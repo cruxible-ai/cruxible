@@ -97,7 +97,7 @@ the work; do not write after every tool call or create telemetry-only updates.
   ownership. Keep implemented, merged, pushed, deployed, adopted, and released
   distinct. Preserve unrelated work and release/scope rulings.
 - Refresh existing gitignored governed views after acceptance and check sync.
-  Keep receipts/timings in the existing `.playbill/project-state/` checkpoint
+  Keep receipts/timings in the existing `.cruxible/project-state/` checkpoint
   area. Do not put operational scripts, payloads, or review guides in `docs/`.
 - Measure connection, reads, prepare, submit, review/approval, acceptance and
   readback separately; record omissions, retries and workflow friction. Carry

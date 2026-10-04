@@ -1,4 +1,4 @@
-"""POST /playbill/get resolves operational references and refuses wrong ones with a repair."""
+"""POST /get resolves operational references and refuses wrong ones with a repair."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def test_http_get_reads_a_capture_by_handle_and_refuses_unknown_operational_refs
         (digest,) = projection.typed.connection.execute(
             "SELECT capture_digest FROM captures ORDER BY capture_digest LIMIT 1"
         ).fetchone()
-    url = f"/api/v1/{instance_id}/playbill/get"
+    url = f"/api/v1/{instance_id}/get"
     handle = "CAP-" + str(digest).removeprefix("sha256:")[:12]
 
     answered = client.post(url, json={"ref": handle, "surface": "cli"})
@@ -39,12 +39,10 @@ def test_http_get_reads_a_capture_by_handle_and_refuses_unknown_operational_refs
     body = answered.json()
     assert body["kind"] == "capture" and body["ref"] == f"Capture:{digest}"
     assert body["card"]["capture"] == handle and body["card"]["status"] == "available"
-    assert body["card"]["next"][-1] == f"cruxible playbill capture read {digest}"
+    assert body["card"]["next"][-1] == f"cruxible capture read {digest}"
 
     # The handle reads the Capture's material too, and at takes a generation.
-    read = client.post(
-        f"/api/v1/{instance_id}/playbill/captures/read", json={"capture_digest": handle}
-    )
+    read = client.post(f"/api/v1/{instance_id}/captures/read", json={"capture_digest": handle})
     assert read.status_code == 200, read.text
     assert read.json()["capture_digest"] == digest and read.json()["status"] == "verified"
     head = instance.accepted_history()[-1]
@@ -75,11 +73,11 @@ def test_http_serves_the_runs_section_and_refuses_an_unknown_run(
 ) -> None:
     client, instance_id, _key = playbill_http
 
-    listed = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"section": "runs"})
+    listed = client.get(f"/api/v1/{instance_id}/orient", params={"section": "runs"})
     assert listed.status_code == 200, listed.text
     assert listed.json()["runs"] == [] and listed.json()["section"] == "runs"
 
-    missing = client.post(f"/api/v1/{instance_id}/playbill/get", json={"ref": "RUN-" + "a" * 12})
+    missing = client.post(f"/api/v1/{instance_id}/get", json={"ref": "RUN-" + "a" * 12})
     assert missing.status_code == 404, missing.text
     assert missing.json()["error_code"] == "cruxible.get.ref_not_found"
     assert missing.json()["repair"]["arguments"] == {"section": "runs"}
@@ -89,7 +87,7 @@ def test_http_orient_serves_every_operational_section_and_counts_them(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
     client, instance_id, _key = playbill_http
-    url = f"/api/v1/{instance_id}/playbill/orient"
+    url = f"/api/v1/{instance_id}/orient"
 
     for section in ("lines", "captures", "capture_contracts", "predictions", "mandates"):
         answered = client.get(url, params={"section": section})

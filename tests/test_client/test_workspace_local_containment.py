@@ -23,7 +23,7 @@ def test_local_writes_do_not_follow_a_directory_swapped_after_open(
 ):
     workspace = (tmp_path / "workspace").resolve()
     workspace.mkdir()
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     floor_apply.apply_floor_delta(
         floor,
         floor_v5_delta(
@@ -33,7 +33,7 @@ def test_local_writes_do_not_follow_a_directory_swapped_after_open(
         ),
     )
     profile = relative == "coverage.json"
-    parent = workspace / ".playbill" if profile else (floor / relative).parent
+    parent = workspace / ".cruxible" if profile else (floor / relative).parent
     parent.mkdir(exist_ok=True)
     identity = parent.stat().st_ino
     outside = tmp_path / "outside"
@@ -77,11 +77,11 @@ def test_local_writes_do_not_follow_a_directory_swapped_after_open(
     monkeypatch.setattr(floor_apply.os, "replace", replace_at)
     if profile:
         authoring._atomic_write_workspace_config(
-            workspace / ".playbill/coverage.json", {"instance_id": "inst_local"}
+            workspace / ".cruxible/coverage.json", {"instance_id": "inst_local"}
         )
     elif relative == ".gitignore":
         authoring._write_workspace_local(
-            workspace, ".playbill/floor/.gitignore", b"*\n", only_if_changed=True
+            workspace, ".cruxible/floor/.gitignore", b"*\n", only_if_changed=True
         )
     else:
         assert authoring.write_projection_index(workspace) == 0
@@ -92,16 +92,16 @@ def test_local_writes_do_not_follow_a_directory_swapped_after_open(
     assert (held / name).read_bytes() != b"outside sentinel\n"
 
 
-@pytest.mark.parametrize("component", ["workspace", ".playbill", "floor", "sources", "projections"])
+@pytest.mark.parametrize("component", ["workspace", ".cruxible", "floor", "sources", "projections"])
 def test_local_index_refuses_a_component_swapped_before_open(tmp_path, monkeypatch, component):
     workspace = (tmp_path / "workspace").resolve()
     workspace.mkdir()
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     (floor / "sources").mkdir(parents=True)
     (floor / "projections").mkdir()
     target = {
         "workspace": workspace,
-        ".playbill": workspace / ".playbill",
+        ".cruxible": workspace / ".cruxible",
         "floor": floor,
         "sources": floor / "sources",
         "projections": floor / "projections",
@@ -135,7 +135,7 @@ def test_join_does_not_bless_a_workspace_swap_by_resolving_it_again(tmp_path, mo
     for root in (workspace, outside):
         root.mkdir()
         floor_apply.apply_floor_delta(
-            root / ".playbill/floor",
+            root / ".cruxible/floor",
             floor_v5_delta(
                 {"sources/LEDGER": (b"# sources LEDGER  0 sources  changed gen 0\n", 0)},
                 coordinate=COORDINATE,
@@ -143,7 +143,7 @@ def test_join_does_not_bless_a_workspace_swap_by_resolving_it_again(tmp_path, mo
             ),
         )
     for relative in ("sources/INDEX", "projections/INDEX"):
-        target = outside / ".playbill/floor" / relative
+        target = outside / ".cruxible/floor" / relative
         target.parent.mkdir(exist_ok=True)
         target.write_bytes(b"outside sentinel\n")
     resolve = authoring._workspace_root
@@ -157,12 +157,12 @@ def test_join_does_not_bless_a_workspace_swap_by_resolving_it_again(tmp_path, mo
     with pytest.raises(WorkspaceError, match="link or a file"):
         authoring.write_projection_index(workspace)
     for relative in ("sources/INDEX", "projections/INDEX"):
-        assert (outside / ".playbill/floor" / relative).read_bytes() == b"outside sentinel\n"
+        assert (outside / ".cruxible/floor" / relative).read_bytes() == b"outside sentinel\n"
 
 
 def test_gitignore_is_created_and_only_replaced_when_bytes_differ(tmp_path):
     workspace = tmp_path / "workspace"
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     floor.mkdir(parents=True)
     assert authoring.write_projection_index(workspace) is None
     ignore = floor / ".gitignore"
@@ -178,7 +178,7 @@ def test_gitignore_is_created_and_only_replaced_when_bytes_differ(tmp_path):
 
 def test_gitignore_comparison_refuses_a_symlink(tmp_path):
     workspace = tmp_path / "workspace"
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     floor.mkdir(parents=True)
     outside = tmp_path / "outside"
     outside.write_bytes(b"outside sentinel\n")
@@ -193,7 +193,7 @@ def test_local_join_refuses_a_fifo_promptly(tmp_path, relative):
     from tests.support.fifos import call_with_fifo_timeout
 
     workspace = tmp_path / "workspace"
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     (floor / "sources").mkdir(parents=True)
     (floor / "sources/LEDGER").write_bytes(b"# sources LEDGER  0 sources  changed gen 0\n")
     fifo = floor / relative
@@ -206,7 +206,7 @@ def test_local_join_refuses_a_fifo_promptly(tmp_path, relative):
 
 def test_local_comparison_reads_only_the_expected_length_plus_one(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     floor.mkdir(parents=True)
     ignore = floor / ".gitignore"
     ignore.write_bytes(b"*\n" + b"x" * 10000)
@@ -221,7 +221,7 @@ def test_local_comparison_reads_only_the_expected_length_plus_one(tmp_path, monk
 
     monkeypatch.setattr(floor_apply.os, "read", observed)
     authoring._write_workspace_local(
-        workspace, ".playbill/floor/.gitignore", b"*\n", only_if_changed=True
+        workspace, ".cruxible/floor/.gitignore", b"*\n", only_if_changed=True
     )
     assert sizes == [3]
     assert ignore.read_bytes() == b"*\n"

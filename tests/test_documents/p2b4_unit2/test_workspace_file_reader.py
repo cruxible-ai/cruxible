@@ -171,9 +171,9 @@ def test_path_grammar_refuses_absolute_and_escape(path: str, tmp_path: Path) -> 
         (".Git/config", "git_metadata"),
         (".gIt/config", "git_metadata"),
         ("nested/.GIT/config", "git_metadata"),
-        (".playbill/coverage.json", "playbill_control"),
-        (".PLAYBILL/coverage.json", "playbill_control"),
-        (".PlayBill/coverage.json", "playbill_control"),
+        (".cruxible/coverage.json", "playbill_control"),
+        (".CRUXIBLE/coverage.json", "playbill_control"),
+        (".CruxIble/coverage.json", "playbill_control"),
         ("owner.ed25519", "client_custody"),
         ("OWNER.ED25519", "client_custody"),
         ("Owner.Ed25519", "client_custody"),
@@ -184,8 +184,8 @@ def test_path_grammar_refuses_absolute_and_escape(path: str, tmp_path: Path) -> 
         ("Daemon_Ed25519.pub", "client_custody"),
         ("allowed_signers", "client_custody"),
         ("Allowed_Signers", "client_custody"),
-        (".playbill-init-resume-owner.json", "client_custody"),
-        (".PLAYBILL-INIT-RESUME-OWNER.JSON", "client_custody"),
+        (".cruxible-init-resume-owner.json", "client_custody"),
+        (".CRUXIBLE-INIT-RESUME-OWNER.JSON", "client_custody"),
     ),
 )
 def test_control_and_custody_path_classes_are_denied(
@@ -201,11 +201,11 @@ def test_control_and_custody_path_classes_are_denied(
 DENIED_ON_DISK: tuple[tuple[str, str, str], ...] = (
     (".git/config", ".GIT/config", "git_metadata"),
     (".git/config", ".Git/CONFIG", "git_metadata"),
-    (".playbill/coverage.json", ".PLAYBILL/coverage.json", "playbill_control"),
+    (".cruxible/coverage.json", ".CRUXIBLE/coverage.json", "playbill_control"),
     ("owner.ed25519", "OWNER.ED25519", "client_custody"),
     ("daemon_ed25519", "DAEMON_ED25519", "client_custody"),
     ("allowed_signers", "Allowed_Signers", "client_custody"),
-    (".playbill-init-resume-owner.json", ".Playbill-Init-Resume-Owner.JSON", "client_custody"),
+    (".cruxible-init-resume-owner.json", ".Cruxible-Init-Resume-Owner.JSON", "client_custody"),
     ("managed/state.db", "MANAGED/state.db", "managed_root"),
 )
 

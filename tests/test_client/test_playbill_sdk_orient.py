@@ -50,7 +50,7 @@ def test_sdk_orient_reads_the_map_for_the_sdk_surface(tmp_path: Path) -> None:
     assert pb.coordinate == result.coordinate
 
     assert result.floor is None
-    floor = tmp_path / ".playbill/floor"
+    floor = tmp_path / ".cruxible/floor"
     (floor / "provenance").mkdir(parents=True)
     oid = _COORDINATE.git_oid
     (floor / "manifest.json").write_text(json.dumps({"coordinate": {"git_oid": oid}}))
@@ -74,7 +74,7 @@ def test_orient_transport_preserves_omitted_empty_and_nonempty_tool_profiles() -
         return httpx.Response(200, json=_OrientClient().orient("inst").model_dump(mode="json"))
 
     client = _client(handle)
-    for tools in (None, (), ("cruxible_playbill_settle",)):
+    for tools in (None, (), ("cruxible_settle",)):
         client.orient("inst", surface="mcp", caller_tools=tools)
         if tools is None:
             assert "caller_tools" not in captured[-1].url.params

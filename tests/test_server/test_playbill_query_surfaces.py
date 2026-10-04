@@ -88,7 +88,6 @@ def test_every_surface_returns_the_same_page(
         invoked = CliRunner().invoke(
             cli,
             [
-                "playbill",
                 "query",
                 SUBJECT_KIND,
                 "--where",
@@ -130,7 +129,7 @@ def test_wrong_names_refuse_over_http_with_code_and_nearest(
 ) -> None:
     client, instance_id = served
     response = client._client.post(
-        f"/api/v1/{instance_id}/playbill/query",
+        f"/api/v1/{instance_id}/query",
         json={"kind": SUBJECT_KIND, "where": [{"field": "stauts", "eq": "ready"}]},
     )
 
@@ -161,7 +160,7 @@ def test_wrong_names_refuse_over_http_with_code_and_nearest(
 def test_malformed_filters_name_their_json_path(served: tuple[CruxibleClient, str]) -> None:
     client, instance_id = served
     response = client._client.post(
-        f"/api/v1/{instance_id}/playbill/query",
+        f"/api/v1/{instance_id}/query",
         json={"kind": SUBJECT_KIND, "where": [{"field": "status"}]},
     )
 
@@ -177,9 +176,9 @@ def test_the_mcp_tool_is_read_only_and_fully_typed(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
     tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
-    schema = tools["cruxible_playbill_query"].inputSchema
+    schema = tools["cruxible_query"].inputSchema
 
-    assert PERMISSION_REQUIREMENTS["cruxible_playbill_query"] is PermissionMode.READ_ONLY
+    assert PERMISSION_REQUIREMENTS["cruxible_query"] is PermissionMode.READ_ONLY
     assert set(schema.get("required", ())) == set()
     assert schema["properties"]["params"]["anyOf"][0]["additionalProperties"]["anyOf"]
 
@@ -209,13 +208,10 @@ def test_the_mcp_tool_is_read_only_and_fully_typed(monkeypatch: pytest.MonkeyPat
     # at most a quarter of the default profile's approved model-visible budget
     # (input schemas plus descriptions), which the curation test guards whole.
     assert "spec" not in schema["properties"]
-    assert (
-        model_visible_tokens(tools["cruxible_playbill_query"])
-        <= DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS / 4
-    )
+    assert model_visible_tokens(tools["cruxible_query"]) <= DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS / 4
 
-    spec_schema = tools["cruxible_playbill_query_spec"].inputSchema
-    assert PERMISSION_REQUIREMENTS["cruxible_playbill_query_spec"] is PermissionMode.READ_ONLY
+    spec_schema = tools["cruxible_query_spec"].inputSchema
+    assert PERMISSION_REQUIREMENTS["cruxible_query_spec"] is PermissionMode.READ_ONLY
     assert set(spec_schema["required"]) == {"spec"}
     assert set(spec_schema["properties"]) == {
         "instance_id",
@@ -258,7 +254,7 @@ def test_the_spec_tool_answers_with_the_same_evaluation(
 
     advertised = advertised_tool_names(
         mode=PermissionMode.ADMIN,
-        registered_tools={"cruxible_playbill_query", "cruxible_playbill_query_spec"},
+        registered_tools={"cruxible_query", "cruxible_query_spec"},
         curation=ToolCuration(profile=PROFILE_DEFAULT),
     )
-    assert advertised == {"cruxible_playbill_query"}
+    assert advertised == {"cruxible_query"}

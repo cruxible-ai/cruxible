@@ -81,7 +81,7 @@ class _Cli:
     def accept(self, proposal_id: str) -> dict[str, Any]:
         """Activate the admitted candidate, exactly as an operator does."""
 
-        activated = self.json("playbill", "proposal", "activate", proposal_id)
+        activated = self.json("proposal", "activate", proposal_id)
         assert activated["status"] == "accepted", activated
         return activated
 
@@ -91,7 +91,6 @@ class _Cli:
         custody = tmp_path / "custody"
         recovery_custody = tmp_path / "recovery-custody"
         initialized = self.json(
-            "playbill",
             "init",
             "--key-dir",
             str(custody),
@@ -123,13 +122,11 @@ def _author_and_accept(
     payload: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     created = cruxible.json(
-        "playbill",
         "authoring",
         "create",
         _write(path, payload),
     )
     submitted = cruxible.json(
-        "playbill",
         "authoring",
         "submit",
         str(created["intent"]["intent_id"]),
@@ -186,10 +183,9 @@ def test_cli_init_key_dir_alone_bootstraps_a_solo_instance(
     tmp_path: Path,
 ) -> None:
     cruxible = served_cli
-    host = cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
+    host = cruxible.json("--server-url", "http://cruxible", "host", "create")
     custody = tmp_path / "solo-custody"
     initialized = cruxible.json(
-        "playbill",
         "init",
         "--key-dir",
         str(custody),
@@ -226,7 +222,6 @@ def test_cli_independent_approval_flag_validates_before_provisioning(
         [
             "--server-url",
             "https://init.example.test",
-            "playbill",
             "init",
             "--key-dir",
             str(tmp_path / "solo-custody"),
@@ -256,7 +251,6 @@ def test_cli_init_requires_an_active_instance_before_provisioning(
         [
             "--server-url",
             "https://init.example.test",
-            "playbill",
             "init",
             "--key-dir",
             str(tmp_path.parent / "missing-instance-custody"),
@@ -318,7 +312,6 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
         "https://init.example.test/",
         "--instance-id",
         "inst_retry",
-        "playbill",
         "init",
         "--key-dir",
         str(custody),
@@ -329,7 +322,7 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
     first = CliRunner().invoke(cli, args)
     assert first.exit_code == 1
     private_key = custody / f"{CREATOR_ID}.ed25519"
-    marker = custody / f".playbill-init-resume-{CREATOR_ID}.json"
+    marker = custody / f".cruxible-init-resume-{CREATOR_ID}.json"
     original_private = private_key.read_bytes()
     assert marker.is_file()
 
@@ -373,12 +366,11 @@ def test_tcp_in_git_worktree_refuses_before_remote_or_key_mutation(
         "cruxible_core.cli.commands.playbill.generate_client_principal_key",
         lambda *_args, **_kwargs: reached.append("key"),
     )
-    leaf = ["playbill", "host", "create"]
+    leaf = ["host", "create"]
     if command == "init":
         leaf = [
             "--instance-id",
             "inst_tcp",
-            "playbill",
             "init",
             "--key-dir",
             str(tmp_path / "outside-custody"),
@@ -397,7 +389,7 @@ def test_cli_custody_uses_the_git_workspace_across_working_directories(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cruxible = served_cli
-    cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
+    cruxible.json("--server-url", "http://cruxible", "host", "create")
     workspace = tmp_path / "workspace"
     init_directory = workspace / "init-directory"
     approval_directory = tmp_path / "operator" / "approval-directory"
@@ -412,7 +404,6 @@ def test_cli_custody_uses_the_git_workspace_across_working_directories(
 
     monkeypatch.chdir(init_directory)
     cruxible.json(
-        "playbill",
         "init",
         "--key-dir",
         str(custody),
@@ -422,7 +413,6 @@ def test_cli_custody_uses_the_git_workspace_across_working_directories(
         str(custody),
     )
     proposed = cruxible.json(
-        "playbill",
         "claim-type",
         "propose",
         "--envelope",
@@ -433,7 +423,6 @@ def test_cli_custody_uses_the_git_workspace_across_working_directories(
 
     monkeypatch.chdir(approval_directory)
     approved = cruxible.json(
-        "playbill",
         "proposal",
         "approve",
         _proposal_id(proposed),
@@ -453,7 +442,7 @@ def test_cli_custody_refusal_names_the_custody_and_workspace_roots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cruxible = served_cli
-    cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
+    cruxible.json("--server-url", "http://cruxible", "host", "create")
     workspace = tmp_path / "workspace"
     subprocess.run(["git", "init", "-q", "-b", "main", str(workspace)], check=True)
     nested = workspace / "nested"
@@ -468,7 +457,6 @@ def test_cli_custody_refusal_names_the_custody_and_workspace_roots(
     refused = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "init",
             "--key-dir",
             str(custody),
@@ -510,9 +498,7 @@ def test_local_git_workspace_ignores_inherited_repository_selection(
         "cruxible_core.cli.commands.playbill._refuse_tcp_workspace_operation",
         lambda _workspace: None,
     )
-    rendered = served_cli.run(
-        "--server-url", "http://cruxible", "playbill", "host", "create", "--json"
-    )
+    rendered = served_cli.run("--server-url", "http://cruxible", "host", "create", "--json")
     payload = json.loads(rendered.stdout)
     assert "inherited_git_workspace_ignored" in rendered.stderr
     assert payload["git_workspace_note"] == {
@@ -531,7 +517,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
 
     # 1. Allocate a host and bootstrap it. The host is remembered, so every
     #    later command names neither the daemon nor the instance.
-    host = cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
+    host = cruxible.json("--server-url", "http://cruxible", "host", "create")
     assert host["status"] == "created"
     initialized = cruxible.bootstrap(tmp_path)
     assert initialized["instance_id"] == host["instance_id"]
@@ -556,7 +542,6 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
         }
     )
     proposed = cruxible.json(
-        "playbill",
         "claim-type",
         "propose",
         "--envelope",
@@ -597,7 +582,6 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
         source_file = tmp_path / f"claim-{subject_id}.md"
         source_file.write_text(f"status: {value}\n", encoding="utf-8")
         bound = cruxible.json(
-            "playbill",
             "authoring",
             "bind",
             "--file",
@@ -610,7 +594,6 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
         intent_id = str(bound["certificate"]["intent_id"])
         if subject_id == "wi-42":
             brief = cruxible.run(
-                "playbill",
                 "authoring",
                 "submit",
                 intent_id,
@@ -620,11 +603,10 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
             assert "outcome: accepted" in brief
             assert "coordinate: " in brief
             assert "receipt: playbill-activation-receipt-v1" in brief
-            intent = cruxible.json("playbill", "authoring", "get", intent_id)["intent"]
+            intent = cruxible.json("authoring", "get", intent_id)["intent"]
             claim_identities.append(f"Claim:{intent['semantic_identity']}")
         else:
             submitted = cruxible.json(
-                "playbill",
                 "authoring",
                 "submit",
                 intent_id,
@@ -645,30 +627,24 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
 
     # -- reads: orient, query and get ----------------------------------------
 
-    oriented = cruxible.json("playbill", "orient", "--kind", SUBJECT_KIND)
+    oriented = cruxible.json("orient", "--kind", SUBJECT_KIND)
     assert oriented["coordinate"] == coordinate
     assert set(oriented["kind_detail"]["sample_subject_ids"]) == {"wi-42", "wi-43"}
     subject_ref = f"{SUBJECT_KIND}/wi-42"
     assert (
-        cruxible.json("playbill", "get", subject_ref, "--detail", "proof")["proof"]["envelope"][
-            "identity"
-        ]
+        cruxible.json("get", subject_ref, "--detail", "proof")["proof"]["envelope"]["identity"]
         == f"Subject:{SUBJECT_KIND}/wi-42"
     )
-    assert cruxible.json("playbill", "get", subject_ref, "--detail", "history")["history"][
-        "revisions"
-    ]
+    assert cruxible.json("get", subject_ref, "--detail", "history")["history"]["revisions"]
 
-    claim_types = cruxible.json("playbill", "orient", "--section", "claim_types")
+    claim_types = cruxible.json("orient", "--section", "claim_types")
     assert [item["predicate"] for item in claim_types["claim_types"]] == [PREDICATE]
     assert (
-        cruxible.json("playbill", "get", f"ClaimType:{PREDICATE}", "--detail", "proof")["proof"][
-            "predicate"
-        ]
+        cruxible.json("get", f"ClaimType:{PREDICATE}", "--detail", "proof")["proof"]["predicate"]
         == PREDICATE
     )
 
-    claims = cruxible.json("playbill", "query", SUBJECT_KIND, "--claims")
+    claims = cruxible.json("query", SUBJECT_KIND, "--claims")
     assert {
         claim["claim"].removeprefix("Claim:")
         for row in claims["rows"]
@@ -676,30 +652,26 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
         for claim in cell
     } == {identity.removeprefix("Claim:") for identity in claim_identities}
     assert (
-        cruxible.json("playbill", "get", claim_identities[0], "--detail", "proof")["proof"][
-            "envelope"
-        ]["identity"]
+        cruxible.json("get", claim_identities[0], "--detail", "proof")["proof"]["envelope"][
+            "identity"
+        ]
         == claim_identities[0]
     )
-    assert cruxible.json("playbill", "get", claim_identities[0], "--detail", "history")["history"][
-        "revisions"
-    ]
-    explained = cruxible.json("playbill", "get", claim_identities[0], "--detail", "why")["why"]
+    assert cruxible.json("get", claim_identities[0], "--detail", "history")["history"]["revisions"]
+    explained = cruxible.json("get", claim_identities[0], "--detail", "why")["why"]
     assert explained["verdict"]["verdict"] == "supported", explained
     assert explained["law_evidence"]
 
-    definitions = cruxible.json("playbill", "orient", "--section", "queries")
+    definitions = cruxible.json("orient", "--section", "queries")
     assert [item["name"] for item in definitions["queries"]] == [QUERY_NAME]
     assert (
-        cruxible.json("playbill", "get", f"query:{QUERY_NAME}", "--detail", "proof")["proof"][
-            "name"
-        ]
+        cruxible.json("get", f"query:{QUERY_NAME}", "--detail", "proof")["proof"]["name"]
         == QUERY_NAME
     )
 
     # 6. Execute the entrypoint. The full receipt is the replay coordinate of
     #    the read.
-    run = cruxible.json("playbill", "query", "--name", QUERY_NAME, "--receipt", "full")
+    run = cruxible.json("query", "--name", QUERY_NAME, "--receipt", "full")
     replay = run["receipt"]["replay"]
     projected = {
         next(field["value"] for field in row["fields"] if field["name"] == "item_id"): next(
@@ -715,7 +687,6 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
 
     # Replaying at the receipt's own evaluation time reproduces it exactly.
     again = cruxible.json(
-        "playbill",
         "query",
         "--name",
         QUERY_NAME,
@@ -732,8 +703,8 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     subdirectory = tmp_path / "nested"
     subdirectory.mkdir()
     monkeypatch.chdir(subdirectory)
-    floor = tmp_path / ".playbill/floor"
-    exported = cruxible.json("playbill", "floor", "export")
+    floor = tmp_path / ".cruxible/floor"
+    exported = cruxible.json("floor", "export")
     manifest = json.loads((floor / "manifest.json").read_text(encoding="utf-8"))
     assert manifest == exported
     assert manifest["coordinate"] == coordinate
@@ -753,9 +724,9 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     assert not any(path.startswith(("subjects/", "claim-types/")) for path in written)
 
     # The discovery cards are opt-in, and the refresh profile remembers them.
-    cruxible.json("playbill", "floor", "export", "--force", "--with-discovery")
+    cruxible.json("floor", "export", "--force", "--with-discovery")
     written = {str(path.relative_to(floor)) for path in floor.rglob("*") if path.is_file()}
-    config = json.loads((tmp_path / ".playbill/coverage.json").read_text(encoding="utf-8"))
+    config = json.loads((tmp_path / ".cruxible/coverage.json").read_text(encoding="utf-8"))
     assert config["floor_output"]["include"] == ["discovery"]
     assert f"subjects/{SUBJECT_KIND}/wi-42.profile.json" in written
     assert f"subjects/{SUBJECT_KIND}/wi-43.profile.json" in written
@@ -774,16 +745,16 @@ def test_cli_floor_export_refuses_to_overwrite_a_non_empty_directory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cruxible = served_cli
-    cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
+    cruxible.json("--server-url", "http://cruxible", "host", "create")
     cruxible.bootstrap(tmp_path)
 
     subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
     monkeypatch.chdir(tmp_path)
-    floor = tmp_path / ".playbill/floor"
+    floor = tmp_path / ".cruxible/floor"
     floor.mkdir(parents=True)
     (floor / "occupied.txt").write_text("not the floor\n", encoding="utf-8")
 
-    refused = CliRunner().invoke(cli, ["playbill", "floor", "export", "--json"])
+    refused = CliRunner().invoke(cli, ["floor", "export", "--json"])
 
     assert refused.exit_code != 0
     assert "refusing to write the floor into a non-empty directory" in refused.output

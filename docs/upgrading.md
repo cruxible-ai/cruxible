@@ -9,7 +9,7 @@ Two kinds of change reach an instance, and they move separately:
   approved and activated like any other change.
 
 Most releases only need the first. A release that adds a compiler revision also
-offers the second, and `playbill next` says when one is available.
+offers the second, and `cruxible next` says when one is available.
 
 ## What the compiler is
 
@@ -44,7 +44,7 @@ it was accepted under.
 3. Check the instance:
 
    ~~~bash
-   cruxible playbill next
+   cruxible next
    ~~~
 
    `next` prints any status facet that needs attention before its rows. After
@@ -52,7 +52,7 @@ it was accepted under.
    state was written by an earlier release rebuilds that state, and its
    findings are complete again once it has caught up. Armed Lines keep their
    arms and watch forward from the restart; time the daemon was down needs an
-   explicit `cruxible playbill line evaluate` (see
+   explicit `cruxible line evaluate` (see
    [playbill line](cli-reference.md#playbill-line)).
 
 If the `compiler` facet reads `current`, the upgrade is done.
@@ -65,16 +65,16 @@ head uses, and an explicit upgrade path exists between them, `next` reports the
 the target digest and a proposal name filled in:
 
 ~~~bash
-cruxible playbill compiler upgrade --to sha256:... --name upgrade-to-...
+cruxible compiler upgrade --to sha256:... --name upgrade-to-...
 ~~~
 
 That only proposes the upgrade. The proposal is admin-only and bound to the
 exact accepted head and target compiler. Then:
 
 ~~~bash
-cruxible playbill proposal review PROPOSAL_ID
-cruxible playbill proposal approve PROPOSAL_ID
-cruxible playbill proposal activate PROPOSAL_ID
+cruxible proposal review PROPOSAL_ID
+cruxible proposal approve PROPOSAL_ID
+cruxible proposal activate PROPOSAL_ID
 ~~~
 
 Approval follows the instance's approval policy, as for any proposal.

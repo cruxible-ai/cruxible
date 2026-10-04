@@ -70,7 +70,7 @@ def pb(playbill_http: tuple[TestClient, str, Path], tmp_path: Path) -> Cruxible:
     """wi-1, wi-2 and wi-3 accepted, then wi-3 retired."""
 
     client, instance_id, _key = playbill_http
-    actor = client.get(f"/api/v1/{instance_id}/playbill/whoami").json()["actor_id"]
+    actor = client.get(f"/api/v1/{instance_id}/whoami").json()["actor_id"]
     instance = get_playbill_manager().get(instance_id)
     seed_write_vocabulary(instance, actor_id=actor)
     _retire_subject(instance, "wi-3", actor_id=actor)
@@ -139,7 +139,7 @@ def test_a_retired_subject_takes_no_place_under_the_ceiling(
     """A live-only answer under a ceiling of one is the first live Subject, not empty."""
 
     client, instance_id, _key = playbill_http
-    actor = client.get(f"/api/v1/{instance_id}/playbill/whoami").json()["actor_id"]
+    actor = client.get(f"/api/v1/{instance_id}/whoami").json()["actor_id"]
     _retire_subject(get_playbill_manager().get(instance_id), "wi-1", actor_id=actor)
     monkeypatch.setattr(compact_module, "COMPACT_QUERY_MAX_RESULTS", 1)
 

@@ -58,7 +58,7 @@ def _mutate_http(surface: dict[str, object], field: str, value: object) -> None:
 def _same_count_mcp_swap(surface: dict[str, object]) -> None:
     tools = surface["mcp_tools"]
     assert isinstance(tools, list) and isinstance(tools[0], dict)
-    tools[0]["name"] = "cruxible_playbill_same_count_substitution"
+    tools[0]["name"] = "cruxible_same_count_substitution"
 
 
 def _mutate_mcp(surface: dict[str, object], field: str, value: object) -> None:

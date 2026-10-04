@@ -152,7 +152,7 @@ def test_admission_names_the_commit_the_ref_holds_after_card_derivation(
 
     A proposal resolved by its target ref matches the admission whose
     candidate_commit_oid equals the ref target, so an admission left naming the
-    pre-evaluation commit makes `playbill proposal show <ref>` unresolvable.
+    pre-evaluation commit makes `cruxible proposal show <ref>` unresolvable.
     """
 
     instance, _owner = initialize_local(tmp_path)
@@ -270,7 +270,7 @@ def test_refusal_keeps_evidence_but_creates_no_candidate(tmp_path: Path) -> None
         ProposalIntegrityError,
         match=(
             r"refused proposal has no approvable candidate; run "
-            rf"`playbill proposal refusal {result.admission.proposal_id}` for refusal code "
+            rf"`cruxible proposal refusal {result.admission.proposal_id}` for refusal code "
             r"cruxible\.document\.body_missing"
         ),
     ):

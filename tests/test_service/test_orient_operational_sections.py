@@ -24,7 +24,7 @@ _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
 def _suggested_get(instance: Any, call: str) -> None:
     """Run an MCP-rendered ``get`` suggestion against the service."""
 
-    assert call.startswith('cruxible_playbill_get(ref="'), call
+    assert call.startswith('cruxible_get(ref="'), call
     ref = call.split('ref="', 1)[1].split('"', 1)[0]
     service_playbill_get(instance, request=GetRequest(ref=ref), access=_ACCESS)
 
@@ -46,7 +46,7 @@ def test_the_lines_and_mandates_sections_carry_arm_state_and_validity(line_world
     (mandate,) = mandates.mandates
     assert mandate.mandate == "ProcedureMandate:served-line-mandate"
     assert mandate.state == "active" and mandate.grants == "propose"
-    assert mandates.next[0] == 'cruxible_playbill_get(ref="Mandate:served-line-mandate")'
+    assert mandates.next[0] == 'cruxible_get(ref="Mandate:served-line-mandate")'
     _suggested_get(instance, mandates.next[0])
 
     contracts = service_playbill_orient(instance, section="capture_contracts", surface="mcp")
@@ -69,7 +69,7 @@ def test_the_default_map_counts_operational_families_without_inlining_them(line_
     )
     for section in ("runs", "lines", "captures", "capture_contracts", "predictions", "mandates"):
         assert getattr(answer, section) is None, section
-    assert "cruxible playbill orient --section lines" in answer.next
+    assert "cruxible orient --section lines" in answer.next
 
 
 def test_the_predictions_and_captures_sections(prediction_world) -> None:  # type: ignore[no-untyped-def]  # noqa: F811

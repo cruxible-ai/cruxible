@@ -89,7 +89,7 @@ __all__ = [
 ]
 
 _DAEMON_OPERATION_LABELS = {
-    "cruxible_playbill_host_create": "playbill host create",
+    "cruxible_host_create": "cruxible host create",
     "cruxible_server_info": "server status",
     "cruxible_server_restart": "server restart",
     "cruxible_server_stop": "server stop",

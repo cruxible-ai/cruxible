@@ -81,8 +81,8 @@ def _workspace(tmp_path: Path) -> Path:
         check=True,
         capture_output=True,
     )
-    (root / ".playbill").mkdir(parents=True)
-    (root / ".playbill/coverage.json").write_text(
+    (root / ".cruxible").mkdir(parents=True)
+    (root / ".cruxible/coverage.json").write_text(
         json.dumps(
             {
                 "tag": "playbill-coverage-workspace-config-v2",
@@ -109,7 +109,7 @@ def test_activate_refreshes_the_operator_configured_workspace(
 
     assert result.status == "accepted"
     assert result.floor_refresh.status == "refreshed"
-    assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
+    assert (workspace / ".cruxible/floor/cards/fresh.json").is_file()
 
 
 def test_activate_from_nested_cwd_refreshes_the_containing_git_worktree(
@@ -127,8 +127,8 @@ def test_activate_from_nested_cwd_refreshes_the_containing_git_worktree(
 
     assert result.status == "accepted"
     assert result.floor_refresh.status == "refreshed"
-    assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
-    assert not (nested / ".playbill/floor").exists()
+    assert (workspace / ".cruxible/floor/cards/fresh.json").is_file()
+    assert not (nested / ".cruxible/floor").exists()
 
 
 def test_activate_outside_a_git_worktree_skips_the_floor_refresh_and_says_so(
@@ -148,7 +148,7 @@ def test_activate_outside_a_git_worktree_skips_the_floor_refresh_and_says_so(
     assert result.floor_refresh.message is not None
     assert "Git worktree" in result.floor_refresh.message
     assert result.block_sync is None
-    assert not (plain / ".playbill").exists()
+    assert not (plain / ".cruxible").exists()
 
 
 def test_library_mode_activate_checks_an_attached_workspace(
@@ -156,7 +156,7 @@ def test_library_mode_activate_checks_an_attached_workspace(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
-    (workspace / ".playbill/coverage.json").write_text(
+    (workspace / ".cruxible/coverage.json").write_text(
         json.dumps(
             {
                 "tag": "playbill-coverage-workspace-config-v2",
@@ -294,7 +294,7 @@ def test_floor_write_after_an_activation_refresh_is_a_no_op_success(
     monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
     activated = handlers.handle_playbill_activate("inst_test", "proposal-1")
     assert activated.floor_refresh.status == "refreshed"
-    card = workspace / ".playbill/floor/cards/fresh.json"
+    card = workspace / ".cruxible/floor/cards/fresh.json"
     before = card.stat().st_mtime_ns
 
     again = handlers.handle_playbill_floor_export("inst_test", mode="write")
@@ -311,7 +311,7 @@ def test_floor_write_still_refuses_a_directory_holding_something_else(
     workspace = _workspace(tmp_path)
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
     monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     floor.mkdir(parents=True)
     (floor / "occupied.txt").write_text("not the floor\n", encoding="utf-8")
 
@@ -333,9 +333,9 @@ def test_floor_export_from_nested_cwd_uses_the_containing_git_worktree(
 
     written = handlers.handle_playbill_floor_export("inst_test", mode="write")
 
-    assert written.destination == str(workspace / ".playbill/floor")
-    assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
-    assert not (nested / ".playbill/floor").exists()
+    assert written.destination == str(workspace / ".cruxible/floor")
+    assert (workspace / ".cruxible/floor/cards/fresh.json").is_file()
+    assert not (nested / ".cruxible/floor").exists()
 
 
 def test_explicit_nested_mcp_root_refuses_to_write_outside_its_boundary(
@@ -351,8 +351,8 @@ def test_explicit_nested_mcp_root_refuses_to_write_outside_its_boundary(
     with pytest.raises(ConfigError, match="must name the Git worktree root"):
         handlers.handle_playbill_floor_export("inst_test", mode="write")
 
-    assert not (workspace / ".playbill/floor").exists()
-    assert not (scoped_root / ".playbill/floor").exists()
+    assert not (workspace / ".cruxible/floor").exists()
+    assert not (scoped_root / ".cruxible/floor").exists()
 
 
 @pytest.mark.parametrize(
@@ -424,7 +424,7 @@ def test_an_mcp_write_with_discovery_survives_an_activation_refresh(
     client = _PartsClient()
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
     monkeypatch.setattr(handlers, "_get_client", lambda: client)
-    profile = workspace / ".playbill/floor/subjects/k/a.profile.json"
+    profile = workspace / ".cruxible/floor/subjects/k/a.profile.json"
 
     written = handlers.handle_playbill_floor_export(
         "inst_test", mode="write", force=True, include=("discovery",)
@@ -432,10 +432,10 @@ def test_an_mcp_write_with_discovery_survives_an_activation_refresh(
 
     assert written.status == "written"
     assert profile.is_file()
-    config = json.loads((workspace / ".playbill/coverage.json").read_text(encoding="utf-8"))
+    config = json.loads((workspace / ".cruxible/coverage.json").read_text(encoding="utf-8"))
     assert config["floor_output"] == {
         "tag": "playbill-floor-output-v1",
-        "format": "playbill-floor-export-v5",
+        "format": "playbill-floor-export-v6",
         "include": ["discovery"],
     }
 

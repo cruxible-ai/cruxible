@@ -9,16 +9,14 @@ def test_http_bound_empty_selection_and_missing_backing(playbill_http):
     instance = get_playbill_manager().get(instance_id)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     body = {"at": coordinate.model_dump(mode="json"), "subject_paths": ["subjects/work/item.json"]}
-    response = client.post(f"/api/v1/{instance_id}/playbill/claims/read-batch", json=body)
+    response = client.post(f"/api/v1/{instance_id}/claims/read-batch", json=body)
     assert response.status_code == 200, response.text
     assert response.json()["claims"] == [] and not response.json()["truncated"]
     assert response.json()["coordinate"] == body["at"]
-    too_many = client.post(
-        f"/api/v1/{instance_id}/playbill/claims/read-batch", json={**body, "limit": 257}
-    )
+    too_many = client.post(f"/api/v1/{instance_id}/claims/read-batch", json={**body, "limit": 257})
     assert too_many.status_code == 422
     missing = client.post(
-        f"/api/v1/{instance_id}/playbill/claims/backings",
+        f"/api/v1/{instance_id}/claims/backings",
         json={
             "at": body["at"],
             "claim_ids": ["CLM-" + "0" * 32],

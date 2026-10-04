@@ -488,7 +488,7 @@ def render_orient_call(call: _Call, surface: OrientSurface) -> str:
 
     args = dict(call.args)
     if surface == "mcp":
-        tool = f"cruxible_playbill_{call.verb}"
+        tool = f"cruxible_{call.verb}"
         return f"{tool}({', '.join(f'{key}={_py(value)}' for key, value in call.args)})"
     if surface == "sdk":
         if call.verb == "evidence_rules_upgrade":
@@ -504,12 +504,12 @@ def render_orient_call(call: _Call, surface: OrientSurface) -> str:
         )
     # cli
     if call.verb == "evidence_rules_upgrade":
-        return "cruxible playbill claim-type upgrade-evidence-rules"
+        return "cruxible claim-type upgrade-evidence-rules"
     if call.verb == "next":
-        return "cruxible playbill next"
+        return "cruxible next"
     if call.verb == "get":
-        return f"cruxible playbill get {_cli_value(args['ref'])}"
-    parts = ["cruxible", "playbill", call.verb]
+        return f"cruxible get {_cli_value(args['ref'])}"
+    parts = ["cruxible", call.verb]
     if call.verb == "query" and "kind" in args:
         parts.append(_cli_value(args.pop("kind")))
     for key, value in args.items():

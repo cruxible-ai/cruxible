@@ -96,7 +96,7 @@ def test_approve_refuses_without_a_configured_key_directory(monkeypatch) -> None
 
     message = str(refused.value)
     assert "set CRUXIBLE_MCP_KEY_DIR" in message
-    assert "cruxible playbill principal add --key-dir" in message
+    assert "cruxible principal add --key-dir" in message
 
 
 def test_approve_needs_a_signer_when_the_directory_holds_several(tmp_path, monkeypatch) -> None:

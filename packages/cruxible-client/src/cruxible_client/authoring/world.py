@@ -744,7 +744,7 @@ _DESCRIBED_VERBS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("cx.orient()", "map accepted state; orient(kind=...) for one kind"),
             ('cx.query("<kind>", where=[...])', "one page of values with verdict flags"),
             ('cx.get("<ref>")', "one thing: kind/id, CLM-..., a predicate, CAP-..."),
-            ("grep -r <text> .playbill/floor/current/", "the exported floor, one file per Subject"),
+            ("grep -r <text> .cruxible/floor/current/", "the exported floor, one file per Subject"),
             ('w.<kind>["<id>"].<field>', "the live Claims under one field"),
             ("w.<kind>.where(<field>=...)", "a compact query over one kind"),
         ),

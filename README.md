@@ -99,7 +99,7 @@ The currently registered CLI commands are deliberately small:
 ~~~text
 cruxible context
 cruxible credential
-cruxible playbill
+cruxible
 cruxible server
 ~~~
 
@@ -139,12 +139,12 @@ client-held key outside the workspace. No bootstrap secret is needed locally:
 ~~~bash
 export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill-run/daemon.sock
 
-uv run cruxible playbill host create --instance-id inst_demo
-uv run cruxible playbill init \
+uv run cruxible host create --instance-id inst_demo
+uv run cruxible init \
   --key-dir /tmp/cruxible-playbill-owner \
   --principal-id me
 export CRUXIBLE_PRINCIPAL_ID=me
-uv run cruxible playbill orient
+uv run cruxible orient
 ~~~
 
 The init command prints each generated private-key path and sends only public
@@ -195,7 +195,7 @@ The minimum Cruxible gate is:
 
 ~~~bash
 uv run pytest -q tests/test_playbill tests/test_architecture/test_playbill_dp0_boundaries.py
-uv run mypy src/cruxible_core/playbill src/cruxible_core/service
+uv run mypy src/cruxible_core src/cruxible_core/service
 uv run ruff check src packages/cruxible-client/src tests
 ~~~
 

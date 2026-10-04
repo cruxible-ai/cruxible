@@ -61,7 +61,6 @@ def test_cli_principal_add_keeps_private_key_client_side_and_proposes_public_rec
             "https://principals.example.test",
             "--instance-id",
             "inst_principals",
-            "playbill",
             "principal",
             "add",
             "reviewer",
@@ -114,7 +113,6 @@ def test_cli_principal_add_rejects_existing_identity_before_generating_keys(
             "https://principals.example.test",
             "--instance-id",
             "inst_principals",
-            "playbill",
             "principal",
             "add",
             "reviewer",
@@ -136,7 +134,6 @@ def test_cli_principal_add_refuses_daemon_kind() -> None:
     result = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "principal",
             "add",
             "bad",
@@ -194,7 +191,6 @@ def test_the_global_principal_id_reaches_the_client_and_whoami_says_it_is_a_clai
             "inst_principals",
             "--principal-id",
             "alice",
-            "playbill",
             "whoami",
         ],
     )

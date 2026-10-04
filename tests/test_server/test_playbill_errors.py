@@ -51,7 +51,7 @@ from cruxible_core.server.errors import response_to_error as compat_response_to_
         ),
         (
             PermissionDeniedError(
-                "cruxible_playbill_activate",
+                "cruxible_activate",
                 "GOVERNED_WRITE",
                 "GRAPH_WRITE",
                 ceiling_mode="GOVERNED_WRITE",
@@ -59,7 +59,7 @@ from cruxible_core.server.errors import response_to_error as compat_response_to_
             403,
             client_errors.PermissionDeniedError,
             {
-                "tool_name": "cruxible_playbill_activate",
+                "tool_name": "cruxible_activate",
                 "current_mode": "GOVERNED_WRITE",
                 "required_mode": "GRAPH_WRITE",
                 "ceiling_mode": "GOVERNED_WRITE",
@@ -169,7 +169,7 @@ def test_proposal_integrity_split_reaches_the_http_surface(
         raise error
 
     monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_head", fail_head)
-    response = client.get(f"/api/v1/{instance_id}/playbill/head")
+    response = client.get(f"/api/v1/{instance_id}/head")
 
     assert response.status_code == expected_status, response.text
     assert response.json()["error_type"] == type(error).__name__
@@ -188,7 +188,7 @@ def test_non_insertion_code_attribute_does_not_widen_the_error_envelope() -> Non
 
 def test_capability_ceiling_denial_message_survives_round_trip() -> None:
     error = PermissionDeniedError(
-        "cruxible_playbill_principal_change",
+        "cruxible_principal_change",
         "GOVERNED_WRITE",
         "ADMIN",
         ceiling_mode="GOVERNED_WRITE",
@@ -199,7 +199,7 @@ def test_capability_ceiling_denial_message_survives_round_trip() -> None:
 
     assert status == 403
     assert "capability ceiling is GOVERNED_WRITE" in str(restored)
-    assert "cruxible_playbill_principal_change" in str(restored)
+    assert "cruxible_principal_change" in str(restored)
 
 
 def test_unknown_error_type_falls_back_to_core_error() -> None:
@@ -226,7 +226,7 @@ def test_http_next_maps_raw_source_observation_to_typed_refusal(
 ) -> None:
     client, instance_id, _private_key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/next",
+        f"/api/v1/{instance_id}/next",
         json={
             "tag": "playbill-next-request-v1",
             "evaluation_time": "2026-08-26T16:00:00+00:00",
@@ -268,8 +268,8 @@ def test_http_next_refuses_a_foreign_cursor_with_its_declared_repair(
         },
     }
 
-    refused = client.post(f"/api/v1/{instance_id}/playbill/next", json=body | {"cursor": "e30="})
-    unbounded = client.post(f"/api/v1/{instance_id}/playbill/next", json=body | {"limit": 1001})
+    refused = client.post(f"/api/v1/{instance_id}/next", json=body | {"cursor": "e30="})
+    unbounded = client.post(f"/api/v1/{instance_id}/next", json=body | {"limit": 1001})
 
     assert refused.status_code == 400, refused.text
     assert refused.json()["error_code"] == "cruxible.next.cursor_mismatch"
@@ -283,7 +283,7 @@ def test_http_activate_refuses_a_missing_proposal_id_typed(
     """A None proposal_id stringifies into the path; it must not reach the catch-all."""
     client, instance_id, _private_key = playbill_http
 
-    response = client.post(f"/api/v1/{instance_id}/playbill/proposals/None/activate")
+    response = client.post(f"/api/v1/{instance_id}/proposals/None/activate")
 
     assert response.status_code == 400, response.text
     assert response.json()["error_code"] == "cruxible.proposal.activation_request_invalid"
@@ -310,7 +310,7 @@ def test_a_frozen_model_failing_inside_a_service_stays_a_generic_server_error(
     # The default TestClient re-raises server exceptions; this asserts on the
     # body the client would actually receive.
     quiet = TestClient(client.app, raise_server_exceptions=False)
-    response = quiet.get(f"/api/v1/{instance_id}/playbill/head")
+    response = quiet.get(f"/api/v1/{instance_id}/head")
 
     assert response.status_code == 500, response.text
     body = response.json()
@@ -355,13 +355,9 @@ def test_http_next_accepts_the_callers_surface_and_tools(
     for tag in ("playbill-next-request-v1", "playbill-next-request-v2"):
         for view in (
             {"caller_surface": "sdk"},
-            {"caller_surface": "mcp", "caller_tools": ["cruxible_playbill_next"]},
+            {"caller_surface": "mcp", "caller_tools": ["cruxible_next"]},
         ):
-            response = client.post(
-                f"/api/v1/{instance_id}/playbill/next", json=body | {"tag": tag} | view
-            )
+            response = client.post(f"/api/v1/{instance_id}/next", json=body | {"tag": tag} | view)
             assert response.status_code == 200, response.text
-    unknown = client.post(
-        f"/api/v1/{instance_id}/playbill/next", json=body | {"caller_surface": "web"}
-    )
+    unknown = client.post(f"/api/v1/{instance_id}/next", json=body | {"caller_surface": "web"})
     assert unknown.status_code == 422, unknown.text

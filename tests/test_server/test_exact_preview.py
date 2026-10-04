@@ -70,7 +70,7 @@ def _warm(client: TestClient, instance_id: str) -> Any:
 
     def warm() -> None:
         _quiet()
-        client.get(_api(instance_id, "/playbill/head"))
+        client.get(_api(instance_id, "/head"))
         # A change accepted just before leaves its review refs reconciling in
         # the background; let that writer finish before comparing.
         get_playbill_manager().get(instance_id).settled_workspace_advertisement()
@@ -94,7 +94,7 @@ def _refused(response: Any, status: int, code: str) -> dict[str, Any]:
 def _document(client: TestClient, instance_id: str, name: str) -> dict[str, Any]:
     stored = _ok(
         client.post(
-            _api(instance_id, "/playbill/bodies"),
+            _api(instance_id, "/bodies"),
             json={"content_base64": base64.b64encode(f"{name}\n".encode()).decode("ascii")},
         )
     )
@@ -115,7 +115,7 @@ def _move_head(client: TestClient, instance_id: str, reviewer_key: Path) -> None
 
     proposed = _ok(
         client.post(
-            _api(instance_id, "/playbill/documents/proposals"),
+            _api(instance_id, "/documents/proposals"),
             json={
                 "shell": _document(client, instance_id, "head-mover"),
                 "proposal_name": "head-mover",
@@ -123,7 +123,7 @@ def _move_head(client: TestClient, instance_id: str, reviewer_key: Path) -> None
         )
     )
     proposal_id = proposed["proposal"]["admission"]["proposal_id"]
-    base = _api(instance_id, f"/playbill/proposals/{proposal_id}")
+    base = _api(instance_id, f"/proposals/{proposal_id}")
     challenge = _ok(client.post(f"{base}/approval-challenge", json={"signer_id": "reviewer"}))
     signer = LocalEd25519ApprovalSigner.open(
         signer_id="reviewer",
@@ -151,7 +151,7 @@ def test_a_principal_change_previews_writes_nothing_and_commits_pinned(
 ) -> None:
     client, instance_id, _reviewer_key = playbill_http
     body = {"principal": _principal(tmp_path, "newcomer"), "proposal_name": "add-newcomer"}
-    url = _api(instance_id, "/playbill/principals/proposals")
+    url = _api(instance_id, "/principals/proposals")
 
     preview = _ok(
         assert_writes_nothing(
@@ -195,7 +195,7 @@ def test_a_head_accepted_after_the_pin_check_refuses_at_publication(
 
     client, instance_id, reviewer_key = playbill_http
     body = {"principal": _principal(tmp_path, "pinned"), "proposal_name": "add-pinned"}
-    url = _api(instance_id, "/playbill/principals/proposals")
+    url = _api(instance_id, "/principals/proposals")
     at = _ok(client.post(url, json={**body, "dry_run": True}))["accepted_coordinate"]["git_oid"]
     original = ProposalService._evaluate_admission
     moved: list[bool] = []
@@ -213,7 +213,7 @@ def test_a_head_accepted_after_the_pin_check_refuses_at_publication(
     _refused(refused, 409, "cruxible.preview.state_moved")
     assert not [
         entry
-        for entry in _ok(client.get(_api(instance_id, "/playbill/proposals")))["entries"]
+        for entry in _ok(client.get(_api(instance_id, "/proposals")))["entries"]
         if entry["target_ref"].endswith("add-pinned")
     ]
 
@@ -226,7 +226,7 @@ def test_a_head_accepted_before_the_stamp_refuses_a_pinned_decommission(
     """F-002: an irreversible operational commit checks its pin under the activation lock."""
 
     client, instance_id, reviewer_key = playbill_http
-    url = _api(instance_id, "/playbill/instance/decommission")
+    url = _api(instance_id, "/instance/decommission")
     at = _ok(client.post(url, json={"reason": "end"}))["coordinate"]["git_oid"]
     original = PlaybillInstance._persisted_decommission
 
@@ -257,8 +257,8 @@ def test_a_cold_preview_opens_without_writing_or_refuses_a_repair_by_name(
     client, instance_id, _reviewer_key = playbill_http
     _quiet()
     root = get_playbill_manager().get(instance_id).root
-    url = _api(instance_id, "/playbill/instance/decommission")
-    proposals = _api(instance_id, "/playbill/principals/proposals")
+    url = _api(instance_id, "/instance/decommission")
+    proposals = _api(instance_id, "/principals/proposals")
     body = {"principal": _principal(tmp_path, "coldcomer"), "proposal_name": "add-coldcomer"}
 
     get_playbill_manager().clear()
@@ -290,7 +290,7 @@ def test_a_cold_preview_opens_without_writing_or_refuses_a_repair_by_name(
     assert not serving.exists()
 
     # An ordinary read reopens (and repairs) it; the preview then runs.
-    _ok(client.get(_api(instance_id, "/playbill/head")))
+    _ok(client.get(_api(instance_id, "/head")))
     assert serving.exists()
     _quiet()
     assert (
@@ -304,13 +304,11 @@ def test_a_cold_preview_opens_without_writing_or_refuses_a_repair_by_name(
     # so the next read rebuilds it. A preview rebuilds a private copy instead.
     proposed = _ok(
         client.post(
-            _api(instance_id, "/playbill/documents/proposals"),
+            _api(instance_id, "/documents/proposals"),
             json={"shell": _document(client, instance_id, "stale"), "proposal_name": "stale"},
         )
     )
-    withdraw = _api(
-        instance_id, f"/playbill/proposals/{proposed['proposal']['admission']['proposal_id']}"
-    )
+    withdraw = _api(instance_id, f"/proposals/{proposed['proposal']['admission']['proposal_id']}")
     _warm(client, instance_id)()
     checkpoint = root / "exhaust" / ".proposal-source.json"
     checkpoint.unlink()
@@ -333,7 +331,7 @@ def test_a_document_proposal_previews_and_writes_nothing(
     playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:
     client, instance_id, _reviewer_key = playbill_http
-    url = _api(instance_id, "/playbill/documents/proposals")
+    url = _api(instance_id, "/documents/proposals")
     body = {
         "shell": _document(client, instance_id, "preview-doc"),
         "proposal_name": "preview-doc",
@@ -347,7 +345,7 @@ def test_a_document_proposal_previews_and_writes_nothing(
     )
 
     assert preview["status"] in {"would_propose", "would_block"}
-    assert _ok(client.get(_api(instance_id, "/playbill/proposals")))["entries"] == []
+    assert _ok(client.get(_api(instance_id, "/proposals")))["entries"] == []
 
 
 def test_withdrawing_and_readmitting_a_proposal_preview_and_write_nothing(
@@ -358,12 +356,12 @@ def test_withdrawing_and_readmitting_a_proposal_preview_and_write_nothing(
     client, instance_id, reviewer_key = playbill_http
     proposed = _ok(
         client.post(
-            _api(instance_id, "/playbill/documents/proposals"),
+            _api(instance_id, "/documents/proposals"),
             json={"shell": _document(client, instance_id, "beta"), "proposal_name": "beta"},
         )
     )
     proposal_id = proposed["proposal"]["admission"]["proposal_id"]
-    base = _api(instance_id, f"/playbill/proposals/{proposal_id}")
+    base = _api(instance_id, f"/proposals/{proposal_id}")
     withdraw = {"tag": "playbill-proposal-withdraw-request-v1", "reason": "superseded"}
 
     previewed = _ok(
@@ -406,13 +404,11 @@ def test_a_head_accepted_before_the_record_refuses_a_pinned_withdrawal(
     client, instance_id, reviewer_key = playbill_http
     proposed = _ok(
         client.post(
-            _api(instance_id, "/playbill/documents/proposals"),
+            _api(instance_id, "/documents/proposals"),
             json={"shell": _document(client, instance_id, "gamma"), "proposal_name": "gamma"},
         )
     )
-    base = _api(
-        instance_id, f"/playbill/proposals/{proposed['proposal']['admission']['proposal_id']}"
-    )
+    base = _api(instance_id, f"/proposals/{proposed['proposal']['admission']['proposal_id']}")
     withdraw = {"tag": "playbill-proposal-withdraw-request-v1", "reason": "superseded"}
     at = _ok(client.post(f"{base}/withdraw", json={**withdraw, "dry_run": True}))["coordinate"][
         "git_oid"
@@ -441,7 +437,7 @@ def test_decommissioning_previews_by_default_and_commits_only_with_its_coordinat
     playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:
     client, instance_id, _reviewer_key = playbill_http
-    url = _api(instance_id, "/playbill/instance/decommission")
+    url = _api(instance_id, "/instance/decommission")
 
     preview = _ok(
         assert_writes_nothing(
@@ -473,7 +469,7 @@ def test_binding_and_publishing_a_ledger_mirror_preview_and_write_nothing(
     client, instance_id, _reviewer_key = playbill_http
     remote = tmp_path / "mirror.git"
     subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
-    url = _api(instance_id, "/playbill/ledger/mirror")
+    url = _api(instance_id, "/ledger/mirror")
 
     preview = _ok(
         assert_writes_nothing(
@@ -495,7 +491,7 @@ def test_binding_and_publishing_a_ledger_mirror_preview_and_write_nothing(
             json={"url": str(remote), "dry_run": False, "at": preview["coordinate"]["git_oid"]},
         )
     )
-    publish = _api(instance_id, "/playbill/ledger/publish")
+    publish = _api(instance_id, "/ledger/publish")
     _ok(client.post(publish, json={"timeout": 60}))
 
     previewed = _ok(
@@ -852,7 +848,7 @@ def test_credential_changes_preview_and_irreversible_ones_need_the_coordinate(
     )
     _ok(
         client.post(
-            _api(instance_id, "/playbill/init"),
+            _api(instance_id, "/init"),
             json={"principals": [owner.principal.model_dump(mode="json")]},
             headers=_bearer(admin),
         )
@@ -879,7 +875,7 @@ def test_credential_changes_preview_and_irreversible_ones_need_the_coordinate(
         assert_writes_nothing(
             [tmp_path],
             lambda: client.post(mint_url, json={**body, "dry_run": True}, headers=_bearer(admin)),
-            warm=lambda: client.get(_api(instance_id, "/playbill/head"), headers=_bearer(admin)),
+            warm=lambda: client.get(_api(instance_id, "/head"), headers=_bearer(admin)),
         )
     )
     assert (preview["status"], preview["token"]) == ("would_mint", None)
@@ -1043,11 +1039,11 @@ def test_a_claim_type_proposal_previews_and_writes_nothing(
     preview = _ok(
         assert_writes_nothing(
             [tmp_path],
-            lambda: client.post(_api(instance_id, "/playbill/claim-types/proposals"), json=body),
+            lambda: client.post(_api(instance_id, "/claim-types/proposals"), json=body),
             warm=_warm(client, instance_id),
         )
     )
 
     assert preview["proposal"]["status"] in {"would_propose", "would_block"}
     assert "admission" not in preview["proposal"]["proposal"]
-    assert _ok(client.get(_api(instance_id, "/playbill/proposals")))["entries"] == []
+    assert _ok(client.get(_api(instance_id, "/proposals")))["entries"] == []

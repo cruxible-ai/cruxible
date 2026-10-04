@@ -1581,9 +1581,9 @@ def test_independent_approval_leaves_the_write_awaiting_the_named_approvers(
     assert approval.eligible_approvers == ("reviewer",)
     pid = outcome.proposal.proposal_id
     assert approval.approve == (
-        f"cruxible playbill proposal approve {pid} --signer-id reviewer --key <reviewer.ed25519>"
+        f"cruxible proposal approve {pid} --signer-id reviewer --key <reviewer.ed25519>"
     )
-    assert approval.activate == f"cruxible playbill proposal activate {pid}"
+    assert approval.activate == f"cruxible proposal activate {pid}"
     assert outcome.next == approval.approve
     assert _values(instance, WI1, "status") == []
 
@@ -1593,8 +1593,8 @@ def test_independent_approval_leaves_the_write_awaiting_the_named_approvers(
     [
         (
             "mcp",
-            'cruxible_playbill_approve(proposal_id="{pid}", signer_id="reviewer")',
-            'cruxible_playbill_activate(proposal_id="{pid}")',
+            'cruxible_approve(proposal_id="{pid}", signer_id="reviewer")',
+            'cruxible_activate(proposal_id="{pid}")',
         ),
         (
             "sdk",

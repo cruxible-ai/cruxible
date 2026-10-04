@@ -100,10 +100,8 @@ def _accept(instance, owner, shell: DocumentShell, *, name: str):
 def test_ratified_specs_survive_supersession_and_projection_rebuild(tmp_path: Path) -> None:
     """Read external bytes only; all ledger, CAS, and projection writes stay in tmp_path."""
 
-    design_bytes = _external_path("CRUXIBLE_PLAYBILL_DOGFOOD_DESIGN", _DEFAULT_DESIGN).read_bytes()
-    program_bytes = _external_path(
-        "CRUXIBLE_PLAYBILL_DOGFOOD_PROGRAM", _DEFAULT_PROGRAM
-    ).read_bytes()
+    design_bytes = _external_path("CRUXIBLE_DOGFOOD_DESIGN", _DEFAULT_DESIGN).read_bytes()
+    program_bytes = _external_path("CRUXIBLE_DOGFOOD_PROGRAM", _DEFAULT_PROGRAM).read_bytes()
     instance, owner, _reviewer = _instance(tmp_path)
 
     design_body = service_store_playbill_body(instance, content=design_bytes)

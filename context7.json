@@ -8,8 +8,8 @@
   "excludeFolders": [],
   "excludeFiles": [],
   "rules": [
-    "Start with cruxible_playbill_host_create, then cruxible_playbill_init to bootstrap public principals",
-    "Write Claims and Procedures with cruxible_playbill_authoring_compile followed by cruxible_playbill_authoring_submit; the returned status names every remaining approval and activation step",
+    "Start with cruxible_host_create, then cruxible_init to bootstrap public principals",
+    "Write Claims and Procedures with cruxible_authoring_compile followed by cruxible_authoring_submit; the returned status names every remaining approval and activation step",
     "A proposal is not accepted state and an approval is not activation; read accepted coordinates as state and candidate coordinates as provisional",
     "Search for an existing Subject or Claim before minting an adjacent concept",
     "Record contradiction as negative evidence rather than only a new positive inverse",

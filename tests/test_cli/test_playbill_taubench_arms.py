@@ -128,9 +128,7 @@ def test_the_seed_bundle_uses_only_surviving_governed_writers(
     assert manifest["seed"]["applied_plan_digest"] == manifest["seed"]["plan_digest"]
 
     # And the accepted world is readable through the ordinary reads.
-    page = recipe.run_cli_json(
-        "playbill", "query", "--name", "project.work_items", "--receipt", "full"
-    )
+    page = recipe.run_cli_json("query", "--name", "project.work_items", "--receipt", "full")
     run = page["receipt"]["replay"]
     projected = {
         next(field["value"] for field in row["fields"] if field["name"] == "item_id"): next(
@@ -148,7 +146,7 @@ def test_the_arm_file_surface_is_floor_artifacts_and_the_boundary(
 
     setups = arm_run["setups"]
     assert isinstance(setups, dict)
-    surface = setups[3].workspace / ".playbill/floor"
+    surface = setups[3].workspace / ".cruxible/floor"
     written = {
         path.relative_to(surface).as_posix() for path in surface.rglob("*") if path.is_file()
     }
@@ -160,8 +158,8 @@ def test_the_arm_file_surface_is_floor_artifacts_and_the_boundary(
     assert {item for item in written if item.endswith(".md")} <= {"README.md"}
     assert "render-manifest.json" not in written
     floor = json.loads((surface / "manifest.json").read_text(encoding="utf-8"))
-    assert floor["tag"] == "playbill-floor-manifest-v5"
-    assert floor["format"] == "playbill-floor-export-v5"
+    assert floor["tag"] == "playbill-floor-manifest-v6"
+    assert floor["format"] == "playbill-floor-export-v6"
     floor_paths = {item["path"] for item in floor["files"]}
     assert {path for path in floor_paths if path.endswith(".md")} <= {"README.md"}
     assert "render-manifest.json" not in floor_paths
@@ -287,8 +285,8 @@ def test_arms_one_and_two_carry_the_corpus_and_arm_two_carries_a_scratchpad(
     assert (second.workspace / "scratchpad/NOTES.md").is_file()
     # Neither control gets the Cruxible surface or a binding configuration.
     for setup in (first, second):
-        assert not (setup.workspace / ".playbill/floor").exists()
-        assert not (setup.workspace / ".playbill").exists()
+        assert not (setup.workspace / ".cruxible/floor").exists()
+        assert not (setup.workspace / ".cruxible").exists()
     # The task corpus is the same bytes in every arm, which is what makes the
     # comparison a comparison.
     assert (first.workspace / recipe.GOVERNED_PATH).read_bytes() == (
@@ -322,7 +320,7 @@ def test_the_run_manifest_pins_every_field_the_evaluation_requires(
 
     for field in ("generation_root", "semantic_root", "compiler_digest", "floor_digest"):
         assert str(manifest["accepted"][field]).startswith("sha256:"), field
-    assert manifest["accepted"]["format"] == "playbill-floor-export-v5"
+    assert manifest["accepted"]["format"] == "playbill-floor-export-v6"
     assert "native_render" not in manifest
     assert manifest["seed"]["plan_digest"].startswith("sha256:")
     assert manifest["arms"] == {

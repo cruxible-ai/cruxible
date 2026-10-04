@@ -6,42 +6,42 @@ HTTP and CLI.
 `CRUXIBLE_MCP_PROFILE` takes two values. `default` (or unset) advertises the
 everyday agent loop:
 
-- read with three verbs: `cruxible_playbill_orient` (the map of accepted state,
-  one kind in full, or one paged section), `cruxible_playbill_query` (any
-  question as rows of values with verdict flags) and `cruxible_playbill_get`
+- read with three verbs: `cruxible_orient` (the map of accepted state,
+  one kind in full, or one paged section), `cruxible_query` (any
+  question as rows of values with verdict flags) and `cruxible_get`
   (one thing by any reference; `detail` picks summary, evidence, why, history,
   proof, or a Document body range);
-- the work queue: `cruxible_playbill_next`;
-- the write verbs: `cruxible_playbill_set` (one value in one field, replacing
-  the live value), `cruxible_playbill_retire` (end one live Claim), and
-  `cruxible_playbill_write` (set, add and retire changes as one change set);
-- proposals through activation: `cruxible_playbill_proposal_list`,
-  `cruxible_playbill_review`, `cruxible_playbill_approve`, and
-  `cruxible_playbill_activate`;
-- identity and versions: `cruxible_playbill_whoami` and `cruxible_server_info`.
+- the work queue: `cruxible_next`;
+- the write verbs: `cruxible_set` (one value in one field, replacing
+  the live value), `cruxible_retire` (end one live Claim), and
+  `cruxible_write` (set, add and retire changes as one change set);
+- proposals through activation: `cruxible_proposal_list`,
+  `cruxible_review`, `cruxible_approve`, and
+  `cruxible_activate`;
+- identity and versions: `cruxible_whoami` and `cruxible_server_info`.
 
-To find something by name, grep the floor (`.playbill/floor/`, which
-`cruxible playbill floor export` and `cruxible_playbill_floor_export` write)
+To find something by name, grep the floor (`.cruxible/floor/`, which
+`cruxible floor export` and `cruxible_floor_export` write)
 and `get` the ref a hit names; an agent without a shell searches values with
-`cruxible_playbill_query` and `contains`.
+`cruxible_query` and `contains`.
 
 `full` advertises the complete catalog below, including the `authoring_*`
-intent tools, `cruxible_playbill_query_spec`, `cruxible_playbill_since`,
+intent tools, `cruxible_query_spec`, `cruxible_since`,
 curation, coverage, the floor, sources, blocks, kits, Procedures, Lines, and the
 split approval pair
-`cruxible_playbill_prepare_approval` and `cruxible_playbill_submit_approval` for
+`cruxible_prepare_approval` and `cruxible_submit_approval` for
 a signer outside the MCP process. Curation changes
 discoverability only; permission tiers still gate every call. There is no
-separate version tool: `cruxible_playbill_whoami` and `cruxible_server_info`
+separate version tool: `cruxible_whoami` and `cruxible_server_info`
 both report the MCP adapter's package version and the daemon's (`GET /version`).
 
 Every tool that acts on one instance takes an optional `instance_id`. Omitted,
 it defaults to `CRUXIBLE_INSTANCE_ID` in the MCP server's own environment (set it
 in the `env` block of the MCP client config), and then to the instance the MCP
-workspace's `.playbill/coverage.json` binds, provided the binding names the same
+workspace's `.cruxible/coverage.json` binds, provided the binding names the same
 daemon the server is configured for; a binding on another daemon is refused. The
 server never reads remembered CLI context. With none of these, the call fails and
-names `CRUXIBLE_INSTANCE_ID`. `cruxible_playbill_whoami` returns the instance it resolved together
+names `CRUXIBLE_INSTANCE_ID`. `cruxible_whoami` returns the instance it resolved together
 with the caller's identity there.
 
 `CRUXIBLE_PRINCIPAL_ID` in the same `env` block names the principal the MCP
@@ -59,18 +59,18 @@ workspace defaults to its working directory.
 All tool paths are normalized relative paths confined under that root; the
 daemon receives bytes and typed observations, never a client filesystem path.
 Floor operations always target the containing Git worktree's canonical
-`.playbill/floor`. With no explicit workspace root, the adapter discovers that
+`.cruxible/floor`. With no explicit workspace root, the adapter discovers that
 worktree from its working directory. An explicit `CRUXIBLE_MCP_WORKSPACE_ROOT`
 must equal the worktree root for floor export, status, and activation refresh;
 a nested explicit root is refused rather than allowing a write above its
 configured filesystem boundary. When the root is in no Git worktree at all,
-`cruxible_playbill_activate` still activates and reports
+`cruxible_activate` still activates and reports
 `floor_refresh.status: not_configured` with the reason.
 
 `CRUXIBLE_MCP_KEY_DIR` names the directory of local approval keys that
-`cruxible_playbill_approve` signs with: an absolute path outside the workspace
-holding `<signer_id>.ed25519`, the layout `cruxible playbill principal add
---key-dir` and `cruxible playbill init --key-dir` write. Set it in the MCP
+`cruxible_approve` signs with: an absolute path outside the workspace
+holding `<signer_id>.ed25519`, the layout `cruxible principal add
+--key-dir` and `cruxible init --key-dir` write. Set it in the MCP
 server's environment; no tool argument can name a key path. The tool signs as
 `signer_id`, or as the directory's only key when `signer_id` is omitted, and
 passing the reviewed `candidate_digest` makes it refuse a candidate that
@@ -92,7 +92,7 @@ covers the verbs the handler names itself, the verbs reached through a local
 adapter object it constructs, and the verbs reached through a sibling handler
 it delegates to. An empty list therefore means the tool reaches no facade verb
 at all -- one tool is in that position today,
-`cruxible_playbill_authoring_example`, and it is `READ_ONLY`. A mutating tool may not publish an empty list without a declared
+`cruxible_authoring_example`, and it is `READ_ONLY`. A mutating tool may not publish an empty list without a declared
 exception naming its reason
 (`tests/test_guardrails/test_playbill_v1_served_surface.py`), because an
 overlay reading `[]` as "reaches nothing" would fail open.
@@ -108,15 +108,15 @@ that starts reaching one more verb moves the pin.
 
 ## Host and initialization
 
-Allocating a host (`cruxible playbill host create`), releasing its worktree
-(`cruxible playbill workspace detach`) and decommissioning an instance
-(`cruxible playbill instance decommission`) are operator acts with no MCP tool.
+Allocating a host (`cruxible host create`), releasing its worktree
+(`cruxible workspace detach`) and decommissioning an instance
+(`cruxible instance decommission`) are operator acts with no MCP tool.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_init` | Bootstrap a host with public principal records | `ADMIN` |
-| `cruxible_playbill_provider_catalog` | List provider packages from the configured daemon repository | `READ_ONLY` |
-| `cruxible_playbill_provider_install` | Install exact package bytes and propose its definitions, without execution grants | `ADMIN` |
+| `cruxible_init` | Bootstrap a host with public principal records | `ADMIN` |
+| `cruxible_provider_catalog` | List provider packages from the configured daemon repository | `READ_ONLY` |
+| `cruxible_provider_install` | Install exact package bytes and propose its definitions, without execution grants | `ADMIN` |
 
 ## Kits
 
@@ -128,38 +128,38 @@ approval stay the ordinary steps.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_kit_build` | Export the definitions under owned identity prefixes as one kit release | `READ_ONLY` |
-| `cruxible_playbill_kit_status` | List installed kits and the kit paths edited since install | `READ_ONLY` |
-| `cruxible_playbill_kit_add` | Propose installing or upgrading a kit as one change set | `GOVERNED_WRITE` |
-| `cruxible_playbill_kit_remove` | Propose retiring every artifact a kit installed | `GOVERNED_WRITE` |
-| `cruxible_playbill_evidence_rules_upgrade` | Propose moving ClaimTypes to identity evidence rules | `GOVERNED_WRITE` |
-| `cruxible_playbill_claim_type_upgrade` | Propose moving ClaimTypes to v7, stating their revision evidence | `GOVERNED_WRITE` |
+| `cruxible_kit_build` | Export the definitions under owned identity prefixes as one kit release | `READ_ONLY` |
+| `cruxible_kit_status` | List installed kits and the kit paths edited since install | `READ_ONLY` |
+| `cruxible_kit_add` | Propose installing or upgrading a kit as one change set | `GOVERNED_WRITE` |
+| `cruxible_kit_remove` | Propose retiring every artifact a kit installed | `GOVERNED_WRITE` |
+| `cruxible_evidence_rules_upgrade` | Propose moving ClaimTypes to identity evidence rules | `GOVERNED_WRITE` |
+| `cruxible_claim_type_upgrade` | Propose moving ClaimTypes to v7, stating their revision evidence | `GOVERNED_WRITE` |
 
 ## Documents and proposals
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_store_body` | Store inert body bytes in CAS | `GOVERNED_WRITE` |
-| `cruxible_playbill_propose_document` | Propose a canonical Document envelope | `GOVERNED_WRITE` |
-| `cruxible_playbill_inspect_proposal` | Inspect a frozen candidate | `READ_ONLY` |
-| `cruxible_playbill_inspect_refusal` | Inspect deterministic refusal evidence | `READ_ONLY` |
-| `cruxible_playbill_review` | Render review material | `READ_ONLY` |
-| `cruxible_playbill_prepare_approval` | Return the exact approval challenge | `READ_ONLY` |
-| `cruxible_playbill_submit_approval` | Submit a public signed attestation | `GRAPH_WRITE` |
-| `cruxible_playbill_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call | `GRAPH_WRITE` |
-| `cruxible_playbill_activate` | Activate by compare-and-set and refresh any configured workspace floor | `GRAPH_WRITE` |
-| `cruxible_playbill_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
-| `cruxible_playbill_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
-| `cruxible_playbill_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
-| `cruxible_playbill_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, and the adapter and daemon versions | `READ_ONLY` |
+| `cruxible_store_body` | Store inert body bytes in CAS | `GOVERNED_WRITE` |
+| `cruxible_propose_document` | Propose a canonical Document envelope | `GOVERNED_WRITE` |
+| `cruxible_inspect_proposal` | Inspect a frozen candidate | `READ_ONLY` |
+| `cruxible_inspect_refusal` | Inspect deterministic refusal evidence | `READ_ONLY` |
+| `cruxible_review` | Render review material | `READ_ONLY` |
+| `cruxible_prepare_approval` | Return the exact approval challenge | `READ_ONLY` |
+| `cruxible_submit_approval` | Submit a public signed attestation | `GRAPH_WRITE` |
+| `cruxible_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call | `GRAPH_WRITE` |
+| `cruxible_activate` | Activate by compare-and-set and refresh any configured workspace floor | `GRAPH_WRITE` |
+| `cruxible_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
+| `cruxible_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
+| `cruxible_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
+| `cruxible_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, and the adapter and daemon versions | `READ_ONLY` |
 
 MCP never accepts a client private key. Signing occurs outside the server and
 outside the language server/MCP process.
 
 ## Accepted reads
 
-Accepted state is read through `cruxible_playbill_orient`,
-`cruxible_playbill_query` and `cruxible_playbill_get` (see
+Accepted state is read through `cruxible_orient`,
+`cruxible_query` and `cruxible_get` (see
 [Queries, orient and get](#queries-orient-and-get)). Documents are listed by
 `orient(section="documents")` and read by `get("Document:<name>")`, its
 `why`, `history` and `body` details; a body read needs `GOVERNED_WRITE` and
@@ -167,18 +167,18 @@ names the whole body's `body_digest`.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_read_capture` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying) | `GOVERNED_WRITE` |
+| `cruxible_read_capture` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying) | `GOVERNED_WRITE` |
 
 ## Sources
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_source_context` | Return source alignment context | `READ_ONLY` |
-| `cruxible_playbill_source_check` | Check a compiled `bundle`, or the sources a workspace `catalog_path` declares, against accepted state | `READ_ONLY` |
-| `cruxible_playbill_propose_source_bundle` | Propose a frozen compiled bundle | `GOVERNED_WRITE` |
-| `cruxible_playbill_workspace_source_compile` | Read catalog-declared workspace bytes and derive a source bundle | `READ_ONLY` |
+| `cruxible_source_context` | Return source alignment context | `READ_ONLY` |
+| `cruxible_source_check` | Check a compiled `bundle`, or the sources a workspace `catalog_path` declares, against accepted state | `READ_ONLY` |
+| `cruxible_propose_source_bundle` | Propose a frozen compiled bundle | `GOVERNED_WRITE` |
+| `cruxible_workspace_source_compile` | Read catalog-declared workspace bytes and derive a source bundle | `READ_ONLY` |
 
-`cruxible_playbill_source_check` takes exactly one of `bundle` (for programmatic
+`cruxible_source_check` takes exactly one of `bundle` (for programmatic
 clients that compiled one) or `catalog_path`. With a catalog path the adapter
 owns local path traversal and digest construction, so an agent supplies catalog
 paths and root aliases, not compilation wire.
@@ -190,20 +190,20 @@ The principal registry is `orient(section="principals")`; one record is
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_compiler_upgrade` | Propose an exact compiler transition; signed approval and activation use the ordinary proposal workflow. | `ADMIN` |
-| `cruxible_playbill_propose_principal_change` | Propose rotation, revocation, or recovery | `ADMIN` |
+| `cruxible_compiler_upgrade` | Propose an exact compiler transition; signed approval and activation use the ordinary proposal workflow. | `ADMIN` |
+| `cruxible_propose_principal_change` | Propose rotation, revocation, or recovery | `ADMIN` |
 
 ## Subjects, ClaimTypes, and Claims
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_propose_claim_type` | Propose a governed predicate interface | `GOVERNED_WRITE` |
-| `cruxible_playbill_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
-| `cruxible_playbill_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
-| `cruxible_playbill_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
-| `cruxible_playbill_retire` | End one live Claim, by Claim ID or by Subject and single-value field, with its dependent Claims, in one change set | `GOVERNED_WRITE` |
-| `cruxible_playbill_write` | Apply `set`, `add` (one more value in a many-valued field) and `retire` changes as one change set, accepted or refused together | `GOVERNED_WRITE` |
-| `cruxible_playbill_get` | Read one thing by any reference (Claim id or prefix, `kind/id`, predicate, `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:`/`Principal:`/`ProviderInterface:<name>`, `ApprovalPolicy:instance`, artifact path, proposal id, or an operational reference: `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is cut to `{value, truncated: true, length}`, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why` (a Claim's verdict and law evidence, or a Subject's or Document's governance and provenance), `history` (newest first, paged by `limit` and `cursor`), `proof` (the full accepted envelope and facts, with the full `accepted_coordinate`), or `body` with a byte `range` and the whole `body_digest`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both; an all-digit `at` of 11 or fewer characters is always a generation); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
+| `cruxible_propose_claim_type` | Propose a governed predicate interface | `GOVERNED_WRITE` |
+| `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
+| `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
+| `cruxible_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
+| `cruxible_retire` | End one live Claim, by Claim ID or by Subject and single-value field, with its dependent Claims, in one change set | `GOVERNED_WRITE` |
+| `cruxible_write` | Apply `set`, `add` (one more value in a many-valued field) and `retire` changes as one change set, accepted or refused together | `GOVERNED_WRITE` |
+| `cruxible_get` | Read one thing by any reference (Claim id or prefix, `kind/id`, predicate, `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:`/`Principal:`/`ProviderInterface:<name>`, `ApprovalPolicy:instance`, artifact path, proposal id, or an operational reference: `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is cut to `{value, truncated: true, length}`, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why` (a Claim's verdict and law evidence, or a Subject's or Document's governance and provenance), `history` (newest first, paged by `limit` and `cursor`), `proof` (the full accepted envelope and facts, with the full `accepted_coordinate`), or `body` with a byte `range` and the whole `body_digest`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both; an all-digit `at` of 11 or fewer characters is always a generation); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
 
 A proposal is not accepted state. A Claim's verdict is computed at read time
 from accepted law evidence, never carried forward from acceptance.
@@ -212,27 +212,27 @@ from accepted law evidence, never carried forward from acceptance.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_authoring_create` | Create or recover a durable authoring intent | `GOVERNED_WRITE` |
-| `cruxible_playbill_authoring_example` | Return a model-generated ClaimType/Claim/Procedure input | `READ_ONLY` |
-| `cruxible_playbill_authoring_get` | Read one authoring intent | `READ_ONLY` |
-| `cruxible_playbill_authoring_resume` | Return an intent's durable continuation | `READ_ONLY` |
-| `cruxible_playbill_authoring_list_pending` | List the caller's pending intents | `READ_ONLY` |
-| `cruxible_playbill_authoring_compile` | Create or update an intent and preflight it | `GOVERNED_WRITE` |
-| `cruxible_playbill_authoring_bind` | Read an anchored workspace selection, derive commitments, and compile | `GOVERNED_WRITE` |
-| `cruxible_playbill_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
-| `cruxible_playbill_authoring_rebase` | Rebase a stale intent onto the current accepted coordinate | `GOVERNED_WRITE` |
-| `cruxible_playbill_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
-| `cruxible_playbill_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
-| `cruxible_playbill_authoring_abandon_insertion` | Release a publication expectation an instance already holds | `GOVERNED_WRITE` |
-| `cruxible_playbill_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp and registers the block | `GOVERNED_WRITE` |
-| `cruxible_playbill_block_sync` | Check each projection block's backings; edits no page | `READ_ONLY` |
-| `cruxible_playbill_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes | `GOVERNED_WRITE` |
-| `cruxible_playbill_block_depublish` | Release the registration that demands one page block, whichever road declared it | `GOVERNED_WRITE` |
+| `cruxible_authoring_create` | Create or recover a durable authoring intent | `GOVERNED_WRITE` |
+| `cruxible_authoring_example` | Return a model-generated ClaimType/Claim/Procedure input | `READ_ONLY` |
+| `cruxible_authoring_get` | Read one authoring intent | `READ_ONLY` |
+| `cruxible_authoring_resume` | Return an intent's durable continuation | `READ_ONLY` |
+| `cruxible_authoring_list_pending` | List the caller's pending intents | `READ_ONLY` |
+| `cruxible_authoring_compile` | Create or update an intent and preflight it | `GOVERNED_WRITE` |
+| `cruxible_authoring_bind` | Read an anchored workspace selection, derive commitments, and compile | `GOVERNED_WRITE` |
+| `cruxible_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
+| `cruxible_authoring_rebase` | Rebase a stale intent onto the current accepted coordinate | `GOVERNED_WRITE` |
+| `cruxible_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
+| `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
+| `cruxible_authoring_abandon_insertion` | Release a publication expectation an instance already holds | `GOVERNED_WRITE` |
+| `cruxible_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp and registers the block | `GOVERNED_WRITE` |
+| `cruxible_block_sync` | Check each projection block's backings; edits no page | `READ_ONLY` |
+| `cruxible_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes | `GOVERNED_WRITE` |
+| `cruxible_block_depublish` | Release the registration that demands one page block, whichever road declared it | `GOVERNED_WRITE` |
 
 The coordinator mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.
 
-`cruxible_playbill_authoring_create` takes one tagless input, and the
+`cruxible_authoring_create` takes one tagless input, and the
 `change_set` kind carries any mix of members -- `claim`, `claim_type`,
 `claim_retirement`, `subject`, `query_definition`, `procedure`,
 `procedure_mandate`, `acquisition_policy`, `line` -- as one intent that admits
@@ -243,7 +243,7 @@ There is no second batch tool.
 A `claim_type_succession` member succeeds an accepted ClaimType and dispositions
 its whole reverse-pin closure in the same generation, so vocabulary evolution
 needs no second tool and no second generation either.
-`cruxible_playbill_authoring_example` serves `change-set` and
+`cruxible_authoring_example` serves `change-set` and
 `claim-type-succession` as starting points, and `procedure`, `line`,
 `acquisition-policy` and `procedure-mandate` templates that are accepted
 together. A `line` input's `parameters` is checked against its Procedure's input
@@ -257,19 +257,19 @@ exactly one may omit it.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_procedure_readiness` | Report exact binding requirements or run readiness | `READ_ONLY` |
-| `cruxible_playbill_procedure_bind` | Attach accepted input-plane bindings through a same-identity successor | `GOVERNED_WRITE` |
-| `cruxible_playbill_procedure_run` | Execute a ready Procedure -- accepted-state reads, deterministic computation, and graph-v4 `source` reads through an accepted Provider -- at an explicit coordinate and time | `READ_ONLY` |
-| `cruxible_playbill_procedure_run_status` | Read one finalized Procedure run and its receipt; for an armed run, the run actor and the receipt are withheld (`playbill-procedure-run-attribution-withheld-v1`, `playbill-procedure-run-receipt-withheld-v1`) unless the caller is an admin, the arming credential, or a credential bound to the same principal | `READ_ONLY` |
-| `cruxible_playbill_procedure_measure` | Evaluate due Procedure measurements from real evidence, persist the resolution, and credit one run's exact grain | `GOVERNED_WRITE` |
-| `cruxible_playbill_procedure_readings` | Inspect measurement standing and retained exact-grain readings (read-only, paginated) | `READ_ONLY` |
-| `cruxible_playbill_line_check` | Read trigger eligibility, exact matches, and admitted occurrences without queuing or running. | `READ_ONLY` |
-| `cruxible_playbill_line_arm` | Arm a Line forward-only: the daemon admits what it matches under the caller's credential, rechecked before each run. Repeating it unchanged returns `outcome: already_armed`. | `GOVERNED_WRITE` |
-| `cruxible_playbill_line_disarm` | Stop a Line admitting work on its own; admitted runs keep going. A stopped arm returns `outcome: already_disarmed`. | `GOVERNED_WRITE` |
-| `cruxible_playbill_line_status` | Read a Line's arm, its pending work, and why an arm stopped. | `READ_ONLY` |
-| `cruxible_playbill_line_evaluate` | Evaluate an explicit historical range into pending work; never executes. | `GOVERNED_WRITE` |
-| `cruxible_playbill_line_dispatch` | Admit retained pending occurrences under the current caller’s authority. | `READ_ONLY` |
-| `cruxible_playbill_line_run` | Trigger one due accepted Line occurrence; a Line that can propose or settle needs a mandate, an observe-only one none | `READ_ONLY` |
+| `cruxible_procedure_readiness` | Report exact binding requirements or run readiness | `READ_ONLY` |
+| `cruxible_procedure_bind` | Attach accepted input-plane bindings through a same-identity successor | `GOVERNED_WRITE` |
+| `cruxible_procedure_run` | Execute a ready Procedure -- accepted-state reads, deterministic computation, and graph-v4 `source` reads through an accepted Provider -- at an explicit coordinate and time | `READ_ONLY` |
+| `cruxible_procedure_run_status` | Read one finalized Procedure run and its receipt; for an armed run, the run actor and the receipt are withheld (`playbill-procedure-run-attribution-withheld-v1`, `playbill-procedure-run-receipt-withheld-v1`) unless the caller is an admin, the arming credential, or a credential bound to the same principal | `READ_ONLY` |
+| `cruxible_procedure_measure` | Evaluate due Procedure measurements from real evidence, persist the resolution, and credit one run's exact grain | `GOVERNED_WRITE` |
+| `cruxible_procedure_readings` | Inspect measurement standing and retained exact-grain readings (read-only, paginated) | `READ_ONLY` |
+| `cruxible_line_check` | Read trigger eligibility, exact matches, and admitted occurrences without queuing or running. | `READ_ONLY` |
+| `cruxible_line_arm` | Arm a Line forward-only: the daemon admits what it matches under the caller's credential, rechecked before each run. Repeating it unchanged returns `outcome: already_armed`. | `GOVERNED_WRITE` |
+| `cruxible_line_disarm` | Stop a Line admitting work on its own; admitted runs keep going. A stopped arm returns `outcome: already_disarmed`. | `GOVERNED_WRITE` |
+| `cruxible_line_status` | Read a Line's arm, its pending work, and why an arm stopped. | `READ_ONLY` |
+| `cruxible_line_evaluate` | Evaluate an explicit historical range into pending work; never executes. | `GOVERNED_WRITE` |
+| `cruxible_line_dispatch` | Admit retained pending occurrences under the current caller’s authority. | `READ_ONLY` |
+| `cruxible_line_run` | Trigger one due accepted Line occurrence; a Line that can propose or settle needs a mandate, an observe-only one none | `READ_ONLY` |
 
 `procedure_run`, `line_run` and `line_dispatch` are read-tier only for targets
 that observe. A Procedure whose terminals can propose or settle, or a Line whose
@@ -286,9 +286,9 @@ themselves a governed track record; promotion remains a separate governed act.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_resolution_contracts` | Find governed tests of a Claim, by `claim_id` | `READ_ONLY` |
-| `cruxible_playbill_predict` | Propose a governed resolution contract whose hypothesis is a Claim ID | `GOVERNED_WRITE` |
-| `cruxible_playbill_settle` | Settle one prediction (`prediction_id`) from the Claim ID of an accepted observation (`observation`) | `GOVERNED_WRITE` |
+| `cruxible_resolution_contracts` | Find governed tests of a Claim, by `claim_id` | `READ_ONLY` |
+| `cruxible_predict` | Propose a governed resolution contract whose hypothesis is a Claim ID | `GOVERNED_WRITE` |
+| `cruxible_settle` | Settle one prediction (`prediction_id`) from the Claim ID of an accepted observation (`observation`) | `GOVERNED_WRITE` |
 
 Every Claim version these tools need can be a plain Claim ID (`CLM-...` or
 `Claim:CLM-...`); the daemon resolves its digests and accepting coordinate. The
@@ -301,8 +301,8 @@ authority plane beside accepted state.
 
 ## Queries, orient and get
 
-`cruxible_playbill_query` takes exactly one mode: compact or a query `name`
-(a full spec runs through `cruxible_playbill_query_spec`, in the `full`
+`cruxible_query` takes exactly one mode: compact or a query `name`
+(a full spec runs through `cruxible_query_spec`, in the `full`
 profile, so the default tool stays small). Compact mode names a Subject
 `kind` (or `ClaimType` / `Procedure` for definitions) and/or free text
 `contains`. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
@@ -334,21 +334,21 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_query` | Answer any question over accepted state in one call: compact (`kind` and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`, `status`, `claims`) or a query `name` with `params` (`budgets`, `receipt`); rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
-| `cruxible_playbill_query_spec` | Run one full `QueryDefinitionSpec` inline (`spec`, `limit`, `cursor`, `at`, `evaluation_time`) with the same evaluation, rows, flags and paging as `cruxible_playbill_query`; `full` profile only | `READ_ONLY` |
-| `cruxible_playbill_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue (with `arms`: the instance's Line arms by state and the stalled or stopped Lines by name, no daemon scope needed), and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types`, `queries`, `interfaces` (each with its interface digest, operation contract and implementing Providers' implementation digests), `principals`, `policies` (every live standalone or embedded governed policy), or an operational family -- `runs` (Procedure runs, newest admission first, paged by an immutable key) or `running` (only the runs still running; read one with `cruxible_playbill_get(ref="ProcedureRun:RUN-...")` for its live progress), `lines`, `captures`, `capture_contracts`, `predictions`, `mandates` -- which the map only counts under `artifacts` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
-| `cruxible_playbill_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
-| `cruxible_playbill_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible playbill next` does | `READ_ONLY` |
-| `cruxible_playbill_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
-| `cruxible_playbill_curation_list` | List one page of curation patterns (`limit`, `cursor`) and ingest an explicit declared-block observation | `READ_ONLY` |
-| `cruxible_playbill_curation_overrule` | Close an inapplicable detector-version item with attribution | `GOVERNED_WRITE` |
-| `cruxible_playbill_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
-| `cruxible_playbill_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
-| `cruxible_playbill_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.playbill/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible playbill floor export` does, so an activation refresh exports the same parts; `mode=status` reports whether that floor is current, stale, or absent. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref and coordinate), `current/<kind>/INDEX`, readable `documents/` and `provenance/`; digests stay in `provenance/` and the manifest. `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_playbill_get` the ref for live verdicts; an agent without a shell uses `cruxible_playbill_query` with `contains` | `READ_ONLY` |
-| `cruxible_playbill_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
+| `cruxible_query` | Answer any question over accepted state in one call: compact (`kind` and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`, `status`, `claims`) or a query `name` with `params` (`budgets`, `receipt`); rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
+| `cruxible_query_spec` | Run one full `QueryDefinitionSpec` inline (`spec`, `limit`, `cursor`, `at`, `evaluation_time`) with the same evaluation, rows, flags and paging as `cruxible_query`; `full` profile only | `READ_ONLY` |
+| `cruxible_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue (with `arms`: the instance's Line arms by state and the stalled or stopped Lines by name, no daemon scope needed), and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types`, `queries`, `interfaces` (each with its interface digest, operation contract and implementing Providers' implementation digests), `principals`, `policies` (every live standalone or embedded governed policy), or an operational family -- `runs` (Procedure runs, newest admission first, paged by an immutable key) or `running` (only the runs still running; read one with `cruxible_get(ref="ProcedureRun:RUN-...")` for its live progress), `lines`, `captures`, `capture_contracts`, `predictions`, `mandates` -- which the map only counts under `artifacts` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
+| `cruxible_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
+| `cruxible_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible next` does | `READ_ONLY` |
+| `cruxible_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
+| `cruxible_curation_list` | List one page of curation patterns (`limit`, `cursor`) and ingest an explicit declared-block observation | `READ_ONLY` |
+| `cruxible_curation_overrule` | Close an inapplicable detector-version item with attribution | `GOVERNED_WRITE` |
+| `cruxible_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
+| `cruxible_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
+| `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so an activation refresh exports the same parts; `mode=status` reports whether that floor is current, stale, or absent. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref and coordinate), `current/<kind>/INDEX`, readable `documents/` and `provenance/`; digests stay in `provenance/` and the manifest. `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
+| `cruxible_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
 
-`cruxible_playbill_next` renders each repair's `command` as the MCP tool call
-that performs it (for example `cruxible_playbill_settle(prediction_id="RSC-...")`,
+`cruxible_next` renders each repair's `command` as the MCP tool call
+that performs it (for example `cruxible_settle(prediction_id="RSC-...")`,
 adding the observation's Claim ID), or none when its operands are local files.
 A row or nested finding whose repair the session cannot perform -- its profile
 does not advertise the tool that performs it, or its tier is too low -- stays in
@@ -357,7 +357,7 @@ profile?}` naming what running it needs, so `orient` attention and the queue
 count it for every caller. A status facet keeps its
 state either way, but drops a repair the session cannot perform and says
 `repair_hidden: true` with the same `repair_requires`. The `default` profile
-advertises neither `cruxible_playbill_settle` nor the Line tools, for example:
+advertises neither `cruxible_settle` nor the Line tools, for example:
 a stopped Line arm still shows as `consumer_stalled`, its repair withheld with
 `because: ["profile"]`. A session that cannot author on the instance at all (an
 unbound credential, or a principal that is not configured, registered or

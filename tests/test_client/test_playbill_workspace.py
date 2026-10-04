@@ -80,8 +80,8 @@ def _export(*, content: bytes = b'{"fresh":true}\n') -> contracts.FloorExport:
 
 def _workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
-    (workspace / ".playbill").mkdir(parents=True)
-    (workspace / ".playbill/coverage.json").write_text(
+    (workspace / ".cruxible").mkdir(parents=True)
+    (workspace / ".cruxible/coverage.json").write_text(
         json.dumps(
             {
                 "tag": "playbill-coverage-workspace-config-v2",
@@ -136,7 +136,7 @@ def test_workspace_config_writer_refuses_differences_and_never_carries_secrets(
     payload = json.loads(written.read_text(encoding="utf-8"))
     assert payload == {
         "floor_output": {
-            "format": "playbill-floor-export-v5",
+            "format": "playbill-floor-export-v6",
             "tag": "playbill-floor-output-v1",
         },
         "instance_id": "inst_two",
@@ -157,7 +157,7 @@ def test_workspace_config_writer_refuses_credentials_embedded_in_url(tmp_path: P
             server_url="https://agent:secret@example.test",
         )
 
-    assert not (workspace / ".playbill" / "coverage.json").exists()
+    assert not (workspace / ".cruxible" / "coverage.json").exists()
 
 
 def test_workspace_config_writer_adds_machine_local_git_exclusion(tmp_path: Path) -> None:
@@ -172,11 +172,11 @@ def test_workspace_config_writer_adds_machine_local_git_exclusion(tmp_path: Path
     )
 
     excluded = subprocess.run(
-        ["git", "-C", str(workspace), "check-ignore", "--quiet", ".playbill/coverage.json"],
+        ["git", "-C", str(workspace), "check-ignore", "--quiet", ".cruxible/coverage.json"],
         check=False,
     )
     assert excluded.returncode == 0
-    assert b"/.playbill/coverage.json\n" in (workspace / ".git/info/exclude").read_bytes()
+    assert b"/.cruxible/coverage.json\n" in (workspace / ".git/info/exclude").read_bytes()
 
 
 @pytest.mark.parametrize("existing_floor", [None, "playbill-floor-export-v2"])
@@ -184,7 +184,7 @@ def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(
     tmp_path: Path, existing_floor: str | None
 ) -> None:
     workspace = tmp_path / "workspace"
-    config_path = workspace / ".playbill" / "coverage.json"
+    config_path = workspace / ".cruxible" / "coverage.json"
     config_path.parent.mkdir(parents=True)
     config_path.write_text(
         json.dumps(
@@ -214,13 +214,13 @@ def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(
     assert payload["rules"] == []
     assert payload["floor_output"] == {
         "tag": "playbill-floor-output-v1",
-        "format": "playbill-floor-export-v5",
+        "format": "playbill-floor-export-v6",
     }
 
 
 def test_replace_upgrades_v1_config_without_dropping_coverage_fields(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
-    config_path = workspace / ".playbill" / "coverage.json"
+    config_path = workspace / ".cruxible" / "coverage.json"
     config_path.parent.mkdir(parents=True)
     preserved = {
         "root": "docs",
@@ -267,7 +267,7 @@ def test_replace_upgrades_v1_config_without_dropping_coverage_fields(tmp_path: P
 
 def test_materialization_exactly_replaces_and_reports_current(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
-    destination = workspace / ".playbill/floor"
+    destination = workspace / ".cruxible/floor"
     destination.mkdir()
     (destination / "stale.json").write_text("old", encoding="utf-8")
 
@@ -291,7 +291,7 @@ def test_materialization_refuses_symlink_escape(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (workspace / ".playbill/floor").symlink_to(outside, target_is_directory=True)
+    (workspace / ".cruxible/floor").symlink_to(outside, target_is_directory=True)
 
     with pytest.raises(WorkspaceError, match="escapes"):
         materialize_floor(
@@ -302,7 +302,7 @@ def test_materialization_refuses_symlink_escape(tmp_path: Path) -> None:
 
 def test_config_refuses_the_obsolete_arbitrary_output_path(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
-    config_path = workspace / ".playbill/coverage.json"
+    config_path = workspace / ".cruxible/coverage.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
     config["floor_output"]["path"] = "other-floor"
     config_path.write_text(json.dumps(config), encoding="utf-8")

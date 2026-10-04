@@ -861,7 +861,7 @@ def test_a_line_occurrence_reads_the_workspace_file_through_the_same_reader(
     [
         ("../outside.json", RELATIVE_PATH, "path_grammar"),
         (".GIT/config", RELATIVE_PATH, "git_metadata"),
-        ("Data/.PlayBill/keys.json", RELATIVE_PATH, "playbill_control"),
+        ("Data/.CruxIble/keys.json", RELATIVE_PATH, "playbill_control"),
     ],
 )
 def test_the_line_lane_refuses_the_same_uncontained_paths(
@@ -1012,7 +1012,7 @@ def test_a_case_flipped_playbill_control_path_refuses_typed(tmp_path: Path) -> N
     """The same folding, on a denied name that is not the leading component."""
 
     instance, _owner, _procedure, root, _policy_artifact = _world(
-        tmp_path, relative_path="Data/.PlayBill/keys.json"
+        tmp_path, relative_path="Data/.CruxIble/keys.json"
     )
 
     state, invoker = _run(instance, root)

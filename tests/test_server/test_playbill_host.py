@@ -146,7 +146,7 @@ def test_host_show_and_server_status_inspect_uninitialized_hosts_without_writing
     record = get_registry().get("inst_show_empty")
     assert record is not None
 
-    shown = host_client.get("/api/v1/inst_show_empty/playbill/host")
+    shown = host_client.get("/api/v1/inst_show_empty/host")
     assert shown.status_code == 200, shown.text
     assert shown.json() == {
         "tag": "playbill-host-inspection-v1",
@@ -198,7 +198,7 @@ def test_status_keeps_malformed_host_as_typed_reseed_row(
     row = status.json()["hosts"][0]
     assert row["compatibility"] == "reseed_required"
     assert row["reason"]["code"] == "host_state_malformed"
-    assert row["reason"]["repair_commands"] == ["cruxible playbill host create"]
+    assert row["reason"]["repair_commands"] == ["cruxible host create"]
 
 
 def test_status_keeps_other_hosts_when_one_inspection_raises_unexpectedly(
@@ -349,7 +349,7 @@ def test_host_registration_status_separates_remote_visibility_from_registration(
     assert local.status == "registered"
     assert local.workspace_path == str(workspace.resolve())
 
-    remote = host_client.get("/api/v1/inst_registration_status/playbill/workspace-registration")
+    remote = host_client.get("/api/v1/inst_registration_status/workspace-registration")
     assert remote.status_code == 200, remote.text
     assert remote.json()["status"] == "registered"
     assert remote.json()["workspace_path"] is None
@@ -373,7 +373,7 @@ def test_transport_credentials_do_not_initialize_playbill_or_a_legacy_graph(
     assert credential.json()["error_code"] == "runtime_credential.auth_off"
     assert not Path(record.location).exists()
 
-    uninitialized = host_client.get(f"/api/v1/{instance_id}/playbill/head")
+    uninitialized = host_client.get(f"/api/v1/{instance_id}/head")
     assert uninitialized.status_code == 409
     assert "not initialized" in uninitialized.text
     assert not Path(record.location).exists()
@@ -405,7 +405,7 @@ def test_managed_root_and_trust_root_must_be_archived_together(
         forbidden_roots=(managed_root,),
     )
     initialized = host_client.post(
-        "/api/v1/inst_archive_pair/playbill/init",
+        "/api/v1/inst_archive_pair/init",
         json={"principals": [owner.principal.model_dump(mode="json")]},
     )
     assert initialized.status_code == 200
@@ -459,7 +459,7 @@ def test_playbill_bootstrap_is_the_first_semantic_write(
         forbidden_roots=(managed_root,),
     )
     initialized = host_client.post(
-        f"/api/v1/{instance_id}/playbill/init",
+        f"/api/v1/{instance_id}/init",
         json={"principals": [owner.principal.model_dump(mode="json")]},
     )
     assert initialized.status_code == 200, initialized.text
@@ -577,9 +577,9 @@ def test_independent_approval_init_creates_no_provider_proposal(
         "require_independent_approval": True,
     }
 
-    accepted = host_client.post(f"/api/v1/{governed_id}/playbill/init", json=payload)
+    accepted = host_client.post(f"/api/v1/{governed_id}/init", json=payload)
     assert accepted.status_code == 200, accepted.text
-    retry = host_client.post(f"/api/v1/{governed_id}/playbill/init", json=payload)
+    retry = host_client.post(f"/api/v1/{governed_id}/init", json=payload)
     assert retry.status_code == 200, retry.text
     assert retry.json() == accepted.json()
     instance = get_playbill_manager().get(governed_id)
@@ -789,7 +789,7 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
     assert get_playbill_manager().get("inst_attached").descriptor.git_object_format == "sha1"
     assert initialized.workspace_advertisement.status == "updated"
     assert initialized.workspace_advertisement.advertised_refs == (
-        "refs/remotes/playbill/accepted",
+        "refs/remotes/cruxible-ledger/accepted",
     )
     local_branches = subprocess.run(
         ["git", "-C", str(workspace), "for-each-ref", "--format=%(refname)", "refs/heads"],
@@ -822,8 +822,8 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
     assert proposed.workspace_advertisement.status == "scheduled"
     assert proposed.workspace_advertisement.workspace_path == str(workspace.resolve())
     assert instance.settled_workspace_advertisement().advertised_refs == (
-        "refs/remotes/playbill/accepted",
-        f"refs/remotes/playbill/proposals/{proposal_key}",
+        "refs/remotes/cruxible-ledger/accepted",
+        f"refs/remotes/cruxible-ledger/proposals/{proposal_key}",
     )
     remote_branches = subprocess.run(
         ["git", "-C", str(workspace), "branch", "--remotes", "--format=%(refname)"],
@@ -832,8 +832,8 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
         text=True,
     ).stdout.splitlines()
     assert remote_branches == [
-        "refs/remotes/playbill/accepted",
-        f"refs/remotes/playbill/proposals/{proposal_key}",
+        "refs/remotes/cruxible-ledger/accepted",
+        f"refs/remotes/cruxible-ledger/proposals/{proposal_key}",
     ]
     assert (
         subprocess.run(
@@ -867,16 +867,16 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
     assert activated.status == "accepted"
     assert activated.workspace_advertisement.status == "scheduled"
     assert instance.settled_workspace_advertisement().advertised_refs == (
-        "refs/remotes/playbill/accepted",
+        "refs/remotes/cruxible-ledger/accepted",
     )
     assert subprocess.run(
         ["git", "-C", str(workspace), "branch", "--remotes", "--format=%(refname)"],
         check=True,
         capture_output=True,
         text=True,
-    ).stdout.splitlines() == ["refs/remotes/playbill/accepted"]
+    ).stdout.splitlines() == ["refs/remotes/cruxible-ledger/accepted"]
     remote_url = subprocess.run(
-        ["git", "-C", str(workspace), "remote", "get-url", "playbill"],
+        ["git", "-C", str(workspace), "remote", "get-url", "cruxible-ledger"],
         check=True,
         capture_output=True,
         text=True,
@@ -916,7 +916,7 @@ def test_propose_document_never_executes_workspace_instead_of_ssh_command(
     assert initialized.workspace_advertisement.status == "updated"
 
     ledger_url = subprocess.run(
-        ["git", "-C", str(workspace), "config", "--local", "--get", "remote.playbill.url"],
+        ["git", "-C", str(workspace), "config", "--local", "--get", "remote.cruxible-ledger.url"],
         check=True,
         capture_output=True,
         text=True,
@@ -1075,7 +1075,7 @@ def test_independent_approval_init_requires_and_accepts_a_second_ordinary_princi
         forbidden_roots=(solo_root,),
     )
     refused = host_client.post(
-        f"/api/v1/{solo_id}/playbill/init",
+        f"/api/v1/{solo_id}/init",
         json={
             "principals": [owner.principal.model_dump(mode="json")],
             "require_independent_approval": True,
@@ -1097,7 +1097,7 @@ def test_independent_approval_init_requires_and_accepts_a_second_ordinary_princi
         forbidden_roots=(governed_root,),
     )
     accepted = host_client.post(
-        f"/api/v1/{governed_id}/playbill/init",
+        f"/api/v1/{governed_id}/init",
         json={
             "principals": [
                 owner.principal.model_dump(mode="json"),
@@ -1108,7 +1108,7 @@ def test_independent_approval_init_requires_and_accepts_a_second_ordinary_princi
     )
     assert accepted.status_code == 200, accepted.text
     retry = host_client.post(
-        f"/api/v1/{governed_id}/playbill/init",
+        f"/api/v1/{governed_id}/init",
         json={
             "principals": [
                 owner.principal.model_dump(mode="json"),
@@ -1165,7 +1165,7 @@ def test_authenticated_bootstrap_binds_owner_to_credential_identity(
         forbidden_roots=(managed_root,),
     )
     initialized = client.post(
-        f"/api/v1/{instance_id}/playbill/init",
+        f"/api/v1/{instance_id}/init",
         json={
             "principals": [
                 owner.principal.model_dump(mode="json"),
@@ -1194,7 +1194,7 @@ def test_host_show_enforces_initialization_scope_and_path_privacy(
         assert created.status_code == 200, created.text
 
     operator_view = client.get(
-        "/api/v1/inst_scoped_show/playbill/host",
+        "/api/v1/inst_scoped_show/host",
         headers=bootstrap_headers,
     )
     assert operator_view.status_code == 200, operator_view.text
@@ -1209,7 +1209,7 @@ def test_host_show_enforces_initialization_scope_and_path_privacy(
     scoped_headers = {"Authorization": f"Bearer {claimed.json()['token']}"}
 
     preinit = client.get(
-        "/api/v1/inst_scoped_show/playbill/host",
+        "/api/v1/inst_scoped_show/host",
         headers=scoped_headers,
     )
     assert preinit.status_code == 403, preinit.text
@@ -1223,7 +1223,7 @@ def test_host_show_enforces_initialization_scope_and_path_privacy(
         forbidden_roots=(Path(record.location),),
     )
     initialized = client.post(
-        "/api/v1/inst_scoped_show/playbill/init",
+        "/api/v1/inst_scoped_show/init",
         # Scope and path privacy, not seeding: this host takes init's explicit opt-out.
         json={"principals": [owner.principal.model_dump(mode="json")]},
         headers=scoped_headers,
@@ -1231,7 +1231,7 @@ def test_host_show_enforces_initialization_scope_and_path_privacy(
     assert initialized.status_code == 200, initialized.text
 
     own = client.get(
-        "/api/v1/inst_scoped_show/playbill/host",
+        "/api/v1/inst_scoped_show/host",
         headers=scoped_headers,
     )
     assert own.status_code == 200, own.text
@@ -1239,7 +1239,7 @@ def test_host_show_enforces_initialization_scope_and_path_privacy(
     assert own.json()["compatibility"] == "writable"
 
     cross_instance = client.get(
-        "/api/v1/inst_other_show/playbill/host",
+        "/api/v1/inst_other_show/host",
         headers=scoped_headers,
     )
     assert cross_instance.status_code == 403, cross_instance.text
@@ -1485,7 +1485,7 @@ def test_a_detach_refuses_while_the_host_still_registers_a_published_block(
 
     message = str(refusal.value)
     assert f"{preparation.source_id}#{preparation.block_id}" in message
-    assert "playbill block depublish" in message
+    assert "cruxible block depublish" in message
     # Refused means refused: the worktree is still this host's.
     assert get_registry().get("inst_publishing_host").workspace_root is not None  # type: ignore[union-attr]
 
@@ -1571,13 +1571,13 @@ def test_a_decommissioned_host_reports_decommissioned_not_writable(
         forbidden_roots=(Path(record.location),),
     )
     initialized = host_client.post(
-        f"/api/v1/{instance_id}/playbill/init",
+        f"/api/v1/{instance_id}/init",
         json={"principals": [owner.principal.model_dump(mode="json")]},
     )
     assert initialized.status_code == 200, initialized.text
-    assert host_client.get(f"/api/v1/{instance_id}/playbill/host").json()["writable"] is True
+    assert host_client.get(f"/api/v1/{instance_id}/host").json()["writable"] is True
 
-    route = f"/api/v1/{instance_id}/playbill/instance/decommission"
+    route = f"/api/v1/{instance_id}/instance/decommission"
     previewed = host_client.post(route, json={"reason": "superseded by a fresh host"})
     assert previewed.status_code == 200, previewed.text
     ended = host_client.post(
@@ -1590,7 +1590,7 @@ def test_a_decommissioned_host_reports_decommissioned_not_writable(
     )
     assert ended.status_code == 200, ended.text
 
-    shown = host_client.get(f"/api/v1/{instance_id}/playbill/host")
+    shown = host_client.get(f"/api/v1/{instance_id}/host")
     assert shown.status_code == 200, shown.text
     body = shown.json()
     assert body["compatibility"] == "decommissioned"
@@ -1634,11 +1634,11 @@ def test_detach_accepts_the_instance_admin_and_the_bootstrap_operator(
     scoped_headers = {"Authorization": f"Bearer {claimed.json()['token']}"}
 
     for headers in (scoped_headers, bootstrap_headers):
-        detached = client.post("/api/v1/inst_detach_own/playbill/workspace-detach", headers=headers)
+        detached = client.post("/api/v1/inst_detach_own/workspace-detach", headers=headers)
         assert detached.status_code == 400, detached.text
         assert "local Unix socket" in detached.json()["message"]
 
     cross_instance = client.post(
-        "/api/v1/inst_detach_other/playbill/workspace-detach", headers=scoped_headers
+        "/api/v1/inst_detach_other/workspace-detach", headers=scoped_headers
     )
     assert cross_instance.status_code == 403, cross_instance.text

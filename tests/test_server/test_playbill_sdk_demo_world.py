@@ -82,9 +82,9 @@ def _digest(label: str) -> str:
 
 
 def _catalog(workspace: Path) -> None:
-    (workspace / ".playbill").mkdir()
+    (workspace / ".cruxible").mkdir()
     (workspace / "corpus").mkdir()
-    (workspace / ".playbill" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "sources.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -145,7 +145,7 @@ def _approve_and_activate(
     proposal_id: str,
 ) -> None:
     challenge_response = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
         json={"signer_id": "reviewer"},
     )
     assert challenge_response.status_code == 200, challenge_response.text
@@ -158,11 +158,11 @@ def _approve_and_activate(
     )
     attestation = signer.sign(ApprovalStatement.model_validate(challenge["statement"]))
     approved = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
         json={"attestation": attestation.model_dump(mode="json")},
     )
     assert approved.status_code == 200, approved.text
-    activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
+    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
     assert activated.json()["status"] == "accepted"
 
@@ -240,7 +240,6 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
             "http://cruxible",
             "--instance-id",
             instance_id,
-            "playbill",
             "claim-type",
             "propose",
             "--input",
@@ -308,7 +307,6 @@ def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
             "http://cruxible",
             "--instance-id",
             instance_id,
-            "playbill",
             "claim-type",
             "propose",
             "--input",
@@ -609,7 +607,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     reverted = pb.next(expiring_within=Duration.days(count=7))
     assert not any(item.reason == "citation_drifted" for item in reverted.items)
 
-    catalog = workspace / ".playbill" / "sources.yaml"
+    catalog = workspace / ".cruxible" / "sources.yaml"
     original_catalog = catalog.read_text(encoding="utf-8")
     catalog.write_text(
         original_catalog.split("  - name: corpus.vuln-response-runbook\n", maxsplit=1)[0],
@@ -647,7 +645,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         claim_type_definition=None,
     )
     response = http.post(
-        f"/api/v1/{instance_id}/playbill/authoring/compile",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
             "tag": "playbill-authoring-intent-compile-request-v3",
             "payload": incomplete.payload.model_dump(mode="json"),

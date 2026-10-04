@@ -100,7 +100,7 @@ def _workspace(tmp_path: Path, *, identity: str = FOREIGN_IDENTITY) -> Path:
     (workspace / "corpus").mkdir(parents=True)
     (workspace / FOREIGN_PATH).write_bytes(FOREIGN_BYTES)
     (workspace / "notes.txt").write_bytes(b"ordinary working notes\n")
-    (workspace / ".playbill").mkdir()
+    (workspace / ".cruxible").mkdir()
     (workspace / CONFIG_RELATIVE_PATH).write_text(
         json.dumps(
             {
@@ -267,7 +267,7 @@ def test_the_prefix_rule_normalizer_binds_the_identity_the_claim_was_authored_ag
     workspace = tmp_path / "workspace"
     (workspace / "corpus").mkdir(parents=True)
     (workspace / FOREIGN_PATH).write_bytes(FOREIGN_BYTES)
-    (workspace / ".playbill").mkdir()
+    (workspace / ".cruxible").mkdir()
     (workspace / CONFIG_RELATIVE_PATH).write_text(
         json.dumps(
             {
@@ -317,7 +317,6 @@ def test_the_middleware_renders_exactly_what_the_reference_surface_renders(
     assert delivery.lines == render_coverage_result(delivery.result)
 
     reference = cruxible.run(
-        "playbill",
         "coverage",
         "resolve",
         "--root",
@@ -376,7 +375,7 @@ def _post_tool_use(tool_name: str, tool_input: Any, tool_response: Any) -> dict[
 def _run_hook(workspace: Path, payload: dict[str, Any]) -> dict[str, Any]:
     result = CliRunner().invoke(
         cli,
-        ["playbill", "hook", "post-tool-use", "--root", str(workspace)],
+        ["hook", "post-tool-use", "--root", str(workspace)],
         input=json.dumps(payload),
     )
     assert result.exit_code == 0, result.output
@@ -389,7 +388,7 @@ def _run_hook_with_diagnostic(
 ) -> tuple[dict[str, Any], str]:
     result = CliRunner().invoke(
         cli,
-        ["playbill", "hook", "post-tool-use", "--root", str(workspace)],
+        ["hook", "post-tool-use", "--root", str(workspace)],
         input=json.dumps(payload),
     )
     assert result.exit_code == 0, result.output
@@ -448,11 +447,15 @@ def test_the_hook_marks_a_floor_from_an_older_generation_without_a_coverage_bind
 ) -> None:
     cruxible = served_cli
     _bootstrap(cruxible, tmp_path)
-    old = cruxible.json("playbill", "orient")
+    old = cruxible.json(
+        "orient",
+    )
     _govern_a_foreign_span(cruxible, tmp_path)
-    current = cruxible.json("playbill", "orient")
+    current = cruxible.json(
+        "orient",
+    )
     workspace = tmp_path / "workspace"
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     floor.mkdir(parents=True)
     (workspace / CONFIG_RELATIVE_PATH).write_text(
         json.dumps(

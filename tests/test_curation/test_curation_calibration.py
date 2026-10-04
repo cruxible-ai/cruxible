@@ -29,9 +29,7 @@ from cruxible_core.server.playbill_request_models import AuditRequest
 
 
 def _audit_cli_option(name: str) -> click.Option:
-    playbill = cli.commands["playbill"]
-    assert isinstance(playbill, click.Group)
-    audit = playbill.commands["audit"]
+    audit = cli.commands["audit"]
     return next(
         parameter
         for parameter in audit.params

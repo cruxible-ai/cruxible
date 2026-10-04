@@ -15,7 +15,7 @@ def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
 ) -> None:
     client, instance_id, _private_key = playbill_http
 
-    response = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"surface": "mcp"})
+    response = client.get(f"/api/v1/{instance_id}/orient", params={"surface": "mcp"})
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -41,10 +41,10 @@ def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
     # Optional parts that do not apply are absent, never null.
     assert "kind_detail" not in body and "next_cursor" not in body
     assert None not in body.values()
-    assert all(line.startswith("cruxible_playbill_") for line in body["next"])
+    assert all(line.startswith("cruxible_") for line in body["next"])
 
     pinned = client.get(
-        f"/api/v1/{instance_id}/playbill/orient",
+        f"/api/v1/{instance_id}/orient",
         params={"at": body["coordinate"]["git_oid"], "section": "documents"},
     )
     assert pinned.status_code == 200, pinned.text
@@ -56,7 +56,7 @@ def test_http_orient_refusals_are_coded(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
     client, instance_id, _private_key = playbill_http
-    url = f"/api/v1/{instance_id}/playbill/orient"
+    url = f"/api/v1/{instance_id}/orient"
 
     missing = client.get(url, params={"kind": "project.nothing"})
     assert missing.status_code == 404, missing.text
@@ -96,7 +96,7 @@ def test_orient_attention_matches_next_for_the_effective_caller(
 
 @pytest.mark.parametrize(
     ("tools", "expected"),
-    [((), 0), (("cruxible_playbill_settle",), 1), (("cruxible_playbill_approve",), 1)],
+    [((), 0), (("cruxible_settle",), 1), (("cruxible_approve",), 1)],
 )
 def test_orient_attention_matches_next_for_an_mcp_profile_missing_a_tool(
     playbill_http: tuple[TestClient, str, Path],
@@ -143,10 +143,10 @@ def _assert_attention_parity(
     params: dict[str, str | list[str]] = {"surface": surface, "evaluation_time": when}
     if tools is not None:
         params["caller_tools"] = list(tools) or [""]
-    orient = client.get(f"/api/v1/{instance_id}/playbill/orient", params=params)
+    orient = client.get(f"/api/v1/{instance_id}/orient", params=params)
     assert orient.status_code == 200, orient.text
     queue = client.post(
-        f"/api/v1/{instance_id}/playbill/next",
+        f"/api/v1/{instance_id}/next",
         json={
             "evaluation_time": when,
             "access_profile": {

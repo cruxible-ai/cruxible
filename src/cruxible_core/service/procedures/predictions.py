@@ -391,7 +391,7 @@ def _settlement_route(
             raise _refuse(
                 "prediction_window_unknown",
                 f"No bound prediction window {prediction_id} is held by the prediction worker; "
-                "`cruxible playbill next` lists settleable windows.",
+                "`cruxible next` lists settleable windows.",
             )
         # The worker's findings may trail accepted state: the held version must
         # still be the live one at the head.
@@ -410,7 +410,7 @@ def _settlement_route(
         raise _refuse(
             "prediction_window_unknown",
             f"No live accepted ResolutionContract is named {name!r}; name the prediction by "
-            "its contract name or by the RSC-... window id `cruxible playbill next` shows.",
+            "its contract name or by the RSC-... window id `cruxible next` shows.",
         )
     return (
         ResolutionContractReference(

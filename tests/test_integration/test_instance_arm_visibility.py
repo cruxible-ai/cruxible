@@ -142,12 +142,12 @@ def test_the_cli_shows_stopped_arms_in_orient_and_next(stopped, monkeypatch, tmp
     prefix = ["--server-url", "http://server", "--instance-id", "inst"]
     stamp = when.isoformat()
 
-    orient = CliRunner().invoke(cli, [*prefix, "playbill", "orient", "--evaluation-time", stamp])
+    orient = CliRunner().invoke(cli, [*prefix, "orient", "--evaluation-time", stamp])
     assert orient.exit_code == 0, orient.output
     assert "Line arms: running=0 stalled=0 stopped=1" in orient.output
     assert f"{line.identity.qualified} stopped (credential_revoked)" in orient.output
 
-    queue = CliRunner().invoke(cli, [*prefix, "playbill", "next", "--evaluation-time", stamp])
+    queue = CliRunner().invoke(cli, [*prefix, "next", "--evaluation-time", stamp])
     assert queue.exit_code == 0, queue.output
     assert "Status: line arms stalled=0 stopped=1" in queue.output
     assert "consumer_stalled" in queue.output
@@ -203,7 +203,7 @@ def test_the_mcp_orient_tool_carries_the_arms(stopped, monkeypatch) -> None:  # 
         async with _protocol_session(server) as session:
             await session.initialize()
             result = await session.call_tool(
-                "cruxible_playbill_orient",
+                "cruxible_orient",
                 {"instance_id": "inst", "evaluation_time": when.isoformat()},
             )
             assert not result.isError

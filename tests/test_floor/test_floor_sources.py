@@ -83,7 +83,7 @@ def test_the_client_joins_workspace_paths_into_sources_and_projections(tmp_path:
     _add_document(instance, "reports", NOTE.encode())
     _add_document(instance, "design-note", NOTE.encode())
     # A local catalog entry whose file is gone.
-    (workspace / ".playbill" / "sources.local.yaml").write_text(
+    (workspace / ".cruxible" / "sources.local.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: local\n"
         "entries:\n"
@@ -99,7 +99,7 @@ def test_the_client_joins_workspace_paths_into_sources_and_projections(tmp_path:
     files = service_export_playbill_floor(instance)
     _header, ledger = _rows(files["sources/LEDGER"])
     materialize_floor(workspace, export=_export_envelope(files))
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     header, rows = _rows((floor / "sources/INDEX").read_bytes())
     assert header.startswith("# sources INDEX  3 sources  columns: source, contracts, locator")
     assert header.endswith("(locators joined from the local workspace catalog)")
@@ -139,7 +139,7 @@ def test_without_a_catalog_the_index_keeps_the_ledger_locators(tmp_path: Any) ->
     workspace = tmp_path / "bare"
     workspace.mkdir()
     materialize_floor(workspace, export=_export_envelope(files))
-    _header, rows = _rows((workspace / ".playbill/floor/sources/INDEX").read_bytes())
+    _header, rows = _rows((workspace / ".cruxible/floor/sources/INDEX").read_bytes())
     assert rows == _rows(files["sources/LEDGER"])[1]
 
 
@@ -163,7 +163,7 @@ def test_a_floor_whose_manifest_lists_sources_index_is_replaced_whole(tmp_path: 
         coordinate=COORDINATE,
         generation=4,
     )
-    floor = tmp_path / ".playbill" / "floor"
+    floor = tmp_path / ".cruxible" / "floor"
     assert apply_floor_delta(floor, old).status == "applied"
     # Rewrite it as the old renderer left it: sources/INDEX in the manifest.
     (floor / "sources/OLDNAME").rename(floor / "sources/INDEX")

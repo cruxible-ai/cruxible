@@ -26,7 +26,7 @@ class WorkspaceAdvertisement(BaseModel):
     #: response. Proposal inspection waits for it and reports the outcome.
     status: Literal["updated", "scheduled", "not_attached", "failed"]
     workspace_path: str | None
-    remote_name: Literal["playbill"] = "playbill"
+    remote_name: Literal["cruxible-ledger"] = "cruxible-ledger"
     advertised_refs: tuple[str, ...] = ()
     failure_code: WorkspaceAdvertisementFailureCode | None = None
 

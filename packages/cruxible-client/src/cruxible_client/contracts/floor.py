@@ -1,4 +1,4 @@
-"""The floor v5 manifest and the floor delta: one shape on both sides of the wire.
+"""The floor v6 manifest and the floor delta: one shape on both sides of the wire.
 
 The floor is a pure function of an accepted coordinate. Its root
 ``manifest.json`` binds every file to its content digest and to ``changed_at``,
@@ -30,8 +30,8 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, ty
 from cruxible_client.contracts.primitives import pretty_json
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
-FLOOR_FORMAT = "playbill-floor-export-v5"
-FLOOR_MANIFEST_TAG = "playbill-floor-manifest-v5"
+FLOOR_FORMAT = "playbill-floor-export-v6"
+FLOOR_MANIFEST_TAG = "playbill-floor-manifest-v6"
 FLOOR_MANIFEST_PATH = "manifest.json"
 # Local metadata the workspace writer adds outside the daemon-verified manifest:
 # `.gitignore` ignores the floor itself; the indexes join workspace bindings:
@@ -160,8 +160,8 @@ class FloorManifest(_StrictFloorModel):
     Two floors with the same renderer and generation are the same bytes.
     """
 
-    tag: Literal["playbill-floor-manifest-v5"] = "playbill-floor-manifest-v5"
-    format: Literal["playbill-floor-export-v5"] = "playbill-floor-export-v5"
+    tag: Literal["playbill-floor-manifest-v6"] = "playbill-floor-manifest-v6"
+    format: Literal["playbill-floor-export-v6"] = "playbill-floor-export-v6"
     renderer: str = Field(pattern=_SHA256)
     coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)

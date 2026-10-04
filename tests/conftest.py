@@ -96,7 +96,7 @@ def isolate_cli_context(
     monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
     monkeypatch.delenv("CRUXIBLE_INSTANCE_ID", raising=False)
-    monkeypatch.delenv("CRUXIBLE_PLAYBILL_WORKSPACE", raising=False)
+    monkeypatch.delenv("CRUXIBLE_WORKSPACE", raising=False)
     if request.node.get_closest_marker("state_root_fallback") is not None:
         isolated_home = tmp_path_factory.mktemp("state-root-fallback-home")
         monkeypatch.setenv("HOME", str(isolated_home))
@@ -135,7 +135,7 @@ def isolate_workspace_bindings(
     """No test reads a Cruxible workspace binding it did not create.
 
     Workspace discovery walks up from the current directory to the enclosing Git
-    checkout looking for `.playbill/coverage.json`, and prefers what it finds
+    checkout looking for `.cruxible/coverage.json`, and prefers what it finds
     over the remembered CLI context -- which is exactly right in a terminal and
     exactly wrong in a test. A developer whose checkout is itself a governed
     workspace was running a suite that silently retargeted at their real

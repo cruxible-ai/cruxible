@@ -99,7 +99,6 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
             "https://review.example.test",
             "--instance-id",
             "inst_review",
-            "playbill",
             "proposal",
             "review",
             "sha256:" + "a" * 64,

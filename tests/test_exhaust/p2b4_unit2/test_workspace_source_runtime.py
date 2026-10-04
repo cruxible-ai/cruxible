@@ -422,14 +422,14 @@ def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path)
     (
         (".git/config", ".GIT/config", "git_metadata", False),
         (".git/config", ".Git/config", "git_metadata", False),
-        (".playbill/coverage.json", ".PLAYBILL/coverage.json", "playbill_control", False),
-        (".playbill/coverage.json", ".PlayBill/coverage.json", "playbill_control", False),
+        (".cruxible/coverage.json", ".CRUXIBLE/coverage.json", "playbill_control", False),
+        (".cruxible/coverage.json", ".CruxIble/coverage.json", "playbill_control", False),
         ("owner.ed25519", "OWNER.ED25519", "client_custody", False),
         ("daemon_ed25519", "DAEMON_ED25519", "client_custody", False),
         ("allowed_signers", "Allowed_Signers", "client_custody", False),
         (
-            ".playbill-init-resume-owner.json",
-            ".Playbill-Init-Resume-Owner.JSON",
+            ".cruxible-init-resume-owner.json",
+            ".Cruxible-Init-Resume-Owner.JSON",
             "client_custody",
             False,
         ),

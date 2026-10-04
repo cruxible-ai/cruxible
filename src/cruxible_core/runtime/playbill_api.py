@@ -433,7 +433,7 @@ def _access(instance_id: str, *, include_body: bool) -> BodyAccessContext:
     actor = _actor_context()
     principal_id = "anonymous" if actor is None else actor.actor_id
     if include_body:
-        check_permission("cruxible_playbill_body_read", instance_id=instance_id)
+        check_permission("cruxible_body_read", instance_id=instance_id)
     return BodyAccessContext(principal_id=principal_id, can_read_body=include_body)
 
 
@@ -489,7 +489,7 @@ def playbill_init(
     git_object_format: GitObjectFormat | None = None,
     mirror_url: str | None = None,
 ) -> contracts.InitResult:
-    check_permission("cruxible_playbill_init", instance_id=instance_id)
+    check_permission("cruxible_init", instance_id=instance_id)
     if mirror_url is not None:
         # Validated before any state exists. A malformed remote is the operator's
         # typo, and finding it after bootstrap would leave a live instance whose
@@ -513,7 +513,7 @@ def playbill_init(
             "cruxible.identity.init_owner_mismatch",
             f"init makes the process that runs it an owner, but this process acts as "
             f"{actor_id!r} and the owner principals named are: {owners}; repair: "
-            "`cruxible playbill init --principal-id ID --key-dir DIR` makes you the owner "
+            "`cruxible init --principal-id ID --key-dir DIR` makes you the owner "
             "under ID (with daemon auth off no bootstrap secret is needed)",
             repair=RepairOperation(
                 operation="cruxible.init",
@@ -585,7 +585,7 @@ def playbill_instance_decommission(
     it previews by default and commits only with ``at`` (R12).
     """
 
-    check_permission("cruxible_playbill_instance_decommission", instance_id=instance_id)
+    check_permission("cruxible_instance_decommission", instance_id=instance_id)
     with change_entry(dry_run, "irreversible"):
         instance = get_playbill_manager().get(instance_id)
         with change_scope(
@@ -669,7 +669,7 @@ def playbill_ledger_set_mirror(
     with ``at`` (R12).
     """
 
-    check_permission("cruxible_playbill_ledger_set_mirror", instance_id=instance_id)
+    check_permission("cruxible_ledger_set_mirror", instance_id=instance_id)
     with change_entry(dry_run, "irreversible"):
         _require_writer(instance_id)
         instance = get_playbill_manager().get(instance_id)
@@ -701,7 +701,7 @@ def playbill_ledger_publish(
 ) -> contracts.LedgerMirror:
     """Request publication to the configured mirror and wait for its acknowledgment."""
 
-    check_permission("cruxible_playbill_ledger_publish", instance_id=instance_id)
+    check_permission("cruxible_ledger_publish", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         _require_writer(instance_id)
         if isinstance(timeout, bool) or not 0 <= timeout <= 60:
@@ -737,7 +737,7 @@ def playbill_ledger_publish(
 def playbill_ledger_clone_url(instance_id: str) -> contracts.LedgerMirror:
     """Print the URL a reviewer clones, or refuse typed when there is none."""
 
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     instance = get_playbill_manager().get(instance_id)
     url = instance.ledger_mirror_url()
     if url is None:
@@ -746,7 +746,7 @@ def playbill_ledger_clone_url(instance_id: str) -> contracts.LedgerMirror:
 
 
 def playbill_provider_catalog(instance_id: str) -> ProviderCatalog:
-    check_permission("cruxible_playbill_provider_catalog", instance_id=instance_id)
+    check_permission("cruxible_provider_catalog", instance_id=instance_id)
     manager = get_playbill_manager()
     manager.get(instance_id)
     return _proposal_validation_boundary(
@@ -758,7 +758,7 @@ def playbill_provider_install(
     instance_id: str,
     request: ProviderInstallRequest,
 ) -> ProviderInstallResult:
-    check_permission("cruxible_playbill_provider_install", instance_id=instance_id)
+    check_permission("cruxible_provider_install", instance_id=instance_id)
     enforce_customer_code_execution_supported()
     with change_entry(request.dry_run, "direct"):
         manager = get_playbill_manager()
@@ -775,21 +775,21 @@ def playbill_provider_install(
 
 
 def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
-    check_permission("cruxible_playbill_kit_build", instance_id=instance_id)
+    check_permission("cruxible_kit_build", instance_id=instance_id)
     return _proposal_validation_boundary(
         "kit build", lambda: service_build_kit(get_playbill_manager().get(instance_id), request)
     )
 
 
 def playbill_kit_status(instance_id: str) -> KitStatus:
-    check_permission("cruxible_playbill_kit_status", instance_id=instance_id)
+    check_permission("cruxible_kit_status", instance_id=instance_id)
     return _proposal_validation_boundary(
         "kit status", lambda: service_kit_status(get_playbill_manager().get(instance_id))
     )
 
 
 def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResult:
-    check_permission("cruxible_playbill_kit_add", instance_id=instance_id)
+    check_permission("cruxible_kit_add", instance_id=instance_id)
     with change_entry(request.dry_run, "derived"):
         return _proposal_validation_boundary(
             "kit add",
@@ -805,7 +805,7 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
 def playbill_evidence_rules_upgrade(
     instance_id: str, request: EvidenceRuleUpgradeRequest
 ) -> EvidenceRuleUpgradeResult:
-    check_permission("cruxible_playbill_evidence_rules_upgrade", instance_id=instance_id)
+    check_permission("cruxible_evidence_rules_upgrade", instance_id=instance_id)
     with change_entry(request.dry_run, "derived"):
         return _proposal_validation_boundary(
             "evidence rule upgrade",
@@ -821,7 +821,7 @@ def playbill_evidence_rules_upgrade(
 def playbill_claim_type_upgrade(
     instance_id: str, request: ClaimTypeUpgradeRequest
 ) -> ClaimTypeUpgradeResult:
-    check_permission("cruxible_playbill_claim_type_upgrade", instance_id=instance_id)
+    check_permission("cruxible_claim_type_upgrade", instance_id=instance_id)
     with change_entry(request.dry_run, "derived"):
         return _proposal_validation_boundary(
             "claim type upgrade",
@@ -835,7 +835,7 @@ def playbill_claim_type_upgrade(
 
 
 def playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
-    check_permission("cruxible_playbill_kit_remove", instance_id=instance_id)
+    check_permission("cruxible_kit_remove", instance_id=instance_id)
     with change_entry(request.dry_run, "derived"):
         return _proposal_validation_boundary(
             "kit removal",
@@ -849,7 +849,7 @@ def playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChang
 
 
 def playbill_store_body(instance_id: str, *, content_base64: str) -> contracts.CasObjectResult:
-    check_permission("cruxible_playbill_store_body", instance_id=instance_id)
+    check_permission("cruxible_store_body", instance_id=instance_id)
     _require_writer(instance_id)
     try:
         content = base64.b64decode(content_base64, validate=True)
@@ -869,7 +869,7 @@ def playbill_propose_document(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalInspection:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         result = _proposal_validation_boundary(
             "document",
@@ -897,7 +897,7 @@ def playbill_propose_compiler_upgrade(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalInspection:
-    check_permission("cruxible_playbill_compiler_upgrade", instance_id=instance_id)
+    check_permission("cruxible_compiler_upgrade", instance_id=instance_id)
     from cruxible_core.service.authoring.documents import service_propose_compiler_upgrade
 
     with change_entry(dry_run, "direct"):
@@ -926,7 +926,7 @@ def playbill_propose_principal_change(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalInspection:
-    check_permission("cruxible_playbill_principal_change", instance_id=instance_id)
+    check_permission("cruxible_principal_change", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         result = _proposal_validation_boundary(
             "principal",
@@ -948,7 +948,7 @@ def playbill_inspect_proposal(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.ProposalInspection:
-    check_permission("cruxible_playbill_inspect", instance_id=instance_id)
+    check_permission("cruxible_inspect", instance_id=instance_id)
     instance = get_playbill_manager().get(instance_id)
     result = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
     return contracts.ProposalInspection.model_validate(
@@ -968,7 +968,7 @@ def playbill_list_proposals(
     limit: int = contracts.PROPOSAL_LIST_DEFAULT_LIMIT,
     cursor: str | None = None,
 ) -> contracts.ProposalList:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     result = service_list_playbill_proposals(
         get_playbill_manager().get(instance_id),
         status=status,
@@ -982,7 +982,7 @@ def playbill_proposal_status(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.ProposalListEntry:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     result = service_playbill_proposal_status(
         get_playbill_manager().get(instance_id), proposal_id=proposal_id
     )
@@ -993,7 +993,7 @@ def playbill_resolve_proposal_selector(
     instance_id: str,
     selector: str,
 ) -> contracts.ProposalSelectorResult:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     result = service_resolve_playbill_proposal_selector(
         get_playbill_manager().get(instance_id),
         selector=selector,
@@ -1008,7 +1008,7 @@ def playbill_readmit_proposal(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalReadmitResult:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         result = service_readmit_playbill_proposal(
             get_playbill_manager().get(instance_id),
@@ -1028,7 +1028,7 @@ def playbill_withdraw_proposal(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalWithdrawResult:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         result = service_withdraw_playbill_proposal(
             get_playbill_manager().get(instance_id),
@@ -1047,7 +1047,7 @@ def playbill_withdraw_proposal(
 
 
 def playbill_whoami(instance_id: str) -> contracts.WhoAmI:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     auth_context = get_current_auth_context()
     actor_id: str | None
     credential_label: str | None
@@ -1087,7 +1087,7 @@ def playbill_head(
 
     from cruxible_core.service.discovery.orient import service_playbill_head
 
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     return service_playbill_head(get_playbill_manager().get(instance_id), at=at)
 
 
@@ -1105,7 +1105,7 @@ def playbill_orient(
 ) -> OrientResult:
     """The orient map; the caller is whoever ``whoami`` resolves the transport to."""
 
-    check_permission("cruxible_playbill_orient", instance_id=instance_id)
+    check_permission("cruxible_orient", instance_id=instance_id)
     try:
         identity: contracts.WhoAmI | None = playbill_whoami(instance_id)
     except AuthenticationError:
@@ -1145,7 +1145,7 @@ def playbill_inspect_refusal(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.RefusalInspection:
-    check_permission("cruxible_playbill_inspect", instance_id=instance_id)
+    check_permission("cruxible_inspect", instance_id=instance_id)
     result = service_inspect_playbill_refusal(
         get_playbill_manager().get(instance_id), proposal_id=proposal_id
     )
@@ -1159,7 +1159,7 @@ def playbill_review_proposal(
     include_body: bool = False,
     workspace_observation: Mapping[str, object] | None = None,
 ) -> contracts.ProposalReview:
-    check_permission("cruxible_playbill_review", instance_id=instance_id)
+    check_permission("cruxible_review", instance_id=instance_id)
     result = service_review_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
@@ -1176,7 +1176,7 @@ def playbill_prepare_approval(
     signer_id: str,
     include_body: bool = False,
 ) -> contracts.ApprovalChallenge:
-    check_permission("cruxible_playbill_review", instance_id=instance_id)
+    check_permission("cruxible_review", instance_id=instance_id)
     result = service_prepare_playbill_approval(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
@@ -1192,7 +1192,7 @@ def playbill_submit_approval(
     *,
     attestation: ApprovalAttestation,
 ) -> contracts.ApprovalReceipt:
-    check_permission("cruxible_playbill_submit_approval", instance_id=instance_id)
+    check_permission("cruxible_submit_approval", instance_id=instance_id)
     result = service_submit_playbill_approval(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
@@ -1206,7 +1206,7 @@ def playbill_activate(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.ActivationReceipt:
-    check_permission("cruxible_playbill_activate", instance_id=instance_id)
+    check_permission("cruxible_activate", instance_id=instance_id)
     activated_by = _actor_id(instance_id)
     result = service_activate_playbill_proposal(
         get_playbill_manager().get(instance_id),
@@ -1217,7 +1217,7 @@ def playbill_activate(
 
 
 def playbill_read_capture(instance_id: str, request: CaptureReadRequest) -> CaptureRead:
-    check_permission("cruxible_playbill_body_read", instance_id=instance_id)
+    check_permission("cruxible_body_read", instance_id=instance_id)
     return service_read_playbill_capture(
         get_playbill_manager().get(instance_id),
         request=request,
@@ -1226,7 +1226,7 @@ def playbill_read_capture(instance_id: str, request: CaptureReadRequest) -> Capt
 
 
 def playbill_source_context(instance_id: str) -> contracts.SourceContext:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     result = service_playbill_source_context(get_playbill_manager().get(instance_id))
     return contracts.SourceContext.model_validate(result.model_dump(mode="json"))
 
@@ -1236,7 +1236,7 @@ def playbill_check_source_bundle(
     *,
     bundle: SourceCompilationBundle,
 ) -> contracts.SourceCheckResult:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     result = service_check_playbill_source_bundle(
         get_playbill_manager().get(instance_id), bundle=bundle
     )
@@ -1252,7 +1252,7 @@ def playbill_propose_source_bundle(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalInspection:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         result = _proposal_validation_boundary(
             "source bundle",
@@ -1283,7 +1283,7 @@ def playbill_propose_claim_type(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalInspection:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         instance = get_playbill_manager().get(instance_id)
         coordinate = instance.accepted_coordinate()
@@ -1315,7 +1315,7 @@ def playbill_propose_claim_type_input(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ClaimTypeInputProposalResult:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         result = _proposal_validation_boundary(
             "claim type input",
@@ -1337,7 +1337,7 @@ def playbill_migrate_claim_type(
     *,
     request: ClaimTypeMigrationRequestAny,
 ) -> contracts.ClaimTypeMigrationResponse:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    check_permission("cruxible_propose", instance_id=instance_id)
     result = service_migrate_claim_type(
         get_playbill_manager().get(instance_id),
         request=request,
@@ -1361,7 +1361,7 @@ def _write_outcome(instance_id: str, request: WriteRequest) -> WriteOutcome:
     with change_entry(request.dry_run, "direct"):
         caller = WriteCaller(
             actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
-            may_activate=_permits("cruxible_playbill_activate", instance_id=instance_id),
+            may_activate=_permits("cruxible_activate", instance_id=instance_id),
         )
         return service_playbill_write(
             get_playbill_manager().get(instance_id), request=request, caller=caller
@@ -1371,21 +1371,21 @@ def _write_outcome(instance_id: str, request: WriteRequest) -> WriteOutcome:
 def playbill_set(instance_id: str, *, request: SetRequest) -> WriteOutcome:
     """Put one value in one field of one Subject; see ``service_playbill_write``."""
 
-    check_permission("cruxible_playbill_set", instance_id=instance_id)
+    check_permission("cruxible_set", instance_id=instance_id)
     return _write_outcome(instance_id, as_write_request(request))
 
 
 def playbill_retire(instance_id: str, *, request: RetireRequest) -> WriteOutcome:
     """End one live Claim, by ID or by its Subject and field."""
 
-    check_permission("cruxible_playbill_retire", instance_id=instance_id)
+    check_permission("cruxible_retire", instance_id=instance_id)
     return _write_outcome(instance_id, as_write_request(request))
 
 
 def playbill_write(instance_id: str, *, request: WriteRequest) -> WriteOutcome:
     """Apply a batch of set, add and retire changes as one change set."""
 
-    check_permission("cruxible_playbill_write", instance_id=instance_id)
+    check_permission("cruxible_write", instance_id=instance_id)
     return _write_outcome(instance_id, request)
 
 
@@ -1394,7 +1394,7 @@ def playbill_append_claim_attestation(
     *,
     request: ClaimAttestationAppendRequest,
 ) -> ClaimAttestationAppendResult:
-    check_permission("cruxible_playbill_claim_attest", instance_id=instance_id)
+    check_permission("cruxible_claim_attest", instance_id=instance_id)
     return service_append_claim_attestation(
         get_playbill_manager().get(instance_id),
         request=request,
@@ -1405,7 +1405,7 @@ def playbill_append_claim_attestation(
 def playbill_recover_claim_attestations(instance_id: str) -> None:
     """Synchronously restore the sole replay-valid evidence-ledger head."""
 
-    check_permission("cruxible_playbill_claim_attestation_recover", instance_id=instance_id)
+    check_permission("cruxible_claim_attestation_recover", instance_id=instance_id)
     _require_writer(instance_id)
     get_playbill_manager().get(instance_id).claim_attestation_evidence_store().recover()
 
@@ -1425,7 +1425,7 @@ def playbill_authoring_create(
     reference_expectations: tuple[AuthoringExpectation, ...] | None = None,
     program_stamp: AuthoringProgramStamp | None = None,
 ) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_playbill_authoring_create", instance_id=instance_id)
+    check_permission("cruxible_authoring_create", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.create(
         actor=actor,
@@ -1442,7 +1442,7 @@ def playbill_authoring_create_input(
     *,
     input: AuthoringInput,
 ) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_playbill_authoring_create", instance_id=instance_id)
+    check_permission("cruxible_authoring_create", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.create_input(
         actor=actor,
@@ -1457,7 +1457,7 @@ def playbill_resolution_contracts(
 ) -> contracts.ResolutionContractsResult:
     from cruxible_core.service.procedures.resolution_contracts import service_resolution_contracts
 
-    check_permission("cruxible_playbill_resolution_contracts", instance_id=instance_id)
+    check_permission("cruxible_resolution_contracts", instance_id=instance_id)
     return service_resolution_contracts(get_playbill_manager().get(instance_id), request)
 
 
@@ -1468,7 +1468,7 @@ def playbill_predict(
 ) -> PredictResult:
     """Submit a governed test of an already accepted hypothesis."""
 
-    check_permission("cruxible_playbill_predict", instance_id=instance_id)
+    check_permission("cruxible_predict", instance_id=instance_id)
     actor_context = _write_actor_context(instance_id)
     if actor_context is None:
         raise AuthenticationError("Prediction authoring requires an authenticated actor identity")
@@ -1488,7 +1488,7 @@ def playbill_settle_prediction(
 ) -> SettleResult:
     """Settle one prediction through admission or retained terminal authority."""
 
-    check_permission("cruxible_playbill_settle", instance_id=instance_id)
+    check_permission("cruxible_settle", instance_id=instance_id)
     actor_context = _write_actor_context(instance_id)
     if actor_context is None:
         raise AuthenticationError("Prediction settlement requires an authenticated actor identity")
@@ -1505,7 +1505,7 @@ def playbill_authoring_get(
     instance_id: str,
     intent_id: str,
 ) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_playbill_authoring_get", instance_id=instance_id)
+    check_permission("cruxible_authoring_get", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.get(intent_id, actor=actor)
     return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
@@ -1515,7 +1515,7 @@ def playbill_authoring_resume(
     instance_id: str,
     intent_id: str,
 ) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_playbill_authoring_resume", instance_id=instance_id)
+    check_permission("cruxible_authoring_resume", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.resume(intent_id, actor=actor)
     return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
@@ -1524,7 +1524,7 @@ def playbill_authoring_resume(
 def playbill_authoring_list_pending(
     instance_id: str,
 ) -> contracts.AuthoringIntentListRecord:
-    check_permission("cruxible_playbill_authoring_list_pending", instance_id=instance_id)
+    check_permission("cruxible_authoring_list_pending", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.list_pending(actor=actor)
     return contracts.AuthoringIntentListRecord.model_validate(result.model_dump(mode="json"))
@@ -1594,7 +1594,7 @@ def playbill_authoring_compile(
     reference_expectations: tuple[AuthoringExpectation, ...] | None = None,
     program_stamp: AuthoringProgramStamp | None = None,
 ) -> contracts.AuthoringPreflightResult:
-    check_permission("cruxible_playbill_authoring_compile", instance_id=instance_id)
+    check_permission("cruxible_authoring_compile", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.compile(
         actor=actor,
@@ -1615,8 +1615,8 @@ def playbill_authoring_compile_and_submit(
     program_stamp: AuthoringProgramStamp,
     intent_id: str | None = None,
 ) -> contracts.AuthoringSubmitResultRecord:
-    check_permission("cruxible_playbill_authoring_compile", instance_id=instance_id)
-    check_permission("cruxible_playbill_authoring_submit", instance_id=instance_id)
+    check_permission("cruxible_authoring_compile", instance_id=instance_id)
+    check_permission("cruxible_authoring_submit", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.compile_and_submit(
         actor=actor,
@@ -1643,7 +1643,7 @@ def playbill_authoring_compile_input(
     input: AuthoringInput,
     intent_id: str | None = None,
 ) -> contracts.AuthoringPreflightResult:
-    check_permission("cruxible_playbill_authoring_compile", instance_id=instance_id)
+    check_permission("cruxible_authoring_compile", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.compile_input(
         actor=actor,
@@ -1658,7 +1658,7 @@ def playbill_authoring_preflight(
     instance_id: str,
     intent_id: str,
 ) -> contracts.AuthoringPreflightResult:
-    check_permission("cruxible_playbill_authoring_preflight", instance_id=instance_id)
+    check_permission("cruxible_authoring_preflight", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.preflight(intent_id, actor=actor)
     return _authoring_preflight_result(coordinator, actor=actor, result=result)
@@ -1668,7 +1668,7 @@ def playbill_authoring_rebase(
     instance_id: str,
     intent_id: str,
 ) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_playbill_authoring_rebase", instance_id=instance_id)
+    check_permission("cruxible_authoring_rebase", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.rebase(intent_id, actor=actor)
     return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
@@ -1678,7 +1678,7 @@ def playbill_authoring_submit(
     instance_id: str,
     intent_id: str,
 ) -> contracts.AuthoringSubmitResultRecord:
-    check_permission("cruxible_playbill_authoring_submit", instance_id=instance_id)
+    check_permission("cruxible_authoring_submit", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.submit(intent_id, actor=actor)
     return contracts.AuthoringSubmitResultRecord.model_validate(result.model_dump(mode="json"))
@@ -1688,7 +1688,7 @@ def playbill_authoring_status(
     instance_id: str,
     intent_id: str,
 ) -> contracts.CandidateStatusRecord:
-    check_permission("cruxible_playbill_authoring_status", instance_id=instance_id)
+    check_permission("cruxible_authoring_status", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.status(intent_id, actor=actor)
     return contracts.CandidateStatusRecord.model_validate(result.model_dump(mode="json"))
@@ -1700,7 +1700,7 @@ def playbill_authoring_abandon_insertion(
     *,
     expectation_id: str | None = None,
 ) -> contracts.InsertionAbandonResultRecord:
-    check_permission("cruxible_playbill_authoring_abandon_insertion", instance_id=instance_id)
+    check_permission("cruxible_authoring_abandon_insertion", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.abandon_insertion(intent_id, actor=actor, expectation_id=expectation_id)
     return contracts.InsertionAbandonResultRecord.model_validate(result.model_dump(mode="json"))
@@ -1712,7 +1712,7 @@ def playbill_block_declare(
 ) -> contracts.BlockDeclareResult:
     """Register one projection block a workspace just stamped into its page."""
 
-    check_permission("cruxible_playbill_block_declare", instance_id=instance_id)
+    check_permission("cruxible_block_declare", instance_id=instance_id)
     instance = get_playbill_manager().get(instance_id)
     _coordinator, actor = _authoring_coordinator(instance_id)
     return service_declare_playbill_block(
@@ -1733,7 +1733,7 @@ def playbill_block_depublish(
 ) -> contracts.BlockDepublishResult:
     """Release one bound publication registration, addressed as the page names it."""
 
-    check_permission("cruxible_playbill_block_depublish", instance_id=instance_id)
+    check_permission("cruxible_block_depublish", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         instance = get_playbill_manager().get(instance_id)
         coordinator, actor = _authoring_coordinator(instance_id)
@@ -1751,7 +1751,7 @@ def playbill_block_depublish(
 def playbill_read_claim_batch(
     instance_id: str, *, request: ClaimReadBatchRequest
 ) -> ClaimReadBatchResult:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     result = service_read_claim_batch(get_playbill_manager().get(instance_id), request=request)
     _record_consumed_paths(
         instance_id,
@@ -1765,7 +1765,7 @@ def playbill_read_claim_batch(
 def playbill_read_claim_backings(
     instance_id: str, *, request: ClaimBackingsRequest
 ) -> ClaimBackingsResult:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     return service_read_claim_backings(get_playbill_manager().get(instance_id), request=request)
 
 
@@ -1776,7 +1776,7 @@ def playbill_check_projection_blocks(
 ) -> contracts.ProjectionCheckResult:
     from cruxible_core.service.authoring.projection_sync import service_check_projection_blocks
 
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     return service_check_projection_blocks(get_playbill_manager().get(instance_id), request=request)
 
 
@@ -1785,7 +1785,7 @@ def playbill_read_block_sync_backing(
     *,
     request: contracts.BlockSyncReadRequest,
 ) -> contracts.BlockSyncReadResult:
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     return service_read_playbill_block_sync_backing(
         get_playbill_manager().get(instance_id),
         request=request,
@@ -1799,7 +1799,7 @@ def playbill_query(
 ) -> contracts.QueryResultRecord:
     """Answer one ``query`` call (compact, spec or named) as one page of values."""
 
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     served: set[str] = set()
     result = service_playbill_query(
         get_playbill_manager().get(instance_id),
@@ -1833,7 +1833,7 @@ def playbill_procedure_source_preview(
 ) -> ProcedureSourcePreview:
     from cruxible_core.service.procedures.source_preview import service_preview_procedure_source
 
-    check_permission("cruxible_playbill_procedure_readiness", instance_id=instance_id)
+    check_permission("cruxible_procedure_readiness", instance_id=instance_id)
     return service_preview_procedure_source(
         get_playbill_manager().get(instance_id), request=request
     )
@@ -1845,7 +1845,7 @@ def playbill_procedure_readiness(
     *,
     request: ProcedureReadinessRequestV1,
 ) -> contracts.ProcedureReadiness:
-    check_permission("cruxible_playbill_procedure_readiness", instance_id=instance_id)
+    check_permission("cruxible_procedure_readiness", instance_id=instance_id)
     result = service_playbill_procedure_readiness(
         get_playbill_manager().get(instance_id),
         name=name,
@@ -1860,7 +1860,7 @@ def playbill_procedure_bind(
     *,
     request: ProcedureBindRequest,
 ) -> contracts.ProcedureBindResult:
-    check_permission("cruxible_playbill_procedure_bind", instance_id=instance_id)
+    check_permission("cruxible_procedure_bind", instance_id=instance_id)
     result = service_bind_playbill_procedure(
         get_playbill_manager().get(instance_id),
         name=name,
@@ -1900,15 +1900,13 @@ def playbill_procedure_run(
     *,
     request: ProcedureRunRequest,
 ) -> contracts.ProcedureRunState:
-    check_permission(
-        "cruxible_playbill_procedure_run", instance_id=instance_id, audit_success=False
-    )
+    check_permission("cruxible_procedure_run", instance_id=instance_id, audit_success=False)
     # A shared hosted profile with no isolated execution backend cannot run
     # customer code at all; refuse at the served boundary so the operator gets
     # the mapped error instead of a node refusal buried in a run journal.
     enforce_customer_code_execution_supported()
     _check_run_target_permission(
-        "cruxible_playbill_procedure_run",
+        "cruxible_procedure_run",
         instance_id,
         lambda: procedure_run_target_rung(
             get_playbill_manager().get(instance_id), name, request.at
@@ -1965,7 +1963,7 @@ def playbill_procedure_run_status(
 
     from cruxible_core.service.discovery.runs import procedure_run_status
 
-    check_permission("cruxible_playbill_procedure_run_status", instance_id=instance_id)
+    check_permission("cruxible_procedure_run_status", instance_id=instance_id)
     return procedure_run_status(
         get_playbill_manager().get(instance_id),
         run_id,
@@ -1986,7 +1984,7 @@ def playbill_procedure_measure(
     between the two appends resumes at the reading.
     """
 
-    check_permission("cruxible_playbill_procedure_measure", instance_id=instance_id)
+    check_permission("cruxible_procedure_measure", instance_id=instance_id)
     actor_context = _write_actor_context(instance_id)
     if actor_context is None:
         raise AuthenticationError("Measurement evaluation requires an authenticated actor identity")
@@ -2007,7 +2005,7 @@ def playbill_procedure_readings(
 ) -> contracts.ProcedureReadingsResult:
     """Inspect measurement standing and retained readings. Never writes."""
 
-    check_permission("cruxible_playbill_procedure_readings", instance_id=instance_id)
+    check_permission("cruxible_procedure_readings", instance_id=instance_id)
     return service_list_playbill_procedure_readings(
         get_playbill_manager().get(instance_id),
         name=name,
@@ -2021,7 +2019,7 @@ def playbill_line_arm(
 ) -> contracts.LineArm:
     """Arm a Line forward-only under the calling credential."""
 
-    check_permission("cruxible_playbill_line_arm", instance_id=instance_id)
+    check_permission("cruxible_line_arm", instance_id=instance_id)
     from cruxible_core.runtime.line_arms import current_arm_principal
     from cruxible_core.service.procedures.line_dispatch import service_arm_line
 
@@ -2048,7 +2046,7 @@ def playbill_line_disarm(
 ) -> contracts.LineArm:
     """Stop a Line admitting work on its own; admitted runs are not cancelled."""
 
-    check_permission("cruxible_playbill_line_disarm", instance_id=instance_id)
+    check_permission("cruxible_line_disarm", instance_id=instance_id)
     from cruxible_core.service.procedures.line_dispatch import service_disarm_line
 
     with change_entry(dry_run, "direct"):
@@ -2068,7 +2066,7 @@ def playbill_line_disarm(
 def playbill_line_status(instance_id: str, line: str) -> contracts.LineArm:
     """The Line's current arm, or its last one and why it stopped."""
 
-    check_permission("cruxible_playbill_line_status", instance_id=instance_id)
+    check_permission("cruxible_line_status", instance_id=instance_id)
     from cruxible_core.service.procedures.line_dispatch import service_line_status
 
     return service_line_status(get_playbill_manager().get(instance_id), line)
@@ -2077,7 +2075,7 @@ def playbill_line_status(instance_id: str, line: str) -> contracts.LineArm:
 def playbill_line_evaluate(
     instance_id: str, line: str, *, request: contracts.LineEvaluateRequest
 ) -> contracts.LineTriggerCheckResult:
-    check_permission("cruxible_playbill_line_evaluate", instance_id=instance_id)
+    check_permission("cruxible_line_evaluate", instance_id=instance_id)
     actor = _write_actor_context(instance_id)
     if actor is None:
         raise AuthenticationError("Historical evaluation requires an authenticated actor identity")
@@ -2095,15 +2093,13 @@ def playbill_line_evaluate(
 def playbill_line_dispatch(
     instance_id: str, line: str, *, request: contracts.LineDispatchRequest
 ) -> contracts.LineDispatchResult:
-    check_permission(
-        "cruxible_playbill_line_dispatch", instance_id=instance_id, audit_success=False
-    )
+    check_permission("cruxible_line_dispatch", instance_id=instance_id, audit_success=False)
     # A shared hosted profile with no isolated execution backend cannot run
     # customer code at all; refuse at the served boundary so the operator gets
     # the mapped error instead of a node refusal buried in a run journal.
     enforce_customer_code_execution_supported()
     _check_run_target_permission(
-        "cruxible_playbill_line_dispatch",
+        "cruxible_line_dispatch",
         instance_id,
         lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line),
     )
@@ -2132,7 +2128,7 @@ def playbill_line_dispatch(
 def playbill_line_check(
     instance_id: str, line: str, *, request: contracts.LineTriggerCheckRequest
 ) -> contracts.LineTriggerCheckResult:
-    check_permission("cruxible_playbill_line_check", instance_id=instance_id)
+    check_permission("cruxible_line_check", instance_id=instance_id)
     from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 
     return service_check_line_trigger(
@@ -2146,13 +2142,13 @@ def playbill_line_run(
     *,
     request: LineRunRequest,
 ) -> contracts.ProcedureRunState:
-    check_permission("cruxible_playbill_line_run", instance_id=instance_id, audit_success=False)
+    check_permission("cruxible_line_run", instance_id=instance_id, audit_success=False)
     # A shared hosted profile with no isolated execution backend cannot run
     # customer code at all; refuse at the served boundary so the operator gets
     # the mapped error instead of a node refusal buried in a run journal.
     enforce_customer_code_execution_supported()
     _check_run_target_permission(
-        "cruxible_playbill_line_run",
+        "cruxible_line_run",
         instance_id,
         lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line_identity_digest),
     )
@@ -2202,7 +2198,7 @@ def playbill_next(
     *,
     request: NextRequestV1 | Mapping[str, object],
 ) -> contracts.NextResult:
-    check_permission("cruxible_playbill_next", instance_id=instance_id)
+    check_permission("cruxible_next", instance_id=instance_id)
     lane_state, lane_code, lane_detail = (
         get_playbill_manager().provider_runtime_operator().lane_status()
     )
@@ -2230,7 +2226,7 @@ def playbill_curation_list(
     *,
     request: PlaybillCurationListRequestV1 | Mapping[str, object],
 ) -> contracts.CurationListResult:
-    check_permission("cruxible_playbill_curation_list", instance_id=instance_id)
+    check_permission("cruxible_curation_list", instance_id=instance_id)
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Cruxible curation reads require an attributed actor")
@@ -2248,7 +2244,7 @@ def playbill_audit(
     *,
     request: PlaybillAuditRequestV1 | Mapping[str, object],
 ) -> contracts.AuditResult:
-    check_permission("cruxible_playbill_audit", instance_id=instance_id)
+    check_permission("cruxible_audit", instance_id=instance_id)
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Cruxible audit reads require an attributed actor")
@@ -2273,7 +2269,7 @@ def playbill_curation_overrule(
     *,
     request: PlaybillCurationOverruleRequestV1 | Mapping[str, object],
 ) -> contracts.CurationActionResult:
-    check_permission("cruxible_playbill_curation_overrule", instance_id=instance_id)
+    check_permission("cruxible_curation_overrule", instance_id=instance_id)
     parsed = _curation_validation_boundary(
         lambda: (
             request
@@ -2295,7 +2291,7 @@ def playbill_curation_accept_fixed(
     *,
     request: PlaybillCurationAcceptFixedRequestV1 | Mapping[str, object],
 ) -> contracts.CurationActionResult:
-    check_permission("cruxible_playbill_curation_accept_fixed", instance_id=instance_id)
+    check_permission("cruxible_curation_accept_fixed", instance_id=instance_id)
     parsed = _curation_validation_boundary(
         lambda: (
             request
@@ -2317,7 +2313,7 @@ def playbill_curation_suppress(
     *,
     request: PlaybillCurationSuppressRequestV1 | Mapping[str, object],
 ) -> contracts.CurationActionResult:
-    check_permission("cruxible_playbill_curation_suppress", instance_id=instance_id)
+    check_permission("cruxible_curation_suppress", instance_id=instance_id)
     parsed = _curation_validation_boundary(
         lambda: (
             request
@@ -2339,7 +2335,7 @@ def playbill_since(
     *,
     request: contracts.SinceRequest | Mapping[str, object],
 ) -> contracts.SinceResult:
-    check_permission("cruxible_playbill_since", instance_id=instance_id)
+    check_permission("cruxible_since", instance_id=instance_id)
     parsed = validate_playbill_since_request(request)
     return service_playbill_since(get_playbill_manager().get(instance_id), request=parsed)
 
@@ -2371,7 +2367,7 @@ def playbill_resolve_coverage(
     disclosure.
     """
 
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     result = service_resolve_playbill_coverage(
         get_playbill_manager().get(instance_id),
         instance_id=instance_id,
@@ -2412,10 +2408,10 @@ def playbill_export_floor(
     directory from this contract is the client's act, never the daemon's.
     """
 
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     # Document bodies keep their own read boundary: the floor carries them only
     # for a caller who may read bodies, and says how to read them otherwise.
-    may_read_bodies = get_current_mode() >= PERMISSION_REQUIREMENTS["cruxible_playbill_body_read"]
+    may_read_bodies = get_current_mode() >= PERMISSION_REQUIREMENTS["cruxible_body_read"]
     files = service_export_playbill_floor(
         get_playbill_manager().get(instance_id),
         at=at,
@@ -2453,7 +2449,7 @@ def playbill_floor_delta(
     missing, unknown, newer or foreign-renderer base, the whole floor.
     """
 
-    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    check_permission("cruxible_read", instance_id=instance_id)
     instance = get_playbill_manager().get(instance_id)
     head = AcceptedCoordinate.from_internal(instance.accepted_coordinate()) if at is None else at
     return service_playbill_floor_delta(
@@ -2510,7 +2506,7 @@ def playbill_get(instance_id: str, *, request: GetRequest) -> GetResult:
     from cruxible_client.contracts.query.definitions import query_definition_path
     from cruxible_core.service.discovery.get import service_playbill_get
 
-    check_permission("cruxible_playbill_get", instance_id=instance_id)
+    check_permission("cruxible_get", instance_id=instance_id)
     # Consumption is recorded at the full coordinate, which a summary answer
     # leaves out unless the caller asked for it.
     result = service_playbill_get(
@@ -2522,8 +2518,7 @@ def playbill_get(instance_id: str, *, request: GetRequest) -> GetResult:
             instance_id,
             include_body=request.detail == "body"
             or (
-                request.detail == "why"
-                and _permits("cruxible_playbill_body_read", instance_id=instance_id)
+                request.detail == "why" and _permits("cruxible_body_read", instance_id=instance_id)
             ),
         ),
         installed_classifier_digests=(

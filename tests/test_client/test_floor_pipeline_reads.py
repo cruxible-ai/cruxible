@@ -17,13 +17,13 @@ from tests.test_client.test_playbill_workspace import _delta, _export
 
 def _workspace(tmp_path):
     workspace = tmp_path / "workspace"
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     (floor / "sources").mkdir(parents=True)
     (floor / "sources/LEDGER").write_bytes(b"# sources LEDGER  0 sources  changed gen 0\n")
     return workspace
 
 
-def _catalog(workspace, *, portable=".playbill/sources.yaml"):
+def _catalog(workspace, *, portable=".cruxible/sources.yaml"):
     catalog = SourceCatalog(
         catalog_kind="portable",
         entries=(
@@ -61,7 +61,7 @@ def _swap_at_open(monkeypatch, path):
 @pytest.mark.parametrize("reader", ["delivery-profile", "profile-recording"])
 def test_fifo_coverage_config_returns_promptly(tmp_path, reader):
     workspace = _workspace(tmp_path)
-    fifo = workspace / ".playbill/coverage.json"
+    fifo = workspace / ".cruxible/coverage.json"
     os.mkfifo(fifo)
 
     def call():
@@ -80,9 +80,9 @@ def test_fifo_projection_manifest_keeps_the_existing_skip_behavior(tmp_path):
     _catalog(workspace)
     digest = "a" * 64
     (workspace / "page.md").write_bytes(
-        b"<!-- playbill:block:test:ref:" + digest[:12].encode() + b" -->\n"
+        b"<!-- cruxible:block:test:ref:" + digest[:12].encode() + b" -->\n"
     )
-    manifests = workspace / ".playbill/manifests"
+    manifests = workspace / ".cruxible/manifests"
     manifests.mkdir()
     fifo = manifests / (digest + ".json")
     os.mkfifo(fifo)
@@ -90,7 +90,7 @@ def test_fifo_projection_manifest_keeps_the_existing_skip_behavior(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "relative", [".playbill/sources.yaml", "sources.yaml", ".playbill/sources.local.yaml"]
+    "relative", [".cruxible/sources.yaml", "sources.yaml", ".cruxible/sources.local.yaml"]
 )
 def test_catalog_swap_to_fifo_keeps_the_existing_invalid_catalog_fallback(
     tmp_path, monkeypatch, relative
@@ -98,7 +98,7 @@ def test_catalog_swap_to_fifo_keeps_the_existing_invalid_catalog_fallback(
     workspace = _workspace(tmp_path)
     catalog = _catalog(
         workspace,
-        portable="sources.yaml" if relative == "sources.yaml" else ".playbill/sources.yaml",
+        portable="sources.yaml" if relative == "sources.yaml" else ".cruxible/sources.yaml",
     )
     fifo = workspace / relative
     if relative.endswith("sources.local.yaml"):
@@ -128,7 +128,7 @@ def test_full_export_comparison_refuses_or_repairs_a_fifo_promptly(tmp_path, for
     workspace = _workspace(tmp_path)
     export = _export()
     authoring.materialize_floor(workspace, export=export)
-    fifo = workspace / ".playbill/floor/cards/fresh.json"
+    fifo = workspace / ".cruxible/floor/cards/fresh.json"
     fifo.unlink()
     os.mkfifo(fifo)
 
@@ -159,7 +159,7 @@ def test_fifo_git_exclude_refuses_after_applying_the_floor(tmp_path):
                 server_socket=str(tmp_path / "socket"),
             ),
         )
-    assert (workspace / ".playbill/floor/manifest.json").is_file()
+    assert (workspace / ".cruxible/floor/manifest.json").is_file()
 
 
 def test_regular_catalog_overlay_and_bound_source_keep_their_results(tmp_path):
@@ -168,7 +168,7 @@ def test_regular_catalog_overlay_and_bound_source_keep_their_results(tmp_path):
     workspace = _workspace(tmp_path)
     portable = _catalog(workspace)
     local = SourceCatalog(catalog_kind="local", entries=portable.entries)
-    (workspace / ".playbill/sources.local.yaml").write_text(
+    (workspace / ".cruxible/sources.local.yaml").write_text(
         yaml.safe_dump(local.model_dump(mode="json"))
     )
     sources = WorkspaceSources(workspace)
@@ -218,10 +218,10 @@ def test_git_info_fifo_swap_refuses_or_persists_through_the_held_descriptor(
             assert (held / "exclude").read_bytes() == old_bytes
         else:
             assert call_with_fifo_timeout(info, write)[1].status == "written"
-            assert (held / "exclude").read_bytes() == old_bytes + b"/.playbill/coverage.json\n"
+            assert (held / "exclude").read_bytes() == old_bytes + b"/.cruxible/coverage.json\n"
             assert (held / "exclude").stat().st_mode & 0o777 == 0o640
             assert sorted(path.name for path in held.iterdir()) == ["exclude"]
     finally:
         os.umask(previous_umask)
     assert swapped and info.is_fifo()
-    assert (workspace / ".playbill/floor/manifest.json").is_file()
+    assert (workspace / ".cruxible/floor/manifest.json").is_file()

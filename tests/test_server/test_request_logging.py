@@ -166,7 +166,7 @@ def test_denied_runtime_request_logs_status_and_error_type(
     _clear_buffer(request_log_buffer)
 
     response = app_client.post(
-        f"/api/v1/{instance_id}/playbill/bodies",
+        f"/api/v1/{instance_id}/bodies",
         json={"content_base64": ""},
         headers=headers,
     )
@@ -175,7 +175,7 @@ def test_denied_runtime_request_logs_status_and_error_type(
     event = _runtime_request_events(request_log_buffer)[-1]
     assert event["event"] == "runtime_request"
     assert event["method"] == "POST"
-    assert event["route"] == "/api/v1/{instance_id}/playbill/bodies"
+    assert event["route"] == "/api/v1/{instance_id}/bodies"
     assert event["status"] == 403
     assert event["error_type"] == "PermissionDeniedError"
     assert event["credential_id"] == credential_id
@@ -212,7 +212,7 @@ def test_playbill_write_logs_credential_actor_and_operation(
     _clear_buffer(request_log_buffer)
 
     response = app_client.post(
-        f"/api/v1/{instance_id}/playbill/init",
+        f"/api/v1/{instance_id}/init",
         json={
             "principals": [
                 owner.principal.model_dump(mode="json"),
@@ -256,7 +256,7 @@ def test_activation_receipt_and_request_log_name_the_credential_actor(
         forbidden_roots=(managed_root,),
     )
     initialized = app_client.post(
-        f"/api/v1/{instance_id}/playbill/init",
+        f"/api/v1/{instance_id}/init",
         json={
             "principals": [
                 owner.principal.model_dump(mode="json"),
@@ -267,7 +267,7 @@ def test_activation_receipt_and_request_log_name_the_credential_actor(
     )
     assert initialized.status_code == 200, initialized.text
     stored = app_client.post(
-        f"/api/v1/{instance_id}/playbill/bodies",
+        f"/api/v1/{instance_id}/bodies",
         json={"content_base64": base64.b64encode(b"activation actor\n").decode("ascii")},
         headers=headers,
     )
@@ -285,7 +285,7 @@ def test_activation_receipt_and_request_log_name_the_credential_actor(
         lifecycle=DocumentLifecycle(revision=1),
     )
     proposed = app_client.post(
-        f"/api/v1/{instance_id}/playbill/documents/proposals",
+        f"/api/v1/{instance_id}/documents/proposals",
         json={"shell": shell.model_dump(mode="json"), "proposal_name": "activation-actor"},
         headers=headers,
     )
@@ -294,14 +294,14 @@ def test_activation_receipt_and_request_log_name_the_credential_actor(
 
     _clear_buffer(request_log_buffer)
     activated = app_client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/activate",
         headers=headers,
     )
 
     assert activated.status_code == 200, activated.text
     assert activated.json()["activated_by"] == "admin_credential"
     event = _runtime_request_events(request_log_buffer)[-1]
-    assert event["route"] == "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate"
+    assert event["route"] == "/api/v1/{instance_id}/proposals/{proposal_id}/activate"
     assert event["credential_id"] == credential_id
     assert event["credential_label"] == "admin_credential"
     assert str(event["operation_id"]).startswith("op_")
@@ -319,7 +319,7 @@ def test_empty_playbill_init_reaches_the_typed_bootstrap_refusal(
     )
 
     response = app_client.post(
-        f"/api/v1/{instance_id}/playbill/init",
+        f"/api/v1/{instance_id}/init",
         json={"principals": []},
         headers=headers,
     )

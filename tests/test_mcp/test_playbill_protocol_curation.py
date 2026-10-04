@@ -35,14 +35,14 @@ def test_protocol_list_hides_tools_outside_playbill_profile(
             return {tool.name for tool in listed.tools}
 
     names = _run(exercise())
-    assert {"cruxible_playbill_orient", "cruxible_playbill_query", "cruxible_playbill_get"} <= names
-    assert "cruxible_playbill_query_spec" not in names
-    assert "cruxible_playbill_set" in names
-    assert "cruxible_playbill_authoring_compile" not in names
-    assert "cruxible_playbill_activate" in names
-    assert "cruxible_playbill_propose_document" not in names
-    assert "cruxible_playbill_block_repin" not in names
-    assert "cruxible_playbill_curation_list" not in names
+    assert {"cruxible_orient", "cruxible_query", "cruxible_get"} <= names
+    assert "cruxible_query_spec" not in names
+    assert "cruxible_set" in names
+    assert "cruxible_authoring_compile" not in names
+    assert "cruxible_activate" in names
+    assert "cruxible_propose_document" not in names
+    assert "cruxible_block_repin" not in names
+    assert "cruxible_curation_list" not in names
 
 
 def test_protocol_call_refuses_hidden_playbill_tool(
@@ -55,7 +55,7 @@ def test_protocol_call_refuses_hidden_playbill_tool(
         async with _protocol_session(server) as session:
             await session.initialize()
             result = await session.call_tool(
-                "cruxible_playbill_block_repin",
+                "cruxible_block_repin",
                 {"instance_id": "inst_missing", "block": "status", "source": "runbook"},
             )
             text = " ".join(block.text for block in result.content if hasattr(block, "text"))
@@ -63,7 +63,7 @@ def test_protocol_call_refuses_hidden_playbill_tool(
 
     is_error, message = _run(exercise())
     assert is_error
-    assert "cruxible_playbill_block_repin" in message
+    assert "cruxible_block_repin" in message
     assert "profile 'default'" in message
 
 
@@ -91,7 +91,7 @@ def test_protocol_explicit_allowlist_is_enforced_on_list_and_call(
     monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
     monkeypatch.setenv(
         "CRUXIBLE_MCP_TOOLS",
-        "cruxible_server_info,cruxible_playbill_get",
+        "cruxible_server_info,cruxible_get",
     )
     server = create_server()
 
@@ -99,16 +99,14 @@ def test_protocol_explicit_allowlist_is_enforced_on_list_and_call(
         async with _protocol_session(server) as session:
             await session.initialize()
             listed = await session.list_tools()
-            result = await session.call_tool(
-                "cruxible_playbill_orient", {"instance_id": "inst_missing"}
-            )
+            result = await session.call_tool("cruxible_orient", {"instance_id": "inst_missing"})
             text = " ".join(block.text for block in result.content if hasattr(block, "text"))
             return {tool.name for tool in listed.tools}, bool(result.isError), text
 
     names, is_error, message = _run(exercise())
-    assert names == {"cruxible_server_info", "cruxible_playbill_get"}
+    assert names == {"cruxible_server_info", "cruxible_get"}
     assert is_error
-    assert "cruxible_playbill_orient" in message
+    assert "cruxible_orient" in message
 
 
 def test_protocol_permission_tier_hides_and_refuses_write(
@@ -122,21 +120,21 @@ def test_protocol_permission_tier_hides_and_refuses_write(
             await session.initialize()
             listed = await session.list_tools()
             result = await session.call_tool(
-                "cruxible_playbill_store_body",
+                "cruxible_store_body",
                 {"instance_id": "inst_missing", "content_base64": ""},
             )
             text = " ".join(block.text for block in result.content if hasattr(block, "text"))
             return {tool.name for tool in listed.tools}, bool(result.isError), text
 
     names, is_error, message = _run(exercise())
-    assert "cruxible_playbill_store_body" not in names
+    assert "cruxible_store_body" not in names
     assert is_error
     assert "GOVERNED_WRITE" in message
     assert "READ_ONLY" in message
 
 
 def test_unknown_allowlist_name_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CRUXIBLE_MCP_TOOLS", "cruxible_server_info,cruxible_query")
+    monkeypatch.setenv("CRUXIBLE_MCP_TOOLS", "cruxible_server_info,cruxible_evaluate")
 
     with pytest.raises(ConfigError, match="Unknown MCP tools"):
         create_server()
@@ -159,8 +157,8 @@ def test_protocol_listing_is_static_when_daemon_transport_is_missing(
             return {tool.name for tool in listed.tools}, bool(result.isError), text
 
     names, is_error, message = _run(exercise())
-    assert "cruxible_playbill_orient" in names
-    assert "cruxible_playbill_next" in names
+    assert "cruxible_orient" in names
+    assert "cruxible_next" in names
     assert is_error
     assert "CRUXIBLE_SERVER_URL" in message
 

@@ -58,7 +58,7 @@ def _initialized_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
         forbidden_roots=(state_root,),
     )
     initialized = client.post(
-        f"/api/v1/{_INSTANCE}/playbill/init",
+        f"/api/v1/{_INSTANCE}/init",
         json={"principals": [owner.principal.model_dump(mode="json")]},
     )
     assert initialized.status_code == 200, initialized.text
@@ -189,7 +189,7 @@ def test_a_copied_pre_migration_root_never_writes_the_original(
     assert refused.value.error_code == "cruxible.host.location_outside_state_root"
     assert str(original / "instances" / _INSTANCE) in str(refused.value)
     stored = client.post(
-        f"/api/v1/{_INSTANCE}/playbill/bodies",
+        f"/api/v1/{_INSTANCE}/bodies",
         json={"content_base64": "aGVsbG8="},
     )
     assert stored.status_code == 409, stored.text
@@ -217,7 +217,7 @@ def test_a_copied_migrated_root_serves_and_writes_only_its_own_copy(
     instance = get_playbill_manager().get(_INSTANCE)
     assert instance.root.resolve() == (copy / "instances" / _INSTANCE).resolve()
     stored = client.post(
-        f"/api/v1/{_INSTANCE}/playbill/bodies",
+        f"/api/v1/{_INSTANCE}/bodies",
         json={"content_base64": "aGVsbG8="},
     )
     assert stored.status_code == 200, stored.text

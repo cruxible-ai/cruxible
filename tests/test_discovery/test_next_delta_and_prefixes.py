@@ -336,12 +336,12 @@ def test_a_retire_repair_names_the_retire_verb_on_every_surface() -> None:
 
     claim = "CLM-" + "1" * 32
     arguments = {"claim_id": claim}
-    assert _REPAIR_TOOLS["cruxible.claim.retire"] == "cruxible_playbill_retire"
+    assert _REPAIR_TOOLS["cruxible.claim.retire"] == "cruxible_retire"
     assert _repair_command("cruxible.claim.retire", arguments=arguments) == (
-        f"cruxible playbill retire {claim}"
+        f"cruxible retire {claim}"
     )
     assert _repair_command("cruxible.claim.retire", arguments=arguments, surface="mcp") == (
-        f'cruxible_playbill_retire(target="{claim}")'
+        f'cruxible_retire(target="{claim}")'
     )
     assert _repair_command("cruxible.claim.retire", arguments=arguments, surface="sdk") == (
         f'cx.retire("{claim}")'
@@ -366,11 +366,11 @@ def test_restating_and_contest_repairs_run_on_the_default_profile_on_every_surfa
         "capture_digest": capture,
     }
     assert _repair_command("cruxible.set", arguments=restate) == (
-        "cruxible playbill set dev.item/tidy-cli dev.item.status done "
+        "cruxible set dev.item/tidy-cli dev.item.status done "
         f"--role observation --capture {capture}"
     )
     assert _repair_command("cruxible.set", arguments=restate, surface="mcp") == (
-        'cruxible_playbill_set(subject="dev.item/tidy-cli", field="dev.item.status", '
+        'cruxible_set(subject="dev.item/tidy-cli", field="dev.item.status", '
         'value="done", role="observation", '
         f'evidence={{"kind": "capture", "capture": "{capture}"}})'
     )
@@ -379,9 +379,9 @@ def test_restating_and_contest_repairs_run_on_the_default_profile_on_every_surfa
         f'evidence={{"kind": "capture", "capture": "{capture}"}})'
     )
     one = {"claim_ids": [claim, "CLM-" + "3" * 32], "changes": [{"op": "retire", "target": claim}]}
-    assert _repair_command("cruxible.write", arguments=one) == f"cruxible playbill retire {claim}"
+    assert _repair_command("cruxible.write", arguments=one) == f"cruxible retire {claim}"
     assert _repair_command("cruxible.write", arguments=one, surface="mcp") == (
-        f'cruxible_playbill_write(changes=[{{"op": "retire", "target": "{claim}"}}])'
+        f'cruxible_write(changes=[{{"op": "retire", "target": "{claim}"}}])'
     )
     assert _repair_command("cruxible.write", arguments=one, surface="sdk") == (
         f'cx.retire("{claim}")'
@@ -396,15 +396,11 @@ def test_a_repair_command_fills_the_placeholder_when_the_row_names_the_file() ->
         arguments={"payload_file": "/" + "tmp/bind payload.json"},
     )
 
-    assert command == (
-        "cruxible playbill authoring bind --payload-file '/" + "tmp/bind payload.json'"
-    )
+    assert command == ("cruxible authoring bind --payload-file '/" + "tmp/bind payload.json'")
 
 
 def test_dropping_a_placeholder_drops_the_flag_that_introduced_it() -> None:
     """A dangling `--payload-file` with no operand is worse than neither."""
     from cruxible_core.service.discovery.next import _repair_command
 
-    assert _repair_command("cruxible.authoring.bind", arguments={}) == (
-        "cruxible playbill authoring bind"
-    )
+    assert _repair_command("cruxible.authoring.bind", arguments={}) == ("cruxible authoring bind")

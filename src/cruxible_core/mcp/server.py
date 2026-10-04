@@ -32,6 +32,7 @@ from cruxible_core.mcp.permissions import (
 )
 from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.tools import register_tools
+from cruxible_core.mcp.wire_tags import fill_tool_arguments, hide_wire_tags
 from cruxible_core.server.config import ServerSettings, resolve_server_settings
 
 BASE_INSTRUCTIONS = """\\
@@ -43,27 +44,27 @@ what becomes canonical.
 
 Every instance tool's instance_id defaults to the server's CRUXIBLE_INSTANCE_ID.
 
-Read with three verbs. cruxible_playbill_orient maps the instance: each Subject
+Read with three verbs. cruxible_orient maps the instance: each Subject
 kind with its predicates, artifact and Claim counts, who you are, what needs
 attention, and the next calls to make; orient(kind=K) widens one kind and
 orient(section=S) pages one family (documents, queries, interfaces,
-principals, policies, runs, ...). cruxible_playbill_query answers any question
+principals, policies, runs, ...). cruxible_query answers any question
 as rows of values with verdict flags: a Subject kind with where/select/follow,
-contains for text in values, or a named query. cruxible_playbill_get reads one
+contains for text in values, or a named query. cruxible_get reads one
 thing by any reference you have seen (CLM-..., kind/id, ClaimType:,
 Document:, query:, Principal:, ...) at a detail: summary, evidence, why,
 history, proof or body. To find something by name or text, grep the floor
-that `cruxible playbill floor export` writes: .playbill/floor/current/<kind>/<id>.yaml
+that `cruxible floor export` writes: .cruxible/floor/current/<kind>/<id>.yaml
 holds one Subject per file, its first line names its ref, and get reads that ref
-live. Without a shell, query with contains instead. cruxible_playbill_next lists
+live. Without a shell, query with contains instead. cruxible_next lists
 what needs attention.
 
-Write with cruxible_playbill_set, retire or write; each proposes one change set
+Write with cruxible_set, retire or write; each proposes one change set
 and accepts it when policy lets you. A proposal is not accepted state, an
 approval is not activation, and diagnostics never carry authority.
 
 Setting up a host and its first principals is operator work on the cruxible CLI
-(server start, playbill host create, playbill init), not part of this tool set.
+(server start, cruxible host create, cruxible init), not part of this tool set.
 Transport tiers only control endpoint reachability; Cruxible principals and
 acceptance laws control semantic authority.
 """
@@ -139,7 +140,7 @@ def _install_tool_curation(
             name=tool.name,
             title=tool.title,
             description=tool.description,
-            inputSchema=tool.parameters,
+            inputSchema=hide_wire_tags(tool.parameters),
             outputSchema=tool.output_schema,
             annotations=tool.annotations,
             icons=tool.icons,
@@ -174,6 +175,9 @@ def _install_tool_curation(
                     advertised=advertised,
                 )
             )
+        tool = manager.get_tool(name)
+        if tool is not None and isinstance(arguments, dict):
+            arguments = fill_tool_arguments(tool.fn_metadata.arg_model, arguments)
         try:
             return await inner_call_tool(
                 name,

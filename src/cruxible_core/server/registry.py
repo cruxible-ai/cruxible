@@ -329,7 +329,7 @@ class InstanceRegistry:
             if attached is not None and attached.instance_id != instance_id:
                 raise ConfigError(
                     f"Workspace {resolved_workspace_root!r} is already attached to Cruxible "
-                    f"host {attached.instance_id!r}; release it with `cruxible playbill "
+                    f"host {attached.instance_id!r}; release it with `cruxible "
                     f"workspace detach --instance-id {attached.instance_id}` or choose "
                     f"another Git worktree before creating {instance_id!r}"
                 )

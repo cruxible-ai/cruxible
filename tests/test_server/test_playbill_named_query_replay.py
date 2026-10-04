@@ -153,7 +153,7 @@ def test_http_admits_a_null_parameter_and_the_definition_decides(
 ) -> None:
     client, instance_id, _instance = served
     response = client._client.post(
-        f"/api/v1/{instance_id}/playbill/query",
+        f"/api/v1/{instance_id}/query",
         json={
             "name": BY_STATUS,
             "params": {"optional_status": None},
@@ -168,7 +168,7 @@ def test_http_admits_a_null_parameter_and_the_definition_decides(
 
     # A null for a parameter the definition does not declare still refuses there.
     refused = client._client.post(
-        f"/api/v1/{instance_id}/playbill/query",
+        f"/api/v1/{instance_id}/query",
         json={"name": BY_STATUS, "params": {"undeclared": None}},
     )
     assert refused.status_code == 400
@@ -307,7 +307,7 @@ def test_a_query_without_a_projection_records_the_claims_its_cells_served(
         body["spec"] = QueryDefinitionSpec.model_validate(
             {**_bare_query().model_dump(mode="json"), "pins": []}
         ).model_dump(mode="json")
-    response = client._client.post(f"/api/v1/{instance_id}/playbill/query", json=body)
+    response = client._client.post(f"/api/v1/{instance_id}/query", json=body)
     assert response.status_code == 200, response.text
     page = QueryResultRecord.model_validate(response.json())
     assert [row["status"] for row in page.rows] == ["ready", "blocked"]

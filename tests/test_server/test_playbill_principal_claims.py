@@ -55,7 +55,7 @@ def _principal(tmp_path: Path, managed: Path, principal_id: str) -> dict[str, ob
 def _init(client: TestClient, tmp_path: Path, managed: Path, *, claim: str | None) -> object:
     headers = {} if claim is None else {PRINCIPAL_ID_HEADER: claim}
     return client.post(
-        f"/api/v1/{INSTANCE}/playbill/init",
+        f"/api/v1/{INSTANCE}/init",
         json={"principals": [_principal(tmp_path, managed, "alice")]},
         headers=headers,
     )
@@ -69,9 +69,7 @@ def test_init_under_a_claimed_principal_makes_it_the_owner_with_no_secret(
     initialized = _init(client, tmp_path, managed, claim="alice")
 
     assert initialized.status_code == 200, initialized.text  # type: ignore[attr-defined]
-    who = client.get(
-        f"/api/v1/{INSTANCE}/playbill/whoami", headers={PRINCIPAL_ID_HEADER: "alice"}
-    ).json()
+    who = client.get(f"/api/v1/{INSTANCE}/whoami", headers={PRINCIPAL_ID_HEADER: "alice"}).json()
     assert who["actor_id"] == "alice"
     assert who["actor_id_source"] == "principal_claim"
     assert who["authenticated"] is False
@@ -89,7 +87,7 @@ def test_init_names_the_owner_mismatch_and_the_command_that_repairs_it(
     assert refused.status_code == 403  # type: ignore[attr-defined]
     body = refused.json()  # type: ignore[attr-defined]
     assert body["error_code"] == "cruxible.identity.init_owner_mismatch"
-    assert "cruxible playbill init --principal-id ID --key-dir DIR" in body["message"]
+    assert "cruxible init --principal-id ID --key-dir DIR" in body["message"]
     assert body["repair"]["operation"] == "cruxible.init"
 
 
@@ -101,11 +99,11 @@ def test_an_unregistered_claim_reads_but_is_refused_every_write(
     mallory = {PRINCIPAL_ID_HEADER: "mallory"}
 
     listed = client.get(
-        f"/api/v1/{INSTANCE}/playbill/orient", params={"section": "principals"}, headers=mallory
+        f"/api/v1/{INSTANCE}/orient", params={"section": "principals"}, headers=mallory
     )
-    who = client.get(f"/api/v1/{INSTANCE}/playbill/whoami", headers=mallory)
+    who = client.get(f"/api/v1/{INSTANCE}/whoami", headers=mallory)
     withdrawn = client.post(
-        f"/api/v1/{INSTANCE}/playbill/proposals/sha256:{'0' * 64}/withdraw",
+        f"/api/v1/{INSTANCE}/proposals/sha256:{'0' * 64}/withdraw",
         json={"reason": "not mine"},
         headers=mallory,
     )
@@ -120,7 +118,7 @@ def test_an_unregistered_claim_reads_but_is_refused_every_write(
         assert refused.status_code == 403  # type: ignore[attr-defined]
         body = refused.json()  # type: ignore[attr-defined]
         assert body["error_code"] == "cruxible.identity.principal_absent"
-        assert "cruxible playbill principal add mallory --key-dir DIR" in body["message"]
+        assert "cruxible principal add mallory --key-dir DIR" in body["message"]
         assert body["repair"] == {
             "operation": "cruxible.principal.add",
             "arguments": {"principal_id": "mallory"},
@@ -132,9 +130,7 @@ def test_a_malformed_claim_is_refused_before_it_names_anyone(
 ) -> None:
     client, _managed = daemon
 
-    refused = client.get(
-        f"/api/v1/{INSTANCE}/playbill/whoami", headers={PRINCIPAL_ID_HEADER: "Not An ID"}
-    )
+    refused = client.get(f"/api/v1/{INSTANCE}/whoami", headers={PRINCIPAL_ID_HEADER: "Not An ID"})
 
     assert refused.status_code == 400
     assert refused.json()["error_code"] == "cruxible.identity.principal_claim_invalid"
@@ -153,7 +149,7 @@ def test_with_auth_on_a_claim_may_only_repeat_the_credentials_principal(
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     headers = {"Authorization": f"Bearer {created.token}", PRINCIPAL_ID_HEADER: "bob"}
 
-    refused = client.get(f"/api/v1/{INSTANCE}/playbill/whoami", headers=headers)
+    refused = client.get(f"/api/v1/{INSTANCE}/whoami", headers=headers)
 
     assert refused.status_code == 401
     assert refused.json()["error_code"] == "cruxible.identity.principal_claim_mismatch"
@@ -176,7 +172,7 @@ def _create(client: TestClient, headers: dict[str, str]) -> object:
     from tests.test_authoring.test_authoring_preflight import _self_source_payload
 
     return client.post(
-        f"/api/v1/{INSTANCE}/playbill/authoring/intents",
+        f"/api/v1/{INSTANCE}/authoring/intents",
         json={
             "tag": "playbill-authoring-intent-create-request-v1",
             "payload": _self_source_payload().model_dump(mode="json"),
@@ -191,11 +187,9 @@ def test_whoami_says_whether_the_actor_can_author_and_create_refuses_with_the_sa
     client, managed = daemon
     assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
 
-    anonymous = client.get(f"/api/v1/{INSTANCE}/playbill/whoami").json()
+    anonymous = client.get(f"/api/v1/{INSTANCE}/whoami").json()
     refused = _create(client, {})
-    alice = client.get(
-        f"/api/v1/{INSTANCE}/playbill/whoami", headers={PRINCIPAL_ID_HEADER: "alice"}
-    ).json()
+    alice = client.get(f"/api/v1/{INSTANCE}/whoami", headers={PRINCIPAL_ID_HEADER: "alice"}).json()
     created = _create(client, {PRINCIPAL_ID_HEADER: "alice"})
 
     assert anonymous["can_author"] is False
@@ -228,7 +222,7 @@ def test_a_read_only_credential_is_told_it_cannot_author_and_how_to_get_the_tier
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
 
     who = client.get(
-        f"/api/v1/{INSTANCE}/playbill/whoami",
+        f"/api/v1/{INSTANCE}/whoami",
         headers={"Authorization": f"Bearer {reader.token}"},
     ).json()
 
@@ -266,7 +260,7 @@ def test_authoring_create_refuses_a_non_principal_before_any_work(
         )
 
     assert refused.value.error_code == "cruxible.identity.principal_absent"
-    assert "cruxible playbill principal add mallory --key-dir DIR" in str(refused.value)
+    assert "cruxible principal add mallory --key-dir DIR" in str(refused.value)
 
 
 _OPERATIONAL_SECTIONS = (
@@ -289,14 +283,14 @@ def test_an_unregistered_claim_reads_orient_and_every_operational_section(
     assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
     mallory = {PRINCIPAL_ID_HEADER: "mallory"}
 
-    base = client.get(f"/api/v1/{INSTANCE}/playbill/orient", headers=mallory)
+    base = client.get(f"/api/v1/{INSTANCE}/orient", headers=mallory)
     assert base.status_code == 200, base.text
     you = base.json()["you"]
     assert you["can_author"] is False
     assert you["authoring_refusal"]["code"] == "cruxible.identity.principal_absent"
     for section in _OPERATIONAL_SECTIONS:
         page = client.get(
-            f"/api/v1/{INSTANCE}/playbill/orient", params={"section": section}, headers=mallory
+            f"/api/v1/{INSTANCE}/orient", params={"section": section}, headers=mallory
         )
         assert page.status_code == 200, (section, page.text)
         assert page.json()["section"] == section
@@ -332,7 +326,7 @@ def test_the_write_verbs_refuse_a_caller_that_cannot_author_with_the_whoami_repa
 ) -> None:
     client, managed = daemon
     assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
-    who = client.get(f"/api/v1/{INSTANCE}/playbill/whoami", headers=headers).json()
+    who = client.get(f"/api/v1/{INSTANCE}/whoami", headers=headers).json()
     assert who["authoring_refusal"]["code"] == code
 
     change = {"subject": "project.work_item/wi-1", "field": "status", "value": "ready"}
@@ -351,7 +345,7 @@ def test_the_write_verbs_refuse_a_caller_that_cannot_author_with_the_whoami_repa
         },
     }
     for verb, body in requests.items():
-        refused = client.post(f"/api/v1/{INSTANCE}/playbill/{verb}", json=body, headers=headers)
+        refused = client.post(f"/api/v1/{INSTANCE}/{verb}", json=body, headers=headers)
         assert refused.status_code == 403, (verb, refused.text)
         answer = refused.json()
         assert answer["error_code"] == code, verb

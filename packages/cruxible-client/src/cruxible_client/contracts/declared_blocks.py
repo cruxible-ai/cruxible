@@ -49,12 +49,12 @@ MAX_PROJECTION_CARDS_PER_SOURCE = 256
 MAX_PROJECTION_COVERAGE_BINDINGS = 1024
 
 _BLOCK_ID = rb"[a-z][a-z0-9_.-]{0,63}"
-_STAMPED_OPEN = re.compile(rb"<!-- playbill:block:(" + _BLOCK_ID + rb"):([A-Za-z0-9_-]+) -->\n")
+_STAMPED_OPEN = re.compile(rb"<!-- cruxible:block:(" + _BLOCK_ID + rb"):([A-Za-z0-9_-]+) -->\n")
 _COMPACT_OPEN = re.compile(
-    rb"<!-- playbill:block:(" + _BLOCK_ID + rb"):ref:([0-9a-f]{12}|sha256:[0-9a-f]{64}) -->\n"
+    rb"<!-- cruxible:block:(" + _BLOCK_ID + rb"):ref:([0-9a-f]{12}|sha256:[0-9a-f]{64}) -->\n"
 )
-_BOOTSTRAP_OPEN = re.compile(rb"<!-- playbill:block:(" + _BLOCK_ID + rb") -->\n")
-_CLOSE = re.compile(rb"<!-- /playbill:block:(" + _BLOCK_ID + rb") -->\n")
+_BOOTSTRAP_OPEN = re.compile(rb"<!-- cruxible:block:(" + _BLOCK_ID + rb") -->\n")
+_CLOSE = re.compile(rb"<!-- /cruxible:block:(" + _BLOCK_ID + rb") -->\n")
 _FENCE_OPEN = re.compile(rb" {0,3}(`{3,}|~{3,})([^\r\n]*)\r?\n?$")
 
 
@@ -514,7 +514,7 @@ def render_projection_opening(stamp: ProjectionBlockStampAny) -> bytes:
     content = canonical_bytes(stamp.model_dump(mode="json"))
     check_projection_processing_bytes(len(content))
     encoded = base64.urlsafe_b64encode(content).rstrip(b"=")
-    return b"<!-- playbill:block:" + stamp.block_id.encode("ascii") + b":" + encoded + b" -->\n"
+    return b"<!-- cruxible:block:" + stamp.block_id.encode("ascii") + b":" + encoded + b" -->\n"
 
 
 def projection_manifest(stamp: ProjectionBlockStampAny) -> tuple[str, bytes]:
@@ -527,7 +527,7 @@ def projection_manifest(stamp: ProjectionBlockStampAny) -> tuple[str, bytes]:
 def render_compact_projection_opening(stamp: ProjectionBlockStampAny) -> bytes:
     digest, _ = projection_manifest(stamp)
     return (
-        b"<!-- playbill:block:"
+        b"<!-- cruxible:block:"
         + stamp.block_id.encode("ascii")
         + b":ref:"
         + digest.removeprefix("sha256:")[:12].encode("ascii")
@@ -577,7 +577,7 @@ def _resolve_projection_manifest(
 def render_projection_closing(block_id: str) -> bytes:
     if re.fullmatch(_BLOCK_ID, block_id.encode("ascii", errors="strict")) is None:
         raise ProjectionMarkerError("projection block ID is malformed")
-    return b"<!-- /playbill:block:" + block_id.encode("ascii") + b" -->\n"
+    return b"<!-- /cruxible:block:" + block_id.encode("ascii") + b" -->\n"
 
 
 def _marker_candidate_lines(content: bytes) -> Iterator[tuple[bytes, int, int]]:
@@ -616,8 +616,8 @@ def _marker_candidate_lines(content: bytes) -> Iterator[tuple[bytes, int, int]]:
 
         candidate = line.lstrip(b" ")
         if not (
-            candidate.startswith(b"<!-- playbill:block:")
-            or candidate.startswith(b"<!-- /playbill:block:")
+            candidate.startswith(b"<!-- cruxible:block:")
+            or candidate.startswith(b"<!-- /cruxible:block:")
         ):
             continue
         yield line, line_start, offset
@@ -706,7 +706,7 @@ def stamped_projection_windows(content: bytes) -> tuple[ProjectionWindow, ...]:
     so a quoted marker inside a fence or an indented one is inert on both sides.
     """
 
-    if b"playbill:block:" not in content:
+    if b"cruxible:block:" not in content:
         return ()
     active: tuple[str, int] | None = None
     windows: list[ProjectionWindow] = []

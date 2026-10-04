@@ -1,7 +1,7 @@
 """Local projection manifests: the immutable declarations a compact page references.
 
 A compact projection block names its declaration by digest; the manifest bytes
-live beside the workspace under ``.playbill/manifests``. They are derived local
+live beside the workspace under ``.cruxible/manifests``. They are derived local
 files, not governed retention.
 """
 
@@ -27,7 +27,7 @@ def load_projection_manifests(workspace: Path, content: bytes) -> dict[str, byte
     root = workspace.resolve()
     result = {}
     total = 0
-    directory = root / ".playbill/manifests"
+    directory = root / ".cruxible/manifests"
     for ref in projection_manifest_refs(content):
         if ref.startswith("sha256:"):
             digest = ref
@@ -55,7 +55,7 @@ def retain_local_manifests(workspace: Path, manifests: Mapping[str, bytes]) -> N
     if not manifests:
         return
     root = workspace.resolve()
-    directory = root / ".playbill/manifests"
+    directory = root / ".cruxible/manifests"
     if not directory.resolve().is_relative_to(root):
         raise ProjectionMarkerError("projection manifest directory escapes its workspace")
     directory.mkdir(parents=True, exist_ok=True)

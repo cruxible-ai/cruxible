@@ -1,6 +1,6 @@
 """The one file a principal's process loads to act: connection, identity, key, token.
 
-`playbill init` writes it for the owner and `playbill principal add` for each
+`cruxible init` writes it for the owner and `cruxible principal add` for each
 agent, beside the private key in the principal's key directory. It is a shell
 file of `export` lines (`set -a; . DIR/cruxible.env; set +a`), readable by the
 CLI, the SDK and the MCP server alike because each reads the same variables.

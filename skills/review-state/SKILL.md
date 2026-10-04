@@ -68,8 +68,8 @@ Use this to answer:
 If the state has `named_queries`, run the ones that matter to the user's concern and inspect receipts:
 
 ```bash
-cruxible query run <query_name> --param key=value
-cruxible explain --receipt <receipt_id>
+cruxible query --name <query_name> --param key=value
+cruxible get <ref> --detail why
 ```
 
 If the review is about overall state health or handoff readiness, do not stop at representative coverage. Exercise all `named_queries`.

@@ -621,7 +621,7 @@ Exports/materializes the configured floor at the explicit accepted coordinate an
 file(path: str | Path) -> FileSelector
 ```
 
-Reads a cataloged workspace file into a FileSelector using .playbill/sources.yaml and applicable local catalog settings.
+Reads a cataloged workspace file into a FileSelector using .cruxible/sources.yaml and applicable local catalog settings.
 
 **Conditions and effects:** Uncataloged/out-of-root selections and malformed catalogs refuse. File bytes are observed now, before prepare.
 
@@ -724,7 +724,7 @@ orient(
 
 Maps accepted state in one call at the context’s coordinate: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (whether this caller can author, and why not), `attention` from the `next` queue, and `next` suggestions written as SDK calls. `kind` reads one kind in full with sample Subject IDs and the predicates that point at it (`incoming`). `section` pages one family: `documents`, `procedures`, `claim_types`, `queries`, `interfaces`, `principals` or `policies`, or an operational one (`runs`, `running`, `lines`, `captures`, `capture_contracts`, `predictions`, `mandates`). An `interfaces` row carries `interface_digest`, `providers` (`[{provider, implementation_digest}]`) and `operation_contract`; read one in full with `get("ProviderInterface:<name>")`. When the workspace holds an exported floor, `floor` says its coordinate and how many generations it is behind; a connection without a workspace reports no floor.
 
-There is no cross-kind name search: grep the exported floor under `.playbill/floor/`, then `get` the reference you found.
+There is no cross-kind name search: grep the exported floor under `.cruxible/floor/`, then `get` the reference you found.
 
 **Conditions and effects:** Follow `next_cursor` while `truncated`. A wrong kind is refused with the nearest kinds.
 
@@ -792,7 +792,7 @@ query(
 ```
 
 Answers any question over accepted state in one call, exactly as the MCP tool
-`cruxible_playbill_query` and `cruxible playbill query` do. Exactly one mode:
+`cruxible_query` and `cruxible query` do. Exactly one mode:
 compact (`kind` and/or `contains`, with `where`, `select`, `follow`,
 `order_by`), a full `spec`, or a query `name` with `params`.
 
@@ -3902,8 +3902,8 @@ the author’s prose or silently repin. It never raises on drift: read
 what it would change without making it. `repin(..., dry_run=True)` returns the
 stamp it would write and writes nothing. The marker grammar is in the CLI
 reference under "Projection block markers"; MCP agents use the
-`cruxible_playbill_block_repin`, `cruxible_playbill_block_sync` (read-only) and
-`cruxible_playbill_block_detach` (the page edit, previewed) tools, which
+`cruxible_block_repin`, `cruxible_block_sync` (read-only) and
+`cruxible_block_detach` (the page edit, previewed) tools, which
 run this same adapter.
 
 <a id="api-projectionblocks"></a>
@@ -4864,7 +4864,7 @@ check_playbill_projection_blocks(
 ) -> contracts.ProjectionCheckResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/projections/check'`.
+HTTP: `POST f'/api/v1/{instance_id}/projections/check'`.
 
 <a id="api-cruxibleclient-read-playbill-block-sync-backing"></a>
 
@@ -4880,7 +4880,7 @@ read_playbill_block_sync_backing(
 ) -> contracts.BlockSyncReadResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/projections/sync-backing'`.
+HTTP: `POST f'/api/v1/{instance_id}/projections/sync-backing'`.
 
 <a id="api-cruxibleclient-server-info"></a>
 
@@ -4947,7 +4947,7 @@ declare_playbill_block(
 ) -> contracts.BlockDeclareResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/blocks/declare'`.
+HTTP: `POST f'/api/v1/{instance_id}/blocks/declare'`.
 
 <a id="api-cruxibleclient-depublish-playbill-block"></a>
 
@@ -4963,7 +4963,7 @@ depublish_playbill_block(
 ) -> contracts.BlockDepublishResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/blocks/depublish'`.
+HTTP: `POST f'/api/v1/{instance_id}/blocks/depublish'`.
 
 <a id="api-cruxibleclient-playbill-host-workspace-detach"></a>
 
@@ -4975,7 +4975,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/blocks/depublish'`.
 playbill_host_workspace_detach(instance_id: str) -> contracts.WorkspaceDetachResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/workspace-detach'`.
+HTTP: `POST f'/api/v1/{instance_id}/workspace-detach'`.
 
 <a id="api-cruxibleclient-playbill-host-workspace-registration"></a>
 
@@ -4987,7 +4987,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/workspace-detach'`.
 playbill_host_workspace_registration(instance_id: str) -> contracts.HostWorkspaceRegistration
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/workspace-registration'`.
+HTTP: `GET f'/api/v1/{instance_id}/workspace-registration'`.
 
 <a id="api-cruxibleclient-show-playbill-host"></a>
 
@@ -4999,7 +4999,7 @@ HTTP: `GET f'/api/v1/{instance_id}/playbill/workspace-registration'`.
 show_playbill_host(instance_id: str) -> contracts.HostInspection
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/host'`.
+HTTP: `GET f'/api/v1/{instance_id}/host'`.
 
 <a id="api-cruxibleclient-claim-runtime-bootstrap"></a>
 
@@ -5107,7 +5107,7 @@ init_playbill(
 ) -> contracts.InitResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/init'`.
+HTTP: `POST f'/api/v1/{instance_id}/init'`.
 
 <a id="api-cruxibleclient-store-playbill-body"></a>
 
@@ -5119,7 +5119,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/init'`.
 store_playbill_body(instance_id: str, content: bytes) -> contracts.CasObjectResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/bodies'`.
+HTTP: `POST f'/api/v1/{instance_id}/bodies'`.
 
 <a id="api-cruxibleclient-decommission-playbill-instance"></a>
 
@@ -5135,7 +5135,7 @@ decommission_playbill_instance(
 ) -> contracts.InstanceDecommissionResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/instance/decommission'`.
+HTTP: `POST f'/api/v1/{instance_id}/instance/decommission'`.
 
 <a id="api-cruxibleclient-set-playbill-ledger-mirror"></a>
 
@@ -5147,7 +5147,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/instance/decommission'`.
 set_playbill_ledger_mirror(instance_id: str, *, url: str) -> contracts.LedgerMirror
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/ledger/mirror'`.
+HTTP: `POST f'/api/v1/{instance_id}/ledger/mirror'`.
 
 <a id="api-cruxibleclient-publish-playbill-ledger"></a>
 
@@ -5159,7 +5159,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/ledger/mirror'`.
 publish_playbill_ledger(instance_id: str, *, timeout: float=60.0) -> contracts.LedgerMirror
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/ledger/publish'`.
+HTTP: `POST f'/api/v1/{instance_id}/ledger/publish'`.
 
 <a id="api-cruxibleclient-get-playbill-ledger-mirror"></a>
 
@@ -5171,7 +5171,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/ledger/publish'`.
 get_playbill_ledger_mirror(instance_id: str) -> contracts.LedgerMirror
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/ledger/mirror'`.
+HTTP: `GET f'/api/v1/{instance_id}/ledger/mirror'`.
 
 <a id="api-cruxibleclient-list-playbill-provider-packages"></a>
 
@@ -5183,7 +5183,7 @@ HTTP: `GET f'/api/v1/{instance_id}/playbill/ledger/mirror'`.
 list_playbill_provider_packages(instance_id: str) -> ProviderCatalog
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/providers'`.
+HTTP: `GET f'/api/v1/{instance_id}/providers'`.
 
 <a id="api-cruxibleclient-install-playbill-provider"></a>
 
@@ -5198,7 +5198,7 @@ install_playbill_provider(
 ) -> ProviderInstallResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/providers/install'`.
+HTTP: `POST f'/api/v1/{instance_id}/providers/install'`.
 
 <a id="api-cruxibleclient-propose-playbill-document"></a>
 
@@ -5217,7 +5217,7 @@ propose_playbill_document(
 ) -> contracts.ProposalInspection
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/documents/proposals'`.
+HTTP: `POST f'/api/v1/{instance_id}/documents/proposals'`.
 
 <a id="api-cruxibleclient-propose-playbill-compiler-upgrade"></a>
 
@@ -5235,7 +5235,7 @@ propose_playbill_compiler_upgrade(
 ) -> contracts.ProposalInspection
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/compiler/proposals'`.
+HTTP: `POST f'/api/v1/{instance_id}/compiler/proposals'`.
 
 <a id="api-cruxibleclient-propose-playbill-principal-change"></a>
 
@@ -5253,7 +5253,7 @@ propose_playbill_principal_change(
 ) -> contracts.ProposalInspection
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/principals/proposals'`.
+HTTP: `POST f'/api/v1/{instance_id}/principals/proposals'`.
 
 <a id="api-cruxibleclient-playbill-whoami"></a>
 
@@ -5265,7 +5265,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/principals/proposals'`.
 playbill_whoami(instance_id: str) -> contracts.WhoAmI
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/whoami'`.
+HTTP: `GET f'/api/v1/{instance_id}/whoami'`.
 
 <a id="api-cruxibleclient-playbill-head"></a>
 
@@ -5281,7 +5281,7 @@ playbill_head(
 ) -> contracts.Head
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/head'`. The accepted head (or the coordinate `at` names) as `Head` `{instance, coordinate, generation}` and nothing else: the cheapest read, which `Cruxible.refresh()` uses in place of `orient`.
+HTTP: `GET f'/api/v1/{instance_id}/head'`. The accepted head (or the coordinate `at` names) as `Head` `{instance, coordinate, generation}` and nothing else: the cheapest read, which `Cruxible.refresh()` uses in place of `orient`.
 
 <a id="api-cruxibleclient-orient-playbill"></a>
 
@@ -5303,7 +5303,7 @@ orient_playbill(
 ) -> contracts.OrientResult
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/orient'`. `at` is an accepted coordinate or one accepted generation's Git OID; `surface` picks how `next` suggestions are written (`mcp`, `cli` or `sdk`).
+HTTP: `GET f'/api/v1/{instance_id}/orient'`. `at` is an accepted coordinate or one accepted generation's Git OID; `surface` picks how `next` suggestions are written (`mcp`, `cli` or `sdk`).
 
 <a id="api-cruxibleclient-list-playbill-proposals"></a>
 
@@ -5319,7 +5319,7 @@ list_playbill_proposals(
 ) -> contracts.ProposalList
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/proposals'`.
+HTTP: `GET f'/api/v1/{instance_id}/proposals'`.
 
 <a id="api-cruxibleclient-resolve-playbill-proposal-selector"></a>
 
@@ -5334,7 +5334,7 @@ resolve_playbill_proposal_selector(
 ) -> contracts.ProposalSelectorResult
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/proposal-selector'`.
+HTTP: `GET f'/api/v1/{instance_id}/proposal-selector'`.
 
 <a id="api-cruxibleclient-readmit-playbill-proposal"></a>
 
@@ -5346,7 +5346,7 @@ HTTP: `GET f'/api/v1/{instance_id}/playbill/proposal-selector'`.
 readmit_playbill_proposal(instance_id: str, proposal_id: str) -> contracts.ProposalReadmitResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/readmit'`.
+HTTP: `POST f'/api/v1/{instance_id}/proposals/{proposal_id}/readmit'`.
 
 <a id="api-cruxibleclient-withdraw-playbill-proposal"></a>
 
@@ -5363,7 +5363,7 @@ withdraw_playbill_proposal(
 ) -> contracts.ProposalWithdrawResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/withdraw'`.
+HTTP: `POST f'/api/v1/{instance_id}/proposals/{proposal_id}/withdraw'`.
 
 <a id="api-cruxibleclient-inspect-playbill-proposal"></a>
 
@@ -5375,7 +5375,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/withdraw'`.
 inspect_playbill_proposal(instance_id: str, proposal_id: str) -> contracts.ProposalInspection
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}'`.
+HTTP: `GET f'/api/v1/{instance_id}/proposals/{proposal_id}'`.
 
 <a id="api-cruxibleclient-playbill-proposal-status"></a>
 
@@ -5390,7 +5390,7 @@ playbill_proposal_status(instance_id: str, proposal_id: str) -> contracts.Propos
 One proposal's list entry at the current accepted coordinate, read by ID.
 `Proposal.status()` uses it.
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/status'`.
+HTTP: `GET f'/api/v1/{instance_id}/proposals/{proposal_id}/status'`.
 
 <a id="api-cruxibleclient-inspect-playbill-refusal"></a>
 
@@ -5402,7 +5402,7 @@ HTTP: `GET f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/status'`.
 inspect_playbill_refusal(instance_id: str, proposal_id: str) -> contracts.RefusalInspection
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/refusal'`.
+HTTP: `GET f'/api/v1/{instance_id}/proposals/{proposal_id}/refusal'`.
 
 <a id="api-cruxibleclient-review-playbill-proposal"></a>
 
@@ -5420,7 +5420,7 @@ review_playbill_proposal(
 ) -> contracts.ProposalReview
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/review'`.
+HTTP: `POST f'/api/v1/{instance_id}/proposals/{proposal_id}/review'`.
 
 <a id="api-cruxibleclient-prepare-playbill-approval"></a>
 
@@ -5438,7 +5438,7 @@ prepare_playbill_approval(
 ) -> contracts.ApprovalChallenge
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge'`.
+HTTP: `POST f'/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge'`.
 
 <a id="api-cruxibleclient-submit-playbill-approval"></a>
 
@@ -5455,7 +5455,7 @@ submit_playbill_approval(
 ) -> contracts.ApprovalReceipt
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals'`.
+HTTP: `POST f'/api/v1/{instance_id}/proposals/{proposal_id}/approvals'`.
 
 <a id="api-cruxibleclient-approve-playbill-proposal"></a>
 
@@ -5484,7 +5484,7 @@ approve_playbill_proposal(
 activate_playbill_proposal(instance_id: str, proposal_id: str) -> contracts.ActivationReceipt
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate'`.
+HTTP: `POST f'/api/v1/{instance_id}/proposals/{proposal_id}/activate'`.
 
 <a id="api-cruxibleclient-read-playbill-capture"></a>
 
@@ -5496,7 +5496,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate'`.
 read_playbill_capture(instance_id: str, request: CaptureReadRequest) -> CaptureRead
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/captures/read'`.
+HTTP: `POST f'/api/v1/{instance_id}/captures/read'`.
 
 <a id="api-cruxibleclient-playbill-source-context"></a>
 
@@ -5508,7 +5508,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/captures/read'`.
 playbill_source_context(instance_id: str) -> contracts.SourceContext
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/sources/context'`.
+HTTP: `GET f'/api/v1/{instance_id}/sources/context'`.
 
 <a id="api-cruxibleclient-check-playbill-source-bundle"></a>
 
@@ -5524,7 +5524,7 @@ check_playbill_source_bundle(
 ) -> contracts.SourceCheckResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/sources/check'`.
+HTTP: `POST f'/api/v1/{instance_id}/sources/check'`.
 
 <a id="api-cruxibleclient-propose-playbill-source-bundle"></a>
 
@@ -5542,7 +5542,7 @@ propose_playbill_source_bundle(
 ) -> contracts.ProposalInspection
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/sources/proposals'`.
+HTTP: `POST f'/api/v1/{instance_id}/sources/proposals'`.
 
 <a id="api-cruxibleclient-propose-playbill-claim-type"></a>
 
@@ -5560,7 +5560,7 @@ propose_playbill_claim_type(
 ) -> contracts.ProposalInspection
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claim-types/proposals'`.
+HTTP: `POST f'/api/v1/{instance_id}/claim-types/proposals'`.
 
 <a id="api-cruxibleclient-propose-playbill-claim-type-input"></a>
 
@@ -5577,7 +5577,7 @@ propose_playbill_claim_type_input(
 ) -> contracts.ClaimTypeInputProposalResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claim-types/proposals'`.
+HTTP: `POST f'/api/v1/{instance_id}/claim-types/proposals'`.
 
 <a id="api-cruxibleclient-migrate-playbill-claim-type"></a>
 
@@ -5593,7 +5593,7 @@ migrate_playbill_claim_type(
 ) -> contracts.ClaimTypeMigrationResponse
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claim-types/migrations'`.
+HTTP: `POST f'/api/v1/{instance_id}/claim-types/migrations'`.
 
 <a id="api-cruxibleclient-playbill-set"></a>
 
@@ -5605,7 +5605,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/claim-types/migrations'`.
 playbill_set(instance_id: str, *, request: SetRequest) -> WriteOutcome
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/set'`. A refused write is an
+HTTP: `POST f'/api/v1/{instance_id}/set'`. A refused write is an
 outcome (`status: refused`), not an HTTP error.
 
 <a id="api-cruxibleclient-playbill-retire"></a>
@@ -5618,7 +5618,7 @@ outcome (`status: refused`), not an HTTP error.
 playbill_retire(instance_id: str, *, request: RetireRequest) -> WriteOutcome
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/retire'`.
+HTTP: `POST f'/api/v1/{instance_id}/retire'`.
 
 <a id="api-cruxibleclient-playbill-write"></a>
 
@@ -5630,7 +5630,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/retire'`.
 playbill_write(instance_id: str, *, request: WriteRequest) -> WriteOutcome
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/write'`.
+HTTP: `POST f'/api/v1/{instance_id}/write'`.
 
 <a id="api-cruxibleclient-append-playbill-claim-attestation"></a>
 
@@ -5646,7 +5646,7 @@ append_playbill_claim_attestation(
 ) -> ClaimAttestationAppendResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claim-attestations'`.
+HTTP: `POST f'/api/v1/{instance_id}/claim-attestations'`.
 
 <a id="api-cruxibleclient-recover-playbill-claim-attestations"></a>
 
@@ -5658,7 +5658,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/claim-attestations'`.
 recover_playbill_claim_attestations(instance_id: str) -> None
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claim-attestations/recover'`.
+HTTP: `POST f'/api/v1/{instance_id}/claim-attestations/recover'`.
 
 <a id="api-cruxibleclient-resolution-contracts"></a>
 
@@ -5674,7 +5674,7 @@ resolution_contracts(
 ) -> contracts.ResolutionContractsResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/resolution-contracts/query'`.
+HTTP: `POST f'/api/v1/{instance_id}/resolution-contracts/query'`.
 
 <a id="api-cruxibleclient-predict-playbill"></a>
 
@@ -5690,7 +5690,7 @@ predict_playbill(
 ) -> contracts.PredictResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/predictions'`.
+HTTP: `POST f'/api/v1/{instance_id}/predictions'`.
 
 <a id="api-cruxibleclient-settle-playbill-prediction"></a>
 
@@ -5707,7 +5707,7 @@ settle_playbill_prediction(
 ) -> contracts.SettleResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/predictions/{prediction_id}/settlements'`.
+HTTP: `POST f'/api/v1/{instance_id}/predictions/{prediction_id}/settlements'`.
 
 <a id="api-cruxibleclient-create-playbill-authoring-intent"></a>
 
@@ -5725,7 +5725,7 @@ create_playbill_authoring_intent(
 ) -> contracts.AuthoringIntentViewRecord
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/authoring/intents'`.
+HTTP: `POST f'/api/v1/{instance_id}/authoring/intents'`.
 
 <a id="api-cruxibleclient-create-playbill-authoring-input"></a>
 
@@ -5741,7 +5741,7 @@ create_playbill_authoring_input(
 ) -> contracts.AuthoringIntentViewRecord
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/authoring/intents'`.
+HTTP: `POST f'/api/v1/{instance_id}/authoring/intents'`.
 
 <a id="api-cruxibleclient-get-playbill-authoring-intent"></a>
 
@@ -5753,7 +5753,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/authoring/intents'`.
 get_playbill_authoring_intent(instance_id: str, intent_id: str) -> contracts.AuthoringIntentViewRecord
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}'`.
+HTTP: `GET f'/api/v1/{instance_id}/authoring/intents/{intent_id}'`.
 
 <a id="api-cruxibleclient-resume-playbill-authoring-intent"></a>
 
@@ -5768,7 +5768,7 @@ resume_playbill_authoring_intent(
 ) -> contracts.AuthoringIntentViewRecord
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/resume'`.
+HTTP: `GET f'/api/v1/{instance_id}/authoring/intents/{intent_id}/resume'`.
 
 <a id="api-cruxibleclient-list-pending-playbill-authoring-intents"></a>
 
@@ -5780,7 +5780,7 @@ HTTP: `GET f'/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/resume
 list_pending_playbill_authoring_intents(instance_id: str) -> contracts.AuthoringIntentListRecord
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/authoring/intents'`.
+HTTP: `GET f'/api/v1/{instance_id}/authoring/intents'`.
 
 <a id="api-cruxibleclient-compile-playbill-authoring"></a>
 
@@ -5799,7 +5799,7 @@ compile_playbill_authoring(
 ) -> contracts.AuthoringPreflightResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/authoring/compile'`.
+HTTP: `POST f'/api/v1/{instance_id}/authoring/compile'`.
 
 <a id="api-cruxibleclient-compile-playbill-authoring-input"></a>
 
@@ -5816,7 +5816,7 @@ compile_playbill_authoring_input(
 ) -> contracts.AuthoringPreflightResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/authoring/compile'`.
+HTTP: `POST f'/api/v1/{instance_id}/authoring/compile'`.
 
 <a id="api-cruxibleclient-preflight-playbill-authoring-intent"></a>
 
@@ -5831,7 +5831,7 @@ preflight_playbill_authoring_intent(
 ) -> contracts.AuthoringPreflightResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight'`.
+HTTP: `POST f'/api/v1/{instance_id}/authoring/intents/{intent_id}/preflight'`.
 
 <a id="api-cruxibleclient-rebase-playbill-authoring-intent"></a>
 
@@ -5846,7 +5846,7 @@ rebase_playbill_authoring_intent(
 ) -> contracts.AuthoringIntentViewRecord
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/rebase'`.
+HTTP: `POST f'/api/v1/{instance_id}/authoring/intents/{intent_id}/rebase'`.
 
 <a id="api-cruxibleclient-submit-playbill-authoring-intent"></a>
 
@@ -5861,7 +5861,7 @@ submit_playbill_authoring_intent(
 ) -> contracts.AuthoringSubmitResultRecord
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit'`.
+HTTP: `POST f'/api/v1/{instance_id}/authoring/intents/{intent_id}/submit'`.
 
 <a id="api-cruxibleclient-playbill-authoring-intent-status"></a>
 
@@ -5873,7 +5873,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submi
 playbill_authoring_intent_status(instance_id: str, intent_id: str) -> contracts.CandidateStatusRecord
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/status'`.
+HTTP: `GET f'/api/v1/{instance_id}/authoring/intents/{intent_id}/status'`.
 
 <a id="api-cruxibleclient-abandon-playbill-authoring-insertion"></a>
 
@@ -5890,7 +5890,7 @@ abandon_playbill_authoring_insertion(
 ) -> contracts.InsertionAbandonResultRecord
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon'`.
+HTTP: `POST f'/api/v1/{instance_id}/authoring/intents/{intent_id}/insertion/abandon'`.
 
 <a id="api-cruxibleclient-read-playbill-claim-batch"></a>
 
@@ -5906,7 +5906,7 @@ read_playbill_claim_batch(
 ) -> ClaimReadBatchResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claims/read-batch'`. SDK-internal: `Cruxible.claim_views` and World reads use it.
+HTTP: `POST f'/api/v1/{instance_id}/claims/read-batch'`. SDK-internal: `Cruxible.claim_views` and World reads use it.
 
 <a id="api-cruxibleclient-playbill-get-batch"></a>
 
@@ -5922,7 +5922,7 @@ playbill_get_batch(
 ) -> GetBatchResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/get-batch'`. SDK-internal: several references read at one coordinate and one detail, so the SDK can read a whole vocabulary (every ClaimType envelope, for `world()`) in a few round trips. `GetBatchRequest` takes `refs` (1 to 64), `detail` (`summary` or `proof`, default `proof`), `at` and `evaluation_time`; every result answers the coordinate the first one resolved. Agents call `Cruxible.get` once per reference.
+HTTP: `POST f'/api/v1/{instance_id}/get-batch'`. SDK-internal: several references read at one coordinate and one detail, so the SDK can read a whole vocabulary (every ClaimType envelope, for `world()`) in a few round trips. `GetBatchRequest` takes `refs` (1 to 64), `detail` (`summary` or `proof`, default `proof`), `at` and `evaluation_time`; every result answers the coordinate the first one resolved. Agents call `Cruxible.get` once per reference.
 
 <a id="api-cruxibleclient-get-playbill-claim-backings"></a>
 
@@ -5939,7 +5939,7 @@ get_playbill_claim_backings(
 ) -> ClaimBackingsResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claims/backings'`. SDK-internal, kept beside `read_playbill_claim_batch`.
+HTTP: `POST f'/api/v1/{instance_id}/claims/backings'`. SDK-internal, kept beside `read_playbill_claim_batch`.
 
 <a id="api-cruxibleclient-playbill-procedure-readiness"></a>
 
@@ -5957,7 +5957,7 @@ playbill_procedure_readiness(
 ) -> contracts.ProcedureReadiness
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/procedures/{name}/readiness'`.
+HTTP: `GET f'/api/v1/{instance_id}/procedures/{name}/readiness'`.
 
 <a id="api-cruxibleclient-bind-playbill-procedure"></a>
 
@@ -5974,7 +5974,7 @@ bind_playbill_procedure(
 ) -> contracts.ProcedureBindResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/procedures/{name}/bind'`.
+HTTP: `POST f'/api/v1/{instance_id}/procedures/{name}/bind'`.
 
 <a id="api-cruxibleclient-run-playbill-procedure"></a>
 
@@ -5995,7 +5995,7 @@ run_playbill_procedure(
 ) -> contracts.ProcedureRunState
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/procedures/{name}/runs'`.
+HTTP: `POST f'/api/v1/{instance_id}/procedures/{name}/runs'`.
 
 <a id="api-cruxibleclient-get-playbill-procedure-run"></a>
 
@@ -6007,7 +6007,7 @@ HTTP: `POST f'/api/v1/{instance_id}/playbill/procedures/{name}/runs'`.
 get_playbill_procedure_run(instance_id: str, run_id: str) -> contracts.ProcedureRunState
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/procedure-runs/{run_id}'`.
+HTTP: `GET f'/api/v1/{instance_id}/procedure-runs/{run_id}'`.
 
 <a id="api-cruxibleclient-measure-playbill-procedure"></a>
 
@@ -6024,7 +6024,7 @@ measure_playbill_procedure(
 ) -> contracts.ProcedureMeasureResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/procedures/{name}/measurements'`.
+HTTP: `POST f'/api/v1/{instance_id}/procedures/{name}/measurements'`.
 
 <a id="api-cruxibleclient-list-playbill-procedure-readings"></a>
 
@@ -6041,7 +6041,7 @@ list_playbill_procedure_readings(
 ) -> contracts.ProcedureReadingsResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/procedures/{name}/readings'`.
+HTTP: `POST f'/api/v1/{instance_id}/procedures/{name}/readings'`.
 
 <a id="api-cruxibleclient-run-playbill-line"></a>
 
@@ -6062,7 +6062,7 @@ run_playbill_line(
 ) -> contracts.ProcedureRunState
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/lines/{line_identity_digest}/runs'`.
+HTTP: `POST f'/api/v1/{instance_id}/lines/{line_identity_digest}/runs'`.
 
 <a id="api-cruxibleclient-next-playbill"></a>
 
@@ -6086,7 +6086,7 @@ next_playbill(
 ) -> contracts.NextResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/next'`.
+HTTP: `POST f'/api/v1/{instance_id}/next'`.
 
 <a id="api-cruxibleclient-since-playbill"></a>
 
@@ -6107,7 +6107,7 @@ since_playbill(
 ) -> contracts.SinceResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/since'`.
+HTTP: `POST f'/api/v1/{instance_id}/since'`.
 
 <a id="api-cruxibleclient-list-playbill-curation"></a>
 
@@ -6125,7 +6125,7 @@ list_playbill_curation(
 ) -> contracts.CurationListResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/curation/list'`.
+HTTP: `POST f'/api/v1/{instance_id}/curation/list'`.
 
 <a id="api-cruxibleclient-audit-playbill"></a>
 
@@ -6148,7 +6148,7 @@ audit_playbill(
 ) -> contracts.AuditResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/audit'`.
+HTTP: `POST f'/api/v1/{instance_id}/audit'`.
 
 <a id="api-cruxibleclient-overrule-playbill-curation"></a>
 
@@ -6167,7 +6167,7 @@ overrule_playbill_curation(
 ) -> contracts.CurationActionResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/curation/overrule'`.
+HTTP: `POST f'/api/v1/{instance_id}/curation/overrule'`.
 
 <a id="api-cruxibleclient-accept-fixed-playbill-curation"></a>
 
@@ -6188,7 +6188,7 @@ accept_fixed_playbill_curation(
 ) -> contracts.CurationActionResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/curation/accept-fixed'`.
+HTTP: `POST f'/api/v1/{instance_id}/curation/accept-fixed'`.
 
 <a id="api-cruxibleclient-suppress-playbill-curation"></a>
 
@@ -6209,7 +6209,7 @@ suppress_playbill_curation(
 ) -> contracts.CurationActionResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/curation/suppress'`.
+HTTP: `POST f'/api/v1/{instance_id}/curation/suppress'`.
 
 <a id="api-cruxibleclient-resolve-playbill-coverage"></a>
 
@@ -6235,7 +6235,7 @@ declared logical source and hashing the bytes it actually read -- and
 this call carries those observations. Coverage is delivered against
 them; the daemon reads no client filesystem.
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/coverage/resolve'`.
+HTTP: `POST f'/api/v1/{instance_id}/coverage/resolve'`.
 
 <a id="api-cruxibleclient-export-playbill-floor"></a>
 
@@ -6254,7 +6254,7 @@ export_playbill_floor(
 ) -> contracts.FloorExport
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/floor/export'`.
+HTTP: `POST f'/api/v1/{instance_id}/floor/export'`.
 
 ## Errors and unsupported surfaces
 
@@ -7464,14 +7464,14 @@ of known selections, then inspect each Claim's value and verdict; when only
 values and verdicts are needed, `world.values(subjects=(...), predicates=(...))`
 returns them through `query` without full Claim views, overturned and refused
 contenders included. To find something by name across kinds, grep the exported
-floor under `.playbill/floor/` and pass the reference you find to `cx.get(...)`.
+floor under `.cruxible/floor/` and pass the reference you find to `cx.get(...)`.
 A returned
 Claim's `subject` path can be passed directly to `cx.claim(subject=...)` or a
 changeset Claim writer when revising it. Acceptance and
 evidential support are distinct: an accepted Claim may remain unsupported under
 its evidence policy.
 
-File-backed authoring requires a declared `.playbill/sources.yaml` catalog in the
+File-backed authoring requires a declared `.cruxible/sources.yaml` catalog in the
 workspace. Supplying a body with `self_source` is an explicit self-assertion, not
 an observation of an independent source. The SDK's `derived_by()` method currently
 returns a typed unavailable refusal; it is not a supported derivation writer.

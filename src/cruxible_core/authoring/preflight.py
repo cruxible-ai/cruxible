@@ -377,7 +377,7 @@ def _reference_diagnostics(
                     message=(
                         "The accepted coordinate that minted this ref cannot be "
                         "verified. Re-mint the reference against the current "
-                        "coordinate: run playbill authoring rebase on this intent, "
+                        "coordinate: run cruxible authoring rebase on this intent, "
                         "then preflight again."
                     ),
                     owner="daemon",
@@ -394,7 +394,7 @@ def _reference_diagnostics(
                     offending_element=expectation.payload_path,
                     message=(
                         "The named artifact was absent where this ref claims it was "
-                        "minted. Re-resolve the target with playbill orient or query, then "
+                        "minted. Re-resolve the target with cruxible orient or query, then "
                         "re-create the intent with the address it names."
                     ),
                     owner="daemon",
@@ -484,13 +484,13 @@ def _reference_diagnostics(
             message = (
                 "More than one accepted artifact claims to succeed this reference. "
                 "Name the intended successor explicitly: read the candidates with "
-                "playbill get, then re-create the intent against one of them."
+                "cruxible get, then re-create the intent against one of them."
             )
         else:
             code = "cruxible.authoring.reference_retired"
             message = (
                 "The typed reference has no live successor at the intent base. "
-                "Choose a live target with playbill orient or query, then re-create "
+                "Choose a live target with cruxible orient or query, then re-create "
                 "the intent against it."
             )
         diagnostics.append(
@@ -690,7 +690,7 @@ def _claim_surface_diagnostics(
                     _repair(
                         "declare_a_projection_block",
                         "Declare a projection block over accepted Claims with "
-                        "`playbill block repin --claim ...`.",
+                        "`cruxible block repin --claim ...`.",
                         None,
                     ),
                 ),

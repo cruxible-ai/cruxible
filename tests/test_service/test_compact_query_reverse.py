@@ -304,12 +304,11 @@ def test_orient_suggests_a_runnable_reverse_follow_on_every_surface(instance: An
     }
 
     assert (
-        f'cruxible_playbill_query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}", '
+        f'cruxible_query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}", '
         '"as": "batch", "direction": "reverse"}], select=["batch"], limit=10)'
     ) in rendered["mcp"]
     assert (
-        f"cruxible playbill query {SUBJECT_KIND} --follow-in {DELIVERS}:batch "
-        "--select batch --limit 10"
+        f"cruxible query {SUBJECT_KIND} --follow-in {DELIVERS}:batch --select batch --limit 10"
     ) in rendered["cli"]
     assert (
         f'cx.query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}", "as": "batch", '

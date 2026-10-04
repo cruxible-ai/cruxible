@@ -114,7 +114,7 @@ def test_a_slow_floor_export_does_not_block_a_concurrent_cheap_request(
             compiler_digest=_DIGEST,
         )
         return contracts.FloorExport(
-            tag="playbill-floor-export-v5", coordinate=coordinate, manifest={}, files=[]
+            tag="playbill-floor-export-v6", coordinate=coordinate, manifest={}, files=[]
         )
 
     monkeypatch.setattr(playbill_routes, "resolve_server_instance_id", lambda value: value)
@@ -123,7 +123,7 @@ def test_a_slow_floor_export_does_not_block_a_concurrent_cheap_request(
     export_status: list[int] = []
 
     def export() -> None:
-        response = client.post("/api/v1/inst_floor_slow/playbill/floor/export", json={})
+        response = client.post("/api/v1/inst_floor_slow/floor/export", json={})
         export_status.append(response.status_code)
 
     exporter = threading.Thread(target=export)
@@ -147,7 +147,7 @@ def test_a_slow_floor_export_does_not_block_a_concurrent_cheap_request(
     assert export_status == [200]
 
     events = {event["route"]: event for event in _runtime_request_events(request_log_buffer)}
-    floor = events["/api/v1/{instance_id}/playbill/floor/export"]
+    floor = events["/api/v1/{instance_id}/floor/export"]
     cheap = events["/api/v1/server/info"]
     assert isinstance(floor["duration_ms"], float)
     assert isinstance(cheap["duration_ms"], float)
@@ -200,7 +200,7 @@ def test_queued_exports_hold_no_worker_thread_while_they_wait(
             if instance_id == "inst_b":
                 other_instance_entered.set()
             return contracts.FloorExport(
-                tag="playbill-floor-export-v5",
+                tag="playbill-floor-export-v6",
                 coordinate=contracts.AcceptedCoordinate(
                     git_oid="0" * 40,
                     semantic_root=_DIGEST,
@@ -221,7 +221,7 @@ def test_queued_exports_hold_no_worker_thread_while_they_wait(
     statuses_lock = threading.Lock()
 
     def export(instance_id: str) -> None:
-        response = client.post(f"/api/v1/{instance_id}/playbill/floor/export", json={})
+        response = client.post(f"/api/v1/{instance_id}/floor/export", json={})
         with statuses_lock:
             statuses.append(response.status_code)
 
@@ -290,7 +290,7 @@ def test_a_delta_waits_behind_an_export_of_its_instance_only(
         with order_lock:
             order.append(f"export {instance_id} out")
         return contracts.FloorExport(
-            tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
+            tag="playbill-floor-export-v6", coordinate=_COORDINATE, manifest={}, files=[]
         )
 
     def delta(instance_id: str, **_: object) -> FloorDelta:
@@ -307,7 +307,7 @@ def test_a_delta_waits_behind_an_export_of_its_instance_only(
     statuses: dict[str, int] = {}
 
     def post(name: str, instance_id: str, route: str) -> None:
-        response = client.post(f"/api/v1/{instance_id}/playbill/floor/{route}", json={})
+        response = client.post(f"/api/v1/{instance_id}/floor/{route}", json={})
         statuses[name] = response.status_code
 
     threads = [threading.Thread(target=post, args=("export a", "inst_a", "export"))]
@@ -382,7 +382,7 @@ def test_an_in_process_floor_holder_on_a_thread_excludes_that_instances_routes(
     statuses: dict[str, int] = {}
 
     def post(name: str, instance_id: str) -> None:
-        response = client.post(f"/api/v1/{instance_id}/playbill/floor/delta", json={})
+        response = client.post(f"/api/v1/{instance_id}/floor/delta", json={})
         statuses[name] = response.status_code
 
     threads = [threading.Thread(target=consumer)]
@@ -454,7 +454,7 @@ def test_a_route_cancelled_mid_render_keeps_its_instance_until_the_render_ends(
         release.wait(_FAILURE_BOUND_SECONDS)
         leave("export")
         return contracts.FloorExport(
-            tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
+            tag="playbill-floor-export-v6", coordinate=_COORDINATE, manifest={}, files=[]
         )
 
     def delta(instance_id: str, **_: object) -> FloorDelta:
@@ -571,8 +571,8 @@ def test_attachment_and_delivery_requests_wait_without_worker_tokens(monkeypatch
     delivered = contracts.FloorDeliveryResult(
         delta=delta,
         written=contracts.WorkspaceFloorWriteResult(
-            path=".playbill/floor",
-            destination="/workspace/.playbill/floor",
+            path=".cruxible/floor",
+            destination="/workspace/.cruxible/floor",
             floor_digest=_DIGEST,
             coordinate=_COORDINATE,
             file_count=1,
@@ -584,7 +584,7 @@ def test_attachment_and_delivery_requests_wait_without_worker_tokens(monkeypatch
         playbill_api,
         "playbill_export_floor",
         lambda *a, **kw: contracts.FloorExport(
-            tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
+            tag="playbill-floor-export-v6", coordinate=_COORDINATE, manifest={}, files=[]
         ),
     )
     app = FastAPI()
@@ -625,7 +625,7 @@ def test_attachment_and_delivery_requests_wait_without_worker_tokens(monkeypatch
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app, client=None), base_url="http://test"
             ) as http:
-                prefix = "/api/v1/inst_pool/playbill"
+                prefix = "/api/v1/inst_pool"
                 tasks.append(asyncio.create_task(http.post(prefix + "/floor/export", json={})))
                 await asyncio.wait_for(admitted.wait(), 5)
                 for _ in range(2):

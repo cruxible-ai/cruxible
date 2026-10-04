@@ -29,7 +29,7 @@ def test_compact_page_manifest_retention_and_refusals(tmp_path: Path) -> None:
     digest, manifest = projection_manifest(stamp)
     page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
     assert page.splitlines()[0] == (
-        f"<!-- playbill:block:{stamp.block_id}:ref:{digest[7:19]} -->".encode()
+        f"<!-- cruxible:block:{stamp.block_id}:ref:{digest[7:19]} -->".encode()
     )
     assert stamped_projection_windows(page)
     with pytest.raises(ProjectionMarkerError, match="unavailable"):
@@ -41,7 +41,7 @@ def test_compact_page_manifest_retention_and_refusals(tmp_path: Path) -> None:
     retain_local_manifests(tmp_path, {digest: manifest})
     assert load_projection_manifests(tmp_path, page) == {digest: manifest}
     # Unavailable sidecars cannot turn the body into independently citable evidence.
-    (tmp_path / ".playbill/manifests" / (digest[7:] + ".json")).unlink()
+    (tmp_path / ".cruxible/manifests" / (digest[7:] + ".json")).unlink()
     with pytest.raises(ProjectionMarkerError, match="unavailable"):
         load_projection_manifests(tmp_path, page)
     assert stamped_projection_windows(page)
@@ -69,7 +69,7 @@ def test_short_reference_refuses_ambiguity(tmp_path: Path) -> None:
         parse_projection_blocks(
             page, source_id=stamp.source_id, manifests={digest: manifest, other: manifest}
         )
-    directory = tmp_path / ".playbill/manifests"
+    directory = tmp_path / ".cruxible/manifests"
     directory.mkdir(parents=True)
     (directory / (other[7:] + ".json")).write_bytes(manifest)
     retain_local_manifests(tmp_path, {digest: manifest})
@@ -174,7 +174,7 @@ def test_compact_sync_and_coverage_preserve_manifest_binding(tmp_path: Path) -> 
     assert coverage is not None and "Claim" in coverage["complete_kinds"]
     assert len(coverage["bindings"]) == 1
     key = next(iter(load_projection_manifests(tmp_path, path.read_bytes())))
-    (tmp_path / ".playbill/manifests" / (key[7:] + ".json")).unlink()
+    (tmp_path / ".cruxible/manifests" / (key[7:] + ".json")).unlink()
     missing = sync_projection_blocks(
         client, INSTANCE_ID, workspace=tmp_path, paths=(path,), check=True
     )
@@ -197,7 +197,7 @@ def test_block_mismatch_and_manifest_path_escape_refuse(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     workspace.mkdir()
     outside.mkdir()
-    (workspace / ".playbill").symlink_to(outside, target_is_directory=True)
+    (workspace / ".cruxible").symlink_to(outside, target_is_directory=True)
     with pytest.raises(ProjectionMarkerError, match="escapes"):
         retain_local_manifests(workspace, {digest: manifest})
     assert not (outside / "manifests").exists()
@@ -207,7 +207,7 @@ def test_compact_observation_allows_adjacent_unstamped_draft() -> None:
     stamp = _stamp()
     digest, manifest = projection_manifest(stamp)
     page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
-    page += b"<!-- playbill:block:draft -->\nUnfinished prose.\n<!-- /playbill:block:draft -->\n"
+    page += b"<!-- cruxible:block:draft -->\nUnfinished prose.\n<!-- /cruxible:block:draft -->\n"
     observation = WorkingSourceObservation(
         source={"plane": "external", "identity": stamp.source_id},
         content_base64=base64.b64encode(page).decode(),

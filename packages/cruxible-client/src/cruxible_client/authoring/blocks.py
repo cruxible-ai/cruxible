@@ -339,7 +339,7 @@ def _result(items: Sequence[BlockSyncItem]) -> BlockSyncResult:
 
 
 def _workspace_binding(root: Path) -> WorkspaceBinding | None:
-    path = root / ".playbill" / "coverage.json"
+    path = root / ".cruxible" / "coverage.json"
     if not path.is_file():
         return None
     try:
@@ -354,7 +354,7 @@ def _workspace_binding(root: Path) -> WorkspaceBinding | None:
 
 def _marker_line(content: bytes) -> int:
     for line_number, line in enumerate(content.splitlines(), start=1):
-        if b"playbill:block:" in line:
+        if b"cruxible:block:" in line:
             return line_number
     return 1
 
@@ -496,7 +496,7 @@ def _discover_workspace_sources(
         (
             path
             for path in root.rglob("*")
-            if not ({".git", ".playbill"} & set(path.relative_to(root).parts))
+            if not ({".git", ".cruxible"} & set(path.relative_to(root).parts))
         ),
         key=lambda path: path.relative_to(root).as_posix().encode("utf-8"),
     )
@@ -528,7 +528,7 @@ def _discover_workspace_sources(
             break
         except OSError:
             continue
-        if b"playbill:block:" not in content:
+        if b"cruxible:block:" not in content:
             continue
         source_id, error = _discover_source(root=root, path=path, inferred=True)
         if error is not None:
@@ -658,7 +658,7 @@ def sync_projection_blocks(
         return _result(
             (
                 BlockSyncItem(
-                    path=".playbill/coverage.json",
+                    path=".cruxible/coverage.json",
                     outcome="refused",
                     reason="workspace_binding_invalid",
                     detail={"message": str(exc)},
@@ -672,7 +672,7 @@ def sync_projection_blocks(
                     path=".",
                     outcome="refused",
                     reason="workspace_not_attached",
-                    detail={"binding": ".playbill/coverage.json"},
+                    detail={"binding": ".cruxible/coverage.json"},
                 ),
             )
         )
@@ -699,7 +699,7 @@ def sync_projection_blocks(
     requested = tuple(detach_paths or paths)
     catalog_paths = tuple(
         path
-        for path in (root / ".playbill" / "sources.yaml", root / "sources.yaml")
+        for path in (root / ".cruxible" / "sources.yaml", root / "sources.yaml")
         if path.is_file()
     )
     sources: WorkspaceSources | None = None
@@ -710,7 +710,7 @@ def sync_projection_blocks(
             return _result(
                 (
                     BlockSyncItem(
-                        path=".playbill/sources.yaml",
+                        path=".cruxible/sources.yaml",
                         outcome="refused",
                         reason="workspace_source_catalog_invalid",
                         detail={"message": str(exc)},

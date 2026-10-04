@@ -1029,7 +1029,7 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
 
     identity_digest = line_identity_digest(line.identity)
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/lines/{identity_digest}/runs",
+        f"/api/v1/{instance_id}/lines/{identity_digest}/runs",
         json={
             "tag": "playbill-line-run-request-v1",
             "line_identity_digest": identity_digest,

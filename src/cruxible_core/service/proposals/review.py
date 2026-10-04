@@ -593,7 +593,7 @@ def service_prepare_playbill_approval(
         raise ApprovalIntegrityError(
             "cruxible.approval.creator_forbidden: independent_approval_required mode needs "
             "an active ordinary approver other than the candidate creator; after that "
-            "eligible signer approves, run playbill proposal activate"
+            "eligible signer approves, run cruxible proposal activate"
         )
     if not principal_lifecycle and principal.kind == "recovery":
         raise ApprovalIntegrityError("recovery principal cannot approve ordinary Documents")
@@ -633,13 +633,13 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
                 f"Settlement base OID: {review.base_oid}",
                 "",
                 "Review this proposal in the ledger, in the attached workspace:",
-                f"  git diff playbill/accepted...playbill/proposals/{key}",
+                f"  git diff cruxible-ledger/accepted...cruxible-ledger/proposals/{key}",
                 "",
                 "The daemon's own records are notes on that same commit:",
-                f"  git notes --ref={NOTE_REFS['evaluation']} show playbill/proposals/{key}",
-                f"  git notes --ref={NOTE_REFS['approval']} show playbill/proposals/{key}",
+                f"  git notes --ref={NOTE_REFS['evaluation']} show cruxible-ledger/proposals/{key}",
+                f"  git notes --ref={NOTE_REFS['approval']} show cruxible-ledger/proposals/{key}",
                 "",
-                "From a clone of the ledger mirror instead (playbill ledger clone-url),",
+                "From a clone of the ledger mirror instead (cruxible ledger clone-url),",
                 "fetch the notes once and read them off the proposal branch:",
                 "  git fetch origin '+refs/notes/*:refs/notes/*'",
                 f"  git diff origin/main...origin/proposals/{key}",

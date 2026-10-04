@@ -108,7 +108,7 @@ def test_the_principals_signed_consent_mints_once_and_the_credential_acts_as_it(
     assert replayed.json()["error_code"] == "runtime_credential.principal_proof_replayed"  # type: ignore[attr-defined]
 
     who = client.get(
-        f"/api/v1/{instance_id}/playbill/whoami",
+        f"/api/v1/{instance_id}/whoami",
         headers={"Authorization": f"Bearer {credential['token']}"},
     ).json()
     assert who["actor_id"] == "reviewer"
@@ -197,11 +197,11 @@ def test_an_unbound_credential_keeps_transport_authority_but_cannot_author(
     headers = {"Authorization": f"Bearer {unbound}"}
 
     listed = client.get(
-        f"/api/v1/{instance_id}/playbill/orient", params={"section": "principals"}, headers=headers
+        f"/api/v1/{instance_id}/orient", params={"section": "principals"}, headers=headers
     )
-    who = client.get(f"/api/v1/{instance_id}/playbill/whoami", headers=headers).json()
+    who = client.get(f"/api/v1/{instance_id}/whoami", headers=headers).json()
     refused = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/sha256:{'0' * 64}/withdraw",
+        f"/api/v1/{instance_id}/proposals/sha256:{'0' * 64}/withdraw",
         json={"reason": "unbound"},
         headers=headers,
     )
@@ -219,7 +219,7 @@ def _accept_principal_change(
     client: TestClient, instance_id: str, principal: PrincipalRecord, *, owner_key: Path
 ) -> None:
     proposed = client.post(
-        f"/api/v1/{instance_id}/playbill/principals/proposals",
+        f"/api/v1/{instance_id}/principals/proposals",
         json={
             "principal": principal.model_dump(mode="json"),
             "proposal_name": f"change-{principal.principal_id}",
@@ -228,7 +228,7 @@ def _accept_principal_change(
     assert proposed.status_code == 200, proposed.text
     proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
     challenge = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
         json={"signer_id": "operator"},
     ).json()
     signer = LocalEd25519ApprovalSigner.open(
@@ -239,11 +239,11 @@ def _accept_principal_change(
     )
     attestation = signer.sign(ApprovalStatement.model_validate(challenge["statement"]))
     approved = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
         json={"attestation": attestation.model_dump(mode="json")},
     )
     assert approved.status_code == 200, approved.text
-    activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
+    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
 
 
@@ -294,9 +294,7 @@ def test_revoking_a_principal_revokes_its_credentials(
 ) -> None:
     client, instance_id, reviewer_key = playbill_http
     reviewer_token = _bearer("reviewer", instance_id, PermissionMode.GOVERNED_WRITE)
-    listing = client.get(
-        f"/api/v1/{instance_id}/playbill/orient", params={"section": "principals"}
-    ).json()
+    listing = client.get(f"/api/v1/{instance_id}/orient", params={"section": "principals"}).json()
     reviewer = next(
         PrincipalRecord.model_validate(item)
         for item in listing["principals"]
@@ -311,7 +309,7 @@ def test_revoking_a_principal_revokes_its_credentials(
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
 
     refused = client.get(
-        f"/api/v1/{instance_id}/playbill/whoami",
+        f"/api/v1/{instance_id}/whoami",
         headers={"Authorization": f"Bearer {reviewer_token}"},
     )
 
@@ -518,12 +516,12 @@ def test_rotating_a_bound_credential_needs_its_principals_authority(
 
 
 _UNGUARDED_WRITES = (
-    ("/playbill/bodies", {"content_base64": "Ym9keQ=="}),
-    ("/playbill/ledger/mirror", {"url": "https://mirror.example.test/ledger.git"}),
-    ("/playbill/ledger/publish", {"timeout": 0}),
-    ("/playbill/claim-attestations/recover", {}),
-    ("/playbill/claim-types/upgrade", {}),
-    ("/playbill/claim-types/upgrade", {"dry_run": True}),
+    ("/bodies", {"content_base64": "Ym9keQ=="}),
+    ("/ledger/mirror", {"url": "https://mirror.example.test/ledger.git"}),
+    ("/ledger/publish", {"timeout": 0}),
+    ("/claim-attestations/recover", {}),
+    ("/claim-types/upgrade", {}),
+    ("/claim-types/upgrade", {"dry_run": True}),
 )
 
 
@@ -544,7 +542,7 @@ def test_an_unbound_credential_is_refused_on_every_instance_write(
         assert refused.status_code == 403, (path, refused.text)
         assert refused.json()["error_code"] == "cruxible.identity.credential_unbound", path
     mirror = client.get(
-        f"/api/v1/{instance_id}/playbill/ledger/clone-url",
+        f"/api/v1/{instance_id}/ledger/clone-url",
         headers={"Authorization": f"Bearer {unbound}"},
     )
     assert "mirror.example.test" not in mirror.text
@@ -569,10 +567,10 @@ def test_an_unregistered_claim_is_refused_on_every_instance_write(
 #: Line arming and dispatch). A read-tier Line dispatch included: every one must
 #: give an unbound credential the typed refusal, not a generic 401.
 _ACTOR_DOORS = (
-    ("/playbill/lines/missing/dispatch", {}, PermissionMode.READ_ONLY),
-    ("/playbill/lines/missing/dispatch", {}, PermissionMode.ADMIN),
-    ("/playbill/lines/missing/arm", None, PermissionMode.ADMIN),
-    ("/playbill/lines/missing/disarm", None, PermissionMode.ADMIN),
+    ("/lines/missing/dispatch", {}, PermissionMode.READ_ONLY),
+    ("/lines/missing/dispatch", {}, PermissionMode.ADMIN),
+    ("/lines/missing/arm", None, PermissionMode.ADMIN),
+    ("/lines/missing/disarm", None, PermissionMode.ADMIN),
 )
 
 

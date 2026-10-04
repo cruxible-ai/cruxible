@@ -100,7 +100,7 @@ class _World:
         return parse_claim_type(self.tree()[path], path=path)
 
     def activate(self, proposal_id: str) -> None:
-        base = f"/api/v1/{self.instance_id}/playbill/proposals/{proposal_id}"
+        base = f"/api/v1/{self.instance_id}/proposals/{proposal_id}"
         activated = self.http.post(f"{base}/activate")
         assert activated.status_code == 200, activated.text
         assert activated.json()["status"] == "accepted", activated.text
@@ -113,7 +113,7 @@ class _World:
             self.activate(result.proposal_id)
 
     def approve(self, proposal_id: str) -> None:
-        base = f"/api/v1/{self.instance_id}/playbill/proposals/{proposal_id}"
+        base = f"/api/v1/{self.instance_id}/proposals/{proposal_id}"
         challenge = self.http.post(f"{base}/approval-challenge", json={"signer_id": "reviewer"})
         assert challenge.status_code == 200, challenge.text
         body = challenge.json()
@@ -212,8 +212,8 @@ def _claim_type(predicate: str, schema: dict[str, object]) -> ClaimType:
 
 def _workspace(root: Path) -> Path:
     workspace = root / "workspace"
-    (workspace / ".playbill").mkdir(parents=True)
-    (workspace / ".playbill" / "sources.yaml").write_text(
+    (workspace / ".cruxible").mkdir(parents=True)
+    (workspace / ".cruxible" / "sources.yaml").write_text(
         "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries: []\n",
         encoding="utf-8",
     )
@@ -262,7 +262,7 @@ def _fresh_open_worlds(
             ]
             instance_id = registered.record.instance_id
             initialized = client.post(
-                f"/api/v1/{instance_id}/playbill/init",
+                f"/api/v1/{instance_id}/init",
                 json={
                     "require_independent_approval": independent and name == "consumer",
                     "principals": [key.principal.model_dump(mode="json") for key in keys],
@@ -630,7 +630,7 @@ def test_a_kit_needs_the_approval_the_consumer_policy_requires(
     assert proposed.status == "proposed" and proposed.approval_required
     assert proposed.proposal_id is not None
     refused = consumer.http.post(
-        f"/api/v1/{consumer.instance_id}/playbill/proposals/{proposed.proposal_id}/activate"
+        f"/api/v1/{consumer.instance_id}/proposals/{proposed.proposal_id}/activate"
     )
     assert refused.status_code != 200 or refused.json()["status"] != "accepted"
     consumer.settle(proposed)

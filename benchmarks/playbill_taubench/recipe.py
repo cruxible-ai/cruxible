@@ -178,9 +178,8 @@ def bootstrap(*, key_dir: Path, server_url: str) -> str:
     two arms end up seeded against different worlds.
     """
 
-    host = run_cli_json("--server-url", server_url, "playbill", "host", "create")
+    host = run_cli_json("--server-url", server_url, "host", "create")
     run_cli_json(
-        "playbill",
         "init",
         "--key-dir",
         str(key_dir),
@@ -196,7 +195,6 @@ def approve_and_activate(proposal_id: str, *, key_dir: Path) -> dict[str, Any]:
     """The two governed acts the seed command deliberately does not perform."""
 
     run_cli(
-        "playbill",
         "proposal",
         "approve",
         proposal_id,
@@ -208,7 +206,6 @@ def approve_and_activate(proposal_id: str, *, key_dir: Path) -> dict[str, Any]:
         "--json",
     )
     activated = run_cli_json(
-        "playbill",
         "proposal",
         "activate",
         proposal_id,
@@ -280,13 +277,11 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             encoding="utf-8",
         )
         created = run_cli_json(
-            "playbill",
             "authoring",
             "create",
             str(authoring_path),
         )
         submitted = run_cli_json(
-            "playbill",
             "authoring",
             "submit",
             str(created["intent"]["intent_id"]),
@@ -295,7 +290,6 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
 
     for path in sorted((bundle_dir / "claim-types").glob("*.json")):
         answer = run_cli_json(
-            "playbill",
             "claim-type",
             "propose",
             "--envelope",
@@ -341,7 +335,6 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             if source["source_id"] != source_id:
                 raise RuntimeError(f"seed source mapping disagrees for {path}")
             prepared = run_cli_json(
-                "playbill",
                 "authoring",
                 "bind",
                 "--file",
@@ -353,9 +346,9 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             )
             intent_id = prepared["certificate"]["intent_id"]
         else:
-            created = run_cli_json("playbill", "authoring", "create", str(path))
+            created = run_cli_json("authoring", "create", str(path))
             intent_id = created["intent"]["intent_id"]
-        submitted = run_cli_json("playbill", "authoring", "submit", str(intent_id))
+        submitted = run_cli_json("authoring", "submit", str(intent_id))
         record(
             f"claim_input:{payload['subject']}#{payload['predicate']}",
             "playbill_authoring_submit",
@@ -374,9 +367,8 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
         )
 
     for path in sorted((bundle_dir / "procedures").glob("*.json")):
-        created = run_cli_json("playbill", "authoring", "create", str(path))
+        created = run_cli_json("authoring", "create", str(path))
         submitted = run_cli_json(
-            "playbill",
             "authoring",
             "submit",
             str(created["intent"]["intent_id"]),
@@ -401,10 +393,10 @@ def export_arm_surface(destination: Path) -> Path:
     previous = Path.cwd()
     try:
         os.chdir(destination)
-        run_cli_json("playbill", "floor", "export", "--with-discovery")
+        run_cli_json("floor", "export", "--with-discovery")
     finally:
         os.chdir(previous)
-    return destination / ".playbill/floor"
+    return destination / ".cruxible/floor"
 
 
 def corpus_files(bundle_dir: Path = BUNDLE_DIR) -> dict[str, bytes]:
@@ -499,7 +491,7 @@ def build_arm(
     if arm in {3, 4}:
         if surface is None:
             raise ValueError("arms 3 and 4 need the exported Cruxible file surface")
-        _copy_tree(surface, workspace / ".playbill/floor")
+        _copy_tree(surface, workspace / ".cruxible/floor")
         config_path = workspace / CONFIG_RELATIVE_PATH
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(

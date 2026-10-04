@@ -28,7 +28,7 @@ class FormatError(CruxibleError):
 
 
 class SinceRequestInvalid(FormatError):
-    """A ``playbill since`` request failed its frozen model boundary."""
+    """A ``cruxible since`` request failed its frozen model boundary."""
 
     error_code = "cruxible.since.request_invalid"
 
@@ -140,14 +140,14 @@ class InstanceDecommissioned(FormatError):
         self.reason = reason
         self.decommissioned_at = decommissioned_at
         self.repair_commands = (
-            "cruxible playbill host create --workspace <root>  # start a fresh instance",
+            "cruxible host create --workspace <root>  # start a fresh instance",
         )
         super().__init__(
             f"{self.error_code}: instance {instance_id!r} was decommissioned at "
             f"{decommissioned_at} ({printable(reason)}); its accepted state stays readable "
             "and nothing "
             "was deleted, but it accepts no further governed writes. Repair: allocate a new "
-            "instance with `cruxible playbill host create`, or archive this directory yourself"
+            "instance with `cruxible host create`, or archive this directory yourself"
         )
 
 
@@ -174,9 +174,7 @@ class ObjectFormatConflict(BootstrapError):
 
     def __init__(self, message: str, *, workspace_format: str | None = None) -> None:
         self.workspace_format = workspace_format
-        self.repair_commands = (
-            "cruxible playbill init  # omit --object-format to inherit the workspace",
-        )
+        self.repair_commands = ("cruxible init  # omit --object-format to inherit the workspace",)
         super().__init__(message)
 
 
@@ -285,12 +283,12 @@ class ProposalNotFoundError(CruxibleError):
             "unique digest prefix (sha256: plus at least 8 hex characters)",
             "target ref",
         )
-        self.repair_commands = ("cruxible playbill proposal list",)
+        self.repair_commands = ("cruxible proposal list",)
         super().__init__(
             message
             or f"{self.error_code}: proposal selector {selector!r} was not found; accepted "
             "forms are a full proposal digest, a unique digest prefix (sha256: plus at "
-            "least 8 hex characters), or a target ref; run `cruxible playbill proposal list`"
+            "least 8 hex characters), or a target ref; run `cruxible proposal list`"
         )
 
 
@@ -308,7 +306,7 @@ class ProposalSelectorAmbiguousError(CruxibleError):
     ) -> None:
         self.selector = selector
         self.candidates = candidates
-        self.repair_commands = ("cruxible playbill proposal list",)
+        self.repair_commands = ("cruxible proposal list",)
         if message is not None:
             rendered = message
         elif len(candidates) == 1:
@@ -321,7 +319,7 @@ class ProposalSelectorAmbiguousError(CruxibleError):
                 f"{self.error_code}: proposal selector {selector!r} names multiple current "
                 f"admissions: {', '.join(candidates)}"
             )
-        super().__init__(f"{rendered}; run `cruxible playbill proposal list`")
+        super().__init__(f"{rendered}; run `cruxible proposal list`")
 
 
 class ProposalContentUnavailable(ProposalAdmissionError):
@@ -357,7 +355,7 @@ class ProposalReadmitAlreadyAccepted(ProposalAdmissionError):
         )
         super().__init__(
             f"{self.error_code}: proposal {proposal_id} is not stale work: {how}, so "
-            "its change is in accepted state; run `cruxible playbill next` for what "
+            "its change is in accepted state; run `cruxible next` for what "
             "still needs you"
         )
 
@@ -371,7 +369,7 @@ class ProposalReadmitNotStale(ProposalAdmissionError):
         self.proposal_id = proposal_id
         self.status = status
         repair = (
-            "it can still be activated where it stands; run `cruxible playbill proposal "
+            "it can still be activated where it stands; run `cruxible proposal "
             f"status {proposal_id}`"
             if status == "open"
             else "author the change again as a new proposal"

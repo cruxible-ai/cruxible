@@ -13,8 +13,8 @@ from cruxible_client.contracts.source_catalog import SourceCatalog
 
 
 def _catalog(path: Path) -> None:
-    (path / ".playbill").mkdir()
-    (path / ".playbill" / "sources.yaml").write_text(
+    (path / ".cruxible").mkdir()
+    (path / ".cruxible" / "sources.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -77,7 +77,7 @@ def test_source_catalog_accepts_unambiguous_entry_order_and_canonicalizes_it(
     tmp_path: Path,
 ) -> None:
     _catalog(tmp_path)
-    catalog_path = tmp_path / ".playbill" / "sources.yaml"
+    catalog_path = tmp_path / ".cruxible" / "sources.yaml"
     first = catalog_path.read_text(encoding="utf-8").split("entries:\n", maxsplit=1)[1]
     second = first.replace("corpus.runbook", "alpha.runbook").replace(
         "document_id: runbook", "document_id: alpha-runbook"
@@ -97,7 +97,7 @@ def test_source_catalog_validation_refusal_has_stable_paths_without_raw_pydantic
     tmp_path: Path,
 ) -> None:
     _catalog(tmp_path)
-    catalog_path = tmp_path / ".playbill" / "sources.yaml"
+    catalog_path = tmp_path / ".cruxible" / "sources.yaml"
     catalog_path.write_text(
         catalog_path.read_text(encoding="utf-8").replace(
             "required_tier: governed_write", "required_tier: impossible"
@@ -137,7 +137,7 @@ def test_next_workspace_observes_confined_whole_source_bytes(tmp_path: Path) -> 
 
 def test_next_workspace_upgrades_v1_archival_presentation_policy(tmp_path: Path) -> None:
     _catalog(tmp_path)
-    catalog_path = tmp_path / ".playbill" / "sources.yaml"
+    catalog_path = tmp_path / ".cruxible" / "sources.yaml"
     first = catalog_path.read_text(encoding="utf-8").split("entries:\n", maxsplit=1)[1]
     second = first.replace("corpus.runbook", "alpha.runbook").replace(
         "document_id: runbook", "document_id: alpha-runbook"
@@ -146,7 +146,7 @@ def test_next_workspace_upgrades_v1_archival_presentation_policy(tmp_path: Path)
         "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n" + first + second,
         encoding="utf-8",
     )
-    policy_path = tmp_path / ".playbill" / "presentation-policy.json"
+    policy_path = tmp_path / ".cruxible" / "presentation-policy.json"
     policy_path.write_text(
         '{"tag":"playbill-presentation-policy-v1",'
         '"archival_source_ids":["corpus.runbook","alpha.runbook"]}',
@@ -184,7 +184,7 @@ def test_next_workspace_degrades_invalid_presentation_policy(
     expected_note: str,
 ) -> None:
     _catalog(tmp_path)
-    (tmp_path / ".playbill" / "presentation-policy.json").write_text(payload, encoding="utf-8")
+    (tmp_path / ".cruxible" / "presentation-policy.json").write_text(payload, encoding="utf-8")
 
     observation = observe_next_workspace(tmp_path)
 
@@ -197,7 +197,7 @@ def test_next_workspace_degrades_unreadable_presentation_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _catalog(tmp_path)
-    policy_path = tmp_path / ".playbill" / "presentation-policy.json"
+    policy_path = tmp_path / ".cruxible" / "presentation-policy.json"
     policy_path.write_text('{"tag":"playbill-presentation-policy-v1"}', encoding="utf-8")
     original = os.open
 
@@ -222,7 +222,7 @@ def test_next_workspace_degrades_escaping_presentation_policy(tmp_path: Path) ->
     _catalog(workspace)
     outside = tmp_path / "outside-policy.json"
     outside.write_text('{"tag":"playbill-presentation-policy-v1"}', encoding="utf-8")
-    os.symlink(outside, workspace / ".playbill" / "presentation-policy.json")
+    os.symlink(outside, workspace / ".cruxible" / "presentation-policy.json")
 
     observation = observe_next_workspace(workspace)
 
@@ -262,7 +262,7 @@ def test_next_workspace_degrades_when_catalog_overlay_escapes_the_workspace(
     _catalog(workspace)
     outside = tmp_path / "outside.yaml"
     outside.write_text("secret: true\n", encoding="utf-8")
-    (workspace / ".playbill" / "sources.local.yaml").symlink_to(outside)
+    (workspace / ".cruxible" / "sources.local.yaml").symlink_to(outside)
 
     observation = observe_next_workspace(workspace)
 
@@ -273,8 +273,8 @@ def test_next_workspace_degrades_when_local_overlay_ambiguously_retargets_source
     tmp_path: Path,
 ) -> None:
     _catalog(tmp_path)
-    portable = (tmp_path / ".playbill" / "sources.yaml").read_text(encoding="utf-8")
-    (tmp_path / ".playbill" / "sources.local.yaml").write_text(
+    portable = (tmp_path / ".cruxible" / "sources.yaml").read_text(encoding="utf-8")
+    (tmp_path / ".cruxible" / "sources.local.yaml").write_text(
         portable.replace("catalog_kind: portable", "catalog_kind: local").replace(
             "document_id: runbook", "document_id: different-runbook"
         ),
@@ -294,8 +294,8 @@ def test_next_workspace_observes_absolute_source_from_explicit_local_overlay(
     _catalog(workspace)
     external = tmp_path / "external.md"
     external.write_bytes(b"Local overlay authorizes this absolute source.\n")
-    portable = (workspace / ".playbill" / "sources.yaml").read_text(encoding="utf-8")
-    (workspace / ".playbill" / "sources.local.yaml").write_text(
+    portable = (workspace / ".cruxible" / "sources.yaml").read_text(encoding="utf-8")
+    (workspace / ".cruxible" / "sources.local.yaml").write_text(
         portable.replace("catalog_kind: portable", "catalog_kind: local").replace(
             "locator: corpus/runbook.md", f"locator: {external}"
         ),
@@ -315,8 +315,8 @@ def test_next_workspace_observes_absolute_source_from_explicit_local_overlay(
 
 def test_next_workspace_omits_unresolved_root_alias_without_failing(tmp_path: Path) -> None:
     _catalog(tmp_path)
-    portable = (tmp_path / ".playbill" / "sources.yaml").read_text(encoding="utf-8")
-    (tmp_path / ".playbill" / "sources.local.yaml").write_text(
+    portable = (tmp_path / ".cruxible" / "sources.yaml").read_text(encoding="utf-8")
+    (tmp_path / ".cruxible" / "sources.local.yaml").write_text(
         portable.replace("catalog_kind: portable", "catalog_kind: local").replace(
             "locator: corpus/runbook.md", "locator: corpus/runbook.md\n    root_alias: external"
         ),
@@ -338,7 +338,7 @@ def test_next_workspace_omits_missing_catalog_source_without_failing(tmp_path: P
 
 def test_next_workspace_observes_root_level_source_catalog(tmp_path: Path) -> None:
     _catalog(tmp_path)
-    (tmp_path / ".playbill" / "sources.yaml").rename(tmp_path / "sources.yaml")
+    (tmp_path / ".cruxible" / "sources.yaml").rename(tmp_path / "sources.yaml")
     source = tmp_path / "corpus" / "runbook.md"
     source.parent.mkdir()
     source.write_bytes(b"Root-level portable source catalog.\n")
@@ -356,7 +356,7 @@ def test_next_workspace_observes_root_level_source_catalog(tmp_path: Path) -> No
 
 def test_next_workspace_degrades_when_both_catalog_layouts_exist(tmp_path: Path) -> None:
     _catalog(tmp_path)
-    portable = (tmp_path / ".playbill" / "sources.yaml").read_text(encoding="utf-8")
+    portable = (tmp_path / ".cruxible" / "sources.yaml").read_text(encoding="utf-8")
     (tmp_path / "sources.yaml").write_text(portable, encoding="utf-8")
 
     observation = observe_next_workspace(tmp_path)

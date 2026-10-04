@@ -345,7 +345,7 @@ def test_every_floor_reader_still_verifies_the_export(
         ),
     )
     assert status.status == "current"
-    assert (workspace / ".playbill/floor/current" / KIND / "wi-1.yaml").read_bytes() == files[
+    assert (workspace / ".cruxible/floor/current" / KIND / "wi-1.yaml").read_bytes() == files[
         f"current/{KIND}/wi-1.yaml"
     ]
 
@@ -428,14 +428,14 @@ def test_orient_reports_the_workspace_floor_and_how_far_behind_it_is(tmp_path: A
     assert (stale.floor.at, stale.floor.generations_behind) == (exported_at, 2)
     assert stale.model_dump(mode="json")["floor"] == {"at": exported_at, "generations_behind": 2}
 
-    manifest_path = workspace / ".playbill/floor/manifest.json"
+    manifest_path = workspace / ".cruxible/floor/manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest.pop("generation")
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     unknown = workspace_floor_freshness(workspace, service_playbill_orient(instance))
     assert unknown.floor is not None and unknown.floor.generations_behind is None
 
-    config = workspace / ".playbill/coverage.json"
+    config = workspace / ".cruxible/coverage.json"
     config.write_text(
         json.dumps(
             {
@@ -456,7 +456,7 @@ def test_the_default_floor_leaves_the_discovery_cards_out(world: dict[str, Any])
         path.startswith(("subjects/", "claim-types/", "procedures/")) for path in default
     )
     assert "coverage-manifest.json" not in default
-    assert json.loads(world["files"]["manifest.json"])["format"] == "playbill-floor-export-v5"
+    assert json.loads(world["files"]["manifest.json"])["format"] == "playbill-floor-export-v6"
 
     full = service_export_playbill_floor(instance, include=("discovery",))
     assert f"subjects/{KIND}/wi-1.profile.json" in full
@@ -480,7 +480,7 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
         refresh_workspace_floor,
     )
 
-    config = tmp_path / ".playbill/coverage.json"
+    config = tmp_path / ".cruxible/coverage.json"
     config.parent.mkdir()
     config.write_text(
         json.dumps(
@@ -503,11 +503,11 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
     written = json.loads(config.read_text(encoding="utf-8"))
     assert written["floor_output"] == {
         "tag": "playbill-floor-output-v1",
-        "format": "playbill-floor-export-v5",
+        "format": "playbill-floor-export-v6",
         "include": ["discovery"],
     }
     assert written["server_socket"] == "daemon.sock"
-    assert configured_floor_output(tmp_path) == (".playbill/floor", ("discovery",))
+    assert configured_floor_output(tmp_path) == (".cruxible/floor", ("discovery",))
 
     seen: list[dict[str, Any]] = []
 
@@ -567,8 +567,8 @@ def test_the_shared_write_records_a_profile_only_where_it_can_name_a_daemon(
     export, written = write_workspace_floor(
         lambda: _export_envelope(files), instance_id="inst_floor", workspace=bare
     )
-    assert written.file_count == len(files) and export.manifest["format"].endswith("-v5")
-    assert not (bare / ".playbill/coverage.json").exists()
+    assert written.file_count == len(files) and export.manifest["format"].endswith("-v6")
+    assert not (bare / ".cruxible/coverage.json").exists()
 
     named = tmp_path / "named"
     named.mkdir()
@@ -579,7 +579,7 @@ def test_the_shared_write_records_a_profile_only_where_it_can_name_a_daemon(
         include=("discovery",),
         server_socket="daemon.sock",
     )
-    assert configured_floor_output(named) == (".playbill/floor", ("discovery",))
+    assert configured_floor_output(named) == (".cruxible/floor", ("discovery",))
 
 
 def _spoil(instance: PlaybillInstance, digest: str, how: str) -> None:

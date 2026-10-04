@@ -102,7 +102,6 @@ def test_every_surface_follows_a_relation_backwards(
         invoked = CliRunner().invoke(
             cli,
             [
-                "playbill",
                 "query",
                 SUBJECT_KIND,
                 "--follow-in",
@@ -166,7 +165,6 @@ def test_every_surface_pages_reverse_rows_and_refuses_a_wrong_predicate(
 
             monkeypatch.setattr(commands, "_server_call", lambda op, **_: op(client, instance_id))
             args = [
-                "playbill",
                 "query",
                 SUBJECT_KIND,
                 "--follow-in",
@@ -229,7 +227,7 @@ def test_every_surface_pages_reverse_rows_and_refuses_a_wrong_predicate(
         monkeypatch.setattr(commands, "_server_call", lambda op, **_: op(client, instance_id))
         invoked = CliRunner().invoke(
             cli,
-            ["playbill", "query", SUBJECT_KIND, "--follow-in", "project.batch.state:batch"],
+            ["query", SUBJECT_KIND, "--follow-in", "project.batch.state:batch"],
         )
         assert invoked.exit_code != 0
         assert "cruxible.query.follow_not_incoming" in invoked.output
@@ -262,11 +260,11 @@ def test_every_surface_orients_with_the_incoming_predicates(
         from cruxible_core.cli.commands import playbill as commands
 
         monkeypatch.setattr(commands, "_server_call", lambda op, **_: op(client, instance_id))
-        invoked = CliRunner().invoke(cli, ["playbill", "orient", "--kind", SUBJECT_KIND, "--json"])
+        invoked = CliRunner().invoke(cli, ["orient", "--kind", SUBJECT_KIND, "--json"])
         assert invoked.exit_code == 0, invoked.output
         result = contracts.OrientResult.model_validate(json.loads(invoked.output))
         marker = f"--follow-in {DELIVERS}:batch"
-        text = CliRunner().invoke(cli, ["playbill", "orient", "--kind", SUBJECT_KIND]).output
+        text = CliRunner().invoke(cli, ["orient", "--kind", SUBJECT_KIND]).output
         assert f"Incoming (--follow-in): {DELIVERS}, {GOVERNS}, {PARENT}" in text
     elif surface == "sdk":
         result = _playbill(client, instance_id, tmp_path).orient(kind=SUBJECT_KIND)
@@ -276,7 +274,7 @@ def test_every_surface_orients_with_the_incoming_predicates(
             handlers, "_get_client", lambda: None if surface == "mcp-local" else client
         )
         result = handlers.handle_playbill_orient(instance_id, kind=SUBJECT_KIND)
-        marker = f'cruxible_playbill_query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}"'
+        marker = f'cruxible_query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}"'
 
     assert result.kind_detail is not None
     assert result.kind_detail.incoming == (DELIVERS, GOVERNS, PARENT)

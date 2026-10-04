@@ -59,7 +59,7 @@ def _reseed_reason(
     return contracts.HostCompatibilityReason(
         code=code,
         detail=detail,
-        repair_commands=("cruxible playbill host create",),
+        repair_commands=("cruxible host create",),
     )
 
 
@@ -68,7 +68,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.HostInspection:
     if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
         raise ConfigError(
             f"Instance {instance_id!r} is not a governed daemon host; run "
-            "`cruxible playbill host create` first"
+            "`cruxible host create` first"
         )
     try:
         managed_root = get_registry().instance_root(record)
@@ -161,7 +161,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.HostInspection:
                     f"Decommissioned at {terminal.decommissioned_at}: {terminal.reason}. "
                     "Reads keep serving; writes are refused."
                 ),
-                repair_commands=("cruxible playbill host create",),
+                repair_commands=("cruxible host create",),
             ),
         )
     writable = compiler in PC_HR_ARTIFACT_CODEC_COMPILERS
@@ -185,10 +185,10 @@ def _inspect_registered_host(instance_id: str) -> contracts.HostInspection:
 def show_playbill_host(instance_id: str) -> contracts.HostInspection:
     """Inspect one governed host without creating or changing any state."""
 
-    check_permission("cruxible_playbill_host_show", instance_id=instance_id)
+    check_permission("cruxible_host_show", instance_id=instance_id)
     result = _inspect_registered_host(instance_id)
     if result.compatibility == "uninitialized":
-        require_unscoped_operator("cruxible_playbill_host_show")
+        require_unscoped_operator("cruxible_host_show")
     if current_request_instance_scope() is not None:
         result = result.model_copy(update={"managed_root": None})
     return result
@@ -223,8 +223,8 @@ def create_playbill_host(
         # yet -- so an instance-scoped credential reaching this route must be
         # told the real boundary it crossed and the credential that clears it,
         # rather than the cross-instance message it happened to trip on the way.
-        require_unscoped_operator("cruxible_playbill_host_create")
-        check_permission("cruxible_playbill_host_create", instance_id=selected)
+        require_unscoped_operator("cruxible_host_create")
+        check_permission("cruxible_host_create", instance_id=selected)
         if workspace_root is not None and not workspace_attachment_authorized:
             raise ConfigError(
                 "Workspace attachment requires a caller connected directly through the local "
@@ -240,7 +240,7 @@ def create_playbill_host(
                 raise ConfigError(
                     f"Workspace {str(Path(workspace_root).expanduser().resolve())!r} is already "
                     f"attached to Cruxible host {attached.instance_id!r}; release it with "
-                    f"`cruxible playbill workspace detach --instance-id {attached.instance_id}` "
+                    f"`cruxible workspace detach --instance-id {attached.instance_id}` "
                     f"or choose another Git worktree before creating {selected!r}"
                 )
 
@@ -269,7 +269,7 @@ def create_playbill_host(
     if registered.record.instance_id != selected:
         raise ConfigError(
             f"Workspace {registered.record.workspace_root!r} is already attached to Cruxible "
-            f"host {registered.record.instance_id!r}; release it with `cruxible playbill "
+            f"host {registered.record.instance_id!r}; release it with `cruxible "
             f"workspace detach --instance-id {registered.record.instance_id}` or choose "
             f"another Git worktree before creating {selected!r}"
         )
@@ -288,7 +288,7 @@ def playbill_host_workspace_registration(
     """Report daemon registration separately from client workspace configuration."""
 
     check_permission(
-        "cruxible_playbill_host_workspace_registration",
+        "cruxible_host_workspace_registration",
         instance_id=instance_id,
     )
     record = get_registry().get(instance_id)
@@ -336,7 +336,7 @@ def attach_workspace(
     if other is not None and other.instance_id != instance_id:
         raise ConfigError(
             f"Workspace {str(resolved)!r} is already attached to Cruxible host "
-            f"{other.instance_id!r}; release it with `cruxible playbill workspace detach "
+            f"{other.instance_id!r}; release it with `cruxible workspace detach "
             f"--instance-id {other.instance_id}` first"
         )
     if record.workspace_root is not None:
@@ -349,7 +349,7 @@ def attach_workspace(
             return False
         raise ConfigError(
             f"Cruxible host {instance_id!r} is attached to {record.workspace_root}; release "
-            f"it with `cruxible playbill workspace detach --instance-id {instance_id}` first"
+            f"it with `cruxible workspace detach --instance-id {instance_id}` first"
         )
     instance = get_playbill_manager().initialized(instance_id)
     if instance is not None:
@@ -395,7 +395,7 @@ def playbill_host_workspace_attach(
     outcome is pinned to the host's binding, which ``at`` carries back.
     """
 
-    check_permission("cruxible_playbill_host_workspace_attach", instance_id=instance_id)
+    check_permission("cruxible_host_workspace_attach", instance_id=instance_id)
     if not workspace_attachment_authorized:
         raise ConfigError(
             "Workspace attachment requires a caller connected directly through the local "
@@ -450,7 +450,7 @@ def _set_playbill_floor_delivery_admitted(
 ) -> contracts.HostWorkspaceRegistration:
     """Set delivery with floor admission already held by the caller."""
 
-    check_permission("cruxible_playbill_workspace_floor_delivery", instance_id=instance_id)
+    check_permission("cruxible_workspace_floor_delivery", instance_id=instance_id)
     if not workspace_attachment_authorized:
         raise ConfigError("Floor delivery changes require the local Unix socket")
     get_registry().set_floor_delivery(instance_id, enabled)
@@ -484,7 +484,7 @@ def _deliver_playbill_floor_now_admitted(
 ) -> contracts.FloorDeliveryResult:
     """Deliver with floor admission already held by the caller."""
 
-    check_permission("cruxible_playbill_floor_deliver_now", instance_id=instance_id)
+    check_permission("cruxible_floor_deliver_now", instance_id=instance_id)
     if not workspace_attachment_authorized:
         raise ConfigError("Floor delivery requires the local Unix socket")
     from cruxible_core.consumers.floor import _refresh_floor_admitted
@@ -551,7 +551,7 @@ def _playbill_host_workspace_detach_admitted(
     # the instance's own ADMIN may take it, and the scope check below refuses a
     # credential scoped to any other instance. The unscoped operator (bootstrap
     # secret) may too, as it may for every host.
-    check_permission("cruxible_playbill_host_workspace_detach", instance_id=instance_id)
+    check_permission("cruxible_host_workspace_detach", instance_id=instance_id)
     if not workspace_attachment_authorized:
         raise ConfigError(
             "Workspace detachment requires a caller connected directly through the local "
@@ -642,7 +642,7 @@ def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
     raise ConfigError(
         f"Cruxible host {instance_id!r} still registers {len(registrations)} governed "
         f"block(s) in this workspace ({named}); detaching would leave markers no host "
-        "owns. Repair: run `cruxible playbill block depublish <source> <block>` for each, "
+        "owns. Repair: run `cruxible block depublish <source> <block>` for each, "
         "or retire their backing Claims, then detach"
     )
 

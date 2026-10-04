@@ -206,7 +206,7 @@ class ClaimTypeNotFoundError(ClaimNotFoundError):
         hint = f"; nearest: {', '.join(nearest)}" if nearest else ""
         super().__init__(
             f"{self.error_code}: no accepted ClaimType has predicate {predicate!r}{hint}; "
-            "run `cruxible playbill orient --section claim_types` for every declared predicate"
+            "run `cruxible orient --section claim_types` for every declared predicate"
         )
 
 

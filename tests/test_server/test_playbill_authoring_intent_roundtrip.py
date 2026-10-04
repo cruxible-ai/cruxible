@@ -27,7 +27,7 @@ def test_public_create_get_resume_pending_and_submit_preserve_intent_version(
     }
     if version == 2:
         request["reference_expectations"] = references
-    base = f"/api/v1/{instance_id}/playbill/authoring/intents"
+    base = f"/api/v1/{instance_id}/authoring/intents"
     created = client.post(base, json=request)
     assert created.status_code == 200, created.text
     expected = created.json()["intent"]

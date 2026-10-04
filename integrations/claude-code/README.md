@@ -12,7 +12,7 @@ kinds including same-turn edit drift.
 ## Install
 
 Merge `settings.hooks.json` into `.claude/settings.json` in your project, and
-put a `.playbill/coverage.json` at the workspace root:
+put a `.cruxible/coverage.json` at the workspace root:
 
 ```json
 {
@@ -41,7 +41,7 @@ put a `.playbill/coverage.json` at the workspace root:
 }
 ```
 
-`floor_output` is optional. When present, `playbill proposal activate` replaces
+`floor_output` is optional. When present, `cruxible proposal activate` replaces
 that directory from a verified floor-v2 export, and tool hits inside it carry
 one staleness line if its manifest generation trails current accepted state.
 Floor files are presentation only: the middleware never binds them as evidence,
@@ -134,7 +134,7 @@ agent's tool call.
 Three adapter diagnostics may appear on stderr, without changing stdout:
 
 - `cruxible.coverage_hook.instance_id_missing` — set `instance_id` in
-  `.playbill/coverage.json` or select an ambient CLI instance.
+  `.cruxible/coverage.json` or select an ambient CLI instance.
 - `cruxible.coverage_hook.rule_tag_invalid` — replace the rule tag with
   `playbill-coverage-exact-path-rule-v1` or
   `playbill-coverage-path-prefix-rule-v1` and keep the matching fields above.

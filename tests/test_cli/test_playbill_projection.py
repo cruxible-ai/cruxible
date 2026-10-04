@@ -64,7 +64,6 @@ def test_cli_repin_passes_explicit_backings_and_canonical_query_parameters(
             "https://projection.example.test",
             "--instance-id",
             "inst_projection",
-            "playbill",
             "block",
             "repin",
             "corpus.runbook",
@@ -95,7 +94,6 @@ def test_cli_repin_refuses_noncanonical_query_parameter_objects(parameters: str)
     result = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "block",
             "repin",
             "corpus.runbook",
@@ -115,7 +113,6 @@ def test_cli_repin_rejects_query_parameter_count_mismatch() -> None:
     result = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "block",
             "repin",
             "corpus.runbook",
@@ -161,7 +158,6 @@ def test_cli_sync_passes_local_edit_and_path_controls(
             "https://projection.example.test",
             "--instance-id",
             "inst_projection",
-            "playbill",
             "block",
             "sync",
             "corpus/runbook.md",
@@ -212,7 +208,6 @@ def test_cli_sync_check_exits_nonzero_when_safe_bytes_would_change(
             "https://projection.example.test",
             "--instance-id",
             "inst_projection",
-            "playbill",
             "block",
             "sync",
             "--all",

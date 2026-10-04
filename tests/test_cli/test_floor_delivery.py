@@ -42,7 +42,6 @@ def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
         [
             "--server-socket",
             str(tmp_path / "socket"),
-            "playbill",
             "workspace",
             *arguments,
             "--instance-id",
@@ -55,7 +54,7 @@ def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
     payload = json.loads(result.stdout)
     assert payload["instance_id"] == "inst_floor"
     if command.startswith("attach"):
-        assert (workspace / ".playbill" / "coverage.json").exists()
+        assert (workspace / ".cruxible" / "coverage.json").exists()
     else:
         assert payload["floor_delivery"] == (command == "on")
 
@@ -67,7 +66,6 @@ def test_workspace_delivery_control_refuses_remote_transport(tmp_path, monkeypat
         [
             "--server-url",
             "http://test",
-            "playbill",
             "workspace",
             "floor-delivery",
             "on",

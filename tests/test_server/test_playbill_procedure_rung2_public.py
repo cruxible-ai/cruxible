@@ -121,7 +121,7 @@ def installed_host(
     (workspace / "data").mkdir(parents=True)
     (workspace / RELATIVE_PATH).write_bytes(ADVISORY)
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)
-    # The operator's `playbill workspace attach`, recorded before init.
+    # The operator's `cruxible workspace attach`, recorded before init.
     get_registry().attach_governed_workspace(instance_id, workspace)
     owner = generate_client_principal_key(
         tmp_path / "owner-custody",
@@ -137,7 +137,7 @@ def installed_host(
     )
     with TestClient(create_app()) as client:
         initialized = client.post(
-            f"/api/v1/{instance_id}/playbill/init",
+            f"/api/v1/{instance_id}/init",
             json={
                 "principals": [
                     owner.principal.model_dump(mode="json"),

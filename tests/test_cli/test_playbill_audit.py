@@ -52,7 +52,6 @@ def test_cli_audit_delegates_scope_and_renders_empty_patrol(
             "https://audit.example.test",
             "--instance-id",
             "inst",
-            "playbill",
             "audit",
             "--claim-type",
             "ClaimType:status",

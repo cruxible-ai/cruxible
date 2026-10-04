@@ -217,8 +217,8 @@ def report_evidence(workspace: Path, anchor: str) -> dict[str, Any]:
     from cruxible_client.authoring.write_evidence import observe_evidence
     from cruxible_client.contracts.write import FileEvidence
 
-    (workspace / ".playbill").mkdir(parents=True, exist_ok=True)
-    (workspace / ".playbill" / "sources.yaml").write_text(_REPORTS_CATALOG, encoding="utf-8")
+    (workspace / ".cruxible").mkdir(parents=True, exist_ok=True)
+    (workspace / ".cruxible" / "sources.yaml").write_text(_REPORTS_CATALOG, encoding="utf-8")
     reports = workspace / "reports.md"
     text = reports.read_text(encoding="utf-8") if reports.exists() else "# Reports\n"
     reports.write_text(text + f"\n{anchor}\n", encoding="utf-8")

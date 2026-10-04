@@ -62,7 +62,7 @@ def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
     )
 
     assert result.generation == 7
-    assert captured[0].url.path == "/api/v1/inst/playbill/curation/list"
+    assert captured[0].url.path == "/api/v1/inst/curation/list"
     payload = json.loads(captured[0].content)
     assert payload["tag"] == "playbill-curation-list-request-v1"
     assert payload["evaluation_time"] == "2026-08-26T16:00:00+00:00"
@@ -75,13 +75,13 @@ def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
     (
         (
             "overrule_curation",
-            "/api/v1/inst/playbill/curation/overrule",
+            "/api/v1/inst/curation/overrule",
             {},
             "playbill-curation-overrule-request-v1",
         ),
         (
             "accept_fixed_curation",
-            "/api/v1/inst/playbill/curation/accept-fixed",
+            "/api/v1/inst/curation/accept-fixed",
             {
                 "accepted_proposal_id": "sha256:" + "3" * 64,
                 "accepted_changeset_digest": "sha256:" + "4" * 64,
@@ -90,7 +90,7 @@ def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
         ),
         (
             "suppress_curation",
-            "/api/v1/inst/playbill/curation/suppress",
+            "/api/v1/inst/curation/suppress",
             {"scope": "pattern", "until_generation": 12},
             "playbill-curation-suppress-request-v1",
         ),

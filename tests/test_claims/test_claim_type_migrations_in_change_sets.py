@@ -855,10 +855,10 @@ def test_the_deprecated_invalidation_word_refuses_typed(tmp_path: Path) -> None:
     assert error.offending_element == "members[0].dependents[0].disposition"
     repair = error.repairs[0]
     assert repair.kind == "replace_disposition"
-    assert "playbill claim-type migrate" in repair.description
+    assert "cruxible claim-type migrate" in repair.description
     replacement = repair.replacement
     assert isinstance(replacement, dict)
-    assert replacement["operator_route"] == "playbill claim-type migrate"
+    assert replacement["operator_route"] == "cruxible claim-type migrate"
     assert replacement["permitted_dispositions"] == ["re_author", "retire", "successor"]
     # The standalone route still takes the word, with its deprecation warning.
     standalone = service_migrate_claim_type(
@@ -1399,7 +1399,7 @@ def test_every_authoring_surface_carries_the_carry_all_flag(
     authoring = [
         name for name, tool in tools.items() if "carry_all" in json.dumps(tool.inputSchema)
     ]
-    assert "cruxible_playbill_authoring_create" in authoring
+    assert "cruxible_authoring_create" in authoring
     assert "carry_all" in json.dumps(create_app().openapi())
     # The CLI and the SDK send the same model's JSON: the flag survives a round trip.
     member = ClaimTypeSuccessionMember.model_validate(

@@ -174,7 +174,7 @@ def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
             instance, selector="refs/proposals/owner/missing"
         )
     assert refused.value.error_code == "cruxible.proposal_not_found"
-    assert refused.value.repair_commands == ("cruxible playbill proposal list",)
+    assert refused.value.repair_commands == ("cruxible proposal list",)
 
     forced = (
         admission.model_copy(update={"proposal_id": "sha256:" + "a" * 8 + "1" * 56}),
@@ -196,7 +196,7 @@ def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
                 selector="sha256:" + "a" * 8,
             )
     assert ambiguous_prefix.value.candidates == tuple(item.proposal_id for item in forced)
-    assert ambiguous_prefix.value.repair_commands == ("cruxible playbill proposal list",)
+    assert ambiguous_prefix.value.repair_commands == ("cruxible proposal list",)
 
     subprocess.run(
         [
@@ -217,7 +217,7 @@ def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
         )
     assert historical.value.candidates == (admission.proposal_id,)
     assert "no longer names a current admission" in str(historical.value)
-    assert "cruxible playbill proposal list" in str(historical.value)
+    assert "cruxible proposal list" in str(historical.value)
 
 
 def test_runtime_whoami_uses_the_runtime_credential_as_actor_id(

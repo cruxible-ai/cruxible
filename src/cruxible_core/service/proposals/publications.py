@@ -220,7 +220,7 @@ def _depublish(
             raise FormatError(
                 f"cruxible.block.not_registered: this instance registers no block "
                 f"{source_id}#{block_id}, by declaration or by publication; repair: read "
-                "the registered blocks with `cruxible playbill next` before releasing one"
+                "the registered blocks with `cruxible next` before releasing one"
             )
         intent_id, expectation_id, claim_identity = released
         return BlockDepublishResult(
@@ -236,7 +236,7 @@ def _depublish(
         raise FormatError(
             f"cruxible.block.publication_registration_ambiguous: {len(matched)} bound "
             f"publications register {source_id}#{block_id}; repair: abandon each intent "
-            "through `cruxible playbill authoring abandon-insertion`"
+            "through `cruxible authoring abandon-insertion`"
         )
     registration = matched[0]
     if mode.previewing:

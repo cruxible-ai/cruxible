@@ -1,4 +1,4 @@
-"""`cruxible playbill set | retire | write`: outcomes as text, refusals with their repair."""
+"""`cruxible set | retire | write`: outcomes as text, refusals with their repair."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def served(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _ServiceClient:
 
 
 def _run(*args: str) -> Any:
-    return CliRunner().invoke(cli, [*PREFIX, "playbill", *args])
+    return CliRunner().invoke(cli, [*PREFIX, *args])
 
 
 def test_set_prints_before_and_after_then_revises_on_the_next_set(served: _ServiceClient) -> None:
@@ -82,7 +82,7 @@ def test_set_prints_before_and_after_then_revises_on_the_next_set(served: _Servi
     assert "target: inst_write" in first.stderr
     assert "set project.work_item/wi-1 status: ready" in first.output
     assert "verdict supported" in first.output
-    assert "next: cruxible playbill get project.work_item/wi-1" in first.output
+    assert "next: cruxible get project.work_item/wi-1" in first.output
     request = served.requests[0]
     assert isinstance(request, SetRequest)
     assert request.surface == "cli" and request.accept == "if_allowed"
@@ -124,7 +124,7 @@ def test_dry_run_no_accept_and_at_reach_the_request(served: _ServiceClient) -> N
     proposed = _run("set", WI1, "status", "ready", "--because", "x", "--no-accept", "--at", at)
     assert proposed.exit_code == 0, proposed.output
     assert "awaiting approval" in proposed.output
-    assert "next: cruxible playbill proposal activate" in proposed.output
+    assert "next: cruxible proposal activate" in proposed.output
     request = served.requests[-1]
     assert request.accept == "never" and request.at == at
 
@@ -187,7 +187,7 @@ def test_add_puts_one_more_value_in_a_many_valued_field(served: _ServiceClient) 
     labels = _run("add", WI1, "labels", "urgent", "--because", "x", "--json")
     assert labels.exit_code == 0, labels.output
     repair = json.loads(labels.stdout)["next"]
-    assert repair.startswith("cruxible playbill add project.work_item/wi-1 labels urgent")
+    assert repair.startswith("cruxible add project.work_item/wi-1 labels urgent")
     assert "--capture" in repair
     both = _run(
         "add",
@@ -366,9 +366,9 @@ def test_capture_handles_and_contract_evidence_on_set_and_add(
 
 def test_evidence_file_is_read_from_the_workspace(served: _ServiceClient, tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
-    (workspace / ".playbill").mkdir(parents=True)
+    (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "notes.md").write_text("# Notes\n\nTitle: Tidy the CLI\n", encoding="utf-8")
-    (workspace / ".playbill" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "sources.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable

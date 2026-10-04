@@ -429,7 +429,7 @@ def _subject_address(shorthand: str, *, field_path: str) -> SemanticAddress:
             "cruxible.authoring.input_subject_invalid",
             field_path,
             "Subject must use canonical <subject-kind>/<subject-id> shorthand.",
-            "Replace it with a subject shown by playbill query KIND.",
+            "Replace it with a subject shown by cruxible query KIND.",
         )
     return SemanticAddress.whole_artifact(subject_path(match["kind"], match["id"]))
 
@@ -469,7 +469,7 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
             "cruxible.authoring.working_selection_requires_bind",
             "input.source",
             "create and compile cannot observe local working-source bytes.",
-            "Run playbill authoring bind with this input and the selected local file.",
+            "Run cruxible authoring bind with this input and the selected local file.",
         )
     if isinstance(value.source, ExistingCaptureInput):
         if value.citation_role is None:

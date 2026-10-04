@@ -52,7 +52,7 @@ def test_client_posts_the_frozen_migration_request_unchanged() -> None:
     assert result.operation_digest == "sha256:" + "1" * 64
     assert "lint" not in result.model_dump(mode="json")
     assert "lint" not in result.proposal.model_dump(mode="json")
-    assert captured[0].url.path == "/api/v1/inst/playbill/claim-types/migrations"
+    assert captured[0].url.path == "/api/v1/inst/claim-types/migrations"
     assert json.loads(captured[0].content) == request
 
 

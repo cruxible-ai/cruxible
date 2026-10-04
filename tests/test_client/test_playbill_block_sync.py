@@ -112,7 +112,7 @@ def _workspace(
     instance_id: str = INSTANCE_ID,
     stamp: ProjectionBlockStampV1 | None = None,
 ) -> Path:
-    playbill = root / ".playbill"
+    playbill = root / ".cruxible"
     playbill.mkdir()
     (playbill / "coverage.json").write_text(
         "{"
@@ -534,7 +534,7 @@ def test_source_catalog_is_optional_for_stamped_marker_discovery(
     all_sources: bool,
 ) -> None:
     source = _workspace(tmp_path)
-    (tmp_path / ".playbill" / "sources.yaml").unlink()
+    (tmp_path / ".cruxible" / "sources.yaml").unlink()
     before = source.read_bytes()
     client = _SyncClient()
 
@@ -680,12 +680,12 @@ def test_malformed_marker_and_foreign_workspace_are_typed_without_daemon_calls(
     assert mismatch.items[0].reason == "workspace_instance_mismatch"
     assert client.requests == []
 
-    coverage = tmp_path / ".playbill" / "coverage.json"
+    coverage = tmp_path / ".cruxible" / "coverage.json"
     coverage.write_text(
         coverage.read_text(encoding="utf-8").replace("inst_other", INSTANCE_ID),
         encoding="utf-8",
     )
-    source.write_bytes(b"<!-- playbill:block:broken -->\nbody\n")
+    source.write_bytes(b"<!-- cruxible:block:broken -->\nbody\n")
     malformed = sync_projection_blocks(
         client,  # type: ignore[arg-type]
         INSTANCE_ID,
@@ -698,7 +698,7 @@ def test_malformed_marker_and_foreign_workspace_are_typed_without_daemon_calls(
 
 def test_catalog_optional_explicit_path_cannot_escape_workspace(tmp_path: Path) -> None:
     source = _workspace(tmp_path)
-    (tmp_path / ".playbill" / "sources.yaml").unlink()
+    (tmp_path / ".cruxible" / "sources.yaml").unlink()
     outside = tmp_path.parent / f"{tmp_path.name}-outside.md"
     outside.write_bytes(source.read_bytes())
 
@@ -717,7 +717,7 @@ def test_nonportable_catalog_returns_a_typed_refusal(tmp_path: Path) -> None:
     source = _workspace(tmp_path)
     outside = tmp_path.parent / "outside-runbook.md"
     outside.write_bytes(source.read_bytes())
-    catalog = tmp_path / ".playbill" / "sources.yaml"
+    catalog = tmp_path / ".cruxible" / "sources.yaml"
     catalog.write_text(
         catalog.read_text(encoding="utf-8")
         .replace("catalog_kind: portable", "catalog_kind: local")
@@ -745,7 +745,7 @@ def test_catalog_symlink_escape_is_typed_and_does_not_abort_other_sources(
     valid_stamp = _stamp().model_copy(update={"source_id": "corpus.valid", "block_id": "pub-valid"})
     valid_source.write_bytes(frame_projection_block(stamp=valid_stamp, body=OLD_BODY))
     valid_before = valid_source.read_bytes()
-    catalog = tmp_path / ".playbill" / "sources.yaml"
+    catalog = tmp_path / ".cruxible" / "sources.yaml"
     catalog.write_text(
         catalog.read_text(encoding="utf-8")
         + """\
@@ -824,14 +824,14 @@ def test_whole_file_cas_preserves_a_concurrent_edit(
 _QUOTING_CAPTURE = (
     b"# Agent reports\n"
     b"\n"
-    b"The proposed grammar was `<!-- playbill:block:draft-note -->`, quoted here\n"
-    b"<!-- playbill:block:draft-note -->\n"
+    b"The proposed grammar was `<!-- cruxible:block:draft-note -->`, quoted here\n"
+    b"<!-- cruxible:block:draft-note -->\n"
     b"so a reader can see the exact bytes under discussion.\n"
 )
 
 
 def _catalog_a_second_source(root: Path, *, name: str, locator: str) -> None:
-    catalog = root / ".playbill" / "sources.yaml"
+    catalog = root / ".cruxible" / "sources.yaml"
     catalog.write_text(
         catalog.read_text(encoding="utf-8")
         + f"""\
@@ -914,7 +914,7 @@ def test_the_catalog_free_workspace_walk_also_skips_a_quoting_capture(
     """The inferred walk that has no catalog reaches the same conclusion."""
 
     source = _workspace(tmp_path)
-    (tmp_path / ".playbill" / "sources.yaml").unlink()
+    (tmp_path / ".cruxible" / "sources.yaml").unlink()
     before = source.read_bytes()
     capture = tmp_path / "history" / "agent-reports.md"
     capture.parent.mkdir()
@@ -949,7 +949,7 @@ def _broken_projection_page(root: Path, *, source_id: str, locator: str) -> Path
     framed = frame_projection_block(stamp=stamp, body=OLD_BODY)
     page = root / locator
     page.parent.mkdir(parents=True, exist_ok=True)
-    page.write_bytes(b"PREFIX\n" + framed.rsplit(b"<!-- /playbill:block:", 1)[0])
+    page.write_bytes(b"PREFIX\n" + framed.rsplit(b"<!-- /cruxible:block:", 1)[0])
     return page
 
 
@@ -997,7 +997,7 @@ def test_a_registered_page_that_repeats_a_block_identity_still_refuses_under_all
     _workspace(tmp_path)
     page = _broken_projection_page(tmp_path, source_id="repo.notes", locator="notes/page.md")
     stamped = page.read_bytes().rstrip(b"\n").split(b"\n")[1] + b"\n"
-    page.write_bytes(page.read_bytes() + b"<!-- /playbill:block:pub-broken -->\n" + stamped)
+    page.write_bytes(page.read_bytes() + b"<!-- /cruxible:block:pub-broken -->\n" + stamped)
     _catalog_a_second_source(tmp_path, name="repo.notes", locator="notes/page.md")
 
     result = sync_projection_blocks(
@@ -1020,7 +1020,7 @@ def test_the_catalog_free_walk_also_refuses_a_page_that_declares_a_block_badly(
     """The inferred walk with no catalog draws the same line."""
 
     _workspace(tmp_path)
-    (tmp_path / ".playbill" / "sources.yaml").unlink()
+    (tmp_path / ".cruxible" / "sources.yaml").unlink()
     _broken_projection_page(tmp_path, source_id="repo.notes", locator="notes/page.md")
     capture = tmp_path / "history" / "agent-reports.md"
     capture.parent.mkdir()
@@ -1140,7 +1140,7 @@ def test_batch_check_http_preserves_policy_and_one_evaluation_binding():
     )
 
     def handler(wire: httpx.Request) -> httpx.Response:
-        assert wire.url.path == f"/api/v1/{INSTANCE_ID}/playbill/projections/check"
+        assert wire.url.path == f"/api/v1/{INSTANCE_ID}/projections/check"
         assert contracts.ProjectionCheckRequest.model_validate_json(wire.content) == request
         return httpx.Response(200, json=response.model_dump(mode="json"))
 

@@ -24,7 +24,7 @@ from cruxible_core.server.route_paths import (
 )
 from cruxible_core.server.routes import resolve_server_instance_id
 
-router = APIRouter(prefix="/api/v1", tags=["playbill-hosts"])
+router = APIRouter(prefix="/api/v1", tags=["hosts"])
 
 
 @router.get(PLAYBILL_HOST_SHOW_PATH, response_model=contracts.HostInspection)
@@ -105,7 +105,7 @@ async def playbill_host_workspace_detach(
 
 
 @router.get(
-    "/{instance_id}/playbill/workspace-registration",
+    "/{instance_id}/workspace-registration",
     response_model=contracts.HostWorkspaceRegistration,
 )
 def playbill_host_workspace_registration(

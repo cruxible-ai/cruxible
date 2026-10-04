@@ -226,14 +226,14 @@ def register_tools(
         return handlers.handle_server_info()
 
     @_tool
-    def cruxible_playbill_provider_catalog(
+    def cruxible_provider_catalog(
         instance_id: InstanceId = None,
     ) -> ProviderCatalog:
         """Discover provider packages available from the configured repository."""
         return handlers.handle_playbill_provider_catalog(require_instance_id(instance_id))
 
     @_tool
-    def cruxible_playbill_provider_install(
+    def cruxible_provider_install(
         instance_id: InstanceId = None,
         *,
         request: ProviderInstallRequest,
@@ -242,7 +242,7 @@ def register_tools(
         return handlers.handle_playbill_provider_install(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_playbill_kit_build(
+    def cruxible_kit_build(
         instance_id: InstanceId = None,
         *,
         request: KitBuildRequest,
@@ -251,12 +251,12 @@ def register_tools(
         return handlers.handle_playbill_kit_build(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_playbill_kit_status(instance_id: InstanceId = None) -> KitStatus:
+    def cruxible_kit_status(instance_id: InstanceId = None) -> KitStatus:
         """List installed kits and the kit paths edited since install."""
         return handlers.handle_playbill_kit_status(require_instance_id(instance_id))
 
     @_tool
-    def cruxible_playbill_kit_add(
+    def cruxible_kit_add(
         instance_id: InstanceId = None,
         *,
         request: KitAddRequest,
@@ -265,7 +265,7 @@ def register_tools(
         return handlers.handle_playbill_kit_add(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_playbill_claim_type_upgrade(
+    def cruxible_claim_type_upgrade(
         instance_id: InstanceId = None,
         *,
         request: ClaimTypeUpgradeRequest,
@@ -276,7 +276,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_evidence_rules_upgrade(
+    def cruxible_evidence_rules_upgrade(
         instance_id: InstanceId = None,
         *,
         dry_run: DryRun = None,
@@ -289,7 +289,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_kit_remove(
+    def cruxible_kit_remove(
         instance_id: InstanceId = None,
         *,
         request: KitRemoveRequest,
@@ -298,7 +298,7 @@ def register_tools(
         return handlers.handle_playbill_kit_remove(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_playbill_init(
+    def cruxible_init(
         instance_id: InstanceId = None,
         *,
         principals: list[PrincipalRecord],
@@ -319,14 +319,14 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_store_body(
+    def cruxible_store_body(
         instance_id: InstanceId = None, *, content_base64: str
     ) -> contracts.CasObjectResult:
         """Store inert exact body bytes."""
         return handlers.handle_playbill_store_body(require_instance_id(instance_id), content_base64)
 
     @_tool
-    def cruxible_playbill_propose_document(
+    def cruxible_propose_document(
         instance_id: InstanceId = None,
         *,
         shell: DocumentShell,
@@ -346,7 +346,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_inspect_proposal(
+    def cruxible_inspect_proposal(
         instance_id: InstanceId = None, *, proposal_id: str
     ) -> contracts.ProposalInspection:
         """Inspect immutable proposal evidence."""
@@ -355,7 +355,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_inspect_refusal(
+    def cruxible_inspect_refusal(
         instance_id: InstanceId = None, *, proposal_id: str
     ) -> contracts.RefusalInspection:
         """Inspect typed admission and law diagnostics."""
@@ -364,7 +364,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_review(
+    def cruxible_review(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -376,7 +376,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_prepare_approval(
+    def cruxible_prepare_approval(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -392,7 +392,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_submit_approval(
+    def cruxible_submit_approval(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -404,7 +404,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_approve(
+    def cruxible_approve(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -436,19 +436,19 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_activate(
+    def cruxible_activate(
         instance_id: InstanceId = None, *, proposal_id: str
     ) -> contracts.WorkspaceActivationResult:
         """Settle by compare-and-set and refresh the configured client-owned floor."""
         return handlers.handle_playbill_activate(require_instance_id(instance_id), proposal_id)
 
     @_tool
-    def cruxible_playbill_whoami(instance_id: InstanceId = None) -> McpWhoAmIResult:
+    def cruxible_whoami(instance_id: InstanceId = None) -> McpWhoAmIResult:
         """Name the resolved instance, the credential-derived actor, and its registration."""
         return handlers.handle_playbill_whoami(require_instance_id(instance_id))
 
     @_tool
-    def cruxible_playbill_orient(
+    def cruxible_orient(
         instance_id: InstanceId = None,
         *,
         kind: Annotated[
@@ -482,7 +482,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_proposal_list(
+    def cruxible_proposal_list(
         instance_id: InstanceId = None,
         *,
         status: Literal["open", "settled", "incomplete"] | None = None,
@@ -497,7 +497,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_proposal_readmit(
+    def cruxible_proposal_readmit(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -510,7 +510,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_proposal_withdraw(
+    def cruxible_proposal_withdraw(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -524,21 +524,21 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_read_capture(
+    def cruxible_read_capture(
         instance_id: InstanceId = None, *, request: CaptureReadRequest
     ) -> CaptureRead:
         """Read exact retained Capture evidence with a byte budget and body permission."""
         return handlers.handle_playbill_read_capture(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_playbill_source_context(
+    def cruxible_source_context(
         instance_id: InstanceId = None,
     ) -> contracts.SourceContext:
         """Fetch path-free inputs for local source compilation."""
         return handlers.handle_playbill_source_context(require_instance_id(instance_id))
 
     @_tool
-    def cruxible_playbill_source_check(
+    def cruxible_source_check(
         instance_id: InstanceId = None,
         *,
         bundle: Annotated[
@@ -564,7 +564,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_propose_source_bundle(
+    def cruxible_propose_source_bundle(
         instance_id: InstanceId = None,
         *,
         bundle: SourceCompilationBundle,
@@ -584,7 +584,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_compiler_upgrade(
+    def cruxible_compiler_upgrade(
         instance_id: InstanceId = None,
         *,
         target_compiler_digest: str,
@@ -604,7 +604,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_propose_principal_change(
+    def cruxible_propose_principal_change(
         instance_id: InstanceId = None,
         *,
         principal: PrincipalRecord,
@@ -622,7 +622,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_propose_claim_type(
+    def cruxible_propose_claim_type(
         instance_id: InstanceId = None,
         *,
         input: ClaimTypeInputRecord,
@@ -640,7 +640,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_claim_type_migrate(
+    def cruxible_claim_type_migrate(
         instance_id: InstanceId = None,
         *,
         request: ClaimTypeMigrationRequestAny,
@@ -651,7 +651,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_claim_attest(
+    def cruxible_claim_attest(
         instance_id: InstanceId = None,
         *,
         claim_id: str,
@@ -695,7 +695,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_authoring_create(
+    def cruxible_authoring_create(
         instance_id: InstanceId = None,
         *,
         payload: AuthoringInput,
@@ -706,7 +706,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_authoring_example(
+    def cruxible_authoring_example(
         name: contracts.AuthoringExampleName,
         claim_id: str | None = None,
         capture_digest: str | None = None,
@@ -719,7 +719,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_authoring_get(
+    def cruxible_authoring_get(
         instance_id: InstanceId = None,
         *,
         intent_id: str,
@@ -728,7 +728,7 @@ def register_tools(
         return handlers.handle_playbill_authoring_get(require_instance_id(instance_id), intent_id)
 
     @_tool
-    def cruxible_playbill_authoring_resume(
+    def cruxible_authoring_resume(
         instance_id: InstanceId = None,
         *,
         intent_id: str,
@@ -739,14 +739,14 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_authoring_list_pending(
+    def cruxible_authoring_list_pending(
         instance_id: InstanceId = None,
     ) -> contracts.AuthoringIntentListRecord:
         """List the authenticated writer's pending intents."""
         return handlers.handle_playbill_authoring_list_pending(require_instance_id(instance_id))
 
     @_tool
-    def cruxible_playbill_authoring_compile(
+    def cruxible_authoring_compile(
         instance_id: InstanceId = None,
         *,
         payload: AuthoringInput,
@@ -760,7 +760,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_authoring_bind(
+    def cruxible_authoring_bind(
         instance_id: InstanceId = None,
         *,
         source_path: str,
@@ -778,7 +778,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_authoring_preflight(
+    def cruxible_authoring_preflight(
         instance_id: InstanceId = None,
         *,
         intent_id: str,
@@ -789,7 +789,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_authoring_rebase(
+    def cruxible_authoring_rebase(
         instance_id: InstanceId = None,
         *,
         intent_id: str,
@@ -800,7 +800,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_authoring_submit(
+    def cruxible_authoring_submit(
         instance_id: InstanceId = None,
         *,
         intent_id: str,
@@ -811,7 +811,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_authoring_status(
+    def cruxible_authoring_status(
         instance_id: InstanceId = None,
         *,
         intent_id: str,
@@ -822,7 +822,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_authoring_abandon_insertion(
+    def cruxible_authoring_abandon_insertion(
         instance_id: InstanceId = None,
         *,
         intent_id: str,
@@ -836,7 +836,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_block_repin(
+    def cruxible_block_repin(
         instance_id: InstanceId = None,
         *,
         block: Annotated[str, Field(description="The block id in its marker.")],
@@ -883,7 +883,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_block_sync(
+    def cruxible_block_sync(
         instance_id: InstanceId = None,
         *,
         files: Annotated[
@@ -901,7 +901,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_block_detach(
+    def cruxible_block_detach(
         instance_id: InstanceId = None,
         *,
         files: Annotated[
@@ -920,7 +920,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_block_depublish(
+    def cruxible_block_depublish(
         instance_id: InstanceId = None,
         *,
         source_id: str,
@@ -934,7 +934,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_get(
+    def cruxible_get(
         instance_id: InstanceId = None,
         *,
         ref: Annotated[
@@ -985,7 +985,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_set(
+    def cruxible_set(
         instance_id: InstanceId = None,
         *,
         subject: Annotated[str, Field(description="The Subject as kind/id.")],
@@ -1065,7 +1065,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_retire(
+    def cruxible_retire(
         instance_id: InstanceId = None,
         *,
         target: Annotated[
@@ -1118,7 +1118,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_write(
+    def cruxible_write(
         instance_id: InstanceId = None,
         *,
         changes: Annotated[
@@ -1165,7 +1165,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_query(
+    def cruxible_query(
         instance_id: InstanceId = None,
         *,
         kind: str | None = None,
@@ -1209,7 +1209,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_query_spec(
+    def cruxible_query_spec(
         instance_id: InstanceId = None,
         *,
         spec: QueryDefinitionSpec,
@@ -1231,7 +1231,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_procedure_readiness(
+    def cruxible_procedure_readiness(
         instance_id: InstanceId = None,
         *,
         name: str,
@@ -1245,7 +1245,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_procedure_bind(
+    def cruxible_procedure_bind(
         instance_id: InstanceId = None,
         *,
         name: str,
@@ -1259,7 +1259,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_procedure_run(
+    def cruxible_procedure_run(
         instance_id: InstanceId = None,
         *,
         name: str,
@@ -1286,7 +1286,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_procedure_run_status(
+    def cruxible_procedure_run_status(
         instance_id: InstanceId = None,
         *,
         run_id: str,
@@ -1297,7 +1297,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_procedure_measure(
+    def cruxible_procedure_measure(
         instance_id: InstanceId = None,
         *,
         name: str,
@@ -1309,7 +1309,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_procedure_readings(
+    def cruxible_procedure_readings(
         instance_id: InstanceId = None,
         *,
         name: str,
@@ -1321,14 +1321,14 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_line_check(
+    def cruxible_line_check(
         instance_id: InstanceId = None, *, line: str, request: contracts.LineTriggerCheckRequest
     ) -> contracts.LineTriggerCheckResult:
         """Check a Line's trigger and admitted occurrences; never enqueue or execute."""
         return handlers.handle_playbill_line_check(require_instance_id(instance_id), line, request)
 
     @_tool
-    def cruxible_playbill_line_arm(
+    def cruxible_line_arm(
         instance_id: InstanceId = None,
         *,
         line: str,
@@ -1341,7 +1341,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_line_disarm(
+    def cruxible_line_disarm(
         instance_id: InstanceId = None,
         *,
         line: str,
@@ -1354,14 +1354,12 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_line_status(
-        instance_id: InstanceId = None, *, line: str
-    ) -> contracts.LineArm:
+    def cruxible_line_status(instance_id: InstanceId = None, *, line: str) -> contracts.LineArm:
         """Read a Line's current arm, or its last one and why it stopped."""
         return handlers.handle_playbill_line_status(require_instance_id(instance_id), line)
 
     @_tool
-    def cruxible_playbill_line_evaluate(
+    def cruxible_line_evaluate(
         instance_id: InstanceId = None, *, line: str, request: contracts.LineEvaluateRequest
     ) -> contracts.LineTriggerCheckResult:
         """Explicitly evaluate a historical range into pending work; never execute."""
@@ -1370,7 +1368,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_line_dispatch(
+    def cruxible_line_dispatch(
         instance_id: InstanceId = None, *, line: str, request: contracts.LineDispatchRequest
     ) -> contracts.LineDispatchResult:
         """Execute retained pending occurrences using the current authenticated actor."""
@@ -1379,7 +1377,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_line_run(
+    def cruxible_line_run(
         instance_id: InstanceId = None,
         *,
         line: str,
@@ -1404,7 +1402,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_resolution_contracts(
+    def cruxible_resolution_contracts(
         instance_id: InstanceId = None,
         *,
         claim_id: str | None = None,
@@ -1423,7 +1421,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_predict(
+    def cruxible_predict(
         instance_id: InstanceId = None,
         *,
         request: contracts.PredictRequest,
@@ -1432,7 +1430,7 @@ def register_tools(
         return handlers.handle_playbill_predict(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_playbill_settle(
+    def cruxible_settle(
         instance_id: InstanceId = None,
         *,
         prediction_id: str,
@@ -1454,7 +1452,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_next(
+    def cruxible_next(
         instance_id: InstanceId = None,
         *,
         evaluation_time: str | None = None,
@@ -1486,7 +1484,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_since(
+    def cruxible_since(
         instance_id: InstanceId = None,
         *,
         generation: int,
@@ -1508,7 +1506,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_curation_list(
+    def cruxible_curation_list(
         instance_id: InstanceId = None,
         *,
         evaluation_time: str,
@@ -1533,7 +1531,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_audit(
+    def cruxible_audit(
         instance_id: InstanceId = None,
         *,
         evaluation_time: str,
@@ -1563,7 +1561,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_curation_overrule(
+    def cruxible_curation_overrule(
         instance_id: InstanceId = None,
         *,
         item_id: str,
@@ -1585,7 +1583,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_curation_accept_fixed(
+    def cruxible_curation_accept_fixed(
         instance_id: InstanceId = None,
         *,
         item_id: str,
@@ -1611,7 +1609,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_curation_suppress(
+    def cruxible_curation_suppress(
         instance_id: InstanceId = None,
         *,
         item_id: str,
@@ -1637,7 +1635,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_coverage(
+    def cruxible_coverage(
         instance_id: InstanceId = None,
         *,
         observations: Annotated[
@@ -1680,7 +1678,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_workspace_source_compile(
+    def cruxible_workspace_source_compile(
         instance_id: InstanceId = None,
         *,
         catalog_path: str,
@@ -1698,7 +1696,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_floor_export(
+    def cruxible_floor_export(
         instance_id: InstanceId = None,
         *,
         mode: Annotated[
@@ -1706,7 +1704,7 @@ def register_tools(
             Field(
                 description=(
                     "bytes: return base64 files per floor path; write: verify and write "
-                    ".playbill/floor in the MCP workspace; status: report whether that "
+                    ".cruxible/floor in the MCP workspace; status: report whether that "
                     "floor is current, stale, or missing."
                 )
             ),

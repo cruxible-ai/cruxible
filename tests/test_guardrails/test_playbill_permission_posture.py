@@ -72,10 +72,10 @@ def test_repeatable_bootstrap_operations_include_workspace_attach_detach_and_del
 
     assert set(auth_module._SERVER_OPERATION_ROUTES) == {
         ("GET", "/api/v1/server/info"),
-        ("GET", "/api/v1/{instance_id}/playbill/host"),
-        ("POST", "/api/v1/{instance_id}/playbill/workspace-detach"),
-        ("POST", "/api/v1/{instance_id}/playbill/workspace-attach"),
-        ("POST", "/api/v1/{instance_id}/playbill/workspace/floor-delivery"),
+        ("GET", "/api/v1/{instance_id}/host"),
+        ("POST", "/api/v1/{instance_id}/workspace-detach"),
+        ("POST", "/api/v1/{instance_id}/workspace-attach"),
+        ("POST", "/api/v1/{instance_id}/workspace/floor-delivery"),
         ("POST", "/api/v1/server/restart"),
         ("POST", "/api/v1/server/stop"),
     }

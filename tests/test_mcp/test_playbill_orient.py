@@ -29,7 +29,7 @@ def _answer() -> contracts.OrientResult:
         accepted_at=datetime(2026, 9, 1, tzinfo=UTC),
         evaluation_time=datetime(2026, 9, 2, tzinfo=UTC),
         kinds=(),
-        next=("cruxible_playbill_next()",),
+        next=("cruxible_next()",),
     )
 
 
@@ -65,7 +65,7 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "default")
     tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
 
-    schema = tools["cruxible_playbill_orient"].inputSchema
+    schema = tools["cruxible_orient"].inputSchema
 
     assert set(schema["properties"]) == {
         "instance_id",
@@ -103,7 +103,7 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.parametrize("remote", [False, True])
-@pytest.mark.parametrize("tools", [(), ("cruxible_playbill_orient", "cruxible_playbill_settle")])
+@pytest.mark.parametrize("tools", [(), ("cruxible_orient", "cruxible_settle")])
 def test_mcp_orient_forwards_the_advertised_tools(
     monkeypatch: pytest.MonkeyPatch, remote: bool, tools: tuple[str, ...]
 ) -> None:
@@ -130,7 +130,7 @@ def test_mcp_orient_forwards_the_advertised_tools(
 def test_mcp_orient_reports_the_mcp_workspace_floor(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     import json
 
-    floor = tmp_path / ".playbill/floor"
+    floor = tmp_path / ".cruxible/floor"
     floor.mkdir(parents=True)
     (floor / "manifest.json").write_text(
         json.dumps({"coordinate": {"git_oid": "9" * 64}, "generation": 1}), encoding="utf-8"

@@ -43,7 +43,7 @@ def test_measure_and_readings_routes_serve_a_real_run_and_typed_refusals(
     name = accepted.procedure.identity.name
 
     run = client.post(
-        f"/api/v1/{instance_id}/playbill/procedures/{name}/runs",
+        f"/api/v1/{instance_id}/procedures/{name}/runs",
         json={
             "tag": "playbill-procedure-run-request-v2",
             "evaluation_time": "2026-09-03T10:00:00Z",
@@ -56,7 +56,7 @@ def test_measure_and_readings_routes_serve_a_real_run_and_typed_refusals(
 
     # No declaration: the fast path answers with no rows and writes nothing.
     measured = client.post(
-        f"/api/v1/{instance_id}/playbill/procedures/{name}/measurements",
+        f"/api/v1/{instance_id}/procedures/{name}/measurements",
         json={
             "tag": "playbill-procedure-measure-request-v1",
             "run_id": run_id,
@@ -71,7 +71,7 @@ def test_measure_and_readings_routes_serve_a_real_run_and_typed_refusals(
 
     # An undeclared name is a typed request fault carrying a runnable repair.
     refused = client.post(
-        f"/api/v1/{instance_id}/playbill/procedures/{name}/measurements",
+        f"/api/v1/{instance_id}/procedures/{name}/measurements",
         json={
             "tag": "playbill-procedure-measure-request-v1",
             "measurement_names": ["nope"],
@@ -83,7 +83,7 @@ def test_measure_and_readings_routes_serve_a_real_run_and_typed_refusals(
     assert envelope["repair"]["operation"] == "cruxible.procedure.readings"
 
     listed = client.post(
-        f"/api/v1/{instance_id}/playbill/procedures/{name}/readings",
+        f"/api/v1/{instance_id}/procedures/{name}/readings",
         json={"tag": "playbill-procedure-readings-request-v1", "run_id": run_id, "limit": 5},
     )
     assert listed.status_code == 200, listed.text
@@ -92,7 +92,7 @@ def test_measure_and_readings_routes_serve_a_real_run_and_typed_refusals(
     assert page["truncated"] is False and page["cursor"] is None
 
     absent = client.post(
-        f"/api/v1/{instance_id}/playbill/procedures/absent-procedure/readings",
+        f"/api/v1/{instance_id}/procedures/absent-procedure/readings",
         json={"tag": "playbill-procedure-readings-request-v1"},
     )
     assert absent.status_code == 404, absent.text
@@ -133,7 +133,7 @@ def owned_playbill_http(
     ]
     with TestClient(create_app()) as client:
         initialized = client.post(
-            f"/api/v1/{instance_id}/playbill/init",
+            f"/api/v1/{instance_id}/init",
             json={
                 "principals": [item.principal.model_dump(mode="json") for item in principals],
             },
@@ -163,7 +163,7 @@ def test_a_nonempty_loop_runs_measures_retries_and_pages_over_the_wire(
     seed_claims_into(instance, material)
     _instance, _owner, procedure = measured_world_on(instance, material)
     name = procedure.identity.name
-    base = f"/api/v1/{instance_id}/playbill/procedures/{name}"
+    base = f"/api/v1/{instance_id}/procedures/{name}"
 
     def run(minute: int) -> str:
         response = client.post(

@@ -83,7 +83,7 @@ def apply_playbill_publication(
         updated = content
         outcome: Literal["applied", "already_applied"] = "already_applied"
     except ProjectionMarkerError:
-        if f"playbill:block:{preparation.block_id}".encode("ascii") in content:
+        if f"cruxible:block:{preparation.block_id}".encode("ascii") in content:
             raise InsertionApplyError("local source contains a conflicting publication block")
         selector = preparation.rebased_selector
         anchor = selector.content
@@ -224,7 +224,7 @@ class PublicationClaimProjectedAsItself(InsertionProtocolError):
 def _raise_marker_refusal(exc: ProjectionMarkerError) -> NoReturn:
     if isinstance(exc, ProjectionBootstrapUnstampedError):
         raise PublicationSourceHasUnrepinnedBlock(
-            f"{PublicationSourceHasUnrepinnedBlock.code}: run playbill block repin before "
+            f"{PublicationSourceHasUnrepinnedBlock.code}: run cruxible block repin before "
             "publishing into this source"
         ) from exc
     raise PublicationBodyNotMarkerCompatible(
@@ -354,7 +354,7 @@ def build_publication_preparation(
     block_id = (
         prior.block_id if prior is not None else publication_block_id(expectation.expectation_id)
     )
-    marker_token = f"playbill:block:{block_id}".encode("ascii")
+    marker_token = f"cruxible:block:{block_id}".encode("ascii")
     if marker_token in observation.content:
         _raise(PublicationPreparationStale, "publication block ID already has non-exact bytes")
 

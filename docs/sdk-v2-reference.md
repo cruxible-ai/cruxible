@@ -1769,7 +1769,7 @@ the local path, which the workspace adapter checks before delegating to
 `deliver_playbill_floor_now`. The latter returns a `FloorDeliveryResult`
 with the delta and the ordinary `WorkspaceFloorWriteResult` receipt.
 Host inspection and server status also show `floor_delivery`. Both client apply
-and daemon delivery create the local `.playbill/floor/.gitignore` containing `*`;
+and daemon delivery create the local `.cruxible/floor/.gitignore` containing `*`;
 it ignores itself and all floor output, stays outside the manifest, and is
 preserved by delta applies and full replay. Its bytes are rewritten only when
 they differ.

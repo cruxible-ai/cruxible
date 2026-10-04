@@ -136,7 +136,7 @@ class WorkspaceFileReader:
         folded = tuple(cls._fold(part) for part in parts)
         if any(part == ".git" for part in folded):
             raise WorkspaceFileReadRefused("git_metadata", "Git metadata is never readable")
-        if any(part == ".playbill" for part in folded):
+        if any(part == ".cruxible" for part in folded):
             raise WorkspaceFileReadRefused(
                 "playbill_control", "Cruxible control paths are never readable"
             )
@@ -145,7 +145,7 @@ class WorkspaceFileReader:
             leaf.endswith(".ed25519")
             or leaf.endswith(".ed25519.pub")
             or leaf in {"daemon_ed25519", "daemon_ed25519.pub", "allowed_signers"}
-            or (leaf.startswith(".playbill-init-resume-") and leaf.endswith(".json"))
+            or (leaf.startswith(".cruxible-init-resume-") and leaf.endswith(".json"))
         ):
             raise WorkspaceFileReadRefused(
                 "client_custody", "client custody and key paths are never readable"

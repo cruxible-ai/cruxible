@@ -2220,9 +2220,7 @@ class PlaybillInstance:
         if any(member.artifact_kind == "compiler-upgrade" for member in candidate.members):
             from cruxible_core.runtime.permissions import check_permission
 
-            check_permission(
-                "cruxible_playbill_compiler_upgrade", instance_id=self.descriptor.instance_id
-            )
+            check_permission("cruxible_compiler_upgrade", instance_id=self.descriptor.instance_id)
         return prepare_generation(
             self._ledger,
             base=base,

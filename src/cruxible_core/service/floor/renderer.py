@@ -10,7 +10,7 @@ from __future__ import annotations
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.floor import FLOOR_FORMAT
 
-FLOOR_RENDERER_REVISION = "playbill-floor-renderer-v5.3"
+FLOOR_RENDERER_REVISION = "playbill-floor-renderer-v6.0"
 
 
 def floor_renderer(compiler_digest: str) -> str:

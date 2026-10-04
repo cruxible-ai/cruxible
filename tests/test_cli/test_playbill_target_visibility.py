@@ -23,59 +23,59 @@ def _isolate_target_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "CRUXIBLE_SERVER_URL",
         "CRUXIBLE_SERVER_SOCKET",
         "CRUXIBLE_INSTANCE_ID",
-        "CRUXIBLE_PLAYBILL_WORKSPACE",
+        "CRUXIBLE_WORKSPACE",
         "CRUXIBLE_NO_WORKSPACE",
     ):
         monkeypatch.delenv(name, raising=False)
 
 
 EXPECTED_MUTATING_COMMAND_TARGETS = {
-    ("playbill", "host", "create"): "create",
-    ("playbill", "workspace", "attach"): "manual",
-    ("playbill", "workspace", "floor-delivery"): "manual",
-    ("playbill", "workspace", "detach"): "manual",
-    ("playbill", "init"): "active",
-    ("playbill", "instance", "decommission"): "active",
-    ("playbill", "body", "store"): "active",
-    ("playbill", "provider", "install"): "active",
-    ("playbill", "kit", "add"): "active",
-    ("playbill", "kit", "remove"): "active",
-    ("playbill", "ledger", "set-mirror"): "active",
-    ("playbill", "ledger", "publish"): "active",
-    ("playbill", "document", "propose"): "active",
-    ("playbill", "claim-type", "propose"): "active",
-    ("playbill", "claim-type", "migrate"): "active",
-    ("playbill", "claim-type", "upgrade-evidence-rules"): "active",
-    ("playbill", "claim-type", "upgrade"): "active",
-    ("playbill", "block", "depublish"): "active",
-    ("playbill", "set"): "active",
-    ("playbill", "add"): "active",
-    ("playbill", "retire"): "active",
-    ("playbill", "write"): "active",
-    ("playbill", "claim", "attest"): "active",
-    ("playbill", "predict"): "active",
-    ("playbill", "settle"): "active",
-    ("playbill", "claim-attestation", "recover"): "active",
-    ("playbill", "authoring", "create"): "manual",
-    ("playbill", "authoring", "bind"): "active",
-    ("playbill", "authoring", "compile"): "active",
-    ("playbill", "authoring", "preflight"): "active",
-    ("playbill", "authoring", "rebase"): "active",
-    ("playbill", "authoring", "submit"): "active",
-    ("playbill", "procedure", "bind"): "active",
-    ("playbill", "procedure", "run"): "active",
-    ("playbill", "procedure", "measure"): "active",
-    ("playbill", "line", "run"): "active",
-    ("playbill", "proposal", "approve"): "active",
-    ("playbill", "proposal", "activate"): "active",
-    ("playbill", "proposal", "readmit"): "active",
-    ("playbill", "proposal", "withdraw"): "active",
-    ("playbill", "sources", "propose"): "active",
-    ("playbill", "compiler", "upgrade"): "active",
-    ("playbill", "principal", "add"): "active",
-    ("playbill", "principal", "rotate"): "active",
-    ("playbill", "principal", "recover"): "active",
-    ("playbill", "principal", "revoke"): "active",
+    ("host", "create"): "create",
+    ("workspace", "attach"): "manual",
+    ("workspace", "floor-delivery"): "manual",
+    ("workspace", "detach"): "manual",
+    ("init",): "active",
+    ("instance", "decommission"): "active",
+    ("body", "store"): "active",
+    ("provider", "install"): "active",
+    ("kit", "add"): "active",
+    ("kit", "remove"): "active",
+    ("ledger", "set-mirror"): "active",
+    ("ledger", "publish"): "active",
+    ("document", "propose"): "active",
+    ("claim-type", "propose"): "active",
+    ("claim-type", "migrate"): "active",
+    ("claim-type", "upgrade-evidence-rules"): "active",
+    ("claim-type", "upgrade"): "active",
+    ("block", "depublish"): "active",
+    ("set",): "active",
+    ("add",): "active",
+    ("retire",): "active",
+    ("write",): "active",
+    ("claim", "attest"): "active",
+    ("predict",): "active",
+    ("settle",): "active",
+    ("claim-attestation", "recover"): "active",
+    ("authoring", "create"): "manual",
+    ("authoring", "bind"): "active",
+    ("authoring", "compile"): "active",
+    ("authoring", "preflight"): "active",
+    ("authoring", "rebase"): "active",
+    ("authoring", "submit"): "active",
+    ("procedure", "bind"): "active",
+    ("procedure", "run"): "active",
+    ("procedure", "measure"): "active",
+    ("line", "run"): "active",
+    ("proposal", "approve"): "active",
+    ("proposal", "activate"): "active",
+    ("proposal", "readmit"): "active",
+    ("proposal", "withdraw"): "active",
+    ("sources", "propose"): "active",
+    ("compiler", "upgrade"): "active",
+    ("principal", "add"): "active",
+    ("principal", "rotate"): "active",
+    ("principal", "recover"): "active",
+    ("principal", "revoke"): "active",
     ("credential", "claim-bootstrap"): "active",
     ("credential", "mint"): "active",
     ("credential", "recover-admin"): "manual",
@@ -127,7 +127,6 @@ def test_explicit_playbill_write_names_instance_transport_and_source(
             "https://explicit.example.test",
             "--instance-id",
             "inst_explicit",
-            "playbill",
             "body",
             "store",
             str(body),
@@ -180,7 +179,7 @@ def test_remembered_playbill_write_marks_remembered_target(
     )
     result = CliRunner().invoke(
         cli,
-        ["playbill", "proposal", "activate", "proposal-1", "--json"],
+        ["proposal", "activate", "proposal-1", "--json"],
     )
 
     assert result.exit_code == 0, result.output
@@ -199,7 +198,7 @@ def test_two_attached_workspaces_route_the_same_write_to_their_own_instance(
         "CRUXIBLE_SERVER_URL",
         "CRUXIBLE_SERVER_SOCKET",
         "CRUXIBLE_INSTANCE_ID",
-        "CRUXIBLE_PLAYBILL_WORKSPACE",
+        "CRUXIBLE_WORKSPACE",
     ):
         monkeypatch.delenv(name, raising=False)
     save_cli_context(
@@ -228,8 +227,8 @@ def test_two_attached_workspaces_route_the_same_write_to_their_own_instance(
     body.write_text("# governed\n", encoding="utf-8")
     for label in ("first", "second"):
         workspace = tmp_path / label
-        (workspace / ".playbill").mkdir(parents=True)
-        (workspace / ".playbill" / "coverage.json").write_text(
+        (workspace / ".cruxible").mkdir(parents=True)
+        (workspace / ".cruxible" / "coverage.json").write_text(
             json.dumps(
                 {
                     "tag": "playbill-coverage-workspace-config-v2",
@@ -243,7 +242,7 @@ def test_two_attached_workspaces_route_the_same_write_to_their_own_instance(
         monkeypatch.chdir(workspace)
         result = CliRunner().invoke(
             cli,
-            ["playbill", "body", "store", str(body), "--json"],
+            ["body", "store", str(body), "--json"],
         )
         assert result.exit_code == 0, result.output
         assert result.stderr == (
@@ -281,7 +280,6 @@ def test_host_creation_names_explicit_requested_id(
         [
             "--server-url",
             "https://host.example.test",
-            "playbill",
             "host",
             "create",
             "--instance-id",
@@ -314,7 +312,6 @@ def test_explicit_transport_does_not_inherit_another_daemons_remembered_instance
         [
             "--server-url",
             "https://other.example.test",
-            "playbill",
             "proposal",
             "activate",
             "proposal-1",
@@ -375,7 +372,7 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
     way every other read does.
     """
 
-    for path in (("playbill", "coverage", "resolve"), ("playbill", "coverage", "status")):
+    for path in (("coverage", "resolve"), ("coverage", "status")):
         assert path not in MUTATING_COMMAND_TARGETS
         assert _command_at_path(path).callback is not None
 
@@ -449,7 +446,6 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
             "https://read.example.test",
             "--instance-id",
             "inst_read",
-            "playbill",
             "coverage",
             "resolve",
             "--root",
@@ -470,7 +466,7 @@ def test_host_show_is_a_silent_read_and_cli_adds_transport(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    assert ("playbill", "host", "show") not in MUTATING_COMMAND_TARGETS
+    assert ("host", "show") not in MUTATING_COMMAND_TARGETS
 
     class StubClient:
         def show_host(self, instance_id: str) -> contracts.HostInspection:
@@ -489,7 +485,6 @@ def test_host_show_is_a_silent_read_and_cli_adds_transport(
         [
             "--server-socket",
             str(socket),
-            "playbill",
             "host",
             "show",
             "inst_show",
@@ -519,7 +514,6 @@ def test_claim_type_template_does_not_announce_a_write_target(
             "https://example.test",
             "--instance-id",
             "inst_template",
-            "playbill",
             "claim-type",
             "propose",
             "--template",
@@ -560,7 +554,6 @@ def test_workspace_attach_writes_config_only_after_exact_daemon_registration(
         [
             "--server-socket",
             str(socket),
-            "playbill",
             "workspace",
             "attach",
             "--instance-id",
@@ -575,7 +568,7 @@ def test_workspace_attach_writes_config_only_after_exact_daemon_registration(
     assert payload["workspace_root"] == str(workspace.resolve())
     assert payload["transport"] == str(socket.resolve())
     assert result.stderr == f"target: inst_attached @ unix://{socket.resolve()} (explicit)\n"
-    config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
+    config = json.loads((workspace / ".cruxible" / "coverage.json").read_text())
     assert config["instance_id"] == "inst_attached"
     assert config["server_socket"] == str(socket.resolve())
     assert not any(
@@ -617,7 +610,7 @@ def test_workspace_attach_marks_a_remembered_target_as_remembered(
             return self.host_workspace_registration(instance_id)
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    result = CliRunner().invoke(cli, ["playbill", "workspace", "attach", "--json"])
+    result = CliRunner().invoke(cli, ["workspace", "attach", "--json"])
 
     assert result.exit_code == 0, result.output
     assert result.stderr == (f"target: inst_remembered @ unix://{socket.resolve()} (remembered)\n")
@@ -649,7 +642,6 @@ def test_workspace_attach_refuses_a_different_registration_without_writing(
         [
             "--server-socket",
             str(tmp_path / "daemon.sock"),
-            "playbill",
             "workspace",
             "attach",
             "--instance-id",
@@ -659,8 +651,8 @@ def test_workspace_attach_refuses_a_different_registration_without_writing(
 
     assert result.exit_code == 1
     assert "cruxible.workspace.registration_disagrees" in result.output
-    assert "cruxible playbill workspace detach --instance-id inst_other" in result.output
-    assert not (workspace / ".playbill" / "coverage.json").exists()
+    assert "cruxible workspace detach --instance-id inst_other" in result.output
+    assert not (workspace / ".cruxible" / "coverage.json").exists()
 
 
 def test_instance_decommission_names_the_instance_it_is_about_to_end(
@@ -700,7 +692,6 @@ def test_instance_decommission_names_the_instance_it_is_about_to_end(
             "https://terminal.example.test",
             "--instance-id",
             "inst_terminal",
-            "playbill",
             "instance",
             "decommission",
             "--reason",
@@ -729,7 +720,7 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
     silent on stderr the way every other read does.
     """
 
-    path = ("playbill", "world", "stub")
+    path = ("stub",)
     assert path not in MUTATING_COMMAND_TARGETS
     assert _command_at_path(path).callback is not None
 
@@ -803,8 +794,6 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
             "https://read.example.test",
             "--instance-id",
             "inst_read",
-            "playbill",
-            "world",
             "stub",
         ],
     )

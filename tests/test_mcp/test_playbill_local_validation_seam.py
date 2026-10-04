@@ -25,7 +25,7 @@ def test_capture_read_revalidates_before_local_dispatch(monkeypatch, changes) ->
         "playbill_read_capture",
         lambda *args: pytest.fail("Invalid capture request reached the local service"),
     )
-    with pytest.raises(DataValidationError, match="cruxible_playbill_read_capture"):
+    with pytest.raises(DataValidationError, match="cruxible_read_capture"):
         handlers.handle_playbill_read_capture("inst_never_reached", request)
 
 
@@ -34,7 +34,7 @@ def test_an_overlong_withdraw_reason_is_a_typed_refusal() -> None:
         handlers.handle_playbill_withdraw_proposal("inst_never_reached", "PROP-1", "x" * 1_001)
 
     message = str(refused.value)
-    assert "cruxible_playbill_proposal_withdraw" in message
+    assert "cruxible_proposal_withdraw" in message
     assert "reason" in message
 
 
@@ -44,7 +44,7 @@ def test_an_empty_depublish_target_is_refused_before_the_facade_is_reached() -> 
     with pytest.raises(DataValidationError) as refused:
         handlers.handle_playbill_block_depublish("inst_never_reached", "", "pub-anything")
 
-    assert "cruxible_playbill_block_depublish" in str(refused.value)
+    assert "cruxible_block_depublish" in str(refused.value)
 
 
 def test_a_reason_the_served_model_admits_reaches_the_facade() -> None:

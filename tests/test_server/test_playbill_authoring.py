@@ -58,7 +58,7 @@ def test_http_raw_intent_cannot_assert_procedure_execution(playbill_http):
         ),
     )
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/intents",
         json={
             "tag": "playbill-authoring-intent-create-request-v1",
             "payload": payload.model_dump(mode="json"),
@@ -67,7 +67,7 @@ def test_http_raw_intent_cannot_assert_procedure_execution(playbill_http):
     assert response.status_code == 200, response.text
     intent_id = response.json()["intent"]["intent_id"]
     compiled = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/compile",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
             "tag": "playbill-authoring-intent-compile-request-v1",
             "payload": payload.model_dump(mode="json"),
@@ -80,7 +80,7 @@ def test_http_raw_intent_cannot_assert_procedure_execution(playbill_http):
         item["code"] for item in compiled.json()["frontier"]["diagnostics"]
     }
     submitted = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit",
+        f"/api/v1/{instance_id}/authoring/intents/{intent_id}/submit",
         json={"tag": "playbill-authoring-intent-submit-request-v1"},
     )
     assert submitted.status_code == 200, submitted.text
@@ -145,7 +145,7 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
         "insertion_target": None,
     }
     compiled = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/compile",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
             "tag": "playbill-authoring-intent-compile-request-v1",
             "payload": payload,
@@ -153,7 +153,7 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
         },
     )
     submitted = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/submit",
+        f"/api/v1/{instance_id}/authoring/intents/{INTENT_ID}/submit",
         json={"tag": "playbill-authoring-intent-submit-request-v1"},
     )
 
@@ -204,7 +204,7 @@ def test_http_compile_renders_a_lowering_fault_typed_instead_of_a_bare_500(
         "existing_claim_dispositions": [],
     }
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/compile",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
             "tag": "playbill-authoring-intent-compile-request-v1",
             "payload": payload,
@@ -249,7 +249,7 @@ def test_http_input_variants_delegate_without_exposing_a_base(
         create_stub,
     )
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/intents",
         json={
             "tag": "playbill-authoring-input-create-request-v1",
             "input": input_value,
@@ -266,7 +266,7 @@ def test_http_create_flow_a_stub_surfaces_the_bind_refusal(
     client, instance_id, _private_key = playbill_http
 
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/intents",
         json={
             "tag": "playbill-authoring-input-create-request-v1",
             "input": claim_flow_a_example().model_dump(mode="json"),
@@ -277,7 +277,7 @@ def test_http_create_flow_a_stub_surfaces_the_bind_refusal(
     assert response.json()["message"] == (
         "cruxible.authoring.working_selection_requires_bind at input.source: "
         "create and compile cannot observe local working-source bytes. "
-        "Repair: Run playbill authoring bind with this input and the selected local file."
+        "Repair: Run cruxible authoring bind with this input and the selected local file."
     )
 
 
@@ -299,7 +299,7 @@ def test_http_unused_procedure_contract_is_a_typed_preflight_refusal(
     ).model_dump(mode="json")
 
     created = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/intents",
         json={
             "tag": "playbill-authoring-input-create-request-v1",
             "input": invalid,
@@ -309,11 +309,11 @@ def test_http_unused_procedure_contract_is_a_typed_preflight_refusal(
     assert created.status_code == 200, created.text
     intent_id = created.json()["intent"]["intent_id"]
     preflight = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight",
+        f"/api/v1/{instance_id}/authoring/intents/{intent_id}/preflight",
         json={"tag": "playbill-authoring-intent-preflight-request-v1"},
     )
     compiled = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/compile",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
             "tag": "playbill-authoring-input-compile-request-v1",
             "input": invalid,
@@ -353,7 +353,7 @@ def test_http_unsorted_owned_contracts_use_the_typed_artifact_validation_refusal
     )
 
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/compile",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
             "tag": "playbill-authoring-intent-compile-request-v1",
             "payload": unsorted.model_dump(mode="json"),
@@ -406,7 +406,7 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
     ]
 
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/intents",
         json={
             "tag": "playbill-authoring-input-create-request-v1",
             "input": {"kind": "brief"},
@@ -440,7 +440,7 @@ def test_http_migration_route_delegates_the_typed_request(
         migrate_stub,
     )
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/claim-types/migrations",
+        f"/api/v1/{instance_id}/claim-types/migrations",
         json={
             "tag": "playbill-claim-type-migration-request-v1",
             "successor": {
@@ -489,14 +489,14 @@ def test_http_claim_type_lowering_returns_typed_nested_validation_refusal(
         ]
     }
     if operation == "migrate":
-        path = f"/api/v1/{instance_id}/playbill/claim-types/migrations"
+        path = f"/api/v1/{instance_id}/claim-types/migrations"
         request = {
             "tag": "playbill-claim-type-migration-request-v2",
             "mode": "preflight",
             "successor": claim_type_input,
         }
     else:
-        path = f"/api/v1/{instance_id}/playbill/claim-types/proposals"
+        path = f"/api/v1/{instance_id}/claim-types/proposals"
         request = {
             "tag": "playbill-claim-type-input-propose-request-v1",
             "input": claim_type_input,
@@ -519,7 +519,7 @@ def test_http_migration_domain_refusal_is_a_bad_request(
     client, instance_id, _private_key = playbill_http
 
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/claim-types/migrations",
+        f"/api/v1/{instance_id}/claim-types/migrations",
         json={
             "tag": "playbill-claim-type-migration-request-v2",
             "mode": "preflight",
@@ -542,7 +542,7 @@ def test_http_claim_type_input_proposal_delivers_actionable_source_lint(
     }
 
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/claim-types/proposals",
+        f"/api/v1/{instance_id}/claim-types/proposals",
         json={
             "tag": "playbill-claim-type-input-propose-request-v1",
             "input": claim_type_input,
@@ -582,7 +582,7 @@ def test_http_claim_type_routes_preserve_optional_lint_payload(
                 lint=lint,
             ),
         )
-        path = f"/api/v1/{instance_id}/playbill/claim-types/proposals"
+        path = f"/api/v1/{instance_id}/claim-types/proposals"
         request = {
             "claim_type": lower_claim_type_input(claim_type_input_example(), tree={}).model_dump(
                 mode="json"
@@ -600,7 +600,7 @@ def test_http_claim_type_routes_preserve_optional_lint_payload(
                 lint=lint,
             ),
         )
-        path = f"/api/v1/{instance_id}/playbill/claim-types/migrations"
+        path = f"/api/v1/{instance_id}/claim-types/migrations"
         request = {
             "tag": "playbill-claim-type-migration-request-v2",
             "mode": "preflight",
@@ -618,7 +618,7 @@ def test_http_refuses_digest_and_base_smuggling_in_request_models(
 ) -> None:
     client, instance_id, _private_key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/intents",
         json={
             "tag": "playbill-authoring-intent-create-request-v1",
             "payload": {
@@ -676,10 +676,10 @@ def test_http_whoami_and_proposal_inventory_are_typed_reads(
         lambda selected, value: (seen.append((selected, value)), selector)[1],
     )
 
-    identity = client.get(f"/api/v1/{instance_id}/playbill/whoami")
-    listing = client.get(f"/api/v1/{instance_id}/playbill/proposals?status=open")
+    identity = client.get(f"/api/v1/{instance_id}/whoami")
+    listing = client.get(f"/api/v1/{instance_id}/proposals?status=open")
     resolved = client.get(
-        f"/api/v1/{instance_id}/playbill/proposal-selector",
+        f"/api/v1/{instance_id}/proposal-selector",
         params={"selector": selector.selector},
     )
 
@@ -727,7 +727,7 @@ def test_http_proposal_selector_resolves_against_a_live_instance(
     admission = proposed.proposal.admission
 
     response = client.get(
-        f"/api/v1/{instance_id}/playbill/proposal-selector",
+        f"/api/v1/{instance_id}/proposal-selector",
         params={"selector": admission.target_ref},
     )
 
@@ -766,7 +766,7 @@ def test_http_insertion_abandon_is_typed(
         abandon_stub,
     )
     abandoned = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/abandon",
+        f"/api/v1/{instance_id}/authoring/intents/{INTENT_ID}/insertion/abandon",
         json={"tag": "playbill-insertion-abandon-request-v1"},
     )
 
@@ -780,16 +780,16 @@ def test_http_list_routes_bound_their_page_size(
 ) -> None:
     client, instance_id, _private_key = playbill_http
 
-    proposals = client.get(f"/api/v1/{instance_id}/playbill/proposals", params={"limit": 1})
+    proposals = client.get(f"/api/v1/{instance_id}/proposals", params={"limit": 1})
     policies = client.get(
-        f"/api/v1/{instance_id}/playbill/orient", params={"section": "policies", "limit": 1}
+        f"/api/v1/{instance_id}/orient", params={"section": "policies", "limit": 1}
     )
     oversized = client.get(
-        f"/api/v1/{instance_id}/playbill/orient",
+        f"/api/v1/{instance_id}/orient",
         params={"section": "policies", "limit": contracts.ORIENT_MAX_LIMIT + 1},
     )
     foreign = client.get(
-        f"/api/v1/{instance_id}/playbill/proposals",
+        f"/api/v1/{instance_id}/proposals",
         params={"cursor": policies.json()["next_cursor"]},
     )
 

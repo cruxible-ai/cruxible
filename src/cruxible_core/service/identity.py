@@ -80,7 +80,7 @@ def principal_refusal(
         return PrincipalRefusedError(
             "cruxible.identity.principal_revoked",
             f"principal {principal_id!r} was revoked on {instance_id}; repair: act as an "
-            "active principal (`cruxible playbill orient --section principals`)",
+            "active principal (`cruxible orient --section principals`)",
             repair=RepairOperation(
                 operation="cruxible.orient",
                 arguments={"section": "principals", "revoked_principal_id": principal_id},
@@ -89,7 +89,7 @@ def principal_refusal(
     return PrincipalRefusedError(
         "cruxible.identity.principal_absent",
         f"principal {principal_id!r} is not registered on {instance_id}; repair: an "
-        f"owner runs `cruxible playbill principal add {principal_id} --key-dir DIR`, "
+        f"owner runs `cruxible principal add {principal_id} --key-dir DIR`, "
         "then this process acts with the settings it writes",
         repair=RepairOperation(
             operation="cruxible.principal.add",

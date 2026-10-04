@@ -264,7 +264,7 @@ class PlaybillInstanceManager:
                 "cruxible.preview.recovery_pending",
                 f"previewing first needs instance {instance_id} reopened, and reopening it "
                 f"would repair derived files on disk ({exc.door}), which a preview may not "
-                "write; run an ordinary read (`cruxible playbill orient`) to reopen it, then "
+                "write; run an ordinary read (`cruxible orient`) to reopen it, then "
                 "preview again",
                 operation="cruxible.orient",
                 repair=RepairOperation(operation="cruxible.orient", arguments={}),

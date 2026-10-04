@@ -1945,7 +1945,10 @@ class FloorExport(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal[
-        "playbill-floor-export-v1", "playbill-floor-export-v2", "playbill-floor-export-v5"
+        "playbill-floor-export-v1",
+        "playbill-floor-export-v2",
+        "playbill-floor-export-v5",
+        "playbill-floor-export-v6",
     ] = "playbill-floor-export-v2"
     coordinate: AcceptedCoordinate
     manifest: dict[str, Any]

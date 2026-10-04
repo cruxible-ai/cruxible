@@ -43,7 +43,7 @@ from recipe import bootstrap, seed, export_arm_surface, build_arm, run_turn, run
 
 ## What each step does
 
-1. **`bootstrap`** — `playbill host create` then `playbill init`, generating the
+1. **`bootstrap`** — `cruxible host create` then `cruxible init`, generating the
    `operator` creator and an independent `reviewer` in client custody. The server
    URL is required, never inferred, so two arms cannot silently seed against
    different worlds.
@@ -52,12 +52,12 @@ from recipe import bootstrap, seed, export_arm_surface, build_arm, run_turn, run
    the Procedure through AuthoringIntent. The independent `reviewer` signs every
    proposal before the harness activates it. One write settles at a time because
    two proposals opened against one head cannot both activate.
-3. **`export_arm_surface`** — `playbill floor export`, producing the pointer-model
+3. **`export_arm_surface`** — `cruxible floor export`, producing the pointer-model
    floor-v2 artifacts and §11.6.3 coverage boundary in one greppable tree. The
    unshipped native markdown projection is deliberately not part of either arm.
 4. **`build_arm`** — materializes each arm's workspace from the bundle's
    committed corpus, and for arms 3 and 4 also copies the exported surface,
-   writes `.playbill/coverage.json`, and constructs the middleware over the
+   writes `.cruxible/coverage.json`, and constructs the middleware over the
    `_resolver` embedding (verbatim from PC-G-H2: observations in, one frozen
    coverage result out, over the ordinary served operation).
 5. **`run_turn`** — a canned agent turn of Read, Grep, and Edit events in the

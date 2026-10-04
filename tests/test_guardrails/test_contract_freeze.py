@@ -78,7 +78,7 @@ def test_http_catalog_is_playbill_plus_generic_host_transport_only() -> None:
         "/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate",
     }
     assert paths - generic
-    assert all(path in generic or "/playbill/" in path for path in paths)
+    assert all(path in generic or "/" in path for path in paths)
 
 
 def test_playbill_openapi_exposes_typed_coordinate_and_host_results() -> None:

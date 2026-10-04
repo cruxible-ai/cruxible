@@ -58,11 +58,11 @@ def test_off_renders_without_writing_and_on_delivers_the_head(world):
     registry.set_floor_delivery(instance.descriptor.instance_id, False)
     assert refresh_floor(instance, instance.descriptor.instance_id) is None
     assert instance.floor_current_memo
-    assert not (workspace / ".playbill").exists()
+    assert not (workspace / ".cruxible").exists()
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
     result = refresh_floor(instance, instance.descriptor.instance_id)
     assert result.written.status == "written"
-    manifest = read_floor_manifest(workspace / ".playbill" / "floor")
+    manifest = read_floor_manifest(workspace / ".cruxible" / "floor")
     assert manifest.generation == result.delta.head.generation
     assert refresh_floor(instance, instance.descriptor.instance_id).written.status == "unchanged"
     assert [outcome.status for outcome in floor_outcomes(instance)] == ["unchanged"]
@@ -117,7 +117,7 @@ def test_hand_edited_base_gets_exactly_one_full_retry(world, monkeypatch):
     instance, workspace, registry = world
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
     result = refresh_floor(instance, instance.descriptor.instance_id)
-    path = workspace / ".playbill" / "floor" / result.delta.files[0].path
+    path = workspace / ".cruxible" / "floor" / result.delta.files[0].path
     path.write_text("changed by hand")
     calls = []
     fetch = floor.service_playbill_floor_delta
@@ -164,15 +164,15 @@ def test_failed_target_stalls_until_head_or_registration_changes(world, monkeypa
     assert FLOOR.health(instance, now=NOW)[0].state == "running"
 
 
-@pytest.mark.parametrize("component", [".playbill", "floor", ".PLAYBILL"])
+@pytest.mark.parametrize("component", [".cruxible", "floor", ".CRUXIBLE"])
 def test_symlinked_delivery_subtree_is_refused(world, tmp_path, component):
     instance, workspace, registry = world
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
     outside = tmp_path / "outside"
     outside.mkdir()
     if component == "floor":
-        (workspace / ".playbill").mkdir()
-        link = workspace / ".playbill" / "floor"
+        (workspace / ".cruxible").mkdir()
+        link = workspace / ".cruxible" / "floor"
     else:
         link = workspace / component
     link.symlink_to(outside, target_is_directory=True)
@@ -307,7 +307,7 @@ def test_delivery_and_deliver_now_share_admission_but_instances_proceed(
         routed = pool.submit(delta_route)
         other = pool.submit(refresh_floor, other_instance, "inst_other")
         assert other.result(timeout=10).written.status == "written"
-        assert read_floor_manifest(other_workspace / ".playbill" / "floor") is not None
+        assert read_floor_manifest(other_workspace / ".cruxible" / "floor") is not None
         assert not second.is_set()
         # The route is admitted only once the consumer's render lets go.
         assert not delta_rendered.wait(0.2)
@@ -507,7 +507,7 @@ def test_deliver_now_refuses_a_pinned_coordinate_with_a_runnable_repair(world, m
     assert client_error.error_code == envelope.error_code
     assert client_error.repair == envelope.repair
     assert floor_outcomes(instance) == ()
-    assert not (workspace / ".playbill").exists()
+    assert not (workspace / ".cruxible").exists()
 
 
 def test_daemon_delivery_writes_the_local_indexes_the_client_writes(tmp_path, monkeypatch):
@@ -530,14 +530,14 @@ def test_daemon_delivery_writes_the_local_indexes_the_client_writes(tmp_path, mo
     local = ("sources/INDEX", "projections/INDEX", ".gitignore")
 
     assert refresh_floor(instance, instance.descriptor.instance_id).written.status == "written"
-    delivered = {path: (workspace / ".playbill/floor" / path).read_bytes() for path in local}
+    delivered = {path: (workspace / ".cruxible/floor" / path).read_bytes() for path in local}
     assert b"reports.md" in delivered["sources/INDEX"]
     assert delivered[".gitignore"] == b"*\n"
     import subprocess
 
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)
     status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all", "--", ".playbill/floor"],
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", ".cruxible/floor"],
         cwd=workspace,
         check=True,
         capture_output=True,
@@ -548,7 +548,7 @@ def test_daemon_delivery_writes_the_local_indexes_the_client_writes(tmp_path, mo
     client = tmp_path / "client"
     report_evidence(client, "Count: 3")
     materialize_floor(client, export=_export_envelope(service_export_playbill_floor(instance)))
-    assert delivered == {path: (client / ".playbill/floor" / path).read_bytes() for path in local}
+    assert delivered == {path: (client / ".cruxible/floor" / path).read_bytes() for path in local}
 
 
 def test_seeded_floor_trigger_delivers_after_accept_and_retirement_stops_it(tmp_path, monkeypatch):
@@ -570,7 +570,7 @@ def test_seeded_floor_trigger_delivers_after_accept_and_retirement_stops_it(tmp_
     runner = ConsumerRunner(manager, kinds=(FLOOR,))
     instance_id = instance.descriptor.instance_id
     runner.match_once(instance_id, instance, now=NOW)
-    assert not (workspace / ".playbill/floor").exists()
+    assert not (workspace / ".cruxible/floor").exists()
 
     def accept(name, at, trigger):
         tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -589,7 +589,7 @@ def test_seeded_floor_trigger_delivers_after_accept_and_retirement_stops_it(tmp_
     at = NOW + timedelta(seconds=1)
     extra = action_trigger("extra-sweep", action="evidence.sweep", interval_seconds=60)
     accept("first-accept", at, extra)
-    floor_root = workspace / ".playbill/floor"
+    floor_root = workspace / ".cruxible/floor"
     delivered = read_floor_manifest(floor_root)
     assert delivered.coordinate.git_oid == instance.accepted_coordinate().git_oid
     assert [
@@ -617,7 +617,7 @@ def test_fifo_local_input_stalls_delivery_promptly_and_releases_admission(world,
     instance, workspace, _ = world
     instance_id = instance.descriptor.instance_id
     refresh_floor(instance, instance_id)
-    fifo = workspace / ".playbill" / relative
+    fifo = workspace / ".cruxible" / relative
     fifo.unlink(missing_ok=True)
     os.mkfifo(fifo)
     with pytest.raises(WorkspaceError, match="not a regular file"):

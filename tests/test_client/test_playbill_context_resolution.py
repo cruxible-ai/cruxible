@@ -26,8 +26,8 @@ def _attach(
     server_url: str | None = None,
     server_socket: str | None = None,
 ) -> None:
-    (root / ".playbill").mkdir(parents=True)
-    (root / ".playbill" / "coverage.json").write_text(
+    (root / ".cruxible").mkdir(parents=True)
+    (root / ".cruxible" / "coverage.json").write_text(
         json.dumps(
             {
                 "tag": "playbill-coverage-workspace-config-v2",
@@ -46,14 +46,14 @@ def _clear_target_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "CRUXIBLE_SERVER_URL",
         "CRUXIBLE_SERVER_SOCKET",
         "CRUXIBLE_INSTANCE_ID",
-        "CRUXIBLE_PLAYBILL_WORKSPACE",
+        "CRUXIBLE_WORKSPACE",
         "CRUXIBLE_NO_WORKSPACE",
     ):
         monkeypatch.delenv(name, raising=False)
 
 
 def _catalog(root: Path) -> None:
-    (root / ".playbill" / "sources.yaml").write_text(
+    (root / ".cruxible" / "sources.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -139,8 +139,8 @@ def test_target_components_use_independent_explicit_env_workspace_global_precede
 
 
 def test_incomplete_coverage_config_does_not_retarget_global_context(tmp_path: Path) -> None:
-    (tmp_path / ".playbill").mkdir()
-    (tmp_path / ".playbill" / "coverage.json").write_text(
+    (tmp_path / ".cruxible").mkdir()
+    (tmp_path / ".cruxible" / "coverage.json").write_text(
         '{"tag":"playbill-coverage-workspace-config-v2","rules":[]}',
         encoding="utf-8",
     )
@@ -250,8 +250,8 @@ def test_invalid_ancestor_binding_is_skipped_with_a_warning(tmp_path: Path) -> N
     home = tmp_path / "home"
     project = home / "a" / "b" / "c"
     project.mkdir(parents=True)
-    (home / ".playbill").mkdir()
-    (home / ".playbill" / "coverage.json").write_text("{not json", encoding="utf-8")
+    (home / ".cruxible").mkdir()
+    (home / ".cruxible" / "coverage.json").write_text("{not json", encoding="utf-8")
 
     resolved = resolve_context(
         remembered={
@@ -269,8 +269,8 @@ def test_invalid_ancestor_binding_is_skipped_with_a_warning(tmp_path: Path) -> N
 
 
 def test_invalid_binding_at_cwd_is_still_a_refusal(tmp_path: Path) -> None:
-    (tmp_path / ".playbill").mkdir()
-    (tmp_path / ".playbill" / "coverage.json").write_text("{not json", encoding="utf-8")
+    (tmp_path / ".cruxible").mkdir()
+    (tmp_path / ".cruxible" / "coverage.json").write_text("{not json", encoding="utf-8")
 
     with pytest.raises(ContextResolutionError, match="not valid JSON"):
         resolve_context(environ={}, cwd=tmp_path, home=tmp_path)
@@ -304,8 +304,8 @@ def test_cli_warns_when_skipping_an_invalid_ancestor_binding(
     home = tmp_path / "home"
     project = home / "project" / "nested"
     project.mkdir(parents=True)
-    (home / ".playbill").mkdir()
-    (home / ".playbill" / "coverage.json").write_text("{not json", encoding="utf-8")
+    (home / ".cruxible").mkdir()
+    (home / ".cruxible" / "coverage.json").write_text("{not json", encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
     monkeypatch.chdir(project)
@@ -359,8 +359,8 @@ def test_disagreeing_coverage_and_catalog_roots_refuse(tmp_path: Path) -> None:
         instance_id="inst_coverage",
         server_url="https://coverage.example.test",
     )
-    (sources_root / ".playbill").mkdir()
-    (sources_root / ".playbill" / "sources.yaml").write_text(
+    (sources_root / ".cruxible").mkdir()
+    (sources_root / ".cruxible" / "sources.yaml").write_text(
         "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries: []\n",
         encoding="utf-8",
     )
@@ -370,20 +370,20 @@ def test_disagreeing_coverage_and_catalog_roots_refuse(tmp_path: Path) -> None:
 
     message = str(raised.value)
     assert "workspace_binding_conflict" in message
-    assert str(coverage_root / ".playbill" / "coverage.json") in message
-    assert str(sources_root / ".playbill" / "sources.yaml") in message
+    assert str(coverage_root / ".cruxible" / "coverage.json") in message
+    assert str(sources_root / ".cruxible" / "sources.yaml") in message
     assert "repair:" in message
 
 
 def test_workspace_binding_symlink_escape_names_the_selected_source(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     outside = tmp_path / "outside.json"
-    (workspace / ".playbill").mkdir(parents=True)
+    (workspace / ".cruxible").mkdir(parents=True)
     outside.write_text(
         '{"server_url":"https://outside.example.test","instance_id":"inst_outside"}',
         encoding="utf-8",
     )
-    os.symlink(outside, workspace / ".playbill" / "coverage.json")
+    os.symlink(outside, workspace / ".cruxible" / "coverage.json")
 
     with pytest.raises(ContextResolutionError, match="selected from.*escapes workspace"):
         resolve_context(environ={}, cwd=workspace)
@@ -489,7 +489,7 @@ def test_context_show_names_workspace_attach_for_missing_local_config(
         "tag": "playbill-workspace-attachment-disagreement-v1",
         "code": "workspace_config_missing",
         "detail": "daemon host is registered here but the workspace config is absent",
-        "repair": "cruxible playbill workspace attach --instance-id inst_workspace",
+        "repair": "cruxible workspace attach --instance-id inst_workspace",
     }
 
 

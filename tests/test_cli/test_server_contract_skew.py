@@ -127,8 +127,8 @@ def test_lifecycle_works_through_an_incompatible_daemon(daemon, command: str) ->
 @pytest.mark.parametrize(
     "command",
     (
-        ("playbill", "get", "project.work_item/wi-42"),
-        ("playbill", "proposal", "activate", "sha256:" + "1" * 64),
+        ("get", "project.work_item/wi-42"),
+        ("proposal", "activate", "sha256:" + "1" * 64),
     ),
 )
 def test_reads_and_authoring_still_refuse_contract_skew(daemon, command: tuple[str, ...]) -> None:

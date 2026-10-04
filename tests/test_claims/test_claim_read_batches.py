@@ -241,7 +241,7 @@ def test_runtime_checks_read_permission_before_instance_lookup(monkeypatch):
     from cruxible_core.runtime import playbill_api
 
     def denied(tool, *, instance_id):
-        assert tool == "cruxible_playbill_read" and instance_id == "restricted"
+        assert tool == "cruxible_read" and instance_id == "restricted"
         raise PermissionError("denied")
 
     monkeypatch.setattr(playbill_api, "check_permission", denied)

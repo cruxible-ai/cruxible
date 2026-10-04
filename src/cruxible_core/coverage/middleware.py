@@ -94,7 +94,7 @@ from cruxible_core.coverage.render import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 
-CONFIG_RELATIVE_PATH = ".playbill/coverage.json"
+CONFIG_RELATIVE_PATH = ".cruxible/coverage.json"
 
 PATH_IDENTITY_NORMALIZER: Literal["playbill-coverage-path-identity-v1"] = (
     "playbill-coverage-path-identity-v1"
@@ -186,7 +186,7 @@ CoveragePathRuleV1 = Annotated[
 
 
 class CoverageWorkspaceConfigV1(_StrictMiddlewareModel):
-    """`.playbill/coverage.json`: which instance, which bindings, which budget.
+    """`.cruxible/coverage.json`: which instance, which bindings, which budget.
 
     Rule precedence is deterministic and stated rather than emergent: an exact
     rule wins over every prefix rule, and among prefix rules the longest
@@ -265,9 +265,9 @@ class FloorOutputV1(_StrictMiddlewareModel):
     """A client-owned floor destination; the daemon never sees this path."""
 
     tag: Literal["playbill-floor-output-v1"] = "playbill-floor-output-v1"
-    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v5"] = (
-        "playbill-floor-export-v2"
-    )
+    format: Literal[
+        "playbill-floor-export-v2", "playbill-floor-export-v5", "playbill-floor-export-v6"
+    ] = "playbill-floor-export-v2"
     # Opt-in parts a refresh exports; "discovery" adds the discovery cards.
     include: tuple[Literal["discovery"], ...] = ()
 
@@ -362,12 +362,12 @@ class FloorManifestFileV1(_StrictMiddlewareModel):
 class FloorFreshnessManifestV2(_StrictMiddlewareModel):
     """The exact v2 manifest shape needed by the presentation-only freshness check."""
 
-    tag: Literal["playbill-floor-manifest-v2", "playbill-floor-manifest-v5"] = (
-        "playbill-floor-manifest-v2"
-    )
-    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v5"] = (
-        "playbill-floor-export-v2"
-    )
+    tag: Literal[
+        "playbill-floor-manifest-v2", "playbill-floor-manifest-v5", "playbill-floor-manifest-v6"
+    ] = "playbill-floor-manifest-v2"
+    format: Literal[
+        "playbill-floor-export-v2", "playbill-floor-export-v5", "playbill-floor-export-v6"
+    ] = "playbill-floor-export-v2"
     # v5 names its rendering rule, the coordinate's generation and its notes.
     renderer: str | None = None
     coordinate: AcceptedCoordinate
@@ -397,7 +397,7 @@ class FloorFreshnessManifestV2(_StrictMiddlewareModel):
             self.format,
             {"files": [item.model_dump(mode="json", exclude_none=True) for item in self.files]},
         ).tagged
-        v5 = self.format == "playbill-floor-export-v5"
+        v5 = self.format in ("playbill-floor-export-v5", "playbill-floor-export-v6")
         if v5 != (
             self.renderer is not None
             and self.generation is not None
@@ -428,7 +428,7 @@ def _logical_source(plane: str, identity: str) -> LogicalSourceIdentity | None:
 
 
 def load_coverage_config(root: Path) -> CoverageWorkspaceConfig:
-    """Read `.playbill/coverage.json` from a workspace root."""
+    """Read `.cruxible/coverage.json` from a workspace root."""
 
     path = root.expanduser() / CONFIG_RELATIVE_PATH
     try:

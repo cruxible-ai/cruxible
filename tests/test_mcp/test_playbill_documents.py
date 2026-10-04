@@ -15,18 +15,18 @@ from cruxible_core.mcp.server import create_server
 from cruxible_core.runtime.permissions import TOOL_PERMISSIONS, PermissionMode
 
 PLAYBILL_DOCUMENT_TOOLS = {
-    "cruxible_playbill_init",
-    "cruxible_playbill_store_body",
-    "cruxible_playbill_propose_document",
-    "cruxible_playbill_inspect_proposal",
-    "cruxible_playbill_review",
-    "cruxible_playbill_prepare_approval",
-    "cruxible_playbill_submit_approval",
-    "cruxible_playbill_activate",
-    "cruxible_playbill_source_context",
-    "cruxible_playbill_source_check",
-    "cruxible_playbill_propose_source_bundle",
-    "cruxible_playbill_propose_principal_change",
+    "cruxible_init",
+    "cruxible_store_body",
+    "cruxible_propose_document",
+    "cruxible_inspect_proposal",
+    "cruxible_review",
+    "cruxible_prepare_approval",
+    "cruxible_submit_approval",
+    "cruxible_activate",
+    "cruxible_source_context",
+    "cruxible_source_check",
+    "cruxible_propose_source_bundle",
+    "cruxible_propose_principal_change",
 }
 
 
@@ -36,9 +36,9 @@ def test_playbill_tools_register_without_private_key_or_local_path_inputs(
     monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
     tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
     assert PLAYBILL_DOCUMENT_TOOLS <= set(tools)
-    approval = tools["cruxible_playbill_submit_approval"].inputSchema
+    approval = tools["cruxible_submit_approval"].inputSchema
     assert set(approval["properties"]) == {"instance_id", "proposal_id", "attestation"}
-    source = tools["cruxible_playbill_propose_source_bundle"].inputSchema
+    source = tools["cruxible_propose_source_bundle"].inputSchema
     assert set(source["properties"]) == {
         "instance_id",
         "bundle",
@@ -54,13 +54,13 @@ def test_playbill_tools_register_without_private_key_or_local_path_inputs(
 
 
 def test_playbill_permission_tiers_separate_inert_proposal_approval_and_activation() -> None:
-    assert TOOL_PERMISSIONS["cruxible_playbill_store_body"] == PermissionMode.GOVERNED_WRITE
-    assert TOOL_PERMISSIONS["cruxible_playbill_propose_document"] == PermissionMode.GOVERNED_WRITE
-    assert TOOL_PERMISSIONS["cruxible_playbill_prepare_approval"] == PermissionMode.READ_ONLY
-    assert TOOL_PERMISSIONS["cruxible_playbill_submit_approval"] == PermissionMode.GRAPH_WRITE
-    assert TOOL_PERMISSIONS["cruxible_playbill_activate"] == PermissionMode.GRAPH_WRITE
-    assert TOOL_PERMISSIONS["cruxible_playbill_get"] == PermissionMode.READ_ONLY
-    assert TOOL_PERMISSIONS["cruxible_playbill_init"] == PermissionMode.ADMIN
+    assert TOOL_PERMISSIONS["cruxible_store_body"] == PermissionMode.GOVERNED_WRITE
+    assert TOOL_PERMISSIONS["cruxible_propose_document"] == PermissionMode.GOVERNED_WRITE
+    assert TOOL_PERMISSIONS["cruxible_prepare_approval"] == PermissionMode.READ_ONLY
+    assert TOOL_PERMISSIONS["cruxible_submit_approval"] == PermissionMode.GRAPH_WRITE
+    assert TOOL_PERMISSIONS["cruxible_activate"] == PermissionMode.GRAPH_WRITE
+    assert TOOL_PERMISSIONS["cruxible_get"] == PermissionMode.READ_ONLY
+    assert TOOL_PERMISSIONS["cruxible_init"] == PermissionMode.ADMIN
 
 
 def test_playbill_handlers_decode_bytes_and_submit_only_public_attestation(monkeypatch) -> None:

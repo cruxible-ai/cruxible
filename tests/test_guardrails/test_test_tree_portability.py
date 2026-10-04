@@ -83,7 +83,7 @@ def test_no_test_reads_a_workspace_binding_it_did_not_create() -> None:
     """Workspace discovery must not find the developer's own governed checkout.
 
     A checkout that is itself a Cruxible workspace carries
-    `.playbill/coverage.json`, and discovery walks up from the current directory
+    `.cruxible/coverage.json`, and discovery walks up from the current directory
     to find exactly that -- so a suite run inside one silently retargets at a
     live instance and fails on a machine where nothing is wrong with the code.
     The repository root is the probe: it is a candidate root for every test that
@@ -101,7 +101,7 @@ def test_no_test_reads_a_workspace_binding_it_did_not_create() -> None:
 def test_a_workspace_binding_a_test_creates_is_still_read(tmp_path: Path) -> None:
     """The isolation hides the ambient binding, not the mechanism under test."""
 
-    binding_dir = tmp_path / ".playbill"
+    binding_dir = tmp_path / ".cruxible"
     binding_dir.mkdir()
     (binding_dir / "coverage.json").write_text(
         json.dumps(

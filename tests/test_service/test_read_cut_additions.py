@@ -55,7 +55,7 @@ def test_orient_pages_the_principal_registry_and_get_reads_one_principal(
 
     ids = [row.principal_id for row in result.principals or ()]
     assert "daemon" in ids and "owner" in ids
-    assert result.next[0] == f'cruxible_playbill_get(ref="Principal:{ids[0]}")'
+    assert result.next[0] == f'cruxible_get(ref="Principal:{ids[0]}")'
     card = service_playbill_get(world, request=GetRequest(ref="Principal:owner"), access=_ACCESS)
     assert card.kind == "principal" and card.card is not None
     assert card.card.model_dump()["status"] == "active"

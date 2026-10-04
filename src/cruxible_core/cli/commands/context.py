@@ -81,9 +81,7 @@ def context_show(output_json: bool) -> None:
                     "tag": "playbill-workspace-attachment-disagreement-v1",
                     "code": "workspace_config_missing",
                     "detail": "daemon host is registered here but the workspace config is absent",
-                    "repair": (
-                        f"cruxible playbill workspace attach --instance-id {obj.get('instance_id')}"
-                    ),
+                    "repair": (f"cruxible workspace attach --instance-id {obj.get('instance_id')}"),
                 }
     payload = {
         "server_url": obj.get("server_url"),

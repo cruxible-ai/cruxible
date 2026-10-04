@@ -139,20 +139,20 @@ class WorkspaceSources:
         portable_paths = tuple(
             path
             for path in (
-                self.workspace / ".playbill" / "sources.yaml",
+                self.workspace / ".cruxible" / "sources.yaml",
                 self.workspace / "sources.yaml",
             )
             if path.is_file()
         )
         if len(portable_paths) != 1:
             raise SourceSelectionError(
-                "workspace must contain exactly one .playbill/sources.yaml or sources.yaml"
+                "workspace must contain exactly one .cruxible/sources.yaml or sources.yaml"
             )
         try:
             portable = SourceCatalog.model_validate(
                 yaml.safe_load(read_regular_file(portable_paths[0]))
             )
-            local_path = self.workspace / ".playbill" / "sources.local.yaml"
+            local_path = self.workspace / ".cruxible" / "sources.local.yaml"
             local = (
                 None
                 if not local_path.is_file()

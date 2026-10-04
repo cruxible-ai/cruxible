@@ -20,8 +20,8 @@ def test_floor_write_delegates_only_to_an_opted_in_local_daemon(
     delta = _delta()
     receipt = contracts.WorkspaceFloorWriteResult(
         status="written",
-        path=".playbill/floor",
-        destination=str(workspace / ".playbill/floor"),
+        path=".cruxible/floor",
+        destination=str(workspace / ".cruxible/floor"),
         floor_digest="sha256:" + "a" * 64,
         coordinate=contracts.AcceptedCoordinate.model_validate(
             delta.head.coordinate().model_dump(mode="json")
@@ -64,7 +64,7 @@ def test_floor_write_delegates_only_to_an_opted_in_local_daemon(
     assert written.status == "written"
     assert bool(delivered) == (enabled and local)
     assert bool(fetches) != (enabled and local)
-    assert (workspace / ".playbill/floor").exists() != (enabled and local)
+    assert (workspace / ".cruxible/floor").exists() != (enabled and local)
     assert authoring.configured_floor_output(workspace) is not None
 
 
@@ -91,8 +91,8 @@ def test_activation_refresh_uses_the_same_daemon_writer(tmp_path, monkeypatch):
     record_floor_output(tmp_path, instance_id="inst_floor", server_socket=str(tmp_path / "socket"))
     delta = _delta()
     written = contracts.WorkspaceFloorWriteResult(
-        path=".playbill/floor",
-        destination=str(tmp_path / ".playbill/floor"),
+        path=".cruxible/floor",
+        destination=str(tmp_path / ".cruxible/floor"),
         floor_digest="sha256:" + "a" * 64,
         coordinate=contracts.AcceptedCoordinate.model_validate(
             delta.head.coordinate().model_dump(mode="json")
@@ -115,7 +115,7 @@ def test_activation_refresh_uses_the_same_daemon_writer(tmp_path, monkeypatch):
         authoring, "apply_floor_delta", lambda *_: pytest.fail("client wrote the floor")
     )
     assert refresh_workspace_floor(client, "inst_floor", workspace=tmp_path).status == "refreshed"
-    assert not (tmp_path / ".playbill/floor").exists()
+    assert not (tmp_path / ".cruxible/floor").exists()
 
 
 def test_client_transport_sends_typed_delivery_requests(tmp_path):
@@ -128,8 +128,8 @@ def test_client_transport_sends_typed_delivery_requests(tmp_path):
     delivered = contracts.FloorDeliveryResult(
         delta=delta,
         written=contracts.WorkspaceFloorWriteResult(
-            path=".playbill/floor",
-            destination=str(tmp_path / ".playbill/floor"),
+            path=".cruxible/floor",
+            destination=str(tmp_path / ".cruxible/floor"),
             floor_digest="sha256:" + "a" * 64,
             coordinate=contracts.AcceptedCoordinate.model_validate(
                 delta.head.coordinate().model_dump(mode="json")
@@ -158,8 +158,8 @@ def test_client_transport_sends_typed_delivery_requests(tmp_path):
         assert client.set_floor_delivery("inst_floor", enabled=True).floor_delivery
         assert client.deliver_floor_now("inst_floor") == delivered
         assert calls == [
-            ("/api/v1/inst_floor/playbill/workspace/floor-delivery", {"enabled": True}),
-            ("/api/v1/inst_floor/playbill/floor/deliver-now", {"include": [], "at": None}),
+            ("/api/v1/inst_floor/workspace/floor-delivery", {"enabled": True}),
+            ("/api/v1/inst_floor/floor/deliver-now", {"include": [], "at": None}),
         ]
     finally:
         client.close()

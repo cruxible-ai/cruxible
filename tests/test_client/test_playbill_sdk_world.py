@@ -348,8 +348,8 @@ class _WorldClient:
 
 
 def _workspace(path: Path) -> None:
-    (path / ".playbill").mkdir()
-    (path / ".playbill" / "sources.yaml").write_text(
+    (path / ".cruxible").mkdir()
+    (path / ".cruxible" / "sources.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -1203,7 +1203,7 @@ def test_a_read_only_connection_needs_no_workspace_source_catalog(
         clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
     )
 
-    assert not (tmp_path / ".playbill").exists()
+    assert not (tmp_path / ".cruxible").exists()
     assert playbill.world().kinds == ("dev.batch", "sec.package", "sec.vulnerability")
 
 
@@ -1226,7 +1226,7 @@ def test_selecting_a_file_still_refuses_at_the_same_typed_point(
     with pytest.raises(SourceSelectionError) as refused:
         playbill.file("notes.txt")
 
-    assert "exactly one .playbill/sources.yaml or sources.yaml" in str(refused.value)
+    assert "exactly one .cruxible/sources.yaml or sources.yaml" in str(refused.value)
     assert len(client.batch_requests) == before
 
 
@@ -1549,7 +1549,7 @@ def test_describe_lists_the_verbs_and_every_kind_with_its_fields(
     described = world.describe()
 
     assert described.startswith(f"World at {'a' * 12}: 3 Subject kinds, 3 predicates.")
-    for verb in ("cx.orient()", 'cx.query("<kind>"', 'cx.get("<ref>")', ".playbill/floor/current/"):
+    for verb in ("cx.orient()", 'cx.query("<kind>"', 'cx.get("<ref>")', ".cruxible/floor/current/"):
         assert verb in described
     # Only the read verbs that survive the surface cut are named.
     for cut in ("search(", "explain(", "run_query(", "claim_values"):

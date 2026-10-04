@@ -65,10 +65,10 @@ CUT_CLIENT_METHODS = (
     "search_playbill",
     "expand_playbill",
 )
-_TOOL = re.compile(r"\bcruxible_playbill_(?:%s)\b" % "|".join(CUT_MCP_TOOLS))
+_TOOL = re.compile(r"\bcruxible_(?:playbill_)?(?:%s)\b" % "|".join(CUT_MCP_TOOLS))
 _METHOD = re.compile(r"\b(?:%s)\(" % "|".join(CUT_CLIENT_METHODS))
 _CLI = re.compile(
-    r"\bplaybill (?:"
+    r"\b(?:cruxible (?:playbill )?|playbill )(?:"
     r"claim (?:list|values|get|history|explain)"
     r"|subject (?:list|get|history)"
     r"|claim-type (?:list|get)"
@@ -84,7 +84,6 @@ def _texts() -> list[Path]:
     docs = [
         *(ROOT / "docs").rglob("*.md"),
         ROOT / "README.md",
-        ROOT / "PLAYBILL.md",
         ROOT / "packages" / "cruxible-client" / "README.md",
         *(ROOT / "skills").rglob("*.md"),
     ]
@@ -107,9 +106,19 @@ def test_no_doc_prompt_or_source_names_a_cut_read_surface(pattern: re.Pattern[st
     assert offenders == [], "names a removed read surface:\n" + "\n".join(offenders)
 
 
+def test_no_client_method_takes_a_cut_read_surface_under_its_new_name() -> None:
+    from cruxible_client.transport.http import CruxibleClient
+
+    renamed = {
+        name.replace("playbill_", "", 1) if "playbill_" in name else name.replace("_playbill", "")
+        for name in CUT_CLIENT_METHODS
+    }
+    assert sorted(name for name in renamed if hasattr(CruxibleClient, name)) == []
+
+
 def test_the_mcp_instructions_teach_the_three_read_verbs() -> None:
     from cruxible_core.mcp.server import BASE_INSTRUCTIONS
 
-    for verb in ("cruxible_playbill_orient", "cruxible_playbill_query", "cruxible_playbill_get"):
+    for verb in ("cruxible_orient", "cruxible_query", "cruxible_get"):
         assert verb in BASE_INSTRUCTIONS
-    assert ".playbill/floor/current/<kind>/<id>.yaml" in BASE_INSTRUCTIONS
+    assert ".cruxible/floor/current/<kind>/<id>.yaml" in BASE_INSTRUCTIONS

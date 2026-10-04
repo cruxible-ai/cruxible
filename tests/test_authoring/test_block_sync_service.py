@@ -141,7 +141,7 @@ class _ServiceClient:
 
 
 def _workspace(root: Path, *, instance_id: str, content: bytes) -> Path:
-    playbill = root / ".playbill"
+    playbill = root / ".cruxible"
     playbill.mkdir()
     (playbill / "coverage.json").write_text(
         "{"
@@ -425,7 +425,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
         content=b"PREFIX\n" + landed + b"SUFFIX\n",
     )
     stamped_content = source.read_bytes()
-    draft = b"<!-- playbill:block:draft-note -->\ndraft\n<!-- /playbill:block:draft-note -->\n"
+    draft = b"<!-- cruxible:block:draft-note -->\ndraft\n<!-- /cruxible:block:draft-note -->\n"
     source.write_bytes(stamped_content.removesuffix(b"SUFFIX\n") + draft + b"SUFFIX\n")
 
     current = service_read_playbill_block_sync_backing(
@@ -479,7 +479,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
     # moved under it and re-declare the list it still means.
     assert stale_row.repair.operation == "cruxible.block.repin"
     assert stale_row.repair.command == (
-        f"cruxible playbill block repin repo.work-items {original_stamp.block_id}"
+        f"cruxible block repin repo.work-items {original_stamp.block_id}"
     )
 
     page_before = source.read_bytes()

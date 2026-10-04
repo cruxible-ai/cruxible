@@ -727,7 +727,7 @@ def _render_get(
     """One ``get`` call spelled for the caller's surface (R07)."""
 
     if surface == "cli":
-        rendered = f"cruxible playbill get {shlex.quote(ref)}"
+        rendered = f"cruxible get {shlex.quote(ref)}"
         if detail:
             rendered += f" --detail {detail}"
         if at is not None:
@@ -754,20 +754,20 @@ def _render_get(
     if at is not None:
         arguments.append(f"at={json.dumps(at.git_oid)}")
     arguments[0] = f"ref={arguments[0]}"
-    return f"cruxible_playbill_get({', '.join(arguments)})"
+    return f"cruxible_get({', '.join(arguments)})"
 
 
 def _render_read_capture(surface: ReadSurface, digest: str) -> str:
     """The body-permission read of one Capture's material, spelled for the surface."""
 
     if surface == "cli":
-        return f"cruxible playbill capture read {digest}"
+        return f"cruxible capture read {digest}"
     if surface == "sdk":
         return (
             "client.read_capture(instance_id, "
             f"CaptureReadRequest(capture_digest={json.dumps(digest)}))"
         )
-    return f'cruxible_playbill_read_capture(request={{"capture_digest": {json.dumps(digest)}}})'
+    return f'cruxible_read_capture(request={{"capture_digest": {json.dumps(digest)}}})'
 
 
 def _value_was_cut(
@@ -787,13 +787,13 @@ def _value_was_cut(
 
 def _render_proposal_step(surface: ReadSurface, step: str, proposal_id: str) -> str:
     if surface == "cli":
-        return f"cruxible playbill proposal {step} {proposal_id}"
+        return f"cruxible proposal {step} {proposal_id}"
     if surface == "sdk":
         return f"cx.proposal({json.dumps(proposal_id)}).{step}()"
     tool = {
-        "review": "cruxible_playbill_review",
-        "refusal": "cruxible_playbill_inspect_refusal",
-        "readmit": "cruxible_playbill_proposal_readmit",
+        "review": "cruxible_review",
+        "refusal": "cruxible_inspect_refusal",
+        "readmit": "cruxible_proposal_readmit",
     }[step]
     return f"{tool}(proposal_id={json.dumps(proposal_id)})"
 

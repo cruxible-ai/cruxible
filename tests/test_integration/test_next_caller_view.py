@@ -121,7 +121,7 @@ def test_an_approval_row_withholds_its_repair_from_a_caller_who_cannot_approve()
         assert kept.repair_requires is not None
         assert kept.repair_requires.model_dump(mode="json", exclude={"tag"}) == {
             "operation": "cruxible.proposal.approve",
-            "tool": "cruxible_playbill_approve",
+            "tool": "cruxible_approve",
             "tier": "graph_write",
             "because": ["tier"],
         }
@@ -132,15 +132,13 @@ def test_an_approval_row_withholds_its_repair_from_a_caller_who_cannot_approve()
 def test_an_mcp_profile_without_the_approval_tool_keeps_the_row_and_names_the_profile() -> None:
     row = _approval_row()
 
-    without = _view(surface="mcp", tools=("cruxible_playbill_next",), caller_rung=3)
+    without = _view(surface="mcp", tools=("cruxible_next",), caller_rung=3)
     (kept,), _held = _caller_queue([row], without, None)
     assert kept.repair is None and kept.repair_requires is not None
     assert kept.repair_requires.because == ("profile",)
     assert kept.repair_requires.profile == "full"
     assert kept.repair_requires.tier == "graph_write"
-    with_tool = _view(
-        surface="mcp", tools=("cruxible_playbill_next", "cruxible_playbill_approve"), caller_rung=3
-    )
+    with_tool = _view(surface="mcp", tools=("cruxible_next", "cruxible_approve"), caller_rung=3)
     (kept,), _held = _caller_queue([row], with_tool, None)
     assert kept.repair is not None and kept.repair.command is not None
     assert kept.repair_requires is None
@@ -158,7 +156,7 @@ def test_a_read_only_caller_keeps_the_row_and_its_nested_findings_withheld() -> 
     (finding,) = kept.findings
     assert finding.reason == "claim_uncovered" and finding.repair is None
     assert finding.repair_requires is not None
-    assert finding.repair_requires.tool == "cruxible_playbill_authoring_bind"
+    assert finding.repair_requires.tool == "cruxible_authoring_bind"
 
 
 def test_every_repair_operation_names_its_door_in_one_table() -> None:
@@ -435,5 +433,5 @@ def test_the_sdk_reads_a_row_whose_repair_is_withheld(
 
     assert wire.repair is None
     assert wire.repair_requires is not None
-    assert wire.repair_requires.tool == "cruxible_playbill_line_arm"
+    assert wire.repair_requires.tool == "cruxible_line_arm"
     assert wire.repair_requires.because == ["tier"]

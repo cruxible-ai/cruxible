@@ -87,7 +87,6 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
             "https://curation.example.test",
             "--instance-id",
             "inst",
-            "playbill",
             "curation",
             "list",
         ],
@@ -106,7 +105,7 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    playbill_dir = tmp_path / ".playbill"
+    playbill_dir = tmp_path / ".cruxible"
     playbill_dir.mkdir()
     (playbill_dir / "sources.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
@@ -136,7 +135,7 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
         body_digest="sha256:" + hashlib.sha256(body).hexdigest(),
     )
     (tmp_path / "runbook.md").write_bytes(
-        render_projection_opening(stamp) + body + b"<!-- /playbill:block:status -->\n"
+        render_projection_opening(stamp) + body + b"<!-- /cruxible:block:status -->\n"
     )
     seen: list[dict[str, object]] = []
 
@@ -220,7 +219,6 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
         "https://curation.example.test",
         "--instance-id",
         "inst",
-        "playbill",
         "curation",
         "list",
         "--workspace-root",
@@ -302,7 +300,6 @@ def test_cli_curation_lifecycle_commands_delegate_once(
             "https://curation.example.test",
             "--instance-id",
             "inst",
-            "playbill",
             "curation",
             *command,
             "sha256:" + "1" * 64,

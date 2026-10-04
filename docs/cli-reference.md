@@ -16,14 +16,14 @@ The public CLI has four top-level command groups.
 
 Target resolution is component-wise and deterministic: explicit flags, then
 `CRUXIBLE_SERVER_URL` / `CRUXIBLE_SERVER_SOCKET` / `CRUXIBLE_INSTANCE_ID`, then
-the attached workspace discovered from `CRUXIBLE_PLAYBILL_WORKSPACE` or by
-walking up from the current directory to `.playbill/coverage.json`, then the
+the attached workspace discovered from `CRUXIBLE_WORKSPACE` or by
+walking up from the current directory to `.cruxible/coverage.json`, then the
 remembered global context. Automatic walk-up stops after the home directory and
 never crosses a filesystem boundary. `--no-workspace` or
 `CRUXIBLE_NO_WORKSPACE=1` disables workspace discovery for recovery from a bad
 ancestor binding. A workspace is attached when that file names an instance and
 exactly one of `server_url` or `server_socket`; its root must agree with the root
-of `.playbill/sources.yaml` when both exist. The global context is only a
+of `.cruxible/sources.yaml` when both exist. The global context is only a
 fallback, its remembered instance remains bound to the transport on which it
 was selected, and entering one workspace never retargets another.
 
@@ -101,7 +101,7 @@ where `--at` pins each changed slot.
 A preview opens its instance behind the same guards. If opening it would first
 repair derived files a crash left behind, the preview refuses
 `cruxible.preview.recovery_pending` instead of writing them; an ordinary read
-(`cruxible playbill orient`) reopens it, and the preview then runs.
+(`cruxible orient`) reopens it, and the preview then runs.
 
 Which operations preview follows one principle (the maintainer's ruling):
 an operation previews when its effect is derived -- computed by the server
@@ -120,7 +120,7 @@ exempt. By that principle these are exempt:
 - `workspace floor-delivery on|off`: its effect is its input;
 - floor deliver-now: its result is fully determined by the accepted head (the
   floor is a pure function of the accepted coordinate), it is idempotent, and
-  it writes only the derived, regenerable `.playbill/floor`.
+  it writes only the derived, regenerable `.cruxible/floor`.
 
 Exempt in v1 as well, by the maintainer's earlier scope ruling:
 
@@ -192,7 +192,7 @@ carry transport authority (host, init, credentials, daemon lifecycle) but act as
 no principal, so they cannot author or perform any other instance write --
 body store, ledger mirror binding and publication, attestation recovery
 included (`cruxible.identity.credential_unbound`).
-`playbill init` under such a credential designates the owner it names.
+`cruxible init` under such a credential designates the owner it names.
 Credentials minted before credentials named a principal are migrated as
 unbound, never rebound from their label; repair each by minting a bound one with
 `cruxible credential mint --principal-id ID --key-dir DIR --mode TIER`, then
@@ -425,7 +425,7 @@ action name that is not registered is refused at acceptance
 (`cruxible.trigger.action_unknown`). A new
 instance is initialized with `evidence-sweep` (daily) and
 `prediction-anchor-retry` (hourly); change a schedule, add a Trigger, or retire
-one through an ordinary proposal. `playbill next` reports unscheduled findings
+one through an ordinary proposal. `cruxible next` reports unscheduled findings
 actions, and an unscheduled floor action when workspace delivery is enabled.
 
 No Trigger fires retroactively. A timer fires each of its instants once, all of
@@ -451,16 +451,16 @@ usual Trigger authoring flow; existing instances are unchanged.
 
 `floor.refresh` warms the floor index on every daemon. Workspace delivery is
 on by default for an attached workspace. Use `workspace attach --no-floor-delivery`
-or `cruxible playbill workspace floor-delivery off` through the local Unix socket
+or `cruxible workspace floor-delivery off` through the local Unix socket
 to opt out; `on` enables delivery again. Detaching clears it, and a later attachment
 defaults on again. Host inspection and daemon status label it "on (default)" or
 "off (opted out)". With delivery
-on, the daemon writes only `.playbill/floor`, and local client floor writes ask
+on, the daemon writes only `.cruxible/floor`, and local client floor writes ask
 it to deliver immediately. Remote clients and workspaces with delivery off keep
-applying deltas locally. Both writers create `.playbill/floor/.gitignore` containing
+applying deltas locally. Both writers create `.cruxible/floor/.gitignore` containing
 `*`, which ignores the entire floor, including itself, in Git. It is local metadata
 outside the accepted floor manifest and survives delta applies and full repairs.
-A failed apply stalls the floor consumer with `playbill floor export` as its
+A failed apply stalls the floor consumer with `cruxible floor export` as its
 repair; automatic retries wait for a changed head or workspace registration.
 
 ### Proposal receive operational configuration
@@ -518,25 +518,25 @@ so launchers that run a package by its own name, such as `uvx cruxible mcp`,
 reach the server. The root options and remembered CLI context do not configure
 it.
 
-## playbill host
+## host and workspace
 
 ~~~text
-cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace] [--dry-run]
-cruxible playbill host show INSTANCE [--json]
-cruxible playbill workspace attach [--instance-id ID] [--replace] [--no-floor-delivery]
+cruxible host create [--instance-id ID] [--workspace DIR] [--replace] [--dry-run]
+cruxible host show INSTANCE [--json]
+cruxible workspace attach [--instance-id ID] [--replace] [--no-floor-delivery]
   [--dry-run|--commit] [--at DIGEST]
-cruxible playbill workspace floor-delivery STATE [--instance-id ID] [--json]
-cruxible playbill workspace detach [--instance-id ID] [--dry-run|--commit] [--at DIGEST] [--json]
+cruxible workspace floor-delivery STATE [--instance-id ID] [--json]
+cruxible workspace detach [--instance-id ID] [--dry-run|--commit] [--at DIGEST] [--json]
 ~~~
 
 Allocates an empty daemon-owned host and remembers it. When the selected daemon
 is reached through `--server-socket` or `CRUXIBLE_SERVER_SOCKET`, the command
 also registers the selected Git worktree with the daemon. Every selected
-workspace gets an atomic `.playbill/coverage.json` v2 write containing exactly
+workspace gets an atomic `.cruxible/coverage.json` v2 write containing exactly
 one transport, the instance ID, and the fixed floor profile; bearer credentials
 and secrets are never inputs to that writer. A differing config is refused
 unless `--replace` is explicit. Because the binding may carry a local socket,
-the writer adds `.playbill/coverage.json` to this repository's machine-local
+the writer adds `.cruxible/coverage.json` to this repository's machine-local
 `.git/info/exclude` rather than changing a shared ignore file.
 
 Daemon floor delivery is on by default when a local workspace is registered.
@@ -569,7 +569,7 @@ initialized host attaches in place (nothing is rebuilt) when the worktree is in
 its ledger's Git object format and holds no part of its managed root, and it
 advertises the accepted ref into the worktree at once. A host already
 registered to this worktree just gets the client config. Either way
-`.playbill/coverage.json` is written only once the daemon holds the exact
+`.cruxible/coverage.json` is written only once the daemon holds the exact
 current worktree. A host registered to a different worktree is a typed refusal
 naming `workspace detach` as the repair, and no config is written. `host create
 --workspace` and `init --workspace` take the same attach path.
@@ -582,12 +582,12 @@ It requires the same local socket for the same reason attaching does. The
 instance's own ADMIN credential or the bootstrap secret may detach it. It refuses
 while the host still registers published blocks in that worktree, because
 detaching under them leaves a page carrying markers no host owns: depublish
-those blocks (`playbill block depublish`) or retire their backing Claims first.
+those blocks (`cruxible block depublish`) or retire their backing Claims first.
 
-## playbill init
+## init
 
 ~~~text
-cruxible playbill init --key-dir DIR
+cruxible init --key-dir DIR
   --principal-id ID
   [--reviewer-key-dir DIR]
   [--require-independent-approval]
@@ -626,8 +626,8 @@ owner, reviewer, and recovery custody by default.
 Successful initialization remembers the initialized instance and atomically
 writes the selected workspace config before rendering either JSON or human
 output. For a daemon-registered local worktree, the advisory `playbill` remote
-fetches accepted state as `playbill/accepted` and open proposals as
-`playbill/proposals/<proposal-digest>`. These are remote-tracking refs only:
+fetches accepted state as `cruxible-ledger/accepted` and open proposals as
+`cruxible-ledger/proposals/<proposal-digest>`. These are remote-tracking refs only:
 compare them, never check them out or merge them to admit governed state.
 
 Explicit `--workspace DIR` over TCP writes only the client-local URL binding.
@@ -644,20 +644,20 @@ the attached workspace refuses with the typed
 `cruxible.init.object_format_conflict` before any state is written; instances
 already initialized keep their pinned format forever. The
 equivalent request field is `git_object_format` on the HTTP/SDK init body and on
-MCP `cruxible_playbill_init`.
+MCP `cruxible_init`.
 
 `--mirror-url` binds the ledger mirror during bootstrap, before subsequent
-proposals. An instance can publish nowhere initially; `playbill ledger set-mirror`
+proposals. An instance can publish nowhere initially; `cruxible ledger set-mirror`
 adds a destination later. See [playbill ledger](#playbill-ledger) for URL syntax.
 
 Initialization creates governed state only. Install provider packages separately
-with `playbill provider install`; initialization needs no provider checkout or
+with `cruxible provider install`; initialization needs no provider checkout or
 executable environment.
 
-## playbill capture
+## capture
 
 ```bash
-cruxible playbill capture read CAPTURE_DIGEST [--max-bytes BYTES]
+cruxible capture read CAPTURE_DIGEST [--max-bytes BYTES]
 ```
 
 Verify a retained Capture and return its evidence metadata and bounded material as JSON.
@@ -672,18 +672,18 @@ the prefix than one bounded lookup examines).
 Uses body-read permission and never refetches the external source. The SDK equivalent
 is `cx.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
 
-## playbill body
+## body
 
 ~~~text
-cruxible playbill body store PATH
+cruxible body store PATH
 ~~~
 
 Stores exact bytes in inert CAS and prints their digest.
 
-## playbill instance
+## instance
 
 ~~~text
-cruxible playbill instance decommission --reason TEXT [--dry-run|--commit] [--at OID]
+cruxible instance decommission --reason TEXT [--dry-run|--commit] [--at OID]
 ~~~
 
 Decommissioning is the terminal lifecycle state of one governed instance. It
@@ -699,12 +699,12 @@ own step — no verb performs it, and the state cannot be reversed. So the comma
 previews first and changes nothing; the confirmation is that preview's
 coordinate: `--commit --at OID` (see [Previews](#previews)).
 
-## playbill ledger
+## ledger
 
 ~~~text
-cruxible playbill ledger set-mirror URL [--dry-run|--commit] [--at OID]
-cruxible playbill ledger clone-url
-cruxible playbill ledger publish [--timeout 0..60] [--dry-run|--commit] [--at OID] [--json]
+cruxible ledger set-mirror URL [--dry-run|--commit] [--at OID]
+cruxible ledger clone-url
+cruxible ledger publish [--timeout 0..60] [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 The ledger is Git, so review is Git — but only for a reviewer who can reach the
@@ -739,11 +739,11 @@ ancestry grow with history. It is retention metadata, not accepted-state authori
 Two ref namespaces exist and they are keyed differently on purpose. The
 daemon's own transport ref is `refs/proposals/<actor>/<name>` — an actor writes
 to a ref they own, and each evaluated snapshot is parented on its accepted base. The branch a
-reviewer sees, locally as `playbill/proposals/<proposal-digest>` and on the
+reviewer sees, locally as `cruxible-ledger/proposals/<proposal-digest>` and on the
 mirror as `refs/heads/proposals/<proposal-digest>`, is the projection of ONE
 evaluated candidate, which is what a digest names and what a name does not: the
 same `<actor>/<name>` ref carries a different candidate after every
-resubmission. So `git diff playbill/accepted...playbill/proposals/<proposal-id>`
+resubmission. So `git diff cruxible-ledger/accepted...cruxible-ledger/proposals/<proposal-id>`
 takes the digest that `proposal list` and `proposal review` print.
 
 Re-keying that branch to `<actor>/<name>` is a deprecate-then-remove candidate,
@@ -762,7 +762,7 @@ budget report a publication failure rather than splitting the atomic update.
 A push that fails never refuses the write that preceded it. The ledger on disk
 is the record and the remote is a copy, so a network that is down, a credential
 that expired or a remote that was deleted puts the `ledger_mirror` facet of
-`playbill next`'s status at `behind`, carrying the URL and Git's own reason.
+`cruxible next`'s status at `behind`, carrying the URL and Git's own reason.
 
 Remote discovery and push each have a 30-second deadline; one attempt may
 therefore take up to roughly 60 seconds. These commands run in a background
@@ -787,13 +787,13 @@ dash (`ssh://-oProxyCommand@host/x` puts it where the transport reads its own
 arguments); the four
 accepted shapes are `https://`, `ssh://`, `user@host:path` and an absolute local
 path (or its `file:///` spelling). The daemon reads its own token from
-`CRUXIBLE_PLAYBILL_MIRROR_TOKEN` in its environment and sends it as an HTTP
+`CRUXIBLE_MIRROR_TOKEN` in its environment and sends it as an HTTP
 Basic `Authorization` header built through Git's environment-config protocol, so
 it appears in no command line, no config file and no error message. SSH and
 local remotes use no token at all: SSH authenticates as the daemon itself.
 
 Create the remote in the ledger's own object format — `git init --bare
---object-format=sha1` or `sha256`, matching `playbill init --object-format` —
+--object-format=sha1` or `sha256`, matching `cruxible init --object-format` —
 because Git refuses a push between repositories with different hash algorithms.
 
 `set-mirror` publishes immediately, so a wrong credential or an unreachable host
@@ -801,16 +801,16 @@ is reported at once rather than at the next governed write. It stays bound
 either way: a remote that is temporarily unreachable is not a wrong remote.
 `clone-url` prints the URL a reviewer clones and refuses with the typed
 `cruxible.ledger.mirror_unset` when the instance publishes nowhere; the same
-value rides `playbill orient --json` as `mirror_url`, so an agent
+value rides `cruxible orient --json` as `mirror_url`, so an agent
 that has just oriented already has it. The equivalent surfaces are
-`POST`/`GET /{instance}/playbill/ledger/mirror` and the `mirror_url` field on
+`POST`/`GET /{instance}/ledger/mirror` and the `mirror_url` field on
 the init body.
 
-## playbill provider
+## provider
 
 ~~~text
-cruxible playbill provider list [--json]
-cruxible playbill provider install NAME[==VERSION] | WHEEL [--lock FILE]
+cruxible provider list [--json]
+cruxible provider install NAME[==VERSION] | WHEEL [--lock FILE]
   [--dependency WHEEL]... [--extra NAME]... [--reverify] [--dry-run] [--json]
 ~~~
 
@@ -840,20 +840,20 @@ and refuses drift instead of silently resealing or repairing it.
 
 SDK: `install_provider_package(client, instance_id, wheel=..., lock=...,
 dependency_wheels=(...))`, or `client.install_provider` with a typed
-request. MCP: `cruxible_playbill_provider_catalog` and
-`cruxible_playbill_provider_install`. HTTP: `GET /{instance}/playbill/providers`
-and `POST /{instance}/playbill/providers/install`.
+request. MCP: `cruxible_provider_catalog` and
+`cruxible_provider_install`. HTTP: `GET /{instance}/providers`
+and `POST /{instance}/providers/install`.
 
-## playbill kit
+## kit
 
 ~~~text
-cruxible playbill kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
+cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
   --out KIT_DIR [--json]
-cruxible playbill kit add KIT [--source TEXT] [--dry-run|--commit] [--at OID] [--json]
-cruxible playbill kit push KIT REFERENCE [--dry-run] [--json]
-cruxible playbill kit pull REFERENCE --out DIR [--layout] [--json]
-cruxible playbill kit status [--json]
-cruxible playbill kit remove ID [--dry-run|--commit] [--at OID] [--json]
+cruxible kit add KIT [--source TEXT] [--dry-run|--commit] [--at OID] [--json]
+cruxible kit push KIT REFERENCE [--dry-run] [--json]
+cruxible kit pull REFERENCE --out DIR [--layout] [--json]
+cruxible kit status [--json]
+cruxible kit remove ID [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 `KIT` is a kit directory, an OCI image layout directory, or a registry
@@ -905,7 +905,7 @@ retired definition must be named. A definition the kit only carries (it pins it 
 does not own it) is added when absent and must otherwise match. A path edited
 since install, one defined outside the kit, and another kit's overlapping `owns`
 prefix are conflicts that block the change. `add` only proposes: activation, and
-any approval the instance's policy requires, are the ordinary `playbill proposal
+any approval the instance's policy requires, are the ordinary `cruxible proposal
 approve` and `activate` steps. It records a `kit_receipt` Document,
 `documents/kit-<id>.json`, with each path's release digest and installed digest.
 A kit carries definitions only, so it never needs a Provider installed first.
@@ -916,17 +916,17 @@ closure refuses it while live Claims depend on those definitions. Removing a kit
 that is not installed refuses with `cruxible.kit.not_installed`, naming the
 installed kits.
 
-MCP: `cruxible_playbill_kit_build`, `cruxible_playbill_kit_status`,
-`cruxible_playbill_kit_add` and `cruxible_playbill_kit_remove`. HTTP:
-`POST /{instance}/playbill/kits/build`, `GET /{instance}/playbill/kits`,
-`POST /{instance}/playbill/kits` and `POST /{instance}/playbill/kits/remove`.
+MCP: `cruxible_kit_build`, `cruxible_kit_status`,
+`cruxible_kit_add` and `cruxible_kit_remove`. HTTP:
+`POST /{instance}/kits/build`, `GET /{instance}/kits`,
+`POST /{instance}/kits` and `POST /{instance}/kits/remove`.
 SDK: `read_kit_directory` and `write_kit_directory` in `cruxible_client.kits`,
 with the matching `CruxibleClient` methods.
 
-## playbill document
+## document
 
 ~~~text
-cruxible playbill document propose --envelope FILE --name NAME [--dry-run|--commit] [--at OID]
+cruxible document propose --envelope FILE --name NAME [--dry-run|--commit] [--at OID]
 ~~~
 
 `document propose` is the only Document subcommand; Documents are read through
@@ -934,11 +934,11 @@ the general reads:
 
 | To | Run |
 |---|---|
-| list accepted Documents | `cruxible playbill orient --section documents` |
-| read one Document's envelope | `cruxible playbill get Document:NAME` |
-| read its body | `cruxible playbill get Document:NAME --detail body [--range a:b] [--output FILE]` |
-| explain it | `cruxible playbill get Document:NAME --detail why` |
-| read its revisions | `cruxible playbill get Document:NAME --detail history` |
+| list accepted Documents | `cruxible orient --section documents` |
+| read one Document's envelope | `cruxible get Document:NAME` |
+| read its body | `cruxible get Document:NAME --detail body [--range a:b] [--output FILE]` |
+| explain it | `cruxible get Document:NAME --detail why` |
+| read its revisions | `cruxible get Document:NAME --detail history` |
 
 `--detail body` answers one page of at most 64 KiB; `--range start:end` reads a
 byte range, and `--output FILE` writes the body's exact bytes to a new file,
@@ -946,26 +946,26 @@ paging past the cap.
 
 A Subject is an identity-only referent named by its canonical `kind/name`
 address, the spelling the SDK, claim objects, floor profiles, and `get` all
-use. `cruxible playbill get KIND/ID` renders the Subject's own facts and an
+use. `cruxible get KIND/ID` renders the Subject's own facts and an
 `incoming` section: every live Claim whose subject-valued object is this
 Subject, grouped by predicate and naming the asserting Subject and the Claim
 id. A relation is stored once, on the asserting Subject, so without this
 section nothing answers "what touches this package" from the object side.
 `--detail history` reads the Subject's revisions.
 
-## playbill claim-type
+## claim-type
 
 ~~~text
-cruxible playbill claim-type propose --template
-cruxible playbill claim-type propose --input FILE --name NAME [--dry-run|--commit] [--at OID]
-cruxible playbill claim-type migrate REQUEST_FILE
-cruxible playbill claim-type upgrade-evidence-rules [--dry-run|--commit] [--at OID]
-cruxible playbill claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate]
+cruxible claim-type propose --template
+cruxible claim-type propose --input FILE --name NAME [--dry-run|--commit] [--at OID]
+cruxible claim-type migrate REQUEST_FILE
+cruxible claim-type upgrade-evidence-rules [--dry-run|--commit] [--at OID]
+cruxible claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate]
   [--dry-run|--commit] [--at OID]
 ~~~
 
-Read the accepted ClaimTypes with `cruxible playbill orient --section
-claim_types`, one ClaimType with `cruxible playbill get ClaimType:PREDICATE`.
+Read the accepted ClaimTypes with `cruxible orient --section
+claim_types`, one ClaimType with `cruxible get ClaimType:PREDICATE`.
 
 A ClaimType is the governed interface a predicate must satisfy before any Claim
 may state it. `propose --input` accepts a complete `ClaimTypeInputRecord`; ClaimType
@@ -994,7 +994,7 @@ retirement decisions from diagnostics.
 
 `migrate` is the operator form of a ClaimType succession: one vocabulary change,
 built from a request file, with nothing else in the generation. The agent form is
-the `claim_type_succession` change-set member under `playbill authoring`, which
+the `claim_type_succession` change-set member under `cruxible authoring`, which
 lands the succession in the same generation as the Claims that speak the new
 vocabulary and adds one disposition the operator form has no use for --
 `re_author`, whose successor is a sibling Claim member of the same set. Both
@@ -1039,29 +1039,29 @@ contract cannot be retired while live evidence rules name it, and cannot move
 while exact-digest rules or ResolutionContract windows still name its previous
 version; the refusal names them.
 
-## playbill claim
+## claim
 
 ~~~text
-cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
+cruxible claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS]
 ~~~
 
-Claims are read through `playbill query`, `playbill get` and `playbill orient`.
-`cruxible playbill query KIND --select P --claims` is the status table: each
+Claims are read through `cruxible query`, `cruxible get` and `cruxible orient`.
+`cruxible query KIND --select P --claims` is the status table: each
 cell names its Claims with their ID, value, verdict, resolution status and
 role, for every Subject of `KIND` (narrow with `--where 'subject_id in a,b'`);
 `--status overturned --status refused --status retired` adds the Claims
 resolution set aside or that were retired. A query lists a kind's live Subjects;
 `--status retired` also lists its retired Subjects, and every row then states its
-Subject's `lifecycle` (`live` or `retired`). `cruxible playbill get CLM-...`
+Subject's `lifecycle` (`live` or `retired`). `cruxible get CLM-...`
 reads one Claim's card; `--detail why` its verdict with the law evidence and
 source handles it was computed from, `--detail history` its revisions, and
 `--detail proof` its full envelope and facts. `orient` counts Claims by status
 under `artifacts.claims`.
 
-Claims are written through `playbill set`, `add`, `retire` and `write`, or authored
-through `playbill authoring create`/`compile`; the retired direct v1 proposal
-commands are not a second writer. `playbill retire` retires a Claim with its
+Claims are written through `cruxible set`, `add`, `retire` and `write`, or authored
+through `cruxible authoring create`/`compile`; the retired direct v1 proposal
+commands are not a second writer. `cruxible retire` retires a Claim with its
 complete dependent Claim closure in one change set. When a Claim shares anything
 with a retired Claim, `get CLM-... --detail why` also carries a
 `retirement_context` section. It is review context, not queue work, so `next` does not
@@ -1081,35 +1081,35 @@ the hold.
 predicate, object, role, qualifier, lifecycle, predecessor digest) in its
 top-level `statement` field alongside the canonical envelope.
 
-## playbill claim-attestation
+## claim-attestation
 
 ~~~text
-cruxible playbill claim-attestation recover
+cruxible claim-attestation recover
 ~~~
 
 Recovery is an admin-only repair for an interrupted evidence-ledger append. It
 rolls the sole durable unpublished event forward and refuses rather than choosing
 between ambiguous histories.
 
-## playbill authoring
+## authoring
 
 ~~~text
-cruxible playbill authoring create PAYLOAD
-cruxible playbill authoring create --example claim-flow-a|claim-self-source|claim-subject-relation|claim-revision|procedure|change-set|claim-type-succession
-cruxible playbill authoring create --example claim-cite-supporting-evidence
+cruxible authoring create PAYLOAD
+cruxible authoring create --example claim-flow-a|claim-self-source|claim-subject-relation|claim-revision|procedure|change-set|claim-type-succession
+cruxible authoring create --example claim-cite-supporting-evidence
   --attestation-claim-id CLAIM_ID --capture-digest DIGEST
-cruxible playbill authoring get INTENT_ID
-cruxible playbill authoring resume INTENT_ID
-cruxible playbill authoring list
-cruxible playbill authoring compile PAYLOAD [--intent-id INTENT_ID]
-cruxible playbill authoring bind --file PATH --anchor TEXT [--occurrence N]
+cruxible authoring get INTENT_ID
+cruxible authoring resume INTENT_ID
+cruxible authoring list
+cruxible authoring compile PAYLOAD [--intent-id INTENT_ID]
+cruxible authoring bind --file PATH --anchor TEXT [--occurrence N]
   [--window-lines N]
   --payload-file CLAIM_STUB
-cruxible playbill authoring preflight INTENT_ID
-cruxible playbill authoring rebase INTENT_ID
-cruxible playbill authoring submit INTENT_ID
-cruxible playbill authoring status INTENT_ID
-cruxible playbill authoring abandon-insertion INTENT_ID [--expectation-id ID]
+cruxible authoring preflight INTENT_ID
+cruxible authoring rebase INTENT_ID
+cruxible authoring submit INTENT_ID
+cruxible authoring status INTENT_ID
+cruxible authoring abandon-insertion INTENT_ID [--expectation-id ID]
 ~~~
 
 A Claim input names the Claim it revises with `revises`, a Claim ID; omit it
@@ -1170,9 +1170,9 @@ ordinary case of a statement that stood under a shape a later ruling replaced)
 or `re_author` (a sibling Claim member of the same set, naming that
 Claim again under the successor, named by `successor_claim_id`). The standalone
 route's fourth, deprecated word `invalidation` parses here and refuses typed,
-naming `cruxible playbill claim-type migrate` as the road that still tolerates
+naming `cruxible claim-type migrate` as the road that still tolerates
 it. A successor that changes `object_kind` refuses `successor`
-for any live Claim dependent. `cruxible playbill claim-type migrate` is the
+for any live Claim dependent. `cruxible claim-type migrate` is the
 operator form of the same law and builds its candidate with the same code.
 
 There is no semantic member ceiling; how many
@@ -1185,7 +1185,7 @@ No intent publishes a Claim into a page any more, and none mints a publication
 expectation. `abandon-insertion` releases one an instance already holds, and
 because a change set that published several Claims owns one expectation per
 publishing member it takes an `expectation_id` naming the one it is about; a
-singular Claim intent owns exactly one and may omit it. `playbill block
+singular Claim intent owns exactly one and may omit it. `cruxible block
 depublish SOURCE_ID BLOCK_ID` is the same release addressed the way a page names
 it, and is the verb to reach for.
 
@@ -1202,15 +1202,15 @@ Use `--example claim-subject-relation` for a subject-valued Claim such as
 `sec.vulnerability/<cve> → sec.vuln.affects_package → sec.package/<package>`.
 Both endpoint Subjects must already be accepted and admitted by the ClaimType.
 A projection block's marker grammar is a page-level shape rather than an
-authoring one, and it is documented under `playbill block`. Nothing composes it
+authoring one, and it is documented under `cruxible block`. Nothing composes it
 for a caller any more: the marker must start in column zero, blocks cannot
 overlap, nest, or repeat an id, and marker-looking text inside a Markdown fence
 is not a declaration.
 
-## playbill query
+## query
 
 ~~~text
-cruxible playbill query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'|'f exists'|'f !exists'|'f~text']...
+cruxible query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'|'f exists'|'f !exists'|'f~text']...
     [--contains TEXT] [--select a,b] [--follow field:alias]... [--follow-in field:alias]...
     [--order-by f|-f] [--status live|overturned|refused|retired]... [--claims]
     [--limit N] [--cursor C]
@@ -1219,7 +1219,7 @@ cruxible playbill query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'
 ~~~
 
 `query` has no subcommands: it answers any question over accepted state in one
-call, the same read as MCP `cruxible_playbill_query` and SDK `cx.query`. KIND is
+call, the same read as MCP `cruxible_query` and SDK `cx.query`. KIND is
 a Subject kind, or `ClaimType` / `Procedure` for definitions; `--contains` alone
 searches every live Claim value across kinds. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
@@ -1248,7 +1248,7 @@ and `--receipt full` adds its replay receipt (`receipt.replay`: the Claims each
 row read, traversal paths, bound parameters, verdict, and the
 `playbill-query-execution-receipt-v1` whose digests replay it).
 
-Author named queries through `playbill authoring compile`, then submit the intent
+Author named queries through `cruxible authoring compile`, then submit the intent
 and review/accept its proposal.
 The SDK equivalent is `cx.query_definition(definition=QueryDefinitionInput(...)).prepare()`, followed
 by the normal intent submission and approval flow. `cx.changes().query_definition(...)`
@@ -1286,16 +1286,16 @@ or changed. Their backing proves currency, not that handwritten prose lists
 every result. Generate a complete list from an untruncated result and keep that
 separate from freeform prose; sync does not render Markdown or HTML.
 
-## playbill procedure
+## procedure
 
 ~~~text
-cruxible playbill procedure readiness NAME --evaluation-time TS
-cruxible playbill procedure bind NAME REQUEST_FILE
-cruxible playbill procedure run NAME INPUT_FILE --evaluation-time TS
-cruxible playbill procedure status RUN_ID
-cruxible playbill procedure measure NAME [--run-id RUN_ID] [--measurement NAME]...
+cruxible procedure readiness NAME --evaluation-time TS
+cruxible procedure bind NAME REQUEST_FILE
+cruxible procedure run NAME INPUT_FILE --evaluation-time TS
+cruxible procedure status RUN_ID
+cruxible procedure measure NAME [--run-id RUN_ID] [--measurement NAME]...
   [--evaluation-time TS] [--at FILE] [--json]
-cruxible playbill procedure readings NAME [--run-id RUN_ID] [--measurement NAME]...
+cruxible procedure readings NAME [--run-id RUN_ID] [--measurement NAME]...
   [--limit N] [--cursor C] [--json]
 ~~~
 
@@ -1307,7 +1307,7 @@ the effectful terminals -- `emit_capture`, `post_inbox`, `propose_change_set`,
 unsupported nodes before execution: a direct invocation carries no requested
 rung, no occurrence, and no mandate coordinate, and none is fabricated for it.
 The Line lane serves `propose_change_set`, and `settle_change_set` under a live
-settle ProcedureMandate; see `playbill line`.
+settle ProcedureMandate; see `cruxible line`.
 
 A Source run needs accepted state to authorize it: a live
 SourceAcquisitionPolicy, the CaptureContract each Source node pins, and the
@@ -1415,32 +1415,32 @@ A complete loop, from a run through a delayed evaluation to inspection and a
 retry:
 
 ~~~text
-$ cruxible playbill procedure run release-guard input.json --evaluation-time 2026-09-06T10:00:00Z
+$ cruxible procedure run release-guard input.json --evaluation-time 2026-09-06T10:00:00Z
 RUN-3f…: succeeded
-$ cruxible playbill procedure measure release-guard --run-id RUN-3f…
+$ cruxible procedure measure release-guard --run-id RUN-3f…
 rollout-healthy: pending reading=no_resolution
   the measurement window has not opened
-$ cruxible playbill procedure measure release-guard --run-id RUN-3f… \
+$ cruxible procedure measure release-guard --run-id RUN-3f… \
     --evaluation-time 2026-09-06T11:00:00Z
 rollout-healthy: resolved (satisfied, RSR-9a…) reading=recorded PRD-c1…
-$ cruxible playbill procedure measure release-guard --run-id RUN-3f… \
+$ cruxible procedure measure release-guard --run-id RUN-3f… \
     --evaluation-time 2026-09-06T11:05:00Z
 rollout-healthy: resolved (satisfied, RSR-9a…) reading=replayed PRD-c1…
-$ cruxible playbill procedure readings release-guard --run-id RUN-3f…
+$ cruxible procedure readings release-guard --run-id RUN-3f…
 rollout-healthy: resolved readings=1 (satisfied, RSR-9a…)
 PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 ~~~
 
-## playbill line
+## line
 
 ~~~text
-cruxible playbill line check LINE [--since TS] [--until TS] [--limit 100] [--cursor CURSOR] [--json]
-cruxible playbill line arm LINE [--dry-run|--commit] [--at OID] [--json]
-cruxible playbill line disarm LINE [--dry-run|--commit] [--at OID] [--json]
-cruxible playbill line status LINE [--json]
-cruxible playbill line evaluate LINE --since TS --until TS [--limit 100] [--cursor CURSOR] [--json]
-cruxible playbill line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit 1] [--json]
-cruxible playbill line run LINE --evaluation-time TS [--trigger TRIGGER]
+cruxible line check LINE [--since TS] [--until TS] [--limit 100] [--cursor CURSOR] [--json]
+cruxible line arm LINE [--dry-run|--commit] [--at OID] [--json]
+cruxible line disarm LINE [--dry-run|--commit] [--at OID] [--json]
+cruxible line status LINE [--json]
+cruxible line evaluate LINE --since TS --until TS [--limit 100] [--cursor CURSOR] [--json]
+cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit 1] [--json]
+cruxible line run LINE --evaluation-time TS [--trigger TRIGGER]
   [--occurrence-id ID] [--json]
 ~~~
 
@@ -1532,7 +1532,7 @@ Line is armed, how many pending occurrences it will admit on its own
 one-minute intervals; event progress and partial scans are retained
 immediately. Each armed Line is drained by at most one worker at a time, so a
 slow Procedure never delays matching or another Line.
-An armed Line is one kind of daemon consumer. `playbill next` reports
+An armed Line is one kind of daemon consumer. `cruxible next` reports
 `consumer_stalled` (with `detail.kind: line`) for an arm that stopped by itself
 (its repair rearms it) or an armed Line whose own due work has waited more than
 15 minutes (its repair dispatches it, which shows the refusal). A deliberate
@@ -1599,7 +1599,7 @@ against the paths lowering actually changed, and the proposal door is called
 once. The run reports, per terminal, the proposal id, the exact candidate
 digest, the operation key, the mandate bound, and the Claim path each item
 lowered into; `--json` carries them in `terminal_egress`. Producing the
-proposal activates nothing: retrieve it with `playbill proposal show`, review
+proposal activates nothing: retrieve it with `cruxible proposal show`, review
 it in the ledger, and activate it with the existing proposal verbs.
 
 The proposal ref is keyed on the admitted operation. A retry of the same
@@ -1653,18 +1653,18 @@ accepted head and then activates it. If another generation is accepted between
 the two, activation refuses `settle_publication_refused`, and that proposal
 stays open but can never be activated, because its candidate no longer
 reproduces against the new head. Retrying the same operation recovers the
-same proposal and refuses the same way. Withdraw it with `playbill proposal
+same proposal and refuses the same way. Withdraw it with `cruxible proposal
 withdraw`; the Line's next due occurrence settles against the current head
 under a new operation key.
 
-## playbill predictions
+## predict, settle and resolution-contracts
 
 ~~~text
-cruxible playbill resolution-contracts CLAIM_ID [--json]
-cruxible playbill resolution-contracts --request REQUEST_FILE [--json]
-cruxible playbill predict REQUEST_FILE [--json]
-cruxible playbill settle PREDICTION_ID --observation CLAIM_ID [--json]
-cruxible playbill settle PREDICTION_ID --request REQUEST_FILE [--json]
+cruxible resolution-contracts CLAIM_ID [--json]
+cruxible resolution-contracts --request REQUEST_FILE [--json]
+cruxible predict REQUEST_FILE [--json]
+cruxible settle PREDICTION_ID --observation CLAIM_ID [--json]
+cruxible settle PREDICTION_ID --request REQUEST_FILE [--json]
 ~~~
 
 Every Claim version these commands need is named by Claim ID (`CLM-...` or
@@ -1694,7 +1694,7 @@ the activation and resolution in operational exhaust; it does not create or
 mutate Claims. A failed attempt or an unevaluable
 observation does not settle the hypothesis as false. Effectful terminal nodes
 remain disabled in the public Procedure runner. The `prediction_settleable` row
-in `playbill next` renders `cruxible playbill settle RSC-...`; add
+in `cruxible next` renders `cruxible settle RSC-...`; add
 `--observation CLAIM_ID`.
 
 A window that closed with no accepted observation inside it cannot settle:
@@ -1704,16 +1704,16 @@ not assign a meaning to a window that closed unobserved (a lapse, or a
 resolution where the contract declares absence decisive); retire the contract
 to clear the row.
 
-## playbill block
+## block
 
 ~~~text
-cruxible playbill block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
+cruxible block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
   [--backing SHA256] [--params CANONICAL_JSON]... [--workspace-root DIR]
   [--evaluation-time TS] [--artifact ID]... [--currency-policy warn|require_current]
   [--clear-claims] [--clear-queries] [--clear-artifacts] [--dry-run]
-cruxible playbill block sync [PATH]... [--all] [--check]
+cruxible block sync [PATH]... [--all] [--check]
   [--detach PATH]... [--workspace-root DIR]
-cruxible playbill block depublish SOURCE_ID BLOCK_ID [--json]
+cruxible block depublish SOURCE_ID BLOCK_ID [--json]
 ~~~
 
 ### The two roads a governed passage takes
@@ -1724,7 +1724,7 @@ exactly two kinds of governed block, and they never overlap.
 
 A **source block** is ordinary prose the author wrote, made governed by a Claim
 that cites its span. There is no marker: write the passage, capture the page
-through `playbill sources compile` / `propose`, and author the Claim citing the
+through `cruxible sources compile` / `propose`, and author the Claim citing the
 span it states -- `copied_from` when the passage states the value verbatim,
 `supported_by` when it rests on the passage as evidence. This is the road for
 "the page says this, and here is the Claim that stands behind it".
@@ -1733,7 +1733,7 @@ A **projection block** is agent-authored prose HELD TO an explicit list of
 accepted Claims and artifacts, marked in the file by a marker pair and declared
 with `block repin`. **Nothing renders it.** The body is git-tracked text the
 agent writes; what the marker commits to is which accepted state the passage is
-accountable for, and `playbill next` and `block sync` prove that state has not
+accountable for, and `cruxible next` and `block sync` prove that state has not
 moved under it. This is the road for "this table reflects these Claims".
 
 Evidence never comes from a projection window. A citation of any role and any
@@ -1764,7 +1764,7 @@ truncated query results are reported as unchecked, never current.
 
 `--currency-policy warn` (the default) makes drift advisory. `require_current`
 makes drift or an incomplete dependency check fail workspace checks and produces
-a blocking `playbill next` finding. Invalid markers and integrity failures always
+a blocking `cruxible next` finding. Invalid markers and integrity failures always
 fail. A zero exit means the configured policy passed, not that every block is
 current: advisory stale, dirty, retired-backing, and unchecked findings remain
 in the result for the author to review. Repin follows that review, whether the
@@ -1789,11 +1789,11 @@ projection -- the overlap the two-block-kinds law refuses. An intent carrying
 repair.
 
 On MCP the same adapter runs in the MCP server process:
-`cruxible_playbill_block_repin` takes the block and its page (`file`,
+`cruxible_block_repin` takes the block and its page (`file`,
 workspace-relative, or `source`, its catalog id) and computes the stamp there,
-so an agent never builds one; `cruxible_playbill_block_sync` is `block sync`
+so an agent never builds one; `cruxible_block_sync` is `block sync`
 without `--detach`, a read that edits no page. Detaching is the write-tier
-`cruxible_playbill_block_detach` (`files`, `dry_run`, `at`): its preview
+`cruxible_block_detach` (`files`, `dry_run`, `at`): its preview
 reports what the edit would change and is pinned to the pages' bytes, and a
 commit with `at` refuses if a page changed since. `--dry-run` (MCP `dry_run`)
 on a repin computes and checks the stamp and writes nothing: no manifest, no
@@ -1805,29 +1805,29 @@ A projection block is the byte range between one opening and one closing
 marker, each on its own line:
 
 ~~~text
-<!-- playbill:block:BLOCK_ID -->
+<!-- cruxible:block:BLOCK_ID -->
 ...the governed prose...
-<!-- /playbill:block:BLOCK_ID -->
+<!-- /cruxible:block:BLOCK_ID -->
 ~~~
 
 - `BLOCK_ID` matches `[a-z][a-z0-9_.-]{0,63}` and is unique within its page.
 - The opening above is the **bootstrap** form you write by hand. `repin`
   replaces it with a stamped opening, by default the compact form
-  `<!-- playbill:block:BLOCK_ID:ref:HEX12 -->`, where `HEX12` is the first 12 hex
+  `<!-- cruxible:block:BLOCK_ID:ref:HEX12 -->`, where `HEX12` is the first 12 hex
   of the stamp's digest and the stamp itself is kept in
-  `.playbill/manifests/`; a block repinned without compaction carries the stamp
-  inline as `<!-- playbill:block:BLOCK_ID:STAMP -->` (unpadded base64url of the
+  `.cruxible/manifests/`; a block repinned without compaction carries the stamp
+  inline as `<!-- cruxible:block:BLOCK_ID:STAMP -->` (unpadded base64url of the
   canonical stamp JSON). Never edit a stamped opening by hand; repin it.
 - Each marker starts at column 0 and ends with a line feed (LF, not CRLF), and
   the body ends with a line feed.
 - Markers inside a fenced code block (``` or ~~~) are text, not markers.
 - Blocks never nest or overlap, and every opening has its closing marker.
-- The page must be a source in `.playbill/sources.yaml` (or `sources.yaml`);
+- The page must be a source in `.cruxible/sources.yaml` (or `sources.yaml`);
   that catalog names the block's `source_id`, which a bootstrap marker cannot.
 
 ### Checking and detaching
 
-`block sync` and `playbill next` use the same currency evaluator. A sync checks
+`block sync` and `cruxible next` use the same currency evaluator. A sync checks
 all blocks at one accepted revision and evaluation time, sharing query facts and
 lineage reads. Claim-backed checks currently build accepted query facts once
 per invocation; each distinct query is evaluated once. Artifact-definition
@@ -1873,17 +1873,17 @@ demands its frame, so a retirement alone clears the row without this verb.
 **Depublishing is one of two steps: the marker still has to leave the page.**
 The verb touches the registration and nothing in the workspace. There is no
 `--strip` -- removing bytes from a file is the operator's explicit act, not a
-side effect of a ledger release -- so between the two steps `playbill next`
+side effect of a ledger release -- so between the two steps `cruxible next`
 reports the marker as `unregistered_projection_block` with the repair
 `remove_or_register_projection_block`. That is a warning rather than a blocking
 row, and it is the opposite instruction to the row it replaces, which asked for
 the frame to be restored. Remove the marker pair with `block sync --detach PATH`
 or by hand and it clears.
 
-## playbill next
+## next
 
 ~~~text
-cruxible playbill next [--evaluation-time TS] [--access-profile FILE]
+cruxible next [--evaluation-time TS] [--access-profile FILE]
   [--expiring-within P7D] [--workspace-root DIR] [--delta DIGEST]
   [--limit N] [--cursor CURSOR] [--brief | --json]
 ~~~
@@ -1892,7 +1892,7 @@ Returns the deterministic repair queue at one accepted coordinate. The client
 stamps the current UTC evaluation time when `--evaluation-time` is omitted,
 parses `--expiring-within` ISO-8601 durations client-side without changing the
 integer-microsecond daemon wire, and observes its configured floor locally. If
-`.playbill/sources.yaml` or root-level `sources.yaml` exists, the client also
+`.cruxible/sources.yaml` or root-level `sources.yaml` exists, the client also
 observes readable source-file digests, including paths explicitly authorized by
 a local overlay. Unreadable or unresolved sources are omitted individually; the
 daemon compares observed sources with accepted whole-source snapshots and names
@@ -1916,7 +1916,7 @@ need attention before the rows.
 
 `compiler` compares the accepted head's compiler with the one the daemon runs.
 `upgrade_available` means an explicit forward edge exists, and its repair is
-`cruxible playbill compiler upgrade --to DIGEST --name NAME`, which only
+`cruxible compiler upgrade --to DIGEST --name NAME`, which only
 proposes the upgrade: an admin still approves and activates it.
 `no_upgrade_path` means the accepted compiler has no edge to the running one,
 for example a daemon older than the state it serves; nothing is proposed.
@@ -1925,7 +1925,7 @@ for example a daemon older than the state it serves; nothing is proposed.
 daemon queued for dispatch and nothing has admitted yet, per Line. It is
 `waiting` while every queued occurrence's window is still open and `due` once
 one could be admitted at the evaluation time; the repair is
-`cruxible playbill line dispatch LINE_DIGEST [--limit N]` for the Line with the
+`cruxible line dispatch LINE_DIGEST [--limit N]` for the Line with the
 oldest due occurrence. Nothing dispatches implicitly. A caller whose access
 profile excludes instance material reads `not_observed`.
 
@@ -1939,9 +1939,9 @@ last check:
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
   `bound_contract_id`. An event window has one row per
-  anchor. The repair is `cruxible playbill settle RSC-...`; add
+  anchor. The repair is `cruxible settle RSC-...`; add
   `--observation CLAIM_ID` naming an accepted observation inside the window. The worker does not check that such an observation exists; if
-  none does, see the note under `playbill settle`.
+  none does, see the note under `cruxible settle`.
   The worker clears the row when the settlement lands, and restores it if that
   answer is overturned.
 - `prediction_window_unbindable` names a ResolutionContract with a matching
@@ -1994,7 +1994,7 @@ so on) always reports its state; when its repair is one the caller cannot
 perform, the repair is dropped and the facet carries `repair_hidden: true` and
 `repair_requires` instead. Each repair's `command`
 renders for the caller's surface: a CLI command here, an MCP tool call on
-`cruxible_playbill_next`.
+`cruxible_next`.
 Empty `items` means only that no work exists in the explicitly observed domains.
 
 Rows are typed: each carries `severity`, `reason`, `subject_identity`,
@@ -2013,7 +2013,7 @@ of the page that minted it, so later pages read the same queue even as the
 clock moves. `result_digest` names the whole queue on every page. If the queue
 has moved since the cursor's first page, or a delta's base has been forgotten,
 the request is refused with `cruxible.next.cursor_mismatch`. The repair is to
-run `cruxible playbill next` again without a cursor.
+run `cruxible next` again without a cursor.
 
 `--brief` prints one line per row: severity, reason, subject, and the repair
 command if there is one. It also prints the status lines that need attention
@@ -2026,7 +2026,7 @@ A `proposal_stale` row is exactly a `proposal list` entry whose terminal reason
 is `stale`: a candidate neither accepted, refused nor withdrawn whose parent is
 no longer the coordinate's semantic root, so it cannot activate. The row names
 the proposal's author in `detail.actor_id`; its repair is
-`cruxible playbill proposal readmit PROPOSAL_ID`, which only that author may
+`cruxible proposal readmit PROPOSAL_ID`, which only that author may
 run, so only the author's queue shows the row (the principal `whoami` reports;
 a read with no principal shows none). `proposal withdraw` is the alternative
 when the change is no longer wanted. A readmission at the same coordinate, or a
@@ -2047,7 +2047,7 @@ registry, must not be the candidate's author, and must not have approved it
 already. The caller is never a request field, so a queue read in library mode,
 or by a caller who is not a registered principal (an auth-off daemon's local
 `operator`, say), has no such rows. The repair is
-`cruxible playbill proposal approve PROPOSAL_ID --signer-id PRINCIPAL`. Add
+`cruxible proposal approve PROPOSAL_ID --signer-id PRINCIPAL`. Add
 `--key` with the path to your signing key: it stays in your own custody and the
 daemon never learns where. Your approval closes the row. So does another
 signer's approval that meets the requirement first, because the candidate then
@@ -2056,21 +2056,21 @@ needs activation, not more approval.
 A `mandate_expiring` row is a live, unsuspended ProcedureMandate whose
 `expires_at` falls after the evaluation time and within `--expiring-within`.
 Nothing renews a mandate, so its repair starts a successor from
-`cruxible playbill authoring create --example procedure-mandate`; a successor
+`cruxible authoring create --example procedure-mandate`; a successor
 whose window reaches past the lead time, or the mandate's retirement, closes
 the row.
 
-## playbill curation
+## curation
 
 ~~~text
-cruxible playbill curation list [--workspace-root PATH] [--limit N] [--cursor CURSOR]
+cruxible curation list [--workspace-root PATH] [--limit N] [--cursor CURSOR]
   [--json]
-cruxible playbill curation overrule ITEM_ID
+cruxible curation overrule ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT [--json]
-cruxible playbill curation accept-fixed ITEM_ID
+cruxible curation accept-fixed ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT
   --proposal-id DIGEST --changeset-digest DIGEST [--json]
-cruxible playbill curation suppress ITEM_ID
+cruxible curation suppress ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT
   --scope item|pattern|instance [--until-generation N] [--json]
 ~~~
@@ -2084,10 +2084,10 @@ refused as `cruxible.list.cursor_stale`. The lifecycle commands append attribute
 operational events; they do not create governed proposals or mutate accepted
 knowledge.
 
-## playbill audit
+## audit
 
 ~~~text
-cruxible playbill audit [--claim-type ID]... [--subject-kind KIND]...
+cruxible audit [--claim-type ID]... [--subject-kind KIND]...
   [--max-rows N] [--max-bytes N] [--access-profile FILE]
   [--cursor FILE] [--json]
 ~~~
@@ -2102,23 +2102,23 @@ Audit reads do not create qualifying consumption touches or change governed
 state. Follow `next_cursor` only while its accepted coordinate, evaluation time,
 scope, and operational input head remain unchanged.
 
-## playbill set, add, retire and write
+## set, add, retire and write
 
 ~~~text
-cruxible playbill set SUBJECT FIELD VALUE --because TEXT
+cruxible set SUBJECT FIELD VALUE --because TEXT
   [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
   [--role ROLE] [--contend] [--expect VALUE... | --expect-absent]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
-cruxible playbill add SUBJECT FIELD VALUE --because TEXT
+cruxible add SUBJECT FIELD VALUE --because TEXT
   [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
   [--role ROLE] [--expect-absent]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
-cruxible playbill retire TARGET [FIELD] --because TEXT
+cruxible retire TARGET [FIELD] --because TEXT
   [--reason was-rescinded|was-wrong|superseded] [--expect VALUE]... [--dry-run] [--no-accept]
   [--at GIT_OID] [--json]
-cruxible playbill write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
+cruxible write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
   [--at GIT_OID] [--json]
-cruxible playbill write --schema
+cruxible write --schema
 ~~~
 
 `set` puts VALUE in FIELD of SUBJECT (`kind/id`). On a single-value field it
@@ -2171,10 +2171,10 @@ neither refuses `cruxible.write.subject_required`. `--schema` prints what FILE
 holds. A refusal prints its code, the nearest valid names and the repair, and
 exits 1.
 
-## playbill get
+## get
 
 ~~~text
-cruxible playbill get REF [--detail summary|evidence|why|history|proof|body]
+cruxible get REF [--detail summary|evidence|why|history|proof|body]
   [--range START:END] [--limit N] [--cursor C] [--at GIT_OID]
   [--evaluation-time TS] [--json]
 ~~~
@@ -2221,10 +2221,10 @@ both accept. A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
 result.
 
-## playbill orient
+## orient
 
 ~~~text
-cruxible playbill orient [--kind KIND | --section SECTION]
+cruxible orient [--kind KIND | --section SECTION]
   [--limit N] [--cursor C] [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
 
@@ -2241,7 +2241,7 @@ reason, for any caller of the instance, without daemon scope; it also notes
 when armed Lines have no consumer loop running here and when the provider lane
 is unavailable. When any live ClaimType still names
 CaptureContracts by digest, attention says so and suggests
-`cruxible playbill claim-type upgrade-evidence-rules`.
+`cruxible claim-type upgrade-evidence-rules`.
 
 `--kind` reads one kind in full: every predicate with its roles, freshness
 horizon and live Claim count, the predicates of other kinds that point at it
@@ -2255,7 +2255,7 @@ admission time, Line and finished-node count, and `--section running` lists
 only the runs still running. Both page by the admission's immutable position,
 so a run admitted or finished after the first page is never repeated or
 skipped; status is shown, never part of the order. Read one
-with `cruxible playbill get ProcedureRun:RUN-...` (or a `RUN-` prefix of 12+
+with `cruxible get ProcedureRun:RUN-...` (or a `RUN-` prefix of 12+
 hex): nodes done over the graph's nodes, the node a running run is on,
 elapsed time (against the read's evaluation time while it runs, the measured
 wall clock once it finished), the last finished nodes, the Line, occurrence and
@@ -2288,14 +2288,14 @@ When the current Git worktree holds this instance's floor (see
 `floor: {at, generations_behind}`: the accepted Git OID the floor was exported
 at, and how many accepted generations it is behind this answer (`null` for a
 floor exported before generations were stamped). The text output prints
-`Floor: .playbill/floor at <oid>, N generation(s) behind; refresh: cruxible
-playbill floor export --force`. It reads only the floor's `manifest.json` (its
+`Floor: .cruxible/floor at <oid>, N generation(s) behind; refresh: cruxible
+floor export --force`. It reads only the floor's `manifest.json` (its
 coordinate and generation); it never re-exports.
 
-## playbill world
+## stub
 
 ~~~text
-cruxible playbill world stub [--out PATH]
+cruxible stub [--out PATH]
 ~~~
 
 Writes a `.pyi` typing this instance's accepted world -- its Subject kinds, the
@@ -2309,10 +2309,10 @@ shows the vocabulary movement as an ordinary diff. It types one coordinate and
 carries no authority over the next: the SDK still refuses a world whose
 orientation has moved.
 
-## playbill since
+## since
 
 ~~~text
-cruxible playbill since GENERATION [--max-rows N] [--max-bytes N]
+cruxible since GENERATION [--max-rows N] [--max-bytes N]
   [--access-profile FILE] [--cursor FILE] [--json]
 ~~~
 
@@ -2320,14 +2320,14 @@ Returns signed accepted ChangeSet members in `(GENERATION, pinned head]` order.
 Follow `next_cursor` to continue against the same historical head even if main
 advances; the cursor binds the lower bound, access profile, and page budgets.
 
-## playbill floor
+## floor
 
 ~~~text
-cruxible playbill floor export [--force] [--with-discovery]
+cruxible floor export [--force] [--with-discovery]
 ~~~
 
 Writes the deterministic greppable floor of accepted state to the fixed derived
-cache `.playbill/floor/` under the current workspace. The floor is the
+cache `.cruxible/floor/` under the current workspace. The floor is the
 grep-first front door to accepted state: agents search it with grep and read
 the file a hit lands in. It does no matching of its own. The read and write
 verbs (`get`, `query`, `orient`, `set`, `retire`, `write`) confirm live
@@ -2335,18 +2335,18 @@ verdicts and act.
 
 ### The loop
 
-1. **Grep.** `grep -rn "some text" .playbill/floor/current`.
+1. **Grep.** `grep -rn "some text" .cruxible/floor/current`.
 2. **Read the header.** Every `current/` file starts with one line naming its
    ref and the generation it last changed, for example
    `# dev.roadmap_item/surface-pass  kind=dev.roadmap_item  changed gen 412`.
-3. **Get the ref for live verdicts.** `cruxible playbill get dev.roadmap_item/surface-pass`.
+3. **Get the ref for live verdicts.** `cruxible get dev.roadmap_item/surface-pass`.
    The floor shows accepted values and no verdicts; `orient` says how many
    generations behind the head the floor is.
-4. **Write with the verbs.** `cruxible playbill set dev.roadmap_item/surface-pass
+4. **Write with the verbs.** `cruxible set dev.roadmap_item/surface-pass
    adoption_state adopted --because "…"`.
 
 An agent without a shell searches the values with
-`cruxible playbill query --contains "some text"` (`cruxible_playbill_query`
+`cruxible query --contains "some text"` (`cruxible_query`
 with `contains` on MCP) instead.
 
 ### What is in the floor
@@ -2422,7 +2422,7 @@ whole.
 
 The daemon keeps a rebuildable floor index on each instance and advances it by
 the ledger diff. `floor export` and every refresh send the generation and
-renderer of the floor the workspace holds to `POST /playbill/floor/delta`,
+renderer of the floor the workspace holds to `POST /floor/delta`,
 which answers with a delta (or the whole floor, for a missing, newer or
 foreign base). One shared apply verifies the base and head manifest digests
 and the bytes actually installed before writing anything (a hand-edited,
@@ -2460,14 +2460,14 @@ earlier build recorded at an older format is refused until
 exact rendered bytes, so repeated exports at one accepted coordinate remain
 byte-identical.
 
-## playbill coverage
+## coverage
 
 ~~~text
-cruxible playbill coverage resolve
+cruxible coverage resolve
   [--bind PATH=PLANE:IDENTITY]... [--bindings FILE] [--root DIR]
   [--file PATH]... [--range PATH:START-END]...
   [--grep-results FILE] [--all]
-cruxible playbill coverage status
+cruxible coverage status
   [--bind PATH=PLANE:IDENTITY]... [--bindings FILE] [--root DIR]
 ~~~
 
@@ -2495,14 +2495,14 @@ health, completeness, and the sources a `none` would have been factual inside.
 
 Resolving coverage changes no accepted state and appends no receipt.
 
-## playbill hook
+## hook
 
 ~~~text
-cruxible playbill hook post-tool-use [--root DIR]
+cruxible hook post-tool-use [--root DIR]
 ~~~
 
 Reads one Claude Code PostToolUse payload on stdin and writes the hook response
-on stdout, binding working paths through `.playbill/coverage.json` at the
+on stdout, binding working paths through `.cruxible/coverage.json` at the
 workspace root. Wire it with the settings fragment in
 `integrations/claude-code/`.
 
@@ -2525,7 +2525,7 @@ The parked hook writes one actionable code to stderr only when its own adapter
 input is malformed:
 
 - `cruxible.coverage_hook.instance_id_missing`: add `instance_id` to
-  `.playbill/coverage.json`, or select one with the CLI context/environment.
+  `.cruxible/coverage.json`, or select one with the CLI context/environment.
 - `cruxible.coverage_hook.rule_tag_invalid`: use the exact-path or path-prefix
   rule tags shown in the integration README.
 - `cruxible.coverage_hook.tool_response_invalid`: the Grep hook must receive its
@@ -2540,24 +2540,24 @@ For a harness that owns its tool executor, the vendor-neutral middleware in
 `cruxible_core.coverage.middleware` is the full-fidelity path and
 covers all four tool kinds, including same-turn edit drift.
 
-## playbill proposal
+## proposal
 
 ~~~text
-cruxible playbill proposal inspect PROPOSAL_ID
-cruxible playbill proposal list [--status open|settled|incomplete] [--limit N]
+cruxible proposal inspect PROPOSAL_ID
+cruxible proposal list [--status open|settled|incomplete] [--limit N]
   [--cursor CURSOR]
-cruxible playbill proposal readmit PROPOSAL_ID
-cruxible playbill proposal withdraw PROPOSAL_ID --reason TEXT
-cruxible playbill proposal refusal PROPOSAL_ID
-cruxible playbill proposal review PROPOSAL_ID [--include-body|--redacted]
+cruxible proposal readmit PROPOSAL_ID
+cruxible proposal withdraw PROPOSAL_ID --reason TEXT
+cruxible proposal refusal PROPOSAL_ID
+cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
   [--workspace-root DIR]
-cruxible playbill proposal approve PROPOSAL_ID
+cruxible proposal approve PROPOSAL_ID
   --signer-id ID --key FILE [--yes]
-cruxible playbill proposal activate PROPOSAL_ID [--workspace-root DIR]
+cruxible proposal activate PROPOSAL_ID [--workspace-root DIR]
   [--no-sync]
 ~~~
 
-`cruxible playbill whoami` names the actor and where its ID came from (the
+`cruxible whoami` names the actor and where its ID came from (the
 credential's principal, the configured principal ID, or the local operator),
 whether a credential authenticates it (with auth off the ID is a claim, not
 authentication), its effective permission mode, accepted principal-registration
@@ -2600,7 +2600,7 @@ rather than rewriting its reason, and a settled proposal refuses, because its
 outcome is not an intention to overwrite.
 
 approve signs locally. The private-key path is not sent to the daemon.
-When `.playbill/coverage.json` at `--workspace-root` declares `floor_output`,
+When `.cruxible/coverage.json` at `--workspace-root` declares `floor_output`,
 activate refreshes floor-v2 as a verified exact directory replacement. An
 accepted activation followed by a failed local refresh reports both truths and
 exits nonzero; the daemon never receives the workspace path.
@@ -2608,7 +2608,7 @@ exits nonzero; the daemon never receives the workspace path.
 After an accepted activation, the client runs block sync last unless
 `--no-sync` is explicit. An unattached workspace retains a typed `skipped`
 `workspace_not_attached` row and exits zero; a sync refusal in an attached
-workspace reports the already-accepted truth, names `cruxible playbill block sync
+workspace reports the already-accepted truth, names `cruxible block sync
 --all`, and exits nonzero.
 
 ### Reviewing a proposal
@@ -2618,7 +2618,7 @@ attached workspace on every proposal, so a reviewer compares the candidate
 against accepted state with standard tooling and no bespoke rendering:
 
 ~~~text
-git diff playbill/accepted...playbill/proposals/<proposal-id>
+git diff cruxible-ledger/accepted...cruxible-ledger/proposals/<proposal-id>
 ~~~
 
 The daemon's records are notes on that same projected commit, fetched into the
@@ -2656,27 +2656,27 @@ A reviewer without a workspace attachment clones the ledger mirror instead and
 runs the same diff against `origin/main`; see [playbill
 ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
 
-## playbill principal
+## principal and whoami
 
 ~~~text
-cruxible playbill principal add PRINCIPAL_ID --key-dir DIR [--signer-key PATH]
+cruxible principal add PRINCIPAL_ID --key-dir DIR [--signer-key PATH]
   [--mode governed_write] [--kind ordinary] [--name NAME] [--dry-run|--commit] [--at OID] [--json]
-cruxible playbill principal rotate ...
-cruxible playbill principal revoke ...
-cruxible playbill principal recover ...
+cruxible principal rotate ...
+cruxible principal revoke ...
+cruxible principal recover ...
 ~~~
 
-The principal registry is read with `cruxible playbill orient --section
-principals`, one principal with `cruxible playbill get Principal:ID`.
+The principal registry is read with `cruxible orient --section
+principals`, one principal with `cruxible get Principal:ID`.
 Registration, rotation, revocation, and recovery are governed principal-change
 proposals. `principal add` generates the Ed25519 private key exclusively in the
 client-held `--key-dir` outside the current workspace and sends only its public
 principal record. Every principal-lifecycle proposal requires the PROPOSING
 actor's own cryptographic approval before it can settle — the identity shown
-by `playbill whoami`, which coincides with the affected principal only for
-self-rotation: run `playbill proposal approve PID --signer-id <the proposing
+by `cruxible whoami`, which coincides with the affected principal only for
+self-rotation: run `cruxible proposal approve PID --signer-id <the proposing
 actor> --key <that actor's current private key> --yes`, then
-`playbill proposal activate`. For `principal add` and `principal recover`,
+`cruxible proposal activate`. For `principal add` and `principal recover`,
 the signer is the actor performing the operation, never the new or
 locked-out principal. Registration neither
 grants authority immediately nor sends a private key to the daemon. Other
@@ -2696,7 +2696,7 @@ SDK and MCP server all read those variables. Without `--signer-key` the
 registration is only proposed and the command prints each remaining step:
 `proposal approve`, `proposal activate`, and, with auth,
 `credential mint --principal-id ID --key-dir DIR`, which writes the token into
-the same settings file. `playbill init` writes the owner's settings file the
+the same settings file. `cruxible init` writes the owner's settings file the
 same way. `proposal approve` defaults `--signer-id` to the configured principal
 and `--key` to `CRUXIBLE_PRINCIPAL_KEY`.
 
@@ -2706,31 +2706,31 @@ limit needs daemon auth; with auth off every process of the OS user is equally
 trusted and could load another principal's settings. See the
 [quickstart](quickstart.md#add-a-propose-only-agent) for the worked example.
 
-## playbill sources
+## sources
 
 ~~~text
-cruxible playbill sources check ...
-cruxible playbill sources compile ...
-cruxible playbill sources propose ...
+cruxible sources check ...
+cruxible sources compile ...
+cruxible sources propose ...
 ~~~
 
 Compilation reads declared local files client-side and emits a path-free bundle.
 The daemon never reads a submitted client path.
 
 Governance and provenance explanations are `get` details:
-`cruxible playbill get Document:NAME --detail why`, `get KIND/ID --detail why`,
+`cruxible get Document:NAME --detail why`, `get KIND/ID --detail why`,
 or `get CLM-... --detail why`; `--detail proof` reads the full accepted
 envelope and facts.
 
 Use --json on operation commands for machine-readable output. Run any command
 with --help for its exact options.
 
-### Compiler upgrade
+## compiler
 
-`cruxible playbill compiler upgrade --to DIGEST --name NAME [--dry-run]` creates an admin-only
+`cruxible compiler upgrade --to DIGEST --name NAME [--dry-run]` creates an admin-only
 proposal bound to the exact accepted head and target compiler. Review it, sign
-through `cruxible playbill proposal approve`, then use
-`cruxible playbill proposal activate`. Activation validates the full target
+through `cruxible proposal approve`, then use
+`cruxible proposal activate`. Activation validates the full target
 projection before advancing the signed ledger. Installing or restarting a daemon
 does not upgrade an instance. Historical generations keep their original compiler.
 The instance descriptor retains its genesis compiler; inspection reports the

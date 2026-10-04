@@ -87,7 +87,7 @@ COPY_SOURCE = f"external:{COPY_IDENTITY}"
 
 
 def _bootstrap(cruxible: _Cli, tmp_path: Path) -> None:
-    cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
+    cruxible.json("--server-url", "http://cruxible", "host", "create")
     cruxible.bootstrap(tmp_path)
     # Git init follows bootstrap so TCP host attachment and in-tree custody stay refused.
     subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
@@ -98,7 +98,6 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
 
     claim_type = _claim_type()
     proposed = cruxible.json(
-        "playbill",
         "claim-type",
         "propose",
         "--envelope",
@@ -130,13 +129,11 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
         ),
     )
     created = cruxible.json(
-        "playbill",
         "authoring",
         "create",
         _write(tmp_path / "claim.json", authoring.model_dump(mode="json")),
     )
     submitted = cruxible.json(
-        "playbill",
         "authoring",
         "submit",
         str(created["intent"]["intent_id"]),
@@ -184,7 +181,6 @@ def _govern_a_foreign_span(
         }
     )
     proposed = cruxible.json(
-        "playbill",
         "claim-type",
         "propose",
         "--envelope",
@@ -220,7 +216,6 @@ def _govern_a_foreign_span(
     )
     stub = _write(tmp_path / "foreign-claim.json", authoring.model_dump(mode="json"))
     preflight = cruxible.json(
-        "playbill",
         "authoring",
         "bind",
         "--file",
@@ -231,7 +226,6 @@ def _govern_a_foreign_span(
         stub,
     )
     submitted = cruxible.json(
-        "playbill",
         "authoring",
         "submit",
         str(preflight["certificate"]["intent_id"]),
@@ -247,7 +241,7 @@ def _resolve_foreign(
 ) -> tuple[str, dict[str, Any]]:
     """Resolve the declared foreign working set in both output modes."""
 
-    argv: tuple[str, ...] = ("playbill", "coverage", "resolve", "--root", str(workspace))
+    argv: tuple[str, ...] = ("coverage", "resolve", "--root", str(workspace))
     for entry in binds or (f"{FOREIGN_PATH}={FOREIGN_SOURCE}",):
         path, _, _ = entry.partition("=")
         argv = (*argv, "--bind", entry, "--file", path)
@@ -270,7 +264,6 @@ def _resolve(cruxible: _Cli, workspace: Path, *extra: str) -> tuple[str, dict[st
     """Run one `coverage resolve` in both output modes over the same working set."""
 
     argv = (
-        "playbill",
         "coverage",
         "resolve",
         "--root",
@@ -296,10 +289,10 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     # 1. The floor's opt-in discovery part carries its own coverage boundary,
     #    enumerated like every other floor file.
     monkeypatch.chdir(tmp_path)
-    floor = tmp_path / ".playbill/floor"
-    default = cruxible.json("playbill", "floor", "export")
+    floor = tmp_path / ".cruxible/floor"
+    default = cruxible.json("floor", "export")
     assert "coverage-manifest.json" not in {item["path"] for item in default["files"]}
-    exported = cruxible.json("playbill", "floor", "export", "--force", "--with-discovery")
+    exported = cruxible.json("floor", "export", "--force", "--with-discovery")
     boundary = json.loads((floor / "coverage-manifest.json").read_text(encoding="utf-8"))
     assert "coverage-manifest.json" in {item["path"] for item in exported["files"]}
     assert boundary["format"] == "playbill-coverage-manifest-v2"
@@ -411,7 +404,7 @@ def test_cli_delivers_exact_then_relocated_exact_then_drifted_for_a_foreign_sour
     # The daemon fetched nothing, and the accepted law evidence says so: every
     # Capture behind this Claim is graded self-asserted, including the one that
     # names a logical source.
-    explained = cruxible.json("playbill", "get", claim_identity, "--detail", "why")["why"]
+    explained = cruxible.json("get", claim_identity, "--detail", "why")["why"]
     assert {item["provenance_grade"] for item in explained["law_evidence"]["verdict_captures"]} == {
         "self-asserted"
     }
@@ -550,7 +543,6 @@ def test_cli_coverage_status_renders_the_manifest_over_the_declared_scope(
     (workspace / "notes.txt").write_bytes(b"ordinary working notes\n")
 
     status = cruxible.run(
-        "playbill",
         "coverage",
         "status",
         "--root",
@@ -587,7 +579,6 @@ def test_cli_coverage_refuses_a_working_path_it_was_never_given_a_binding_for(
     refused = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "coverage",
             "resolve",
             "--root",

@@ -36,52 +36,52 @@ if TYPE_CHECKING:
 # - manual: the command resolves its target from command-specific inputs and
 #   emits the notice itself immediately before the write.
 MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
-    ("playbill", "host", "create"): "create",
-    ("playbill", "workspace", "attach"): "manual",
-    ("playbill", "workspace", "detach"): "manual",
-    ("playbill", "workspace", "floor-delivery"): "manual",
-    ("playbill", "init"): "active",
-    ("playbill", "instance", "decommission"): "active",
-    ("playbill", "body", "store"): "active",
-    ("playbill", "provider", "install"): "active",
-    ("playbill", "kit", "add"): "active",
-    ("playbill", "kit", "remove"): "active",
-    ("playbill", "ledger", "set-mirror"): "active",
-    ("playbill", "ledger", "publish"): "active",
-    ("playbill", "document", "propose"): "active",
-    ("playbill", "claim-type", "propose"): "active",
-    ("playbill", "claim-type", "migrate"): "active",
-    ("playbill", "claim-type", "upgrade-evidence-rules"): "active",
-    ("playbill", "claim-type", "upgrade"): "active",
-    ("playbill", "block", "depublish"): "active",
-    ("playbill", "set"): "active",
-    ("playbill", "add"): "active",
-    ("playbill", "retire"): "active",
-    ("playbill", "write"): "active",
-    ("playbill", "claim", "attest"): "active",
-    ("playbill", "predict"): "active",
-    ("playbill", "settle"): "active",
-    ("playbill", "claim-attestation", "recover"): "active",
-    ("playbill", "authoring", "create"): "manual",
-    ("playbill", "authoring", "bind"): "active",
-    ("playbill", "authoring", "compile"): "active",
-    ("playbill", "authoring", "preflight"): "active",
-    ("playbill", "authoring", "rebase"): "active",
-    ("playbill", "authoring", "submit"): "active",
-    ("playbill", "procedure", "bind"): "active",
-    ("playbill", "procedure", "run"): "active",
-    ("playbill", "procedure", "measure"): "active",
-    ("playbill", "line", "run"): "active",
-    ("playbill", "proposal", "approve"): "active",
-    ("playbill", "proposal", "activate"): "active",
-    ("playbill", "proposal", "readmit"): "active",
-    ("playbill", "proposal", "withdraw"): "active",
-    ("playbill", "sources", "propose"): "active",
-    ("playbill", "compiler", "upgrade"): "active",
-    ("playbill", "principal", "add"): "active",
-    ("playbill", "principal", "rotate"): "active",
-    ("playbill", "principal", "recover"): "active",
-    ("playbill", "principal", "revoke"): "active",
+    ("host", "create"): "create",
+    ("workspace", "attach"): "manual",
+    ("workspace", "detach"): "manual",
+    ("workspace", "floor-delivery"): "manual",
+    ("init",): "active",
+    ("instance", "decommission"): "active",
+    ("body", "store"): "active",
+    ("provider", "install"): "active",
+    ("kit", "add"): "active",
+    ("kit", "remove"): "active",
+    ("ledger", "set-mirror"): "active",
+    ("ledger", "publish"): "active",
+    ("document", "propose"): "active",
+    ("claim-type", "propose"): "active",
+    ("claim-type", "migrate"): "active",
+    ("claim-type", "upgrade-evidence-rules"): "active",
+    ("claim-type", "upgrade"): "active",
+    ("block", "depublish"): "active",
+    ("set",): "active",
+    ("add",): "active",
+    ("retire",): "active",
+    ("write",): "active",
+    ("claim", "attest"): "active",
+    ("predict",): "active",
+    ("settle",): "active",
+    ("claim-attestation", "recover"): "active",
+    ("authoring", "create"): "manual",
+    ("authoring", "bind"): "active",
+    ("authoring", "compile"): "active",
+    ("authoring", "preflight"): "active",
+    ("authoring", "rebase"): "active",
+    ("authoring", "submit"): "active",
+    ("procedure", "bind"): "active",
+    ("procedure", "run"): "active",
+    ("procedure", "measure"): "active",
+    ("line", "run"): "active",
+    ("proposal", "approve"): "active",
+    ("proposal", "activate"): "active",
+    ("proposal", "readmit"): "active",
+    ("proposal", "withdraw"): "active",
+    ("sources", "propose"): "active",
+    ("compiler", "upgrade"): "active",
+    ("principal", "add"): "active",
+    ("principal", "rotate"): "active",
+    ("principal", "recover"): "active",
+    ("principal", "revoke"): "active",
     ("credential", "claim-bootstrap"): "active",
     ("credential", "mint"): "active",
     ("credential", "recover-admin"): "manual",
@@ -154,9 +154,9 @@ def handle_errors(f: Any) -> Any:
             if ctx is not None:
                 command_path = _command_path(ctx)
                 target_mode = MUTATING_COMMAND_TARGETS.get(command_path)
-                if command_path == ("playbill", "claim-type", "propose") and kwargs.get("template"):
+                if command_path == ("claim-type", "propose") and kwargs.get("template"):
                     target_mode = None
-                if command_path == ("playbill", "write") and kwargs.get("schema"):
+                if command_path == ("write",) and kwargs.get("schema"):
                     target_mode = None
                 if target_mode is not None and target_mode != "manual":
                     # Runtime import avoids the main <-> commands import cycle.
@@ -375,508 +375,436 @@ def _group(
 # names and first-paragraph help live here so top-level help and completion can
 # enumerate the full surface without importing any domain command module.
 CLI_COMMANDS: dict[str, LazyCommandSpec] = {
-    "playbill": _group(
-        "Govern state through Cruxible's proposal and acceptance ledger.",
+    "host": _group(
+        "Allocate daemon-owned Cruxible hosts.",
         {
-            "host": _group(
-                "Allocate daemon-owned Cruxible hosts.",
-                {
-                    "create": _command(
-                        "playbill", "create_host", "Allocate an empty host for Cruxible."
-                    ),
-                    "show": _command(
-                        "playbill", "show_host", "Inspect one registered Cruxible host."
-                    ),
-                },
-                module="playbill",
-                attr="host_group",
-            ),
-            "workspace": _group(
-                "Bind local configuration to a registered Cruxible host.",
-                {
-                    "attach": _command(
-                        "playbill",
-                        "attach_workspace",
-                        "Attach this Git worktree to an existing host.",
-                    ),
-                    "floor-delivery": _command(
-                        "playbill",
-                        "workspace_floor_delivery",
-                        "Choose the local daemon workspace floor writer.",
-                    ),
-                    "detach": _command(
-                        "playbill",
-                        "detach_workspace",
-                        "Release a host from the Git worktree it registers.",
-                    ),
-                },
-                module="playbill",
-                attr="workspace_group",
-            ),
-            "init": _command("playbill", "init_playbill", "Bootstrap Cruxible state."),
-            "whoami": _command(
-                "playbill", "whoami", "Explain the active writer identity and permissions."
-            ),
-            "capture": _group(
-                "Read verified retained Capture evidence.",
-                {"read": _command("playbill", "read_capture", "Read one retained Capture.")},
-                module="playbill",
-                attr="capture_group",
-            ),
-            "body": _group(
-                "Store inert Document body bytes.",
-                {
-                    "store": _command(
-                        "playbill", "store_body", "Store exact bytes without creating authority."
-                    )
-                },
-                module="playbill",
-                attr="body_group",
-            ),
-            "instance": _group(
-                "Read and end the lifecycle of one governed instance.",
-                {
-                    "decommission": _command(
-                        "playbill",
-                        "decommission_instance",
-                        "End this instance's governed writes without deleting anything.",
-                    )
-                },
-                module="playbill",
-                attr="instance_group",
-            ),
-            "ledger": _group(
-                "Publish this instance's ledger, and read where it publishes to.",
-                {
-                    "set-mirror": _command(
-                        "playbill",
-                        "set_ledger_mirror",
-                        "Bind the remote this ledger publishes to.",
-                    ),
-                    "clone-url": _command(
-                        "playbill",
-                        "ledger_clone_url",
-                        "Print the ledger mirror a reviewer clones.",
-                    ),
-                    "publish": _command(
-                        "playbill",
-                        "ledger_publish",
-                        "Wait for publication to the configured ledger mirror.",
-                    ),
-                },
-                module="playbill",
-                attr="ledger_group",
-            ),
-            "provider": _group(
-                "Manage governed Provider artifacts.",
-                {
-                    "list": _command(
-                        "playbill", "list_provider_packages", "List available provider packages."
-                    ),
-                    "install": _command(
-                        "playbill", "install_provider", "Install and register a provider package."
-                    ),
-                },
-                module="playbill",
-                attr="provider_group",
-            ),
-            "kit": _group(
-                "Export and import definition kits.",
-                {
-                    "build": _command(
-                        "playbill", "build_kit", "Export owned definitions as a kit release."
-                    ),
-                    "add": _command(
-                        "playbill", "add_kit", "Propose installing or upgrading a kit."
-                    ),
-                    "status": _command("playbill", "kit_status", "List installed kits."),
-                    "push": _command("playbill", "push_kit_cmd", "Publish a kit to a registry."),
-                    "pull": _command(
-                        "playbill", "pull_kit", "Fetch and verify a kit without installing it."
-                    ),
-                    "remove": _command(
-                        "playbill", "remove_kit", "Propose retiring what a kit installed."
-                    ),
-                },
-                module="playbill",
-                attr="kit_group",
-            ),
-            "block": _group(
-                "Maintain client-owned declared projection blocks.",
-                {
-                    "depublish": _command(
-                        "playbill",
-                        "depublish_projection",
-                        "Release the registration that demands one published block.",
-                    ),
-                    "repin": _command(
-                        "playbill",
-                        "repin_projection",
-                        "Refresh one declaration marker without editing its prose.",
-                    ),
-                    "sync": _command(
-                        "playbill",
-                        "sync_projection",
-                        "Report whether each declared block still reads as its stamp says.",
-                    ),
-                },
-                module="playbill",
-                attr="block_group",
-            ),
-            "document": _group(
-                "Propose governed Documents.",
-                {
-                    "propose": _command(
-                        "playbill", "propose_document", "Propose a Document envelope."
-                    ),
-                },
-                module="playbill",
-                attr="document_group",
-            ),
-            "proposal": _group(
-                "Inspect, review, approve, and activate candidates.",
-                {
-                    "list": _command(
-                        "playbill", "list_proposals", "List open or settled proposals."
-                    ),
-                    "readmit": _command(
-                        "playbill",
-                        "readmit_proposal",
-                        "Re-admit one stale proposal at the current head.",
-                    ),
-                    "withdraw": _command(
-                        "playbill",
-                        "withdraw_proposal",
-                        "Retire an open proposal that will never activate.",
-                    ),
-                    "inspect": _command(
-                        "playbill", "inspect_proposal", "Inspect immutable proposal evidence."
-                    ),
-                    "refusal": _command(
-                        "playbill", "inspect_refusal", "Inspect typed refusal diagnostics."
-                    ),
-                    "review": _command(
-                        "playbill", "review_proposal", "Render structured candidate review."
-                    ),
-                    "approve": _command(
-                        "playbill", "approve_proposal", "Sign locally and submit an attestation."
-                    ),
-                    "activate": _command(
-                        "playbill", "activate_proposal", "Settle an approved candidate."
-                    ),
-                },
-                module="playbill",
-                attr="proposal_group",
-            ),
-            "claim-type": _group(
-                "Propose and upgrade the governed predicate vocabulary.",
-                {
-                    "propose": _command(
-                        "playbill", "propose_claim_type", "Propose a ClaimType interface."
-                    ),
-                    "migrate": _command(
-                        "playbill",
-                        "migrate_claim_type",
-                        "Atomically succeed a ClaimType and dispose dependents.",
-                    ),
-                    "upgrade-evidence-rules": _command(
-                        "playbill",
-                        "upgrade_evidence_rules",
-                        "Propose moving ClaimTypes to identity evidence rules.",
-                    ),
-                    "upgrade": _command(
-                        "playbill",
-                        "upgrade_claim_types",
-                        "Propose moving ClaimTypes to v7 (revision evidence stated).",
-                    ),
-                },
-                module="playbill",
-                attr="claim_type_group",
-            ),
-            "claim": _group(
-                "Attest to first-class Claims.",
-                {
-                    "attest": _command(
-                        "playbill",
-                        "attest_claim",
-                        "Sign that this caller examined the current exact Claim.",
-                    ),
-                },
-                module="playbill",
-                attr="claim_group",
-            ),
-            "claim-attestation": _group(
-                "Operate the principal-authored Claim-attestation evidence ledger.",
-                {
-                    "recover": _command(
-                        "playbill",
-                        "recover_claim_attestations",
-                        "Roll the sole durable unpublished attestation forward.",
-                    )
-                },
-                module="playbill",
-                attr="claim_attestation_group",
-            ),
-            "resolution-contracts": _command(
-                "playbill", "resolution_contracts", "Find accepted tests of an exact Claim version."
-            ),
-            "predict": _command(
+            "create": _command("playbill", "create_host", "Allocate an empty host for Cruxible."),
+            "show": _command("playbill", "show_host", "Inspect one registered Cruxible host."),
+        },
+        module="playbill",
+        attr="host_group",
+    ),
+    "workspace": _group(
+        "Bind local configuration to a registered Cruxible host.",
+        {
+            "attach": _command(
                 "playbill",
-                "predict",
-                "Propose a governed resolution contract.",
+                "attach_workspace",
+                "Attach this Git worktree to an existing host.",
             ),
-            "settle": _command(
+            "floor-delivery": _command(
                 "playbill",
-                "settle",
-                "Settle a prediction from accepted evidence.",
+                "workspace_floor_delivery",
+                "Choose the local daemon workspace floor writer.",
             ),
-            "authoring": _group(
-                "Author, preflight, submit, and resume governed writes.",
-                {
-                    "create": _command(
-                        "playbill", "create_authoring_intent", "Create a durable intent."
-                    ),
-                    "get": _command(
-                        "playbill", "get_authoring_intent", "Read one authoring intent."
-                    ),
-                    "resume": _command(
-                        "playbill", "resume_authoring_intent", "Resume durable authoring."
-                    ),
-                    "list": _command(
-                        "playbill",
-                        "list_pending_authoring_intents",
-                        "List pending authoring intents.",
-                    ),
-                    "compile": _command(
-                        "playbill", "compile_authoring", "Author and preflight a payload."
-                    ),
-                    "bind": _command(
-                        "playbill",
-                        "bind_authoring_selection",
-                        "Bind a Flow-A selection and compile it.",
-                    ),
-                    "preflight": _command(
-                        "playbill",
-                        "preflight_authoring_intent",
-                        "Recheck an authoring intent.",
-                    ),
-                    "rebase": _command(
-                        "playbill",
-                        "rebase_authoring_intent",
-                        "Advance a refused intent to accepted head.",
-                    ),
-                    "submit": _command(
-                        "playbill", "submit_authoring_intent", "Submit a passing intent."
-                    ),
-                    "status": _command(
-                        "playbill",
-                        "authoring_intent_status",
-                        "Read the path to acceptance.",
-                    ),
-                    "abandon-insertion": _command(
-                        "playbill",
-                        "abandon_authoring_insertion",
-                        "Abandon a pending publication copy.",
-                    ),
-                },
-                module="playbill",
-                attr="authoring_group",
-            ),
-            "compiler": _group(
-                "Propose a governed compiler upgrade.",
-                {
-                    "upgrade": _command(
-                        "playbill", "propose_compiler_upgrade", "Propose a compiler upgrade."
-                    )
-                },
-                module="playbill",
-                attr="compiler_group",
-            ),
-            "query": _command(
+            "detach": _command(
                 "playbill",
-                "query_group",
-                "Query accepted state: values with flags, a spec, or a named query.",
-            ),
-            "procedure": _group(
-                "Inspect, bind, run, and measure accepted Procedures.",
-                {
-                    "readiness": _command(
-                        "playbill", "procedure_readiness", "Inspect Procedure readiness."
-                    ),
-                    "bind": _command(
-                        "playbill", "bind_procedure", "Bind accepted artifacts to slots."
-                    ),
-                    "run": _command("playbill", "run_procedure", "Run an accepted Procedure."),
-                    "status": _command(
-                        "playbill", "procedure_run_status", "Read one Procedure run state."
-                    ),
-                    "measure": _command(
-                        "playbill",
-                        "procedure_measure",
-                        "Evaluate due measurements and credit one run's exact grain.",
-                    ),
-                    "readings": _command(
-                        "playbill",
-                        "procedure_readings",
-                        "Inspect measurement standing and retained readings.",
-                    ),
-                },
-                module="playbill",
-                attr="procedure_group",
-            ),
-            "line": _group(
-                "Trigger accepted Lines.",
-                {
-                    "dispatch": _command(
-                        "playbill", "dispatch_line", "Dispatch accepted Line work."
-                    ),
-                    "evaluate": _command(
-                        "playbill", "evaluate_line", "Evaluate accepted Line work."
-                    ),
-                    "arm": _command(
-                        "playbill", "arm_line", "Admit what a Line matches from now on."
-                    ),
-                    "disarm": _command(
-                        "playbill", "disarm_line", "Stop a Line admitting work automatically."
-                    ),
-                    "status": _command(
-                        "playbill", "line_status", "Show a Line's arm and why it stopped."
-                    ),
-                    "check": _command(
-                        "playbill",
-                        "check_line",
-                        "Check trigger eligibility without running a Line.",
-                    ),
-                    "run": _command(
-                        "playbill", "run_line", "Trigger one due accepted Line occurrence."
-                    ),
-                },
-                module="playbill",
-                attr="line_group",
-            ),
-            "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
-            "audit": _command("playbill", "audit", "Read ranked Claim verification work."),
-            "curation": _group(
-                "Inspect mechanically detected ontology-maintenance patterns.",
-                {
-                    "list": _command("playbill", "curation_list", "Read the curation queue."),
-                    "overrule": _command(
-                        "playbill", "curation_overrule", "Overrule one detector item."
-                    ),
-                    "accept-fixed": _command(
-                        "playbill",
-                        "curation_accept_fixed",
-                        "Link an item to an accepted fix.",
-                    ),
-                    "suppress": _command(
-                        "playbill", "curation_suppress", "Suppress open curation work."
-                    ),
-                },
-                module="playbill",
-                attr="curation_group",
-            ),
-            "get": _command(
-                "playbill", "get_by_ref", "Read one governed thing by reference, values first."
-            ),
-            "set": _command(
-                "playbill", "set_value", "Set one field of one Subject, replacing its value."
-            ),
-            "add": _command(
-                "playbill", "add_value", "Add one value to a many-valued field of one Subject."
-            ),
-            "retire": _command(
-                "playbill", "retire", "Retire one live Claim, by ID or by Subject and field."
-            ),
-            "write": _command(
-                "playbill", "write_changes", "Apply set, add and retire changes as one change set."
-            ),
-            "since": _command("playbill", "since", "Read accepted ChangeSet history."),
-            "orient": _command(
-                "playbill", "orient", "Map accepted state: kinds, attention and next commands."
-            ),
-            "world": _group(
-                "Read the accepted vocabulary as typed Python.",
-                {
-                    "stub": _command(
-                        "playbill", "world_stub", "Write a .pyi typing the accepted world."
-                    )
-                },
-                module="playbill",
-                attr="world_group",
-            ),
-            "floor": _group(
-                "Materialize the deterministic greppable floor.",
-                {
-                    "export": _command(
-                        "playbill", "export_floor", "Write the accepted floor to a directory."
-                    )
-                },
-                module="playbill",
-                attr="floor_group",
-            ),
-            "coverage": _group(
-                "Deliver what working files have to do with accepted state.",
-                {
-                    "resolve": _command(
-                        "playbill", "resolve_coverage", "Resolve coverage for working sources."
-                    ),
-                    "status": _command(
-                        "playbill", "coverage_status", "Render the coverage manifest."
-                    ),
-                },
-                module="playbill",
-                attr="coverage_group",
-            ),
-            "hook": _group(
-                "Deliver coverage into a harness's own tool results.",
-                {
-                    "post-tool-use": _command(
-                        "playbill",
-                        "post_tool_use_hook",
-                        "Annotate a Claude Code tool result with coverage.",
-                    ),
-                },
-                module="playbill",
-                attr="hook_group",
-            ),
-            "sources": _group(
-                "Compile declared local files into exact-byte bundles.",
-                {
-                    "compile": _command(
-                        "playbill", "compile_sources", "Compile a read-only frozen bundle."
-                    ),
-                    "check": _command(
-                        "playbill", "check_sources", "Compare local bytes with accepted state."
-                    ),
-                    "propose": _command(
-                        "playbill", "propose_sources", "Propose one exact compiled source."
-                    ),
-                },
-                module="playbill",
-                attr="sources_group",
-            ),
-            "principal": _group(
-                "Govern owner, reviewer, and recovery public keys.",
-                {
-                    "add": _command(
-                        "playbill", "add_principal", "Propose an owner-approved principal."
-                    ),
-                    "rotate": _command(
-                        "playbill", "rotate_principal", "Self-rotate a principal key."
-                    ),
-                    "recover": _command(
-                        "playbill", "recover_principal", "Recover a principal key narrowly."
-                    ),
-                    "revoke": _command(
-                        "playbill", "revoke_principal", "Propose principal revocation."
-                    ),
-                },
-                module="playbill",
-                attr="principal_group",
+                "detach_workspace",
+                "Release a host from the Git worktree it registers.",
             ),
         },
         module="playbill",
-        attr="playbill_group",
+        attr="workspace_group",
+    ),
+    "init": _command("playbill", "init_playbill", "Bootstrap Cruxible state."),
+    "whoami": _command("playbill", "whoami", "Explain the active writer identity and permissions."),
+    "capture": _group(
+        "Read verified retained Capture evidence.",
+        {"read": _command("playbill", "read_capture", "Read one retained Capture.")},
+        module="playbill",
+        attr="capture_group",
+    ),
+    "body": _group(
+        "Store inert Document body bytes.",
+        {
+            "store": _command(
+                "playbill", "store_body", "Store exact bytes without creating authority."
+            )
+        },
+        module="playbill",
+        attr="body_group",
+    ),
+    "instance": _group(
+        "Read and end the lifecycle of one governed instance.",
+        {
+            "decommission": _command(
+                "playbill",
+                "decommission_instance",
+                "End this instance's governed writes without deleting anything.",
+            )
+        },
+        module="playbill",
+        attr="instance_group",
+    ),
+    "ledger": _group(
+        "Publish this instance's ledger, and read where it publishes to.",
+        {
+            "set-mirror": _command(
+                "playbill",
+                "set_ledger_mirror",
+                "Bind the remote this ledger publishes to.",
+            ),
+            "clone-url": _command(
+                "playbill",
+                "ledger_clone_url",
+                "Print the ledger mirror a reviewer clones.",
+            ),
+            "publish": _command(
+                "playbill",
+                "ledger_publish",
+                "Wait for publication to the configured ledger mirror.",
+            ),
+        },
+        module="playbill",
+        attr="ledger_group",
+    ),
+    "provider": _group(
+        "Manage governed Provider artifacts.",
+        {
+            "list": _command(
+                "playbill", "list_provider_packages", "List available provider packages."
+            ),
+            "install": _command(
+                "playbill", "install_provider", "Install and register a provider package."
+            ),
+        },
+        module="playbill",
+        attr="provider_group",
+    ),
+    "kit": _group(
+        "Export and import definition kits.",
+        {
+            "build": _command(
+                "playbill", "build_kit", "Export owned definitions as a kit release."
+            ),
+            "add": _command("playbill", "add_kit", "Propose installing or upgrading a kit."),
+            "status": _command("playbill", "kit_status", "List installed kits."),
+            "push": _command("playbill", "push_kit_cmd", "Publish a kit to a registry."),
+            "pull": _command(
+                "playbill", "pull_kit", "Fetch and verify a kit without installing it."
+            ),
+            "remove": _command("playbill", "remove_kit", "Propose retiring what a kit installed."),
+        },
+        module="playbill",
+        attr="kit_group",
+    ),
+    "block": _group(
+        "Maintain client-owned declared projection blocks.",
+        {
+            "depublish": _command(
+                "playbill",
+                "depublish_projection",
+                "Release the registration that demands one published block.",
+            ),
+            "repin": _command(
+                "playbill",
+                "repin_projection",
+                "Refresh one declaration marker without editing its prose.",
+            ),
+            "sync": _command(
+                "playbill",
+                "sync_projection",
+                "Report whether each declared block still reads as its stamp says.",
+            ),
+        },
+        module="playbill",
+        attr="block_group",
+    ),
+    "document": _group(
+        "Propose governed Documents.",
+        {
+            "propose": _command("playbill", "propose_document", "Propose a Document envelope."),
+        },
+        module="playbill",
+        attr="document_group",
+    ),
+    "proposal": _group(
+        "Inspect, review, approve, and activate candidates.",
+        {
+            "list": _command("playbill", "list_proposals", "List open or settled proposals."),
+            "readmit": _command(
+                "playbill",
+                "readmit_proposal",
+                "Re-admit one stale proposal at the current head.",
+            ),
+            "withdraw": _command(
+                "playbill",
+                "withdraw_proposal",
+                "Retire an open proposal that will never activate.",
+            ),
+            "inspect": _command(
+                "playbill", "inspect_proposal", "Inspect immutable proposal evidence."
+            ),
+            "refusal": _command(
+                "playbill", "inspect_refusal", "Inspect typed refusal diagnostics."
+            ),
+            "review": _command(
+                "playbill", "review_proposal", "Render structured candidate review."
+            ),
+            "approve": _command(
+                "playbill", "approve_proposal", "Sign locally and submit an attestation."
+            ),
+            "activate": _command("playbill", "activate_proposal", "Settle an approved candidate."),
+        },
+        module="playbill",
+        attr="proposal_group",
+    ),
+    "claim-type": _group(
+        "Propose and upgrade the governed predicate vocabulary.",
+        {
+            "propose": _command("playbill", "propose_claim_type", "Propose a ClaimType interface."),
+            "migrate": _command(
+                "playbill",
+                "migrate_claim_type",
+                "Atomically succeed a ClaimType and dispose dependents.",
+            ),
+            "upgrade-evidence-rules": _command(
+                "playbill",
+                "upgrade_evidence_rules",
+                "Propose moving ClaimTypes to identity evidence rules.",
+            ),
+            "upgrade": _command(
+                "playbill",
+                "upgrade_claim_types",
+                "Propose moving ClaimTypes to v7 (revision evidence stated).",
+            ),
+        },
+        module="playbill",
+        attr="claim_type_group",
+    ),
+    "claim": _group(
+        "Attest to first-class Claims.",
+        {
+            "attest": _command(
+                "playbill",
+                "attest_claim",
+                "Sign that this caller examined the current exact Claim.",
+            ),
+        },
+        module="playbill",
+        attr="claim_group",
+    ),
+    "claim-attestation": _group(
+        "Operate the principal-authored Claim-attestation evidence ledger.",
+        {
+            "recover": _command(
+                "playbill",
+                "recover_claim_attestations",
+                "Roll the sole durable unpublished attestation forward.",
+            )
+        },
+        module="playbill",
+        attr="claim_attestation_group",
+    ),
+    "resolution-contracts": _command(
+        "playbill", "resolution_contracts", "Find accepted tests of an exact Claim version."
+    ),
+    "predict": _command(
+        "playbill",
+        "predict",
+        "Propose a governed resolution contract.",
+    ),
+    "settle": _command(
+        "playbill",
+        "settle",
+        "Settle a prediction from accepted evidence.",
+    ),
+    "authoring": _group(
+        "Author, preflight, submit, and resume governed writes.",
+        {
+            "create": _command("playbill", "create_authoring_intent", "Create a durable intent."),
+            "get": _command("playbill", "get_authoring_intent", "Read one authoring intent."),
+            "resume": _command("playbill", "resume_authoring_intent", "Resume durable authoring."),
+            "list": _command(
+                "playbill",
+                "list_pending_authoring_intents",
+                "List pending authoring intents.",
+            ),
+            "compile": _command("playbill", "compile_authoring", "Author and preflight a payload."),
+            "bind": _command(
+                "playbill",
+                "bind_authoring_selection",
+                "Bind a Flow-A selection and compile it.",
+            ),
+            "preflight": _command(
+                "playbill",
+                "preflight_authoring_intent",
+                "Recheck an authoring intent.",
+            ),
+            "rebase": _command(
+                "playbill",
+                "rebase_authoring_intent",
+                "Advance a refused intent to accepted head.",
+            ),
+            "submit": _command("playbill", "submit_authoring_intent", "Submit a passing intent."),
+            "status": _command(
+                "playbill",
+                "authoring_intent_status",
+                "Read the path to acceptance.",
+            ),
+            "abandon-insertion": _command(
+                "playbill",
+                "abandon_authoring_insertion",
+                "Abandon a pending publication copy.",
+            ),
+        },
+        module="playbill",
+        attr="authoring_group",
+    ),
+    "compiler": _group(
+        "Propose a governed compiler upgrade.",
+        {
+            "upgrade": _command(
+                "playbill", "propose_compiler_upgrade", "Propose a compiler upgrade."
+            )
+        },
+        module="playbill",
+        attr="compiler_group",
+    ),
+    "query": _command(
+        "playbill",
+        "query_group",
+        "Query accepted state: values with flags, a spec, or a named query.",
+    ),
+    "procedure": _group(
+        "Inspect, bind, run, and measure accepted Procedures.",
+        {
+            "readiness": _command(
+                "playbill", "procedure_readiness", "Inspect Procedure readiness."
+            ),
+            "bind": _command("playbill", "bind_procedure", "Bind accepted artifacts to slots."),
+            "run": _command("playbill", "run_procedure", "Run an accepted Procedure."),
+            "status": _command("playbill", "procedure_run_status", "Read one Procedure run state."),
+            "measure": _command(
+                "playbill",
+                "procedure_measure",
+                "Evaluate due measurements and credit one run's exact grain.",
+            ),
+            "readings": _command(
+                "playbill",
+                "procedure_readings",
+                "Inspect measurement standing and retained readings.",
+            ),
+        },
+        module="playbill",
+        attr="procedure_group",
+    ),
+    "line": _group(
+        "Trigger accepted Lines.",
+        {
+            "dispatch": _command("playbill", "dispatch_line", "Dispatch accepted Line work."),
+            "evaluate": _command("playbill", "evaluate_line", "Evaluate accepted Line work."),
+            "arm": _command("playbill", "arm_line", "Admit what a Line matches from now on."),
+            "disarm": _command(
+                "playbill", "disarm_line", "Stop a Line admitting work automatically."
+            ),
+            "status": _command("playbill", "line_status", "Show a Line's arm and why it stopped."),
+            "check": _command(
+                "playbill",
+                "check_line",
+                "Check trigger eligibility without running a Line.",
+            ),
+            "run": _command("playbill", "run_line", "Trigger one due accepted Line occurrence."),
+        },
+        module="playbill",
+        attr="line_group",
+    ),
+    "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
+    "audit": _command("playbill", "audit", "Read ranked Claim verification work."),
+    "curation": _group(
+        "Inspect mechanically detected ontology-maintenance patterns.",
+        {
+            "list": _command("playbill", "curation_list", "Read the curation queue."),
+            "overrule": _command("playbill", "curation_overrule", "Overrule one detector item."),
+            "accept-fixed": _command(
+                "playbill",
+                "curation_accept_fixed",
+                "Link an item to an accepted fix.",
+            ),
+            "suppress": _command("playbill", "curation_suppress", "Suppress open curation work."),
+        },
+        module="playbill",
+        attr="curation_group",
+    ),
+    "get": _command(
+        "playbill", "get_by_ref", "Read one governed thing by reference, values first."
+    ),
+    "set": _command("playbill", "set_value", "Set one field of one Subject, replacing its value."),
+    "add": _command(
+        "playbill", "add_value", "Add one value to a many-valued field of one Subject."
+    ),
+    "retire": _command(
+        "playbill", "retire", "Retire one live Claim, by ID or by Subject and field."
+    ),
+    "write": _command(
+        "playbill", "write_changes", "Apply set, add and retire changes as one change set."
+    ),
+    "since": _command("playbill", "since", "Read accepted ChangeSet history."),
+    "orient": _command(
+        "playbill", "orient", "Map accepted state: kinds, attention and next commands."
+    ),
+    "stub": _command("playbill", "world_stub", "Write a .pyi typing the accepted world."),
+    "floor": _group(
+        "Materialize the deterministic greppable floor.",
+        {
+            "export": _command(
+                "playbill", "export_floor", "Write the accepted floor to a directory."
+            )
+        },
+        module="playbill",
+        attr="floor_group",
+    ),
+    "coverage": _group(
+        "Deliver what working files have to do with accepted state.",
+        {
+            "resolve": _command(
+                "playbill", "resolve_coverage", "Resolve coverage for working sources."
+            ),
+            "status": _command("playbill", "coverage_status", "Render the coverage manifest."),
+        },
+        module="playbill",
+        attr="coverage_group",
+    ),
+    "hook": _group(
+        "Deliver coverage into a harness's own tool results.",
+        {
+            "post-tool-use": _command(
+                "playbill",
+                "post_tool_use_hook",
+                "Annotate a Claude Code tool result with coverage.",
+            ),
+        },
+        module="playbill",
+        attr="hook_group",
+    ),
+    "sources": _group(
+        "Compile declared local files into exact-byte bundles.",
+        {
+            "compile": _command(
+                "playbill", "compile_sources", "Compile a read-only frozen bundle."
+            ),
+            "check": _command(
+                "playbill", "check_sources", "Compare local bytes with accepted state."
+            ),
+            "propose": _command(
+                "playbill", "propose_sources", "Propose one exact compiled source."
+            ),
+        },
+        module="playbill",
+        attr="sources_group",
+    ),
+    "principal": _group(
+        "Govern owner, reviewer, and recovery public keys.",
+        {
+            "add": _command("playbill", "add_principal", "Propose an owner-approved principal."),
+            "rotate": _command("playbill", "rotate_principal", "Self-rotate a principal key."),
+            "recover": _command(
+                "playbill", "recover_principal", "Recover a principal key narrowly."
+            ),
+            "revoke": _command("playbill", "revoke_principal", "Propose principal revocation."),
+        },
+        module="playbill",
+        attr="principal_group",
     ),
     "context": _group(
         "Manage remembered daemon and instance context.",

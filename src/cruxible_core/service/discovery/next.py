@@ -872,22 +872,22 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
 
 
 _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
-    "cruxible.authoring.create": "playbill authoring create",
-    "cruxible.authoring.bind": "playbill authoring bind",
-    "cruxible.claim.retire": "playbill retire",
-    "cruxible.set": "playbill set",
-    "cruxible.write": "playbill write",
-    "cruxible.floor.export": "playbill floor export",
-    "cruxible.block.depublish": "playbill block depublish",
-    "cruxible.block.repin": "playbill block repin",
-    "cruxible.block.sync": "playbill block sync",
-    "cruxible.document.propose": "playbill document propose",
-    "cruxible.proposal.readmit": "playbill proposal readmit",
-    "cruxible.proposal.approve": "playbill proposal approve",
-    "cruxible.compiler.upgrade": "playbill compiler upgrade",
-    "cruxible.line.arm": "playbill line arm",
-    "cruxible.line.dispatch": "playbill line dispatch",
-    "cruxible.settle": "playbill settle",
+    "cruxible.authoring.create": "authoring create",
+    "cruxible.authoring.bind": "authoring bind",
+    "cruxible.claim.retire": "retire",
+    "cruxible.set": "set",
+    "cruxible.write": "write",
+    "cruxible.floor.export": "floor export",
+    "cruxible.block.depublish": "block depublish",
+    "cruxible.block.repin": "block repin",
+    "cruxible.block.sync": "block sync",
+    "cruxible.document.propose": "document propose",
+    "cruxible.proposal.readmit": "proposal readmit",
+    "cruxible.proposal.approve": "proposal approve",
+    "cruxible.compiler.upgrade": "compiler upgrade",
+    "cruxible.line.arm": "line arm",
+    "cruxible.line.dispatch": "line dispatch",
+    "cruxible.settle": "settle",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -941,22 +941,22 @@ NextCallerSurface: TypeAlias = Literal["cli", "mcp", "sdk"]
 #: every surface (MCP included): repin declares the block at the instance, and
 #: sync reads its backings.
 _REPAIR_TOOLS: Mapping[str, str | None] = {
-    "cruxible.authoring.create": "cruxible_playbill_authoring_create",
-    "cruxible.authoring.bind": "cruxible_playbill_authoring_bind",
-    "cruxible.claim.retire": "cruxible_playbill_retire",
-    "cruxible.set": "cruxible_playbill_set",
-    "cruxible.write": "cruxible_playbill_write",
-    "cruxible.floor.export": "cruxible_playbill_floor_export",
-    "cruxible.block.depublish": "cruxible_playbill_block_depublish",
-    "cruxible.block.repin": "cruxible_playbill_block_repin",
-    "cruxible.block.sync": "cruxible_playbill_block_sync",
-    "cruxible.document.propose": "cruxible_playbill_propose_document",
-    "cruxible.proposal.readmit": "cruxible_playbill_proposal_readmit",
-    "cruxible.proposal.approve": "cruxible_playbill_approve",
-    "cruxible.compiler.upgrade": "cruxible_playbill_compiler_upgrade",
-    "cruxible.line.arm": "cruxible_playbill_line_arm",
-    "cruxible.line.dispatch": "cruxible_playbill_line_dispatch",
-    "cruxible.settle": "cruxible_playbill_settle",
+    "cruxible.authoring.create": "cruxible_authoring_create",
+    "cruxible.authoring.bind": "cruxible_authoring_bind",
+    "cruxible.claim.retire": "cruxible_retire",
+    "cruxible.set": "cruxible_set",
+    "cruxible.write": "cruxible_write",
+    "cruxible.floor.export": "cruxible_floor_export",
+    "cruxible.block.depublish": "cruxible_block_depublish",
+    "cruxible.block.repin": "cruxible_block_repin",
+    "cruxible.block.sync": "cruxible_block_sync",
+    "cruxible.document.propose": "cruxible_propose_document",
+    "cruxible.proposal.readmit": "cruxible_proposal_readmit",
+    "cruxible.proposal.approve": "cruxible_approve",
+    "cruxible.compiler.upgrade": "cruxible_compiler_upgrade",
+    "cruxible.line.arm": "cruxible_line_arm",
+    "cruxible.line.dispatch": "cruxible_line_dispatch",
+    "cruxible.settle": "cruxible_settle",
     "hand_edit": None,
 }
 _GOVERNED_WRITE_RUNG = 1
@@ -1113,47 +1113,45 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return value if isinstance(value, str) and value else None
 
     if operation == "cruxible.line.arm" and text("line"):
-        return _mcp_call("cruxible_playbill_line_arm", line=text("line"))
+        return _mcp_call("cruxible_line_arm", line=text("line"))
     if operation == "cruxible.line.dispatch" and text("line"):
         limit = values.get("limit")
         request = {"limit": limit} if isinstance(limit, int) and limit > 1 else {}
-        return _mcp_call("cruxible_playbill_line_dispatch", line=text("line"), request=request)
+        return _mcp_call("cruxible_line_dispatch", line=text("line"), request=request)
     if operation == "cruxible.settle" and text("prediction_id"):
         # The observation is the settler's to choose: its Claim ID is the one
         # argument left to add.
-        return _mcp_call("cruxible_playbill_settle", prediction_id=text("prediction_id"))
+        return _mcp_call("cruxible_settle", prediction_id=text("prediction_id"))
     if operation == "cruxible.authoring.create" and text("example") and not text("payload_file"):
-        return _mcp_call("cruxible_playbill_authoring_example", name=text("example"))
+        return _mcp_call("cruxible_authoring_example", name=text("example"))
     if operation == "cruxible.proposal.readmit" and text("proposal_id"):
-        return _mcp_call("cruxible_playbill_proposal_readmit", proposal_id=text("proposal_id"))
+        return _mcp_call("cruxible_proposal_readmit", proposal_id=text("proposal_id"))
     if operation == "cruxible.proposal.approve" and text("proposal_id") and text("signer_id"):
         return _mcp_call(
-            "cruxible_playbill_approve",
+            "cruxible_approve",
             proposal_id=text("proposal_id"),
             signer_id=text("signer_id"),
         )
     if operation == "cruxible.block.depublish" and text("source_id") and text("block_id"):
         return _mcp_call(
-            "cruxible_playbill_block_depublish",
+            "cruxible_block_depublish",
             source_id=text("source_id"),
             block_id=text("block_id"),
         )
     if operation == "cruxible.block.repin" and text("source_id") and text("block_id"):
-        return _mcp_call(
-            "cruxible_playbill_block_repin", source=text("source_id"), block=text("block_id")
-        )
+        return _mcp_call("cruxible_block_repin", source=text("source_id"), block=text("block_id"))
     if operation == "cruxible.block.sync" and values.get("all") is True:
-        return _mcp_call("cruxible_playbill_block_sync", all_sources=True)
+        return _mcp_call("cruxible_block_sync", all_sources=True)
     if operation == "cruxible.floor.export":
-        return _mcp_call("cruxible_playbill_floor_export", mode="write")
+        return _mcp_call("cruxible_floor_export", mode="write")
     if operation == "cruxible.claim.retire" and text("claim_id"):
         # Why it ends is the retirer's to say: `because` is the argument left to add.
-        return _mcp_call("cruxible_playbill_retire", target=text("claim_id"))
+        return _mcp_call("cruxible_retire", target=text("claim_id"))
     if operation == "cruxible.set" and (restated := _restated_set(values)) is not None:
         # `because` (and the file evidence a recapture needs) is the caller's to add.
-        return _mcp_call("cruxible_playbill_set", **restated)
+        return _mcp_call("cruxible_set", **restated)
     if operation == "cruxible.write" and (changes := _write_changes(values)):
-        return _mcp_call("cruxible_playbill_write", changes=changes)
+        return _mcp_call("cruxible_write", changes=changes)
     return None
 
 
@@ -1348,7 +1346,7 @@ def _repair_command(
         changes = _write_changes(values)
         if len(changes) != 1 or changes[0].get("op") != "retire":
             return None
-        return f"cruxible playbill retire {shlex.quote(str(changes[0]['target']))}"
+        return f"cruxible retire {shlex.quote(str(changes[0]['target']))}"
     elif operation == "cruxible.claim.retire":
         # Why it ends is the retirer's to say: `--because` is the operand left to add.
         claim_id = values.get("claim_id")
@@ -1400,7 +1398,7 @@ def _item(
         capture_digest = repair.arguments.get("capture_digest")
         if isinstance(claim_id, str) and isinstance(capture_digest, str) and surface == "mcp":
             command = _mcp_call(
-                "cruxible_playbill_authoring_example",
+                "cruxible_authoring_example",
                 name=example,
                 claim_id=claim_id,
                 capture_digest=capture_digest,
@@ -1412,7 +1410,7 @@ def _item(
         elif isinstance(claim_id, str) and isinstance(capture_digest, str):
             command = " ".join(
                 (
-                    "cruxible playbill authoring create --example",
+                    "cruxible authoring create --example",
                     shlex.quote(example),
                     "--attestation-claim-id",
                     shlex.quote(claim_id),
@@ -3933,7 +3931,7 @@ def _ledger_mirror_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
                 "requested_sequence": state.requested_sequence,
                 "published_sequence": state.published_sequence,
                 "message": state.detail or "ledger publication failed",
-                "publication_command": "cruxible playbill ledger publish --json",
+                "publication_command": "cruxible ledger publish --json",
             },
             repair=restore,
         )
@@ -4249,7 +4247,7 @@ def _procedure_catalog_health(
         },
         repair=PlaybillNextRepairV1(
             operation="hand_edit",
-            target=".playbill/sources.yaml",
+            target=".cruxible/sources.yaml",
             required_change="add_procedure_projection_catalog_entries",
             arguments={"catalog_entries": entries},
         ),

@@ -58,14 +58,12 @@ def test_no_output_schema_root_is_a_union(tool_schemas: dict[str, dict]) -> None
 def test_union_tools_use_the_result_envelope(tool_schemas: dict[str, dict]) -> None:
     """The full-profile union tool keeps the reviewed envelope convention."""
 
-    assert "cruxible_playbill_floor_export" not in tool_schemas
+    assert "cruxible_floor_export" not in tool_schemas
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
         server = create_server()
         tools = asyncio.run(server.list_tools())
-    schema = next(
-        tool.outputSchema for tool in tools if tool.name == "cruxible_playbill_floor_export"
-    )
+    schema = next(tool.outputSchema for tool in tools if tool.name == "cruxible_floor_export")
 
     assert schema["type"] == "object"
     assert schema["required"] == ["result"]

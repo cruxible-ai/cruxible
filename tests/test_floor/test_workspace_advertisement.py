@@ -97,17 +97,17 @@ def test_advertisement_fetches_only_remote_tracking_refs(
     assert workspace_git_object_format(workspace) == object_format
     assert result.status == "updated"
     assert result.advertised_refs == (
-        "refs/remotes/playbill/accepted",
-        f"refs/remotes/playbill/proposals/{PROPOSAL_KEY}",
+        "refs/remotes/cruxible-ledger/accepted",
+        f"refs/remotes/cruxible-ledger/proposals/{PROPOSAL_KEY}",
     )
     assert _git(workspace, "status", "--porcelain=v1") == before_status
     assert _git(workspace, "symbolic-ref", "--short", "HEAD") == "main"
-    assert _git(workspace, "config", "--get-all", "remote.playbill.fetch").splitlines() == [
-        "+refs/heads/main:refs/remotes/playbill/accepted",
-        "+refs/heads/proposals/*:refs/remotes/playbill/proposals/*",
+    assert _git(workspace, "config", "--get-all", "remote.cruxible-ledger.fetch").splitlines() == [
+        "+refs/heads/main:refs/remotes/cruxible-ledger/accepted",
+        "+refs/heads/proposals/*:refs/remotes/cruxible-ledger/proposals/*",
     ]
-    assert _git(workspace, "config", "--get", "remote.playbill.tagOpt") == "--no-tags"
-    assert _git(workspace, "config", "--get", "remote.playbill.skipFetchAll") == "true"
+    assert _git(workspace, "config", "--get", "remote.cruxible-ledger.tagOpt") == "--no-tags"
+    assert _git(workspace, "config", "--get", "remote.cruxible-ledger.skipFetchAll") == "true"
 
 
 def test_advertisement_does_not_fetch_ledger_tags(tmp_path: Path) -> None:
@@ -128,7 +128,7 @@ def test_advertisement_does_not_fetch_ledger_tags(tmp_path: Path) -> None:
 def test_advertisement_resolves_relative_remote_url_from_workspace(tmp_path: Path) -> None:
     workspace, ledger = _repositories(tmp_path, "sha1")
     relative = str(ledger.relative_to(workspace.parent))
-    _git(workspace, "config", "--add", "remote.playbill.url", f"../{relative}")
+    _git(workspace, "config", "--add", "remote.cruxible-ledger.url", f"../{relative}")
 
     result = advertise_workspace_refs(
         workspace_root=workspace,
@@ -147,7 +147,7 @@ def test_advertisement_ignores_executable_workspace_git_config(tmp_path: Path) -
     _git(
         workspace,
         "config",
-        "remote.playbill.uploadpack",
+        "remote.cruxible-ledger.uploadpack",
         f"touch {uploadpack_marker}; git-upload-pack",
     )
     fsmonitor_marker.unlink(missing_ok=True)
@@ -316,7 +316,7 @@ def test_git_environment_drops_ambient_execution_configuration(
 def test_non_utf8_git_config_output_is_a_typed_remote_conflict(tmp_path: Path) -> None:
     workspace, ledger = _repositories(tmp_path, "sha1")
     with (workspace / ".git/config").open("ab") as config:
-        config.write(b'\n[remote "playbill"]\n\turl = invalid-\xff\n')
+        config.write(b'\n[remote "cruxible-ledger"]\n\turl = invalid-\xff\n')
 
     result = advertise_workspace_refs(
         workspace_root=workspace,
@@ -369,7 +369,7 @@ def test_advertisement_is_total_for_unexpected_failures(
 
 def test_advertisement_refuses_remote_name_conflict(tmp_path: Path) -> None:
     workspace, ledger = _repositories(tmp_path, "sha1")
-    _git(workspace, "remote", "add", "playbill", str(tmp_path / "someone-elses-ledger.git"))
+    _git(workspace, "remote", "add", "cruxible-ledger", str(tmp_path / "someone-elses-ledger.git"))
 
     result = advertise_workspace_refs(
         workspace_root=workspace,
@@ -431,9 +431,9 @@ def test_advertisement_refreshes_main_and_prunes_only_proposal_refs(tmp_path: Pa
     )
 
     assert refreshed.status == "updated"
-    assert refreshed.advertised_refs == ("refs/remotes/playbill/accepted",)
+    assert refreshed.advertised_refs == ("refs/remotes/cruxible-ledger/accepted",)
     assert _git(workspace, "rev-parse", "refs/heads/main") == local_main
-    assert _git(workspace, "rev-parse", "refs/remotes/playbill/accepted") == _git(
+    assert _git(workspace, "rev-parse", "refs/remotes/cruxible-ledger/accepted") == _git(
         producer, "rev-parse", "HEAD"
     )
 
@@ -443,12 +443,17 @@ def test_advertisement_prunes_pre_df3_remote_refs_without_touching_local_main(
 ) -> None:
     workspace, ledger = _repositories(tmp_path, "sha1")
     local_main = _git(workspace, "rev-parse", "refs/heads/main")
-    _git(workspace, "update-ref", "refs/remotes/playbill/main", local_main)
-    _git(workspace, "symbolic-ref", "refs/remotes/playbill/HEAD", "refs/remotes/playbill/main")
+    _git(workspace, "update-ref", "refs/remotes/cruxible-ledger/main", local_main)
+    _git(
+        workspace,
+        "symbolic-ref",
+        "refs/remotes/cruxible-ledger/HEAD",
+        "refs/remotes/cruxible-ledger/main",
+    )
     _git(
         workspace,
         "update-ref",
-        "refs/remotes/playbill/proposals/owner/example",
+        "refs/remotes/cruxible-ledger/proposals/owner/example",
         local_main,
     )
 
@@ -464,11 +469,11 @@ def test_advertisement_prunes_pre_df3_remote_refs_without_touching_local_main(
         workspace,
         "for-each-ref",
         "--format=%(refname)",
-        "refs/remotes/playbill",
+        "refs/remotes/cruxible-ledger",
     ).splitlines()
-    assert "refs/remotes/playbill/HEAD" not in remaining
-    assert "refs/remotes/playbill/main" not in remaining
-    assert "refs/remotes/playbill/proposals/owner/example" not in remaining
+    assert "refs/remotes/cruxible-ledger/HEAD" not in remaining
+    assert "refs/remotes/cruxible-ledger/main" not in remaining
+    assert "refs/remotes/cruxible-ledger/proposals/owner/example" not in remaining
 
 
 def test_advertisement_fetches_the_daemons_note_refs_for_the_reviewer(
@@ -478,7 +483,7 @@ def test_advertisement_fetches_the_daemons_note_refs_for_the_reviewer(
 
     Under `refs/notes/` and no deeper: `git notes --ref=` prefixes anything that
     does not already begin with `refs/notes/`, so a note parked inside
-    `refs/remotes/playbill/` reads back as "no note found".
+    `refs/remotes/cruxible-ledger/` reads back as "no note found".
     """
 
     workspace, ledger = _repositories(tmp_path, "sha1")

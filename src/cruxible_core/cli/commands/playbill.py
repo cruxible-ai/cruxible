@@ -371,7 +371,7 @@ def _read_authoring_input(path: str) -> AuthoringInput:
         return _AUTHORING_INPUT_ADAPTER.validate_python(payload)
     except ValidationError as exc:
         examples = ", ".join(
-            f"playbill authoring create --example {name}"
+            f"cruxible authoring create --example {name}"
             for name in _authoring_examples_for(payload)
         )
         errors = "; ".join(
@@ -525,7 +525,7 @@ def _refuse_tcp_workspace_operation(git_workspace: Path | None) -> None:
 
 
 def _init_resume_marker(target: ClientPrincipalKeyTarget) -> Path:
-    return target.directory / f".playbill-init-resume-{target.principal.principal_id}.json"
+    return target.directory / f".cruxible-init-resume-{target.principal.principal_id}.json"
 
 
 def _init_resume_payload(
@@ -754,10 +754,10 @@ def attach_workspace(
     _emit_git_workspace_note(resolution)
     workspace = resolution.workspace_root
     if workspace is None:
-        raise click.UsageError("playbill workspace attach must run inside one Git worktree")
+        raise click.UsageError("cruxible workspace attach must run inside one Git worktree")
     if not _root_ctx_obj().get("server_socket"):
         raise click.UsageError(
-            "playbill workspace attach requires a local --server-socket so the daemon can "
+            "cruxible workspace attach requires a local --server-socket so the daemon can "
             "prove its registered workspace path"
         )
     selected = instance_id or _require_instance_id()
@@ -765,7 +765,7 @@ def attach_workspace(
         lambda client: client.host_workspace_registration(selected),
         lambda: None,
         allow_local=False,
-        command_name="playbill workspace attach",
+        command_name="cruxible workspace attach",
     )
     assert isinstance(registration, contracts.HostWorkspaceRegistration)
     registered = registration.workspace_path
@@ -776,7 +776,7 @@ def attach_workspace(
             ),
             lambda: None,
             allow_local=False,
-            command_name="playbill workspace attach",
+            command_name="cruxible workspace attach",
         )
         assert isinstance(attached, contracts.HostWorkspaceAttachResult)
         if attached.status == "would_attach":
@@ -815,7 +815,7 @@ def attach_workspace(
         lambda client: client.set_floor_delivery(selected, enabled=not no_floor_delivery),
         lambda: None,
         allow_local=False,
-        command_name="playbill workspace attach",
+        command_name="cruxible workspace attach",
     )
     result = contracts.WorkspaceAttachResult(
         instance_id=selected,
@@ -846,7 +846,7 @@ def workspace_floor_delivery(state: str, instance_id: str | None, output_json: b
         lambda client: client.set_floor_delivery(selected, enabled=state == "on"),
         lambda: None,
         allow_local=False,
-        command_name="playbill workspace floor-delivery",
+        command_name="cruxible workspace floor-delivery",
     )
     assert result is not None
     if output_json:
@@ -880,7 +880,7 @@ def detach_workspace(
         lambda client: client.host_workspace_detach(selected, dry_run=dry_run, at=at),
         lambda: None,
         allow_local=False,
-        command_name="playbill workspace detach",
+        command_name="cruxible workspace detach",
     )
     assert isinstance(result, contracts.WorkspaceDetachResult)
     if output_json:
@@ -916,7 +916,7 @@ def show_host(instance_id: str, output_json: bool) -> None:
         lambda client: client.show_host(instance_id),
         lambda: None,
         allow_local=False,
-        command_name="playbill host show",
+        command_name="cruxible host show",
     )
     assert isinstance(result, contracts.HostInspection)
     transport = _active_server_transport()
@@ -989,7 +989,7 @@ def create_host(
         ),
         lambda: None,
         allow_local=False,
-        command_name="playbill host create",
+        command_name="cruxible host create",
     )
     assert isinstance(result, contracts.HostResult)
     result = _with_git_workspace_note(result)
@@ -1061,7 +1061,7 @@ def create_host(
     default=None,
     help=(
         "Remote this ledger publishes to after every write. Never a URL carrying a "
-        "credential; bind one later with 'playbill ledger set-mirror'."
+        "credential; bind one later with 'cruxible ledger set-mirror'."
     ),
 )
 @json_option
@@ -1096,11 +1096,11 @@ def init_playbill(
     if workspace_path is None:
         _refuse_tcp_workspace_operation(git_workspace)
     if not (_root_ctx_obj().get("server_url") or _root_ctx_obj().get("server_socket")):
-        raise click.UsageError("Local execution disabled for playbill init; use server mode.")
+        raise click.UsageError("Local execution disabled for cruxible init; use server mode.")
     selected = _require_instance_id()
     transport = _transport_target(_root_ctx_obj())
     if transport is None:  # pragma: no cover - guarded by _get_client above
-        raise click.UsageError("Server mode is required for playbill init")
+        raise click.UsageError("Server mode is required for cruxible init")
     config_transport = _workspace_config_transport() if git_workspace is not None else {}
     if git_workspace is not None:
         validate_workspace_config_write(
@@ -1114,8 +1114,8 @@ def init_playbill(
         principal_id = configured
     if principal_id is None:
         raise click.UsageError(
-            "playbill init needs the owner principal ID; repair: "
-            "`cruxible playbill init --principal-id ID --key-dir DIR`"
+            "cruxible init needs the owner principal ID; repair: "
+            "`cruxible init --principal-id ID --key-dir DIR`"
         )
     if configured is not None and configured != principal_id:
         raise click.UsageError(
@@ -1159,7 +1159,7 @@ def init_playbill(
                 else {}
             ),
         ),
-        command_name="playbill init",
+        command_name="cruxible init",
     )
     result = _with_git_workspace_note(result)
     if git_workspace is not None:
@@ -1180,7 +1180,7 @@ def init_playbill(
         principal_id=principal_id,
         private_key_path=owner.private_key_path,
         token=owner_token,
-        written_by="cruxible playbill init",
+        written_by="cruxible init",
     )
     if output_json:
         _emit_json({**_json_receipt(result), "owner_settings_path": str(settings)})
@@ -1222,7 +1222,7 @@ def _mint_owner_credential(owner: GeneratedKeyMaterial, *, principal_id: str) ->
         return None
     identity = _server_call(
         lambda client, instance_id: client.whoami(instance_id),
-        command_name="playbill init",
+        command_name="cruxible init",
     )
     if not identity.authenticated or identity.actor_id == principal_id:
         return None
@@ -1240,7 +1240,7 @@ def _mint_owner_credential(owner: GeneratedKeyMaterial, *, principal_id: str) ->
                 forbidden_roots=_custody_forbidden_roots(),
             ),
         ),
-        command_name="playbill init",
+        command_name="cruxible init",
     )
     return minted.token
 
@@ -1258,7 +1258,7 @@ def store_body(path: str, output_json: bool) -> None:
     content = Path(path).read_bytes()
     result = _server_call(
         lambda client, instance_id: client.store_body(instance_id, content),
-        command_name="playbill body store",
+        command_name="cruxible body store",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1291,7 +1291,7 @@ def decommission_instance(
         lambda client, instance_id: client.decommission_instance(
             instance_id, reason=reason, dry_run=dry_run, at=at
         ),
-        command_name="playbill instance decommission",
+        command_name="cruxible instance decommission",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1334,7 +1334,7 @@ def set_ledger_mirror(url: str, dry_run: bool | None, at: str | None, output_jso
         lambda client, instance_id: client.set_ledger_mirror(
             instance_id, url=url, dry_run=dry_run, at=at
         ),
-        command_name="playbill ledger set-mirror",
+        command_name="cruxible ledger set-mirror",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1354,7 +1354,7 @@ def ledger_clone_url(output_json: bool) -> None:
 
     result = _server_call(
         lambda client, instance_id: client.get_ledger_mirror(instance_id),
-        command_name="playbill ledger clone-url",
+        command_name="cruxible ledger clone-url",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1379,7 +1379,7 @@ def ledger_publish(timeout: float, dry_run: bool | None, at: str | None, output_
         lambda client, instance_id: client.publish_ledger(
             instance_id, timeout=timeout, dry_run=dry_run, at=at
         ),
-        command_name="playbill ledger publish",
+        command_name="cruxible ledger publish",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1408,7 +1408,7 @@ def list_provider_packages(output_json: bool) -> None:
     """List packages from the daemon's configured provider repository."""
     result = _server_call(
         lambda client, instance_id: client.list_provider_packages(instance_id),
-        command_name="playbill provider list",
+        command_name="cruxible provider list",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1472,7 +1472,7 @@ def install_provider(
                 extras=extras,
                 reverify=reverify,
             ),
-            command_name="playbill provider install",
+            command_name="cruxible provider install",
         )
     else:
         if lock_path is not None or dependencies:
@@ -1487,7 +1487,7 @@ def install_provider(
         )
         result = _server_call(
             lambda client, instance_id: client.install_provider(instance_id, request),
-            command_name="playbill provider install",
+            command_name="cruxible provider install",
         )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1526,11 +1526,11 @@ def _echo_kit_change(result: KitChangeResult) -> None:
         click.echo(f"Proposal: {result.proposal_id}")
         if result.approval_required:
             click.echo(
-                f"Next: cruxible playbill proposal approve {result.proposal_id} "
+                f"Next: cruxible proposal approve {result.proposal_id} "
                 "--signer-id ID --key FILE, then activate it."
             )
         else:
-            click.echo(f"Next: cruxible playbill proposal activate {result.proposal_id}")
+            click.echo(f"Next: cruxible proposal activate {result.proposal_id}")
     echo_preview_next(result.status, result.coordinate)
 
 
@@ -1566,7 +1566,7 @@ def build_kit(
     )
     bundle = _server_call(
         lambda client, instance_id: client.build_kit(instance_id, request),
-        command_name="playbill kit build",
+        command_name="cruxible kit build",
     ).bundle
     write_kit_directory(bundle, out)
     if output_json:
@@ -1599,7 +1599,7 @@ def add_kit(
     request = KitAddRequest(bundle=bundle, source=source or origin, dry_run=dry_run, at=at)
     result = _server_call(
         lambda client, instance_id: client.add_kit(instance_id, request),
-        command_name="playbill kit add",
+        command_name="cruxible kit add",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1676,7 +1676,7 @@ def kit_status(output_json: bool) -> None:
     """List installed kits and any kit paths edited since install."""
     result = _server_call(
         lambda client, instance_id: client.kit_status(instance_id),
-        command_name="playbill kit status",
+        command_name="cruxible kit status",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1699,7 +1699,7 @@ def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: b
     request = KitRemoveRequest(kit_id=kit_id, dry_run=dry_run, at=at)
     result = _server_call(
         lambda client, instance_id: client.remove_kit(instance_id, request),
-        command_name="playbill kit remove",
+        command_name="cruxible kit remove",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1748,7 +1748,7 @@ def propose_document(
             dry_run=dry_run,
             at=at,
         ),
-        command_name="playbill document propose",
+        command_name="cruxible document propose",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -1769,7 +1769,7 @@ def read_capture(capture_digest: str, max_bytes: int) -> None:
         lambda client, instance_id: client.read_capture(
             instance_id, CaptureReadRequest(capture_digest=capture_digest, max_bytes=max_bytes)
         ),
-        command_name="playbill capture read",
+        command_name="cruxible capture read",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -1799,7 +1799,7 @@ def list_proposals(status: str | None, limit: int, cursor: str | None, output_js
             limit=limit,
             cursor=cursor,
         ),
-        command_name="playbill proposal list",
+        command_name="cruxible proposal list",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1830,7 +1830,7 @@ def readmit_proposal(
             dry_run=dry_run,
             at=at,
         ),
-        command_name="playbill proposal readmit",
+        command_name="cruxible proposal readmit",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1871,7 +1871,7 @@ def withdraw_proposal(
             dry_run=dry_run,
             at=at,
         ),
-        command_name="playbill proposal withdraw",
+        command_name="cruxible proposal withdraw",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1892,7 +1892,7 @@ def inspect_proposal(proposal_id: str, output_json: bool) -> None:
             instance_id,
             client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
         ),
-        command_name="playbill proposal inspect",
+        command_name="cruxible proposal inspect",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -1907,7 +1907,7 @@ def inspect_refusal(proposal_id: str, output_json: bool) -> None:
             instance_id,
             client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
         ),
-        command_name="playbill proposal refusal",
+        command_name="cruxible proposal refusal",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -1961,7 +1961,7 @@ def review_proposal(
 
     result = _server_call(
         _review_at_observed_coordinate,
-        command_name="playbill proposal review",
+        command_name="cruxible proposal review",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -2015,7 +2015,7 @@ def approve_proposal(
 
     resolved_id, challenge = _server_call(
         _resolve_and_prepare,
-        command_name="playbill proposal approve",
+        command_name="cruxible proposal approve",
     )
     review = ProposalReview.model_validate(challenge.review.model_dump(mode="json"))
     if not output_json:
@@ -2036,7 +2036,7 @@ def approve_proposal(
             resolved_id,
             attestation=attestation.model_dump(mode="json"),
         ),
-        command_name="playbill proposal approve",
+        command_name="cruxible proposal approve",
     )
     result = _with_git_workspace_note(result)
     if output_json:
@@ -2052,7 +2052,7 @@ def approve_proposal(
     default=".",
     show_default=True,
     type=click.Path(file_okay=False),
-    help="Workspace holding .playbill/coverage.json and its optional floor output.",
+    help="Workspace holding .cruxible/coverage.json and its optional floor output.",
 )
 @click.option("--no-sync", is_flag=True, help="Skip the activating workspace's block sync.")
 @brief_option
@@ -2073,7 +2073,7 @@ def activate_proposal(
             workspace=Path(workspace_root),
             sync=not no_sync,
         ),
-        command_name="playbill proposal activate",
+        command_name="cruxible proposal activate",
     )
     payload = result.model_dump(mode="json")
     if result.floor_refresh.status == "failed":
@@ -2086,7 +2086,7 @@ def activate_proposal(
         _emit_json(payload)
         raise click.ClickException(
             f"proposal activation status={result.status}; block sync reported refusals; "
-            "repair: cruxible playbill block sync --all"
+            "repair: cruxible block sync --all"
         )
     if output_brief:
         _emit_brief(
@@ -2099,7 +2099,7 @@ def activate_proposal(
                     else result.accepted_coordinate.git_oid
                 ),
             },
-            next_command="cruxible playbill next --brief",
+            next_command="cruxible next --brief",
         )
         return
     _emit_json(payload)
@@ -2113,7 +2113,7 @@ def whoami(output_json: bool) -> None:
 
     result = _server_call(
         lambda client, instance_id: client.whoami(instance_id),
-        command_name="playbill whoami",
+        command_name="cruxible whoami",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -2184,7 +2184,7 @@ def compile_sources(
             repository_root=Path(repository_root),
             aliases=_root_aliases(root_alias),
         ),
-        command_name="playbill sources compile",
+        command_name="cruxible sources compile",
     )
     _write_bundle(output, bundle)
     if output_json:
@@ -2216,7 +2216,7 @@ def check_sources(
         )
         return client.check_source_bundle(instance_id, bundle=bundle.model_dump(mode="json"))
 
-    result = _server_call(call, command_name="playbill sources check")
+    result = _server_call(call, command_name="cruxible sources check")
     _emit_json(result.model_dump(mode="json"))
 
 
@@ -2247,7 +2247,7 @@ def propose_sources(
             dry_run=dry_run,
             at=at,
         ),
-        command_name="playbill sources propose",
+        command_name="cruxible sources propose",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -2394,7 +2394,7 @@ def add_principal(
             outcome.credential = minted
         return outcome
 
-    outcome = _server_call(call, command_name="playbill principal add")
+    outcome = _server_call(call, command_name="cruxible principal add")
     token = None if outcome.credential is None else outcome.credential.token
     settings = write_principal_settings(
         custody,
@@ -2403,7 +2403,7 @@ def add_principal(
         principal_id=principal_id,
         private_key_path=outcome.material.private_key_path,
         token=token,
-        written_by="cruxible playbill principal add",
+        written_by="cruxible principal add",
     )
     next_steps = _principal_add_next_steps(outcome, principal_id, custody, permission_mode)
     if output_json:
@@ -2488,17 +2488,16 @@ def _principal_add_next_steps(
         return []
     if outcome.proposal_id is None:
         return [
-            "the registration proposal was not admitted; inspect it with "
-            "`cruxible playbill proposal list`"
+            "the registration proposal was not admitted; inspect it with `cruxible proposal list`"
         ]
     signer = outcome.signer_id or "YOUR_PRINCIPAL_ID"
     steps = []
     if outcome.signer_id is None:
         steps.append(
-            f"cruxible playbill proposal approve {outcome.proposal_id} --signer-id {signer} "
+            f"cruxible proposal approve {outcome.proposal_id} --signer-id {signer} "
             "--key YOUR_PRIVATE_KEY"
         )
-    steps.append(f"cruxible playbill proposal activate {outcome.proposal_id}")
+    steps.append(f"cruxible proposal activate {outcome.proposal_id}")
     steps.append(
         f"with daemon auth on: cruxible credential mint --principal-id {principal_id} "
         f"--key-dir {custody} --mode {permission_mode} (writes the token into "
@@ -2545,7 +2544,7 @@ def _preview_principal_change(
             at=at,
         )
 
-    return _server_call(call, command_name="playbill principal change")
+    return _server_call(call, command_name="cruxible principal change")
 
 
 def _emit_principal_preview(preview: contracts.ProposalInspection, *, output_json: bool) -> None:
@@ -2593,7 +2592,7 @@ def _principal_successor(
             at=at,
         )
 
-    return _server_call(call, command_name="playbill principal change")
+    return _server_call(call, command_name="cruxible principal change")
 
 
 @principal_group.command("rotate")
@@ -2675,7 +2674,7 @@ def revoke_principal(
             at=at,
         )
 
-    result = _server_call(call, command_name="playbill principal revoke")
+    result = _server_call(call, command_name="cruxible principal revoke")
     _emit_json(result.model_dump(mode="json"))
 
 
@@ -2725,7 +2724,7 @@ def propose_claim_type(
                 dry_run=dry_run,
                 at=at,
             ),
-            command_name="playbill claim-type propose",
+            command_name="cruxible claim-type propose",
         )
         _emit_json(envelope_result.model_dump(mode="json"))
         return
@@ -2750,7 +2749,7 @@ def propose_claim_type(
             dry_run=dry_run,
             at=at,
         ),
-        command_name="playbill claim-type propose",
+        command_name="cruxible claim-type propose",
     )
     _emit_json(input_result.model_dump(mode="json"))
 
@@ -2773,7 +2772,7 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
             instance_id,
             request=request.model_dump(mode="json"),
         ),
-        command_name="playbill claim-type migrate",
+        command_name="cruxible claim-type migrate",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -2797,7 +2796,7 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
         admission = result.proposal.proposal.get("admission", {})
         proposal_id = admission.get("proposal_id", "<submitted>")
         click.echo(f"Proposal: {proposal_id}")
-        click.echo(f"Next: cruxible playbill proposal approve {proposal_id}")
+        click.echo(f"Next: cruxible proposal approve {proposal_id}")
     click.echo("Semantic delta:")
     if not result.semantic_delta:
         click.echo("  (no semantic field changes)")
@@ -2867,7 +2866,7 @@ def upgrade_claim_types(
     )
     result = _server_call(
         lambda client, instance_id: client.upgrade_claim_types(instance_id, request),
-        command_name="playbill claim-type upgrade",
+        command_name="cruxible claim-type upgrade",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -2889,7 +2888,7 @@ def upgrade_claim_types(
     if result.detail:
         click.echo(result.detail)
     if result.proposal_id:
-        click.echo(f"Next: cruxible playbill proposal approve {result.proposal_id}")
+        click.echo(f"Next: cruxible proposal approve {result.proposal_id}")
     echo_preview_next(result.status, result.coordinate)
 
 
@@ -2908,7 +2907,7 @@ def upgrade_evidence_rules(dry_run: bool | None, at: str | None, output_json: bo
     request = EvidenceRuleUpgradeRequest(dry_run=dry_run, at=at)
     result = _server_call(
         lambda client, instance_id: client.upgrade_evidence_rules(instance_id, request),
-        command_name="playbill claim-type upgrade-evidence-rules",
+        command_name="cruxible claim-type upgrade-evidence-rules",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -2925,7 +2924,7 @@ def upgrade_evidence_rules(dry_run: bool | None, at: str | None, output_json: bo
     if result.detail:
         click.echo(result.detail)
     if result.proposal_id:
-        click.echo(f"Next: cruxible playbill proposal approve {result.proposal_id}")
+        click.echo(f"Next: cruxible proposal approve {result.proposal_id}")
     echo_preview_next(result.status, result.coordinate)
 
 
@@ -2959,7 +2958,7 @@ def resolution_contracts(claim_id: str | None, request_file: str | None, output_
     )
     result = _server_call(
         lambda client, instance_id: client.resolution_contracts(instance_id, request=request),
-        command_name="playbill resolution-contracts",
+        command_name="cruxible resolution-contracts",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -2989,7 +2988,7 @@ def predict(request_file: str, output_json: bool) -> None:
         ) from exc
     result = _server_call(
         lambda client, instance_id: client.predict(instance_id, request=request),
-        command_name="playbill predict",
+        command_name="cruxible predict",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -3025,7 +3024,7 @@ def settle(
     """Settle one prediction from a later accepted observation.
 
     PREDICTION_ID is the contract name or the bound window id (RSC-...) that
-    `playbill next` names; the daemon resolves the exact contract, window and
+    `cruxible next` names; the daemon resolves the exact contract, window and
     observation version from it and `--observation CLM-...`.
     """
 
@@ -3050,7 +3049,7 @@ def settle(
             prediction_id,
             request=request,
         ),
-        command_name="playbill settle",
+        command_name="cruxible settle",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -3071,7 +3070,7 @@ def recover_claim_attestations() -> None:
 
     _server_call(
         lambda client, instance_id: client.recover_claim_attestations(instance_id),
-        command_name="playbill claim-attestation recover",
+        command_name="cruxible claim-attestation recover",
     )
     click.echo("Claim-attestation evidence ledger recovered.")
 
@@ -3144,7 +3143,7 @@ def attest_claim(
             signer=signer,
         )
 
-    result = _server_call(call, command_name="playbill claim attest")
+    result = _server_call(call, command_name="cruxible claim attest")
     _emit_json(result.model_dump(mode="json"))
 
 
@@ -3251,7 +3250,7 @@ def create_authoring_intent(
         lambda client, instance_id: client.create_authoring_input(
             instance_id, input=parsed_input.model_dump(mode="json")
         ),
-        command_name="playbill authoring create",
+        command_name="cruxible authoring create",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -3263,7 +3262,7 @@ def create_authoring_intent(
 def get_authoring_intent(intent_id: str, output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.get_authoring_intent(instance_id, intent_id),
-        command_name="playbill authoring get",
+        command_name="cruxible authoring get",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -3275,7 +3274,7 @@ def get_authoring_intent(intent_id: str, output_json: bool) -> None:
 def resume_authoring_intent(intent_id: str, output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.resume_authoring_intent(instance_id, intent_id),
-        command_name="playbill authoring resume",
+        command_name="cruxible authoring resume",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -3286,7 +3285,7 @@ def resume_authoring_intent(intent_id: str, output_json: bool) -> None:
 def list_pending_authoring_intents(output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.list_pending_authoring_intents(instance_id),
-        command_name="playbill authoring list",
+        command_name="cruxible authoring list",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -3303,7 +3302,7 @@ def compile_authoring(payload: str, intent_id: str | None, output_json: bool) ->
             input=_read_authoring_input(payload).model_dump(mode="json"),
             intent_id=intent_id,
         ),
-        command_name="playbill authoring compile",
+        command_name="cruxible authoring compile",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -3357,7 +3356,7 @@ def bind_authoring_selection(
             payload=payload.model_dump(mode="json"),
             intent_id=None,
         ),
-        command_name="playbill authoring bind",
+        command_name="cruxible authoring bind",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -3370,7 +3369,7 @@ def bind_authoring_selection(
 def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.preflight_authoring_intent(instance_id, intent_id),
-        command_name="playbill authoring preflight",
+        command_name="cruxible authoring preflight",
     )
     if output_brief:
         codes = [
@@ -3382,9 +3381,9 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: 
             outcome=result.verdict + (f" ({', '.join(codes)})" if codes else ""),
             ids={"intent": intent_id},
             next_command=(
-                f"cruxible playbill authoring submit {intent_id}"
+                f"cruxible authoring submit {intent_id}"
                 if result.verdict == "passed"
-                else f"cruxible playbill authoring create  # repair, then preflight {intent_id}"
+                else f"cruxible authoring create  # repair, then preflight {intent_id}"
             ),
         )
         return
@@ -3392,11 +3391,11 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: 
     if result.verdict == "refused":
         intent = _server_call(
             lambda client, instance_id: client.get_authoring_intent(instance_id, intent_id),
-            command_name="playbill authoring preflight",
+            command_name="cruxible authoring preflight",
         ).intent
         if intent.get("base_coordinate") != result.certificate.get("accepted_coordinate"):
             click.echo(
-                f"Hint: run playbill authoring rebase {intent_id}; resume does not advance "
+                f"Hint: run cruxible authoring rebase {intent_id}; resume does not advance "
                 "a stale intent coordinate.",
                 err=True,
             )
@@ -3411,7 +3410,7 @@ def rebase_authoring_intent(intent_id: str, output_json: bool) -> None:
 
     result = _server_call(
         lambda client, instance_id: client.rebase_authoring_intent(instance_id, intent_id),
-        command_name="playbill authoring rebase",
+        command_name="cruxible authoring rebase",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -3450,7 +3449,7 @@ def submit_authoring_intent(
             client, instance_id, proposal_id, workspace=workspace_root
         )
 
-    submitted, activation = _server_call(call, command_name="playbill authoring submit")
+    submitted, activation = _server_call(call, command_name="cruxible authoring submit")
     payload: dict[str, Any] = {"submit": submitted.model_dump(mode="json")}
     if activation is not None:
         payload["activation"] = activation.model_dump(mode="json")
@@ -3482,7 +3481,7 @@ def _not_activated_note(state: str) -> str:
     if state == "awaiting_external_approval":
         return (
             "not activated: the candidate needs an external approval. "
-            "Collect it with `cruxible playbill proposal approve`, then activate."
+            "Collect it with `cruxible proposal approve`, then activate."
         )
     return f"not activated: the candidate is {state}, not ready_to_activate"
 
@@ -3532,11 +3531,11 @@ def _submit_next_command(submitted: Any, *, activated: bool) -> str | None:
         return None
     proposal_id = submitted.status.proposal_id
     if submitted.status.state == "ready_to_activate" and proposal_id:
-        return f"cruxible playbill proposal activate {proposal_id}"
+        return f"cruxible proposal activate {proposal_id}"
     if submitted.status.state == "awaiting_external_approval" and proposal_id:
-        return f"cruxible playbill proposal approve {proposal_id}"
+        return f"cruxible proposal approve {proposal_id}"
     if submitted.status.state == "preflight_refused":
-        return f"cruxible playbill authoring preflight {submitted.intent['intent_id']}"
+        return f"cruxible authoring preflight {submitted.intent['intent_id']}"
     return None
 
 
@@ -3547,7 +3546,7 @@ def _submit_next_command(submitted: Any, *, activated: bool) -> str | None:
 def authoring_intent_status(intent_id: str, output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.authoring_intent_status(instance_id, intent_id),
-        command_name="playbill authoring status",
+        command_name="cruxible authoring status",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -3568,7 +3567,7 @@ def abandon_authoring_insertion(
             intent_id,
             expectation_id=expectation_id,
         ),
-        command_name="playbill authoring abandon-insertion",
+        command_name="cruxible authoring abandon-insertion",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -3577,7 +3576,7 @@ def abandon_authoring_insertion(
 
 
 class _WriteFileV1(BaseModel):
-    """What ``cruxible playbill write FILE`` reads: the changes, and why."""
+    """What ``cruxible write FILE`` reads: the changes, and why."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -3810,11 +3809,11 @@ def set_value(
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
         },
-        example='cruxible playbill set dev.item/tidy-cli status done --because "Shipped."',
+        example='cruxible set dev.item/tidy-cli status done --because "Shipped."',
     )
     outcome = _server_call(
         lambda client, instance_id: client.set(instance_id, request=request),
-        command_name="playbill set",
+        command_name="cruxible set",
     )
     _finish_write(outcome, output_json=output_json)
 
@@ -3899,13 +3898,12 @@ def add_value(
             "at": at_oid,
         },
         example=(
-            "cruxible playbill add dev.item/tidy-cli governs dev.item/cli-docs "
-            '--because "Linked in review."'
+            'cruxible add dev.item/tidy-cli governs dev.item/cli-docs --because "Linked in review."'
         ),
     )
     outcome = _server_call(
         lambda client, instance_id: client.write(instance_id, request=request),
-        command_name="playbill add",
+        command_name="cruxible add",
     )
     _finish_write(outcome, output_json=output_json)
 
@@ -3951,11 +3949,11 @@ def retire(
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
         },
-        example='cruxible playbill retire CLM-0123456789abcdef0123456789abcdef --because "Wrong."',
+        example='cruxible retire CLM-0123456789abcdef0123456789abcdef --because "Wrong."',
     )
     outcome = _server_call(
         lambda client, instance_id: client.retire(instance_id, request=request),
-        command_name="playbill retire",
+        command_name="cruxible retire",
     )
     _finish_write(outcome, output_json=output_json)
 
@@ -4007,7 +4005,7 @@ def write_changes(
         parsed = _WriteFileV1.model_validate(payload)
     except ValidationError as exc:
         raise DataValidationError(
-            f"{source} is not a valid write file (cruxible playbill write --schema prints it)",
+            f"{source} is not a valid write file (cruxible write --schema prints it)",
             errors=_model_field_errors(exc),
         ) from exc
     rationale = because or parsed.because
@@ -4023,11 +4021,11 @@ def write_changes(
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
         },
-        example="cruxible playbill write changes.yaml",
+        example="cruxible write changes.yaml",
     )
     outcome = _server_call(
         lambda client, instance_id: client.write(instance_id, request=request),
-        command_name="playbill write",
+        command_name="cruxible write",
     )
     _finish_write(outcome, output_json=output_json)
 
@@ -4111,7 +4109,7 @@ def get_by_ref(
     except (ValidationError, ValueError) as exc:
         errors = _model_field_errors(exc) if isinstance(exc, ValidationError) else [str(exc)]
         raise click.UsageError(
-            "; ".join(errors) + " (example: cruxible playbill get Document:design "
+            "; ".join(errors) + " (example: cruxible get Document:design "
             "--detail body --range 0:4096)"
         ) from None
     if output_path is not None:
@@ -4121,7 +4119,7 @@ def get_by_ref(
         return
     result = _server_call(
         lambda client, instance_id: client.get(instance_id, request=request),
-        command_name="playbill get",
+        command_name="cruxible get",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -4129,8 +4127,7 @@ def get_by_ref(
     _emit_get_text(result)
     if result.next_cursor is not None:
         click.echo(
-            f"next: cruxible playbill get {shlex.quote(ref)} --detail history "
-            f"--cursor {result.next_cursor}"
+            f"next: cruxible get {shlex.quote(ref)} --detail history --cursor {result.next_cursor}"
         )
 
 
@@ -4149,7 +4146,7 @@ def _write_body(request: Any, destination: Path, *, whole: bool) -> None:
         ranged = request.model_copy(update={"range": window, "at": at})
         result = _server_call(
             lambda client, instance_id: client.get(instance_id, request=ranged),
-            command_name="playbill get",
+            command_name="cruxible get",
         )
         assert result.body is not None
         return result
@@ -4322,7 +4319,7 @@ def depublish_projection(
             dry_run=dry_run,
             at=at,
         ),
-        command_name="playbill block depublish",
+        command_name="cruxible block depublish",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -4440,7 +4437,7 @@ def repin_projection(
             evaluation_time=instant,
             dry_run=dry_run,
         ),
-        command_name="playbill block repin",
+        command_name="cruxible block repin",
     )
     if output_json:
         _emit_json(stamp.model_dump(mode="json"))
@@ -4492,7 +4489,7 @@ def sync_projection(
             check=check,
             detach_paths=(*detach_paths,),
         ),
-        command_name="playbill block sync",
+        command_name="cruxible block sync",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -4551,12 +4548,12 @@ def propose_compiler_upgrade(
             at=at,
         )
 
-    result = _server_call(call, command_name="playbill compiler upgrade")
+    result = _server_call(call, command_name="cruxible compiler upgrade")
     _emit_json(result.model_dump(mode="json"))
 
 
 class _QueryCommand(click.Command):
-    """``playbill query [KIND] ...``: KIND, when given, comes before every option."""
+    """``cruxible query [KIND] ...``: KIND, when given, comes before every option."""
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         if not args:
@@ -4744,7 +4741,7 @@ def query_group(
     evaluation_time: str | None,
     output_json: bool,
 ) -> None:
-    """Query accepted state: cruxible playbill query [KIND] [--where 'f=v']...
+    """Query accepted state: cruxible query [KIND] [--where 'f=v']...
 
     This answers one query and prints its values as a table with flags, then
     the next command when the page is truncated. KIND is a Subject kind, or
@@ -4754,8 +4751,7 @@ def query_group(
 
     if ctx.args:
         raise click.UsageError(
-            f"{ctx.args[0]!r} is not an option; put KIND first: "
-            "cruxible playbill query KIND [--where ...]",
+            f"{ctx.args[0]!r} is not an option; put KIND first: cruxible query KIND [--where ...]",
             ctx=ctx,
         )
     try:
@@ -4817,7 +4813,7 @@ def query_group(
         raise click.ClickException(f"invalid query: {_validation_problems(exc)}") from exc
     result = _server_call(
         lambda client, instance_id: client.query(instance_id, request=request),
-        command_name="playbill query",
+        command_name="cruxible query",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -4833,7 +4829,7 @@ def query_group(
     if result.truncated and result.next_cursor is not None:
         again = _without_cursor(ctx.meta.get("playbill_query_args", []))
         click.echo(
-            "next: cruxible playbill query "
+            "next: cruxible query "
             + " ".join(shlex.quote(item) for item in again)
             + f" --cursor {result.next_cursor}"
         )
@@ -4856,7 +4852,7 @@ def procedure_readiness(name: str, evaluation_time: str, output_json: bool) -> N
             name,
             evaluation_time=evaluation_time,
         ),
-        command_name="playbill procedure readiness",
+        command_name="cruxible procedure readiness",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -4882,7 +4878,7 @@ def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
             name,
             bindings=[item.model_dump(mode="json") for item in request.bindings],
         ),
-        command_name="playbill procedure bind",
+        command_name="cruxible procedure bind",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -4898,7 +4894,7 @@ def _cli_repair(repair: Any) -> str:
 
     if not isinstance(repair, RepairOperation) or not repair.operation.startswith("cruxible."):
         return render_served_repair(repair)
-    parts = ["cruxible", "playbill", *repair.operation.removeprefix("cruxible.").split(".")]
+    parts = ["cruxible", *repair.operation.removeprefix("cruxible.").split(".")]
     for key, value in repair.arguments.items():
         if key in _POSITIONAL_REPAIR_ARGUMENTS:
             parts.append(shlex.quote(str(value)))
@@ -5043,7 +5039,7 @@ def run_procedure(
             at=None if at is None else at.model_dump(mode="json"),
             input=_read_mapping(input_file),
         ),
-        command_name="playbill procedure run",
+        command_name="cruxible procedure run",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5061,7 +5057,7 @@ def run_procedure(
 def procedure_run_status(run_id: str, output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.get_procedure_run(instance_id, run_id),
-        command_name="playbill procedure status",
+        command_name="cruxible procedure status",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -5112,7 +5108,7 @@ def procedure_measure(
     )
     result = _server_call(
         lambda client, instance_id: client.measure_procedure(instance_id, name, request=request),
-        command_name="playbill procedure measure",
+        command_name="cruxible procedure measure",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5158,7 +5154,7 @@ def procedure_readings(
         lambda client, instance_id: client.list_procedure_readings(
             instance_id, name, request=request
         ),
-        command_name="playbill procedure readings",
+        command_name="cruxible procedure readings",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5205,7 +5201,7 @@ def check_line(
     )
     result = _server_call(
         lambda client, instance_id: client.check_line(instance_id, line, request=request),
-        command_name="playbill line check",
+        command_name="cruxible line check",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5251,7 +5247,7 @@ def arm_line(line: str, dry_run: bool | None, at: str | None, output_json: bool)
 
     result = _server_call(
         lambda client, instance_id: client.arm_line(instance_id, line, dry_run=dry_run, at=at),
-        command_name="playbill line arm",
+        command_name="cruxible line arm",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5269,7 +5265,7 @@ def disarm_line(line: str, dry_run: bool | None, at: str | None, output_json: bo
 
     result = _server_call(
         lambda client, instance_id: client.disarm_line(instance_id, line, dry_run=dry_run, at=at),
-        command_name="playbill line disarm",
+        command_name="cruxible line disarm",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5286,7 +5282,7 @@ def line_status(line: str, output_json: bool) -> None:
 
     result = _server_call(
         lambda client, instance_id: client.line_status(instance_id, line),
-        command_name="playbill line status",
+        command_name="cruxible line status",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5312,7 +5308,7 @@ def evaluate_line(
     )
     result = _server_call(
         lambda client, instance_id: client.evaluate_line(instance_id, line, request=request),
-        command_name="playbill line evaluate",
+        command_name="cruxible line evaluate",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5348,7 +5344,7 @@ def dispatch_line(
             line,
             request=LineDispatchRequest(occurrence_id=occurrence_id, limit=limit, retry=retry),
         ),
-        command_name="playbill line dispatch",
+        command_name="cruxible line dispatch",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5422,7 +5418,7 @@ def run_line(
                 None if request.evaluation_time is None else request.evaluation_time.isoformat()
             ),
         ),
-        command_name="playbill line run",
+        command_name="cruxible line run",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5525,7 +5521,7 @@ def next_work(
 
     result = _server_call(
         _next_at_scanned_coordinate,
-        command_name="playbill next",
+        command_name="cruxible next",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5635,7 +5631,7 @@ def _echo_next_status(status: contracts.NextStatus) -> None:
     if isinstance(arms, dict) and (arms.get("stalled") or arms.get("stopped")):
         click.echo(
             f"Status: line arms stalled={arms.get('stalled', 0)} stopped={arms.get('stopped', 0)}"
-            "  next=cruxible playbill orient --section lines"
+            "  next=cruxible orient --section lines"
         )
 
 
@@ -5707,7 +5703,7 @@ def curation_list(
 
     result = _server_call(
         _curation_at_scanned_coordinate,
-        command_name="playbill curation list",
+        command_name="cruxible curation list",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5743,7 +5739,7 @@ def curation_overrule(
             dry_run=dry_run,
             at=at,
         ),
-        command_name="playbill curation overrule",
+        command_name="cruxible curation overrule",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5785,7 +5781,7 @@ def curation_accept_fixed(
             dry_run=dry_run,
             at=at,
         ),
-        command_name="playbill curation accept-fixed",
+        command_name="cruxible curation accept-fixed",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5827,7 +5823,7 @@ def curation_suppress(
             dry_run=dry_run,
             at=at,
         ),
-        command_name="playbill curation suppress",
+        command_name="cruxible curation suppress",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5903,7 +5899,7 @@ def audit(
             max_bytes=max_bytes,
             cursor=cursor,
         ),
-        command_name="playbill audit",
+        command_name="cruxible audit",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -5966,7 +5962,7 @@ def since(
             max_bytes=max_bytes,
             cursor=cursor,
         ),
-        command_name="playbill since",
+        command_name="cruxible since",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -6000,7 +5996,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     if floor is not None:
         behind = floor["generations_behind"]
         lines.append(
-            f"Floor: .playbill/floor at {floor['at'][:12]}, "
+            f"Floor: .cruxible/floor at {floor['at'][:12]}, "
             + (
                 "current"
                 if behind == 0
@@ -6008,7 +6004,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
                 if behind is None
                 else f"{behind} generation(s) behind"
             )
-            + ("" if behind == 0 else "; refresh: cruxible playbill floor export --force")
+            + ("" if behind == 0 else "; refresh: cruxible floor export --force")
         )
     you = result.get("you")
     if you is not None:
@@ -6153,7 +6149,7 @@ def orient(
             evaluation_time=evaluation_time,
             surface="cli",
         ),
-        command_name="playbill orient",
+        command_name="cruxible orient",
     )
     workspace_root = containing_git_workspace_root(Path.cwd())
     if workspace_root is not None:
@@ -6165,12 +6161,7 @@ def orient(
     click.echo(_render_orient(rendered))
 
 
-@playbill_group.group("world")
-def world_group() -> None:
-    """Read the accepted vocabulary as typed Python."""
-
-
-@world_group.command("stub")
+@playbill_group.command("stub")
 @click.option(
     "--out",
     "out_path",
@@ -6193,7 +6184,7 @@ def world_stub(out_path: str | None) -> None:
             instance_id,
             workspace=Path.cwd(),
         ),
-        command_name="playbill world stub",
+        command_name="cruxible stub",
     )
     if out_path is None:
         click.echo(rendered, nl=False)
@@ -6211,7 +6202,7 @@ def floor_group() -> None:
 
 
 @floor_group.command("export")
-@click.option("--force", is_flag=True, help="Replace a non-empty .playbill/floor cache.")
+@click.option("--force", is_flag=True, help="Replace a non-empty .cruxible/floor cache.")
 @click.option(
     "--with-discovery",
     is_flag=True,
@@ -6234,7 +6225,7 @@ def export_floor(
     _emit_git_workspace_note(workspace_resolution)
     workspace_root = workspace_resolution.workspace_root
     if workspace_root is None:
-        raise click.UsageError("playbill floor export must run inside one Git worktree")
+        raise click.UsageError("cruxible floor export must run inside one Git worktree")
     transport = _workspace_config_transport()
     if include:
         # The discovery cards are a full export's; they never travel in a delta.
@@ -6250,7 +6241,7 @@ def export_floor(
                 force=force,
                 **transport,
             ),
-            command_name="playbill floor export",
+            command_name="cruxible floor export",
         )
         manifest: dict[str, Any] = dict(result.manifest)
         touched = len(result.files)
@@ -6268,7 +6259,7 @@ def export_floor(
                 force=force,
                 **transport,
             ),
-            command_name="playbill floor export",
+            command_name="cruxible floor export",
         )
         manifest = json.loads(Path(written.destination, "manifest.json").read_text("utf-8"))
         touched = len(delta.files) + len(delta.tombstones)
@@ -6440,7 +6431,7 @@ def resolve_coverage(
         grep_path=grep_path,
         whole_working_set=whole_working_set,
     )
-    result = _resolved_coverage(observations, command_name="playbill coverage resolve")
+    result = _resolved_coverage(observations, command_name="cruxible coverage resolve")
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
@@ -6451,7 +6442,7 @@ def resolve_coverage(
             ),
             ids={"coordinate": result.at.git_oid, "epoch": str(result.epoch)},
             next_command=(
-                "cruxible playbill next --brief"
+                "cruxible next --brief"
                 if result.summary.drifted or result.health != "complete"
                 else None
             ),
@@ -6482,7 +6473,7 @@ def coverage_status(
         grep_path=None,
         whole_working_set=True,
     )
-    result = _resolved_coverage(observations, command_name="playbill coverage status")
+    result = _resolved_coverage(observations, command_name="cruxible coverage status")
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
@@ -6510,7 +6501,7 @@ def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
     def resolve(observations: Sequence[WorkingSourceObservation]) -> CoverageResultV3:
         return _resolved_coverage(
             tuple(observations),
-            command_name="playbill hook post-tool-use",
+            command_name="cruxible hook post-tool-use",
             scan_budget=config.scan_budget,
             instance_id=config.instance_id,
         )
@@ -6526,7 +6517,7 @@ def _hook_floor_generation_resolver() -> ResolveFloorGenerations:
             lambda client, instance_id: client.head(
                 instance_id, at=None if at is None else at.model_dump(mode="json")
             ),
-            command_name="playbill hook floor freshness",
+            command_name="cruxible hook floor freshness",
         )
         return result.generation
 
@@ -6547,7 +6538,7 @@ def _hook_floor_generation_resolver() -> ResolveFloorGenerations:
     default=".",
     show_default=True,
     type=click.Path(file_okay=False),
-    help="Workspace root holding .playbill/coverage.json.",
+    help="Workspace root holding .cruxible/coverage.json.",
 )
 def post_tool_use_hook(root: str) -> None:
     """Annotate a Claude Code tool result with coverage, reading the hook JSON on stdin.

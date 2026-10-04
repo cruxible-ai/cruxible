@@ -10,7 +10,7 @@ A Unix socket avoids exposing a TCP port:
 ~~~bash
 uv run cruxible server start \
   --socket /run/user/$UID/cruxible.sock \
-  --state-root /srv/cruxible/playbill
+  --state-root /srv/cruxible
 ~~~
 
 Clients select it with --server-socket or CRUXIBLE_SERVER_SOCKET.
@@ -40,7 +40,7 @@ provides the boundary:
 uv run cruxible server start \
   --host 127.0.0.1 \
   --port 8100 \
-  --state-root /srv/cruxible/playbill \
+  --state-root /srv/cruxible \
   --capability-ceiling admin \
   --auth \
   --bootstrap-secret-file /secure/cruxible-bootstrap
@@ -54,7 +54,7 @@ read it from there.
 
 Use TLS at the proxy for any non-loopback deployment. Never send bearer tokens
 over plaintext untrusted networks. TCP-created hosts are intentionally
-unattached: run `playbill host create` and `playbill init` outside a Git
+unattached: run `cruxible host create` and `cruxible init` outside a Git
 worktree. If the daemon and workspace are local and the ledger should advertise
 into that workspace, use the Unix socket and attach before initialization;
 attachment cannot be retrofitted afterward.
@@ -104,7 +104,7 @@ daemon's own host, or through whatever supervises the process.
 
 ## Ending an instance
 
-`cruxible playbill instance decommission --reason "<why>"` previews; committing it
+`cruxible instance decommission --reason "<why>"` previews; committing it
 with `--commit --at OID` (the preview's coordinate) is terminal: it
 ends one instance's governed writes and cannot be undone. It is ADMIN-tiered and
 deletes NOTHING. Afterwards:
@@ -120,7 +120,7 @@ deletes NOTHING. Afterwards:
 
 Archiving or erasing the directory afterwards is your own step. No verb here
 performs it, and nothing restores the instance once the state is stamped: the
-successor is a fresh instance from `playbill host create`.
+successor is a fresh instance from `cruxible host create`.
 
 ## Capability ceiling
 

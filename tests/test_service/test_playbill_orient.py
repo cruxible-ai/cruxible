@@ -103,7 +103,7 @@ def test_attention_names_digest_named_rules_and_suggests_the_upgrade(seeded) -> 
 
     assert result.attention is not None
     assert result.attention.notes == (UPGRADE_NOTE,)
-    assert "cruxible_playbill_evidence_rules_upgrade()" in result.next
+    assert "cruxible_evidence_rules_upgrade()" in result.next
 
 
 def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
@@ -115,7 +115,7 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
         reason="claim_uncovered",
         subject_identity="ClaimType:project.work_item.status",
         repair=SimpleNamespace(
-            command="cruxible playbill claim-type upgrade-evidence-rules", required_change="x"
+            command="cruxible claim-type upgrade-evidence-rules", required_change="x"
         ),
     )
     other = SimpleNamespace(
@@ -187,12 +187,12 @@ def test_next_suggestions_are_rendered_for_each_surface(seeded) -> None:  # type
     }
 
     assert rendered["mcp"][:2] == (
-        f'cruxible_playbill_orient(kind="{SUBJECT_KIND}")',
-        f'cruxible_playbill_query(kind="{SUBJECT_KIND}", select=["status"], limit=10)',
+        f'cruxible_orient(kind="{SUBJECT_KIND}")',
+        f'cruxible_query(kind="{SUBJECT_KIND}", select=["status"], limit=10)',
     )
     assert rendered["cli"][:2] == (
-        f"cruxible playbill orient --kind {SUBJECT_KIND}",
-        f"cruxible playbill query {SUBJECT_KIND} --select status --limit 10",
+        f"cruxible orient --kind {SUBJECT_KIND}",
+        f"cruxible query {SUBJECT_KIND} --select status --limit 10",
     )
     assert rendered["sdk"][:2] == (
         f'cx.orient(kind="{SUBJECT_KIND}")',
@@ -211,10 +211,9 @@ def test_orient_kind_reads_every_predicate_in_full_with_sample_subjects(seeded) 
     assert predicate.roles == ("normative", "observation")
     assert predicate.live_claims == 2
     assert result.next == (
-        f'cruxible_playbill_query(kind="{SUBJECT_KIND}", select=["status"], limit=10)',
-        f'cruxible_playbill_query(kind="{SUBJECT_KIND}", where=[{{"field": "status", '
-        '"eq": "blocked"}])',
-        f'cruxible_playbill_get(ref="{SUBJECT_KIND}/wi-42")',
+        f'cruxible_query(kind="{SUBJECT_KIND}", select=["status"], limit=10)',
+        f'cruxible_query(kind="{SUBJECT_KIND}", where=[{{"field": "status", "eq": "blocked"}}])',
+        f'cruxible_get(ref="{SUBJECT_KIND}/wi-42")',
     )
 
 
@@ -245,8 +244,8 @@ def test_a_section_pages_compact_rows_with_a_bound_cursor(seeded) -> None:  # ty
     first = service_playbill_orient(seeded, section="queries", limit=1, surface="cli")
     assert first.truncated is True and first.next_cursor is not None
     assert first.next == (
-        f"cruxible playbill get query:{QUERY_NAME}",
-        f"cruxible playbill orient --section queries --cursor {first.next_cursor}",
+        f"cruxible get query:{QUERY_NAME}",
+        f"cruxible orient --section queries --cursor {first.next_cursor}",
     )
     second = service_playbill_orient(
         seeded,
@@ -460,7 +459,7 @@ def test_sdk_suggestions_are_python_literals_and_mcp_keeps_json() -> None:
         "limit": 10,
     }
     assert orient_module.render_orient_call(call, "mcp") == (
-        f'cruxible_playbill_query(kind="{SUBJECT_KIND}", where=[{{"field": "flag", "eq": true}}, '
+        f'cruxible_query(kind="{SUBJECT_KIND}", where=[{{"field": "flag", "eq": true}}, '
         '{"field": "note", "eq": null}], limit=10)'
     )
 
@@ -589,8 +588,8 @@ def test_orient_pages_the_provider_interfaces_a_procedure_can_call(
     assert fetch.interface_digest.startswith("sha256:") and fetch.providers == ()
     assert fetch.operation_contract is not None
     assert first.next == (
-        'cruxible_playbill_get(ref="ProviderInterface:demo.fetch")',
-        f'cruxible_playbill_orient(section="interfaces", cursor="{first.next_cursor}")',
+        'cruxible_get(ref="ProviderInterface:demo.fetch")',
+        f'cruxible_orient(section="interfaces", cursor="{first.next_cursor}")',
     )
     rest = service_playbill_orient(instance, section="interfaces", cursor=first.next_cursor)
     assert rest.interfaces is not None
@@ -615,7 +614,7 @@ def test_orient_pages_the_provider_interfaces_a_procedure_can_call(
     # The map counts them and points at the section.
     default = service_playbill_orient(instance, surface="mcp")
     assert default.artifacts is not None and default.artifacts.interfaces == 2
-    assert 'cruxible_playbill_orient(section="interfaces")' in default.next
+    assert 'cruxible_orient(section="interfaces")' in default.next
 
 
 def test_orient_without_interfaces_counts_none_and_suggests_no_section(

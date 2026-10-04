@@ -54,24 +54,24 @@ def _client_at_ceiling(monkeypatch: pytest.MonkeyPatch, ceiling: str) -> TestCli
             "GET",
             "/api/v1/server/info",
             None,
-            "/api/v1/inst_ceiling/playbill/bodies",
-            "cruxible_playbill_store_body",
+            "/api/v1/inst_ceiling/bodies",
+            "cruxible_store_body",
         ),
         (
             "governed_write",
             "POST",
-            "/api/v1/inst_ceiling/playbill/bodies",
+            "/api/v1/inst_ceiling/bodies",
             {"content_base64": ""},
-            "/api/v1/inst_ceiling/playbill/proposals/missing/activate",
-            "cruxible_playbill_activate",
+            "/api/v1/inst_ceiling/proposals/missing/activate",
+            "cruxible_activate",
         ),
         (
             "graph_write",
             "POST",
-            "/api/v1/inst_ceiling/playbill/proposals/missing/activate",
+            "/api/v1/inst_ceiling/proposals/missing/activate",
             None,
             "/api/v1/runtime/instances",
-            "cruxible_playbill_host_create",
+            "cruxible_host_create",
         ),
     ],
 )
@@ -91,7 +91,7 @@ def test_each_playbill_tier_allows_at_ceiling_and_refuses_above_it(
     denied = client.post(
         denied_path,
         json={"content_base64": ""}
-        if denied_path.endswith("/playbill/bodies")
+        if denied_path.endswith("/bodies")
         else ({} if denied_path == "/api/v1/runtime/instances" else None),
     )
 
@@ -135,12 +135,12 @@ def test_admin_credential_is_clamped_and_cannot_mint_above_ceiling(
     headers = {"Authorization": f"Bearer {admin.token}"}
 
     at_ceiling = client.post(
-        f"/api/v1/{host_id}/playbill/bodies",
+        f"/api/v1/{host_id}/bodies",
         json={"content_base64": ""},
         headers=headers,
     )
     above_ceiling = client.post(
-        f"/api/v1/{host_id}/playbill/proposals/missing/activate",
+        f"/api/v1/{host_id}/proposals/missing/activate",
         headers=headers,
     )
     mint = client.post(
@@ -210,11 +210,10 @@ def test_daemon_scope_refusal_names_operation_instead_of_a_fake_instance() -> No
         with pytest.raises(
             DaemonOperationScopeError,
             match=(
-                "instance 'inst_scoped' cannot perform daemon-wide operation "
-                "'cruxible_playbill_host_create'"
+                "instance 'inst_scoped' cannot perform daemon-wide operation 'cruxible_host_create'"
             ),
         ):
-            require_unscoped_operator("cruxible_playbill_host_create")
+            require_unscoped_operator("cruxible_host_create")
 
 
 @pytest.mark.parametrize(
@@ -224,8 +223,8 @@ def test_daemon_scope_refusal_names_operation_instead_of_a_fake_instance() -> No
             "POST",
             "/api/v1/runtime/instances",
             {"instance_id": "inst_ceiling"},
-            "cruxible_playbill_host_create",
-            "playbill host create",
+            "cruxible_host_create",
+            "cruxible host create",
         ),
         (
             "GET",
@@ -313,7 +312,7 @@ def test_line_run_is_an_instance_operation_a_foreign_token_cannot_reach(
 
     with TestClient(create_app(), raise_server_exceptions=False) as client:
         response = client.post(
-            f"/api/v1/{host_id}/playbill/lines/{digest}/runs",
+            f"/api/v1/{host_id}/lines/{digest}/runs",
             json=body,
             headers={"Authorization": f"Bearer {foreign.token}"},
         )

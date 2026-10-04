@@ -99,7 +99,7 @@ def test_a_line_card_names_its_procedure_trigger_arms_and_runs(line_world) -> No
     assert card.runs_total == len(admitted)
     assert card.recent_runs[0].line == line.identity.qualified
     assert result.live is not None and "arms" in result.live.fields
-    assert any(step.startswith("cruxible_playbill_get(") for step in card.next)
+    assert any(step.startswith("cruxible_get(") for step in card.next)
 
 
 def test_the_line_identity_digest_next_names_resolves_to_its_line(line_world) -> None:  # type: ignore[no-untyped-def]
@@ -194,7 +194,7 @@ def test_a_resolution_contract_card_names_its_hypothesis_window_and_state(
     (window,) = card.windows
     assert window.status == "settleable" and card.windows_total == 1
     assert "fixed window" in card.window
-    assert card.next[0] == f'cruxible_playbill_get(ref="{card.hypothesis}")'
+    assert card.next[0] == f'cruxible_get(ref="{card.hypothesis}")'
 
 
 def test_a_capture_reads_by_handle_prefix_or_full_digest(prediction_world) -> None:  # type: ignore[no-untyped-def]
@@ -217,7 +217,7 @@ def test_a_capture_reads_by_handle_prefix_or_full_digest(prediction_world) -> No
     assert card.citing and card.citing_total >= len(card.citing)
     assert "project.work_item/wi-42" in card.subjects
     assert card.next[-1] == (
-        f'cruxible_playbill_read_capture(request={{"capture_digest": "{capture_digest}"}})'
+        f'cruxible_read_capture(request={{"capture_digest": "{capture_digest}"}})'
     )
 
     proof = _get(instance, "CAP-" + hex_digits[:12], detail="proof")
@@ -225,7 +225,7 @@ def test_a_capture_reads_by_handle_prefix_or_full_digest(prediction_world) -> No
 
     cli = _get(instance, "CAP-" + hex_digits[:12], surface="cli")
     assert isinstance(cli.card, GetCaptureCard)
-    assert cli.card.next[-1] == f"cruxible playbill capture read {capture_digest}"
+    assert cli.card.next[-1] == f"cruxible capture read {capture_digest}"
 
 
 def test_a_capture_card_names_the_evidence_workers_finding(

@@ -78,7 +78,7 @@ def _normalized_transport(server_url: object, server_socket: object) -> str | No
 
 
 def _workspace_binding(root: Path) -> tuple[WorkspaceBinding | None, Path | None]:
-    path = root / ".playbill" / "coverage.json"
+    path = root / ".cruxible" / "coverage.json"
     if not path.exists():
         return None, None
     try:
@@ -150,7 +150,7 @@ def _source_catalog_path(root: Path) -> Path | None:
     return next(
         (
             path
-            for path in (root / ".playbill" / "sources.yaml", root / "sources.yaml")
+            for path in (root / ".cruxible" / "sources.yaml", root / "sources.yaml")
             if path.exists()
         ),
         None,
@@ -166,7 +166,7 @@ def _binding_conflict(*, binding_path: Path | None, source_catalog_path: Path | 
         "workspace_binding_conflict: "
         f"coverage binding {binding_path} and source catalog {source_catalog_path} "
         "select different workspace roots; repair: move both files under the same "
-        "<workspace>/.playbill directory"
+        "<workspace>/.cruxible directory"
     )
 
 
@@ -196,7 +196,7 @@ def _selected_workspace(
         root = Path(explicit).expanduser().resolve()
         binding, path = _workspace_binding(root)
         return root, "explicit", binding, path, ()
-    if raw := environ.get("CRUXIBLE_PLAYBILL_WORKSPACE"):
+    if raw := environ.get("CRUXIBLE_WORKSPACE"):
         root = Path(raw).expanduser().resolve()
         binding, path = _workspace_binding(root)
         return root, "environment", binding, path, ()
@@ -355,7 +355,7 @@ def resolve_context(
                     f"transport is {selected_transport_coordinate or '<local>'}; repair: "
                     "pass --instance-id <id>, re-run `cruxible context connect` with this "
                     "transport and --instance-id <id>, or attach the workspace with "
-                    ".playbill/coverage.json"
+                    ".cruxible/coverage.json"
                 )
                 continue
         selected_instance = _instance(raw_instance, source=source)

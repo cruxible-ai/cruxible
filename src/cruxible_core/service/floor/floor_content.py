@@ -70,11 +70,11 @@ answers with the live verdict.
 
 ## The loop
 
-1. `grep -rn "some text" .playbill/floor/current`
+1. `grep -rn "some text" .cruxible/floor/current`
 2. Read the hit's first line: its ref, and the generation it last changed.
-3. `cruxible playbill get <ref>` for the live values and verdicts (`orient`
+3. `cruxible get <ref>` for the live values and verdicts (`orient`
    says how far behind the floor is).
-4. Change state with the write verbs (`cruxible playbill set|retire|write`).
+4. Change state with the write verbs (`cruxible set|retire|write`).
 
 An agent without a shell asks `query --contains "some text"` instead. A
 Document's body is read with `get Document:<name> --detail body`.

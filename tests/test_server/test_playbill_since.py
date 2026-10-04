@@ -44,7 +44,7 @@ def test_http_since_delegates_the_exact_request(
 
     monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_since", stub)
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/since",
+        f"/api/v1/{instance_id}/since",
         json={
             "tag": "playbill-since-request-v1",
             "generation": 2,
@@ -73,7 +73,7 @@ def test_http_since_refuses_oversized_limits(
 ) -> None:
     client, instance_id, _private_key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/since",
+        f"/api/v1/{instance_id}/since",
         json={
             "generation": 0,
             "access_profile": {
@@ -117,7 +117,7 @@ def test_http_since_reports_every_invalid_field(
 ) -> None:
     client, instance_id, _private_key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/since",
+        f"/api/v1/{instance_id}/since",
         json={
             "generation": -1,
             "access_profile": VALID_PROFILE,
@@ -139,7 +139,7 @@ def test_http_since_unknown_generation_is_a_typed_400(
 ) -> None:
     client, instance_id, _private_key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/since",
+        f"/api/v1/{instance_id}/since",
         json={"generation": 999999, "access_profile": VALID_PROFILE},
     )
     assert response.status_code == 400, response.text
@@ -182,7 +182,7 @@ def test_http_since_adversarial_bodies_are_typed_400(
     expected_path_prefix: str,
 ) -> None:
     client, instance_id, _private_key = playbill_http
-    response = client.post(f"/api/v1/{instance_id}/playbill/since", json=body)
+    response = client.post(f"/api/v1/{instance_id}/since", json=body)
     assert response.status_code == 400, response.text
     payload = response.json()
     assert payload["error_code"] == "cruxible.since.request_invalid"
@@ -196,6 +196,6 @@ def test_http_since_non_object_bodies_are_typed_400(
     body: object,
 ) -> None:
     client, instance_id, _private_key = playbill_http
-    response = client.post(f"/api/v1/{instance_id}/playbill/since", json=body)
+    response = client.post(f"/api/v1/{instance_id}/since", json=body)
     assert response.status_code == 400, response.text
     assert response.json()["error_code"] == "cruxible.since.request_invalid"

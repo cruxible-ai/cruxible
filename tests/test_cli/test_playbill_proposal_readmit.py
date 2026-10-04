@@ -52,7 +52,7 @@ def test_client_sends_the_frozen_tag_only_request() -> None:
     assert client.readmit_proposal("inst_test", SOURCE_ID) == _result()
     assert calls == [
         (
-            f"/api/v1/inst_test/playbill/proposals/{SOURCE_ID}/readmit",
+            f"/api/v1/inst_test/proposals/{SOURCE_ID}/readmit",
             {"tag": "playbill-proposal-readmit-request-v1"},
         )
     ]
@@ -76,7 +76,6 @@ def test_cli_reports_the_new_proposal_without_hiding_its_source(monkeypatch) -> 
             "https://playbill.invalid",
             "--instance-id",
             "inst_test",
-            "playbill",
             "proposal",
             "readmit",
             SOURCE_ID,
@@ -109,7 +108,6 @@ def test_cli_renders_typed_selector_candidates_and_repair(
             "https://playbill.invalid",
             "--instance-id",
             "inst_test",
-            "playbill",
             "proposal",
             "readmit",
             "sha256:11111111",
@@ -118,7 +116,7 @@ def test_cli_renders_typed_selector_candidates_and_repair(
 
     assert result.exit_code == 1
     assert SOURCE_ID in result.stderr and NEW_ID in result.stderr
-    assert "Repair: cruxible playbill proposal list" in result.stderr
+    assert "Repair: cruxible proposal list" in result.stderr
 
 
 def test_proposal_list_rows_match_the_labelled_columns(
@@ -180,7 +178,6 @@ def test_proposal_list_rows_match_the_labelled_columns(
             "https://playbill.invalid",
             "--instance-id",
             "inst_test",
-            "playbill",
             "proposal",
             "list",
         ],
@@ -227,7 +224,7 @@ def test_withdraw_client_sends_the_reason_it_records() -> None:
     )
     assert calls == [
         (
-            f"/api/v1/inst_test/playbill/proposals/{SOURCE_ID}/withdraw",
+            f"/api/v1/inst_test/proposals/{SOURCE_ID}/withdraw",
             {
                 "tag": "playbill-proposal-withdraw-request-v1",
                 "reason": "its change-set record exceeds the ledger blob ceiling",
@@ -258,7 +255,6 @@ def test_withdraw_cli_resolves_the_selector_and_reports_the_recorded_reason(
             "https://playbill.invalid",
             "--instance-id",
             "inst_test",
-            "playbill",
             "proposal",
             "withdraw",
             "sha256:11111111",
@@ -295,7 +291,6 @@ def test_withdraw_cli_says_when_the_answer_is_the_earlier_one(
             "https://playbill.invalid",
             "--instance-id",
             "inst_test",
-            "playbill",
             "proposal",
             "withdraw",
             SOURCE_ID,

@@ -62,7 +62,6 @@ def _cli_cases(tmp_path: Path) -> list[list[str]]:
     return [
         # a request model the CLI builds from flags
         [
-            "playbill",
             "kit",
             "build",
             "--id",
@@ -75,16 +74,15 @@ def _cli_cases(tmp_path: Path) -> list[list[str]]:
             str(tmp_path / "out"),
         ],
         # kit sources that name no kit
-        ["playbill", "kit", "add", str(tmp_path / "missing-kit")],
-        ["playbill", "kit", "add", str(empty_dir)],
-        ["playbill", "kit", "push", str(empty_dir), "registry.example/kits/a:1"],
-        ["playbill", "kit", "pull", "::bad::", "--out", str(tmp_path / "pulled")],
+        ["kit", "add", str(tmp_path / "missing-kit")],
+        ["kit", "add", str(empty_dir)],
+        ["kit", "push", str(empty_dir), "registry.example/kits/a:1"],
+        ["kit", "pull", "::bad::", "--out", str(tmp_path / "pulled")],
         # request files that are not requests
-        ["playbill", "claim-type", "migrate", str(bad_json)],
-        ["playbill", "predict", str(bad_json)],
+        ["claim-type", "migrate", str(bad_json)],
+        ["predict", str(bad_json)],
         # a file that is not there
         [
-            "playbill",
             "sources",
             "compile",
             "--catalog",
@@ -117,13 +115,13 @@ def test_an_unexpected_cli_failure_is_one_line_unless_debugging(
         raise KeyError("something internal")
 
     monkeypatch.setattr("cruxible_core.cli.commands.playbill.resolve_kit", explode)
-    result = runner.invoke(cli, ["--instance-id", "inst_x", "playbill", "kit", "add", "x"])
+    result = runner.invoke(cli, ["--instance-id", "inst_x", "kit", "add", "x"])
     assert result.exit_code == 1
     _assert_readable(result.output)
     assert "CRUXIBLE_DEBUG=1" in result.output
 
     monkeypatch.setenv("CRUXIBLE_DEBUG", "1")
-    debugging = runner.invoke(cli, ["--instance-id", "inst_x", "playbill", "kit", "add", "x"])
+    debugging = runner.invoke(cli, ["--instance-id", "inst_x", "kit", "add", "x"])
     assert isinstance(debugging.exception, KeyError)
 
 
@@ -143,11 +141,11 @@ def mcp_tools(monkeypatch: pytest.MonkeyPatch) -> object:
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [
-        ("cruxible_playbill_retire", {"instance_id": "inst_x", "target": 7, "because": 3}),
-        ("cruxible_playbill_set", {"instance_id": "inst_x", "subject": [], "field": {}}),
-        ("cruxible_playbill_curation_suppress", {"instance_id": "inst_x", "item_id": 5}),
-        ("cruxible_playbill_kit_remove", {"instance_id": "inst_x", "request": {"kit_id": 1}}),
-        ("cruxible_playbill_proposal_withdraw", {"instance_id": "inst_x", "reason": "x" * 1001}),
+        ("cruxible_retire", {"instance_id": "inst_x", "target": 7, "because": 3}),
+        ("cruxible_set", {"instance_id": "inst_x", "subject": [], "field": {}}),
+        ("cruxible_curation_suppress", {"instance_id": "inst_x", "item_id": 5}),
+        ("cruxible_kit_remove", {"instance_id": "inst_x", "request": {"kit_id": 1}}),
+        ("cruxible_proposal_withdraw", {"instance_id": "inst_x", "reason": "x" * 1001}),
     ],
 )
 def test_mcp_tool_failures_name_paths_not_models(
@@ -168,7 +166,7 @@ def test_a_library_mode_refusal_names_the_operation_and_the_path(
         handlers.handle_playbill_withdraw_proposal("inst_never_reached", "PROP-1", "x" * 1_001)
     message = str(refused.value)
     _assert_readable(message)
-    assert "cruxible_playbill_proposal_withdraw" in message
+    assert "cruxible_proposal_withdraw" in message
     assert "$.reason" in message
 
 
@@ -193,11 +191,11 @@ def http(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient
 @pytest.mark.parametrize(
     ("path", "body"),
     [
-        ("/api/v1/inst_x/playbill/set", {"subject": 1, "field": [], "value": {}}),
-        ("/api/v1/inst_x/playbill/retire", {"target": "", "because": ""}),
-        ("/api/v1/inst_x/playbill/kits/remove", {"kit_id": "Not A Kit"}),
-        ("/api/v1/inst_x/playbill/claim-types/upgrade", {"dry_run": "maybe"}),
-        ("/api/v1/inst_x/playbill/curation/suppress", {"item_id": "not-a-digest"}),
+        ("/api/v1/inst_x/set", {"subject": 1, "field": [], "value": {}}),
+        ("/api/v1/inst_x/retire", {"target": "", "because": ""}),
+        ("/api/v1/inst_x/kits/remove", {"kit_id": "Not A Kit"}),
+        ("/api/v1/inst_x/claim-types/upgrade", {"dry_run": "maybe"}),
+        ("/api/v1/inst_x/curation/suppress", {"item_id": "not-a-digest"}),
         ("/api/v1/inst_x/runtime/credentials", {"permission_mode": "root"}),
     ],
 )

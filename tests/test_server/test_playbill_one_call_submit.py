@@ -24,7 +24,7 @@ def _playbill(http: TestClient, instance_id: str, workspace: Path) -> tuple[Crux
     send = http.request
 
     def recorded(method: str, url: str, *args: object, **kwargs: object) -> object:
-        requests.append(f"{method} {url.split('/playbill/', 1)[-1]}")
+        requests.append(f"{method} {url.split(f'/{instance_id}/', 1)[-1]}")
         return send(method, url, *args, **kwargs)  # type: ignore[arg-type]
 
     http.request = recorded  # type: ignore[method-assign]

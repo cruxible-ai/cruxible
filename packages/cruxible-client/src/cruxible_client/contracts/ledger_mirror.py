@@ -15,7 +15,7 @@ from cruxible_client.contracts.errors import FormatError
 
 MIRROR_URL_MAX_LENGTH: Final = 2048
 
-LEDGER_MIRROR_CREDENTIAL_ENV: Final = "CRUXIBLE_PLAYBILL_MIRROR_TOKEN"
+LEDGER_MIRROR_CREDENTIAL_ENV: Final = "CRUXIBLE_MIRROR_TOKEN"
 """The one place a mirror credential is read from: the daemon's own environment.
 
 Named rather than discovered. It is used as the HTTP Basic password under the
@@ -49,7 +49,7 @@ class LedgerMirrorUrlInvalid(FormatError):
     error_code = "cruxible.ledger.mirror_url_invalid"
 
     def __init__(self, detail: str) -> None:
-        self.repair_commands = ("cruxible playbill ledger set-mirror <url>",)
+        self.repair_commands = ("cruxible ledger set-mirror <url>",)
         super().__init__(f"{self.error_code}: {detail}")
 
 
@@ -59,10 +59,10 @@ class LedgerMirrorUnset(FormatError):
     error_code = "cruxible.ledger.mirror_unset"
 
     def __init__(self) -> None:
-        self.repair_commands = ("cruxible playbill ledger set-mirror <url>",)
+        self.repair_commands = ("cruxible ledger set-mirror <url>",)
         super().__init__(
             f"{self.error_code}: this instance has no ledger mirror; set one with "
-            "`cruxible playbill ledger set-mirror <url>`"
+            "`cruxible ledger set-mirror <url>`"
         )
 
 

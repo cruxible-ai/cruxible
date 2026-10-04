@@ -708,10 +708,10 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
     source_id = bound.preparation.source_id
     (parsed,) = parse_projection_blocks(landed, source_id=source_id)
     if corruption == "closing_id_changed":
-        closer = f"<!-- /playbill:block:{block_id} -->\n".encode()
+        closer = f"<!-- /cruxible:block:{block_id} -->\n".encode()
         corrupted = landed.replace(
             closer,
-            b"<!-- /playbill:block:pub-CORRUPTED -->\n",
+            b"<!-- /cruxible:block:pub-CORRUPTED -->\n",
         )
     else:
         corrupted = landed[: parsed.opening_start] + landed[parsed.opening_end :]
@@ -772,7 +772,7 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
     }
     assert row.repair.operation == "cruxible.block.repin"
     assert row.repair.required_change == "restore_projection_frame_then_repin"
-    assert row.repair.command == f"cruxible playbill block repin {source_id} {block_id}"
+    assert row.repair.command == f"cruxible block repin {source_id} {block_id}"
 
 
 def test_prepared_publication_can_be_abandoned_without_observing_the_source(

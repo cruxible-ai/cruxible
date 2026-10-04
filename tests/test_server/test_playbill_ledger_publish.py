@@ -95,7 +95,7 @@ def test_http_publish_forwards_bounded_wait_and_returns_full_status(
         return receipt
 
     monkeypatch.setattr(playbill_api, "playbill_ledger_publish", publish)
-    path = f"/api/v1/{instance_id}/playbill/ledger/publish"
+    path = f"/api/v1/{instance_id}/ledger/publish"
     result = client.post(path, json={"timeout": 0})
     assert result.status_code == 200, result.text
     assert contracts.LedgerMirror.model_validate(result.json()) == receipt

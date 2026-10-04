@@ -2,7 +2,7 @@
 
 Start with ``cx = Cruxible.connect()``, then read: ``cx.orient()`` maps
 accepted state, ``cx.query(kind, ...)`` answers questions over it, ``cx.get(ref)``
-opens one thing, and the exported floor (``.playbill/floor/current/``) is
+opens one thing, and the exported floor (``.cruxible/floor/current/``) is
 greppable. ``cx.world().describe()`` names every verb and the vocabulary;
 ``cx.next(...)`` says what needs attention.
 """

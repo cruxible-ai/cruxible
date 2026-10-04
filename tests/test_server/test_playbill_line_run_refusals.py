@@ -151,7 +151,7 @@ def test_an_unaccepted_line_refuses_typed_over_http_instead_of_a_daemon_fault(
     client, instance_id, _reviewer_key = playbill_http
 
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/lines/{_ABSENT}/runs",
+        f"/api/v1/{instance_id}/lines/{_ABSENT}/runs",
         json=_body(_ABSENT),
     )
 
@@ -172,7 +172,7 @@ def test_a_route_body_identity_mismatch_refuses_typed_over_http(
     client, instance_id, _reviewer_key = playbill_http
 
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/lines/{_ABSENT}/runs",
+        f"/api/v1/{instance_id}/lines/{_ABSENT}/runs",
         json=_body(_OTHER),
     )
 
@@ -192,7 +192,7 @@ def test_the_sibling_procedure_run_route_refuses_typed_in_the_same_family(
     client, instance_id, _reviewer_key = playbill_http
 
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/procedures/no-such-procedure/runs",
+        f"/api/v1/{instance_id}/procedures/no-such-procedure/runs",
         json={
             "tag": "playbill-procedure-run-request-v2",
             "evaluation_time": None,
@@ -214,7 +214,7 @@ def test_an_instant_outside_the_daemon_skew_bound_refuses_typed_over_http(
     client, instance_id, _reviewer_key = playbill_http
 
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/lines/{_ABSENT}/runs",
+        f"/api/v1/{instance_id}/lines/{_ABSENT}/runs",
         json={
             "tag": "playbill-line-run-request-v1",
             "line_identity_digest": _ABSENT,
@@ -252,7 +252,7 @@ def test_the_daemon_not_the_caller_configures_the_evaluation_instant_skew(
     }
 
     # A minute of drift is inside the default bound, so the run reaches the Line.
-    admitted = client.post(f"/api/v1/{instance_id}/playbill/lines/{_ABSENT}/runs", json=body)
+    admitted = client.post(f"/api/v1/{instance_id}/lines/{_ABSENT}/runs", json=body)
     assert admitted.status_code == 404, admitted.text
     assert admitted.json()["error_code"] == "line_not_accepted"
 
@@ -267,7 +267,7 @@ def test_the_daemon_not_the_caller_configures_the_evaluation_instant_skew(
         )
     )
 
-    refused = client.post(f"/api/v1/{instance_id}/playbill/lines/{_ABSENT}/runs", json=body)
+    refused = client.post(f"/api/v1/{instance_id}/lines/{_ABSENT}/runs", json=body)
     assert refused.status_code == 400, refused.text
     payload = refused.json()
     assert payload["error_code"] == "evaluation_instant_skewed"
@@ -279,7 +279,7 @@ def test_the_daemon_not_the_caller_configures_the_evaluation_instant_skew(
     # A configuration that exists and cannot be read is a daemon fault; falling
     # back would silently restore the bound the operator meant to move.
     config_path.write_text("not-json", encoding="utf-8")
-    malformed = client.post(f"/api/v1/{instance_id}/playbill/lines/{_ABSENT}/runs", json=body)
+    malformed = client.post(f"/api/v1/{instance_id}/lines/{_ABSENT}/runs", json=body)
     assert malformed.status_code == 500, malformed.text
     assert "daemon/procedure-runs.json" in malformed.json()["message"]
 
@@ -372,7 +372,7 @@ def test_a_line_pinning_a_query_definition_runs_through_the_live_route(
 
     identity_digest = line_identity_digest(line.identity)
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/lines/{identity_digest}/runs",
+        f"/api/v1/{instance_id}/lines/{identity_digest}/runs",
         json=_body(identity_digest),
     )
 
@@ -406,7 +406,7 @@ def test_a_real_accepted_line_runs_through_the_live_route_with_no_patch(
 
     identity_digest = line_identity_digest(line.identity)
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/lines/{identity_digest}/runs",
+        f"/api/v1/{instance_id}/lines/{identity_digest}/runs",
         json=_body(identity_digest),
     )
 
@@ -487,7 +487,7 @@ def test_a_source_free_line_under_a_required_rule_still_runs(
 
     identity_digest = line_identity_digest(line.identity)
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/lines/{identity_digest}/runs",
+        f"/api/v1/{instance_id}/lines/{identity_digest}/runs",
         json=_body(identity_digest),
     )
 
@@ -562,7 +562,7 @@ def test_accepted_line_successors_run_against_their_retained_predecessor(
         )
     identity_digest = line_identity_digest(line.identity)
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/lines/{identity_digest}/runs",
+        f"/api/v1/{instance_id}/lines/{identity_digest}/runs",
         json=_body(identity_digest),
     )
     assert response.status_code == 200, response.text

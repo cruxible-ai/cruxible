@@ -415,7 +415,7 @@ class LineNeverArmed(ProcedureSurfaceError):
     def __init__(self, line: str) -> None:
         super().__init__(
             f"{self.code}: Line {line!r} has never been armed; arm it with "
-            f"`cruxible playbill line arm {line}`"
+            f"`cruxible line arm {line}`"
         )
         self.repair = RepairOperation(operation="cruxible.line.arm", arguments={"line": line})
 
@@ -431,7 +431,7 @@ class LineMandateRequired(ProcedureSurfaceError):
         super().__init__(
             f"{self.code}: Line {line!r} can propose or settle, and Procedure {procedure!r} "
             "has no current accepted ProcedureMandate, so every run would refuse; author "
-            "and accept one (`cruxible playbill authoring create --example procedure-mandate`) "
+            "and accept one (`cruxible authoring create --example procedure-mandate`) "
             "before arming"
         )
         self.repair = RUNNABLE_REFUSAL_REPAIRS["line_mandate_required"]
@@ -3515,7 +3515,7 @@ def service_run_playbill_procedure(
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
     if caller_rung is not None:
         require_run_permission(
-            "cruxible_playbill_procedure_run",
+            "cruxible_procedure_run",
             target_rung=int(accepted.procedure.definition.terminal_capability),
             caller_rung=caller_rung,
         )
@@ -3570,7 +3570,7 @@ def service_run_playbill_procedure(
             refusal_message = (
                 "Capture and proposal terminals require an accepted Line and its authority "
                 "bindings; "
-                "invoke the Line through playbill line run."
+                "invoke the Line through cruxible line run."
             )
         return ProcedureRunStateV2(
             run_id=None,
@@ -3930,7 +3930,7 @@ def _run_playbill_line(
         coordinate=coordinate,
     )
     require_run_permission(
-        "cruxible_playbill_line_run",
+        "cruxible_line_run",
         target_rung=line_authority_rung(accepted_line, accepted),
         caller_rung=caller_rung,
     )

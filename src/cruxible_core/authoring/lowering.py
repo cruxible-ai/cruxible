@@ -3310,12 +3310,12 @@ def _stage_claim_type_succession(
             repair_description=(
                 "Disposition this dependent `retire` with a claim_retirement_reason, or "
                 "run the succession through the operator route "
-                "`cruxible playbill claim-type migrate`, which still tolerates the "
+                "`cruxible claim-type migrate`, which still tolerates the "
                 "deprecated word and warns."
             ),
             replacement={
                 "identity": dependent.identity.qualified,
-                "operator_route": "playbill claim-type migrate",
+                "operator_route": "cruxible claim-type migrate",
                 "permitted_dispositions": ["re_author", "retire", "successor"],
             },
         )
@@ -3389,7 +3389,7 @@ def _stage_claim_type_succession(
                 "given; `missing` names the ones this member omits and `unexpected` the ones it "
                 "names outside the closure. Or set carry_all: true to carry every dependent "
                 "this member does not name to the successor. A truncated list is continued "
-                "by `cruxible playbill claim-type migrate` in preflight mode."
+                "by `cruxible claim-type migrate` in preflight mode."
             ),
             replacement={
                 **_closure_difference(required, supplied),

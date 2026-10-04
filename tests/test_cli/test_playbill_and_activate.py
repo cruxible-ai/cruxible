@@ -32,7 +32,6 @@ COMMON = [
     "https://authoring.example.test",
     "--instance-id",
     "inst_authoring",
-    "playbill",
     "authoring",
 ]
 
@@ -118,7 +117,7 @@ def test_and_activate_names_the_approve_command_in_brief_when_it_stops(
 
     assert result.exit_code == 0, result.output
     assert client.activations == []
-    assert f"cruxible playbill proposal approve {PROPOSAL_ID}" in result.output
+    assert f"cruxible proposal approve {PROPOSAL_ID}" in result.output
 
 
 def test_refused_brief_prints_the_typed_reason_on_one_line(

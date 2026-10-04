@@ -19,7 +19,7 @@ _TARGET_ENV = ("CRUXIBLE_SERVER_URL", "CRUXIBLE_SERVER_SOCKET", MCP_INSTANCE_ENV
 NO_INSTANCE_MESSAGE = (
     "No Cruxible instance selected: pass instance_id, or launch the MCP server with "
     f"{MCP_INSTANCE_ENV}=<instance id> in its environment (the `env` block of the MCP "
-    "client config), or run it in a workspace whose .playbill/coverage.json binds an "
+    "client config), or run it in a workspace whose .cruxible/coverage.json binds an "
     "instance on this server's daemon."
 )
 

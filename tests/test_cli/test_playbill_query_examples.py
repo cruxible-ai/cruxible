@@ -20,7 +20,7 @@ def test_query_coordinator_example_is_local_and_directly_creatable(
 
     result = CliRunner().invoke(
         cli,
-        ["playbill", "authoring", "create", "--example", "query-claims-by-type"],
+        ["authoring", "create", "--example", "query-claims-by-type"],
     )
 
     assert result.exit_code == 0, result.output

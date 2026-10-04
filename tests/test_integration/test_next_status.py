@@ -232,7 +232,7 @@ def test_a_procedure_catalog_is_checked_only_where_the_workspace_asks_for_one(
     asked = status(_catalog_observation(instance, advisory=True)).procedure_catalog
     assert asked.state == "missing"
     assert asked.repair is not None
-    assert asked.repair.target == ".playbill/sources.yaml"
+    assert asked.repair.target == ".cruxible/sources.yaml"
     assert asked.repair.required_change == "add_procedure_projection_catalog_entries"
 
 
@@ -270,7 +270,7 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     assert behind.compiler.state == "upgrade_available"
     assert behind.compiler.repair is not None
     assert behind.compiler.repair.command == (
-        f"cruxible playbill compiler upgrade --to {GOVERNED_TRIGGERS_COMPILER.rule_digest} "
+        f"cruxible compiler upgrade --to {GOVERNED_TRIGGERS_COMPILER.rule_digest} "
         "--name upgrade-to-governed-triggers-v1"
     )
     # A compiler before Trigger artifacts schedules no internal action at all.
@@ -327,9 +327,7 @@ def test_a_status_repair_the_caller_cannot_perform_keeps_the_facet_but_not_the_r
         # Facets are not rows: the status counts no left-out rows.
         assert "hidden" not in lower.model_dump(mode="json")
 
-    mcp = request.model_copy(
-        update={"caller_surface": "mcp", "caller_tools": ("cruxible_playbill_next",)}
-    )
+    mcp = request.model_copy(update={"caller_surface": "mcp", "caller_tools": ("cruxible_next",)})
     profiled = _status(instance, mcp, caller_rung=3)
     assert profiled.compiler.repair is None and profiled.compiler.repair_hidden is True
     assert profiled.compiler.repair_requires.because == ("profile",)
@@ -384,7 +382,7 @@ def test_due_line_occurrences_name_their_dispatch_until_it_admits_them(tmp_path:
     due = _status(instance, _request(instance, evaluation_time=now))
     assert due.line_dispatch.state == "due"
     assert due.line_dispatch.repair is not None
-    assert due.line_dispatch.repair.command == f"cruxible playbill line dispatch {identity}"
+    assert due.line_dispatch.repair.command == f"cruxible line dispatch {identity}"
     assert _attention(due) == (("line_dispatch", due.line_dispatch),)
     hidden = NextRequestV1(
         evaluation_time=now,

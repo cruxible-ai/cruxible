@@ -5,77 +5,75 @@ from __future__ import annotations
 from cruxible_core.errors import ConfigError
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
-    "cruxible_playbill_provider_catalog": (
+    "cruxible_provider_catalog": (
         "Use when you need to discover available provider packages and their node types."
     ),
-    "cruxible_playbill_provider_install": (
+    "cruxible_provider_install": (
         "Use when you want to install a provider package by name (from the configured "
         "repository or the provider index) and register its definitions. Requires admin "
         "permission; installation grants no execution permissions."
     ),
-    "cruxible_playbill_kit_build": (
+    "cruxible_kit_build": (
         "Use when you want to export the definitions under owned identity prefixes as a "
         "kit release another instance can install; pass the previous release to continue "
         "its lineage."
     ),
-    "cruxible_playbill_kit_status": (
+    "cruxible_kit_status": (
         "Use when you need the installed kits and the kit paths edited since install."
     ),
-    "cruxible_playbill_kit_add": (
+    "cruxible_kit_add": (
         "Use when you want to install or upgrade a kit. It only proposes one change set; "
         "approval and activation remain the ordinary steps."
     ),
-    "cruxible_playbill_evidence_rules_upgrade": (
+    "cruxible_evidence_rules_upgrade": (
         "Use once after upgrading, to move ClaimTypes whose evidence rules name contracts "
         "by exact digest to identity rules. It only proposes; rules whose meaning would "
         "change are left as they are and reported."
     ),
-    "cruxible_playbill_claim_type_upgrade": (
+    "cruxible_claim_type_upgrade": (
         "Use to move ClaimTypes before v7 to v7, which states revision_evidence "
         "(default replace: a statement-changing revision keeps only the evidence it cites) "
         "and evidence_requirement (kept at self). It only proposes; dry_run proposes nothing."
     ),
-    "cruxible_playbill_kit_remove": (
+    "cruxible_kit_remove": (
         "Use when you want to retire what a kit installed. It only proposes; live Claims "
         "that depend on those definitions block it."
     ),
     "cruxible_server_info": (
         "Use when you need adapter and daemon versions with state, auth, and host metadata."
     ),
-    "cruxible_playbill_init": (
-        "Use when you need to bootstrap Cruxible from client-generated public keys."
-    ),
-    "cruxible_playbill_store_body": (
+    "cruxible_init": ("Use when you need to bootstrap Cruxible from client-generated public keys."),
+    "cruxible_store_body": (
         "Use when you need to store exact Document bytes inertly before proposing them."
     ),
-    "cruxible_playbill_propose_document": (
+    "cruxible_propose_document": (
         "Use when you need to propose a governed Document create or supersession."
     ),
-    "cruxible_playbill_inspect_proposal": (
+    "cruxible_inspect_proposal": (
         "Use when you need immutable proposal evaluation and candidate evidence."
     ),
-    "cruxible_playbill_inspect_refusal": (
+    "cruxible_inspect_refusal": (
         "Use when you need typed admission or acceptance-law diagnostics for a proposal."
     ),
-    "cruxible_playbill_review": (
+    "cruxible_review": (
         "Use when you need a structured candidate review and permission-filtered diff."
     ),
-    "cruxible_playbill_prepare_approval": (
+    "cruxible_prepare_approval": (
         "Use when a client-held signer needs the exact immutable approval statement."
     ),
-    "cruxible_playbill_submit_approval": (
+    "cruxible_submit_approval": (
         "Use when you have a public approval attestation produced outside the daemon."
     ),
-    "cruxible_playbill_approve": (
+    "cruxible_approve": (
         "Use after review to approve a proposal with a local key from the server's "
         "CRUXIBLE_MCP_KEY_DIR; it challenges, signs and submits in one call and never "
         "activates. Pass the reviewed candidate_digest to bind it to what you read."
     ),
-    "cruxible_playbill_activate": (
+    "cruxible_activate": (
         "Use when an admitted Cruxible candidate has satisfied any committed requirements and "
         "is ready to settle."
     ),
-    "cruxible_playbill_orient": (
+    "cruxible_orient": (
         "Use first, to see what an instance holds: each Subject kind with its count and "
         "predicates (type, enum members, accepted evidence), artifact counts, named queries, "
         "Claims by status, whether you can author, what needs attention, and runnable next "
@@ -83,140 +81,140 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "documents, procedures, claim_types, queries, interfaces, principals, policies, or an "
         "operational family (runs, lines, captures, ...)."
     ),
-    "cruxible_playbill_whoami": (
+    "cruxible_whoami": (
         "Use when you need which instance this server acts on, who you are there, and "
         "whether you can author (and the repair when not)."
     ),
-    "cruxible_playbill_proposal_list": (
+    "cruxible_proposal_list": (
         "Use when you need to find open proposals or inspect terminal proposal outcomes. "
         "Returns one page (default limit 50); when truncated, pass next_cursor back as cursor."
     ),
-    "cruxible_playbill_proposal_readmit": (
+    "cruxible_proposal_readmit": (
         "Use when a stale proposal should be re-admitted against the current coordinate."
     ),
-    "cruxible_playbill_proposal_withdraw": (
+    "cruxible_proposal_withdraw": (
         "Use when an open proposal can never be activated and should leave the open inventory."
     ),
-    "cruxible_playbill_read_capture": (
+    "cruxible_read_capture": (
         "Use when you need verified retained Capture evidence for inspection or Claim authoring. "
         "Requires body-read permission; max_bytes bounds returned material. "
         "Never refetches sources."
     ),
-    "cruxible_playbill_source_context": (
+    "cruxible_source_context": (
         "Use when a local client needs path-free accepted inputs before compiling sources."
     ),
-    "cruxible_playbill_source_check": (
+    "cruxible_source_check": (
         "Use when you need to check sources against accepted state: a compiled bundle, "
         "or catalog-declared workspace files."
     ),
-    "cruxible_playbill_propose_source_bundle": (
+    "cruxible_propose_source_bundle": (
         "Use when you need to propose frozen source bytes without sending a local path."
     ),
-    "cruxible_playbill_compiler_upgrade": (
+    "cruxible_compiler_upgrade": (
         "Use to propose an explicit compiler upgrade bound to the exact accepted base. "
         "Requires admin permission; approve and activate through the normal proposal workflow."
     ),
-    "cruxible_playbill_propose_principal_change": (
+    "cruxible_propose_principal_change": (
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
     ),
-    "cruxible_playbill_propose_claim_type": (
+    "cruxible_propose_claim_type": (
         "Use when you need a governed ClaimType before any Claim can state that predicate; "
         "pass a complete ClaimTypeInputRecord whose evidence rules match its capture contracts. "
         "Generate a lawful starting payload with "
-        "`cruxible playbill claim-type propose --template`."
+        "`cruxible claim-type propose --template`."
     ),
-    "cruxible_playbill_claim_type_migrate": (
+    "cruxible_claim_type_migrate": (
         "Use when a ClaimType and all of its dependent Claim dispositions must change atomically."
     ),
-    "cruxible_playbill_claim_attest": (
+    "cruxible_claim_attest": (
         "Use when you examined a Claim and want to sign support, contradict, or unsure on it, "
         "optionally citing new Captures you examined."
     ),
-    "cruxible_playbill_authoring_create": (
+    "cruxible_authoring_create": (
         "Use when you need a durable machine-owned intent before iterating on a governed write."
     ),
-    "cruxible_playbill_authoring_example": (
+    "cruxible_authoring_example": (
         "Use when you need a model-constructed Claim, Procedure, Line, acquisition policy, "
         "mandate, Subject, QueryDefinition, or ApprovalPolicy authoring input template."
     ),
-    "cruxible_playbill_authoring_get": (
+    "cruxible_authoring_get": (
         "Use when you need the current durable content and state of one authoring intent."
     ),
-    "cruxible_playbill_authoring_resume": (
+    "cruxible_authoring_resume": (
         "Use when you need to continue an authoring flow after losing conversational context."
     ),
-    "cruxible_playbill_authoring_list_pending": (
+    "cruxible_authoring_list_pending": (
         "Use when you need to find your incomplete authoring work without remembering handles."
     ),
-    "cruxible_playbill_authoring_compile": (
+    "cruxible_authoring_compile": (
         "Use when you want to author or revise a Claim or Procedure and learn every "
         "refusal at once."
     ),
-    "cruxible_playbill_authoring_bind": (
+    "cruxible_authoring_bind": (
         "Use when one exact anchor in a configured workspace file is the evidence for a "
         "Flow-A Claim."
     ),
-    "cruxible_playbill_authoring_preflight": (
+    "cruxible_authoring_preflight": (
         "Use when you need a complete binding check of an existing authoring intent."
     ),
-    "cruxible_playbill_authoring_rebase": (
+    "cruxible_authoring_rebase": (
         "Use when an authoring intent went stale because accepted state moved and must be "
         "rebased onto the current coordinate before preflight or submit."
     ),
-    "cruxible_playbill_next": (
+    "cruxible_next": (
         "Use when you need what to work on next: ranked repair work, conflicts, and stale "
         "evidence, each with its exact next operation."
     ),
-    "cruxible_playbill_authoring_submit": (
+    "cruxible_authoring_submit": (
         "Use when an authoring intent has passed preflight and should become one candidate."
     ),
-    "cruxible_playbill_authoring_status": (
+    "cruxible_authoring_status": (
         "Use when you need exactly what still separates an authored candidate from acceptance."
     ),
-    "cruxible_playbill_block_repin": (
+    "cruxible_block_repin": (
         "Use to stamp a new projection block or refresh one: name the page (file or source) "
         "and the block; this adapter reads the backings, rewrites the opening marker and "
         "registers the block. The marker grammar is in docs/cli-reference.md, Projection "
         "block markers."
     ),
-    "cruxible_playbill_block_sync": (
+    "cruxible_block_sync": (
         "Use to check whether page blocks still match their backings; each stale block names "
         "its repin. It edits no page."
     ),
-    "cruxible_playbill_block_detach": (
+    "cruxible_block_detach": (
         "Use to take retired blocks' markers off pages, keeping the prose: preview with "
         "dry_run, then commit with at set to the preview's coordinate digest."
     ),
-    "cruxible_playbill_authoring_abandon_insertion": (
+    "cruxible_authoring_abandon_insertion": (
         "Use to release a publication expectation an instance already holds; nothing mints "
         "a new one."
     ),
-    "cruxible_playbill_block_depublish": (
+    "cruxible_block_depublish": (
         "Use when a published page block is being taken down for good, so the registration "
         "that demands its frame is released instead of asking for the block back."
     ),
-    "cruxible_playbill_set": (
+    "cruxible_set": (
         "Use to change one value: set a field of a Subject (kind/id) to a value. It replaces "
         "the live value (no Claim ID needed), adds a missing Subject of a known kind, and "
         "accepts in the same call when policy lets you; otherwise it answers awaiting_approval "
         "with the approve call. Check each change's verdict and the warnings."
     ),
-    "cruxible_playbill_retire": (
+    "cruxible_retire": (
         "Use to end one live Claim: by Claim ID, or by Subject and field when it holds one "
         "value. Its dependent Claims retire with it, in one change set."
     ),
-    "cruxible_playbill_write": (
+    "cruxible_write": (
         "Use to make several changes as one change set: set, add (one more value in a "
         "many-valued field, e.g. two links) and retire, all accepted or refused together."
     ),
-    "cruxible_playbill_get": (
+    "cruxible_get": (
         "Use when you have a reference to one thing -- a Claim id or prefix, kind/id, a "
         "predicate, ClaimType:/Document:/Procedure:/query:/Principal:/ProviderInterface:<name>, "
         "ApprovalPolicy:instance, or a proposal id -- and want its values. detail: summary "
         "(default card), evidence, why, history, proof (full envelope), body (Document bytes "
         "by range). A wrong name refuses with the nearest names."
     ),
-    "cruxible_playbill_query": (
+    "cruxible_query": (
         "Use to answer any question over accepted state in one call. Compact: kind "
         '(e.g. "dev.roadmap_item") with where filters such as '
         '{"field": "adoption_state", "eq": "adopted"} (also ne, lt, lte, gt, gte, in, '
@@ -229,106 +227,106 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "When truncated, pass next_cursor back as cursor. A wrong name refuses with the "
         "nearest valid names."
     ),
-    "cruxible_playbill_query_spec": (
+    "cruxible_query_spec": (
         "Use when compact filters cannot say it: run one full QueryDefinitionSpec inline "
         "(traversals, disjunctions, projections) without accepting a QueryDefinition. "
-        "Same rows, flags and paging as cruxible_playbill_query."
+        "Same rows, flags and paging as cruxible_query."
     ),
-    "cruxible_playbill_procedure_readiness": (
+    "cruxible_procedure_readiness": (
         "Use when you need to know whether an accepted Procedure can run or which slots must "
         "be bound first."
     ),
-    "cruxible_playbill_procedure_bind": (
+    "cruxible_procedure_bind": (
         "Use when an accepted Procedure's open slots should be bound to exact accepted "
         "artifacts through governance."
     ),
-    "cruxible_playbill_procedure_run": (
+    "cruxible_procedure_run": (
         "Use when you need to execute an accepted Procedure with durable outcomes."
     ),
-    "cruxible_playbill_procedure_run_status": (
+    "cruxible_procedure_run_status": (
         "Use when you need one Procedure run's typed outcomes and exact next operation."
     ),
-    "cruxible_playbill_procedure_measure": (
+    "cruxible_procedure_measure": (
         "Use when a Procedure's declared measurements are due: evaluate them from real evidence "
         "at an explicit observation instant, persist the resolution, and credit one finalized "
         "run's exact grain. Retrying replays the standing answer; pending and expired windows "
         "write nothing."
     ),
-    "cruxible_playbill_procedure_readings": (
+    "cruxible_procedure_readings": (
         "Use when you need each measurement's standing (pending, expired, resolved) and the "
         "retained exact-grain readings that credit real runs. Read-only and paginated."
     ),
-    "cruxible_playbill_line_check": (
+    "cruxible_line_check": (
         "Check a named Line without enqueuing or running it. Incomplete coverage is not absence; "
         "retain the returned checked_until when paging."
     ),
-    "cruxible_playbill_line_arm": (
+    "cruxible_line_arm": (
         "Arm a Line so the daemon admits what it matches from now on, under your credential "
         "and the Line version current now. Never catches up: earlier pending work and daemon "
         "downtime need evaluate and dispatch. Repeating it unchanged returns already_armed."
     ),
-    "cruxible_playbill_line_disarm": (
+    "cruxible_line_disarm": (
         "Stop a Line admitting work on its own. Runs already admitted keep going. "
         "A Line already stopped returns already_disarmed."
     ),
-    "cruxible_playbill_line_status": (
+    "cruxible_line_status": (
         "Read whether a Line is armed, its pending work, and why an arm stopped "
         "(credential revoked, Line changed, disarmed). Rearm to resume."
     ),
-    "cruxible_playbill_line_evaluate": (
+    "cruxible_line_evaluate": (
         "Evaluate an explicit missed range into pending work. "
         "Repeat or page incomplete results; no runs start."
     ),
-    "cruxible_playbill_line_dispatch": (
+    "cruxible_line_dispatch": (
         "Execute pending occurrences under your current authority. An armed Line admits only "
         "what it matched itself; everything else waits for this call."
     ),
-    "cruxible_playbill_line_run": (
+    "cruxible_line_run": (
         "Trigger one due accepted Line occurrence. Reuse a returned occurrence id only as an "
         "idempotency assertion; the daemon derives occurrence identity."
     ),
-    "cruxible_playbill_resolution_contracts": (
+    "cruxible_resolution_contracts": (
         "Find accepted resolution contracts testing a Claim, by Claim ID. Returns their "
         "definitions and version references, including retired contracts."
     ),
-    "cruxible_playbill_predict": (
+    "cruxible_predict": (
         "Propose a governed test of an accepted Claim: its hypothesis is a Claim ID, plus an "
         "observation selector, mechanical rule, and fixed or retained-event observation window."
     ),
-    "cruxible_playbill_settle": (
+    "cruxible_settle": (
         "Use when a predicted Claim and its matching later observation are accepted: pass the "
         "prediction id and the observation's Claim ID."
     ),
-    "cruxible_playbill_curation_list": (
+    "cruxible_curation_list": (
         "List mechanically detected curation patterns. Supply an explicit workspace_observation "
         "only when the client has scanned declared blocks; the daemon never reads workspace files. "
         "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
     ),
-    "cruxible_playbill_audit": (
+    "cruxible_audit": (
         "Rank visible Claim verification work by exact stake, weakness, and recency factors. "
         "This read records completed coverage but never recommends or executes a repair."
     ),
-    "cruxible_playbill_curation_overrule": (
+    "cruxible_curation_overrule": (
         "Use when the exact mechanical detector pattern is inapplicable and should be closed."
     ),
-    "cruxible_playbill_curation_accept_fixed": (
+    "cruxible_curation_accept_fixed": (
         "Use only after an accepted ChangeSet mechanically intersects the curation evidence."
     ),
-    "cruxible_playbill_curation_suppress": (
+    "cruxible_curation_suppress": (
         "Hide open curation work by item, pattern, or instance without resolving it."
     ),
-    "cruxible_playbill_since": (
+    "cruxible_since": (
         "Use when you need the exact accepted ChangeSet members after a known generation."
     ),
-    "cruxible_playbill_floor_export": (
+    "cruxible_floor_export": (
         "Use when you need the accepted floor as greppable files: return the bytes, write "
         "them to the workspace, or check that copy's status."
     ),
-    "cruxible_playbill_coverage": (
+    "cruxible_coverage": (
         "Use when you have read or changed working files and need what they have to do with "
         "accepted state."
     ),
-    "cruxible_playbill_workspace_source_compile": (
+    "cruxible_workspace_source_compile": (
         "Use to compile catalog-declared files under this MCP client's workspace without "
         "constructing source digests or compilation wire."
     ),

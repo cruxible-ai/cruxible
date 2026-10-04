@@ -156,14 +156,14 @@ def create_app() -> FastAPI:
     async def request_validation_error_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        if request.url.path.endswith("/playbill/since"):
+        if request.url.path.endswith("/since"):
             typed = SinceRequestInvalid.from_validation_errors(exc.errors())
             request.state.error_type = typed.__class__.__name__
             status_code, body = error_to_response(typed)
             content = body.model_dump(mode="json")
             content["errors"] = [_format_request_validation_error(err) for err in exc.errors()]
             return JSONResponse(status_code=status_code, content=content)
-        if request.url.path.endswith("/playbill/claim-attestations"):
+        if request.url.path.endswith("/claim-attestations"):
             attestation_error = ClaimAttestationRequestInvalid.from_validation_errors(exc.errors())
             request.state.error_type = attestation_error.__class__.__name__
             status_code, body = error_to_response(attestation_error)

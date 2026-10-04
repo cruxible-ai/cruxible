@@ -97,12 +97,18 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     group_claims, _ = _walk_lazy_map(CLI_COMMANDS)
     defined = _defined_click_objects()
     groups = [(obj, origin) for obj, origin in defined.values() if isinstance(obj, click.Group)]
-    # 29 includes the retained-Capture read group and the kit group; the read
-    # cut removed the subject, policy and query groups (query is one command).
-    assert len(groups) == 29, f"expected 29 Cruxible/host groups, found {len(groups)}"
+    # 28 includes the retained-Capture read group, the kit group and the internal
+    # registration group whose children are the root's; the read cut removed the
+    # subject, policy and query groups (query is one command), and the stub leaf
+    # replaced the world group.
+    assert len(groups) == 28, f"expected 28 Cruxible/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
+        if origin.endswith(":playbill_group"):
+            # The internal registration group: its subcommands are the root's.
+            assert set(group.commands) <= set(CLI_COMMANDS), origin
+            continue
         claim = group_claims.get(id(group))
         if claim is None:
             problems.append(f"{origin}: group is not registered in CLI_COMMANDS")

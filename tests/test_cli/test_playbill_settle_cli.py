@@ -1,4 +1,4 @@
-"""`playbill settle PREDICTION_ID --observation CLM-...` builds a Claim-ID settle request."""
+"""`cruxible settle PREDICTION_ID --observation CLM-...` builds a Claim-ID settle request."""
 
 from __future__ import annotations
 
@@ -29,7 +29,6 @@ def _settle(monkeypatch: pytest.MonkeyPatch, *args: str) -> tuple[Any, list[Any]
             "https://settle.example.test",
             "--instance-id",
             "inst_settle",
-            "playbill",
             "settle",
             *args,
         ],

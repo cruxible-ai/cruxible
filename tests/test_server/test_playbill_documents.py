@@ -35,7 +35,7 @@ def test_http_document_lifecycle_and_explanation(
     get_playbill_manager().clear()
     body_bytes = b"# Public Cruxible\n\nGoverned through HTTP.\n"
     stored = client.post(
-        f"/api/v1/{instance_id}/playbill/bodies",
+        f"/api/v1/{instance_id}/bodies",
         json={"content_base64": base64.b64encode(body_bytes).decode("ascii")},
     )
     assert stored.status_code == 200, stored.text
@@ -51,14 +51,14 @@ def test_http_document_lifecycle_and_explanation(
         lifecycle=DocumentLifecycle(revision=1),
     )
     proposed = client.post(
-        f"/api/v1/{instance_id}/playbill/documents/proposals",
+        f"/api/v1/{instance_id}/documents/proposals",
         json={"shell": shell.model_dump(mode="json"), "proposal_name": "design"},
     )
     assert proposed.status_code == 200, proposed.text
     proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
 
     review = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/review",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/review",
         json={"include_body": True},
     )
     assert review.status_code == 200, review.text
@@ -66,7 +66,7 @@ def test_http_document_lifecycle_and_explanation(
     assert review.json()["attestation_coverage"]["coverage"] == "containing_change_set"
 
     challenge_response = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
         json={"signer_id": "reviewer", "include_body": True},
     )
     assert challenge_response.status_code == 200, challenge_response.text
@@ -80,28 +80,28 @@ def test_http_document_lifecycle_and_explanation(
     )
     attestation = signer.sign(ApprovalStatement.model_validate(challenge["statement"]))
     approved = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
         json={"attestation": attestation.model_dump(mode="json")},
     )
     assert approved.status_code == 200, approved.text
     assert approved.json()["submitted_by"] == "operator"
-    activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
+    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
     assert activated.json()["activated_by"] == "operator"
     coordinate = activated.json()["accepted_coordinate"]
 
-    listed = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"section": "documents"})
+    listed = client.get(f"/api/v1/{instance_id}/orient", params={"section": "documents"})
     assert listed.status_code == 200, listed.text
     assert listed.json()["coordinate"] == coordinate
     assert [row["name"] for row in listed.json()["documents"]] == ["design"]
     read = client.post(
-        f"/api/v1/{instance_id}/playbill/get", json={"ref": "Document:design", "detail": "body"}
+        f"/api/v1/{instance_id}/get", json={"ref": "Document:design", "detail": "body"}
     )
     assert read.status_code == 200, read.text
     assert read.json()["body"]["text"] == body_bytes.decode()
     assert read.json()["body"]["body_digest"] == body_digest
     why = client.post(
-        f"/api/v1/{instance_id}/playbill/get",
+        f"/api/v1/{instance_id}/get",
         json={"ref": "Document:design", "detail": "why", "at": coordinate["git_oid"]},
     )
     assert why.status_code == 200, why.text
@@ -117,7 +117,7 @@ def test_http_activation_refuses_a_malformed_proposal_id_as_typed_400(
 ) -> None:
     client, instance_id, _ = playbill_http
 
-    response = client.post(f"/api/v1/{instance_id}/playbill/proposals/bogus-no-prefix/activate")
+    response = client.post(f"/api/v1/{instance_id}/proposals/bogus-no-prefix/activate")
 
     assert response.status_code == 400
     assert response.json()["error_type"] == "ProposalActivationRequestInvalid"
@@ -129,13 +129,13 @@ def test_http_models_refuse_private_key_and_local_path_inputs(
 ) -> None:
     client, instance_id, private_key_path = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/sha256:{'1' * 64}/approvals",
+        f"/api/v1/{instance_id}/proposals/sha256:{'1' * 64}/approvals",
         json={"private_key_path": str(private_key_path)},
     )
     assert response.status_code == 422
     assert "private_key_path" in response.text
     source = client.post(
-        f"/api/v1/{instance_id}/playbill/sources/check",
+        f"/api/v1/{instance_id}/sources/check",
         json={"local_path": "/" + "tmp/secret.md"},
     )
     assert source.status_code == 422
@@ -152,7 +152,7 @@ def test_principal_display_name_is_sanitized_and_invalid_ref_is_a_typed_400(
         kind="ordinary",
     )
     proposed = client.post(
-        f"/api/v1/{instance_id}/playbill/principals/proposals",
+        f"/api/v1/{instance_id}/principals/proposals",
         json={
             "principal": principal.model_dump(mode="json"),
             "proposal_name": "Add Reviewer",
@@ -165,7 +165,7 @@ def test_principal_display_name_is_sanitized_and_invalid_ref_is_a_typed_400(
     )
 
     refused = client.post(
-        f"/api/v1/{instance_id}/playbill/principals/proposals",
+        f"/api/v1/{instance_id}/principals/proposals",
         json={
             "principal": principal.model_dump(mode="json"),
             "proposal_name": " !!! ",
@@ -195,7 +195,7 @@ def test_policy_read_is_a_real_http_behavior(
 ) -> None:
     client, instance_id, _private_key_path = playbill_http
 
-    policies = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"section": "policies"})
+    policies = client.get(f"/api/v1/{instance_id}/orient", params={"section": "policies"})
     assert policies.status_code == 200, policies.text
     rows = policies.json()["policies"]
     assert [item["policy_kind"] for item in rows] == [
@@ -223,7 +223,7 @@ def test_friendly_change_set_duplicate_is_a_typed_http_400(
     query = query_claims_by_type_example().model_dump(mode="json")
 
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/intents",
         json={
             "tag": "playbill-authoring-input-create-request-v1",
             "input": {"kind": "change_set", "members": [query, query]},
@@ -262,7 +262,7 @@ def test_residual_proposal_ref_validation_is_a_typed_http_400(
     monkeypatch.setattr(playbill_api, "service_propose_playbill_document", residual_failure)
 
     refused = client.post(
-        f"/api/v1/{instance_id}/playbill/documents/proposals",
+        f"/api/v1/{instance_id}/documents/proposals",
         json={"shell": shell.model_dump(mode="json"), "proposal_name": "Any name"},
     )
 
@@ -280,13 +280,11 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
     monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
     reset_permissions()
     assert (
-        client.get(
-            f"/api/v1/{instance_id}/playbill/orient", params={"section": "documents"}
-        ).status_code
+        client.get(f"/api/v1/{instance_id}/orient", params={"section": "documents"}).status_code
         == 200
     )
     denied_store = client.post(
-        f"/api/v1/{instance_id}/playbill/bodies",
+        f"/api/v1/{instance_id}/bodies",
         json={"content_base64": base64.b64encode(b"# Tiered\n").decode("ascii")},
     )
     assert denied_store.status_code == 403
@@ -294,7 +292,7 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
     monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
     reset_permissions()
     stored = client.post(
-        f"/api/v1/{instance_id}/playbill/bodies",
+        f"/api/v1/{instance_id}/bodies",
         json={"content_base64": base64.b64encode(b"# Tiered\n").decode("ascii")},
     )
     assert stored.status_code == 200, stored.text
@@ -311,13 +309,13 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
         lifecycle=DocumentLifecycle(revision=1),
     )
     proposed = client.post(
-        f"/api/v1/{instance_id}/playbill/documents/proposals",
+        f"/api/v1/{instance_id}/documents/proposals",
         json={"shell": shell.model_dump(mode="json"), "proposal_name": "tiered"},
     )
     assert proposed.status_code == 200, proposed.text
     proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
     challenge = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
         json={"signer_id": "reviewer"},
     ).json()
     signer = LocalEd25519ApprovalSigner.open(
@@ -328,7 +326,7 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
     )
     attestation = signer.sign(ApprovalStatement.model_validate(challenge["statement"]))
     denied_approval = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
         json={"attestation": attestation.model_dump(mode="json")},
     )
     assert denied_approval.status_code == 403
@@ -336,11 +334,11 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
     monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
     reset_permissions()
     approved = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
         json={"attestation": attestation.model_dump(mode="json")},
     )
     assert approved.status_code == 200, approved.text
-    activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
+    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
 
 
@@ -359,9 +357,9 @@ def test_http_inspect_and_review_refuse_an_unknown_proposal_id_as_typed_404(
 ) -> None:
     client, instance_id, _ = playbill_http
 
-    inspected = client.get(f"/api/v1/{instance_id}/playbill/proposals/{selector}")
+    inspected = client.get(f"/api/v1/{instance_id}/proposals/{selector}")
     reviewed = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{selector}/review",
+        f"/api/v1/{instance_id}/proposals/{selector}/review",
         json={"include_body": False},
     )
 
@@ -382,7 +380,7 @@ def test_sdk_proposal_status_reads_one_proposal_by_id_without_paging_the_list(
 
     client, instance_id, _ = playbill_http
     stored = client.post(
-        f"/api/v1/{instance_id}/playbill/bodies",
+        f"/api/v1/{instance_id}/bodies",
         json={"content_base64": base64.b64encode(b"# Status\n").decode("ascii")},
     )
     shell = DocumentShell(
@@ -396,7 +394,7 @@ def test_sdk_proposal_status_reads_one_proposal_by_id_without_paging_the_list(
         lifecycle=DocumentLifecycle(revision=1),
     )
     proposed = client.post(
-        f"/api/v1/{instance_id}/playbill/documents/proposals",
+        f"/api/v1/{instance_id}/documents/proposals",
         json={"shell": shell.model_dump(mode="json"), "proposal_name": "status"},
     )
     assert proposed.status_code == 200, proposed.text
@@ -417,6 +415,6 @@ def test_sdk_proposal_status_reads_one_proposal_by_id_without_paging_the_list(
     assert status.status == "open"
     assert status.verdict == "candidate"
 
-    missing = client.get(f"/api/v1/{instance_id}/playbill/proposals/sha256:{'0' * 64}/status")
+    missing = client.get(f"/api/v1/{instance_id}/proposals/sha256:{'0' * 64}/status")
     assert missing.status_code == 404, missing.text
     assert missing.json()["error_code"] == "cruxible.proposal_not_found"

@@ -13,7 +13,7 @@ def test_capture_read_permission_and_request_validation(
     playbill_http: tuple[TestClient, str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     http, instance_id, _key = playbill_http
-    route = f"/api/v1/{instance_id}/playbill/captures/read"
+    route = f"/api/v1/{instance_id}/captures/read"
     request = {"capture_digest": "sha256:" + "f" * 64}
     available = http.post(route, json=request)
     assert available.status_code == 200, available.text
@@ -21,7 +21,7 @@ def test_capture_read_permission_and_request_validation(
     assert http.post(route, json={"capture_digest": "/etc/passwd"}).status_code == 422
     assert http.post(route, json={**request, "max_bytes": -1}).status_code == 422
     stored = http.post(
-        f"/api/v1/{instance_id}/playbill/bodies",
+        f"/api/v1/{instance_id}/bodies",
         json={"content_base64": base64.b64encode(b"not a capture").decode("ascii")},
     )
     assert stored.status_code == 200, stored.text

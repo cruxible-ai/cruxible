@@ -14,7 +14,6 @@ htmlcov/
 *.db
 *.csv
 .DS_Store
-/.cruxible/
 .venv/
 venv/
 docs/dev/
@@ -36,6 +35,6 @@ docs/llms-full.txt
 # repository inside the workspace, never core content.
 /cruxible-providers/
 
-# Cruxible program instance: client custody and the captured raw history
-.playbill/
+# The workspace directory (client custody) and the captured raw history
+.cruxible/
 playbill-history/

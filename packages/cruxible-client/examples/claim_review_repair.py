@@ -42,7 +42,7 @@ def run(
 ) -> dict[str, object]:
     """Callbacks make review and activation decisions explicit to the consumer."""
     source = workspace / "sdk-demo.md"
-    catalog = workspace / ".playbill" / "sources.yaml"
+    catalog = workspace / ".cruxible" / "sources.yaml"
     if source.exists() or catalog.exists():
         raise ValueError("Use a fresh disposable workspace; demo source/catalog already exists")
     catalog.parent.mkdir(parents=True, exist_ok=True)

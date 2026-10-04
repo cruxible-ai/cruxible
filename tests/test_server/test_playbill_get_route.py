@@ -1,4 +1,4 @@
-"""POST /playbill/get serves the get read and its coded refusals."""
+"""POST /get serves the get read and its coded refusals."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _BODY = b"# Design\n\nServed through get.\n"
 
 def _accept_document(client: TestClient, instance_id: str, key: Path) -> None:
     stored = client.post(
-        f"/api/v1/{instance_id}/playbill/bodies",
+        f"/api/v1/{instance_id}/bodies",
         json={"content_base64": base64.b64encode(_BODY).decode("ascii")},
     )
     assert stored.status_code == 200, stored.text
@@ -31,13 +31,13 @@ def _accept_document(client: TestClient, instance_id: str, key: Path) -> None:
         lifecycle=DocumentLifecycle(revision=1),
     )
     proposed = client.post(
-        f"/api/v1/{instance_id}/playbill/documents/proposals",
+        f"/api/v1/{instance_id}/documents/proposals",
         json={"shell": shell.model_dump(mode="json"), "proposal_name": "design"},
     )
     assert proposed.status_code == 200, proposed.text
     proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
     challenge = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
         json={"signer_id": "reviewer", "include_body": True},
     ).json()
     signer = LocalEd25519ApprovalSigner.open(
@@ -48,11 +48,11 @@ def _accept_document(client: TestClient, instance_id: str, key: Path) -> None:
     )
     attestation = signer.sign(ApprovalStatement.model_validate(challenge["statement"]))
     approved = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
         json={"attestation": attestation.model_dump(mode="json")},
     )
     assert approved.status_code == 200, approved.text
-    activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
+    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
 
 
@@ -61,7 +61,7 @@ def test_get_serves_cards_details_and_coded_refusals(
 ) -> None:
     client, instance_id, key = playbill_http
     _accept_document(client, instance_id, key)
-    url = f"/api/v1/{instance_id}/playbill/get"
+    url = f"/api/v1/{instance_id}/get"
 
     card = client.post(url, json={"ref": "Document:design"})
     body = client.post(

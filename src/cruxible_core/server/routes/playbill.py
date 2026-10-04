@@ -116,7 +116,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     ProcedureRunRequest,
 )
 
-router = APIRouter(prefix="/api/v1", tags=["playbill"])
+router = APIRouter(prefix="/api/v1", tags=["state"])
 
 
 def _coordinate(
@@ -143,7 +143,7 @@ def _coordinate(
 
 
 @router.post(
-    "/{instance_id}/playbill/init",
+    "/{instance_id}/init",
     response_model=contracts.InitResult,
     response_model_exclude={"git_workspace_note"},
 )
@@ -168,7 +168,7 @@ def playbill_init(
 
 
 @router.post(
-    "/{instance_id}/playbill/instance/decommission",
+    "/{instance_id}/instance/decommission",
     response_model=contracts.InstanceDecommissionResult,
 )
 def instance_decommission(
@@ -184,7 +184,7 @@ def instance_decommission(
 
 
 @router.post(
-    "/{instance_id}/playbill/ledger/mirror",
+    "/{instance_id}/ledger/mirror",
     response_model=contracts.LedgerMirror,
 )
 def set_ledger_mirror(
@@ -200,7 +200,7 @@ def set_ledger_mirror(
 
 
 @router.post(
-    "/{instance_id}/playbill/ledger/publish",
+    "/{instance_id}/ledger/publish",
     response_model=contracts.LedgerMirror,
 )
 def publish_ledger(
@@ -216,40 +216,40 @@ def publish_ledger(
 
 
 @router.get(
-    "/{instance_id}/playbill/ledger/mirror",
+    "/{instance_id}/ledger/mirror",
     response_model=contracts.LedgerMirror,
 )
 def ledger_clone_url(instance_id: str) -> contracts.LedgerMirror:
     return playbill_api.playbill_ledger_clone_url(resolve_server_instance_id(instance_id))
 
 
-@router.get("/{instance_id}/playbill/providers", response_model=ProviderCatalog)
+@router.get("/{instance_id}/providers", response_model=ProviderCatalog)
 def provider_catalog(instance_id: str) -> ProviderCatalog:
     return playbill_api.playbill_provider_catalog(resolve_server_instance_id(instance_id))
 
 
-@router.post("/{instance_id}/playbill/providers/install", response_model=ProviderInstallResult)
+@router.post("/{instance_id}/providers/install", response_model=ProviderInstallResult)
 def provider_install(instance_id: str, request: ProviderInstallRequest) -> ProviderInstallResult:
     return playbill_api.playbill_provider_install(resolve_server_instance_id(instance_id), request)
 
 
-@router.post("/{instance_id}/playbill/kits/build", response_model=KitBuildResult)
+@router.post("/{instance_id}/kits/build", response_model=KitBuildResult)
 def kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
     return playbill_api.playbill_kit_build(resolve_server_instance_id(instance_id), request)
 
 
-@router.get("/{instance_id}/playbill/kits", response_model=KitStatus)
+@router.get("/{instance_id}/kits", response_model=KitStatus)
 def kit_status(instance_id: str) -> KitStatus:
     return playbill_api.playbill_kit_status(resolve_server_instance_id(instance_id))
 
 
-@router.post("/{instance_id}/playbill/kits", response_model=KitChangeResult)
+@router.post("/{instance_id}/kits", response_model=KitChangeResult)
 def kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResult:
     return playbill_api.playbill_kit_add(resolve_server_instance_id(instance_id), request)
 
 
 @router.post(
-    "/{instance_id}/playbill/claim-types/evidence-rules/upgrade",
+    "/{instance_id}/claim-types/evidence-rules/upgrade",
     response_model=EvidenceRuleUpgradeResult,
 )
 def evidence_rules_upgrade(
@@ -261,7 +261,7 @@ def evidence_rules_upgrade(
 
 
 @router.post(
-    "/{instance_id}/playbill/claim-types/upgrade",
+    "/{instance_id}/claim-types/upgrade",
     response_model=ClaimTypeUpgradeResult,
 )
 def claim_type_upgrade(
@@ -272,13 +272,13 @@ def claim_type_upgrade(
     )
 
 
-@router.post("/{instance_id}/playbill/kits/remove", response_model=KitChangeResult)
+@router.post("/{instance_id}/kits/remove", response_model=KitChangeResult)
 def kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
     return playbill_api.playbill_kit_remove(resolve_server_instance_id(instance_id), request)
 
 
 @router.post(
-    "/{instance_id}/playbill/bodies",
+    "/{instance_id}/bodies",
     response_model=contracts.CasObjectResult,
 )
 def store_body(
@@ -291,7 +291,7 @@ def store_body(
 
 
 @router.post(
-    "/{instance_id}/playbill/documents/proposals",
+    "/{instance_id}/documents/proposals",
     response_model=contracts.ProposalInspection,
 )
 def propose_document(
@@ -310,7 +310,7 @@ def propose_document(
 
 
 @router.post(
-    "/{instance_id}/playbill/compiler/proposals",
+    "/{instance_id}/compiler/proposals",
     response_model=contracts.ProposalInspection,
 )
 def propose_compiler_upgrade(
@@ -328,7 +328,7 @@ def propose_compiler_upgrade(
 
 
 @router.post(
-    "/{instance_id}/playbill/principals/proposals",
+    "/{instance_id}/principals/proposals",
     response_model=contracts.ProposalInspection,
 )
 def propose_principal(
@@ -346,14 +346,14 @@ def propose_principal(
 
 
 @router.get(
-    "/{instance_id}/playbill/whoami",
+    "/{instance_id}/whoami",
     response_model=contracts.WhoAmI,
 )
 def whoami(instance_id: str) -> contracts.WhoAmI:
     return playbill_api.playbill_whoami(resolve_server_instance_id(instance_id))
 
 
-@router.get("/{instance_id}/playbill/head", response_model=contracts.Head)
+@router.get("/{instance_id}/head", response_model=contracts.Head)
 def head(
     instance_id: str,
     at: str | None = Query(
@@ -375,7 +375,7 @@ def head(
 
 
 @router.get(
-    "/{instance_id}/playbill/orient",
+    "/{instance_id}/orient",
     response_model=contracts.OrientResult,
 )
 def orient(
@@ -426,7 +426,7 @@ def orient(
 
 
 @router.get(
-    "/{instance_id}/playbill/proposals",
+    "/{instance_id}/proposals",
     response_model=contracts.ProposalList,
 )
 def list_proposals(
@@ -448,7 +448,7 @@ def list_proposals(
 
 
 @router.get(
-    "/{instance_id}/playbill/proposal-selector",
+    "/{instance_id}/proposal-selector",
     response_model=contracts.ProposalSelectorResult,
 )
 def resolve_proposal_selector(
@@ -462,7 +462,7 @@ def resolve_proposal_selector(
 
 
 @router.get(
-    "/{instance_id}/playbill/proposals/{proposal_id}",
+    "/{instance_id}/proposals/{proposal_id}",
     response_model=contracts.ProposalInspection,
 )
 def inspect_proposal(
@@ -475,7 +475,7 @@ def inspect_proposal(
 
 
 @router.post(
-    "/{instance_id}/playbill/proposals/{proposal_id}/readmit",
+    "/{instance_id}/proposals/{proposal_id}/readmit",
     response_model=contracts.ProposalReadmitResult,
 )
 def readmit_proposal(
@@ -492,7 +492,7 @@ def readmit_proposal(
 
 
 @router.post(
-    "/{instance_id}/playbill/proposals/{proposal_id}/withdraw",
+    "/{instance_id}/proposals/{proposal_id}/withdraw",
     response_model=contracts.ProposalWithdrawResult,
 )
 def withdraw_proposal(
@@ -510,7 +510,7 @@ def withdraw_proposal(
 
 
 @router.get(
-    "/{instance_id}/playbill/proposals/{proposal_id}/status",
+    "/{instance_id}/proposals/{proposal_id}/status",
     response_model=contracts.ProposalListEntry,
 )
 def proposal_status(
@@ -523,7 +523,7 @@ def proposal_status(
 
 
 @router.get(
-    "/{instance_id}/playbill/proposals/{proposal_id}/refusal",
+    "/{instance_id}/proposals/{proposal_id}/refusal",
     response_model=contracts.RefusalInspection,
 )
 def inspect_refusal(
@@ -536,7 +536,7 @@ def inspect_refusal(
 
 
 @router.post(
-    "/{instance_id}/playbill/proposals/{proposal_id}/review",
+    "/{instance_id}/proposals/{proposal_id}/review",
     response_model=contracts.ProposalReview,
 )
 def review_proposal(
@@ -557,7 +557,7 @@ def review_proposal(
 
 
 @router.post(
-    "/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
+    "/{instance_id}/proposals/{proposal_id}/approval-challenge",
     response_model=contracts.ApprovalChallenge,
 )
 def prepare_approval(
@@ -574,7 +574,7 @@ def prepare_approval(
 
 
 @router.post(
-    "/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+    "/{instance_id}/proposals/{proposal_id}/approvals",
     response_model=contracts.ApprovalReceipt,
     response_model_exclude={"git_workspace_note"},
 )
@@ -596,7 +596,7 @@ def submit_approval(
 
 
 @router.post(
-    "/{instance_id}/playbill/proposals/{proposal_id}/activate",
+    "/{instance_id}/proposals/{proposal_id}/activate",
     response_model=contracts.ActivationReceipt,
 )
 def activate_proposal(
@@ -606,13 +606,13 @@ def activate_proposal(
     return playbill_api.playbill_activate(resolve_server_instance_id(instance_id), proposal_id)
 
 
-@router.post("/{instance_id}/playbill/captures/read", response_model=CaptureRead)
+@router.post("/{instance_id}/captures/read", response_model=CaptureRead)
 def read_capture(instance_id: str, request: CaptureReadRequest) -> CaptureRead:
     return playbill_api.playbill_read_capture(resolve_server_instance_id(instance_id), request)
 
 
 @router.get(
-    "/{instance_id}/playbill/sources/context",
+    "/{instance_id}/sources/context",
     response_model=contracts.SourceContext,
 )
 def source_context(instance_id: str) -> contracts.SourceContext:
@@ -620,7 +620,7 @@ def source_context(instance_id: str) -> contracts.SourceContext:
 
 
 @router.post(
-    "/{instance_id}/playbill/sources/check",
+    "/{instance_id}/sources/check",
     response_model=contracts.SourceCheckResult,
 )
 def check_sources(
@@ -633,7 +633,7 @@ def check_sources(
 
 
 @router.post(
-    "/{instance_id}/playbill/sources/proposals",
+    "/{instance_id}/sources/proposals",
     response_model=contracts.ProposalInspection,
 )
 def propose_sources(
@@ -651,7 +651,7 @@ def propose_sources(
 
 
 @router.post(
-    "/{instance_id}/playbill/claim-types/proposals",
+    "/{instance_id}/claim-types/proposals",
     response_model=(contracts.ProposalInspection | contracts.ClaimTypeInputProposalResult),
 )
 def propose_claim_type(
@@ -677,7 +677,7 @@ def propose_claim_type(
 
 
 @router.post(
-    "/{instance_id}/playbill/claim-types/migrations",
+    "/{instance_id}/claim-types/migrations",
     response_model=contracts.ClaimTypeMigrationResponse,
 )
 def migrate_claim_type(
@@ -691,7 +691,7 @@ def migrate_claim_type(
 
 
 @router.post(
-    "/{instance_id}/playbill/claim-attestations",
+    "/{instance_id}/claim-attestations",
     response_model=ClaimAttestationAppendResult,
 )
 def append_claim_attestation(
@@ -705,7 +705,7 @@ def append_claim_attestation(
 
 
 @router.post(
-    "/{instance_id}/playbill/claim-attestations/recover",
+    "/{instance_id}/claim-attestations/recover",
     response_model=None,
     status_code=204,
 )
@@ -717,7 +717,7 @@ def recover_claim_attestations(instance_id: str) -> Response:
 
 
 @router.post(
-    "/{instance_id}/playbill/resolution-contracts/query",
+    "/{instance_id}/resolution-contracts/query",
     response_model=contracts.ResolutionContractsResult,
 )
 def resolution_contracts(
@@ -729,7 +729,7 @@ def resolution_contracts(
 
 
 @router.post(
-    "/{instance_id}/playbill/predictions",
+    "/{instance_id}/predictions",
     response_model=contracts.PredictResult,
 )
 def predict(
@@ -743,7 +743,7 @@ def predict(
 
 
 @router.post(
-    "/{instance_id}/playbill/predictions/{prediction_id}/settlements",
+    "/{instance_id}/predictions/{prediction_id}/settlements",
     response_model=contracts.SettleResult,
 )
 def settle_prediction(
@@ -759,7 +759,7 @@ def settle_prediction(
 
 
 @router.post(
-    "/{instance_id}/playbill/authoring/intents",
+    "/{instance_id}/authoring/intents",
     response_model=contracts.AuthoringIntentViewRecord,
 )
 def create_authoring_intent(
@@ -795,7 +795,7 @@ def create_authoring_intent(
 
 
 @router.get(
-    "/{instance_id}/playbill/authoring/intents",
+    "/{instance_id}/authoring/intents",
     response_model=contracts.AuthoringIntentListRecord,
 )
 def list_pending_authoring_intents(
@@ -805,7 +805,7 @@ def list_pending_authoring_intents(
 
 
 @router.post(
-    "/{instance_id}/playbill/authoring/compile",
+    "/{instance_id}/authoring/compile",
     response_model=contracts.AuthoringPreflightResult,
 )
 def compile_authoring(
@@ -846,7 +846,7 @@ def compile_authoring(
 
 
 @router.get(
-    "/{instance_id}/playbill/authoring/intents/{intent_id}",
+    "/{instance_id}/authoring/intents/{intent_id}",
     response_model=contracts.AuthoringIntentViewRecord,
 )
 def get_authoring_intent(
@@ -857,7 +857,7 @@ def get_authoring_intent(
 
 
 @router.get(
-    "/{instance_id}/playbill/authoring/intents/{intent_id}/resume",
+    "/{instance_id}/authoring/intents/{intent_id}/resume",
     response_model=contracts.AuthoringIntentViewRecord,
 )
 def resume_authoring_intent(
@@ -870,7 +870,7 @@ def resume_authoring_intent(
 
 
 @router.post(
-    "/{instance_id}/playbill/authoring/intents/{intent_id}/rebase",
+    "/{instance_id}/authoring/intents/{intent_id}/rebase",
     response_model=contracts.AuthoringIntentViewRecord,
 )
 def rebase_authoring_intent(
@@ -884,7 +884,7 @@ def rebase_authoring_intent(
 
 
 @router.post(
-    "/{instance_id}/playbill/authoring/intents/{intent_id}/preflight",
+    "/{instance_id}/authoring/intents/{intent_id}/preflight",
     response_model=contracts.AuthoringPreflightResult,
 )
 def preflight_authoring_intent(
@@ -898,7 +898,7 @@ def preflight_authoring_intent(
 
 
 @router.post(
-    "/{instance_id}/playbill/authoring/submit",
+    "/{instance_id}/authoring/submit",
     response_model=contracts.AuthoringSubmitResultRecord,
 )
 def compile_and_submit_authoring(
@@ -915,7 +915,7 @@ def compile_and_submit_authoring(
 
 
 @router.post(
-    "/{instance_id}/playbill/authoring/intents/{intent_id}/submit",
+    "/{instance_id}/authoring/intents/{intent_id}/submit",
     response_model=contracts.AuthoringSubmitResultRecord,
 )
 def submit_authoring_intent(
@@ -929,7 +929,7 @@ def submit_authoring_intent(
 
 
 @router.get(
-    "/{instance_id}/playbill/authoring/intents/{intent_id}/status",
+    "/{instance_id}/authoring/intents/{intent_id}/status",
     response_model=contracts.CandidateStatusRecord,
 )
 def authoring_intent_status(
@@ -942,7 +942,7 @@ def authoring_intent_status(
 
 
 @router.post(
-    "/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon",
+    "/{instance_id}/authoring/intents/{intent_id}/insertion/abandon",
     response_model=contracts.InsertionAbandonResultRecord,
 )
 def abandon_authoring_insertion(
@@ -958,7 +958,7 @@ def abandon_authoring_insertion(
 
 
 @router.post(
-    "/{instance_id}/playbill/blocks/declare",
+    "/{instance_id}/blocks/declare",
     response_model=contracts.BlockDeclareResult,
 )
 def declare_playbill_block(
@@ -972,7 +972,7 @@ def declare_playbill_block(
 
 
 @router.post(
-    "/{instance_id}/playbill/blocks/depublish",
+    "/{instance_id}/blocks/depublish",
     response_model=contracts.BlockDepublishResult,
 )
 def depublish_playbill_block(
@@ -988,44 +988,44 @@ def depublish_playbill_block(
     )
 
 
-@router.post("/{instance_id}/playbill/claims/read-batch", response_model=ClaimReadBatchResult)
+@router.post("/{instance_id}/claims/read-batch", response_model=ClaimReadBatchResult)
 def read_claim_batch(instance_id: str, req: ClaimReadBatchRequest) -> ClaimReadBatchResult:
     return playbill_api.playbill_read_claim_batch(
         resolve_server_instance_id(instance_id), request=req
     )
 
 
-@router.post("/{instance_id}/playbill/get", response_model=GetResult)
+@router.post("/{instance_id}/get", response_model=GetResult)
 def get_by_ref(instance_id: str, req: GetRequest) -> GetResult:
     """One governed thing by reference, values first; ``detail`` chooses the depth."""
     return playbill_api.playbill_get(resolve_server_instance_id(instance_id), request=req)
 
 
-@router.post("/{instance_id}/playbill/get-batch", response_model=GetBatchResult)
+@router.post("/{instance_id}/get-batch", response_model=GetBatchResult)
 def get_batch(instance_id: str, req: GetBatchRequest) -> GetBatchResult:
     """SDK-internal: several references at one coordinate (agents call get per reference)."""
     return playbill_api.playbill_get_batch(resolve_server_instance_id(instance_id), request=req)
 
 
-@router.post("/{instance_id}/playbill/set", response_model=WriteOutcome)
+@router.post("/{instance_id}/set", response_model=WriteOutcome)
 def set_value(instance_id: str, req: SetRequest) -> WriteOutcome:
     """Put one value in one field of one Subject; a refusal is an outcome, not an error."""
     return playbill_api.playbill_set(resolve_server_instance_id(instance_id), request=req)
 
 
-@router.post("/{instance_id}/playbill/retire", response_model=WriteOutcome)
+@router.post("/{instance_id}/retire", response_model=WriteOutcome)
 def retire(instance_id: str, req: RetireRequest) -> WriteOutcome:
     """End one live Claim, named by ID or by its Subject and field."""
     return playbill_api.playbill_retire(resolve_server_instance_id(instance_id), request=req)
 
 
-@router.post("/{instance_id}/playbill/write", response_model=WriteOutcome)
+@router.post("/{instance_id}/write", response_model=WriteOutcome)
 def write(instance_id: str, req: WriteRequest) -> WriteOutcome:
     """Apply set, add and retire changes as one change set."""
     return playbill_api.playbill_write(resolve_server_instance_id(instance_id), request=req)
 
 
-@router.post("/{instance_id}/playbill/claims/backings", response_model=ClaimBackingsResult)
+@router.post("/{instance_id}/claims/backings", response_model=ClaimBackingsResult)
 def read_claim_backings(instance_id: str, req: ClaimBackingsRequest) -> ClaimBackingsResult:
     return playbill_api.playbill_read_claim_backings(
         resolve_server_instance_id(instance_id), request=req
@@ -1033,7 +1033,7 @@ def read_claim_backings(instance_id: str, req: ClaimBackingsRequest) -> ClaimBac
 
 
 @router.post(
-    "/{instance_id}/playbill/projections/check",
+    "/{instance_id}/projections/check",
     response_model=contracts.ProjectionCheckResult,
 )
 def check_projection_blocks(
@@ -1045,7 +1045,7 @@ def check_projection_blocks(
 
 
 @router.post(
-    "/{instance_id}/playbill/projections/sync-backing",
+    "/{instance_id}/projections/sync-backing",
     response_model=contracts.BlockSyncReadResult,
 )
 def read_block_sync_backing(
@@ -1058,7 +1058,7 @@ def read_block_sync_backing(
     )
 
 
-@router.post("/{instance_id}/playbill/query", response_model=contracts.QueryResultRecord)
+@router.post("/{instance_id}/query", response_model=contracts.QueryResultRecord)
 def query_playbill(
     instance_id: str,
     req: contracts.QueryRequest,
@@ -1066,9 +1066,7 @@ def query_playbill(
     return playbill_api.playbill_query(resolve_server_instance_id(instance_id), request=req)
 
 
-@router.post(
-    "/{instance_id}/playbill/procedures/source/preview", response_model=ProcedureSourcePreview
-)
+@router.post("/{instance_id}/procedures/source/preview", response_model=ProcedureSourcePreview)
 def procedure_source_preview(
     instance_id: str, req: ProcedureSourcePreviewRequest
 ) -> ProcedureSourcePreview:
@@ -1078,7 +1076,7 @@ def procedure_source_preview(
 
 
 @router.get(
-    "/{instance_id}/playbill/procedures/{name}/readiness",
+    "/{instance_id}/procedures/{name}/readiness",
     response_model=contracts.ProcedureReadiness,
 )
 def procedure_readiness(
@@ -1101,7 +1099,7 @@ def procedure_readiness(
 
 
 @router.post(
-    "/{instance_id}/playbill/procedures/{name}/bind",
+    "/{instance_id}/procedures/{name}/bind",
     response_model=contracts.ProcedureBindResult,
 )
 def bind_procedure(
@@ -1117,7 +1115,7 @@ def bind_procedure(
 
 
 @router.post(
-    "/{instance_id}/playbill/procedures/{name}/runs",
+    "/{instance_id}/procedures/{name}/runs",
     response_model=contracts.ProcedureRunState,
 )
 def run_procedure(
@@ -1132,9 +1130,7 @@ def run_procedure(
     )
 
 
-@router.post(
-    "/{instance_id}/playbill/lines/{line}/check", response_model=contracts.LineTriggerCheckResult
-)
+@router.post("/{instance_id}/lines/{line}/check", response_model=contracts.LineTriggerCheckResult)
 def check_line_trigger(
     instance_id: str, line: str, req: contracts.LineTriggerCheckRequest
 ) -> contracts.LineTriggerCheckResult:
@@ -1143,7 +1139,7 @@ def check_line_trigger(
     )
 
 
-@router.post("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArm)
+@router.post("/{instance_id}/lines/{line}/arm", response_model=contracts.LineArm)
 def arm_line(
     instance_id: str, line: str, req: ChangeControlRequest | None = None
 ) -> contracts.LineArm:
@@ -1153,7 +1149,7 @@ def arm_line(
     )
 
 
-@router.post("/{instance_id}/playbill/lines/{line}/disarm", response_model=contracts.LineArm)
+@router.post("/{instance_id}/lines/{line}/disarm", response_model=contracts.LineArm)
 def disarm_line(
     instance_id: str, line: str, req: ChangeControlRequest | None = None
 ) -> contracts.LineArm:
@@ -1163,13 +1159,13 @@ def disarm_line(
     )
 
 
-@router.get("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArm)
+@router.get("/{instance_id}/lines/{line}/arm", response_model=contracts.LineArm)
 def line_status(instance_id: str, line: str) -> contracts.LineArm:
     return playbill_api.playbill_line_status(resolve_server_instance_id(instance_id), line)
 
 
 @router.post(
-    "/{instance_id}/playbill/lines/{line}/evaluate",
+    "/{instance_id}/lines/{line}/evaluate",
     response_model=contracts.LineTriggerCheckResult,
 )
 def evaluate_line(
@@ -1180,9 +1176,7 @@ def evaluate_line(
     )
 
 
-@router.post(
-    "/{instance_id}/playbill/lines/{line}/dispatch", response_model=contracts.LineDispatchResult
-)
+@router.post("/{instance_id}/lines/{line}/dispatch", response_model=contracts.LineDispatchResult)
 def dispatch_line(
     instance_id: str, line: str, req: contracts.LineDispatchRequest
 ) -> contracts.LineDispatchResult:
@@ -1192,7 +1186,7 @@ def dispatch_line(
 
 
 @router.post(
-    "/{instance_id}/playbill/lines/{line}/runs",
+    "/{instance_id}/lines/{line}/runs",
     response_model=contracts.ProcedureRunState,
 )
 def run_line(
@@ -1208,7 +1202,7 @@ def run_line(
 
 
 @router.get(
-    "/{instance_id}/playbill/procedure-runs/{run_id}",
+    "/{instance_id}/procedure-runs/{run_id}",
     response_model=contracts.ProcedureRunState,
 )
 def procedure_run_status(
@@ -1222,7 +1216,7 @@ def procedure_run_status(
 
 
 @router.post(
-    "/{instance_id}/playbill/procedures/{name}/measurements",
+    "/{instance_id}/procedures/{name}/measurements",
     response_model=contracts.ProcedureMeasureResult,
 )
 def procedure_measure(
@@ -1238,7 +1232,7 @@ def procedure_measure(
 
 
 @router.post(
-    "/{instance_id}/playbill/procedures/{name}/readings",
+    "/{instance_id}/procedures/{name}/readings",
     response_model=contracts.ProcedureReadingsResult,
 )
 def procedure_readings(
@@ -1254,7 +1248,7 @@ def procedure_readings(
 
 
 @router.post(
-    "/{instance_id}/playbill/next",
+    "/{instance_id}/next",
     response_model=contracts.NextResult,
 )
 def next_work(
@@ -1268,7 +1262,7 @@ def next_work(
 
 
 @router.post(
-    "/{instance_id}/playbill/curation/list",
+    "/{instance_id}/curation/list",
     response_model=contracts.CurationListResult,
 )
 def curation_list(
@@ -1282,7 +1276,7 @@ def curation_list(
 
 
 @router.post(
-    "/{instance_id}/playbill/audit",
+    "/{instance_id}/audit",
     response_model=contracts.AuditResult,
 )
 def audit(
@@ -1296,7 +1290,7 @@ def audit(
 
 
 @router.post(
-    "/{instance_id}/playbill/curation/overrule",
+    "/{instance_id}/curation/overrule",
     response_model=contracts.CurationActionResult,
 )
 def curation_overrule(
@@ -1310,7 +1304,7 @@ def curation_overrule(
 
 
 @router.post(
-    "/{instance_id}/playbill/curation/accept-fixed",
+    "/{instance_id}/curation/accept-fixed",
     response_model=contracts.CurationActionResult,
 )
 def curation_accept_fixed(
@@ -1324,7 +1318,7 @@ def curation_accept_fixed(
 
 
 @router.post(
-    "/{instance_id}/playbill/curation/suppress",
+    "/{instance_id}/curation/suppress",
     response_model=contracts.CurationActionResult,
 )
 def curation_suppress(
@@ -1338,7 +1332,7 @@ def curation_suppress(
 
 
 @router.post(
-    "/{instance_id}/playbill/since",
+    "/{instance_id}/since",
     response_model=contracts.SinceResult,
 )
 def since(
@@ -1352,7 +1346,7 @@ def since(
 
 
 @router.post(
-    "/{instance_id}/playbill/coverage/resolve",
+    "/{instance_id}/coverage/resolve",
     response_model=contracts.CoverageResult,
 )
 def resolve_coverage(
@@ -1369,7 +1363,7 @@ def resolve_coverage(
 
 
 @router.post(
-    "/{instance_id}/playbill/floor/export",
+    "/{instance_id}/floor/export",
     response_model=contracts.FloorExport,
 )
 async def export_floor(
@@ -1405,7 +1399,7 @@ async def export_floor(
 
 
 @router.post(
-    "/{instance_id}/playbill/floor/delta",
+    "/{instance_id}/floor/delta",
     response_model=FloorDelta,
 )
 async def floor_delta(

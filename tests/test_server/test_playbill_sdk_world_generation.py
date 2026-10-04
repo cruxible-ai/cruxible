@@ -41,10 +41,10 @@ AFFECTS = "sec.vuln.affects_package"
 
 def _workspace(root: Path) -> Path:
     workspace = root / "world-workspace"
-    (workspace / ".playbill").mkdir(parents=True)
+    (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "corpus").mkdir()
     (workspace / "corpus" / "advisory.md").write_text("# advisory\n", encoding="utf-8")
-    (workspace / ".playbill" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "sources.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"
@@ -114,7 +114,7 @@ def _approve_and_activate(
     proposal_id: str,
 ) -> api.ActivationReceipt:
     challenge = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
         json={"signer_id": "reviewer"},
     )
     assert challenge.status_code == 200, challenge.text
@@ -127,11 +127,11 @@ def _approve_and_activate(
     )
     attestation = signer.sign(ApprovalStatement.model_validate(body["statement"]))
     approved = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
         json={"attestation": attestation.model_dump(mode="json")},
     )
     assert approved.status_code == 200, approved.text
-    activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
+    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
     assert activated.json()["status"] == "accepted"
     return api.ActivationReceipt.model_validate(activated.json())
@@ -329,8 +329,6 @@ def test_the_cli_leaf_writes_a_coordinate_stamped_stub_for_the_live_world(
             "http://cruxible",
             "--instance-id",
             instance_id,
-            "playbill",
-            "world",
             "stub",
             "--out",
             str(out_path),

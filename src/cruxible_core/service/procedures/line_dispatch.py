@@ -265,7 +265,7 @@ def _segment(
 
 ARM_REQUIRES_REARM = (
     "This arm was recorded before arms named their provenance, so the authority it "
-    "would run under cannot be established; rearm the Line (`cruxible playbill line arm "
+    "would run under cannot be established; rearm the Line (`cruxible line arm "
     "LINE`) to resume."
 )
 
@@ -1001,7 +1001,7 @@ def service_dispatch_line(
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
     # Dispatch runs what the Line can do, so it needs the tier those runs need.
     require_run_permission(
-        "cruxible_playbill_line_dispatch",
+        "cruxible_line_dispatch",
         target_rung=line_run_target_rung(instance, line),
         caller_rung=caller_rung,
     )

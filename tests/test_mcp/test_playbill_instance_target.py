@@ -91,8 +91,8 @@ def test_explicit_instance_wins_over_the_environment(monkeypatch: pytest.MonkeyP
 
 
 def _bind_workspace(root, **fields: str) -> None:
-    (root / ".playbill").mkdir()
-    (root / ".playbill" / "coverage.json").write_text(
+    (root / ".cruxible").mkdir()
+    (root / ".cruxible" / "coverage.json").write_text(
         json.dumps({"tag": "playbill-coverage-workspace-config-v2", **fields}),
         encoding="utf-8",
     )
@@ -162,7 +162,7 @@ def test_whoami_without_instance_id_reports_the_configured_instance(
     client = _ScopedClient()
     monkeypatch.setattr(handlers, "_get_client", lambda: client)
 
-    is_error, text = _call("cruxible_playbill_whoami", {})
+    is_error, text = _call("cruxible_whoami", {})
 
     assert not is_error, text
     payload = json.loads(text)
@@ -178,7 +178,7 @@ def test_instance_tool_without_any_instance_fails_with_the_repair(
 ) -> None:
     monkeypatch.setattr(handlers, "_get_client", lambda: _ScopedClient())
 
-    is_error, text = _call("cruxible_playbill_whoami", {})
+    is_error, text = _call("cruxible_whoami", {})
 
     assert is_error
     assert "CRUXIBLE_INSTANCE_ID" in text
@@ -231,13 +231,13 @@ def test_client_decodes_the_daemon_scope_refusal_with_its_scope() -> None:
 def test_a_malformed_workspace_binding_selects_nothing_and_breaks_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    (tmp_path / ".playbill").mkdir()
-    (tmp_path / ".playbill" / "coverage.json").write_bytes(b"\xff\xfe not utf-8")
+    (tmp_path / ".cruxible").mkdir()
+    (tmp_path / ".cruxible" / "coverage.json").write_bytes(b"\xff\xfe not utf-8")
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
     with pytest.raises(ConfigError, match="No Cruxible instance selected"):
         require_instance_id()
 
-    (tmp_path / ".playbill" / "coverage.json").write_text(
+    (tmp_path / ".cruxible" / "coverage.json").write_text(
         json.dumps(
             {
                 "tag": "playbill-coverage-workspace-config-v2",

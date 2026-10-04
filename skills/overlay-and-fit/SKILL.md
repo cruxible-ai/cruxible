@@ -110,8 +110,8 @@ Use the existing CLI surfaces that match the current overlay:
 ```bash
 cruxible run --workflow <workflow_name> --apply
 cruxible propose --workflow <workflow_name>
-cruxible query run <query_name> --param key=value
-cruxible explain --receipt <receipt_id>
+cruxible query --name <query_name> --param key=value
+cruxible get <ref> --detail why
 ```
 
 If the current overlay and `kit` solve the problem, stop here and hand off the working flow.

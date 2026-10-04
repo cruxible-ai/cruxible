@@ -269,8 +269,8 @@ def test_malformed_marker_keeps_its_invalid_grammar_note(tmp_path: Path) -> None
     source = _workspace(tmp_path)
     source.write_bytes(
         source.read_bytes().replace(
-            b"<!-- /playbill:block:summary -->\n",
-            b"<!-- /playbill:block:different -->\n",
+            b"<!-- /cruxible:block:summary -->\n",
+            b"<!-- /cruxible:block:different -->\n",
         )
     )
 
@@ -297,7 +297,7 @@ def test_projection_coverage_combines_claim_markers_and_procedure_catalog(
 ) -> None:
     _workspace(tmp_path)
     _repin(_RepinClient(), tmp_path, claims=("CLM-first",))
-    catalog = tmp_path / ".playbill" / "sources.yaml"
+    catalog = tmp_path / ".cruxible" / "sources.yaml"
     catalog.write_text(
         catalog.read_text(encoding="utf-8")
         + """\
@@ -325,8 +325,8 @@ def test_malformed_claim_markers_never_assert_claim_absence_but_leave_catalog_co
     tmp_path: Path,
 ) -> None:
     source = _workspace(tmp_path)
-    source.write_bytes(source.read_bytes().replace(b"/playbill:block", b"/playbill:broken"))
-    catalog = tmp_path / ".playbill" / "sources.yaml"
+    source.write_bytes(source.read_bytes().replace(b"/cruxible:block", b"/playbill:broken"))
+    catalog = tmp_path / ".cruxible" / "sources.yaml"
     catalog.write_text(
         catalog.read_text(encoding="utf-8")
         + """\

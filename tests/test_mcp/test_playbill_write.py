@@ -40,7 +40,7 @@ def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dic
     ("tool", "required", "declared"),
     [
         (
-            "cruxible_playbill_set",
+            "cruxible_set",
             ["subject", "field", "value", "because"],
             {
                 "instance_id",
@@ -58,12 +58,12 @@ def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dic
             },
         ),
         (
-            "cruxible_playbill_retire",
+            "cruxible_retire",
             ["target", "because"],
             {"instance_id", "target", "because", "reason", "expect", "dry_run", "accept", "at"},
         ),
         (
-            "cruxible_playbill_write",
+            "cruxible_write",
             ["changes", "because"],
             {"instance_id", "changes", "because", "subject", "dry_run", "accept", "at"},
         ),
@@ -181,9 +181,9 @@ def test_file_evidence_is_read_in_the_mcp_workspace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "workspace"
-    (workspace / ".playbill").mkdir(parents=True)
+    (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "notes.md").write_text("# Notes\n\nStatus: done\n", encoding="utf-8")
-    (workspace / ".playbill" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "sources.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -240,7 +240,7 @@ def test_write_tool_outputs_declare_each_warning_variant(
 ) -> None:
     monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
     tools = {item.name: item for item in asyncio.run(create_server().list_tools())}
-    for name in ("cruxible_playbill_set", "cruxible_playbill_retire", "cruxible_playbill_write"):
+    for name in ("cruxible_set", "cruxible_retire", "cruxible_write"):
         schema = tools[name].outputSchema
         assert schema is not None
         defs = schema.get("$defs", {})

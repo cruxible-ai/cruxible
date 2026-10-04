@@ -1,4 +1,4 @@
-"""`cruxible playbill orient` against a served daemon: the map, one kind, a refusal."""
+"""`cruxible orient` against a served daemon: the map, one kind, a refusal."""
 
 from __future__ import annotations
 
@@ -24,7 +24,9 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     _bootstrap(cruxible, tmp_path)
     _govern_the_bytes(cruxible, tmp_path)
 
-    mapped = cruxible.json("playbill", "orient")
+    mapped = cruxible.json(
+        "orient",
+    )
 
     assert mapped["tag"] == "playbill-orient-v1"
     (kind,) = mapped["kinds"]
@@ -33,32 +35,38 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     assert mapped["artifacts"]["claim_types"] == 1
     assert mapped["you"]["actor"] is not None
     # Rendered for the CLI: commands, not tool calls.
-    assert mapped["next"][0] == f"cruxible playbill orient --kind {KIND}"
-    assert all(line.startswith("cruxible playbill ") for line in mapped["next"])
+    assert mapped["next"][0] == f"cruxible orient --kind {KIND}"
+    assert all(line.startswith("cruxible ") for line in mapped["next"])
 
-    text = cruxible.run("playbill", "orient").stdout
+    text = cruxible.run(
+        "orient",
+    ).stdout
     assert f"  {KIND}  subjects=1" in text
     assert "    status  one  enum[blocked|done|ready]" in text
-    assert "Next:\n  cruxible playbill orient --kind " + KIND in text
+    assert "Next:\n  cruxible orient --kind " + KIND in text
 
-    detail = cruxible.json("playbill", "orient", "--kind", KIND)
+    detail = cruxible.json("orient", "--kind", KIND)
     assert detail["kind_detail"]["sample_subject_ids"] == ["wi-42"]
     assert detail["kind_detail"]["predicates"][0]["live_claims"] == 1
 
-    page = cruxible.json("playbill", "orient", "--section", "claim_types", "--limit", "1")
+    page = cruxible.json("orient", "--section", "claim_types", "--limit", "1")
     assert [row["predicate"] for row in page["claim_types"]] == [f"{KIND}.status"]
-    assert "(no procedures)" in cruxible.run("playbill", "orient", "--section", "procedures").stdout
+    assert "(no procedures)" in cruxible.run("orient", "--section", "procedures").stdout
     assert mapped["artifacts"]["interfaces"] == 0
-    assert cruxible.json("playbill", "orient", "--section", "interfaces")["interfaces"] == []
-    assert "(no interfaces)" in cruxible.run("playbill", "orient", "--section", "interfaces").stdout
+    assert cruxible.json("orient", "--section", "interfaces")["interfaces"] == []
+    assert "(no interfaces)" in cruxible.run("orient", "--section", "interfaces").stdout
     assert "floor" not in mapped
 
     # With a floor exported into this workspace, orient says where it is.
-    cruxible.json("playbill", "floor", "export")
-    floored = cruxible.json("playbill", "orient")
+    cruxible.json("floor", "export")
+    floored = cruxible.json(
+        "orient",
+    )
     assert floored["floor"] == {"at": mapped["coordinate"]["git_oid"], "generations_behind": 0}
-    text = cruxible.run("playbill", "orient").stdout
-    assert f"Floor: .playbill/floor at {mapped['coordinate']['git_oid'][:12]}, current" in text
+    text = cruxible.run(
+        "orient",
+    ).stdout
+    assert f"Floor: .cruxible/floor at {mapped['coordinate']['git_oid'][:12]}, current" in text
 
 
 def test_an_interfaces_page_prints_each_contract_and_who_implements_it() -> None:
@@ -99,7 +107,7 @@ def test_orient_refuses_a_wrong_kind_with_the_nearest_names(
     _bootstrap(cruxible, tmp_path)
     _govern_the_bytes(cruxible, tmp_path)
 
-    refused = CliRunner().invoke(cli, ["playbill", "orient", "--kind", "project.work_itm"])
+    refused = CliRunner().invoke(cli, ["orient", "--kind", "project.work_itm"])
 
     assert refused.exit_code != 0
     assert "cruxible.orient.kind_not_found" in refused.output
@@ -149,6 +157,6 @@ def test_a_stale_floor_prints_how_far_behind_it_is_and_how_to_refresh() -> None:
     )
 
     assert (
-        f"Floor: .playbill/floor at {'b' * 12}, 2 generation(s) behind; "
-        "refresh: cruxible playbill floor export --force"
+        f"Floor: .cruxible/floor at {'b' * 12}, 2 generation(s) behind; "
+        "refresh: cruxible floor export --force"
     ) in text

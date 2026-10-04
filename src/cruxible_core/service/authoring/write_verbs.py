@@ -204,10 +204,9 @@ def _render_proposal_call(
         if verb == "approve":
             who = signer or "<approver>"
             return (
-                f"cruxible playbill proposal approve {proposal_id} --signer-id {who} "
-                f"--key <{who}.ed25519>"
+                f"cruxible proposal approve {proposal_id} --signer-id {who} --key <{who}.ed25519>"
             )
-        return f"cruxible playbill proposal activate {proposal_id}"
+        return f"cruxible proposal activate {proposal_id}"
     if surface == "sdk":
         handle = f"cx.proposal({json.dumps(proposal_id)})"
         if verb == "approve":
@@ -218,16 +217,16 @@ def _render_proposal_call(
         arguments = f"proposal_id={json.dumps(proposal_id)}"
         if signer is not None:
             arguments += f", signer_id={json.dumps(signer)}"
-        return f"cruxible_playbill_approve({arguments})"
-    return f"cruxible_playbill_activate(proposal_id={json.dumps(proposal_id)})"
+        return f"cruxible_approve({arguments})"
+    return f"cruxible_activate(proposal_id={json.dumps(proposal_id)})"
 
 
 def _render_get(surface: ReadSurface, ref: str) -> str:
     if surface == "cli":
-        return f"cruxible playbill get {shlex.quote(ref)}"
+        return f"cruxible get {shlex.quote(ref)}"
     if surface == "sdk":
         return f"cx.get({json.dumps(ref)})"
-    return f"cruxible_playbill_get(ref={json.dumps(ref)})"
+    return f"cruxible_get(ref={json.dumps(ref)})"
 
 
 def _render_commit(surface: ReadSurface, git_oid: str) -> str:
@@ -1870,7 +1869,7 @@ def _render_evidence_repair(
         role = "" if change.role is None else f" --role {change.role}"
         contend = " --contend" if isinstance(change, SetChange) and change.contend else ""
         return (
-            f"cruxible playbill {verb} {shlex.quote(subject)} "
+            f"cruxible {verb} {shlex.quote(subject)} "
             f"{shlex.quote(change.field)} {shlex.quote(str(value))} "
             f"--because {shlex.quote(because)} --capture {placeholder}{role}{contend}"
         )
@@ -1895,7 +1894,7 @@ def _render_evidence_repair(
     evidence = json.dumps({"kind": "capture", "capture": placeholder})
     if isinstance(change, SetChange):
         return (
-            f"cruxible_playbill_set(subject={json.dumps(subject)}, "
+            f"cruxible_set(subject={json.dumps(subject)}, "
             f"field={json.dumps(change.field)}, value={json.dumps(value)}, "
             f"because={json.dumps(because)}, evidence={evidence})"
         )
@@ -1906,7 +1905,7 @@ def _render_evidence_repair(
         "value": value,
         "evidence": {"kind": "capture", "capture": placeholder},
     }
-    return f"cruxible_playbill_write(changes=[{json.dumps(item)}], because={json.dumps(because)})"
+    return f"cruxible_write(changes=[{json.dumps(item)}], because={json.dumps(because)})"
 
 
 def _with_verdicts(

@@ -587,7 +587,7 @@ def test_a_detach_refuses_while_a_repin_declared_block_is_registered(
         host_api._refuse_detach_with_registered_blocks("inst_declared_blocks")
     message = str(refusal.value)
     assert "corpus.runbook#held-rows" in message
-    assert "playbill block depublish" in message
+    assert "cruxible block depublish" in message
 
     _depublish(instance, source_id="corpus.runbook", block_id="held-rows")
 

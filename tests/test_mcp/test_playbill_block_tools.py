@@ -1,7 +1,7 @@
 """Q17: MCP stamps and checks projection blocks through the client-side adapter.
 
-`cruxible_playbill_block_declare` took a stamp only the client could compute.
-`cruxible_playbill_block_repin` takes the page and the block instead, and the
+`cruxible_block_declare` took a stamp only the client could compute.
+`cruxible_block_repin` takes the page and the block instead, and the
 adapter in the MCP process computes the stamp, rewrites the marker and declares
 the block -- the same SDK path the CLI's `block repin` runs.
 """
@@ -57,7 +57,7 @@ def test_repin_by_page_previews_then_stamps_and_declares(
     assert stamped.status == "repinned"
     assert stamped.stamp == preview.stamp
     assert [item["block_id"] for item in adapter.declared] == ["summary"]
-    assert b"<!-- playbill:block:summary:ref:" in (tmp_path / "runbook.md").read_bytes()
+    assert b"<!-- cruxible:block:summary:ref:" in (tmp_path / "runbook.md").read_bytes()
 
 
 def test_repin_names_its_page_exactly_once(adapter: _RepinClient) -> None:
@@ -74,10 +74,10 @@ def test_repin_names_its_page_exactly_once(adapter: _RepinClient) -> None:
 
 
 def test_the_block_tools_replace_declare_on_mcp() -> None:
-    assert "cruxible_playbill_block_declare" not in TOOL_PERMISSIONS
-    assert TOOL_PERMISSIONS["cruxible_playbill_block_repin"] == PermissionMode.GOVERNED_WRITE
-    assert TOOL_PERMISSIONS["cruxible_playbill_block_sync"] == PermissionMode.READ_ONLY
-    assert TOOL_PERMISSIONS["cruxible_playbill_block_detach"] == PermissionMode.GOVERNED_WRITE
+    assert "cruxible_block_declare" not in TOOL_PERMISSIONS
+    assert TOOL_PERMISSIONS["cruxible_block_repin"] == PermissionMode.GOVERNED_WRITE
+    assert TOOL_PERMISSIONS["cruxible_block_sync"] == PermissionMode.READ_ONLY
+    assert TOOL_PERMISSIONS["cruxible_block_detach"] == PermissionMode.GOVERNED_WRITE
 
 
 def test_a_read_only_agent_checks_blocks_but_never_edits_a_page(
@@ -100,14 +100,14 @@ def test_a_read_only_agent_checks_blocks_but_never_edits_a_page(
             await session.initialize()
             listed = await session.list_tools()
             detach = await session.call_tool(
-                "cruxible_playbill_block_detach",
+                "cruxible_block_detach",
                 {"instance_id": "inst_projection", "files": ["runbook.md"], "dry_run": False},
             )
             text = " ".join(block.text for block in detach.content if hasattr(block, "text"))
             # Extra arguments are not part of the read: whatever the caller
             # sends, the read tool has no page edit to reach.
             synced = await session.call_tool(
-                "cruxible_playbill_block_sync",
+                "cruxible_block_sync",
                 {
                     "instance_id": "inst_projection",
                     "files": ["runbook.md"],
@@ -122,8 +122,8 @@ def test_a_read_only_agent_checks_blocks_but_never_edits_a_page(
 
     schemas, (detach_refused, detach_text), _sync_error = _run(exercise())
 
-    assert schemas["cruxible_playbill_block_sync"] == {"instance_id", "files", "all_sources"}
-    assert "cruxible_playbill_block_detach" not in schemas
+    assert schemas["cruxible_block_sync"] == {"instance_id", "files", "all_sources"}
+    assert "cruxible_block_detach" not in schemas
     assert detach_refused and "GOVERNED_WRITE" in detach_text
     assert page.read_bytes() == before
     reset_permissions()
@@ -152,7 +152,7 @@ def test_detaching_previews_on_a_retired_page_and_writes_nothing(
         "detached",
         ["detached"],
     )
-    assert b"playbill:block" not in page.read_bytes()
+    assert b"cruxible:block" not in page.read_bytes()
 
 
 def _retired_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:

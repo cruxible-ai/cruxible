@@ -97,12 +97,12 @@ def mcp_approval_key_dir(environ: Mapping[str, str] | None = None) -> Path:
     raw = env.get(MCP_KEY_DIR_ENV)
     if not raw:
         raise ConfigError(
-            "cruxible_playbill_approve has no local approval key: set "
+            "cruxible_approve has no local approval key: set "
             f"{MCP_KEY_DIR_ENV} in this MCP server's environment (the env block of the MCP "
             "client config) to an absolute directory outside the workspace holding "
-            "<signer_id>.ed25519, as `cruxible playbill principal add --key-dir` writes it. "
-            "A remote signer uses cruxible_playbill_prepare_approval and "
-            "cruxible_playbill_submit_approval instead (profile full)."
+            "<signer_id>.ed25519, as `cruxible principal add --key-dir` writes it. "
+            "A remote signer uses cruxible_prepare_approval and "
+            "cruxible_submit_approval instead (profile full)."
         )
     directory = Path(raw).expanduser()
     if not directory.is_absolute():

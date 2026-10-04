@@ -37,8 +37,8 @@ def _delta(*, corrupt: bool = False) -> FloorDelta:
 
 def _workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
-    (workspace / ".playbill").mkdir(parents=True)
-    (workspace / ".playbill/coverage.json").write_text(
+    (workspace / ".cruxible").mkdir(parents=True)
+    (workspace / ".cruxible/coverage.json").write_text(
         json.dumps(
             {
                 "tag": "playbill-coverage-workspace-config-v2",
@@ -132,11 +132,11 @@ def test_floor_export_records_missing_config_and_clears_floor_missing(
         lambda: StubClient(),
     )
 
-    result = CliRunner().invoke(cli, ["playbill", "floor", "export", "--json"])
+    result = CliRunner().invoke(cli, ["floor", "export", "--json"])
 
     assert result.exit_code == 0, result.output
-    config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
-    assert config["floor_output"]["format"] == "playbill-floor-export-v5"
+    config = json.loads((workspace / ".cruxible" / "coverage.json").read_text())
+    assert config["floor_output"]["format"] == "playbill-floor-export-v6"
     observation = observe_next_workspace(workspace)
     assert observation["floor_status"] != "missing"
     assert observation["floor_status"] != "not_configured"
@@ -148,7 +148,7 @@ def test_accepted_activation_exactly_replaces_the_declared_floor(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
-    old = workspace / ".playbill/floor"
+    old = workspace / ".cruxible/floor"
     old.mkdir()
     (old / "retired-card.json").write_text("stale", encoding="utf-8")
     _install_client(monkeypatch, tmp_path)
@@ -156,7 +156,6 @@ def test_accepted_activation_exactly_replaces_the_declared_floor(
     result = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "proposal",
             "activate",
             "proposal-1",
@@ -222,12 +221,12 @@ def test_attached_sync_refusal_reports_accepted_truth_and_runnable_repair(
 
     result = CliRunner().invoke(
         cli,
-        ["playbill", "proposal", "activate", "proposal-1", "--json"],
+        ["proposal", "activate", "proposal-1", "--json"],
     )
 
     assert result.exit_code == 1
     assert json.loads(result.stdout)["status"] == "accepted"
-    assert "repair: cruxible playbill block sync --all" in result.stderr
+    assert "repair: cruxible block sync --all" in result.stderr
 
 
 def test_invalid_refresh_preserves_the_old_floor_and_reports_both_truths(
@@ -235,7 +234,7 @@ def test_invalid_refresh_preserves_the_old_floor_and_reports_both_truths(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
-    old = workspace / ".playbill/floor"
+    old = workspace / ".cruxible/floor"
     old.mkdir()
     (old / "keep.json").write_text("old", encoding="utf-8")
     _install_client(monkeypatch, tmp_path, corrupt=True)
@@ -243,7 +242,6 @@ def test_invalid_refresh_preserves_the_old_floor_and_reports_both_truths(
     result = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "proposal",
             "activate",
             "proposal-1",
@@ -273,7 +271,6 @@ def test_lost_cas_retry_safely_refreshes_the_current_floor(
     result = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "proposal",
             "activate",
             "proposal-1",
@@ -288,7 +285,7 @@ def test_lost_cas_retry_safely_refreshes_the_current_floor(
     payload = json.loads(result.stdout)
     assert payload["status"] == "lost_cas"
     assert payload["floor_refresh"]["status"] == "refreshed"
-    assert (workspace / ".playbill/floor/cards/fresh.json").exists()
+    assert (workspace / ".cruxible/floor/cards/fresh.json").exists()
 
 
 def test_activation_renders_malformed_proposal_id_as_typed_refusal(
@@ -319,7 +316,7 @@ def test_activation_renders_malformed_proposal_id_as_typed_refusal(
 
     result = CliRunner().invoke(
         cli,
-        ["playbill", "proposal", "activate", "bogus-no-prefix", "--json"],
+        ["proposal", "activate", "bogus-no-prefix", "--json"],
     )
 
     assert result.exit_code == 1
@@ -335,13 +332,12 @@ def test_floor_symlink_may_not_escape_the_workspace(
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "keep.json").write_text("outside", encoding="utf-8")
-    (workspace / ".playbill/floor").symlink_to(outside, target_is_directory=True)
+    (workspace / ".cruxible/floor").symlink_to(outside, target_is_directory=True)
     _install_client(monkeypatch, tmp_path)
 
     result = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "proposal",
             "activate",
             "proposal-1",

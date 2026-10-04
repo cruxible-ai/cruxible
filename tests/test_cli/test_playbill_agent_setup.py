@@ -94,11 +94,10 @@ def test_principal_add_registers_an_agent_and_writes_its_settings_with_auth_off(
     daemon: Any, tmp_path: Path
 ) -> None:
     owner_dir, agent_dir = tmp_path / "owner", tmp_path / "agent-b"
-    made = _run("playbill", "init", "--key-dir", str(owner_dir), "--principal-id", "owner")
+    made = _run("init", "--key-dir", str(owner_dir), "--principal-id", "owner")
     assert made.exit_code == 0, made.output
 
     added = _run(
-        "playbill",
         "principal",
         "add",
         "agent-b",
@@ -120,7 +119,7 @@ def test_principal_add_registers_an_agent_and_writes_its_settings_with_auth_off(
     assert settings["CRUXIBLE_PRINCIPAL_KEY"] == str((agent_dir / "agent-b.ed25519").resolve())
     # Auth off: the principal ID is the identity; no bearer credential is minted.
     assert "CRUXIBLE_SERVER_BEARER_TOKEN" not in settings
-    who = _run("playbill", "whoami", "--json", principal="agent-b")
+    who = _run("whoami", "--json", principal="agent-b")
     assert who.exit_code == 0, who.output
     identity = json.loads(who.stdout)
     assert identity["actor_id"] == "agent-b"
@@ -132,13 +131,9 @@ def test_principal_add_without_a_signer_key_proposes_and_names_each_next_step(
     daemon: Any, tmp_path: Path
 ) -> None:
     owner_dir = tmp_path / "owner"
-    assert (
-        _run("playbill", "init", "--key-dir", str(owner_dir), "--principal-id", "owner").exit_code
-        == 0
-    )
+    assert _run("init", "--key-dir", str(owner_dir), "--principal-id", "owner").exit_code == 0
 
     added = _run(
-        "playbill",
         "principal",
         "add",
         "agent-b",
@@ -149,8 +144,8 @@ def test_principal_add_without_a_signer_key_proposes_and_names_each_next_step(
 
     assert added.exit_code == 0, added.output
     assert "Principal agent-b: proposed, not yet active" in added.output
-    assert "Next: cruxible playbill proposal approve sha256:" in added.output
-    assert "Next: cruxible playbill proposal activate sha256:" in added.output
+    assert "Next: cruxible proposal approve sha256:" in added.output
+    assert "Next: cruxible proposal activate sha256:" in added.output
     assert "cruxible credential mint --principal-id agent-b --key-dir" in added.output
 
 
@@ -167,16 +162,14 @@ def test_a_networked_owner_adds_a_propose_only_agent_in_one_command(
     monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", operator.token)
     owner_dir, agent_dir = tmp_path / "owner", tmp_path / "agent-b"
 
-    made = _run("playbill", "init", "--key-dir", str(owner_dir), "--principal-id", "owner")
+    made = _run("init", "--key-dir", str(owner_dir), "--principal-id", "owner")
     assert made.exit_code == 0, made.output
     owner = _settings(owner_dir / "cruxible.env")
     assert owner["CRUXIBLE_SERVER_BEARER_TOKEN"] not in made.output
     monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", owner["CRUXIBLE_SERVER_BEARER_TOKEN"])
     monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY", owner["CRUXIBLE_PRINCIPAL_KEY"])
 
-    added = _run(
-        "playbill", "principal", "add", "agent-b", "--key-dir", str(agent_dir), principal="owner"
-    )
+    added = _run("principal", "add", "agent-b", "--key-dir", str(agent_dir), principal="owner")
 
     assert added.exit_code == 0, added.output
     assert "Principal agent-b: registered and active" in added.output
@@ -185,7 +178,6 @@ def test_a_networked_owner_adds_a_propose_only_agent_in_one_command(
     assert agent["CRUXIBLE_SERVER_BEARER_TOKEN"] not in added.output
     monkeypatch.delenv("CRUXIBLE_PRINCIPAL_KEY")
     pending = _run(
-        "playbill",
         "principal",
         "add",
         "agent-c",
@@ -197,14 +189,14 @@ def test_a_networked_owner_adds_a_propose_only_agent_in_one_command(
     assert pending.exit_code == 0, pending.output
     pending_id = json.loads(pending.stdout)["proposal_id"]
     monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", agent["CRUXIBLE_SERVER_BEARER_TOKEN"])
-    who = _run("playbill", "whoami", "--json", principal="agent-b")
+    who = _run("whoami", "--json", principal="agent-b")
     assert who.exit_code == 0, who.output
     identity = json.loads(who.stdout)
     assert identity["actor_id"] == "agent-b"
     assert identity["actor_id_source"] == "runtime_credential"
     assert identity["credential_permission_mode"] == "governed_write"
     # Propose-only: the credential's tier refuses activation outright.
-    refused = _run("playbill", "proposal", "activate", pending_id)
+    refused = _run("proposal", "activate", pending_id)
     assert refused.exit_code != 0
     assert "PermissionDeniedError" in refused.output
     assert "GRAPH_WRITE" in refused.output

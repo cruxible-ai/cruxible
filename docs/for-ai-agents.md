@@ -28,8 +28,8 @@ Read with three verbs, cheapest first:
    and Claim counts, who you are, what needs attention, and the next calls;
    `orient(kind=K)` widens one kind and `orient(section=S)` pages one family
    (documents, queries, interfaces, principals, policies, runs, ...);
-2. to find something by name, grep the floor (`.playbill/floor/`, which
-   `cruxible playbill floor export` writes) and take the ref a hit names;
+2. to find something by name, grep the floor (`.cruxible/floor/`, which
+   `cruxible floor export` writes) and take the ref a hit names;
    without a shell, `query(contains=...)` searches Claim values;
 3. `query` answers a question as rows of values with verdict flags: a Subject
    kind with `where`, `select` and `follow`, or a named query;
@@ -99,12 +99,12 @@ When you only need values and verdicts -- a status table, a checklist, a view --
 use `world.values(subjects=(...), predicates=(...))`: one `query` per Subject
 kind that returns each live Claim's subject, predicate, Claim ID, value,
 verdict, status and role without full Claim views. The CLI
-(`cruxible playbill query KIND --select P --claims`) and MCP
-(`cruxible_playbill_query` with `claims: true`) expose the same read for every
+(`cruxible query KIND --select P --claims`) and MCP
+(`cruxible_query` with `claims: true`) expose the same read for every
 Subject of one kind; `status` adds Claims resolution overturned or refused, or
 retired ones.
 To read one thing you have a reference to, use `get`: `cx.get(ref,
-detail=...)`, `cruxible playbill get REF`, or `cruxible_playbill_get`. It takes
+detail=...)`, `cruxible get REF`, or `cruxible_get`. It takes
 any reference form you have seen (a Claim id or prefix, `kind/id`, a predicate,
 `Document:<name>`, `Principal:<id>`, `ProviderInterface:<name>`, a proposal id,
 ...), answers values first with verdict flags,
@@ -117,7 +117,7 @@ receipt (the Claims each row read, paths, verdict), checking truncation before
 assuming completeness; `query(name=..., receipt="full")` carries the same
 receipt.
 To ask any question over accepted state in one call, use `query`: MCP
-`cruxible_playbill_query`, CLI `cruxible playbill query KIND --where 'f=v'`, SDK
+`cruxible_query`, CLI `cruxible query KIND --where 'f=v'`, SDK
 `cx.query(kind, where=[{"field": ..., "eq": ...}], select=[...])` or the typed
 `w.<ns>.<kind>.where(field=value, other__ne=value).select("field")`. Rows lead
 with values and carry `flags` (`stale`, `contested`, `contradicted`,
@@ -141,7 +141,7 @@ and a Subject kind -- which the vocabulary above happens not to contain -- the
 predicate wins attribute access and the kind is reached as `w.kind("dev.batch")`
 or as that predicate's own `.as_kind`.
 
-`cruxible playbill world stub --out world.pyi` writes the world down as types,
+`cruxible stub --out world.pyi` writes the world down as types,
 stamped with the coordinate it was read at, so an editor and a model both
 complete the real vocabulary instead of `Any`. The generated classes are closed,
 so a misspelled kind, Subject, predicate or enum member is a type error rather
@@ -197,7 +197,7 @@ into the source it was authored from is the overlap the two-block-kinds law
 refuses, and the `publish_to` option that did it is gone; a passage that states a
 Claim is a source block (write the prose, capture the page, cite the span), and a
 passage that reflects several accepted Claims is a projection block declared with
-`playbill block repin`.
+`cruxible block repin`.
 
 ### Evolving vocabulary in one generation
 
@@ -237,7 +237,7 @@ answered with a warning. A change set parses it and always refuses typed --
 `cruxible.authoring.claim_type_succession_disposition_deprecated`, whose repair
 names both roads -- because lowering has no warning channel, so admitting the
 word would coerce it silently. Say `retire` with a reason, or take the
-succession to `cruxible playbill claim-type migrate`.
+succession to `cruxible claim-type migrate`.
 
 A re-authored dependent keeps its own identity, its slot -- the Subject it is
 about and the predicate it speaks -- and its exact predecessor digest: the
@@ -262,10 +262,10 @@ the succession lands and the re-grading is visible in the dependent's admission
 accounts afterwards. A successor whose policy admits no accepted capture
 contract is linted on both roads: preflight carries the same
 `cruxible.claim_type.evidence_policy_admits_no_accepted_contract` warning
-`cruxible playbill claim-type migrate` reports, in the result's `lint`, as a
+`cruxible claim-type migrate` reports, in the result's `lint`, as a
 warning rather than a refusal.
 
-`cruxible playbill claim-type migrate` remains the operator form of the same
+`cruxible claim-type migrate` remains the operator form of the same
 law -- one succession, no siblings to re-author. Both roads build the candidate
 with the same function, so `carry` and `retire` produce the same bytes whichever
 road authored them. `re_author` has no operator analogue by design: the
@@ -328,13 +328,13 @@ attached workspace on every proposal, so a reviewer diffs the candidate against
 accepted state with standard tooling:
 
 ~~~text
-git diff playbill/accepted...playbill/proposals/<proposal-id>
+git diff cruxible-ledger/accepted...cruxible-ledger/proposals/<proposal-id>
 ~~~
 
 The candidate commit's message is the change set's own summary -- what it does,
 then one line per member -- and the daemon's records are attached to the SAME
 commit the branch points at, as Git notes read by name (`git notes
---ref=refs/notes/playbill-eval show playbill/proposals/<proposal-id>`; from a
+--ref=refs/notes/playbill-eval show cruxible-ledger/proposals/<proposal-id>`; from a
 clone of the mirror, `git fetch origin '+refs/notes/*:refs/notes/*'` first): `refs/notes/playbill-eval` carries the admission and the
 evaluation verdict with every diagnostic behind a refusal, and
 `refs/notes/playbill-approval` carries the canonical approval list with each
@@ -359,13 +359,13 @@ evaluated candidate. Use the id `proposal list` prints.
 
 An agent with no attached workspace reads the same refs from the ledger mirror.
 `orient --json` carries `mirror_url` when the instance publishes to
-one, and `playbill ledger clone-url` asks for it directly; clone that, and
+one, and `cruxible ledger clone-url` asks for it directly; clone that, and
 `origin/main` is accepted state while `origin/proposals/<proposal-id>` is the
 candidate. Local write completion does not imply remote visibility. Before a
-remote review, run `playbill ledger publish --json` and require non-null
+remote review, run `cruxible ledger publish --json` and require non-null
 `wait_sequence` with `published_sequence >= wait_sequence`; retry or inspect
 `detail` if the bounded wait is unacknowledged. The background publisher combines
-pending work and reports it in the `ledger_mirror` facet of `playbill next`'s
+pending work and reports it in the `ledger_mirror` facet of `cruxible next`'s
 `status` (`publishing` while in flight, `behind` after a failure). Publication receipts name the exact acknowledged ref snapshot.
 
 The change set's own summary reaches that commit only if a door carried one.
@@ -551,8 +551,8 @@ Approval signs locally and sends only the public attestation:
 - the client signs it with a local key;
 - submit_approval sends only the public attestation.
 
-The CLI command playbill proposal approve and the MCP tool
-cruxible_playbill_approve perform those steps in one call without exposing the
+The CLI command cruxible proposal approve and the MCP tool
+cruxible_approve perform those steps in one call without exposing the
 key to the daemon; the MCP tool signs with a key from the server's
 CRUXIBLE_MCP_KEY_DIR. prepare_approval and submit_approval stay in the full
 MCP profile for a signer outside the MCP process.

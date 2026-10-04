@@ -263,8 +263,8 @@ class _Client:
 
 
 def _workspace(path: Path) -> None:
-    (path / ".playbill").mkdir()
-    (path / ".playbill" / "sources.yaml").write_text(
+    (path / ".cruxible").mkdir()
+    (path / ".cruxible" / "sources.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -412,7 +412,7 @@ def test_sdk_declared_block_refuses_every_citation_role_inside_it(
         b"A second preamble line.\n"
         + render_projection_opening(stamp)
         + body
-        + b"<!-- /playbill:block:policy -->\n"
+        + b"<!-- /cruxible:block:policy -->\n"
     )
     source.write_bytes(page)
     pb = Cruxible._from_client(  # type: ignore[arg-type]

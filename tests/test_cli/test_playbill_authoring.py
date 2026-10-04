@@ -103,7 +103,6 @@ def test_cli_line_run_forwards_only_the_occurrence_assertion(monkeypatch) -> Non
             "https://line.example.test",
             "--instance-id",
             "inst_line",
-            "playbill",
             "line",
             "run",
             digest,
@@ -164,7 +163,6 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
         "https://authoring.example.test",
         "--instance-id",
         "inst_authoring",
-        "playbill",
         "authoring",
     ]
     compiled = runner.invoke(cli, [*common, "compile", str(payload), "--json"])
@@ -230,7 +228,6 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
             "https://authoring.example.test",
             "--instance-id",
             "inst_authoring",
-            "playbill",
             "claim-type",
             "propose",
             "--input",
@@ -249,7 +246,7 @@ def test_cli_claim_type_template_is_complete_model_generated_and_local(monkeypat
         lambda: (_ for _ in ()).throw(AssertionError("template must not contact the daemon")),
     )
 
-    result = CliRunner().invoke(cli, ["playbill", "claim-type", "propose", "--template"])
+    result = CliRunner().invoke(cli, ["claim-type", "propose", "--template"])
 
     assert result.exit_code == 0, result.output
     rendered = ClaimTypeInputRecord.model_validate(json.loads(result.stdout))
@@ -263,10 +260,10 @@ def test_cli_claim_type_template_is_complete_model_generated_and_local(monkeypat
 def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     runner = CliRunner()
 
-    claim_type_help = runner.invoke(cli, ["playbill", "claim-type", "propose", "--help"])
-    claim_type_example = runner.invoke(cli, ["playbill", "claim-type", "propose", "--example"])
-    claim_type_missing = runner.invoke(cli, ["playbill", "claim-type", "propose"])
-    create_help = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
+    claim_type_help = runner.invoke(cli, ["claim-type", "propose", "--help"])
+    claim_type_example = runner.invoke(cli, ["claim-type", "propose", "--example"])
+    claim_type_missing = runner.invoke(cli, ["claim-type", "propose"])
+    create_help = runner.invoke(cli, ["authoring", "create", "--help"])
 
     assert claim_type_help.exit_code == 0, claim_type_help.output
     assert "--template" in claim_type_help.output
@@ -311,7 +308,6 @@ def test_cli_refused_stale_preflight_teaches_rebase_not_resume(monkeypatch) -> N
             "https://authoring.example.test",
             "--instance-id",
             "inst_authoring",
-            "playbill",
             "authoring",
             "preflight",
             INTENT_ID,
@@ -320,7 +316,7 @@ def test_cli_refused_stale_preflight_teaches_rebase_not_resume(monkeypatch) -> N
     )
 
     assert result.exit_code == 0, result.output
-    assert f"playbill authoring rebase {INTENT_ID}" in result.stderr
+    assert f"cruxible authoring rebase {INTENT_ID}" in result.stderr
     assert "resume does not advance" in result.stderr
 
 
@@ -378,7 +374,6 @@ def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
             "https://authoring.example.test",
             "--instance-id",
             "inst_authoring",
-            "playbill",
             "claim-type",
             "migrate",
             str(payload),
@@ -396,7 +391,6 @@ def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
             "https://authoring.example.test",
             "--instance-id",
             "inst_authoring",
-            "playbill",
             "claim-type",
             "migrate",
             str(payload),
@@ -453,7 +447,6 @@ def test_cli_claim_type_migration_submit_names_the_proposal_and_next_step(
             "https://authoring.example.test",
             "--instance-id",
             "inst_authoring",
-            "playbill",
             "claim-type",
             "migrate",
             str(payload),
@@ -462,7 +455,7 @@ def test_cli_claim_type_migration_submit_names_the_proposal_and_next_step(
 
     assert result.exit_code == 0, result.output
     assert f"Proposal: {proposal_id}" in result.stdout
-    assert f"Next: cruxible playbill proposal approve {proposal_id}" in result.stdout
+    assert f"Next: cruxible proposal approve {proposal_id}" in result.stdout
 
 
 def test_cli_status_is_a_read_and_emits_no_write_target(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -484,7 +477,6 @@ def test_cli_status_is_a_read_and_emits_no_write_target(monkeypatch) -> None:  #
             "https://authoring.example.test",
             "--instance-id",
             "inst_authoring",
-            "playbill",
             "authoring",
             "status",
             INTENT_ID,
@@ -549,7 +541,6 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
         "https://authoring.example.test",
         "--instance-id",
         "inst_authoring",
-        "playbill",
     ]
     runner = CliRunner()
     identity = runner.invoke(cli, [*base, "whoami"])
@@ -596,7 +587,6 @@ def test_cli_insertion_abandon_uses_the_opaque_intent(
         "https://authoring.example.test",
         "--instance-id",
         "inst_authoring",
-        "playbill",
         "authoring",
     ]
     runner = CliRunner()
@@ -616,7 +606,7 @@ def test_cli_insertion_abandon_uses_the_opaque_intent(
 
 def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     runner = CliRunner()
-    help_result = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
+    help_result = runner.invoke(cli, ["authoring", "create", "--help"])
     assert help_result.exit_code == 0
     assert "Input kind family: claim | procedure | subject | query_definition" in help_result.output
     # Click wraps the family list, so read it as a list rather than by substring:
@@ -657,7 +647,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         "change-set",
         "claim-type-succession",
     ):
-        result = runner.invoke(cli, ["playbill", "authoring", "create", "--example", name])
+        result = runner.invoke(cli, ["authoring", "create", "--example", name])
         assert result.exit_code == 0, result.output
         # A note (cron's UTC reading) goes to stderr: stdout is one JSON document.
         payload = json.loads(result.stdout)
@@ -731,7 +721,7 @@ def test_cli_create_help_names_only_kinds_the_discriminators_admit() -> None:
 
     top_level = TypeAdapter(AuthoringInput)
     member = TypeAdapter(AuthoringChangeSetMemberInput)
-    help_output = CliRunner().invoke(cli, ["playbill", "authoring", "create", "--help"]).output
+    help_output = CliRunner().invoke(cli, ["authoring", "create", "--help"]).output
     member_kinds = _input_kinds(AuthoringChangeSetMemberInput)
     singleton_only = {item.kind for item in CHANGE_SET_SINGLETON_ONLY_MEMBERS}
     assert singleton_only and singleton_only < member_kinds
@@ -770,8 +760,8 @@ def test_cli_create_help_names_only_kinds_the_discriminators_admit() -> None:
 
 def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
     runner = CliRunner()
-    document = runner.invoke(cli, ["playbill", "document", "propose", "--help"])
-    claim_type = runner.invoke(cli, ["playbill", "claim-type", "propose", "--help"])
+    document = runner.invoke(cli, ["document", "propose", "--help"])
+    claim_type = runner.invoke(cli, ["claim-type", "propose", "--help"])
 
     assert document.exit_code == 0
     assert "sanctioned command-local Document proposal path" in document.output
@@ -779,10 +769,10 @@ def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
     assert claim_type.exit_code == 0
     assert "sanctioned typed-input ClaimType proposal path" in claim_type.output
     assert "Deprecated" not in claim_type.output
-    removed = runner.invoke(cli, ["playbill", "subject", "propose"])
+    removed = runner.invoke(cli, ["subject", "propose"])
     assert removed.exit_code != 0
     assert "No such command 'subject'" in removed.output
-    # `playbill query KIND` answers a query itself, so `propose` is read as a
+    # `cruxible query KIND` answers a query itself, so `propose` is read as a
     # kind there; what matters is that query has no subcommands at all.
     from cruxible_core.cli.commands.playbill import query_group
 
@@ -820,7 +810,7 @@ def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
 def test_cli_attestation_door_example_options_refuse_incomplete_or_wrong_hints(
     arguments: list[str],
 ) -> None:
-    result = CliRunner().invoke(cli, ["playbill", "authoring", "create", *arguments])
+    result = CliRunner().invoke(cli, ["authoring", "create", *arguments])
     assert result.exit_code == 2
 
 
@@ -828,7 +818,6 @@ def test_cli_attestation_door_example_accepts_both_hints() -> None:
     result = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "authoring",
             "create",
             "--example",
@@ -856,7 +845,7 @@ def test_cli_payload_file_refuses_attestation_example_hints(
 
     result = CliRunner().invoke(
         cli,
-        ["playbill", "authoring", "create", str(payload), hint, value],
+        ["authoring", "create", str(payload), hint, value],
     )
 
     assert result.exit_code == 2
@@ -894,7 +883,7 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
     try:
         with TestClient(create_app()) as transport:
             initialized = transport.post(
-                f"/api/v1/{instance_id}/playbill/init",
+                f"/api/v1/{instance_id}/init",
                 json={
                     "principals": [
                         owner.principal.model_dump(mode="json"),
@@ -916,7 +905,6 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
                     "http://cruxible",
                     "--instance-id",
                     instance_id,
-                    "playbill",
                     "authoring",
                     "create",
                     str(payload),
@@ -929,7 +917,7 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
 
     assert result.exit_code == 1
     assert "cruxible.authoring.working_selection_requires_bind" in result.stderr
-    assert "Run playbill authoring bind" in result.stderr
+    assert "Run cruxible authoring bind" in result.stderr
     assert "internal server error" not in result.stderr
 
 
@@ -956,7 +944,6 @@ def test_cli_validation_names_field_path_and_matching_example(tmp_path: Path) ->
             "https://authoring.example.test",
             "--instance-id",
             "inst_authoring",
-            "playbill",
             "authoring",
             "create",
             str(payload),
@@ -965,7 +952,7 @@ def test_cli_validation_names_field_path_and_matching_example(tmp_path: Path) ->
 
     assert result.exit_code == 1
     assert "$.claim.source.self_source.body" in result.output
-    assert "playbill authoring create --example claim-self-source" in result.output
+    assert "cruxible authoring create --example claim-self-source" in result.output
 
 
 def test_cli_bind_derives_observation_and_compiles(
@@ -1005,7 +992,6 @@ def test_cli_bind_derives_observation_and_compiles(
             "https://authoring.example.test",
             "--instance-id",
             "inst_authoring",
-            "playbill",
             "authoring",
             "bind",
             "--file",
@@ -1046,7 +1032,6 @@ def test_cli_bind_ambiguity_reports_candidate_offsets_without_calling_daemon(
     result = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "authoring",
             "bind",
             "--file",
@@ -1083,7 +1068,6 @@ def test_cli_bind_missing_anchor_has_no_occurrence_repair_hint(
     result = CliRunner().invoke(
         cli,
         [
-            "playbill",
             "authoring",
             "bind",
             "--file",
@@ -1139,7 +1123,6 @@ def test_cli_bind_occurrence_selects_one_ambiguous_anchor(
             "https://authoring.example.test",
             "--instance-id",
             "inst_authoring",
-            "playbill",
             "authoring",
             "bind",
             "--file",
@@ -1181,7 +1164,7 @@ def test_cli_bind_declared_block_refuses_every_role(
         body_digest="sha256:" + hashlib.sha256(body).hexdigest(),
     )
     source.write_bytes(
-        render_projection_opening(stamp) + body + b"<!-- /playbill:block:status -->\n"
+        render_projection_opening(stamp) + body + b"<!-- /cruxible:block:status -->\n"
     )
     stub = claim_self_source_example().model_dump(mode="json")
     stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
@@ -1213,7 +1196,6 @@ def test_cli_bind_declared_block_refuses_every_role(
             "https://authoring.example.test",
             "--instance-id",
             "inst_authoring",
-            "playbill",
             "authoring",
             "bind",
             "--file",

@@ -74,11 +74,9 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
         if surface == "cli":
             payload_file = tmp_path / "query.json"
             payload_file.write_text(input.model_dump_json())
-            compiled = invoke("playbill", "authoring", "compile", str(payload_file))
+            compiled = invoke("authoring", "compile", str(payload_file))
             assert compiled["verdict"] == "passed", compiled
-            submitted = invoke(
-                "playbill", "authoring", "submit", compiled["certificate"]["intent_id"]
-            )
+            submitted = invoke("authoring", "submit", compiled["certificate"]["intent_id"])
         else:
             compiled = handlers.handle_playbill_authoring_compile(
                 instance_id, input.model_dump(mode="json"), intent_id=None
@@ -100,7 +98,7 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
     name = definition.query_definition.identity.name
     if surface == "cli":
         page = api.QueryResultRecord.model_validate(
-            invoke("playbill", "query", "--name", name, "--receipt", "full")
+            invoke("query", "--name", name, "--receipt", "full")
         )
         result = _run(page, name)
     elif surface == "mcp":

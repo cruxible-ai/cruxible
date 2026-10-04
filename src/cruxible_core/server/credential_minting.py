@@ -157,7 +157,7 @@ def _principal_authority(
             "runtime_credential.principal_not_ordinary",
             f"principal {principal_id!r} is a {registered.kind} principal, and only ordinary "
             "principals hold credentials; repair: mint for an ordinary principal "
-            "(`cruxible playbill orient --section principals`)",
+            "(`cruxible orient --section principals`)",
             repair=RepairOperation(
                 operation="cruxible.orient", arguments={"section": "principals"}
             ),

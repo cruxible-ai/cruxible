@@ -1,4 +1,4 @@
-"""`cruxible playbill get REF`: values per kind as text, the whole result as JSON."""
+"""`cruxible get REF`: values per kind as text, the whole result as JSON."""
 
 from __future__ import annotations
 
@@ -78,19 +78,19 @@ def test_a_subject_prints_its_claims_as_an_aligned_value_table(
                     ),
                 ),
                 incoming_count=2,
-                next=("cruxible playbill get dev.roadmap_item/x --detail why",),
+                next=("cruxible get dev.roadmap_item/x --detail why",),
             ),
         ),
     )
 
-    result = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "dev.roadmap_item/x"])
+    result = CliRunner().invoke(cli, [*PREFIX, "get", "dev.roadmap_item/x"])
 
     assert result.exit_code == 0, result.output
     assert stub.requests[0].surface == "cli" and stub.requests[0].detail == "summary"
     assert "dev.roadmap_item/x  (live, 2 incoming)" in result.output
     assert "  adoption_state  adopted" in result.output
     assert "  task_title      Ship it  [stale]" in result.output
-    assert "next: cruxible playbill get dev.roadmap_item/x --detail why" in result.output
+    assert "next: cruxible get dev.roadmap_item/x --detail why" in result.output
 
 
 def test_a_claim_prints_its_value_and_verdict_and_json_carries_everything(
@@ -109,8 +109,8 @@ def test_a_claim_prints_its_value_and_verdict_and_json_carries_everything(
     )
     _stub(monkeypatch, _result("claim", card=card))
 
-    text = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "CLM-aaaaaaaa"])
-    raw = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "CLM-aaaaaaaa", "--json"])
+    text = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-aaaaaaaa"])
+    raw = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-aaaaaaaa", "--json"])
 
     assert text.exit_code == 0, text.output
     assert "dev.roadmap_item/x  adoption_state = adopted" in text.output
@@ -138,7 +138,7 @@ def test_body_takes_a_byte_range_and_prints_the_bytes(monkeypatch: pytest.Monkey
 
     result = CliRunner().invoke(
         cli,
-        [*PREFIX, "playbill", "get", "Document:design", "--detail", "body", "--range", "0:10"],
+        [*PREFIX, "get", "Document:design", "--detail", "body", "--range", "0:10"],
     )
 
     assert result.exit_code == 0, result.output
@@ -153,12 +153,12 @@ def test_a_malformed_range_is_a_usage_error_with_an_example(
     _stub(monkeypatch, _result("document"))
 
     result = CliRunner().invoke(
-        cli, [*PREFIX, "playbill", "get", "Document:design", "--detail", "body", "--range", "x"]
+        cli, [*PREFIX, "get", "Document:design", "--detail", "body", "--range", "x"]
     )
 
     assert result.exit_code == 2
     assert "range must be start:end" in result.output
-    assert "example: cruxible playbill get" in result.output
+    assert "example: cruxible get" in result.output
 
 
 def test_other_cards_print_names_whole_and_nested_rows_readably(
@@ -178,17 +178,17 @@ def test_other_cards_print_names_whole_and_nested_rows_readably(
                 status="open",
                 verdict="candidate",
                 changes=(GetProposalChange(path="documents/design.json", change="create"),),
-                next=("cruxible playbill proposal review sha256:" + "1" * 64,),
+                next=("cruxible proposal review sha256:" + "1" * 64,),
             ),
         ),
     )
 
-    result = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "sha256:11111111"])
+    result = CliRunner().invoke(cli, [*PREFIX, "get", "sha256:11111111"])
 
     assert result.exit_code == 0, result.output
     assert "status: open" in result.output
     assert "changes:\n  documents/design.json  create" in result.output
-    assert "next: cruxible playbill proposal review sha256:" in result.output
+    assert "next: cruxible proposal review sha256:" in result.output
 
 
 def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
@@ -224,13 +224,13 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     )
 
     paged = CliRunner().invoke(
-        cli, [*PREFIX, "playbill", "get", "CLM-aaaa", "--detail", "history", "--limit", "1"]
+        cli, [*PREFIX, "get", "CLM-aaaa", "--detail", "history", "--limit", "1"]
     )
 
     assert paged.exit_code == 0, paged.output
     assert stub.requests[0].limit == 1 and stub.requests[0].cursor is None
     assert f"rev 3  seq 9 at {'9' * 12}" in paged.output
-    assert "next: cruxible playbill get CLM-aaaa --detail history --cursor CURSOR" in paged.output
+    assert "next: cruxible get CLM-aaaa --detail history --cursor CURSOR" in paged.output
 
     long_row = GetSubjectClaim(
         predicate="note",
@@ -250,8 +250,8 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
             ),
         ),
     )
-    summary = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "dev.roadmap_item/x"])
-    as_json = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "dev.roadmap_item/x", "--json"])
+    summary = CliRunner().invoke(cli, [*PREFIX, "get", "dev.roadmap_item/x"])
+    as_json = CliRunner().invoke(cli, [*PREFIX, "get", "dev.roadmap_item/x", "--json"])
 
     assert summary.exit_code == 0, summary.output
     assert "(900 chars; --detail evidence for all)" in summary.output
@@ -288,7 +288,7 @@ def test_exact_content_prints_as_text_and_a_marker_says_why_when_it_cannot(
         incoming_count=0,
     )
     _stub(monkeypatch, _result("subject", card=card))
-    text = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "legal.case/c-1"])
+    text = CliRunner().invoke(cli, [*PREFIX, "get", "legal.case/c-1"])
 
     assert text.exit_code == 0, text.output
     assert "  ruling   Affirmed." in text.output
@@ -298,7 +298,7 @@ def test_exact_content_prints_as_text_and_a_marker_says_why_when_it_cannot(
         value="Affirmed, in full.", content_digest=digest, captures=(), attestations=()
     )
     _stub(monkeypatch, _result("claim", detail="evidence", evidence=evidence))
-    whole = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "CLM-1", "--detail", "evidence"])
+    whole = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "evidence"])
 
     assert whole.exit_code == 0, whole.output
     assert "value: Affirmed, in full." in whole.output
@@ -335,7 +335,7 @@ def test_cli_display_cuts_offer_runnable_evidence_even_below_the_summary_limit(
         (claim.claim_id, "summary", 120),
         (claim.claim_id, "history", 80),
     ):
-        result = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", ref, "--detail", detail])
+        result = CliRunner().invoke(cli, [*PREFIX, "get", ref, "--detail", detail])
         assert result.exit_code == 0, result.output
         assert (
             f"{printable(value)[: width - 1]}… ({len(value)} chars; --detail evidence for all)"
@@ -383,7 +383,7 @@ def test_cli_value_width_boundary_and_evidence_objects_are_not_silently_cut(
             ),
         ),
     )
-    result = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "CLM-1", "--detail", "evidence"])
+    result = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "evidence"])
     assert result.exit_code == 0, result.output
     assert "value: " + json.dumps(value) in result.output
     assert "--detail evidence for all" not in result.output
@@ -429,7 +429,7 @@ def test_output_writes_a_whole_binary_body_across_ranges(
 
     result = CliRunner().invoke(
         cli,
-        [*PREFIX, "playbill", "get", "Document:blob", "--detail", "body", "--output", str(target)],
+        [*PREFIX, "get", "Document:blob", "--detail", "body", "--output", str(target)],
     )
 
     assert result.exit_code == 0, result.output
@@ -438,6 +438,6 @@ def test_output_writes_a_whole_binary_body_across_ranges(
     # Every range after the first is read at the first read's coordinate.
     assert client.requests[1].at == COORDINATE.git_oid
     refused = CliRunner().invoke(
-        cli, [*PREFIX, "playbill", "get", "Document:blob", "--output", str(tmp_path / "x")]
+        cli, [*PREFIX, "get", "Document:blob", "--output", str(tmp_path / "x")]
     )
     assert refused.exit_code != 0 and "--detail body" in refused.output

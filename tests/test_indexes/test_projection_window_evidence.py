@@ -101,7 +101,7 @@ def _page(*, source_id: str = SOURCE_ID) -> bytes:
         PROSE
         + render_projection_opening(_stamp(source_id=source_id))
         + BLOCK_BODY
-        + b"<!-- /playbill:block:status -->\n"
+        + b"<!-- /cruxible:block:status -->\n"
         + b"trailing prose the author also wrote\n"
     )
 
@@ -206,7 +206,7 @@ def test_a_selection_that_spans_the_marker_refuses_too(tmp_path: Path) -> None:
     verdict, codes = _preflight_codes(
         coordinator,
         actor,
-        _selection_payload(page, anchor=b"ready\n<!-- playbill", citation_role="evidence"),
+        _selection_payload(page, anchor=b"ready\n<!-- cruxible", citation_role="evidence"),
     )
 
     assert verdict == "refused"

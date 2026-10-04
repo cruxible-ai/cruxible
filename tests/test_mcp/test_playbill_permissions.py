@@ -21,18 +21,18 @@ def _tool_names() -> set[str]:
 
 
 _DEFAULT_PROFILE = {
-    "cruxible_playbill_next",
-    "cruxible_playbill_get",
-    "cruxible_playbill_query",
-    "cruxible_playbill_set",
-    "cruxible_playbill_retire",
-    "cruxible_playbill_write",
-    "cruxible_playbill_proposal_list",
-    "cruxible_playbill_review",
-    "cruxible_playbill_approve",
-    "cruxible_playbill_activate",
-    "cruxible_playbill_orient",
-    "cruxible_playbill_whoami",
+    "cruxible_next",
+    "cruxible_get",
+    "cruxible_query",
+    "cruxible_set",
+    "cruxible_retire",
+    "cruxible_write",
+    "cruxible_proposal_list",
+    "cruxible_review",
+    "cruxible_approve",
+    "cruxible_activate",
+    "cruxible_orient",
+    "cruxible_whoami",
     "cruxible_server_info",
 }
 
@@ -64,13 +64,13 @@ def test_the_write_verbs_replace_the_authoring_tools_in_the_default_profile(
     reset_permissions()
     names = _tool_names()
 
-    assert {"cruxible_playbill_set", "cruxible_playbill_retire", "cruxible_playbill_write"} <= names
-    assert not {name for name in names if name.startswith("cruxible_playbill_authoring_")}
-    assert "cruxible_playbill_claim_retire" not in TOOL_PERMISSIONS
-    # add stays a change of cruxible_playbill_write on MCP: no tool of its own.
-    assert "cruxible_playbill_add" not in TOOL_PERMISSIONS
+    assert {"cruxible_set", "cruxible_retire", "cruxible_write"} <= names
+    assert not {name for name in names if name.startswith("cruxible_authoring_")}
+    assert "cruxible_claim_retire" not in TOOL_PERMISSIONS
+    # add stays a change of cruxible_write on MCP: no tool of its own.
+    assert "cruxible_add" not in TOOL_PERMISSIONS
     for verb in ("set", "retire", "write"):
-        assert TOOL_PERMISSIONS[f"cruxible_playbill_{verb}"] == PermissionMode.GOVERNED_WRITE
+        assert TOOL_PERMISSIONS[f"cruxible_{verb}"] == PermissionMode.GOVERNED_WRITE
 
 
 def test_full_profile_advertises_the_uncurated_surface(
@@ -98,13 +98,13 @@ def test_permission_checks_fail_closed_for_unknown_and_higher_tier_operations(
 ) -> None:
     monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
     reset_permissions()
-    check_permission("cruxible_playbill_store_body")
+    check_permission("cruxible_store_body")
     with pytest.raises(PermissionDeniedError):
-        check_permission("cruxible_playbill_submit_approval")
+        check_permission("cruxible_submit_approval")
     with pytest.raises(PermissionDeniedError):
-        check_permission("cruxible_playbill_init")
+        check_permission("cruxible_init")
     with pytest.raises(ConfigError):
-        check_permission("cruxible_query")
+        check_permission("cruxible_evaluate")
 
 
 def test_a_permission_denial_names_what_the_required_tier_allows(
@@ -116,7 +116,7 @@ def test_a_permission_denial_names_what_the_required_tier_allows(
     monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
     reset_permissions()
     with pytest.raises(PermissionDeniedError) as caught:
-        check_permission("cruxible_playbill_submit_approval")
+        check_permission("cruxible_submit_approval")
 
     message = str(caught.value)
     assert "requires GRAPH_WRITE mode" in message

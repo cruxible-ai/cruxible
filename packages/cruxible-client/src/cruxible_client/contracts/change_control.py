@@ -37,7 +37,7 @@ is determined by its input and that writes nothing when refused is exempt:
 - workspace floor-delivery (on/off): its effect is its input;
 - floor deliver-now: its result is fully determined by the accepted head (the
   floor is a pure function of the accepted coordinate), it is idempotent, and
-  it writes only the derived, regenerable ``.playbill/floor``.
+  it writes only the derived, regenerable ``.cruxible/floor``.
 
 Exempt in v1 as well (the maintainer's scope ruling, r12-scope-1001), and so
 taking no ``dry_run``:

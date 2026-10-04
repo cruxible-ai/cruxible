@@ -187,8 +187,8 @@ def test_the_mcp_read_tools_take_a_generation_number(monkeypatch: pytest.MonkeyP
     server = create_server()
 
     for name, arguments in (
-        ("cruxible_playbill_get", {"instance_id": "i", "ref": "x", "at": 7}),
-        ("cruxible_playbill_orient", {"instance_id": "i", "at": 7}),
+        ("cruxible_get", {"instance_id": "i", "ref": "x", "at": 7}),
+        ("cruxible_orient", {"instance_id": "i", "at": 7}),
     ):
         try:
             asyncio.run(server.call_tool(name, arguments))
@@ -215,8 +215,8 @@ def test_the_cli_passes_a_generation_and_a_capture_handle(
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: _Stub())
     prefix = ["--server-url", "http://server", "--instance-id", "inst"]
 
-    CliRunner().invoke(cli, [*prefix, "playbill", "get", "Line:x", "--at", "12"])
-    CliRunner().invoke(cli, [*prefix, "playbill", "capture", "read", "CAP-" + "a" * 12])
+    CliRunner().invoke(cli, [*prefix, "get", "Line:x", "--at", "12"])
+    CliRunner().invoke(cli, [*prefix, "capture", "read", "CAP-" + "a" * 12])
 
     assert requests[0].at == "12"
     assert requests[1].capture_digest == "CAP-" + "a" * 12

@@ -278,7 +278,7 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
     assert health.repair is not None
     assert health.repair.operation == "hand_edit"
     assert health.repair.command is None
-    assert health.repair.target == ".playbill/sources.yaml"
+    assert health.repair.target == ".cruxible/sources.yaml"
     assert health.repair.required_change == "add_procedure_projection_catalog_entries"
     assert health.repair.arguments == {
         "catalog_entries": [
@@ -762,7 +762,7 @@ def test_missing_registered_projection_marker_surfaces_runnable_block_row(
         "source_id": "corpus.runbook",
         "block_id": "pub-status",
     }
-    assert row.repair.command == "cruxible playbill block depublish corpus.runbook pub-status"
+    assert row.repair.command == "cruxible block depublish corpus.runbook pub-status"
 
 
 def test_invalid_projection_marker_recovers_registered_block_identity(
@@ -790,7 +790,7 @@ def test_invalid_projection_marker_recovers_registered_block_identity(
         "error_code": "cruxible.projection.marker_invalid",
         "marker_status": "invalid",
     }
-    assert row.repair.command == "cruxible playbill block repin corpus.runbook pub-status"
+    assert row.repair.command == "cruxible block repin corpus.runbook pub-status"
 
 
 def test_invisible_claim_reports_unchecked_without_hiding_dirty_body(
@@ -842,7 +842,7 @@ def test_retired_claim_backing_requires_depublication_without_access_disclosure(
     # the row named a change with no command behind it. There is a verb now, so
     # the row names it and composes the exact invocation.
     assert row.repair.operation == "cruxible.block.depublish"
-    assert row.repair.command == "cruxible playbill block depublish corpus.runbook status"
+    assert row.repair.command == "cruxible block depublish corpus.runbook status"
     assert row.repair.required_change == "depublish_retired_backing_block"
 
     assert retired_request.workspace_observation is not None
@@ -990,7 +990,7 @@ def test_overturned_claim_backing_requires_depublication(
     assert row.detail["backing_state"] == "exhausted"
     assert row.detail["surviving_backings"] == []
     assert row.repair.operation == "cruxible.block.depublish"
-    assert row.repair.command == "cruxible playbill block depublish corpus.runbook status"
+    assert row.repair.command == "cruxible block depublish corpus.runbook status"
     assert row.repair.required_change == "depublish_overturned_backing_block"
 
 

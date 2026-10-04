@@ -224,7 +224,7 @@ def verify_candidate_approvals(
         raise ApprovalIntegrityError(
             "cruxible.approval.creator_forbidden: independent_approval_required mode needs "
             "an active ordinary approver other than the candidate creator; after that "
-            "eligible signer approves, run playbill proposal activate"
+            "eligible signer approves, run cruxible proposal activate"
         )
     if not approval_requirements_satisfied(
         candidate,

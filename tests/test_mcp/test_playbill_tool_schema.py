@@ -34,14 +34,14 @@ def test_registered_schema_catalog_matches_permission_catalog() -> None:
 
 def test_init_and_get_publish_their_protocol_enums() -> None:
     schemas = _schemas()
-    init = schemas["cruxible_playbill_init"].inputSchema
+    init = schemas["cruxible_init"].inputSchema
     assert set(init["required"]) == {"principals"}
     assert init["properties"]["operating_profile"]["enum"] == ["local", "cloud"]
     assert init["properties"]["require_independent_approval"]["default"] is False
     # Bootstrap no longer installs a seed implicitly; provider setup is separate.
     assert "seed" not in init["properties"]
 
-    get = schemas["cruxible_playbill_get"].inputSchema
+    get = schemas["cruxible_get"].inputSchema
     assert get["properties"]["detail"]["enum"] == [
         "summary",
         "evidence",
@@ -53,7 +53,7 @@ def test_init_and_get_publish_their_protocol_enums() -> None:
 
 
 def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation() -> None:
-    schema = _schemas()["cruxible_playbill_line_run"].inputSchema
+    schema = _schemas()["cruxible_line_run"].inputSchema
 
     assert set(schema["properties"]) == {
         "resolution_contract",
@@ -71,8 +71,8 @@ def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation()
 
 def test_prediction_tools_expose_the_same_typed_requests_as_http_and_sdk() -> None:
     schemas = _schemas()
-    predict = schemas["cruxible_playbill_predict"].inputSchema
-    settle = schemas["cruxible_playbill_settle"].inputSchema
+    predict = schemas["cruxible_predict"].inputSchema
+    settle = schemas["cruxible_settle"].inputSchema
 
     assert set(predict["properties"]) == {"instance_id", "request"}
     assert set(predict["required"]) == {"request"}
@@ -116,9 +116,9 @@ def test_playbill_tools_publish_typed_output_schemas() -> None:
 
 def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None:
     schemas = _schemas()
-    compile_schema = schemas["cruxible_playbill_authoring_compile"].inputSchema
-    submit_schema = schemas["cruxible_playbill_authoring_submit"].inputSchema
-    abandon_schema = schemas["cruxible_playbill_authoring_abandon_insertion"].inputSchema
+    compile_schema = schemas["cruxible_authoring_compile"].inputSchema
+    submit_schema = schemas["cruxible_authoring_submit"].inputSchema
+    abandon_schema = schemas["cruxible_authoring_abandon_insertion"].inputSchema
 
     assert set(compile_schema["properties"]) == {"instance_id", "payload", "intent_id"}
     assert set(submit_schema["properties"]) == {"instance_id", "intent_id"}
@@ -136,7 +136,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
     assert forbidden.isdisjoint(submit_schema["properties"])
     assert forbidden.isdisjoint(abandon_schema["properties"])
 
-    example_schema = schemas["cruxible_playbill_authoring_example"].inputSchema
+    example_schema = schemas["cruxible_authoring_example"].inputSchema
     assert example_schema["properties"]["name"]["enum"] == [
         "claim-existing-capture",
         "claim-flow-a",
@@ -161,7 +161,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "change-set",
         "claim-type-succession",
     ]
-    bind_schema = schemas["cruxible_playbill_authoring_bind"].inputSchema
+    bind_schema = schemas["cruxible_authoring_bind"].inputSchema
     assert set(bind_schema["properties"]) == {
         "instance_id",
         "source_path",
@@ -173,7 +173,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
 
 
 def test_since_schema_exposes_the_frozen_history_wire() -> None:
-    schema = _schemas()["cruxible_playbill_since"].inputSchema
+    schema = _schemas()["cruxible_since"].inputSchema
     assert set(schema["properties"]) == {
         "instance_id",
         "generation",
@@ -189,7 +189,7 @@ def test_since_schema_exposes_the_frozen_history_wire() -> None:
 
 
 def test_audit_schema_uses_the_central_budget_calibration() -> None:
-    schema = _schemas()["cruxible_playbill_audit"].inputSchema
+    schema = _schemas()["cruxible_audit"].inputSchema
     rows = schema["properties"]["max_rows"]
     bytes_ = schema["properties"]["max_bytes"]
 
@@ -217,7 +217,7 @@ def test_tool_parameters_use_declared_types_except_instance_defined_query_parame
         if not isinstance(function, ast.FunctionDef) or not function.name.startswith("cruxible_"):
             continue
         for parameter in (*function.args.args, *function.args.kwonlyargs):
-            if (function.name, parameter.arg) == ("cruxible_playbill_query", "params"):
+            if (function.name, parameter.arg) == ("cruxible_query", "params"):
                 continue  # Its accepted QueryDefinition declares the names and scalar types.
             annotation = parameter.annotation
             names = (

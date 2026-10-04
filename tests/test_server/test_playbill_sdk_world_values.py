@@ -75,7 +75,7 @@ def _sdk(client: TestClient, instance_id: str, tmp_path: Path) -> Cruxible:
 @pytest.fixture
 def served(playbill_http: tuple[TestClient, str, Path]) -> tuple[TestClient, str, str]:
     client, instance_id, _key = playbill_http
-    actor = client.get(f"/api/v1/{instance_id}/playbill/whoami").json()["actor_id"]
+    actor = client.get(f"/api/v1/{instance_id}/whoami").json()["actor_id"]
     seed_write_vocabulary(get_playbill_manager().get(instance_id), actor_id=actor)
     return client, instance_id, actor
 

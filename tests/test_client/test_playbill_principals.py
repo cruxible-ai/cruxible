@@ -49,7 +49,7 @@ def test_client_proposes_principal_public_record_on_existing_route() -> None:
     )
 
     assert result.proposal["proposal_id"] == "sha256:" + "5" * 64
-    assert captured[0].url.path == "/api/v1/inst_principals/playbill/principals/proposals"
+    assert captured[0].url.path == "/api/v1/inst_principals/principals/proposals"
     assert json.loads(captured[0].content) == {
         "principal": principal,
         "proposal_name": "register-reviewer",

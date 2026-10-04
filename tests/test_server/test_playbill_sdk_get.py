@@ -166,7 +166,7 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
         handlers, "_dispatch_remote_or_local", lambda remote, _local, **_kw: remote(transport)
     )
     prefix = ["--server-url", "http://testserver", "--instance-id", instance_id]
-    url = f"/api/v1/{instance_id}/playbill/get"
+    url = f"/api/v1/{instance_id}/get"
     for ref, detail in (
         (seeded.subject, "summary"),
         (seeded.claim_id, "summary"),
@@ -183,11 +183,11 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
         assert mcp_section is not None and mcp_section.next[0] == step
         evidence = eval(
             step,
-            {"cruxible_playbill_get": lambda **kw: handlers.handle_playbill_get(instance_id, **kw)},
+            {"cruxible_get": lambda **kw: handlers.handle_playbill_get(instance_id, **kw)},
         )
         assert evidence.evidence.value == whole
 
-        result = CliRunner().invoke(cli, [*prefix, "playbill", "get", ref, "--detail", detail])
+        result = CliRunner().invoke(cli, [*prefix, "get", ref, "--detail", detail])
         assert result.exit_code == 0, result.output
         assert f"({len(whole)} chars; --detail evidence for all)" in result.output
         step = next(
@@ -248,8 +248,8 @@ def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
     transport = CruxibleClient(base_url="http://testserver")
     transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
-    get_url = f"/api/v1/{instance_id}/playbill/get"
-    capture_url = f"/api/v1/{instance_id}/playbill/captures/read"
+    get_url = f"/api/v1/{instance_id}/get"
+    capture_url = f"/api/v1/{instance_id}/captures/read"
 
     monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
     reset_permissions()
@@ -262,7 +262,7 @@ def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
         assert history.status_code == 200, history.text
         assert [item["value"] for item in history.json()["history"]["revisions"]] == [text]
         rows = client.post(
-            f"/api/v1/{instance_id}/playbill/query",
+            f"/api/v1/{instance_id}/query",
             json={"kind": EXACT_KIND, "select": ["status"]},
         )
         assert rows.status_code == 200, rows.text
@@ -293,17 +293,15 @@ def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
 
         # CLI, over the daemon.
         prefix = ["--server-url", "http://testserver", "--instance-id", instance_id]
-        printed = CliRunner().invoke(cli, [*prefix, "playbill", "get", ruling.claim_id])
+        printed = CliRunner().invoke(cli, [*prefix, "get", ruling.claim_id])
         assert printed.exit_code == 0, printed.output
         assert "The ruling, exactly as written." in printed.output
         printed_history = CliRunner().invoke(
-            cli, [*prefix, "playbill", "get", ruling.claim_id, "--detail", "history"]
+            cli, [*prefix, "get", ruling.claim_id, "--detail", "history"]
         )
         assert printed_history.exit_code == 0, printed_history.output
         assert "The ruling, exactly as written." in printed_history.output
-        table = CliRunner().invoke(
-            cli, [*prefix, "playbill", "query", EXACT_KIND, "--select", "status"]
-        )
+        table = CliRunner().invoke(cli, [*prefix, "query", EXACT_KIND, "--select", "status"])
         assert table.exit_code == 0, table.output
         assert "The ruling, exactly as written." in table.output
 
@@ -351,7 +349,7 @@ def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
         ),
     )
     earlier = instance.accepted_history()[-2]
-    get_url = f"/api/v1/{instance_id}/playbill/get"
+    get_url = f"/api/v1/{instance_id}/get"
     ref = f"ClaimType:{PREDICATE}"
 
     printed = client.post(get_url, json={"ref": ref, "at": earlier.oid})
@@ -363,12 +361,10 @@ def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
     again = client.post(get_url, json={"ref": ref, "at": compact})
     assert again.status_code == 200, again.text
     assert again.json()["coordinate"] == printed.json()["coordinate"]
-    queried = client.post(
-        f"/api/v1/{instance_id}/playbill/query", json={"kind": "ClaimType", "at": compact}
-    )
+    queried = client.post(f"/api/v1/{instance_id}/query", json={"kind": "ClaimType", "at": compact})
     assert queried.status_code == 200, queried.text
     assert queried.json()["receipt"]["coordinate"]["git_oid"] == earlier.oid
-    oriented = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"at": compact})
+    oriented = client.get(f"/api/v1/{instance_id}/orient", params={"at": compact})
     assert oriented.status_code == 200, oriented.text
     assert oriented.json()["generation"] == earlier.sequence
 
@@ -379,10 +375,10 @@ def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
     short = client.post(get_url, json={"ref": ref, "at": too_short})
     assert short.status_code == 400, short.text
     assert short.json()["error_code"] == "cruxible.read.coordinate_prefix_too_short"
-    short_orient = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"at": too_short})
+    short_orient = client.get(f"/api/v1/{instance_id}/orient", params={"at": too_short})
     assert short_orient.json()["error_code"] == "cruxible.read.coordinate_prefix_too_short"
     short_query = client.post(
-        f"/api/v1/{instance_id}/playbill/query", json={"kind": "ClaimType", "at": too_short}
+        f"/api/v1/{instance_id}/query", json={"kind": "ClaimType", "at": too_short}
     )
     assert short_query.json()["error_code"] == "cruxible.read.coordinate_prefix_too_short"
 
@@ -410,17 +406,15 @@ def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
     assert transport.orient(instance_id, at=compact).generation == earlier.sequence
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
     prefix = ["--server-url", "http://testserver", "--instance-id", instance_id]
-    as_json = CliRunner().invoke(cli, [*prefix, "playbill", "get", ref, "--at", compact, "--json"])
+    as_json = CliRunner().invoke(cli, [*prefix, "get", ref, "--at", compact, "--json"])
     assert as_json.exit_code == 0, as_json.output
     assert json.loads(as_json.output)["coordinate"]["git_oid"] == compact
     queried_cli = CliRunner().invoke(
-        cli, [*prefix, "playbill", "query", "ClaimType", "--at", compact, "--json"]
+        cli, [*prefix, "query", "ClaimType", "--at", compact, "--json"]
     )
     assert queried_cli.exit_code == 0, queried_cli.output
     assert json.loads(queried_cli.output)["receipt"]["coordinate"]["git_oid"] == earlier.oid
-    oriented_cli = CliRunner().invoke(
-        cli, [*prefix, "playbill", "orient", "--at", compact, "--json"]
-    )
+    oriented_cli = CliRunner().invoke(cli, [*prefix, "orient", "--at", compact, "--json"])
     assert oriented_cli.exit_code == 0, oriented_cli.output
     assert json.loads(oriented_cli.output)["generation"] == earlier.sequence
 

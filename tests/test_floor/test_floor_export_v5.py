@@ -25,7 +25,7 @@ def test_floor_v5_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> 
     instance, _ = seed_claims(tmp_path)
     files = service_export_playbill_floor(instance)
     manifest = json.loads(files["manifest.json"])
-    assert manifest["format"] == "playbill-floor-export-v5"
+    assert manifest["format"] == "playbill-floor-export-v6"
     assert manifest["generation"] == len(instance.accepted_history()) - 1
     assert b"\nstatus: ready  # CLM-" in files["current/project.work_item/wi-42.yaml"]
     # No source content and no provenance mirror: the ledger clone is the audit path.

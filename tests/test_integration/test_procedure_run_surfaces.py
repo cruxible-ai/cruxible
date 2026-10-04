@@ -58,12 +58,12 @@ def test_the_cli_lists_runs_and_reads_one(run_world, monkeypatch, tmp_path) -> N
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     prefix = ["--server-url", "http://server", "--instance-id", "inst"]
 
-    listed = CliRunner().invoke(cli, [*prefix, "playbill", "orient", "--section", "runs"])
+    listed = CliRunner().invoke(cli, [*prefix, "orient", "--section", "runs"])
     assert listed.exit_code == 0, listed.output
     assert finished.run_id in listed.output and "running" in listed.output
-    assert "cruxible playbill get ProcedureRun:" in listed.output
+    assert "cruxible get ProcedureRun:" in listed.output
 
-    read = CliRunner().invoke(cli, [*prefix, "playbill", "get", finished.run_id, "--json"])
+    read = CliRunner().invoke(cli, [*prefix, "get", finished.run_id, "--json"])
     assert read.exit_code == 0, read.output
     body = json.loads(read.output)
     assert body["kind"] == "procedure_run" and body["card"]["status"] == "succeeded"
@@ -87,10 +87,10 @@ def test_the_mcp_tools_read_runs(run_world, monkeypatch) -> None:  # type: ignor
         async with _protocol_session(server) as session:
             await session.initialize()
             orient = await session.call_tool(
-                "cruxible_playbill_orient", {"instance_id": "inst", "section": "runs"}
+                "cruxible_orient", {"instance_id": "inst", "section": "runs"}
             )
             got = await session.call_tool(
-                "cruxible_playbill_get",
+                "cruxible_get",
                 {"instance_id": "inst", "ref": f"ProcedureRun:{finished.run_id}"},
             )
             assert not orient.isError and not got.isError

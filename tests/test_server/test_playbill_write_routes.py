@@ -1,4 +1,4 @@
-"""POST /playbill/set, /retire and /write: outcomes over HTTP, refusals included."""
+"""POST /set, /retire and /write: outcomes over HTTP, refusals included."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ WI1 = f"{KIND}/wi-1"
 
 
 def _seed(client: TestClient, instance_id: str) -> str:
-    actor = client.get(f"/api/v1/{instance_id}/playbill/whoami").json()["actor_id"]
+    actor = client.get(f"/api/v1/{instance_id}/whoami").json()["actor_id"]
     seed_write_vocabulary(get_playbill_manager().get(instance_id), actor_id=actor)
     return actor
 
@@ -29,7 +29,7 @@ def test_set_retire_and_write_answer_outcomes(
 ) -> None:
     client, instance_id, _key = playbill_http
     _seed(client, instance_id)
-    base = f"/api/v1/{instance_id}/playbill"
+    base = f"/api/v1/{instance_id}"
 
     first = client.post(
         f"{base}/set",
@@ -63,7 +63,7 @@ def test_expect_travels_on_every_write_route(
 ) -> None:
     client, instance_id, _key = playbill_http
     _seed(client, instance_id)
-    base = f"/api/v1/{instance_id}/playbill"
+    base = f"/api/v1/{instance_id}"
     post = lambda route, body: client.post(f"{base}/{route}", json=body).json()  # noqa: E731
 
     first = post("set", {"subject": WI1, "field": "status", "value": "ready", "because": "x"})
@@ -113,7 +113,7 @@ def test_the_write_route_takes_a_default_subject(
 ) -> None:
     client, instance_id, _key = playbill_http
     _seed(client, instance_id)
-    base = f"/api/v1/{instance_id}/playbill"
+    base = f"/api/v1/{instance_id}"
     written = client.post(
         f"{base}/write",
         json={
@@ -139,7 +139,7 @@ def test_capture_handles_and_contract_evidence_over_http(
 ) -> None:
     client, instance_id, _key = playbill_http
     _seed(client, instance_id)
-    base = f"/api/v1/{instance_id}/playbill"
+    base = f"/api/v1/{instance_id}"
     evidence = report_evidence(tmp_path, "Count: 3")
     first = client.post(
         f"{base}/set",
@@ -200,7 +200,7 @@ def test_a_refused_write_is_an_outcome_and_a_malformed_one_is_a_422(
 ) -> None:
     client, instance_id, _key = playbill_http
     _seed(client, instance_id)
-    base = f"/api/v1/{instance_id}/playbill"
+    base = f"/api/v1/{instance_id}"
 
     refused = client.post(
         f"{base}/set",
@@ -221,7 +221,7 @@ def test_the_dedicated_claim_retire_route_is_gone(
 ) -> None:
     client, instance_id, _key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/claims/CLM-{'0' * 32}/retire",
+        f"/api/v1/{instance_id}/claims/CLM-{'0' * 32}/retire",
         json={"mode": "preflight"},
     )
     assert response.status_code in {404, 405}
@@ -257,7 +257,7 @@ def test_a_cold_write_preview_opens_its_instance_behind_the_guards(
 
     client, instance_id, _key = playbill_http
     actor = _seed(client, instance_id)
-    base = f"/api/v1/{instance_id}/playbill"
+    base = f"/api/v1/{instance_id}"
     body = {"subject": WI1, "field": "status", "value": "ready", "because": "x", "dry_run": True}
     manager = get_playbill_manager()
 

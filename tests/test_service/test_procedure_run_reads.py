@@ -158,7 +158,7 @@ def test_orient_lists_runs_newest_first_filters_running_and_pages_by_key(run_wor
     assert running.section == "running" and running.runs is not None
     assert [row.status for row in running.runs] == ["running"]
     assert whole.runs[1].run == finished.run_id
-    assert whole.next[0] == f"cruxible playbill get ProcedureRun:{whole.runs[0].run}"
+    assert whole.next[0] == f"cruxible get ProcedureRun:{whole.runs[0].run}"
 
     first = service_playbill_orient(instance, section="runs", limit=1)
     assert first.truncated and first.next_cursor is not None
@@ -192,7 +192,7 @@ def test_a_line_run_names_the_line_occurrence_and_arm_that_admitted_it(tmp_path:
     assert card.triggered_by.arm == arm["arm_id"]
     assert card.triggered_by.armed_by == "operator"
     assert card.nodes_total >= card.nodes_done >= 1
-    assert f'cruxible_playbill_get(ref="{line.identity.qualified}")' in card.next
+    assert f'cruxible_get(ref="{line.identity.qualified}")' in card.next
 
 
 def test_an_explicitly_dispatched_line_run_names_no_arm(tmp_path: Path) -> None:

@@ -45,7 +45,7 @@ def floor_v5_export(
     )
     rendered = render_floor_manifest(manifest)
     return contracts.FloorExport(
-        tag="playbill-floor-export-v5",
+        tag="playbill-floor-export-v6",
         coordinate=coordinate,
         manifest=manifest.model_dump(mode="json"),
         files=[

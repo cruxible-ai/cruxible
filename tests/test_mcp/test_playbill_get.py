@@ -32,8 +32,8 @@ def test_get_is_a_read_only_default_tool_with_only_declared_parameters(
     monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
     tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
 
-    assert PERMISSION_REQUIREMENTS["cruxible_playbill_get"] is PermissionMode.READ_ONLY
-    schema = tools["cruxible_playbill_get"].inputSchema
+    assert PERMISSION_REQUIREMENTS["cruxible_get"] is PermissionMode.READ_ONLY
+    schema = tools["cruxible_get"].inputSchema
     defs = schema.get("$defs", {})
     assert schema["required"] == ["ref"]
     assert set(schema["properties"]) == {
@@ -59,7 +59,7 @@ def test_get_is_a_read_only_default_tool_with_only_declared_parameters(
         for option in _object_properties(prop, defs):
             assert option.get("properties"), name
             assert option.get("additionalProperties") is not True, name
-    assert tools["cruxible_playbill_get"].outputSchema is not None
+    assert tools["cruxible_get"].outputSchema is not None
 
 
 def test_get_handler_builds_the_request_for_the_mcp_surface(

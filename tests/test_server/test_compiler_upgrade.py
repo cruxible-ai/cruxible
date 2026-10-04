@@ -90,7 +90,7 @@ def test_upgrade_surfaces_create_the_same_reviewable_proposal(
     reset_permissions()
     try:
         response = host_client.post(
-            f"/api/v1/{instance_id}/playbill/compiler/proposals",
+            f"/api/v1/{instance_id}/compiler/proposals",
             json={
                 "target": UPGRADE_COMPILER.model_dump(mode="json"),
                 "base": base.model_dump(mode="json"),
@@ -115,7 +115,7 @@ def test_upgrade_to_the_current_compiler_is_a_coded_400_not_a_500(
     monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "owner")
 
     response = host_client.post(
-        f"/api/v1/{instance_id}/playbill/compiler/proposals",
+        f"/api/v1/{instance_id}/compiler/proposals",
         json={
             "target": before.compiler.model_dump(mode="json"),
             "base": base.model_dump(mode="json"),
@@ -150,7 +150,7 @@ def test_an_upgrade_previews_on_the_proposal_path_and_writes_nothing(
         "base": base.model_dump(mode="json"),
         "proposal_name": "upgrade",
     }
-    url = f"/api/v1/{instance_id}/playbill/compiler/proposals"
+    url = f"/api/v1/{instance_id}/compiler/proposals"
 
     response = assert_writes_nothing(
         [tmp_path],

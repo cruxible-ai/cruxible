@@ -101,7 +101,6 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
         "https://next.example.test",
         "--instance-id",
         "inst_next",
-        "playbill",
         "next",
     ]
     if provided_time is not None:
@@ -126,14 +125,14 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
 
 @pytest.mark.parametrize("duration", ["P", "PT", "P1M", "-P1D", "PT0.0000001S"])
 def test_cli_next_refuses_invalid_or_calendar_ambiguous_duration(duration: str) -> None:
-    result = CliRunner().invoke(cli, ["playbill", "next", "--expiring-within", duration])
+    result = CliRunner().invoke(cli, ["next", "--expiring-within", duration])
 
     assert result.exit_code != 0
     assert "ISO-8601" in result.output
 
 
 def test_cli_next_no_longer_accepts_the_microsecond_flag() -> None:
-    result = CliRunner().invoke(cli, ["playbill", "next", "--expiring-within-us", "1"])
+    result = CliRunner().invoke(cli, ["next", "--expiring-within-us", "1"])
 
     assert result.exit_code != 0
     assert "No such option" in result.output
@@ -203,7 +202,6 @@ def test_cli_next_delta_labels_additions_and_removals(
             "https://next.example.test",
             "--instance-id",
             "inst_next",
-            "playbill",
             "next",
             "--evaluation-time",
             "2026-08-24T18:00:00Z",
@@ -266,7 +264,6 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
             "https://next.example.test",
             "--instance-id",
             "inst_next",
-            "playbill",
             "next",
             "--evaluation-time",
             "2026-08-24T18:00:00Z",
@@ -292,7 +289,7 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
                 "operation": "cruxible.floor.export",
                 "target": "inst_next",
                 "required_change": "replace_installed_floor",
-                "command": "cruxible playbill floor export --force --json",
+                "command": "cruxible floor export --force --json",
             },
         },
     }
@@ -322,7 +319,6 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
             "https://next.example.test",
             "--instance-id",
             "inst_next",
-            "playbill",
             "next",
             "--evaluation-time",
             "2026-08-24T18:00:00Z",
@@ -330,9 +326,7 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
     )
 
     assert result.exit_code == 0, result.output
-    assert "Status: floor stale  next=cruxible playbill floor export --force --json" in (
-        result.output
-    )
+    assert "Status: floor stale  next=cruxible floor export --force --json" in (result.output)
     # A healthy facet stays silent.
     assert "ledger mirror" not in result.output
 
@@ -350,7 +344,7 @@ def _rows() -> list[dict[str, object]]:
                 "target": "docs/runbook.md",
                 "required_change": "resync_projection",
                 "arguments": {"all": True},
-                "command": "cruxible playbill block sync --all",
+                "command": "cruxible block sync --all",
             },
             "findings": [
                 {
@@ -426,7 +420,6 @@ def _invoke_next(*arguments: str) -> str:
             "https://next.example.test",
             "--instance-id",
             "inst_next",
-            "playbill",
             "next",
             "--evaluation-time",
             "2026-08-24T18:00:00Z",
@@ -446,8 +439,7 @@ def test_cli_next_brief_prints_one_line_per_row_with_its_command(
 
     assert output.splitlines() == [
         "Status: ledger mirror behind  next=push_the_ledger_mirror",
-        "repair  projection_dirty  Block:docs/runbook.md#b  "
-        "next=cruxible playbill block sync --all",
+        "repair  projection_dirty  Block:docs/runbook.md#b  next=cruxible block sync --all",
         "warning  claim_conflicted  Claim:c",
     ]
 
@@ -462,7 +454,7 @@ def test_cli_next_default_names_each_rows_repair_and_findings(
     assert output.splitlines() == [
         "Status: ledger mirror behind  next=push_the_ledger_mirror",
         "repair  projection_dirty  Block:docs/runbook.md#b  next=cruxible.block.sync",
-        "  repair: cruxible playbill block sync --all",
+        "  repair: cruxible block sync --all",
         "  also: warning  projection_backing_stale  Block:docs/runbook.md#b",
         "warning  claim_conflicted  Claim:c  next=hand_edit",
         "  repair: hand edit Claim:c: revise_claims_into_distinct_qualifiers",
@@ -487,9 +479,7 @@ def test_cli_next_defaults_to_the_shared_page_size_and_bounds_it(
     calls = _stub_pages(monkeypatch, total=2, next_cursor=None)
 
     _invoke_next()
-    refused = CliRunner().invoke(
-        cli, ["playbill", "next", "--limit", str(contracts.NEXT_MAX_LIMIT + 1)]
-    )
+    refused = CliRunner().invoke(cli, ["next", "--limit", str(contracts.NEXT_MAX_LIMIT + 1)])
 
     assert (calls[0]["limit"], calls[0]["cursor"]) == (contracts.NEXT_DEFAULT_LIMIT, None)
     assert refused.exit_code != 0
@@ -508,7 +498,7 @@ def test_cli_next_keeps_a_row_whose_repair_is_withheld_and_names_what_it_needs(
         "repair": None,
         "repair_requires": {
             "operation": "cruxible.line.arm",
-            "tool": "cruxible_playbill_line_arm",
+            "tool": "cruxible_line_arm",
             "tier": "governed_write",
             "because": ["tier"],
         },
@@ -539,6 +529,6 @@ def test_cli_next_keeps_a_row_whose_repair_is_withheld_and_names_what_it_needs(
 
     assert _invoke_next().splitlines()[0] == (
         "repair  consumer_stalled  Line:hourly  repair withheld: "
-        "cruxible_playbill_line_arm needs the governed_write tier"
+        "cruxible_line_arm needs the governed_write tier"
     )
     assert _invoke_next("--brief").splitlines() == ["repair  consumer_stalled  Line:hourly"]

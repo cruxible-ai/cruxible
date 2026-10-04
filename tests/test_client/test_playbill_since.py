@@ -62,7 +62,7 @@ def test_client_sends_the_frozen_since_request() -> None:
     )
 
     assert result.generation == 7
-    assert captured[0].url.path == "/api/v1/inst/playbill/since"
+    assert captured[0].url.path == "/api/v1/inst/since"
     payload = json.loads(captured[0].content)
     assert payload == {
         "tag": "playbill-since-request-v1",

@@ -18,7 +18,7 @@ def test_http_curation_list_is_read_tier_and_returns_operational_head(
 ) -> None:
     client, instance_id, _private_key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/curation/list",
+        f"/api/v1/{instance_id}/curation/list",
         json={
             "tag": "playbill-curation-list-request-v1",
             "evaluation_time": "2026-08-26T16:00:00+00:00",
@@ -44,7 +44,7 @@ def test_http_curation_list_maps_raw_source_observation_to_typed_refusal(
 ) -> None:
     client, instance_id, _private_key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/curation/list",
+        f"/api/v1/{instance_id}/curation/list",
         json={
             "tag": "playbill-curation-list-request-v1",
             "evaluation_time": "2026-08-26T16:00:00+00:00",
@@ -113,7 +113,7 @@ def test_http_curation_lifecycle_validation_is_a_typed_refusal(
 ) -> None:
     client, instance_id, _private_key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/curation/{route}",
+        f"/api/v1/{instance_id}/curation/{route}",
         json=payload,
     )
 
@@ -149,7 +149,7 @@ def test_http_curation_lifecycle_routes_deliver_typed_domain_refusals(
 ) -> None:
     client, instance_id, _private_key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/curation/{route}",
+        f"/api/v1/{instance_id}/curation/{route}",
         json={
             "item_id": "sha256:" + "1" * 64,
             "expected_latest_event_digest": "sha256:" + "2" * 64,
@@ -193,7 +193,7 @@ def test_http_curation_maps_both_operational_store_statuses(
 
     monkeypatch.setattr(playbill_api, "playbill_curation_list", refuse)
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/curation/list",
+        f"/api/v1/{instance_id}/curation/list",
         json={
             "tag": "playbill-curation-list-request-v1",
             "evaluation_time": "2026-08-26T16:00:00+00:00",

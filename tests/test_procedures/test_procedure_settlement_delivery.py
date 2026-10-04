@@ -680,4 +680,4 @@ def test_a_delegated_settle_that_lost_its_race_says_readmit_routes_it_for_approv
     assert row.repair.required_change == (
         "readmit_to_route_the_delegated_settle_for_approval_or_withdraw_it"
     )
-    assert row.repair.command == f"cruxible playbill proposal readmit {pending.proposal_id}"
+    assert row.repair.command == f"cruxible proposal readmit {pending.proposal_id}"

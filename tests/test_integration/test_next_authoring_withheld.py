@@ -72,7 +72,7 @@ def test_an_admin_that_cannot_author_keeps_the_row_with_the_identity_repair(
 def test_the_identity_gate_joins_the_tier_and_profile_gates() -> None:
     row = _approval_row()
 
-    (kept,) = _view(surface="mcp", caller_rung=1, tools=("cruxible_playbill_next",)).render([row])
+    (kept,) = _view(surface="mcp", caller_rung=1, tools=("cruxible_next",)).render([row])
 
     assert kept.repair_requires is not None
     assert kept.repair_requires.because == ("tier", "profile", "authoring")
@@ -104,7 +104,7 @@ def test_a_repair_that_writes_nothing_is_never_withheld_for_authoring() -> None:
 def test_the_requirement_names_the_refusal_exactly_when_authoring_gates_it() -> None:
     base: dict[str, Any] = {
         "operation": "cruxible.set",
-        "tool": "cruxible_playbill_set",
+        "tool": "cruxible_set",
         "tier": "governed_write",
     }
     with pytest.raises(ValidationError):
@@ -121,7 +121,7 @@ def test_the_cli_hint_leads_with_the_identity_repair() -> None:
     requires = contracts.NextRepairRequirement.model_validate(
         PlaybillNextRepairRequirementV1(
             operation="cruxible.set",
-            tool="cruxible_playbill_set",
+            tool="cruxible_set",
             tier="governed_write",
             because=("tier", "authoring"),
             authoring_refusal=UNBOUND,
@@ -130,7 +130,7 @@ def test_the_cli_hint_leads_with_the_identity_repair() -> None:
 
     hint = _next_requirement_hint(requires)
 
-    assert hint.startswith("cruxible_playbill_set needs a caller that can author")
+    assert hint.startswith("cruxible_set needs a caller that can author")
     assert "cruxible.identity.credential_unbound" in hint and "mint one" in hint
     assert hint.endswith("and the governed_write tier")
 

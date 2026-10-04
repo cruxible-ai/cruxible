@@ -14,13 +14,13 @@ from cruxible_client.contracts.workspace_advertisement import (
 )
 from cruxible_core.ledger.git import NOTE_REFS
 
-_REMOTE_NAME = "playbill"
-_ACCEPTED_REFSPEC = "+refs/heads/main:refs/remotes/playbill/accepted"
-_PROPOSAL_REFSPEC = "+refs/heads/proposals/*:refs/remotes/playbill/proposals/*"
+_REMOTE_NAME = "cruxible-ledger"
+_ACCEPTED_REFSPEC = "+refs/heads/main:refs/remotes/cruxible-ledger/accepted"
+_PROPOSAL_REFSPEC = "+refs/heads/proposals/*:refs/remotes/cruxible-ledger/proposals/*"
 # The note refs land under their own names rather than inside
-# `refs/remotes/playbill/`, because `git notes --ref=` prefixes anything that
+# `refs/remotes/cruxible-ledger/`, because `git notes --ref=` prefixes anything that
 # does not already begin with `refs/notes/` -- so a note fetched to
-# `refs/remotes/playbill/notes/playbill-eval` reads back as "no note found",
+# `refs/remotes/cruxible-ledger/notes/playbill-eval` reads back as "no note found",
 # which is the silent failure this refspec exists to remove. The names are
 # already the product's own (`playbill-gen`, `playbill-eval`,
 # `playbill-approval`), so one vocabulary serves the attached workspace and a
@@ -45,7 +45,7 @@ _GIT_OVERRIDES = (
     "-c",
     "protocol.ext.allow=never",
     "-c",
-    "remote.playbill.uploadpack=git-upload-pack",
+    "remote.cruxible-ledger.uploadpack=git-upload-pack",
 )
 
 
@@ -309,7 +309,7 @@ def _advertise_workspace_refs(
         [
             "for-each-ref",
             "--format=%(refname)",
-            "refs/remotes/playbill",
+            "refs/remotes/cruxible-ledger",
         ],
     )
     if listed.returncode != 0:
@@ -318,8 +318,8 @@ def _advertise_workspace_refs(
     stale_refs = tuple(
         ref
         for ref in all_refs
-        if ref != "refs/remotes/playbill/accepted"
-        and not ref.startswith("refs/remotes/playbill/proposals/")
+        if ref != "refs/remotes/cruxible-ledger/accepted"
+        and not ref.startswith("refs/remotes/cruxible-ledger/proposals/")
     )
     if stale_refs:
         deleted = _git(

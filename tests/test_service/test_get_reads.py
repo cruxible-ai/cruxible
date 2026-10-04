@@ -122,7 +122,7 @@ def test_every_claim_reference_form_reads_the_same_values_first_card(world: dict
     assert card.value == "ready"
     assert (card.verdict, card.status, card.revision) == ("supported", "accepted", 1)
     assert card.accepted is not None and card.contenders == () and card.flags == ()
-    assert card.next[0] == f'cruxible_playbill_get(ref="{claim}", detail="evidence")'
+    assert card.next[0] == f'cruxible_get(ref="{claim}", detail="evidence")'
 
 
 def test_next_steps_are_rendered_for_the_callers_surface(world: dict[str, Any]) -> None:
@@ -131,7 +131,7 @@ def test_next_steps_are_rendered_for_the_callers_surface(world: dict[str, Any]) 
     cli = _get(instance, claim, surface="cli").card
     sdk = _get(instance, claim, surface="sdk").card
 
-    assert cli is not None and cli.next[0] == f"cruxible playbill get {claim} --detail evidence"
+    assert cli is not None and cli.next[0] == f"cruxible get {claim} --detail evidence"
     assert sdk is not None and sdk.next[0] == f'cx.get("{claim}", detail="evidence")'
 
 
@@ -332,7 +332,7 @@ def test_a_proposal_reads_by_id_prefix_with_its_next_step(world: dict[str, Any])
     assert {"path": "documents/pending.json", "change": "create"} in [
         dict(item) for item in fields["changes"]
     ]
-    assert fields["next"] == (f'cruxible_playbill_review(proposal_id="{proposal}")',)
+    assert fields["next"] == (f'cruxible_review(proposal_id="{proposal}")',)
 
 
 def test_at_reads_an_earlier_generation_by_git_oid(world: dict[str, Any]) -> None:
@@ -513,7 +513,7 @@ def test_a_contested_slot_shows_every_live_value_with_the_contested_flag(
     assert isinstance(subject, GetSubjectCard)
     assert isinstance(claim, GetClaimCard)
     contender = claim.contenders[0].claim
-    expected = f'cruxible_playbill_get(ref="{contender}", detail="evidence")'
+    expected = f'cruxible_get(ref="{contender}", detail="evidence")'
     assert subject.next[0] == expected
     assert claim.next[1] == expected
 
@@ -788,7 +788,7 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
         "length": len(long_value),
     }
     assert isinstance(row.claim, str)
-    assert subject.next[0] == f'cruxible_playbill_get(ref="{row.claim}", detail="evidence")'
+    assert subject.next[0] == f'cruxible_get(ref="{row.claim}", detail="evidence")'
     claim = _get(instance, row.claim).card
     assert isinstance(claim, GetClaimCard) and claim.value == cut
 
@@ -912,9 +912,9 @@ def test_history_evidence_suggestions_read_the_cut_revision_not_the_latest(
     assert current.value == "done" and current.next == ()
     (step,) = old.next
     args = shlex.split(step)
-    assert args[:6] == ["cruxible", "playbill", "get", claim, "--detail", "evidence"]
-    assert args[6] == "--at"
-    read = _get(world.instance, claim, detail="evidence", at=args[7]).evidence
+    assert args[:5] == ["cruxible", "get", claim, "--detail", "evidence"]
+    assert args[5] == "--at"
+    read = _get(world.instance, claim, detail="evidence", at=args[6]).evidence
     assert read is not None and read.value == long_value
     assert _get(world.instance, claim, detail="evidence").evidence.value == "done"
 
@@ -937,7 +937,7 @@ def test_cli_width_cuts_offer_evidence_without_changing_other_surfaces(
         assert isinstance(subject, GetSubjectCard)
         assert history is not None
         if surface == "cli":
-            assert subject.next[0] == f"cruxible playbill get {claim_id} --detail evidence"
+            assert subject.next[0] == f"cruxible get {claim_id} --detail evidence"
             assert history.revisions[0].next[0].startswith(subject.next[0] + " --at ")
         else:
             assert not any("evidence" in step for step in subject.next)

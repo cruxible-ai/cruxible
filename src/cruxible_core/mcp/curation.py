@@ -21,21 +21,21 @@ _PROFILES = (PROFILE_DEFAULT, PROFILE_FULL)
 _DEFAULT_TOOLS = frozenset(
     {
         # the three read verbs and the work queue
-        "cruxible_playbill_orient",
-        "cruxible_playbill_query",
-        "cruxible_playbill_get",
-        "cruxible_playbill_next",
+        "cruxible_orient",
+        "cruxible_query",
+        "cruxible_get",
+        "cruxible_next",
         # the write verbs; the authoring_* intent tools stay in the full profile
-        "cruxible_playbill_set",
-        "cruxible_playbill_retire",
-        "cruxible_playbill_write",
+        "cruxible_set",
+        "cruxible_retire",
+        "cruxible_write",
         # proposals through activation
-        "cruxible_playbill_proposal_list",
-        "cruxible_playbill_review",
-        "cruxible_playbill_approve",
-        "cruxible_playbill_activate",
+        "cruxible_proposal_list",
+        "cruxible_review",
+        "cruxible_approve",
+        "cruxible_activate",
         # identity and versions
-        "cruxible_playbill_whoami",
+        "cruxible_whoami",
         "cruxible_server_info",
     }
 )

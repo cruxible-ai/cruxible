@@ -54,7 +54,7 @@ def test_the_default_mcp_profile_keeps_a_stopped_arm_row_and_names_what_it_needs
 ) -> None:
     instance, line, when = _stopped_arm_world(tmp_path)
     tools = _default_profile_tools()
-    assert "cruxible_playbill_line_arm" not in tools
+    assert "cruxible_line_arm" not in tools
 
     request = NextRequest(
         evaluation_time=when,
@@ -72,7 +72,7 @@ def test_the_default_mcp_profile_keeps_a_stopped_arm_row_and_names_what_it_needs
     assert row.repair_requires is not None
     assert row.repair_requires.model_dump(mode="json", exclude={"tag"}) == {
         "operation": "cruxible.line.arm",
-        "tool": "cruxible_playbill_line_arm",
+        "tool": "cruxible_line_arm",
         "tier": "governed_write",
         "profile": "full",
         "because": ["profile"],
@@ -87,7 +87,7 @@ def test_the_default_mcp_profile_keeps_a_stopped_arm_row_and_names_what_it_needs
     )
     (runnable,) = [item for item in full.items if item.reason == "consumer_stalled"]
     assert runnable.repair is not None and runnable.repair_requires is None
-    assert runnable.repair.command == f'cruxible_playbill_line_arm(line="{line.identity.name}")'
+    assert runnable.repair.command == f'cruxible_line_arm(line="{line.identity.name}")'
 
 
 def test_a_read_only_cli_caller_keeps_the_row_with_the_tier_it_needs(tmp_path: Path) -> None:

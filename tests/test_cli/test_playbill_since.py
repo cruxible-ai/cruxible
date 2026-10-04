@@ -1,4 +1,4 @@
-"""CLI parity for ``playbill since``."""
+"""CLI parity for ``cruxible since``."""
 
 from __future__ import annotations
 
@@ -47,7 +47,6 @@ def test_cli_since_calls_the_frozen_client_operation(monkeypatch) -> None:  # ty
             "https://since.example.test",
             "--instance-id",
             "inst_since",
-            "playbill",
             "since",
             "3",
             "--json",
@@ -88,7 +87,6 @@ def test_cli_since_surfaces_a_typed_profile_refusal_without_traceback(
             "https://since.example.test",
             "--instance-id",
             "inst_since",
-            "playbill",
             "since",
             "3",
             "--access-profile",
@@ -145,7 +143,6 @@ def test_cli_since_accepts_a_profile_file_relying_on_model_defaults(
             "https://since.example.test",
             "--instance-id",
             "inst_since",
-            "playbill",
             "since",
             "3",
             "--access-profile",

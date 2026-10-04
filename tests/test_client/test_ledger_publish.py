@@ -29,7 +29,7 @@ def test_publish_barrier_forwards_timeout_and_parses_acknowledgment(monkeypatch,
 
         monkeypatch.setattr(client._client, "post", post)
         result = client.publish_ledger("inst_test", timeout=0)
-        assert calls == [("/api/v1/inst_test/playbill/ledger/publish", {"timeout": 0})]
+        assert calls == [("/api/v1/inst_test/ledger/publish", {"timeout": 0})]
         assert result.status == "publishing"
         assert result.wait_sequence == result.published_sequence == 2
         assert result.published_refs == {"refs/heads/main": "a" * 40}

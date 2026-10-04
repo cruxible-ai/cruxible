@@ -66,7 +66,7 @@ def _block(*, block_id: str = "summary", body: bytes = BODY) -> bytes:
     return (
         render_projection_opening(_stamp(block_id=block_id))
         + body
-        + f"<!-- /playbill:block:{block_id} -->\n".encode()
+        + f"<!-- /cruxible:block:{block_id} -->\n".encode()
     )
 
 
@@ -83,7 +83,7 @@ def test_declaration_round_trip_preserves_prose_and_presentation_offsets() -> No
 
 
 def test_unstamped_bootstrap_is_undeclared_except_during_explicit_repin() -> None:
-    content = b"<!-- playbill:block:summary -->\n" + BODY + b"<!-- /playbill:block:summary -->\n"
+    content = b"<!-- cruxible:block:summary -->\n" + BODY + b"<!-- /cruxible:block:summary -->\n"
 
     with pytest.raises(ProjectionMarkerError, match="unstamped bootstrap"):
         parse_projection_blocks(content, source_id="corpus.runbook")
@@ -114,12 +114,12 @@ def test_short_closing_fence_cannot_expose_marker_candidates() -> None:
 @pytest.mark.parametrize(
     ("content", "message"),
     [
-        (b" <!-- playbill:block:summary -->\n", "column zero"),
-        (b"<!-- playbill:block:summary -->\r\n", "LF-only"),
-        (b"<!-- playbill:block:summary:bad= -->\n", "malformed grammar"),
-        (b"<!-- playbill:block:UPPER -->\n", "malformed grammar"),
-        (b"<!-- /playbill:block:summary -->\n", "absent or different"),
-        (b"<!-- playbill:block:summary -->\n", "matching closing"),
+        (b" <!-- cruxible:block:summary -->\n", "column zero"),
+        (b"<!-- cruxible:block:summary -->\r\n", "LF-only"),
+        (b"<!-- cruxible:block:summary:bad= -->\n", "malformed grammar"),
+        (b"<!-- cruxible:block:UPPER -->\n", "malformed grammar"),
+        (b"<!-- /cruxible:block:summary -->\n", "absent or different"),
+        (b"<!-- cruxible:block:summary -->\n", "matching closing"),
         (b"\xff", "valid UTF-8"),
     ],
 )
@@ -139,11 +139,11 @@ def test_stamp_refuses_duplicate_json_keys_noncanonical_json_and_source_substitu
     for raw in variants:
         encoded = base64.urlsafe_b64encode(raw).rstrip(b"=")
         content = (
-            b"<!-- playbill:block:summary:"
+            b"<!-- cruxible:block:summary:"
             + encoded
             + b" -->\n"
             + BODY
-            + b"<!-- /playbill:block:summary -->\n"
+            + b"<!-- /cruxible:block:summary -->\n"
         )
         with pytest.raises(ProjectionMarkerError):
             parse_projection_blocks(content, source_id="corpus.runbook")
@@ -192,9 +192,9 @@ def test_unstamped_block_preserves_independent_evidence_and_stamped_block_refusa
     bootstrap_body = b"Unstamped draft evidence.\n"
     content = (
         b"Independent source evidence.\n"
-        + b"<!-- playbill:block:draft -->\n"
+        + b"<!-- cruxible:block:draft -->\n"
         + bootstrap_body
-        + b"<!-- /playbill:block:draft -->\n"
+        + b"<!-- /cruxible:block:draft -->\n"
         + _block()
     )
     template = claim_self_source_example().model_dump(mode="json")
@@ -316,7 +316,7 @@ def test_an_oversized_capture_with_no_marker_is_citable(tmp_path: object) -> Non
 def test_a_stamped_window_is_read_without_the_page_parser() -> None:
     """The evidence-side scanner neither raises on a page defect nor bounds the size."""
 
-    broken = b"<!-- playbill:block:one:AAAA -->\nbody\n<!-- /playbill:block:two -->\ntail\n"
+    broken = b"<!-- cruxible:block:one:AAAA -->\nbody\n<!-- /cruxible:block:two -->\ntail\n"
     (window,) = stamped_projection_windows(broken)
     assert (window.block_id, window.start_byte, window.end_byte) == ("one", 0, len(broken))
     with pytest.raises(ProjectionMarkerError):

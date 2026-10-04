@@ -21,7 +21,7 @@ from cruxible_core.cli.main import cli
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 
-DECOMMISSION_ROUTE = "/api/v1/{instance_id}/playbill/instance/decommission"
+DECOMMISSION_ROUTE = "/api/v1/{instance_id}/instance/decommission"
 
 HOSTILE_REASONS = {
     "escape": "retired\x1b[2Kforged",
@@ -117,7 +117,6 @@ def test_the_cli_prints_the_typed_refusal_for_a_hostile_reason(
             "http://testserver",
             "--instance-id",
             instance_id,
-            "playbill",
             "instance",
             "decommission",
             "--reason",

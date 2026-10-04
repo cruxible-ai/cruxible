@@ -37,8 +37,8 @@ BODY = b"reflects generation 7\nstatus: ready --> preserve this prose\n"
 
 
 def _workspace(root: Path) -> Path:
-    (root / ".playbill").mkdir()
-    (root / ".playbill" / "sources.yaml").write_text(
+    (root / ".cruxible").mkdir()
+    (root / ".cruxible" / "sources.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"
@@ -52,9 +52,9 @@ def _workspace(root: Path) -> Path:
     )
     source = root / "runbook.md"
     source.write_bytes(
-        b"prefix\n<!-- playbill:block:summary -->\n"
+        b"prefix\n<!-- cruxible:block:summary -->\n"
         + BODY
-        + b"<!-- /playbill:block:summary -->\nsuffix\n"
+        + b"<!-- /cruxible:block:summary -->\nsuffix\n"
     )
     return source
 
@@ -238,7 +238,7 @@ def test_bootstrap_repin_changes_only_opening_then_preserves_or_replaces_backing
     assert source.read_bytes() == original
 
     first = _repin(client, tmp_path, claims=("CLM-first",))
-    assert b"<!-- playbill:block:summary:ref:" in source.read_bytes()
+    assert b"<!-- cruxible:block:summary:ref:" in source.read_bytes()
     (parsed,) = parse_projection_blocks(
         source.read_bytes(),
         source_id="corpus.runbook",
@@ -248,8 +248,8 @@ def test_bootstrap_repin_changes_only_opening_then_preserves_or_replaces_backing
     assert (
         source.read_bytes()[parsed.opening_end :]
         == original[
-            original.index(b"<!-- playbill:block:summary -->\n")
-            + len(b"<!-- playbill:block:summary -->\n") :
+            original.index(b"<!-- cruxible:block:summary -->\n")
+            + len(b"<!-- cruxible:block:summary -->\n") :
         ]
     )
     assert first.body_digest == "sha256:" + hashlib.sha256(BODY).hexdigest()
@@ -313,7 +313,7 @@ def test_repin_of_a_stamped_block_preserves_an_adjacent_unstamped_draft(
     source = _workspace(tmp_path)
     client = _RepinClient()
     _repin(client, tmp_path, claims=("CLM-first",))
-    draft = b"<!-- playbill:block:draft -->\nagent-owned draft\n<!-- /playbill:block:draft -->\n"
+    draft = b"<!-- cruxible:block:draft -->\nagent-owned draft\n<!-- /cruxible:block:draft -->\n"
     source.write_bytes(source.read_bytes() + draft)
 
     refreshed = _repin(client, tmp_path)
@@ -390,7 +390,7 @@ def test_sdk_block_facade_bootstraps_at_its_active_coordinate(tmp_path: Path) ->
     assert stamp.declared_generation == 7
     assert stamp.backing[0].identity.qualified == "Claim:CLM-first"
     content = (tmp_path / "runbook.md").read_bytes()
-    assert b"<!-- playbill:block:summary:ref:" in content
+    assert b"<!-- cruxible:block:summary:ref:" in content
     (block,) = parse_projection_blocks(
         content, source_id="corpus.runbook", manifests=load_projection_manifests(tmp_path, content)
     )

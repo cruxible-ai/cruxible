@@ -2115,7 +2115,7 @@ class Cruxible:
 
     Open one with ``Cruxible.connect()``. Reading: ``cx.orient()`` maps what exists,
     ``cx.query(kind, ...)`` answers questions over it, ``cx.get(ref)`` opens one thing, and the
-    exported floor under ``.playbill/floor/current/`` is plain files to grep. ``cx.world()``
+    exported floor under ``.cruxible/floor/current/`` is plain files to grep. ``cx.world()``
     hands back the vocabulary as objects; ``cx.world().describe()`` lists every verb and field.
     Writing: ``cx.set``, ``cx.retire`` and ``cx.changes(because=...)``; authoring anything else:
     ``cx.changes(rationale=...)``. Next: ``cx.next(expiring_within=...)`` for what needs
@@ -2684,7 +2684,7 @@ class Cruxible:
         Does not advance this connection's read coordinate or check agent-owned
         projection blocks; use block.sync() separately for that inspection.
 
-        Next: grep ``.playbill/floor/current/`` for what it wrote.
+        Next: grep ``.cruxible/floor/current/`` for what it wrote.
         """
 
         coordinate = api.AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
@@ -2706,7 +2706,7 @@ class Cruxible:
         separately. A live connection remembers the acceptance coordinate; pinned
         contexts and existing World snapshots stay fixed.
 
-        Next: grep ``.playbill/floor/current/``, or ``cx.get(ref)`` to read the accepted
+        Next: grep ``.cruxible/floor/current/``, or ``cx.get(ref)`` to read the accepted
         change.
         """
 

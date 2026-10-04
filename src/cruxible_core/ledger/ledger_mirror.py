@@ -12,7 +12,7 @@ Three properties keep it from becoming a second source of record.
 
 * It is a PUBLICATION of already-accepted state, never a condition of it. A push
   that fails -- no network, no credential, a remote that moved -- is a typed
-  warning row in ``playbill next``, never a refusal of the write that preceded
+  warning row in ``cruxible next``, never a refusal of the write that preceded
   it. The ledger on disk is the record; the remote is a copy.
 * The URL is OPERATIONAL configuration, not accepted state. It lives on the
   instance descriptor beside the terminal decommission record, is absent from

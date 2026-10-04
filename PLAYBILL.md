@@ -7,15 +7,15 @@ QueryDefinitions; the passage is never itself canonical governed state.
 Create both delimiters and every prose byte yourself:
 
 ```markdown
-<!-- playbill:block:status -->
+<!-- cruxible:block:status -->
 Reflects generation 12: the incident is ready for review.
-<!-- /playbill:block:status -->
+<!-- /cruxible:block:status -->
 ```
 
 The unstamped pair is not a declaration until an explicit first repin:
 
 ```bash
-cruxible playbill block repin corpus.runbook status --claim CLM-example
+cruxible block repin corpus.runbook status --claim CLM-example
 ```
 
 Repin replaces only the opening marker with its machine-derived backing,
@@ -24,7 +24,7 @@ content; the machine never inserts, updates, or removes prose. Future repins
 without backing options retain the existing identities and parameters. Supplying
 explicit Claim or QueryDefinition references replaces the backing set.
 
-`playbill next` reports `projection_dirty` when the prose no longer matches its
+`cruxible next` reports `projection_dirty` when the prose no longer matches its
 declared body and `projection_backing_stale` when a visible backing's actual
 statement or query-result meaning changes. Review and edit prose yourself, then
 repin. Unrelated accepted generations never stale a semantically current block.

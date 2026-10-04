@@ -39,14 +39,14 @@ instance. When run inside a Git worktree, the local socket also lets the daemon
 attach that exact workspace before initialization:
 
 ~~~bash
-uv run cruxible playbill host create --instance-id inst_demo
+uv run cruxible host create --instance-id inst_demo
 ~~~
 
 Initialize Cruxible and make yourself the owner, with a key generated outside
 the repository. The principal ID is yours to choose:
 
 ~~~bash
-uv run cruxible playbill init \
+uv run cruxible init \
   --key-dir /tmp/cruxible-playbill-owner \
   --principal-id me
 export CRUXIBLE_PRINCIPAL_ID=me
@@ -73,7 +73,7 @@ Create a body:
 
 ~~~bash
 printf '# Demo policy\n\nExact governed bytes.\n' > /tmp/demo-policy.md
-BODY_DIGEST="$(uv run cruxible playbill body store /tmp/demo-policy.md)"
+BODY_DIGEST="$(uv run cruxible body store /tmp/demo-policy.md)"
 ~~~
 
 Create an envelope at /tmp/demo-envelope.json, substituting the entire
@@ -94,7 +94,7 @@ Create an envelope at /tmp/demo-envelope.json, substituting the entire
 Propose it:
 
 ~~~bash
-uv run cruxible playbill document propose \
+uv run cruxible document propose \
   --envelope /tmp/demo-envelope.json \
   --name add-demo-policy \
   --json
@@ -103,18 +103,18 @@ uv run cruxible playbill document propose \
 Copy the proposal ID from the response, then review and activate:
 
 ~~~bash
-uv run cruxible playbill proposal review PROPOSAL_ID
-uv run cruxible playbill proposal activate PROPOSAL_ID
+uv run cruxible proposal review PROPOSAL_ID
+uv run cruxible proposal activate PROPOSAL_ID
 ~~~
 
 Read accepted state and its explanation:
 
 ~~~bash
-uv run cruxible playbill orient --section documents
-uv run cruxible playbill get Document:demo-policy
-uv run cruxible playbill get Document:demo-policy --detail body
-uv run cruxible playbill get Document:demo-policy --detail why
-uv run cruxible playbill get Document:demo-policy --detail history
+uv run cruxible orient --section documents
+uv run cruxible get Document:demo-policy
+uv run cruxible get Document:demo-policy --detail body
+uv run cruxible get Document:demo-policy --detail why
+uv run cruxible get Document:demo-policy --detail history
 ~~~
 
 Storing body bytes was inert. Proposing created a frozen candidate. A voluntary
@@ -144,10 +144,10 @@ own admin credential into your settings file:
 export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill-run/daemon.sock
 SECRET_FILE=/tmp/cruxible-playbill-dev/daemon/bootstrap-secret
 CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$SECRET_FILE")" \
-  uv run cruxible playbill host create --instance-id inst_demo
+  uv run cruxible host create --instance-id inst_demo
 uv run cruxible credential claim-bootstrap --secret-file "$SECRET_FILE"
 export CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed>
-uv run cruxible playbill init --key-dir /tmp/cruxible-playbill-owner --principal-id me
+uv run cruxible init --key-dir /tmp/cruxible-playbill-owner --principal-id me
 set -a; . /tmp/cruxible-playbill-owner/cruxible.env; set +a
 ~~~
 
@@ -156,17 +156,17 @@ settings you just loaded, so the registration is proposed, approved by you, and
 activated, and the agent's `governed_write` credential is minted:
 
 ~~~bash
-uv run cruxible playbill principal add agent-b --key-dir /tmp/agent-b
+uv run cruxible principal add agent-b --key-dir /tmp/agent-b
 ~~~
 
 Hand the agent its directory. It loads its settings and acts as `agent-b`:
 
 ~~~bash
 set -a; . /tmp/agent-b/cruxible.env; set +a
-uv run cruxible playbill whoami        # agent-b, governed_write
-uv run cruxible playbill document propose --envelope /tmp/demo-envelope.json \
+uv run cruxible whoami        # agent-b, governed_write
+uv run cruxible document propose --envelope /tmp/demo-envelope.json \
   --name agent-b-change
-uv run cruxible playbill proposal activate PROPOSAL_ID   # refused: needs graph_write
+uv run cruxible proposal activate PROPOSAL_ID   # refused: needs graph_write
 ~~~
 
 You review, approve, and activate the agent's proposal under your own settings.
@@ -181,7 +181,7 @@ For local or external files, author a portable catalog and optional ignored
 local overlay. Compilation is client-side:
 
 ~~~bash
-uv run cruxible playbill sources compile \
+uv run cruxible sources compile \
   --catalog sources.yaml \
   --root . \
   --output /tmp/source-bundle.json

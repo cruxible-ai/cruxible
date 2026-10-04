@@ -125,7 +125,7 @@ def _floor_config(**overrides: object) -> CoverageWorkspaceConfigV2:
 
 
 def _write_floor_manifest(workspace: Path) -> None:
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     floor.mkdir(parents=True, exist_ok=True)
     (floor / "manifest.json").write_text(
         json.dumps(
@@ -220,7 +220,7 @@ def test_ambiguous_rules_are_refused_at_load_rather_than_resolved_by_file_order(
 
 
 def test_the_config_round_trips_through_the_committed_file_shape(workspace: Path) -> None:
-    (workspace / ".playbill").mkdir()
+    (workspace / ".cruxible").mkdir()
     socket = workspace / ".b2-cruxible-workspace.sock"
     (workspace / CONFIG_RELATIVE_PATH).write_text(
         json.dumps(
@@ -267,7 +267,7 @@ def test_workspace_config_refuses_two_transport_bindings(
 
 
 def test_v2_config_adds_only_the_optional_normalized_floor_output(workspace: Path) -> None:
-    (workspace / ".playbill").mkdir()
+    (workspace / ".cruxible").mkdir()
     (workspace / CONFIG_RELATIVE_PATH).write_text(
         json.dumps(
             {
@@ -511,7 +511,7 @@ def test_floor_hits_are_freshness_only_and_a_stale_floor_gets_one_batch_line(
     config = _floor_config(
         rules=(
             CoveragePathPrefixRuleV1(
-                path_prefix=".playbill/floor/",
+                path_prefix=".cruxible/floor/",
                 plane="external",
                 identity_prefix="floor.",
             ),
@@ -530,7 +530,7 @@ def test_floor_hits_are_freshness_only_and_a_stale_floor_gets_one_batch_line(
     delivery = middleware.after_tool(
         HarnessToolEventV1(
             kind="read",
-            paths=(".playbill/floor/manifest.json", ".playbill/floor/other.json"),
+            paths=(".cruxible/floor/manifest.json", ".cruxible/floor/other.json"),
             original_output="floor bytes",
         )
     )
@@ -538,8 +538,8 @@ def test_floor_hits_are_freshness_only_and_a_stale_floor_gets_one_batch_line(
     assert recorder.calls == []
     assert delivery.lines == ("floor at generation 2, current 4; re-export required",)
     assert delivery.unbound_paths == (
-        ".playbill/floor/manifest.json",
-        ".playbill/floor/other.json",
+        ".cruxible/floor/manifest.json",
+        ".cruxible/floor/other.json",
     )
     assert delivery.spliced() == (
         "floor bytes\nfloor at generation 2, current 4; re-export required"
@@ -552,7 +552,7 @@ def test_floor_hits_are_freshness_only_and_a_stale_floor_gets_one_batch_line(
         CoverageWorkspaceConfigV1(
             rules=(
                 CoveragePathPrefixRuleV1(
-                    path_prefix=".playbill/floor/",
+                    path_prefix=".cruxible/floor/",
                     plane="external",
                     identity_prefix="floor.",
                 ),
@@ -561,7 +561,7 @@ def test_floor_hits_are_freshness_only_and_a_stale_floor_gets_one_batch_line(
         CoverageWorkspaceConfigV2(
             rules=(
                 CoveragePathPrefixRuleV1(
-                    path_prefix=".playbill/floor/",
+                    path_prefix=".cruxible/floor/",
                     plane="external",
                     identity_prefix="floor.",
                 ),
@@ -575,18 +575,18 @@ def test_floor_hits_never_become_evidence_without_a_floor_declaration(
 ) -> None:
     recorder = _Recorder()
     delivery = coverage_middleware(root=workspace, config=config, resolve=recorder).after_tool(
-        HarnessToolEventV1(kind="read", paths=(".playbill/floor/claim.json",))
+        HarnessToolEventV1(kind="read", paths=(".cruxible/floor/claim.json",))
     )
 
     assert recorder.calls == []
-    assert delivery.unbound_paths == (".playbill/floor/claim.json",)
+    assert delivery.unbound_paths == (".cruxible/floor/claim.json",)
 
 
 def test_current_floor_is_silent_and_invalid_floor_is_explicitly_unavailable(
     workspace: Path,
 ) -> None:
     _write_floor_manifest(workspace)
-    event = HarnessToolEventV1(kind="grep", paths=(".playbill/floor/manifest.json",))
+    event = HarnessToolEventV1(kind="grep", paths=(".cruxible/floor/manifest.json",))
     current = coverage_middleware(
         root=workspace,
         config=_floor_config(),
@@ -598,7 +598,7 @@ def test_current_floor_is_silent_and_invalid_floor_is_explicitly_unavailable(
     ).after_tool(event)
     assert current.lines == ()
 
-    (workspace / ".playbill/floor/manifest.json").write_text("{}", encoding="utf-8")
+    (workspace / ".cruxible/floor/manifest.json").write_text("{}", encoding="utf-8")
     unavailable = coverage_middleware(
         root=workspace,
         config=_floor_config(),

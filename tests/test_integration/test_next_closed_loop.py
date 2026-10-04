@@ -1225,8 +1225,8 @@ def _workspace_binding_missing(root: Path, _monkeypatch: pytest.MonkeyPatch) -> 
     (root / "instance").mkdir()
     instance, _owner = initialize_local(root / "instance")
     workspace = root / "workspace"
-    (workspace / ".playbill").mkdir(parents=True)
-    (workspace / ".playbill/sources.yaml").write_text(
+    (workspace / ".cruxible").mkdir(parents=True)
+    (workspace / ".cruxible/sources.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"
@@ -1300,7 +1300,7 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     row = _row(instance, "proposal_stale", _request(instance), **author)
     assert row.subject_identity == stale_id
     assert row.repair.operation == EXPECTED_OPERATIONS["proposal_stale"]
-    assert row.repair.command == f"cruxible playbill proposal readmit {stale_id}"
+    assert row.repair.command == f"cruxible proposal readmit {stale_id}"
     assert row.detail["actor_id"] == "owner"
     # Only the author may readmit, so only the author's queue carries the row.
     _assert_gone(instance, "proposal_stale", _request(instance), caller_principal_id="reviewer")
@@ -1368,9 +1368,7 @@ def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     (row,) = rows("reviewer", _request(instance))
     assert row.subject_identity == proposal_id
     assert row.repair.operation == EXPECTED_OPERATIONS["proposal_awaiting_approval"]
-    assert row.repair.command == (
-        f"cruxible playbill proposal approve {proposal_id} --signer-id reviewer"
-    )
+    assert row.repair.command == (f"cruxible proposal approve {proposal_id} --signer-id reviewer")
     assert row.detail["actor_id"] == "owner"
     assert row.detail["minimum_distinct_signers"] == 1
     # The creator cannot approve its own candidate, an unregistered caller has
@@ -1447,7 +1445,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     row = _row(instance, "mandate_expiring", _request(instance))
     assert row.subject_identity == "ProcedureMandate:triage"
     assert row.repair.operation == EXPECTED_OPERATIONS["mandate_expiring"]
-    assert row.repair.command == "cruxible playbill authoring create --example procedure-mandate"
+    assert row.repair.command == "cruxible authoring create --example procedure-mandate"
     assert datetime.fromisoformat(row.detail["expires_at"]) == lapsing.expires_at
     hidden = NextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
@@ -1546,7 +1544,7 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     row = _row(instance, "consumer_stalled", request)
     assert row.subject_identity == line.identity.qualified
     assert row.detail["stop_reason"] == "credential_revoked"
-    assert row.repair.command == f"cruxible playbill line arm {line.identity.name}"
+    assert row.repair.command == f"cruxible line arm {line.identity.name}"
 
     # The named repair: rearm under a credential that holds.
     service_arm_line(
@@ -1595,7 +1593,7 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     # resolves its exact contract and window, and the settler adds only the
     # observation's Claim ID.
     bound = row.detail["bound_contract_id"]
-    assert row.repair.command == f"cruxible playbill settle {bound}"
+    assert row.repair.command == f"cruxible settle {bound}"
     observation = worker.observe(instance, owner, capture, at="2026-09-02T12:02:00.000000Z")
     filled = SettleRequest(observation=observation.identity.name)
     # A window id the worker does not hold names no prediction.
@@ -1752,25 +1750,25 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
     governed = service_playbill_next(instance, request=request, caller_rung=1)
     (row,) = settle_rows(governed)
     bound = row.detail["bound_contract_id"]
-    assert row.repair.command == f"cruxible playbill settle {bound}"
+    assert row.repair.command == f"cruxible settle {bound}"
     assert "hidden" not in governed.status.model_dump(mode="json")
 
     read_only = service_playbill_next(instance, request=request, caller_rung=0)
     (withheld,) = settle_rows(read_only)
     assert withheld.repair is None
-    assert withheld.repair_requires.tool == "cruxible_playbill_settle"
+    assert withheld.repair_requires.tool == "cruxible_settle"
     assert withheld.repair_requires.because == ("tier",)
 
     mcp = request.model_copy(
         update={
             "caller_surface": "mcp",
-            "caller_tools": ("cruxible_playbill_next", "cruxible_playbill_settle"),
+            "caller_tools": ("cruxible_next", "cruxible_settle"),
         }
     )
     (mcp_row,) = settle_rows(service_playbill_next(instance, request=mcp, caller_rung=1))
-    assert mcp_row.repair.command == f'cruxible_playbill_settle(prediction_id="{bound}")'
+    assert mcp_row.repair.command == f'cruxible_settle(prediction_id="{bound}")'
 
-    default_profile = mcp.model_copy(update={"caller_tools": ("cruxible_playbill_next",)})
+    default_profile = mcp.model_copy(update={"caller_tools": ("cruxible_next",)})
     profiled = service_playbill_next(instance, request=default_profile, caller_rung=1)
     (kept,) = settle_rows(profiled)
     assert kept.repair is None and kept.repair_requires.because == ("profile",)

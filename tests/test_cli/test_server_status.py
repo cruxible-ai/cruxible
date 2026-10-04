@@ -70,16 +70,15 @@ def test_status_down_daemon_errors_clearly(monkeypatch, runner: CliRunner) -> No
 @pytest.mark.parametrize(
     "command",
     (
-        ("--instance-id", "inst_mismatch", "playbill", "get", "project.work_item/wi-42"),
+        ("--instance-id", "inst_mismatch", "get", "project.work_item/wi-42"),
         (
             "--instance-id",
             "inst_mismatch",
-            "playbill",
             "proposal",
             "activate",
             "sha256:" + "1" * 64,
         ),
-        ("playbill", "host", "show", "inst_mismatch"),
+        ("host", "show", "inst_mismatch"),
     ),
 )
 def test_cli_renders_daemon_contract_mismatch(

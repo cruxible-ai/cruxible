@@ -1,4 +1,4 @@
-"""`cruxible playbill query [KIND] --where ...` beside the query list/get/run leaves."""
+"""`cruxible query [KIND] --where ...` beside the query list/get/run leaves."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def stub(monkeypatch: pytest.MonkeyPatch) -> _StubClient:
 
 
 def _run(*args: str) -> Any:
-    return CliRunner().invoke(cli, [*PREFIX, "playbill", "query", *args])
+    return CliRunner().invoke(cli, [*PREFIX, "query", *args])
 
 
 def test_compact_query_prints_a_table_of_values_flags_and_the_next_command(
@@ -120,7 +120,7 @@ def test_compact_query_prints_a_table_of_values_flags_and_the_next_command(
     assert "dev.roadmap_item/perf, dev.roadmap_item/ops" in lines[1]
     assert lines[1].rstrip().endswith("stale")
     assert "note: showing 12 of 13 predicates" in result.output
-    assert lines[-1].startswith("next: cruxible playbill query dev.roadmap_item --where")
+    assert lines[-1].startswith("next: cruxible query dev.roadmap_item --where")
     assert lines[-1].endswith("--cursor CURSOR")
 
 

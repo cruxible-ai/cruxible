@@ -434,7 +434,7 @@ def service_read_playbill_capture(
     # Envelopes also carry body-derived source/selector metadata. Authorize
     # before reading either them or their bodies, including for in-process callers.
     if not access.can_read_body:
-        raise PermissionDeniedError("cruxible_playbill_body_read", "read_only", "governed_write")
+        raise PermissionDeniedError("cruxible_body_read", "read_only", "governed_write")
     coordinate = (
         instance.accepted_coordinate()
         if request.at is None

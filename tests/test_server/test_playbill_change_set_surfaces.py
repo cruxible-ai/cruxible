@@ -138,10 +138,10 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
     workspace = tmp_path / "parity-world"
-    (workspace / ".playbill").mkdir(parents=True)
+    (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "corpus").mkdir()
     (workspace / "corpus" / "notes.md").write_text("# notes\n", encoding="utf-8")
-    (workspace / ".playbill" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "sources.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"
@@ -296,10 +296,10 @@ def test_the_sdk_builder_authors_a_mixed_changeset_that_preflights_clean(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
     workspace = tmp_path / "builder-world"
-    (workspace / ".playbill").mkdir(parents=True)
+    (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "corpus").mkdir()
     (workspace / "corpus" / "notes.md").write_text("# notes\n", encoding="utf-8")
-    (workspace / ".playbill" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "sources.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"
@@ -371,10 +371,10 @@ def test_one_claim_type_succession_has_one_identity_across_sdk_cli_and_mcp(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
     workspace = tmp_path / "succession-world"
-    (workspace / ".playbill").mkdir(parents=True)
+    (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "corpus").mkdir()
     (workspace / "corpus" / "notes.md").write_text("# notes\n", encoding="utf-8")
-    (workspace / ".playbill" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "sources.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"

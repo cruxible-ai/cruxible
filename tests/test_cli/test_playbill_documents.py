@@ -46,7 +46,6 @@ def test_cli_allocates_and_remembers_a_playbill_host(monkeypatch, tmp_path) -> N
         [
             "--server-url",
             "https://playbill.invalid",
-            "playbill",
             "host",
             "create",
             "--instance-id",
@@ -103,7 +102,6 @@ def test_cli_init_remembers_the_initialized_instance(monkeypatch, tmp_path) -> N
             "https://playbill.invalid",
             "--instance-id",
             "inst_cli_init",
-            "playbill",
             "init",
             "--key-dir",
             str(tmp_path / "keys" / "custody"),
@@ -134,7 +132,6 @@ def test_cli_init_refuses_a_shared_key_dir_with_a_chmod_repair(monkeypatch, tmp_
             "https://playbill.invalid",
             "--instance-id",
             "inst_cli_init",
-            "playbill",
             "init",
             "--key-dir",
             str(custody),
@@ -192,7 +189,6 @@ def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_pa
             "https://playbill.example.test",
             "--instance-id",
             "inst_cli_init",
-            "playbill",
             "init",
             "--workspace",
             str(workspace),
@@ -205,10 +201,10 @@ def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_pa
     )
 
     assert result.exit_code == 0, result.output
-    config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
+    config = json.loads((workspace / ".cruxible" / "coverage.json").read_text())
     assert config["server_url"] == "https://playbill.example.test"
     assert config["instance_id"] == "inst_cli_init"
-    assert config["floor_output"]["format"] == "playbill-floor-export-v5"
+    assert config["floor_output"]["format"] == "playbill-floor-export-v6"
 
 
 def test_unix_socket_host_attach_uses_the_containing_git_worktree(
@@ -249,7 +245,6 @@ def test_unix_socket_host_attach_uses_the_containing_git_worktree(
         [
             "--server-socket",
             str(tmp_path / "cruxible.sock"),
-            "playbill",
             "host",
             "create",
             "--instance-id",
@@ -260,7 +255,7 @@ def test_unix_socket_host_attach_uses_the_containing_git_worktree(
 
     assert result.exit_code == 0, result.output
     assert calls == [str(workspace.resolve())]
-    config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
+    config = json.loads((workspace / ".cruxible" / "coverage.json").read_text())
     assert config["server_socket"] == str(tmp_path / "cruxible.sock")
     assert config["instance_id"] == "inst_socket"
     assert "server_url" not in config
@@ -301,7 +296,6 @@ def test_explicit_remote_workspace_config_never_sends_the_client_path(
         [
             "--server-url",
             "https://playbill.example.test",
-            "playbill",
             "host",
             "create",
             "--instance-id",
@@ -313,11 +307,11 @@ def test_explicit_remote_workspace_config_never_sends_the_client_path(
     )
 
     assert result.exit_code == 0, result.output
-    config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
+    config = json.loads((workspace / ".cruxible" / "coverage.json").read_text())
     CoverageWorkspaceConfigV2.model_validate(config)
     assert config == {
         "floor_output": {
-            "format": "playbill-floor-export-v5",
+            "format": "playbill-floor-export-v6",
             "tag": "playbill-floor-output-v1",
         },
         "instance_id": "inst_remote",
@@ -333,7 +327,7 @@ def test_document_example_is_local_and_model_constructed(monkeypatch) -> None:
     )
     result = CliRunner().invoke(
         cli,
-        ["playbill", "document", "propose", "--example", "document"],
+        ["document", "propose", "--example", "document"],
     )
 
     assert result.exit_code == 0, result.output
@@ -370,7 +364,7 @@ def test_cli_init_needs_an_owner_principal_and_claims_it_on_an_auth_off_daemon(
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     base = ["--server-url", "https://playbill.invalid", "--instance-id", "inst_cli_init"]
 
-    missing = CliRunner().invoke(cli, [*base, "playbill", "init", "--key-dir", str(tmp_path / "a")])
+    missing = CliRunner().invoke(cli, [*base, "init", "--key-dir", str(tmp_path / "a")])
     conflicting = CliRunner().invoke(
         cli,
         [
@@ -378,7 +372,6 @@ def test_cli_init_needs_an_owner_principal_and_claims_it_on_an_auth_off_daemon(
             "--principal-id",
             "alice",
             *base[2:],
-            "playbill",
             "init",
             "--key-dir",
             str(tmp_path / "b"),
@@ -388,11 +381,11 @@ def test_cli_init_needs_an_owner_principal_and_claims_it_on_an_auth_off_daemon(
     )
     made = CliRunner().invoke(
         cli,
-        [*base, "playbill", "init", "--key-dir", str(tmp_path / "c"), "--principal-id", "alice"],
+        [*base, "init", "--key-dir", str(tmp_path / "c"), "--principal-id", "alice"],
     )
 
     assert missing.exit_code == 2
-    assert "cruxible playbill init --principal-id ID --key-dir DIR" in missing.output
+    assert "cruxible init --principal-id ID --key-dir DIR" in missing.output
     assert conflicting.exit_code == 2
     assert "disagrees with the configured principal alice" in conflicting.output
     assert made.exit_code == 0, made.output

@@ -21,6 +21,7 @@ from cruxible_client import contracts
 from cruxible_client.authoring.workspace import (
     WorkspaceError,
     configured_floor_output,
+    ensure_workspace_directory,
     sync_floor_directory,
     write_projection_index,
 )
@@ -72,11 +73,12 @@ def _floor_directory(workspace: str) -> tuple[Path, Path]:
     root = registered.resolve(strict=True)
     if registered.is_symlink() or str(registered.absolute()).casefold() != str(root).casefold():
         raise WorkspaceError("floor delivery refuses a symlinked workspace root")
-    floor = root / ".playbill" / "floor"
+    ensure_workspace_directory(root)
+    floor = root / ".cruxible" / "floor"
     # Check the real on-disk spellings too: a differently cased symlink is
     # still the same path on the local case-insensitive filesystem.
     parent = root
-    for name in (".playbill", "floor"):
+    for name in (".cruxible", "floor"):
         matches = (
             []
             if not parent.exists()
@@ -159,7 +161,7 @@ def _included_floor(
         }
     )
     export = contracts.FloorExport(
-        tag="playbill-floor-export-v5",
+        tag="playbill-floor-export-v6",
         coordinate=contracts.AcceptedCoordinate.model_validate(
             AcceptedCoordinate.from_internal(head).model_dump(mode="json")
         ),
@@ -220,7 +222,7 @@ def _refresh_floor_admitted(
             "Daemon floor delivery owns this workspace's floor and writes only the "
             "current accepted head; at names a different coordinate. To read an older "
             "coordinate, use get or query with at. To write a pinned floor, turn daemon "
-            "delivery off: cruxible playbill workspace floor-delivery off "
+            "delivery off: cruxible workspace floor-delivery off "
             f"--instance-id {instance_id}.",
             repair=RepairOperation(
                 operation="cruxible.workspace.floor-delivery",
@@ -265,7 +267,7 @@ def _refresh_floor_admitted(
             assert applied.floor_digest is not None
             receipt = contracts.WorkspaceFloorWriteResult(
                 status="unchanged" if applied.status == "unchanged" else "written",
-                path=".playbill/floor",
+                path=".cruxible/floor",
                 destination=str(floor),
                 floor_digest=applied.floor_digest,
                 coordinate=contracts.AcceptedCoordinate.model_validate(

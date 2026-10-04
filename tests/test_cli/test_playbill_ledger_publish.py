@@ -33,7 +33,6 @@ def mirror_cli(monkeypatch, tmp_path):
         "http://unused.invalid",
         "--instance-id",
         "inst_test",
-        "playbill",
         "ledger",
     ]
     return args, calls

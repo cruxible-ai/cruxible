@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -59,14 +60,18 @@ from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.floor import (
     FLOOR_FORMAT,
     FLOOR_LOCAL_PATHS,
+    FLOOR_MANIFEST_PATH,
     FloorApplyResult,
     FloorDelta,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.workspace_layout import FLOOR_PATH
+from cruxible_client.contracts.workspace_layout import (
+    FLOOR_PATH,
+    workspace_directory_conflict,
+)
 
-_CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
-_CONFIG_EXCLUDE_RULE = b"/.playbill/coverage.json\n"
+_CONFIG_PATH = PurePosixPath(".cruxible/coverage.json")
+_CONFIG_EXCLUDE_RULE = b"/.cruxible/coverage.json\n"
 _FLOOR_DOMAIN = FLOOR_FORMAT
 _FLOOR_DOMAINS = {"playbill-floor-export-v2", _FLOOR_DOMAIN}
 _WORKSPACE_CONFIG_TAG = "playbill-coverage-workspace-config-v2"
@@ -132,8 +137,8 @@ class WorkspaceAttachmentError(WorkspaceError):
         self.requested_workspace = requested_workspace
         self.registered_workspace = registered_workspace
         self.repair_commands = (
-            f"cruxible playbill workspace detach --instance-id {instance_id}",
-            f"cruxible playbill workspace attach --instance-id {instance_id}",
+            f"cruxible workspace detach --instance-id {instance_id}",
+            f"cruxible workspace attach --instance-id {instance_id}",
         )
         super().__init__(
             f"{self.error_code}: host {instance_id!r} is not registered to workspace "
@@ -141,6 +146,39 @@ class WorkspaceAttachmentError(WorkspaceError):
             f"the registered one with `{self.repair_commands[0]}`, then run "
             f"`{self.repair_commands[1]}` from this worktree"
         )
+
+
+class WorkspaceDirectoryConflict(WorkspaceError):
+    """The workspace root cannot hold the ``.cruxible`` workspace directory."""
+
+    error_code = "cruxible.workspace.directory_conflict"
+
+    def __init__(self, *, workspace: Path, reason: str) -> None:
+        self.workspace = str(workspace)
+        self.reason = reason
+        if reason == "home":
+            self.repair_commands: tuple[str, ...] = ()
+            detail = (
+                "the home directory's .cruxible is the daemon state root; run from the "
+                "project's Git worktree instead"
+            )
+        else:
+            moved = f"{workspace}/.cruxible-0.3"
+            self.repair_commands = (f"mv {workspace}/.cruxible {moved}",)
+            detail = (
+                f"{workspace}/.cruxible holds a 0.3 instance ({reason}); move it aside "
+                f"with `{self.repair_commands[0]}` (or remove it once retired), then retry"
+            )
+        super().__init__(f"{self.error_code}: {detail}")
+
+
+def ensure_workspace_directory(root: Path) -> Path:
+    """Refuse a workspace root whose ``.cruxible`` is not a workspace directory."""
+
+    reason = workspace_directory_conflict(root)
+    if reason is not None:
+        raise WorkspaceDirectoryConflict(workspace=root, reason=reason)
+    return root
 
 
 def _contains_secret_field(value: object) -> bool:
@@ -434,7 +472,7 @@ def _presentation_policy(
     *,
     known_source_ids: Sequence[str],
 ) -> tuple[PresentationPolicy | None, tuple[PresentationPolicyNote, ...]]:
-    path = root / ".playbill" / "presentation-policy.json"
+    path = root / ".cruxible" / "presentation-policy.json"
     try:
         if not path.exists():
             return PresentationPolicy(), ()
@@ -630,7 +668,7 @@ def verified_floor_files(export: contracts.FloorExport) -> dict[str, bytes]:
 
 
 def _workspace_root(workspace: str | Path) -> Path:
-    return Path(workspace).expanduser().resolve()
+    return ensure_workspace_directory(Path(workspace).expanduser().resolve())
 
 
 def _relative_destination(workspace: Path, relative_path: str) -> Path:
@@ -679,7 +717,7 @@ def configured_floor_output(
     ):
         raise WorkspaceError(
             "coverage floor_output has an unsupported profile; rewrite it with "
-            "`cruxible playbill floor export --force`"
+            "`cruxible floor export --force`"
         )
     include = _profile_include(output)
     _relative_destination(root, FLOOR_PATH)
@@ -729,9 +767,9 @@ def _replace_exact(destination: Path, files: Mapping[str, bytes], *, root: Path)
     if _holds_exactly(destination, files):
         return
     stage = Path(
-        tempfile.mkdtemp(prefix=f".{destination.name}.playbill-floor-", dir=destination.parent)
+        tempfile.mkdtemp(prefix=f".{destination.name}.cruxible-floor-", dir=destination.parent)
     )
-    backup = destination.parent / f".{destination.name}.playbill-backup-{secrets.token_hex(8)}"
+    backup = destination.parent / f".{destination.name}.cruxible-backup-{secrets.token_hex(8)}"
     moved_old = False
     installed = False
     try:
@@ -774,13 +812,17 @@ def materialize_floor(
     relative_path = FLOOR_PATH
     destination = _relative_destination(root, relative_path)
     files = verified_floor_files(export)
-    if destination.exists() and any(destination.iterdir()) and not force:
+    occupied = destination.exists() and any(destination.iterdir()) and not force
+    # A floor of another format (a format bump) is this writer's own floor and
+    # is replaced whole; anything else non-empty is the caller's and refused.
+    replaceable = holds_floor_of_another_format(destination, str(export.manifest.get("format")))
+    if occupied and not _holds_exactly(destination, files) and not replaceable:
+        raise WorkspaceError(
+            f"refusing to write the floor into a non-empty directory: {destination}"
+        )
+    if occupied and _holds_exactly(destination, files):
         # Already exactly this floor (as it is right after an activation's
         # refresh): nothing to write, and nothing of the caller's is at risk.
-        if not _holds_exactly(destination, files):
-            raise WorkspaceError(
-                f"refusing to write the floor into a non-empty directory: {destination}"
-            )
         write_projection_index(root)
         return contracts.WorkspaceFloorWriteResult(
             status="unchanged",
@@ -914,7 +956,7 @@ def _write_floor_local(workspace: Path, relative: str, text: str) -> None:
 def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
     """Each compact projection block in ``content``: its ref and declared generation."""
 
-    directory = root / ".playbill/manifests"
+    directory = root / ".cruxible/manifests"
     blocks: list[tuple[str, str]] = []
     try:
         refs = projection_manifest_refs(content)
@@ -1051,6 +1093,29 @@ def floor_export_parts(
 FloorDeltaFetch = Callable[[int | None, str | None], FloorDelta]
 
 
+_FLOOR_FORMAT_RE = re.compile(r"playbill-floor-export-v\d+")
+
+
+def holds_floor_of_another_format(directory: Path, current_format: str) -> bool:
+    """Whether ``directory`` holds a floor whose manifest names another floor format.
+
+    A floor written before a format bump fails the current manifest model, but
+    it is still the floor this writer owns, so a refresh replaces it whole. A
+    floor of the same format that does not verify is still refused without force.
+    """
+
+    try:
+        raw = json.loads(read_regular_file(directory / FLOOR_MANIFEST_PATH, max_bytes=1 << 20))
+    except (OSError, ValueError):
+        return False
+    form = raw.get("format") if isinstance(raw, dict) else None
+    return (
+        isinstance(form, str)
+        and _FLOOR_FORMAT_RE.fullmatch(form) is not None
+        and form != current_format
+    )
+
+
 def sync_floor_directory(
     fetch_delta: FloorDeltaFetch, floor_dir: Path
 ) -> tuple[FloorDelta, FloorApplyResult]:
@@ -1139,6 +1204,7 @@ def write_workspace_floor_delta(
         and destination.is_dir()
         and any(destination.iterdir())
         and read_floor_manifest(destination) is None
+        and not holds_floor_of_another_format(destination, FLOOR_FORMAT)
     ):
         raise WorkspaceError(
             f"refusing to write the floor into a non-empty directory: {destination}"
@@ -1326,14 +1392,14 @@ def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
     }
     try:
         candidates = (
-            root / ".playbill" / "sources.yaml",
+            root / ".cruxible" / "sources.yaml",
             root / "sources.yaml",
         )
         existing = tuple(path for path in candidates if path.is_file())
         if not existing or any(not path.resolve().is_relative_to(root) for path in existing):
             _observe_presentation_policy(observation, root, known_source_ids=())
             return observation
-        overlay_path = root / ".playbill" / "sources.local.yaml"
+        overlay_path = root / ".cruxible" / "sources.local.yaml"
         if overlay_path.is_file() and not overlay_path.resolve().is_relative_to(root):
             return observation
         sources = WorkspaceSources(root)
@@ -2135,6 +2201,7 @@ def activate_with_workspace_refresh(
 
 __all__ = [
     "WorkspaceAttachmentError",
+    "WorkspaceDirectoryConflict",
     "WorkspaceError",
     "activate_with_workspace_refresh",
     "configured_floor_path",

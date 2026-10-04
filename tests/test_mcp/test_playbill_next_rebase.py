@@ -73,9 +73,9 @@ def test_rebase_reaches_the_served_rebase_route(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_next_is_a_read_and_rebase_writes_at_the_preflight_tier() -> None:
-    assert TOOL_PERMISSIONS["cruxible_playbill_next"] == PermissionMode.READ_ONLY
+    assert TOOL_PERMISSIONS["cruxible_next"] == PermissionMode.READ_ONLY
     assert (
-        TOOL_PERMISSIONS["cruxible_playbill_authoring_rebase"]
-        == TOOL_PERMISSIONS["cruxible_playbill_authoring_preflight"]
+        TOOL_PERMISSIONS["cruxible_authoring_rebase"]
+        == TOOL_PERMISSIONS["cruxible_authoring_preflight"]
         == PermissionMode.GOVERNED_WRITE
     )

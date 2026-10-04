@@ -36,7 +36,7 @@ def test_mcp_examined_existing_signs_with_real_key_and_appends(
         async with _protocol_session(server) as session:
             await session.initialize()
             result = await session.call_tool(
-                "cruxible_playbill_claim_attest",
+                "cruxible_claim_attest",
                 {
                     "instance_id": instance.descriptor.instance_id,
                     "claim_id": claim_id,
@@ -96,7 +96,7 @@ def test_referent_coordinate_needs_capture_digests(monkeypatch: pytest.MonkeyPat
         handlers.handle_playbill_claim_attest(
             "inst_test", "CLM-1", "support", None, referent_coordinate={}
         )
-    with pytest.raises(DataValidationError, match="cruxible_playbill_claim_attest"):
+    with pytest.raises(DataValidationError, match="cruxible_claim_attest"):
         handlers.handle_playbill_claim_attest(
             "inst_test", "CLM-1", "support", None, capture_digests=["not-a-digest"]
         )

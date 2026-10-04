@@ -88,23 +88,21 @@ def test_the_cli_prints_a_line_card_as_values(world, monkeypatch, tmp_path) -> N
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     prefix = ["--server-url", "http://server", "--instance-id", "inst"]
 
-    text = CliRunner().invoke(cli, [*prefix, "playbill", "get", f"Line:{line.identity.name}"])
+    text = CliRunner().invoke(cli, [*prefix, "get", f"Line:{line.identity.name}"])
 
     assert text.exit_code == 0, text.output
     assert f"line: {line.identity.qualified}" in text.output
     assert "trigger: capture_landing" in text.output
     assert "credential_revoked" in text.output
-    assert f"next: cruxible playbill get {line.procedure.target.qualified}" in text.output
+    assert f"next: cruxible get {line.procedure.target.qualified}" in text.output
     assert client.requests[-1].surface == "cli"
 
-    as_json = CliRunner().invoke(
-        cli, [*prefix, "playbill", "get", "Mandate:served-line-mandate", "--json"]
-    )
+    as_json = CliRunner().invoke(cli, [*prefix, "get", "Mandate:served-line-mandate", "--json"])
     assert as_json.exit_code == 0, as_json.output
     body = json.loads(as_json.output)
     assert body["kind"] == "mandate" and body["card"]["grants"] == "propose"
 
-    missing = CliRunner().invoke(cli, [*prefix, "playbill", "get", "Line:nope"])
+    missing = CliRunner().invoke(cli, [*prefix, "get", "Line:nope"])
     assert missing.exit_code != 0
     assert "cruxible.get.ref_not_found" in missing.output
 
@@ -122,7 +120,7 @@ def test_the_mcp_tool_answers_a_line_card_by_its_identity_digest(world, monkeypa
         async with _protocol_session(server) as session:
             await session.initialize()
             result = await session.call_tool(
-                "cruxible_playbill_get",
+                "cruxible_get",
                 {"instance_id": "inst", "ref": line_identity_digest(line.identity)},
             )
             text = " ".join(block.text for block in result.content if hasattr(block, "text"))
@@ -134,7 +132,7 @@ def test_the_mcp_tool_answers_a_line_card_by_its_identity_digest(world, monkeypa
     body = json.loads(output)
     assert body["kind"] == "line" and body["card"]["line"] == line.identity.qualified
     assert body["card"]["arms"][0]["state"] == "stopped"
-    assert all(step.startswith("cruxible_playbill_get(") for step in body["card"]["next"])
+    assert all(step.startswith("cruxible_get(") for step in body["card"]["next"])
     assert client.requests[-1].surface == "mcp"
 
 
@@ -186,18 +184,16 @@ def test_the_cli_pages_the_operational_sections(world, monkeypatch, tmp_path) ->
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     prefix = ["--server-url", "http://server", "--instance-id", "inst"]
 
-    lines = CliRunner().invoke(cli, [*prefix, "playbill", "orient", "--section", "lines"])
+    lines = CliRunner().invoke(cli, [*prefix, "orient", "--section", "lines"])
     assert lines.exit_code == 0, lines.output
     assert line.identity.qualified in lines.output and "stopped" in lines.output
-    assert f"cruxible playbill get {line.identity.qualified}" in lines.output
+    assert f"cruxible get {line.identity.qualified}" in lines.output
 
-    mandates = CliRunner().invoke(
-        cli, [*prefix, "playbill", "orient", "--section", "mandates", "--json"]
-    )
+    mandates = CliRunner().invoke(cli, [*prefix, "orient", "--section", "mandates", "--json"])
     assert mandates.exit_code == 0, mandates.output
     assert json.loads(mandates.output)["mandates"][0]["grants"] == "propose"
 
-    whole = CliRunner().invoke(cli, [*prefix, "playbill", "orient"])
+    whole = CliRunner().invoke(cli, [*prefix, "orient"])
     assert whole.exit_code == 0, whole.output
     assert "lines=1" in whole.output and "mandates=1" in whole.output
 
@@ -217,7 +213,7 @@ def test_the_mcp_orient_tool_pages_lines(world, monkeypatch) -> None:  # type: i
         async with _protocol_session(server) as session:
             await session.initialize()
             result = await session.call_tool(
-                "cruxible_playbill_orient", {"instance_id": "inst", "section": "lines"}
+                "cruxible_orient", {"instance_id": "inst", "section": "lines"}
             )
             assert not result.isError
             return " ".join(block.text for block in result.content if hasattr(block, "text"))
@@ -225,7 +221,7 @@ def test_the_mcp_orient_tool_pages_lines(world, monkeypatch) -> None:  # type: i
     body = json.loads(_run(exercise()))
 
     assert body["lines"][0]["line"] == line.identity.qualified
-    assert body["next"][0] == f'cruxible_playbill_get(ref="{line.identity.qualified}")'
+    assert body["next"][0] == f'cruxible_get(ref="{line.identity.qualified}")'
 
 
 def test_the_sdk_orients_by_operational_section(world) -> None:  # type: ignore[no-untyped-def]

@@ -147,7 +147,7 @@ def test_refresh_refuses_a_head_differing_only_beyond_its_git_oid(
     tmp_path: Path, field: str
 ) -> None:
     workspace = _workspace(tmp_path)
-    floor = workspace / ".playbill/floor"
+    floor = workspace / ".cruxible/floor"
     requested = _coordinate().model_copy(update={field: "sha256:" + "9" * 64})
     assert requested.git_oid == _coordinate().git_oid
 

@@ -188,7 +188,7 @@ def _multi_source_world(
 ):  # type: ignore[no-untyped-def]
     workspace = root / "workspace"
     workspace.mkdir()
-    playbill = workspace / ".playbill"
+    playbill = workspace / ".cruxible"
     playbill.mkdir()
     lines = [
         "tag: playbill-source-catalog-v1",

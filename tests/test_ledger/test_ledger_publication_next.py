@@ -30,7 +30,7 @@ def test_next_names_publication_status_and_the_appropriate_follow_up(status, tmp
         assert health.state == "behind"
         assert health.detail["requested_sequence"] == 3
         assert health.detail["published_sequence"] == 2
-        assert health.detail["publication_command"] == "cruxible playbill ledger publish --json"
+        assert health.detail["publication_command"] == "cruxible ledger publish --json"
         assert health.repair is not None
         assert health.repair.required_change == (
             "restore_the_ledger_mirror_remote_or_its_credential"

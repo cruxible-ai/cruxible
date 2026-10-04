@@ -22,7 +22,7 @@ def test_clone_url_refuses_typed_before_a_mirror_is_bound(
 ) -> None:
     client, instance_id, _reviewer = playbill_http
 
-    response = client.get(f"/api/v1/{instance_id}/playbill/ledger/mirror")
+    response = client.get(f"/api/v1/{instance_id}/ledger/mirror")
 
     assert response.status_code == 400, response.text
     assert "cruxible.ledger.mirror_unset" in response.text
@@ -32,7 +32,7 @@ def test_clone_url_refuses_typed_before_a_mirror_is_bound(
 def _bind(client: TestClient, instance_id: str, remote: Path) -> Any:
     """Bind a mirror: it cannot be called back, so preview it, then commit that preview."""
 
-    url = f"/api/v1/{instance_id}/playbill/ledger/mirror"
+    url = f"/api/v1/{instance_id}/ledger/mirror"
     preview = client.post(url, json={"url": str(remote)})
     assert preview.status_code == 200, preview.text
     assert preview.json()["status"] == "would_publish"
@@ -58,7 +58,7 @@ def test_setting_a_mirror_publishes_and_reads_back(
     assert bound.status_code == 200, bound.text
     assert bound.json()["status"] == "current"
     assert bound.json()["mirror_url"] == str(remote)
-    read_back = client.get(f"/api/v1/{instance_id}/playbill/ledger/mirror")
+    read_back = client.get(f"/api/v1/{instance_id}/ledger/mirror")
     assert read_back.status_code == 200, read_back.text
     assert read_back.json()["mirror_url"] == str(remote)
 
@@ -69,13 +69,13 @@ def test_a_credential_bearing_url_never_reaches_the_descriptor(
     client, instance_id, _reviewer = playbill_http
 
     response = client.post(
-        f"/api/v1/{instance_id}/playbill/ledger/mirror",
+        f"/api/v1/{instance_id}/ledger/mirror",
         json={"url": "https://x-access-token:secret@forge.invalid/ledger.git"},
     )
 
     assert response.status_code == 400, response.text
     assert "cruxible.ledger.mirror_url_invalid" in response.text
-    assert client.get(f"/api/v1/{instance_id}/playbill/ledger/mirror").status_code == 400
+    assert client.get(f"/api/v1/{instance_id}/ledger/mirror").status_code == 400
 
 
 def test_orientation_carries_the_mirror_url_without_a_second_round_trip(
@@ -86,7 +86,7 @@ def test_orientation_carries_the_mirror_url_without_a_second_round_trip(
     remote = _bare(tmp_path / "mirror.git")
     assert _bind(client, instance_id, remote).status_code == 200
 
-    response = client.get(f"/api/v1/{instance_id}/playbill/orient")
+    response = client.get(f"/api/v1/{instance_id}/orient")
 
     assert response.status_code == 200, response.text
     assert response.json()["mirror_url"] == str(remote)
@@ -110,7 +110,7 @@ def test_init_binds_the_mirror_during_bootstrap(
     )
 
     initialized = client.post(
-        f"/api/v1/{second.record.instance_id}/playbill/init",
+        f"/api/v1/{second.record.instance_id}/init",
         json={
             "principals": [owner.principal.model_dump(mode="json")],
             "mirror_url": str(remote),
@@ -118,7 +118,7 @@ def test_init_binds_the_mirror_during_bootstrap(
     )
 
     assert initialized.status_code == 200, initialized.text
-    read_back = client.get(f"/api/v1/{second.record.instance_id}/playbill/ledger/mirror")
+    read_back = client.get(f"/api/v1/{second.record.instance_id}/ledger/mirror")
     assert read_back.status_code == 200, read_back.text
     assert read_back.json() == {
         "tag": "playbill-ledger-mirror-v1",
@@ -152,7 +152,7 @@ def test_init_refuses_a_malformed_mirror_before_any_state_exists(
     )
 
     refused = client.post(
-        f"/api/v1/{third.record.instance_id}/playbill/init",
+        f"/api/v1/{third.record.instance_id}/init",
         json={
             "principals": [owner.principal.model_dump(mode="json")],
             "mirror_url": "ext::sh -c 'curl evil'",

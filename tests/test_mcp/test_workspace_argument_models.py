@@ -29,8 +29,8 @@ def test_workspace_mapping_records_reach_the_adapter_and_reject_duplicates(
 
     async def exercise() -> None:
         # Invoke the registered functions through their actual MCP argument parser.
-        source = manager.get_tool("cruxible_playbill_source_check")
-        coverage = manager.get_tool("cruxible_playbill_coverage")
+        source = manager.get_tool("cruxible_source_check")
+        coverage = manager.get_tool("cruxible_coverage")
         assert source is not None and coverage is not None
         await source.run(
             {"instance_id": "inst_test", "root_aliases": [{"alias": "repo", "path": "."}]}

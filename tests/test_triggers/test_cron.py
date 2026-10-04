@@ -149,7 +149,7 @@ def test_the_trigger_example_says_cron_is_utc_and_how_to_convert(
     description = CronSchedule.model_json_schema()["properties"]["expression"]["description"]
     assert "evaluated in UTC" in description and CRON_UTC_HINT in description
 
-    printed = CliRunner().invoke(cli, ["playbill", "authoring", "create", "--example", "trigger"])
+    printed = CliRunner().invoke(cli, ["authoring", "create", "--example", "trigger"])
     assert printed.exit_code == 0, printed.output
     # stdout stays one JSON document; the hint rides beside it.
     assert json.loads(printed.stdout)["schedule"]["kind"] == "cron"

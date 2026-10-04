@@ -356,8 +356,8 @@ cruxible lock
 Run every `named_query` you added and inspect its receipt:
 
 ```bash
-cruxible query run <query_name> --param key=value
-cruxible explain --receipt <receipt_id>
+cruxible query --name <query_name> --param key=value
+cruxible get <ref> --detail why
 ```
 
 Do not hand off a state whose `named_queries` have not all been exercised against representative cases.
@@ -418,8 +418,8 @@ prediction path instead:
    calibration input. A deadline or evidence mismatch is a typed refusal whose
    repair is another `predict` or `settle` call.
 
-The CLI equivalents are `cruxible playbill predict REQUEST_FILE` followed by
-`cruxible playbill settle PREDICTION_ID REQUEST_FILE`.
+The CLI equivalents are `cruxible predict REQUEST_FILE` followed by
+`cruxible settle PREDICTION_ID REQUEST_FILE`.
 
 ## Write Step D: Add feedback and outcome structure
 

@@ -51,7 +51,7 @@ def test_http_append_uses_authenticated_actor_and_shared_wire(
     request = _request(instance, owner, claim_id, tmp_path)
 
     response = client.post(
-        f"/api/v1/{instance.descriptor.instance_id}/playbill/claim-attestations",
+        f"/api/v1/{instance.descriptor.instance_id}/claim-attestations",
         json=request.model_dump(mode="json"),
     )
 
@@ -69,14 +69,14 @@ def test_http_actor_relay_and_malformed_request_are_typed(
     request = _request(instance, owner, claim_id, tmp_path)
     monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "reviewer")
     relay = client.post(
-        f"/api/v1/{instance.descriptor.instance_id}/playbill/claim-attestations",
+        f"/api/v1/{instance.descriptor.instance_id}/claim-attestations",
         json=request.model_dump(mode="json"),
     )
     assert relay.status_code == 400
     assert relay.json()["error_code"] == "cruxible.claim_attestation.actor_signer_mismatch"
 
     malformed = client.post(
-        f"/api/v1/{instance.descriptor.instance_id}/playbill/claim-attestations",
+        f"/api/v1/{instance.descriptor.instance_id}/claim-attestations",
         json={"tag": "playbill-claim-attestation-append-request-v1"},
     )
     assert malformed.status_code == 400
@@ -95,7 +95,7 @@ def test_http_read_only_refuses_attestation_append(
     reset_permissions()
 
     response = client.post(
-        f"/api/v1/{instance.descriptor.instance_id}/playbill/claim-attestations",
+        f"/api/v1/{instance.descriptor.instance_id}/claim-attestations",
         json=request.model_dump(mode="json"),
     )
 
@@ -127,9 +127,7 @@ def test_http_admin_recovery_rolls_forward_and_clears_poison(
         store.head()
     store.crash_hook = None
 
-    response = client.post(
-        f"/api/v1/{instance.descriptor.instance_id}/playbill/claim-attestations/recover"
-    )
+    response = client.post(f"/api/v1/{instance.descriptor.instance_id}/claim-attestations/recover")
 
     assert response.status_code == 204, response.text
     assert len(store.events()) == 1
@@ -143,9 +141,7 @@ def test_http_recovery_is_admin_only(
     monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
     reset_permissions()
 
-    response = client.post(
-        f"/api/v1/{instance.descriptor.instance_id}/playbill/claim-attestations/recover"
-    )
+    response = client.post(f"/api/v1/{instance.descriptor.instance_id}/claim-attestations/recover")
 
     assert response.status_code == 403
     assert response.json()["context"]["required_mode"] == "ADMIN"
@@ -180,7 +176,7 @@ def test_http_next_maps_unknown_attestation_head_to_typed_400(
 ) -> None:
     client, instance, _claim_id, _owner = attestation_http
     response = client.post(
-        f"/api/v1/{instance.descriptor.instance_id}/playbill/next",
+        f"/api/v1/{instance.descriptor.instance_id}/next",
         json={
             "tag": "playbill-next-request-v2",
             "evaluation_time": "2026-08-28T18:00:00Z",
@@ -221,13 +217,13 @@ def test_http_next_passes_the_authenticated_caller_not_a_request_field(
             "disclose_restricted_existence": True,
         },
     }
-    response = client.post(f"/api/v1/{instance.descriptor.instance_id}/playbill/next", json=body)
+    response = client.post(f"/api/v1/{instance.descriptor.instance_id}/next", json=body)
     assert response.status_code == 200, response.text
     # An auth-off daemon has one caller: the local operator.
     assert seen == ["operator"]
 
     spoofed = client.post(
-        f"/api/v1/{instance.descriptor.instance_id}/playbill/next",
+        f"/api/v1/{instance.descriptor.instance_id}/next",
         json=body | {"caller_principal_id": "reviewer"},
     )
     assert spoofed.status_code in {400, 422}

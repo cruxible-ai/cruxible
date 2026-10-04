@@ -53,13 +53,13 @@ def sign_principal_mint(
     label: str,
     key_dir: Path,
 ) -> RuntimeCredentialPrincipalProof:
-    """Sign the principal's consent with the key `playbill init`/`principal add` wrote."""
+    """Sign the principal's consent with the key `cruxible init`/`principal add` wrote."""
 
     private_key = key_dir.expanduser() / f"{principal_id}.ed25519"
     if not private_key.is_file():
         raise click.UsageError(
             f"no private key for principal {principal_id} at {private_key}; repair: pass the "
-            "--key-dir that `playbill init` or `playbill principal add` wrote for it"
+            "--key-dir that `cruxible init` or `cruxible principal add` wrote for it"
         )
     return sign_runtime_credential_mint(
         instance_id=instance_id,

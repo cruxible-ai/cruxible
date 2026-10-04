@@ -102,7 +102,7 @@ def test_client_sends_explicit_time_access_and_workspace_observation() -> None:
     )
 
     assert result.observed_domains == ["accepted_state", "workspace_floor"]
-    assert captured[0].url.path == "/api/v1/inst/playbill/next"
+    assert captured[0].url.path == "/api/v1/inst/next"
     payload: dict[str, Any] = json.loads(captured[0].content)
     assert payload["tag"] == "playbill-next-request-v2"
     assert "at_attestation_head_digest" not in payload
@@ -159,7 +159,7 @@ def test_client_parses_typed_rows_findings_and_status() -> None:
         "target": "docs/runbook.md",
         "required_change": "resync_projection",
         "arguments": {"all": True},
-        "command": "cruxible playbill block sync --all",
+        "command": "cruxible block sync --all",
     }
     body = {
         "tag": "playbill-next-result-v2",
@@ -179,7 +179,7 @@ def test_client_parses_typed_rows_findings_and_status() -> None:
                     "target": "inst",
                     "required_change": "replace_installed_floor",
                     "arguments": {},
-                    "command": "cruxible playbill floor export",
+                    "command": "cruxible floor export",
                 },
             },
         },
@@ -226,7 +226,7 @@ def test_client_parses_typed_rows_findings_and_status() -> None:
         "projection_dirty",
         ["Claim:a"],
     )
-    assert row.repair.command == "cruxible playbill block sync --all"
+    assert row.repair.command == "cruxible block sync --all"
     assert row.repair.arguments == {"all": True}
     (finding,) = row.findings
     assert finding.reason == "projection_backing_stale"

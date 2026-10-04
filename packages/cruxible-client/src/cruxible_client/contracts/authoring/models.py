@@ -1304,7 +1304,7 @@ class ClaimTypeSuccessionMember(_StrictAuthoringModel):
             # know the other: the refusal now says which road takes it.
             raise ValueError(
                 "a ClaimType succession installs a live successor; retire a ClaimType "
-                "through `cruxible playbill claim-type migrate`, which is the road that "
+                "through `cruxible claim-type migrate`, which is the road that "
                 "takes a retiring successor"
             )
         if value.lifecycle.predecessor_digest is None:

@@ -348,7 +348,7 @@ def _candidate_for_proposal(
             )
         raise ProposalIntegrityError(
             "refused proposal has no approvable candidate; run "
-            f"`playbill proposal refusal {proposal_id}` for refusal code "
+            f"`cruxible proposal refusal {proposal_id}` for refusal code "
             f"{diagnostics[0].code}"
         )
     return inspection.proposal, candidate
@@ -384,7 +384,7 @@ def service_submit_playbill_approval(
     ):
         raise ApprovalIntegrityError(
             "cruxible.approval.creator_forbidden: ordinary candidate creator cannot approve; "
-            "after an eligible signer approves, run playbill proposal activate"
+            "after an eligible signer approves, run cruxible proposal activate"
         )
     verified = verify_approval(
         submission,
@@ -488,7 +488,7 @@ def _reconcile_proposal_notes(
                             "cruxible.proposal.note_disagrees_with_evidence: "
                             f"the {kind} note on this review commit differs from the "
                             "proposal evidence the daemon persisted; re-read the proposal "
-                            "with `playbill proposal review --json` and settle from that, "
+                            "with `cruxible proposal review --json` and settle from that, "
                             "or restore the ledger from its own evidence before activating"
                         )
                     if kind == "approval" and expected == b"[]\n":

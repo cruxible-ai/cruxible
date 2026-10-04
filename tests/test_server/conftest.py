@@ -50,7 +50,7 @@ def _fresh_playbill_http(
     )
     with TestClient(create_app()) as client:
         initialized = client.post(
-            f"/api/v1/{instance_id}/playbill/init",
+            f"/api/v1/{instance_id}/init",
             json={
                 "require_independent_approval": require_independent_approval,
                 "principals": [
