@@ -18,6 +18,8 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
+from fastapi.utils import generate_unique_id
 from starlette.types import ASGIApp
 
 from cruxible_client.contracts.authoring.models import (
@@ -277,7 +279,25 @@ def create_app() -> FastAPI:
     app.include_router(hosted_instances_router)
     app.include_router(runtime_credentials_router)
     app.include_router(playbill_router)
+    _public_route_names(app)
     return app
+
+
+def _public_route_names(app: FastAPI) -> None:
+    """Name each route for the public API, not for the module that serves it.
+
+    OpenAPI summaries and operation ids come from the handler's name, and some
+    handlers keep internal names (``query_playbill``); the served name drops
+    the internal qualifier.
+    """
+
+    for route in app.routes:
+        if not isinstance(route, APIRoute) or "playbill" not in route.name:
+            continue
+        route.name = route.name.replace("playbill_", "").replace("_playbill", "")
+        route.summary = route.summary or route.name.replace("_", " ").title()
+        route.unique_id = generate_unique_id(route)
+        route.operation_id = route.operation_id or route.unique_id
 
 
 def run_server(
