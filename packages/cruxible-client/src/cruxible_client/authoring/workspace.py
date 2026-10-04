@@ -67,7 +67,14 @@ from cruxible_client.contracts.floor import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_layout import (
     FLOOR_PATH,
-    workspace_directory_conflict,
+    workspace_path,
+)
+from cruxible_client.contracts.workspace_layout import (
+    WorkspaceDirectoryConflict as WorkspaceDirectoryConflict,
+)
+from cruxible_client.contracts.workspace_layout import WorkspaceError as WorkspaceError
+from cruxible_client.contracts.workspace_layout import (
+    ensure_workspace_directory as ensure_workspace_directory,
 )
 
 _CONFIG_PATH = PurePosixPath(".cruxible/coverage.json")
@@ -117,10 +124,6 @@ _WORKSPACE_CONFIG_FIELDS = frozenset(
 _SECRET_FIELD_FRAGMENTS = ("bearer", "credential", "password", "secret", "token")
 
 
-class WorkspaceError(CruxibleError, ValueError):
-    """A client workspace or exported floor failed deterministic validation."""
-
-
 class WorkspaceAttachmentError(WorkspaceError):
     """Daemon registration and the requested client workspace disagree."""
 
@@ -146,39 +149,6 @@ class WorkspaceAttachmentError(WorkspaceError):
             f"the registered one with `{self.repair_commands[0]}`, then run "
             f"`{self.repair_commands[1]}` from this worktree"
         )
-
-
-class WorkspaceDirectoryConflict(WorkspaceError):
-    """The workspace root cannot hold the ``.cruxible`` workspace directory."""
-
-    error_code = "cruxible.workspace.directory_conflict"
-
-    def __init__(self, *, workspace: Path, reason: str) -> None:
-        self.workspace = str(workspace)
-        self.reason = reason
-        if reason == "home":
-            self.repair_commands: tuple[str, ...] = ()
-            detail = (
-                "the home directory's .cruxible is the daemon state root; run from the "
-                "project's Git worktree instead"
-            )
-        else:
-            moved = f"{workspace}/.cruxible-0.3"
-            self.repair_commands = (f"mv {workspace}/.cruxible {moved}",)
-            detail = (
-                f"{workspace}/.cruxible holds a 0.3 instance ({reason}); move it aside "
-                f"with `{self.repair_commands[0]}` (or remove it once retired), then retry"
-            )
-        super().__init__(f"{self.error_code}: {detail}")
-
-
-def ensure_workspace_directory(root: Path) -> Path:
-    """Refuse a workspace root whose ``.cruxible`` is not a workspace directory."""
-
-    reason = workspace_directory_conflict(root)
-    if reason is not None:
-        raise WorkspaceDirectoryConflict(workspace=root, reason=reason)
-    return root
 
 
 def _contains_secret_field(value: object) -> bool:
@@ -472,7 +442,7 @@ def _presentation_policy(
     *,
     known_source_ids: Sequence[str],
 ) -> tuple[PresentationPolicy | None, tuple[PresentationPolicyNote, ...]]:
-    path = root / ".cruxible" / "presentation-policy.json"
+    path = workspace_path(root, "presentation-policy.json")
     try:
         if not path.exists():
             return PresentationPolicy(), ()
@@ -927,6 +897,7 @@ def _write_workspace_local(
     local join or coverage profile outside the workspace.
     """
 
+    ensure_workspace_directory(workspace)
     anchor = os.open(workspace.anchor, _DIRECTORY)
     try:
         with _directory(anchor, workspace.parts[1:], create=True) as directory:
@@ -956,7 +927,7 @@ def _write_floor_local(workspace: Path, relative: str, text: str) -> None:
 def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
     """Each compact projection block in ``content``: its ref and declared generation."""
 
-    directory = root / ".cruxible/manifests"
+    directory = workspace_path(root, "manifests")
     blocks: list[tuple[str, str]] = []
     try:
         refs = projection_manifest_refs(content)
@@ -1392,14 +1363,14 @@ def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
     }
     try:
         candidates = (
-            root / ".cruxible" / "sources.yaml",
+            workspace_path(root, "sources.yaml"),
             root / "sources.yaml",
         )
         existing = tuple(path for path in candidates if path.is_file())
         if not existing or any(not path.resolve().is_relative_to(root) for path in existing):
             _observe_presentation_policy(observation, root, known_source_ids=())
             return observation
-        overlay_path = root / ".cruxible" / "sources.local.yaml"
+        overlay_path = workspace_path(root, "sources.local.yaml")
         if overlay_path.is_file() and not overlay_path.resolve().is_relative_to(root):
             return observation
         sources = WorkspaceSources(root)

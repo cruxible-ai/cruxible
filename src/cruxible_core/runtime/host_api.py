@@ -18,6 +18,7 @@ from cruxible_client.contracts.errors import (
     ObjectFormatConflict,
     ReseedRequired,
 )
+from cruxible_client.contracts.workspace_layout import ensure_workspace_directory
 from cruxible_core import __version__
 from cruxible_core.compiler.compiler import (
     COMPILER_REVISION_LABELS,
@@ -231,6 +232,7 @@ def create_playbill_host(
                 "Unix socket"
             )
         if workspace_root is not None:
+            ensure_workspace_directory(Path(workspace_root).expanduser().resolve())
             try:
                 workspace_git_object_format(Path(workspace_root))
             except ValueError as exc:
@@ -329,6 +331,11 @@ def attach_workspace(
         raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
     try:
         resolved = Path(workspace_root).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise ConfigError("Workspace attachment requires one local Git worktree") from exc
+    # Refuse the home directory and a 0.3 instance before reading or registering.
+    ensure_workspace_directory(resolved)
+    try:
         workspace_format = workspace_git_object_format(resolved)
     except (OSError, ValueError) as exc:
         raise ConfigError("Workspace attachment requires one local Git worktree") from exc

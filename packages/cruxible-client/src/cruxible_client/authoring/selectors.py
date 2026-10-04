@@ -25,6 +25,7 @@ from cruxible_client.contracts.source_catalog import (
     SourceCatalogEntryAny,
     merge_source_catalogs,
 )
+from cruxible_client.contracts.workspace_layout import workspace_path
 
 
 def _digest(content: bytes) -> str:
@@ -139,7 +140,7 @@ class WorkspaceSources:
         portable_paths = tuple(
             path
             for path in (
-                self.workspace / ".cruxible" / "sources.yaml",
+                workspace_path(self.workspace, "sources.yaml"),
                 self.workspace / "sources.yaml",
             )
             if path.is_file()
@@ -152,7 +153,7 @@ class WorkspaceSources:
             portable = SourceCatalog.model_validate(
                 yaml.safe_load(read_regular_file(portable_paths[0]))
             )
-            local_path = self.workspace / ".cruxible" / "sources.local.yaml"
+            local_path = workspace_path(self.workspace, "sources.local.yaml")
             local = (
                 None
                 if not local_path.is_file()

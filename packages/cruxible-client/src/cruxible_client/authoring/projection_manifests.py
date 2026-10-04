@@ -21,13 +21,14 @@ from cruxible_client.contracts.declared_blocks import (
     read_projection_source,
     resolve_projection_manifest_digest,
 )
+from cruxible_client.contracts.workspace_layout import workspace_path
 
 
 def load_projection_manifests(workspace: Path, content: bytes) -> dict[str, bytes]:
     root = workspace.resolve()
     result = {}
     total = 0
-    directory = root / ".cruxible/manifests"
+    directory = workspace_path(root, "manifests")
     for ref in projection_manifest_refs(content):
         if ref.startswith("sha256:"):
             digest = ref
@@ -55,7 +56,7 @@ def retain_local_manifests(workspace: Path, manifests: Mapping[str, bytes]) -> N
     if not manifests:
         return
     root = workspace.resolve()
-    directory = root / ".cruxible/manifests"
+    directory = workspace_path(root, "manifests")
     if not directory.resolve().is_relative_to(root):
         raise ProjectionMarkerError("projection manifest directory escapes its workspace")
     directory.mkdir(parents=True, exist_ok=True)

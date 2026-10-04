@@ -11,6 +11,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from cruxible_client.contracts.workspace_layout import (
+    WORKSPACE_DIRECTORY,
+    WorkspaceDirectoryConflict,
+    ensure_workspace_directory,
+    workspace_directory_conflict,
+)
+
 TargetSource = Literal["explicit", "environment", "workspace", "remembered", "local"]
 WorkspaceSource = Literal["explicit", "environment", "workspace", "local"]
 
@@ -78,9 +85,11 @@ def _normalized_transport(server_url: object, server_socket: object) -> str | No
 
 
 def _workspace_binding(root: Path) -> tuple[WorkspaceBinding | None, Path | None]:
-    path = root / ".cruxible" / "coverage.json"
+    path = root / WORKSPACE_DIRECTORY / "coverage.json"
     if not path.exists():
         return None, None
+    # A binding is about to be read: this root is the selected workspace.
+    ensure_workspace_directory(root)
     try:
         resolved = path.resolve(strict=True)
     except OSError as exc:
@@ -150,8 +159,12 @@ def _source_catalog_path(root: Path) -> Path | None:
     return next(
         (
             path
-            for path in (root / ".cruxible" / "sources.yaml", root / "sources.yaml")
+            for path in (root / WORKSPACE_DIRECTORY / "sources.yaml", root / "sources.yaml")
             if path.exists()
+            and (
+                path.parent.name != WORKSPACE_DIRECTORY
+                or workspace_directory_conflict(root) is None
+            )
         ),
         None,
     )
@@ -193,11 +206,11 @@ def _selected_workspace(
     }:
         return start, "local", None, None, ()
     if explicit is not None:
-        root = Path(explicit).expanduser().resolve()
+        root = ensure_workspace_directory(Path(explicit).expanduser().resolve())
         binding, path = _workspace_binding(root)
         return root, "explicit", binding, path, ()
     if raw := environ.get("CRUXIBLE_WORKSPACE"):
-        root = Path(raw).expanduser().resolve()
+        root = ensure_workspace_directory(Path(raw).expanduser().resolve())
         binding, path = _workspace_binding(root)
         return root, "environment", binding, path, ()
 
@@ -208,7 +221,7 @@ def _selected_workspace(
         source_catalog_path = source_catalog_path or _source_catalog_path(root)
         try:
             binding, path = _workspace_binding(root)
-        except ContextResolutionError as exc:
+        except (ContextResolutionError, WorkspaceDirectoryConflict) as exc:
             if root == start:
                 raise
             warnings.append(f"skipped invalid ancestor workspace binding: {exc}")

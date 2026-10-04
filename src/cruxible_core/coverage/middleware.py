@@ -70,7 +70,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.workspace_layout import FLOOR_PATH
+from cruxible_client.contracts.workspace_layout import FLOOR_PATH, ensure_workspace_directory
 from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingPathBindingV1,
@@ -430,7 +430,7 @@ def _logical_source(plane: str, identity: str) -> LogicalSourceIdentity | None:
 def load_coverage_config(root: Path) -> CoverageWorkspaceConfig:
     """Read `.cruxible/coverage.json` from a workspace root."""
 
-    path = root.expanduser() / CONFIG_RELATIVE_PATH
+    path = ensure_workspace_directory(root.expanduser().resolve()) / CONFIG_RELATIVE_PATH
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:

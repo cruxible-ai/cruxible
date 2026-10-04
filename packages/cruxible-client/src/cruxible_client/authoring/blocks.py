@@ -61,6 +61,7 @@ from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.repairs import RepairOperation, ServedRepair
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_client.contracts.workspace_layout import workspace_path
 from cruxible_client.transport.http import CruxibleClient
 
 
@@ -339,7 +340,7 @@ def _result(items: Sequence[BlockSyncItem]) -> BlockSyncResult:
 
 
 def _workspace_binding(root: Path) -> WorkspaceBinding | None:
-    path = root / ".cruxible" / "coverage.json"
+    path = workspace_path(root, "coverage.json")
     if not path.is_file():
         return None
     try:
@@ -699,7 +700,7 @@ def sync_projection_blocks(
     requested = tuple(detach_paths or paths)
     catalog_paths = tuple(
         path
-        for path in (root / ".cruxible" / "sources.yaml", root / "sources.yaml")
+        for path in (workspace_path(root, "sources.yaml"), root / "sources.yaml")
         if path.is_file()
     )
     sources: WorkspaceSources | None = None
