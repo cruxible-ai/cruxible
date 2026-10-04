@@ -588,6 +588,7 @@ class CoverageMiddlewareV1:
         resolve: ResolveCoverage,
         resolve_floor_generations: ResolveFloorGenerations | None = None,
     ) -> None:
+        ensure_workspace_directory(root.expanduser().resolve())
         self._root = root.expanduser()
         self._config = config
         self._resolve = resolve

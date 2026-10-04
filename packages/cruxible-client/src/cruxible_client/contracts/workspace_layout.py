@@ -39,7 +39,8 @@ class WorkspaceDirectoryConflict(WorkspaceError):
             self.repair_commands: tuple[str, ...] = ()
             detail = (
                 "the home directory's .cruxible is the daemon state root; run from the "
-                "project's Git worktree instead"
+                "project's Git worktree instead (or set CRUXIBLE_NO_WORKSPACE=1 when the "
+                "command needs no workspace)"
             )
         else:
             moved = f"{workspace}/.cruxible-0.3"

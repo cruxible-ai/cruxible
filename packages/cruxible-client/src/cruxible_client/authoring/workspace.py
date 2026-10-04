@@ -67,6 +67,7 @@ from cruxible_client.contracts.floor import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_layout import (
     FLOOR_PATH,
+    workspace_directory_conflict,
     workspace_path,
 )
 from cruxible_client.contracts.workspace_layout import (
@@ -1313,6 +1314,8 @@ def workspace_floor_freshness(
     workspace's coverage config names another instance.
     """
 
+    if workspace_directory_conflict(Path(workspace).expanduser().resolve()) is not None:
+        return orientation
     root = _workspace_root(workspace)
     floor = root / FLOOR_PATH
     try:
@@ -1347,6 +1350,17 @@ def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
     valid observation so the daemon can explain each accepted citation separately.
     """
 
+    unchecked = Path(workspace).expanduser().resolve()
+    if workspace_directory_conflict(unchecked) is not None:
+        # Observation is optional: a root that is no workspace observes nothing.
+        return {
+            "tag": "playbill-next-workspace-observation-v1",
+            "floor_status": "not_configured",
+            "installed_coordinate": None,
+            "drift_observations": None,
+            "presentation_policy": PresentationPolicy().model_dump(mode="json"),
+            "presentation_policy_notes": [],
+        }
     root = _workspace_root(workspace)
     floor = inspect_workspace_floor(workspace, current_coordinate=None)
     observation: dict[str, object] = {

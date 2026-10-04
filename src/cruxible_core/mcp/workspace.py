@@ -6,6 +6,10 @@ import os
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 
+from cruxible_client.contracts.workspace_layout import (
+    ensure_workspace_directory,
+    workspace_directory_conflict,
+)
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.floor.workspace_advertisement import containing_git_workspace_root
 
@@ -13,8 +17,14 @@ MCP_WORKSPACE_ROOT_ENV = "CRUXIBLE_MCP_WORKSPACE_ROOT"
 MCP_KEY_DIR_ENV = "CRUXIBLE_MCP_KEY_DIR"
 
 
-def mcp_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
-    """Resolve the adapter workspace; absence deliberately means process cwd."""
+def mcp_workspace_root(environ: Mapping[str, str] | None = None, *, guard: bool = True) -> Path:
+    """Resolve the adapter workspace; absence deliberately means process cwd.
+
+    The root is refused when it is the home directory or holds a 0.3 instance
+    (``WorkspaceDirectoryConflict``). ``guard=False`` is only for a caller that
+    reads nothing under the root's ``.cruxible`` and handles a conflicting root
+    itself (an optional observation, a forbidden-root list).
+    """
 
     env = os.environ if environ is None else environ
     raw = env.get(MCP_WORKSPACE_ROOT_ENV)
@@ -25,31 +35,45 @@ def mcp_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
         raise ConfigError(f"MCP workspace root is unavailable: {candidate}: {exc}") from exc
     if not root.is_dir():
         raise ConfigError(f"MCP workspace root is not a directory: {root}")
-    return root
+    return ensure_workspace_directory(root) if guard else root
 
 
 def mcp_git_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
-    """Resolve the canonical worktree without escaping an explicit MCP root."""
+    """Resolve the canonical worktree without escaping an explicit MCP root.
 
-    git_root = optional_mcp_git_workspace_root(environ)
+    Required, so a worktree that is no workspace (the home directory, a 0.3
+    instance) refuses with ``WorkspaceDirectoryConflict`` rather than reading as
+    "no worktree".
+    """
+
+    env = os.environ if environ is None else environ
+    configured_root = mcp_workspace_root(env)
+    git_root = containing_git_workspace_root(configured_root)
     if git_root is None:
         raise ConfigError("MCP workspace floor export must run inside one Git worktree")
-    return git_root
+    if MCP_WORKSPACE_ROOT_ENV in env and git_root != configured_root:
+        raise ConfigError(
+            "CRUXIBLE_MCP_WORKSPACE_ROOT must name the Git worktree root for floor operations"
+        )
+    return ensure_workspace_directory(git_root)
 
 
 def optional_mcp_git_workspace_root(environ: Mapping[str, str] | None = None) -> Path | None:
     """Resolve the canonical worktree, or None when the MCP root is in no Git worktree."""
 
     env = os.environ if environ is None else environ
-    configured_root = mcp_workspace_root(env)
+    explicit = MCP_WORKSPACE_ROOT_ENV in env
+    configured_root = mcp_workspace_root(env, guard=explicit)
     git_root = containing_git_workspace_root(configured_root)
     if git_root is None:
         return None
-    if MCP_WORKSPACE_ROOT_ENV in env and git_root != configured_root:
+    if explicit and git_root != configured_root:
         raise ConfigError(
             "CRUXIBLE_MCP_WORKSPACE_ROOT must name the Git worktree root for floor operations"
         )
-    return git_root
+    # An implicit (process cwd) root that is no workspace means no workspace here;
+    # a configured one was refused above.
+    return None if workspace_directory_conflict(git_root) is not None else git_root
 
 
 def resolve_workspace_path(
@@ -63,7 +87,11 @@ def resolve_workspace_path(
     pure = PurePosixPath(value)
     if not value or pure.is_absolute() or pure.as_posix() != value or ".." in pure.parts:
         raise DataValidationError("workspace path must be normalized, relative POSIX text")
-    workspace = mcp_workspace_root() if root is None else root.resolve(strict=True)
+    workspace = (
+        mcp_workspace_root()
+        if root is None
+        else ensure_workspace_directory(root.resolve(strict=True))
+    )
     try:
         resolved = (workspace / value).resolve(strict=kind in {"file", "directory"})
     except OSError as exc:
@@ -113,8 +141,11 @@ def mcp_approval_key_dir(environ: Mapping[str, str] | None = None) -> Path:
 
 
 def mcp_custody_forbidden_roots(environ: Mapping[str, str] | None = None) -> tuple[Path, ...]:
-    """Workspace roots a local signing key must stay outside, as the CLI refuses."""
+    """Workspace roots a local signing key must stay outside, as the CLI refuses.
 
-    root = mcp_workspace_root(environ)
+    A forbidden-root list reads nothing under the root, so it is unguarded.
+    """
+
+    root = mcp_workspace_root(environ, guard=False)
     git_root = containing_git_workspace_root(root)
     return (root,) if git_root is None or git_root == root else (root, git_root)

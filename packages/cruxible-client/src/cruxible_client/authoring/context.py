@@ -231,6 +231,9 @@ def _selected_workspace(
             selected = (root, binding, path)
             break
     if selected is None:
+        # Nothing bound: the start directory itself is returned as the workspace,
+        # so it is guarded like any selected root (ancestors were skipped above).
+        ensure_workspace_directory(start)
         return start, "local", None, None, tuple(warnings)
     root, binding, path = selected
     if source_catalog_path is None:

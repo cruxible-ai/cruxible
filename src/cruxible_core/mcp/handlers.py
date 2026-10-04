@@ -1161,7 +1161,8 @@ def _handle_claim_attestation(
     signer = local_attestation_signer_from_environment(
         client,
         instance_id,
-        workspace_root=mcp_workspace_root(),
+        # A forbidden root for key custody; nothing under it is read.
+        workspace_root=mcp_workspace_root(guard=False),
     )
     return append_prepared_claim_attestation(
         client,
@@ -2134,7 +2135,9 @@ def handle_playbill_next(
         access_profile
         or {"profile_id": "mcp-next", "permitted_access_classes": ["instance", "public"]}
     ).model_dump(mode="json")
-    workspace = mcp_workspace_root()
+    # The workspace observation is optional: a root that is no workspace is observed
+    # as no workspace rather than refusing the queue.
+    workspace = mcp_workspace_root(guard=False)
     observation = observe_next_workspace(workspace)
     # Rows render as MCP tool calls, and a row whose repair is a tool this
     # session does not advertise keeps its place with the repair withheld and

@@ -61,7 +61,7 @@ from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.repairs import RepairOperation, ServedRepair
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
-from cruxible_client.contracts.workspace_layout import workspace_path
+from cruxible_client.contracts.workspace_layout import ensure_workspace_directory, workspace_path
 from cruxible_client.transport.http import CruxibleClient
 
 
@@ -652,7 +652,7 @@ def sync_projection_blocks(
     bytes (R12 ``at``) can raise here and nothing is written.
     """
 
-    root = Path(workspace).expanduser().resolve()
+    root = ensure_workspace_directory(Path(workspace).expanduser().resolve())
     try:
         binding = _workspace_binding(root)
     except ProjectionSyncError as exc:
@@ -1091,7 +1091,7 @@ def repin_projection_block(
         raise ProjectionRepinError("projection repin requires an absolute evaluation time")
     instant = ensure_utc(evaluation_time)
     formatted = cast(str, format_datetime(instant))
-    root = Path(workspace).resolve()
+    root = ensure_workspace_directory(Path(workspace).resolve())
     sources = WorkspaceSources(root)
     path = sources.path_for_source(source_id)
     content = read_projection_source(path)

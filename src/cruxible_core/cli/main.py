@@ -17,6 +17,7 @@ from cruxible_client.authoring.context import (
     resolve_context,
 )
 from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
+from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
@@ -905,18 +906,35 @@ def cli(
         return
     try:
         stored = load_cli_context()
-        resolved = resolve_context(
-            server_url=server_url,
-            server_socket=server_socket,
-            instance_id=instance_id,
-            remembered=stored.as_json(),
-            no_workspace=no_workspace,
-        )
+        try:
+            resolved = resolve_context(
+                server_url=server_url,
+                server_socket=server_socket,
+                instance_id=instance_id,
+                remembered=stored.as_json(),
+                no_workspace=no_workspace,
+            )
+        except WorkspaceDirectoryConflict as conflict:
+            # An implicitly selected directory that is no workspace (home, a 0.3
+            # instance) still lets the command choose its daemon and instance: it
+            # runs without a workspace, and any workspace read or write refuses by
+            # name. A workspace named by CRUXIBLE_WORKSPACE refuses here.
+            if os.environ.get("CRUXIBLE_WORKSPACE"):
+                raise
+            if conflict.reason != "home":
+                click.echo(f"warning: {conflict}; continuing without a workspace", err=True)
+            resolved = resolve_context(
+                server_url=server_url,
+                server_socket=server_socket,
+                instance_id=instance_id,
+                remembered=stored.as_json(),
+                no_workspace=True,
+            )
         settings = resolve_server_settings(
             server_url=resolved.server_url,
             server_socket=resolved.server_socket,
         )
-    except (ConfigError, ContextResolutionError) as exc:
+    except (ConfigError, ContextResolutionError, WorkspaceDirectoryConflict) as exc:
         raise click.UsageError(str(exc)) from exc
 
     for warning in resolved.warnings:

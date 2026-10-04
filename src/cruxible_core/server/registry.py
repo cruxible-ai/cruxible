@@ -22,6 +22,7 @@ from pathlib import Path, PurePath
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.temporal import format_datetime, utc_now
+from cruxible_client.contracts.workspace_layout import ensure_workspace_directory
 from cruxible_core.errors import ConfigError, InstanceLocationRefusedError
 from cruxible_core.server.config import (
     STATE_ROOT_OWN_ENTRIES,
@@ -322,7 +323,9 @@ class InstanceRegistry:
         location = str(self.governed_instance_location(instance_id))
         resolved_workspace_root: str | None = None
         if workspace_root is not None:
-            resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
+            resolved_workspace_root = str(
+                ensure_workspace_directory(Path(workspace_root).expanduser().resolve())
+            )
             attached = self._get_by_backend_workspace_root(
                 GOVERNED_DAEMON_BACKEND, resolved_workspace_root
             )
@@ -417,6 +420,8 @@ class InstanceRegistry:
         write, so the row cannot move between the check and the attach.
         """
 
+        # The registry is the last gate: no row ever names a root that is no workspace.
+        ensure_workspace_directory(Path(workspace_root).expanduser().resolve())
         refuse_write_while_previewing("instance registry")
         _validate_instance_id(instance_id)
         try:
