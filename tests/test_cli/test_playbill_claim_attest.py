@@ -88,8 +88,8 @@ def test_cli_claim_attestation_recover_calls_admin_surface(
             "https://playbill.invalid",
             "--instance-id",
             "inst_test",
-            "claim-attestation",
-            "recover",
+            "claim",
+            "recover-attestation",
         ],
     )
 

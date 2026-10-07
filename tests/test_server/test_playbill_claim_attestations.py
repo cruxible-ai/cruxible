@@ -123,7 +123,7 @@ def test_http_admin_recovery_rolls_forward_and_clears_poison(
             request=request,
             actor_id="owner",
         )
-    with pytest.raises(ClaimAttestationStoreError, match="claim-attestation recover"):
+    with pytest.raises(ClaimAttestationStoreError, match="claim recover-attestation"):
         store.head()
     store.crash_hook = None
 

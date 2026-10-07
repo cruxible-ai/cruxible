@@ -1044,6 +1044,7 @@ version; the refusal names them.
 ~~~text
 cruxible claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS]
+cruxible claim recover-attestation
 ~~~
 
 Claims are read through `cruxible query`, `cruxible get` and `cruxible orient`.
@@ -1081,15 +1082,9 @@ the hold.
 predicate, object, role, qualifier, lifecycle, predecessor digest) in its
 top-level `statement` field alongside the canonical envelope.
 
-## claim-attestation
-
-~~~text
-cruxible claim-attestation recover
-~~~
-
-Recovery is an admin-only repair for an interrupted evidence-ledger append. It
-rolls the sole durable unpublished event forward and refuses rather than choosing
-between ambiguous histories.
+`recover-attestation` is an admin-only repair for an interrupted
+Claim-attestation evidence-ledger append. It rolls the sole durable unpublished
+event forward and refuses rather than choosing between ambiguous histories.
 
 ## authoring
 

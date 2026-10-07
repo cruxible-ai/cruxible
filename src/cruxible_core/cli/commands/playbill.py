@@ -3059,19 +3059,18 @@ def settle(
     click.echo(f"Outcome: {result.resolution['settlement_outcome']}")
 
 
-@playbill_group.group("claim-attestation")
-def claim_attestation_group() -> None:
-    """Operate the principal-authored Claim-attestation evidence ledger."""
-
-
-@claim_attestation_group.command("recover")
+@claim_group.command("recover-attestation")
 @handle_errors
 def recover_claim_attestations() -> None:
-    """Roll the sole durable unpublished attestation forward after a poison refusal."""
+    """Roll the sole durable unpublished attestation forward after a poison refusal.
+
+    Run this when a Claim write or attestation refuses because the
+    Claim-attestation evidence ledger requires recovery.
+    """
 
     _server_call(
         lambda client, instance_id: client.recover_claim_attestations(instance_id),
-        command_name="cruxible claim-attestation recover",
+        command_name="cruxible claim recover-attestation",
     )
     click.echo("Claim-attestation evidence ledger recovered.")
 

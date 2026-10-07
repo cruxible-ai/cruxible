@@ -62,7 +62,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("claim", "attest"): "active",
     ("predict",): "active",
     ("settle",): "active",
-    ("claim-attestation", "recover"): "active",
+    ("claim", "recover-attestation"): "active",
     ("authoring", "create"): "manual",
     ("authoring", "bind"): "active",
     ("authoring", "compile"): "active",
@@ -581,21 +581,14 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "attest_claim",
                 "Sign that this caller examined the current exact Claim.",
             ),
-        },
-        module="playbill",
-        attr="claim_group",
-    ),
-    "claim-attestation": _group(
-        "Operate the principal-authored Claim-attestation evidence ledger.",
-        {
-            "recover": _command(
+            "recover-attestation": _command(
                 "playbill",
                 "recover_claim_attestations",
                 "Roll the sole durable unpublished attestation forward.",
-            )
+            ),
         },
         module="playbill",
-        attr="claim_attestation_group",
+        attr="claim_group",
     ),
     "resolution-contracts": _command(
         "playbill", "resolution_contracts", "Find accepted tests of an exact Claim version."
