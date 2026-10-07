@@ -132,7 +132,7 @@
     },
     "NextRepairOperation": {
       "values": [
-        "cruxible.authoring.create",
+        "cruxible.authoring.example",
         "cruxible.authoring.bind",
         "cruxible.claim.retire",
         "cruxible.set",
@@ -147,7 +147,7 @@
         "cruxible.compiler.upgrade",
         "cruxible.line.arm",
         "cruxible.line.dispatch",
-        "cruxible.settle",
+        "cruxible.prediction.settle",
         "hand_edit"
       ]
     },
@@ -4562,7 +4562,7 @@
                 "type": "array"
               },
               "artifact_format": {
-                "default": "playbill-claim-type-v1",
+                "default": "playbill-claim-type-v7",
                 "enum": [
                   "playbill-claim-type-v1",
                   "playbill-claim-type-v3",
@@ -8156,9 +8156,7 @@
           "json_name": "certificate",
           "required": true,
           "schema": {
-            "additionalProperties": true,
-            "title": "Certificate",
-            "type": "object"
+            "$ref": "#/$defs/PreflightCertificate"
           }
         },
         "frontier": {
@@ -8167,9 +8165,7 @@
           "json_name": "frontier",
           "required": true,
           "schema": {
-            "additionalProperties": true,
-            "title": "Frontier",
-            "type": "object"
+            "$ref": "#/$defs/DiagnosticFrontier"
           }
         },
         "lint": {
@@ -8222,6 +8218,167 @@
       },
       "json_schema": {
         "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "AuthenticatedActor": {
+            "additionalProperties": false,
+            "description": "Identity established by the daemon's authentication boundary.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "capabilities": {
+                "default": [
+                  "propose"
+                ],
+                "items": {
+                  "enum": [
+                    "read",
+                    "propose",
+                    "review",
+                    "activate",
+                    "operate",
+                    "administer"
+                  ],
+                  "type": "string"
+                },
+                "title": "Capabilities",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-authenticated-actor-v1",
+                "default": "playbill-authenticated-actor-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id"
+            ],
+            "title": "AuthenticatedActor",
+            "type": "object"
+          },
+          "AuthoringDiagnostic": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "title": "Code",
+                "type": "string"
+              },
+              "disposition": {
+                "enum": [
+                  "edit_and_retry",
+                  "wait",
+                  "superseded",
+                  "terminal"
+                ],
+                "title": "Disposition",
+                "type": "string"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "offending_element": {
+                "title": "Offending Element",
+                "type": "string"
+              },
+              "owner": {
+                "enum": [
+                  "writer",
+                  "approver",
+                  "daemon",
+                  "external_state"
+                ],
+                "title": "Owner",
+                "type": "string"
+              },
+              "repairs": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/RepairAlternative"
+                },
+                "title": "Repairs",
+                "type": "array"
+              },
+              "stage": {
+                "title": "Stage",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "stage",
+              "offending_element",
+              "message",
+              "owner",
+              "disposition"
+            ],
+            "title": "AuthoringDiagnostic",
+            "type": "object"
+          },
+          "BlockedCheck": {
+            "additionalProperties": false,
+            "properties": {
+              "blocked_by": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Blocked By",
+                "type": "array"
+              },
+              "check": {
+                "title": "Check",
+                "type": "string"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              }
+            },
+            "required": [
+              "check",
+              "blocked_by",
+              "reason"
+            ],
+            "title": "BlockedCheck",
+            "type": "object"
+          },
           "ClaimTypeProposalLint": {
             "additionalProperties": false,
             "properties": {
@@ -8245,19 +8402,314 @@
             ],
             "title": "ClaimTypeProposalLint",
             "type": "object"
+          },
+          "CompilerCoordinate": {
+            "additionalProperties": false,
+            "description": "Validated semantic compiler/schema coordinate outside the bootstrap preimage.\n\n``implementation`` names the reference semantics whose rule digest is\naccepted. The physical assembler engine that realizes those semantics is\nrecorded separately as nonlogical projection build metadata.",
+            "properties": {
+              "implementation": {
+                "const": "python-reference",
+                "default": "python-reference",
+                "title": "Implementation",
+                "type": "string"
+              },
+              "rule_digest": {
+                "title": "Rule Digest",
+                "type": "string"
+              },
+              "schema_version": {
+                "const": 1,
+                "default": 1,
+                "title": "Schema Version",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-compiler-v1",
+                "default": "playbill-compiler-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_digest"
+            ],
+            "title": "CompilerCoordinate",
+            "type": "object"
+          },
+          "DiagnosticFrontier": {
+            "additionalProperties": false,
+            "properties": {
+              "blocked_checks": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/BlockedCheck"
+                },
+                "title": "Blocked Checks",
+                "type": "array"
+              },
+              "diagnostics": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/AuthoringDiagnostic"
+                },
+                "title": "Diagnostics",
+                "type": "array"
+              },
+              "frontier_complete": {
+                "default": true,
+                "title": "Frontier Complete",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-authoring-diagnostic-frontier-v1",
+                "default": "playbill-authoring-diagnostic-frontier-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "DiagnosticFrontier",
+            "type": "object"
+          },
+          "DiagnosticFrontierLimits": {
+            "additionalProperties": false,
+            "properties": {
+              "max_blocked_checks": {
+                "const": 128,
+                "default": 128,
+                "title": "Max Blocked Checks",
+                "type": "integer"
+              },
+              "max_diagnostics": {
+                "const": 128,
+                "default": 128,
+                "title": "Max Diagnostics",
+                "type": "integer"
+              },
+              "max_frontier_bytes": {
+                "const": 1048576,
+                "default": 1048576,
+                "title": "Max Frontier Bytes",
+                "type": "integer"
+              },
+              "max_repair_alternatives": {
+                "const": 4,
+                "default": 4,
+                "title": "Max Repair Alternatives",
+                "type": "integer"
+              },
+              "max_repair_bytes": {
+                "const": 16384,
+                "default": 16384,
+                "title": "Max Repair Bytes",
+                "type": "integer"
+              }
+            },
+            "title": "DiagnosticFrontierLimits",
+            "type": "object"
+          },
+          "PreflightCertificate": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "actor": {
+                "$ref": "#/$defs/AuthenticatedActor"
+              },
+              "candidate_tree_digest": {
+                "title": "Candidate Tree Digest",
+                "type": "string"
+              },
+              "canonical_timestamp": {
+                "title": "Canonical Timestamp",
+                "type": "string"
+              },
+              "certificate_digest": {
+                "title": "Certificate Digest",
+                "type": "string"
+              },
+              "compiler_coordinate": {
+                "$ref": "#/$defs/CompilerCoordinate"
+              },
+              "frontier_digest": {
+                "title": "Frontier Digest",
+                "type": "string"
+              },
+              "frontier_limits": {
+                "$ref": "#/$defs/DiagnosticFrontierLimits",
+                "default": {
+                  "max_blocked_checks": 128,
+                  "max_diagnostics": 128,
+                  "max_frontier_bytes": 1048576,
+                  "max_repair_alternatives": 4,
+                  "max_repair_bytes": 16384
+                }
+              },
+              "instance_descriptor_digest": {
+                "title": "Instance Descriptor Digest",
+                "type": "string"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "intent_id": {
+                "title": "Intent Id",
+                "type": "string"
+              },
+              "intent_revision": {
+                "minimum": 0,
+                "title": "Intent Revision",
+                "type": "integer"
+              },
+              "payload_digest": {
+                "title": "Payload Digest",
+                "type": "string"
+              },
+              "proposal_ref": {
+                "title": "Proposal Ref",
+                "type": "string"
+              },
+              "proposal_ref_oid": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Proposal Ref Oid"
+              },
+              "receive_limits": {
+                "$ref": "#/$defs/ProposalReceiveLimits"
+              },
+              "resolved_authoring_digest": {
+                "title": "Resolved Authoring Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-authoring-preflight-certificate-v1",
+                "default": "playbill-authoring-preflight-certificate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instance_id",
+              "intent_id",
+              "intent_revision",
+              "actor",
+              "payload_digest",
+              "resolved_authoring_digest",
+              "accepted_coordinate",
+              "compiler_coordinate",
+              "instance_descriptor_digest",
+              "receive_limits",
+              "canonical_timestamp",
+              "proposal_ref",
+              "proposal_ref_oid",
+              "candidate_tree_digest",
+              "frontier_digest",
+              "certificate_digest"
+            ],
+            "title": "PreflightCertificate",
+            "type": "object"
+          },
+          "ProposalReceiveLimits": {
+            "additionalProperties": false,
+            "description": "Every bound proposal receive enforces before a single member is parsed.\n\nThe file-count and aggregate-byte ceilings track the adoption posture of\n`TreeReadLimits`: a proposal carries the whole candidate tree, so a receive\nceiling below the tree-read ceiling would make a legally accepted instance\nunproposable. The other three keep receive itself bounded no matter how\nlarge the accepted tree has grown -- how many members one submission may\nchange, how large a single member may be, and how deep a member path may\nnest -- so an oversized submission is refused on cheap metadata instead of\nafter parsing.\n\nThe last two are ADVERTISEMENTS rather than receive gates, and they are here\nbecause this is the object a caller reads to learn what a submission may\ncarry. The ledger writes its record OF a change set as one blob, measured\nagainst the per-blob ceiling; a set that satisfies every receive bound above\ncould once still exceed it, which was discovered only at activation, after\nthe compile. Advertising the ceiling and the per-entry cost next to the\nmember budget lets a caller compute the member count that fits before\nauthoring anything.\n\nThey are no longer a SECOND budget. At the 4 MiB ceiling this shipped with,\nonly 372 entries fit -- far below `max_changed_members` -- so the two numbers\nstood side by side bounding different things, one what receive accepts and\none what the ledger can record. The per-blob ceiling is now 64 MiB and they\nare ONE number: 5,000 entries at 11,264 bytes each project to 56,320,000\nbytes, about 53.7 MiB, so the advertised member budget fits under the record\nceiling with room left, and `max_change_set_members` (5,957 at the defaults)\nis a derived reading of the same budget rather than a competing one.\n\nWhat both bound is RECORD ENTRIES, not authored members: the record holds one\nentry per path the set lowers to, and a member may lower to several -- a\nClaimType succession writes one per dependent it dispositions, a retirement\none per Claim in its closure. `max_change_set_members` is therefore the\nentry budget, and a set of that many 1:1 members is the largest set it\nnames exactly.",
+            "properties": {
+              "change_set_record_bytes_per_member": {
+                "default": 11264,
+                "maximum": 1048576,
+                "minimum": 1,
+                "title": "Change Set Record Bytes Per Member",
+                "type": "integer"
+              },
+              "max_change_set_record_bytes": {
+                "default": 67108864,
+                "maximum": 1099511627776,
+                "minimum": 1,
+                "title": "Max Change Set Record Bytes",
+                "type": "integer"
+              },
+              "max_changed_members": {
+                "default": 5000,
+                "maximum": 1000000,
+                "minimum": 1,
+                "title": "Max Changed Members",
+                "type": "integer"
+              },
+              "max_file_bytes": {
+                "default": 8388608,
+                "maximum": 1099511627776,
+                "minimum": 1,
+                "title": "Max File Bytes",
+                "type": "integer"
+              },
+              "max_files": {
+                "default": 250000,
+                "maximum": 1000000,
+                "minimum": 1,
+                "title": "Max Files",
+                "type": "integer"
+              },
+              "max_path_depth": {
+                "default": 8,
+                "maximum": 64,
+                "minimum": 1,
+                "title": "Max Path Depth",
+                "type": "integer"
+              },
+              "max_total_bytes": {
+                "default": 536870912,
+                "maximum": 17592186044416,
+                "minimum": 1,
+                "title": "Max Total Bytes",
+                "type": "integer"
+              }
+            },
+            "title": "ProposalReceiveLimits",
+            "type": "object"
+          },
+          "RepairAlternative": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "title": "Description",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "replacement": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Replacement"
+              }
+            },
+            "required": [
+              "kind",
+              "description"
+            ],
+            "title": "RepairAlternative",
+            "type": "object"
           }
         },
         "additionalProperties": false,
         "properties": {
           "certificate": {
-            "additionalProperties": true,
-            "title": "Certificate",
-            "type": "object"
+            "$ref": "#/$defs/PreflightCertificate"
           },
           "frontier": {
-            "additionalProperties": true,
-            "title": "Frontier",
-            "type": "object"
+            "$ref": "#/$defs/DiagnosticFrontier"
           },
           "lint": {
             "anyOf": [
@@ -8611,18 +9063,112 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "AuthenticatedActor": {
+            "additionalProperties": false,
+            "description": "Identity established by the daemon's authentication boundary.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "capabilities": {
+                "default": [
+                  "propose"
+                ],
+                "items": {
+                  "enum": [
+                    "read",
+                    "propose",
+                    "review",
+                    "activate",
+                    "operate",
+                    "administer"
+                  ],
+                  "type": "string"
+                },
+                "title": "Capabilities",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-authenticated-actor-v1",
+                "default": "playbill-authenticated-actor-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id"
+            ],
+            "title": "AuthenticatedActor",
+            "type": "object"
+          },
+          "AuthoringDiagnostic": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "title": "Code",
+                "type": "string"
+              },
+              "disposition": {
+                "enum": [
+                  "edit_and_retry",
+                  "wait",
+                  "superseded",
+                  "terminal"
+                ],
+                "title": "Disposition",
+                "type": "string"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "offending_element": {
+                "title": "Offending Element",
+                "type": "string"
+              },
+              "owner": {
+                "enum": [
+                  "writer",
+                  "approver",
+                  "daemon",
+                  "external_state"
+                ],
+                "title": "Owner",
+                "type": "string"
+              },
+              "repairs": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/RepairAlternative"
+                },
+                "title": "Repairs",
+                "type": "array"
+              },
+              "stage": {
+                "title": "Stage",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "stage",
+              "offending_element",
+              "message",
+              "owner",
+              "disposition"
+            ],
+            "title": "AuthoringDiagnostic",
+            "type": "object"
+          },
           "AuthoringPreflightResult": {
             "additionalProperties": false,
             "properties": {
               "certificate": {
-                "additionalProperties": true,
-                "title": "Certificate",
-                "type": "object"
+                "$ref": "#/$defs/PreflightCertificate"
               },
               "frontier": {
-                "additionalProperties": true,
-                "title": "Frontier",
-                "type": "object"
+                "$ref": "#/$defs/DiagnosticFrontier"
               },
               "lint": {
                 "anyOf": [
@@ -8656,6 +9202,33 @@
               "frontier"
             ],
             "title": "AuthoringPreflightResult",
+            "type": "object"
+          },
+          "BlockedCheck": {
+            "additionalProperties": false,
+            "properties": {
+              "blocked_by": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Blocked By",
+                "type": "array"
+              },
+              "check": {
+                "title": "Check",
+                "type": "string"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              }
+            },
+            "required": [
+              "check",
+              "blocked_by",
+              "reason"
+            ],
+            "title": "BlockedCheck",
             "type": "object"
           },
           "CandidateStatusRecord": {
@@ -8759,6 +9332,305 @@
               "warnings"
             ],
             "title": "ClaimTypeProposalLint",
+            "type": "object"
+          },
+          "CompilerCoordinate": {
+            "additionalProperties": false,
+            "description": "Validated semantic compiler/schema coordinate outside the bootstrap preimage.\n\n``implementation`` names the reference semantics whose rule digest is\naccepted. The physical assembler engine that realizes those semantics is\nrecorded separately as nonlogical projection build metadata.",
+            "properties": {
+              "implementation": {
+                "const": "python-reference",
+                "default": "python-reference",
+                "title": "Implementation",
+                "type": "string"
+              },
+              "rule_digest": {
+                "title": "Rule Digest",
+                "type": "string"
+              },
+              "schema_version": {
+                "const": 1,
+                "default": 1,
+                "title": "Schema Version",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-compiler-v1",
+                "default": "playbill-compiler-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_digest"
+            ],
+            "title": "CompilerCoordinate",
+            "type": "object"
+          },
+          "DiagnosticFrontier": {
+            "additionalProperties": false,
+            "properties": {
+              "blocked_checks": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/BlockedCheck"
+                },
+                "title": "Blocked Checks",
+                "type": "array"
+              },
+              "diagnostics": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/AuthoringDiagnostic"
+                },
+                "title": "Diagnostics",
+                "type": "array"
+              },
+              "frontier_complete": {
+                "default": true,
+                "title": "Frontier Complete",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-authoring-diagnostic-frontier-v1",
+                "default": "playbill-authoring-diagnostic-frontier-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "DiagnosticFrontier",
+            "type": "object"
+          },
+          "DiagnosticFrontierLimits": {
+            "additionalProperties": false,
+            "properties": {
+              "max_blocked_checks": {
+                "const": 128,
+                "default": 128,
+                "title": "Max Blocked Checks",
+                "type": "integer"
+              },
+              "max_diagnostics": {
+                "const": 128,
+                "default": 128,
+                "title": "Max Diagnostics",
+                "type": "integer"
+              },
+              "max_frontier_bytes": {
+                "const": 1048576,
+                "default": 1048576,
+                "title": "Max Frontier Bytes",
+                "type": "integer"
+              },
+              "max_repair_alternatives": {
+                "const": 4,
+                "default": 4,
+                "title": "Max Repair Alternatives",
+                "type": "integer"
+              },
+              "max_repair_bytes": {
+                "const": 16384,
+                "default": 16384,
+                "title": "Max Repair Bytes",
+                "type": "integer"
+              }
+            },
+            "title": "DiagnosticFrontierLimits",
+            "type": "object"
+          },
+          "PreflightCertificate": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "actor": {
+                "$ref": "#/$defs/AuthenticatedActor"
+              },
+              "candidate_tree_digest": {
+                "title": "Candidate Tree Digest",
+                "type": "string"
+              },
+              "canonical_timestamp": {
+                "title": "Canonical Timestamp",
+                "type": "string"
+              },
+              "certificate_digest": {
+                "title": "Certificate Digest",
+                "type": "string"
+              },
+              "compiler_coordinate": {
+                "$ref": "#/$defs/CompilerCoordinate"
+              },
+              "frontier_digest": {
+                "title": "Frontier Digest",
+                "type": "string"
+              },
+              "frontier_limits": {
+                "$ref": "#/$defs/DiagnosticFrontierLimits",
+                "default": {
+                  "max_blocked_checks": 128,
+                  "max_diagnostics": 128,
+                  "max_frontier_bytes": 1048576,
+                  "max_repair_alternatives": 4,
+                  "max_repair_bytes": 16384
+                }
+              },
+              "instance_descriptor_digest": {
+                "title": "Instance Descriptor Digest",
+                "type": "string"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "intent_id": {
+                "title": "Intent Id",
+                "type": "string"
+              },
+              "intent_revision": {
+                "minimum": 0,
+                "title": "Intent Revision",
+                "type": "integer"
+              },
+              "payload_digest": {
+                "title": "Payload Digest",
+                "type": "string"
+              },
+              "proposal_ref": {
+                "title": "Proposal Ref",
+                "type": "string"
+              },
+              "proposal_ref_oid": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Proposal Ref Oid"
+              },
+              "receive_limits": {
+                "$ref": "#/$defs/ProposalReceiveLimits"
+              },
+              "resolved_authoring_digest": {
+                "title": "Resolved Authoring Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-authoring-preflight-certificate-v1",
+                "default": "playbill-authoring-preflight-certificate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instance_id",
+              "intent_id",
+              "intent_revision",
+              "actor",
+              "payload_digest",
+              "resolved_authoring_digest",
+              "accepted_coordinate",
+              "compiler_coordinate",
+              "instance_descriptor_digest",
+              "receive_limits",
+              "canonical_timestamp",
+              "proposal_ref",
+              "proposal_ref_oid",
+              "candidate_tree_digest",
+              "frontier_digest",
+              "certificate_digest"
+            ],
+            "title": "PreflightCertificate",
+            "type": "object"
+          },
+          "ProposalReceiveLimits": {
+            "additionalProperties": false,
+            "description": "Every bound proposal receive enforces before a single member is parsed.\n\nThe file-count and aggregate-byte ceilings track the adoption posture of\n`TreeReadLimits`: a proposal carries the whole candidate tree, so a receive\nceiling below the tree-read ceiling would make a legally accepted instance\nunproposable. The other three keep receive itself bounded no matter how\nlarge the accepted tree has grown -- how many members one submission may\nchange, how large a single member may be, and how deep a member path may\nnest -- so an oversized submission is refused on cheap metadata instead of\nafter parsing.\n\nThe last two are ADVERTISEMENTS rather than receive gates, and they are here\nbecause this is the object a caller reads to learn what a submission may\ncarry. The ledger writes its record OF a change set as one blob, measured\nagainst the per-blob ceiling; a set that satisfies every receive bound above\ncould once still exceed it, which was discovered only at activation, after\nthe compile. Advertising the ceiling and the per-entry cost next to the\nmember budget lets a caller compute the member count that fits before\nauthoring anything.\n\nThey are no longer a SECOND budget. At the 4 MiB ceiling this shipped with,\nonly 372 entries fit -- far below `max_changed_members` -- so the two numbers\nstood side by side bounding different things, one what receive accepts and\none what the ledger can record. The per-blob ceiling is now 64 MiB and they\nare ONE number: 5,000 entries at 11,264 bytes each project to 56,320,000\nbytes, about 53.7 MiB, so the advertised member budget fits under the record\nceiling with room left, and `max_change_set_members` (5,957 at the defaults)\nis a derived reading of the same budget rather than a competing one.\n\nWhat both bound is RECORD ENTRIES, not authored members: the record holds one\nentry per path the set lowers to, and a member may lower to several -- a\nClaimType succession writes one per dependent it dispositions, a retirement\none per Claim in its closure. `max_change_set_members` is therefore the\nentry budget, and a set of that many 1:1 members is the largest set it\nnames exactly.",
+            "properties": {
+              "change_set_record_bytes_per_member": {
+                "default": 11264,
+                "maximum": 1048576,
+                "minimum": 1,
+                "title": "Change Set Record Bytes Per Member",
+                "type": "integer"
+              },
+              "max_change_set_record_bytes": {
+                "default": 67108864,
+                "maximum": 1099511627776,
+                "minimum": 1,
+                "title": "Max Change Set Record Bytes",
+                "type": "integer"
+              },
+              "max_changed_members": {
+                "default": 5000,
+                "maximum": 1000000,
+                "minimum": 1,
+                "title": "Max Changed Members",
+                "type": "integer"
+              },
+              "max_file_bytes": {
+                "default": 8388608,
+                "maximum": 1099511627776,
+                "minimum": 1,
+                "title": "Max File Bytes",
+                "type": "integer"
+              },
+              "max_files": {
+                "default": 250000,
+                "maximum": 1000000,
+                "minimum": 1,
+                "title": "Max Files",
+                "type": "integer"
+              },
+              "max_path_depth": {
+                "default": 8,
+                "maximum": 64,
+                "minimum": 1,
+                "title": "Max Path Depth",
+                "type": "integer"
+              },
+              "max_total_bytes": {
+                "default": 536870912,
+                "maximum": 17592186044416,
+                "minimum": 1,
+                "title": "Max Total Bytes",
+                "type": "integer"
+              }
+            },
+            "title": "ProposalReceiveLimits",
+            "type": "object"
+          },
+          "RepairAlternative": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "title": "Description",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "replacement": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Replacement"
+              }
+            },
+            "required": [
+              "kind",
+              "description"
+            ],
+            "title": "RepairAlternative",
             "type": "object"
           },
           "WorkspaceAdvertisement": {
@@ -9087,26 +9959,6 @@
             "type": "string"
           }
         },
-        "claim_identity": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "claim_identity",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Claim Identity"
-          }
-        },
         "coordinate": {
           "has_default": false,
           "has_default_factory": false,
@@ -9114,63 +9966,6 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/AcceptedCoordinate"
-          }
-        },
-        "expectation_id": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "expectation_id",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Expectation Id"
-          }
-        },
-        "intent_id": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "intent_id",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Intent Id"
-          }
-        },
-        "origin": {
-          "default": "publication",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "origin",
-          "required": false,
-          "schema": {
-            "default": "publication",
-            "enum": [
-              "publication",
-              "declaration"
-            ],
-            "title": "Origin",
-            "type": "string"
           }
         },
         "outcome": {
@@ -9253,59 +10048,14 @@
           }
         },
         "additionalProperties": false,
-        "description": "One published block released from the registration that demanded it.\n\nA publication registration was terminal at `bound`: publish once, and that\npage carried that block, with that id, forever. `next` demanded the frame\nback for a block a later ruling had deleted, and the repair it named was to\nrestore it. This is the transition out, addressed the way the page names it\n-- a source and a block -- rather than by the intent id nobody keeps.",
+        "description": "One declared block released from the registration that demanded it.\n\nA registration nothing released kept `next` demanding the frame back for a\nblock a later ruling had deleted, with the repair \"restore it\". This is the\ntransition out, addressed the way the page names it: a source and a block.",
         "properties": {
           "block_id": {
             "title": "Block Id",
             "type": "string"
           },
-          "claim_identity": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Claim Identity"
-          },
           "coordinate": {
             "$ref": "#/$defs/AcceptedCoordinate"
-          },
-          "expectation_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Expectation Id"
-          },
-          "intent_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Intent Id"
-          },
-          "origin": {
-            "default": "publication",
-            "enum": [
-              "publication",
-              "declaration"
-            ],
-            "title": "Origin",
-            "type": "string"
           },
           "outcome": {
             "enum": [
@@ -16094,6 +16844,221 @@
         "result_digest"
       ]
     },
+    "DiagnosticFrontier": {
+      "fields": {
+        "blocked_checks": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "blocked_checks",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/BlockedCheck"
+            },
+            "title": "Blocked Checks",
+            "type": "array"
+          }
+        },
+        "diagnostics": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "diagnostics",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/AuthoringDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          }
+        },
+        "frontier_complete": {
+          "default": true,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "frontier_complete",
+          "required": false,
+          "schema": {
+            "default": true,
+            "title": "Frontier Complete",
+            "type": "boolean"
+          }
+        },
+        "tag": {
+          "default": "playbill-authoring-diagnostic-frontier-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-authoring-diagnostic-frontier-v1",
+            "default": "playbill-authoring-diagnostic-frontier-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AuthoringDiagnostic": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "title": "Code",
+                "type": "string"
+              },
+              "disposition": {
+                "enum": [
+                  "edit_and_retry",
+                  "wait",
+                  "superseded",
+                  "terminal"
+                ],
+                "title": "Disposition",
+                "type": "string"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "offending_element": {
+                "title": "Offending Element",
+                "type": "string"
+              },
+              "owner": {
+                "enum": [
+                  "writer",
+                  "approver",
+                  "daemon",
+                  "external_state"
+                ],
+                "title": "Owner",
+                "type": "string"
+              },
+              "repairs": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/RepairAlternative"
+                },
+                "title": "Repairs",
+                "type": "array"
+              },
+              "stage": {
+                "title": "Stage",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "stage",
+              "offending_element",
+              "message",
+              "owner",
+              "disposition"
+            ],
+            "title": "AuthoringDiagnostic",
+            "type": "object"
+          },
+          "BlockedCheck": {
+            "additionalProperties": false,
+            "properties": {
+              "blocked_by": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Blocked By",
+                "type": "array"
+              },
+              "check": {
+                "title": "Check",
+                "type": "string"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              }
+            },
+            "required": [
+              "check",
+              "blocked_by",
+              "reason"
+            ],
+            "title": "BlockedCheck",
+            "type": "object"
+          },
+          "RepairAlternative": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "title": "Description",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "replacement": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Replacement"
+              }
+            },
+            "required": [
+              "kind",
+              "description"
+            ],
+            "title": "RepairAlternative",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "blocked_checks": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/BlockedCheck"
+            },
+            "title": "Blocked Checks",
+            "type": "array"
+          },
+          "diagnostics": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/AuthoringDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "frontier_complete": {
+            "default": true,
+            "title": "Frontier Complete",
+            "type": "boolean"
+          },
+          "tag": {
+            "const": "playbill-authoring-diagnostic-frontier-v1",
+            "default": "playbill-authoring-diagnostic-frontier-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "title": "DiagnosticFrontier",
+        "type": "object"
+      },
+      "required_fields": []
+    },
     "FloorConsumerOutcome": {
       "fields": {
         "error": {
@@ -18947,77 +19912,6 @@
         "recovery_posture",
         "trust_root",
         "workspace_advertisement"
-      ]
-    },
-    "InsertionAbandonResultRecord": {
-      "fields": {
-        "expectation": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "expectation",
-          "required": true,
-          "schema": {
-            "additionalProperties": true,
-            "title": "Expectation",
-            "type": "object"
-          }
-        },
-        "intent": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "intent",
-          "required": true,
-          "schema": {
-            "additionalProperties": true,
-            "title": "Intent",
-            "type": "object"
-          }
-        },
-        "tag": {
-          "default": "playbill-insertion-abandon-result-v1",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-insertion-abandon-result-v1",
-            "default": "playbill-insertion-abandon-result-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "additionalProperties": false,
-        "properties": {
-          "expectation": {
-            "additionalProperties": true,
-            "title": "Expectation",
-            "type": "object"
-          },
-          "intent": {
-            "additionalProperties": true,
-            "title": "Intent",
-            "type": "object"
-          },
-          "tag": {
-            "const": "playbill-insertion-abandon-result-v1",
-            "default": "playbill-insertion-abandon-result-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
-        "required": [
-          "intent",
-          "expectation"
-        ],
-        "title": "InsertionAbandonResultRecord",
-        "type": "object"
-      },
-      "required_fields": [
-        "expectation",
-        "intent"
       ]
     },
     "InstanceDecommissionResult": {
@@ -23387,7 +24281,7 @@
               },
               "operation": {
                 "enum": [
-                  "cruxible.authoring.create",
+                  "cruxible.authoring.example",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -23402,7 +24296,7 @@
                   "cruxible.compiler.upgrade",
                   "cruxible.line.arm",
                   "cruxible.line.dispatch",
-                  "cruxible.settle",
+                  "cruxible.prediction.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -23454,7 +24348,7 @@
               },
               "operation": {
                 "enum": [
-                  "cruxible.authoring.create",
+                  "cruxible.authoring.example",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -23469,7 +24363,7 @@
                   "cruxible.compiler.upgrade",
                   "cruxible.line.arm",
                   "cruxible.line.dispatch",
-                  "cruxible.settle",
+                  "cruxible.prediction.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -23823,7 +24717,7 @@
               },
               "operation": {
                 "enum": [
-                  "cruxible.authoring.create",
+                  "cruxible.authoring.example",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -23838,7 +24732,7 @@
                   "cruxible.compiler.upgrade",
                   "cruxible.line.arm",
                   "cruxible.line.dispatch",
-                  "cruxible.settle",
+                  "cruxible.prediction.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -23890,7 +24784,7 @@
               },
               "operation": {
                 "enum": [
-                  "cruxible.authoring.create",
+                  "cruxible.authoring.example",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -23905,7 +24799,7 @@
                   "cruxible.compiler.upgrade",
                   "cruxible.line.arm",
                   "cruxible.line.dispatch",
-                  "cruxible.settle",
+                  "cruxible.prediction.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -24379,7 +25273,7 @@
               },
               "operation": {
                 "enum": [
-                  "cruxible.authoring.create",
+                  "cruxible.authoring.example",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -24394,7 +25288,7 @@
                   "cruxible.compiler.upgrade",
                   "cruxible.line.arm",
                   "cruxible.line.dispatch",
-                  "cruxible.settle",
+                  "cruxible.prediction.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -24446,7 +25340,7 @@
               },
               "operation": {
                 "enum": [
-                  "cruxible.authoring.create",
+                  "cruxible.authoring.example",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -24461,7 +25355,7 @@
                   "cruxible.compiler.upgrade",
                   "cruxible.line.arm",
                   "cruxible.line.dispatch",
-                  "cruxible.settle",
+                  "cruxible.prediction.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -24682,7 +25576,7 @@
           "required": true,
           "schema": {
             "enum": [
-              "cruxible.authoring.create",
+              "cruxible.authoring.example",
               "cruxible.authoring.bind",
               "cruxible.claim.retire",
               "cruxible.set",
@@ -24697,7 +25591,7 @@
               "cruxible.compiler.upgrade",
               "cruxible.line.arm",
               "cruxible.line.dispatch",
-              "cruxible.settle",
+              "cruxible.prediction.settle",
               "hand_edit"
             ],
             "title": "Operation",
@@ -24745,7 +25639,7 @@
           },
           "operation": {
             "enum": [
-              "cruxible.authoring.create",
+              "cruxible.authoring.example",
               "cruxible.authoring.bind",
               "cruxible.claim.retire",
               "cruxible.set",
@@ -24760,7 +25654,7 @@
               "cruxible.compiler.upgrade",
               "cruxible.line.arm",
               "cruxible.line.dispatch",
-              "cruxible.settle",
+              "cruxible.prediction.settle",
               "hand_edit"
             ],
             "title": "Operation",
@@ -24835,7 +25729,7 @@
           "required": true,
           "schema": {
             "enum": [
-              "cruxible.authoring.create",
+              "cruxible.authoring.example",
               "cruxible.authoring.bind",
               "cruxible.claim.retire",
               "cruxible.set",
@@ -24850,7 +25744,7 @@
               "cruxible.compiler.upgrade",
               "cruxible.line.arm",
               "cruxible.line.dispatch",
-              "cruxible.settle",
+              "cruxible.prediction.settle",
               "hand_edit"
             ],
             "title": "Operation",
@@ -25044,7 +25938,7 @@
           },
           "operation": {
             "enum": [
-              "cruxible.authoring.create",
+              "cruxible.authoring.example",
               "cruxible.authoring.bind",
               "cruxible.claim.retire",
               "cruxible.set",
@@ -25059,7 +25953,7 @@
               "cruxible.compiler.upgrade",
               "cruxible.line.arm",
               "cruxible.line.dispatch",
-              "cruxible.settle",
+              "cruxible.prediction.settle",
               "hand_edit"
             ],
             "title": "Operation",
@@ -25692,7 +26586,7 @@
               },
               "operation": {
                 "enum": [
-                  "cruxible.authoring.create",
+                  "cruxible.authoring.example",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -25707,7 +26601,7 @@
                   "cruxible.compiler.upgrade",
                   "cruxible.line.arm",
                   "cruxible.line.dispatch",
-                  "cruxible.settle",
+                  "cruxible.prediction.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -25759,7 +26653,7 @@
               },
               "operation": {
                 "enum": [
-                  "cruxible.authoring.create",
+                  "cruxible.authoring.example",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -25774,7 +26668,7 @@
                   "cruxible.compiler.upgrade",
                   "cruxible.line.arm",
                   "cruxible.line.dispatch",
-                  "cruxible.settle",
+                  "cruxible.prediction.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -26307,7 +27201,7 @@
               },
               "operation": {
                 "enum": [
-                  "cruxible.authoring.create",
+                  "cruxible.authoring.example",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -26322,7 +27216,7 @@
                   "cruxible.compiler.upgrade",
                   "cruxible.line.arm",
                   "cruxible.line.dispatch",
-                  "cruxible.settle",
+                  "cruxible.prediction.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -26374,7 +27268,7 @@
               },
               "operation": {
                 "enum": [
-                  "cruxible.authoring.create",
+                  "cruxible.authoring.example",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -26389,7 +27283,7 @@
                   "cruxible.compiler.upgrade",
                   "cruxible.line.arm",
                   "cruxible.line.dispatch",
-                  "cruxible.settle",
+                  "cruxible.prediction.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -30855,6 +31749,536 @@
       "required_fields": [
         "comparison",
         "threshold"
+      ]
+    },
+    "PreflightCertificate": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "actor": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AuthenticatedActor"
+          }
+        },
+        "candidate_tree_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "candidate_tree_digest",
+          "required": true,
+          "schema": {
+            "title": "Candidate Tree Digest",
+            "type": "string"
+          }
+        },
+        "canonical_timestamp": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "canonical_timestamp",
+          "required": true,
+          "schema": {
+            "title": "Canonical Timestamp",
+            "type": "string"
+          }
+        },
+        "certificate_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "certificate_digest",
+          "required": true,
+          "schema": {
+            "title": "Certificate Digest",
+            "type": "string"
+          }
+        },
+        "compiler_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "compiler_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/CompilerCoordinate"
+          }
+        },
+        "frontier_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "frontier_digest",
+          "required": true,
+          "schema": {
+            "title": "Frontier Digest",
+            "type": "string"
+          }
+        },
+        "frontier_limits": {
+          "default_json_serializable": false,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "frontier_limits",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/DiagnosticFrontierLimits",
+            "default": {
+              "max_blocked_checks": 128,
+              "max_diagnostics": 128,
+              "max_frontier_bytes": 1048576,
+              "max_repair_alternatives": 4,
+              "max_repair_bytes": 16384
+            }
+          }
+        },
+        "instance_descriptor_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_descriptor_digest",
+          "required": true,
+          "schema": {
+            "title": "Instance Descriptor Digest",
+            "type": "string"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "intent_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "intent_id",
+          "required": true,
+          "schema": {
+            "title": "Intent Id",
+            "type": "string"
+          }
+        },
+        "intent_revision": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "intent_revision",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Intent Revision",
+            "type": "integer"
+          }
+        },
+        "payload_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "payload_digest",
+          "required": true,
+          "schema": {
+            "title": "Payload Digest",
+            "type": "string"
+          }
+        },
+        "proposal_ref": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_ref",
+          "required": true,
+          "schema": {
+            "title": "Proposal Ref",
+            "type": "string"
+          }
+        },
+        "proposal_ref_oid": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_ref_oid",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposal Ref Oid"
+          }
+        },
+        "receive_limits": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "receive_limits",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ProposalReceiveLimits"
+          }
+        },
+        "resolved_authoring_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "resolved_authoring_digest",
+          "required": true,
+          "schema": {
+            "title": "Resolved Authoring Digest",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-authoring-preflight-certificate-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-authoring-preflight-certificate-v1",
+            "default": "playbill-authoring-preflight-certificate-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "AuthenticatedActor": {
+            "additionalProperties": false,
+            "description": "Identity established by the daemon's authentication boundary.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "capabilities": {
+                "default": [
+                  "propose"
+                ],
+                "items": {
+                  "enum": [
+                    "read",
+                    "propose",
+                    "review",
+                    "activate",
+                    "operate",
+                    "administer"
+                  ],
+                  "type": "string"
+                },
+                "title": "Capabilities",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-authenticated-actor-v1",
+                "default": "playbill-authenticated-actor-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id"
+            ],
+            "title": "AuthenticatedActor",
+            "type": "object"
+          },
+          "CompilerCoordinate": {
+            "additionalProperties": false,
+            "description": "Validated semantic compiler/schema coordinate outside the bootstrap preimage.\n\n``implementation`` names the reference semantics whose rule digest is\naccepted. The physical assembler engine that realizes those semantics is\nrecorded separately as nonlogical projection build metadata.",
+            "properties": {
+              "implementation": {
+                "const": "python-reference",
+                "default": "python-reference",
+                "title": "Implementation",
+                "type": "string"
+              },
+              "rule_digest": {
+                "title": "Rule Digest",
+                "type": "string"
+              },
+              "schema_version": {
+                "const": 1,
+                "default": 1,
+                "title": "Schema Version",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-compiler-v1",
+                "default": "playbill-compiler-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_digest"
+            ],
+            "title": "CompilerCoordinate",
+            "type": "object"
+          },
+          "DiagnosticFrontierLimits": {
+            "additionalProperties": false,
+            "properties": {
+              "max_blocked_checks": {
+                "const": 128,
+                "default": 128,
+                "title": "Max Blocked Checks",
+                "type": "integer"
+              },
+              "max_diagnostics": {
+                "const": 128,
+                "default": 128,
+                "title": "Max Diagnostics",
+                "type": "integer"
+              },
+              "max_frontier_bytes": {
+                "const": 1048576,
+                "default": 1048576,
+                "title": "Max Frontier Bytes",
+                "type": "integer"
+              },
+              "max_repair_alternatives": {
+                "const": 4,
+                "default": 4,
+                "title": "Max Repair Alternatives",
+                "type": "integer"
+              },
+              "max_repair_bytes": {
+                "const": 16384,
+                "default": 16384,
+                "title": "Max Repair Bytes",
+                "type": "integer"
+              }
+            },
+            "title": "DiagnosticFrontierLimits",
+            "type": "object"
+          },
+          "ProposalReceiveLimits": {
+            "additionalProperties": false,
+            "description": "Every bound proposal receive enforces before a single member is parsed.\n\nThe file-count and aggregate-byte ceilings track the adoption posture of\n`TreeReadLimits`: a proposal carries the whole candidate tree, so a receive\nceiling below the tree-read ceiling would make a legally accepted instance\nunproposable. The other three keep receive itself bounded no matter how\nlarge the accepted tree has grown -- how many members one submission may\nchange, how large a single member may be, and how deep a member path may\nnest -- so an oversized submission is refused on cheap metadata instead of\nafter parsing.\n\nThe last two are ADVERTISEMENTS rather than receive gates, and they are here\nbecause this is the object a caller reads to learn what a submission may\ncarry. The ledger writes its record OF a change set as one blob, measured\nagainst the per-blob ceiling; a set that satisfies every receive bound above\ncould once still exceed it, which was discovered only at activation, after\nthe compile. Advertising the ceiling and the per-entry cost next to the\nmember budget lets a caller compute the member count that fits before\nauthoring anything.\n\nThey are no longer a SECOND budget. At the 4 MiB ceiling this shipped with,\nonly 372 entries fit -- far below `max_changed_members` -- so the two numbers\nstood side by side bounding different things, one what receive accepts and\none what the ledger can record. The per-blob ceiling is now 64 MiB and they\nare ONE number: 5,000 entries at 11,264 bytes each project to 56,320,000\nbytes, about 53.7 MiB, so the advertised member budget fits under the record\nceiling with room left, and `max_change_set_members` (5,957 at the defaults)\nis a derived reading of the same budget rather than a competing one.\n\nWhat both bound is RECORD ENTRIES, not authored members: the record holds one\nentry per path the set lowers to, and a member may lower to several -- a\nClaimType succession writes one per dependent it dispositions, a retirement\none per Claim in its closure. `max_change_set_members` is therefore the\nentry budget, and a set of that many 1:1 members is the largest set it\nnames exactly.",
+            "properties": {
+              "change_set_record_bytes_per_member": {
+                "default": 11264,
+                "maximum": 1048576,
+                "minimum": 1,
+                "title": "Change Set Record Bytes Per Member",
+                "type": "integer"
+              },
+              "max_change_set_record_bytes": {
+                "default": 67108864,
+                "maximum": 1099511627776,
+                "minimum": 1,
+                "title": "Max Change Set Record Bytes",
+                "type": "integer"
+              },
+              "max_changed_members": {
+                "default": 5000,
+                "maximum": 1000000,
+                "minimum": 1,
+                "title": "Max Changed Members",
+                "type": "integer"
+              },
+              "max_file_bytes": {
+                "default": 8388608,
+                "maximum": 1099511627776,
+                "minimum": 1,
+                "title": "Max File Bytes",
+                "type": "integer"
+              },
+              "max_files": {
+                "default": 250000,
+                "maximum": 1000000,
+                "minimum": 1,
+                "title": "Max Files",
+                "type": "integer"
+              },
+              "max_path_depth": {
+                "default": 8,
+                "maximum": 64,
+                "minimum": 1,
+                "title": "Max Path Depth",
+                "type": "integer"
+              },
+              "max_total_bytes": {
+                "default": 536870912,
+                "maximum": 17592186044416,
+                "minimum": 1,
+                "title": "Max Total Bytes",
+                "type": "integer"
+              }
+            },
+            "title": "ProposalReceiveLimits",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "accepted_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "actor": {
+            "$ref": "#/$defs/AuthenticatedActor"
+          },
+          "candidate_tree_digest": {
+            "title": "Candidate Tree Digest",
+            "type": "string"
+          },
+          "canonical_timestamp": {
+            "title": "Canonical Timestamp",
+            "type": "string"
+          },
+          "certificate_digest": {
+            "title": "Certificate Digest",
+            "type": "string"
+          },
+          "compiler_coordinate": {
+            "$ref": "#/$defs/CompilerCoordinate"
+          },
+          "frontier_digest": {
+            "title": "Frontier Digest",
+            "type": "string"
+          },
+          "frontier_limits": {
+            "$ref": "#/$defs/DiagnosticFrontierLimits",
+            "default": {
+              "max_blocked_checks": 128,
+              "max_diagnostics": 128,
+              "max_frontier_bytes": 1048576,
+              "max_repair_alternatives": 4,
+              "max_repair_bytes": 16384
+            }
+          },
+          "instance_descriptor_digest": {
+            "title": "Instance Descriptor Digest",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "intent_id": {
+            "title": "Intent Id",
+            "type": "string"
+          },
+          "intent_revision": {
+            "minimum": 0,
+            "title": "Intent Revision",
+            "type": "integer"
+          },
+          "payload_digest": {
+            "title": "Payload Digest",
+            "type": "string"
+          },
+          "proposal_ref": {
+            "title": "Proposal Ref",
+            "type": "string"
+          },
+          "proposal_ref_oid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposal Ref Oid"
+          },
+          "receive_limits": {
+            "$ref": "#/$defs/ProposalReceiveLimits"
+          },
+          "resolved_authoring_digest": {
+            "title": "Resolved Authoring Digest",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-authoring-preflight-certificate-v1",
+            "default": "playbill-authoring-preflight-certificate-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "intent_id",
+          "intent_revision",
+          "actor",
+          "payload_digest",
+          "resolved_authoring_digest",
+          "accepted_coordinate",
+          "compiler_coordinate",
+          "instance_descriptor_digest",
+          "receive_limits",
+          "canonical_timestamp",
+          "proposal_ref",
+          "proposal_ref_oid",
+          "candidate_tree_digest",
+          "frontier_digest",
+          "certificate_digest"
+        ],
+        "title": "PreflightCertificate",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate",
+        "actor",
+        "candidate_tree_digest",
+        "canonical_timestamp",
+        "certificate_digest",
+        "compiler_coordinate",
+        "frontier_digest",
+        "instance_descriptor_digest",
+        "instance_id",
+        "intent_id",
+        "intent_revision",
+        "payload_digest",
+        "proposal_ref",
+        "proposal_ref_oid",
+        "receive_limits",
+        "resolved_authoring_digest"
       ]
     },
     "ProcedureBindResult": {
@@ -71531,7 +72955,7 @@
                 "type": "array"
               },
               "artifact_format": {
-                "default": "playbill-claim-type-v1",
+                "default": "playbill-claim-type-v7",
                 "enum": [
                   "playbill-claim-type-v1",
                   "playbill-claim-type-v3",
@@ -82203,7 +83627,7 @@
                 "type": "array"
               },
               "artifact_format": {
-                "default": "playbill-claim-type-v1",
+                "default": "playbill-claim-type-v7",
                 "enum": [
                   "playbill-claim-type-v1",
                   "playbill-claim-type-v3",
@@ -89116,105 +90540,6 @@
         "columns",
         "receipt",
         "rows"
-      ]
-    },
-    "RefusalInspection": {
-      "fields": {
-        "diagnostics": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "diagnostics",
-          "required": true,
-          "schema": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Diagnostics",
-            "type": "array"
-          }
-        },
-        "proposal_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "proposal_id",
-          "required": true,
-          "schema": {
-            "title": "Proposal Id",
-            "type": "string"
-          }
-        },
-        "tag": {
-          "default": "playbill-refusal-v1",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-refusal-v1",
-            "default": "playbill-refusal-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
-        "verdict": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "verdict",
-          "required": true,
-          "schema": {
-            "enum": [
-              "candidate",
-              "refused"
-            ],
-            "title": "Verdict",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "additionalProperties": false,
-        "properties": {
-          "diagnostics": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Diagnostics",
-            "type": "array"
-          },
-          "proposal_id": {
-            "title": "Proposal Id",
-            "type": "string"
-          },
-          "tag": {
-            "const": "playbill-refusal-v1",
-            "default": "playbill-refusal-v1",
-            "title": "Tag",
-            "type": "string"
-          },
-          "verdict": {
-            "enum": [
-              "candidate",
-              "refused"
-            ],
-            "title": "Verdict",
-            "type": "string"
-          }
-        },
-        "required": [
-          "proposal_id",
-          "verdict",
-          "diagnostics"
-        ],
-        "title": "RefusalInspection",
-        "type": "object"
-      },
-      "required_fields": [
-        "diagnostics",
-        "proposal_id",
-        "verdict"
       ]
     },
     "ResolutionContract": {
@@ -96686,595 +98011,6 @@
       },
       "required_fields": [
         "window"
-      ]
-    },
-    "WorkspaceActivationResult": {
-      "fields": {
-        "accepted_coordinate": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "accepted_coordinate",
-          "required": true,
-          "schema": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/AcceptedCoordinate"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "activated_by": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "activated_by",
-          "required": true,
-          "schema": {
-            "title": "Activated By",
-            "type": "string"
-          }
-        },
-        "block_sync": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "block_sync",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/BlockSyncResult"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          }
-        },
-        "floor_refresh": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "floor_refresh",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/FloorRefreshResult"
-          }
-        },
-        "proposal_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "proposal_id",
-          "required": true,
-          "schema": {
-            "title": "Proposal Id",
-            "type": "string"
-          }
-        },
-        "status": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "status",
-          "required": true,
-          "schema": {
-            "enum": [
-              "accepted",
-              "lost_cas"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "tag": {
-          "default": "playbill-activation-receipt-v1",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-activation-receipt-v1",
-            "default": "playbill-activation-receipt-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
-        "workspace_advertisement": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "workspace_advertisement",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/WorkspaceAdvertisement"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "AcceptedCoordinate": {
-            "additionalProperties": false,
-            "description": "Path-free public handle for one fully verified accepted generation.",
-            "properties": {
-              "compiler_digest": {
-                "title": "Compiler Digest",
-                "type": "string"
-              },
-              "generation_root": {
-                "title": "Generation Root",
-                "type": "string"
-              },
-              "git_oid": {
-                "title": "Git Oid",
-                "type": "string"
-              },
-              "semantic_root": {
-                "title": "Semantic Root",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-accepted-coordinate-v1",
-                "default": "playbill-accepted-coordinate-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "git_oid",
-              "semantic_root",
-              "generation_root",
-              "compiler_digest"
-            ],
-            "title": "AcceptedCoordinate",
-            "type": "object"
-          },
-          "BlockSyncItem": {
-            "additionalProperties": false,
-            "properties": {
-              "block_id": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Block Id"
-              },
-              "currency_policy": {
-                "default": "warn",
-                "enum": [
-                  "warn",
-                  "require_current"
-                ],
-                "title": "Currency Policy",
-                "type": "string"
-              },
-              "detail": {
-                "additionalProperties": true,
-                "title": "Detail",
-                "type": "object"
-              },
-              "outcome": {
-                "enum": [
-                  "unchanged",
-                  "stale",
-                  "dirty",
-                  "detached",
-                  "would_detach",
-                  "skipped",
-                  "refused",
-                  "unchecked"
-                ],
-                "title": "Outcome",
-                "type": "string"
-              },
-              "path": {
-                "title": "Path",
-                "type": "string"
-              },
-              "reason": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "workspace_not_attached",
-                      "workspace_binding_invalid",
-                      "workspace_instance_mismatch",
-                      "workspace_source_catalog_invalid",
-                      "source_path_invalid",
-                      "source_not_projection_target",
-                      "block_marker_malformed",
-                      "block_unstamped",
-                      "block_locally_modified",
-                      "block_backing_missing",
-                      "block_backing_changed",
-                      "block_backing_overturned",
-                      "block_backing_retired",
-                      "block_successor_ambiguous",
-                      "block_concurrent_edit",
-                      "block_frame_invalid",
-                      "block_sync_failed",
-                      "projection_processing_incomplete",
-                      "block_query_unchecked"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Reason"
-              },
-              "repair": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/RepairOperation"
-                  },
-                  {
-                    "$ref": "#/$defs/HandEditRepair"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Repair"
-              },
-              "source_id": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Source Id"
-              },
-              "tag": {
-                "const": "playbill-block-sync-item-v1",
-                "default": "playbill-block-sync-item-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "path",
-              "outcome"
-            ],
-            "title": "BlockSyncItem",
-            "type": "object"
-          },
-          "BlockSyncResult": {
-            "additionalProperties": false,
-            "properties": {
-              "changed_file_count": {
-                "minimum": 0,
-                "title": "Changed File Count",
-                "type": "integer"
-              },
-              "has_refusals": {
-                "title": "Has Refusals",
-                "type": "boolean"
-              },
-              "items": {
-                "items": {
-                  "$ref": "#/$defs/BlockSyncItem"
-                },
-                "title": "Items",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-block-sync-result-v1",
-                "default": "playbill-block-sync-result-v1",
-                "title": "Tag",
-                "type": "string"
-              },
-              "would_change": {
-                "title": "Would Change",
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "items",
-              "changed_file_count",
-              "would_change",
-              "has_refusals"
-            ],
-            "title": "BlockSyncResult",
-            "type": "object"
-          },
-          "FloorRefreshResult": {
-            "additionalProperties": false,
-            "description": "Client-owned truth about the optional workspace floor refresh.",
-            "properties": {
-              "coordinate": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/AcceptedCoordinate"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "destination": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Destination"
-              },
-              "floor_digest": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Floor Digest"
-              },
-              "message": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Message"
-              },
-              "path": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Path"
-              },
-              "status": {
-                "enum": [
-                  "not_configured",
-                  "refreshed",
-                  "failed"
-                ],
-                "title": "Status",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-floor-refresh-result-v1",
-                "default": "playbill-floor-refresh-result-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "status"
-            ],
-            "title": "FloorRefreshResult",
-            "type": "object"
-          },
-          "HandEditInstruction": {
-            "additionalProperties": false,
-            "properties": {
-              "required_change": {
-                "minLength": 1,
-                "title": "Required Change",
-                "type": "string"
-              },
-              "target": {
-                "minLength": 1,
-                "title": "Target",
-                "type": "string"
-              }
-            },
-            "required": [
-              "target",
-              "required_change"
-            ],
-            "title": "HandEditInstruction",
-            "type": "object"
-          },
-          "HandEditRepair": {
-            "additionalProperties": false,
-            "properties": {
-              "hand_edit": {
-                "$ref": "#/$defs/HandEditInstruction"
-              }
-            },
-            "required": [
-              "hand_edit"
-            ],
-            "title": "HandEditRepair",
-            "type": "object"
-          },
-          "RepairOperation": {
-            "additionalProperties": false,
-            "properties": {
-              "arguments": {
-                "additionalProperties": true,
-                "title": "Arguments",
-                "type": "object"
-              },
-              "operation": {
-                "minLength": 1,
-                "title": "Operation",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation"
-            ],
-            "title": "RepairOperation",
-            "type": "object"
-          },
-          "WorkspaceAdvertisement": {
-            "additionalProperties": false,
-            "properties": {
-              "advertised_refs": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Advertised Refs",
-                "type": "array"
-              },
-              "failure_code": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "workspace_missing",
-                      "workspace_not_git",
-                      "workspace_path_invalid",
-                      "git_unavailable",
-                      "remote_conflict",
-                      "object_format_mismatch",
-                      "fetch_failed",
-                      "unexpected_failure"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Failure Code"
-              },
-              "remote_name": {
-                "const": "cruxible-ledger",
-                "default": "cruxible-ledger",
-                "title": "Remote Name",
-                "type": "string"
-              },
-              "status": {
-                "enum": [
-                  "updated",
-                  "scheduled",
-                  "not_attached",
-                  "failed"
-                ],
-                "title": "Status",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-workspace-advertisement-v1",
-                "default": "playbill-workspace-advertisement-v1",
-                "title": "Tag",
-                "type": "string"
-              },
-              "workspace_path": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Workspace Path"
-              }
-            },
-            "required": [
-              "status",
-              "workspace_path"
-            ],
-            "title": "WorkspaceAdvertisement",
-            "type": "object"
-          }
-        },
-        "additionalProperties": false,
-        "description": "Activation receipt plus the independent client-workspace refresh outcome.",
-        "properties": {
-          "accepted_coordinate": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/AcceptedCoordinate"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "activated_by": {
-            "title": "Activated By",
-            "type": "string"
-          },
-          "block_sync": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/BlockSyncResult"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "floor_refresh": {
-            "$ref": "#/$defs/FloorRefreshResult"
-          },
-          "proposal_id": {
-            "title": "Proposal Id",
-            "type": "string"
-          },
-          "status": {
-            "enum": [
-              "accepted",
-              "lost_cas"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "tag": {
-            "const": "playbill-activation-receipt-v1",
-            "default": "playbill-activation-receipt-v1",
-            "title": "Tag",
-            "type": "string"
-          },
-          "workspace_advertisement": {
-            "$ref": "#/$defs/WorkspaceAdvertisement"
-          }
-        },
-        "required": [
-          "proposal_id",
-          "activated_by",
-          "status",
-          "accepted_coordinate",
-          "workspace_advertisement",
-          "floor_refresh"
-        ],
-        "title": "WorkspaceActivationResult",
-        "type": "object"
-      },
-      "required_fields": [
-        "accepted_coordinate",
-        "activated_by",
-        "floor_refresh",
-        "proposal_id",
-        "status",
-        "workspace_advertisement"
       ]
     },
     "WorkspaceAdvertisement": {
