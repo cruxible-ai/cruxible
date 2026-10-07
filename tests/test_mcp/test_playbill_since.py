@@ -7,6 +7,7 @@ import pytest
 from cruxible_client import contracts
 from cruxible_client.contracts.errors import SinceRequestInvalid
 from cruxible_core.mcp import handlers
+from tests.support.mcp_daemon import bind_mcp_daemon
 
 
 def test_mcp_since_delegates_the_frozen_request(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -38,6 +39,7 @@ def test_mcp_since_delegates_the_frozen_request(monkeypatch) -> None:  # type: i
         seen.update(request.model_dump(mode="json"))
         return result
 
+    bind_mcp_daemon(monkeypatch, instances=["inst_since"])
     monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_since", stub)
     actual = handlers.handle_playbill_since(
         "inst_since",

@@ -26,7 +26,7 @@
       "environmentVariables": [
         {
           "name": "CRUXIBLE_SERVER_SOCKET",
-          "description": "Unix socket of a running Cruxible daemon (start one with `cruxible server start`)",
+          "description": "Unix socket of a running Cruxible daemon; unset (with no URL), the server reuses the local daemon on ~/.cruxible/run/daemon.sock or starts one",
           "isRequired": false,
           "format": "string",
           "isSecret": false
@@ -34,6 +34,13 @@
         {
           "name": "CRUXIBLE_SERVER_URL",
           "description": "HTTP base URL of a Cruxible daemon, used instead of a socket",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "CRUXIBLE_STATE_ROOT",
+          "description": "State root of the local daemon the server reuses or starts when no transport is set; defaults to ~/.cruxible",
           "isRequired": false,
           "format": "string",
           "isSecret": false

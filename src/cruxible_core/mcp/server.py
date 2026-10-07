@@ -33,7 +33,7 @@ from cruxible_core.mcp.permissions import (
 from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.tools import register_tools
 from cruxible_core.mcp.wire_tags import fill_tool_arguments, hide_wire_tags
-from cruxible_core.server.config import ServerSettings, resolve_server_settings
+from cruxible_core.server.config import resolve_server_settings
 
 BASE_INSTRUCTIONS = """\\
 # Cruxible
@@ -213,18 +213,15 @@ def _tool_failure_message(name: str, error: ToolError) -> str:
 
 
 def create_server() -> FastMCP:
+    transport_error: str | None = None
     try:
-        settings = resolve_server_settings()
-        transport_error: str | None = None
+        resolve_server_settings()
     except ConfigError as exc:
-        settings = ServerSettings()
         transport_error = str(exc)
     mode = init_permissions()
     server = FastMCP(name=f"cruxible v{__version__}", instructions="")
-    registered = register_tools(
-        server,
-        offload_sync_calls=settings.enabled,
-    )
+    # Every tool blocks on the daemon, so each runs off the event loop.
+    registered = register_tools(server, offload_sync_calls=True)
     validate_tool_permissions(registered)
     curation = resolve_tool_curation()
     advertised = advertised_tool_names(

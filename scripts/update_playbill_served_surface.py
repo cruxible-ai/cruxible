@@ -34,7 +34,6 @@ from typing import get_args, get_origin
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FACADE = REPO_ROOT / "src/cruxible_core/runtime/playbill_api.py"
-MCP_HANDLERS = REPO_ROOT / "src/cruxible_core/mcp/handlers.py"
 SNAPSHOT = REPO_ROOT / "tests/goldens/playbill/served-surface-dp0b-v1.json"
 _COMPONENT_PREFIX = "#/components/schemas/"
 
@@ -115,115 +114,60 @@ def _facade_operations(path: Path = FACADE) -> list[str]:
     )
 
 
-def _mcp_facade_operations(path: Path = MCP_HANDLERS) -> list[str]:
-    """Pin the exact facade breadth the MCP lane reaches.
+def _client_public_methods() -> frozenset[str]:
+    from cruxible_client import CruxibleClient
 
-    Tool count alone does not bound the MCP surface: an existing handler that
-    starts calling one more facade operation widens what MCP can reach without
-    adding a tool. Pinning the operations it calls makes that a pin movement.
-    """
-
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    return sorted(
-        {
-            node.func.attr
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "playbill_api"
-            and node.func.attr.startswith("playbill_")
-        }
+    return frozenset(
+        name
+        for name, value in vars(CruxibleClient).items()
+        if callable(value) and not name.startswith("_")
     )
 
 
-def _direct_facade_attributes(node: ast.AST) -> set[str]:
-    """Facade verbs named anywhere under `node` as `playbill_api.X` / `host_api.X`.
+_JOIN_MODULE_PREFIXES = ("cruxible_core.mcp.", "cruxible_client.")
 
-    References, not only calls: a handler that hands the facade verb to the
-    dispatcher as a callable reaches it exactly as much as one that calls it,
-    and reads as a bare attribute in the tree.
+
+def _client_operations(
+    function: Callable[..., object], *, seen: set[object] | None = None
+) -> set[str]:
+    """The daemon client operations one MCP handler reaches, transitively.
+
+    Every MCP tool runs on the daemon through the client, so the client
+    operations a handler calls are the published join to the HTTP routes (and,
+    through each route's own `facade_operations`, to the facade verbs). A
+    handler reaches an operation three ways and all three count: it calls
+    `client.<op>` itself (a lambda included); it delegates to a sibling handler
+    or helper that does; or it hands the client to shared client-side code
+    (`repin_projection_block(client, ...)`) whose body calls it. The closure
+    follows named functions of the MCP and client packages only.
     """
 
-    return {
-        item.attr
-        for item in ast.walk(node)
-        if isinstance(item, ast.Attribute)
-        and isinstance(item.value, ast.Name)
-        and item.value.id in {"playbill_api", "host_api"}
+    visited = set() if seen is None else seen
+    unwrapped = inspect.unwrap(function)
+    if unwrapped in visited:
+        return set()
+    visited.add(unwrapped)
+    try:
+        source = textwrap.dedent(inspect.getsource(unwrapped))
+    except (OSError, TypeError):
+        return set()
+    tree = ast.parse(source)
+    methods = _client_public_methods()
+    reached = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "client"
+        and node.func.attr in methods
     }
-
-
-def _shim_facade_operations(tree: ast.Module) -> dict[str, set[str]]:
-    """Facade verbs each in-module adapter CLASS reaches, by class name.
-
-    `handlers.py` reaches the facade two ways. Most handlers name
-    `playbill_api.<verb>` in their own body. The rest hand a local adapter
-    object -- `_LocalFloorClient`, `_LocalAttestationClient`,
-    `_LocalSourceContextClient` -- to shared client-side code, and the verbs are
-    named inside that class's methods instead. A body-only walk records the
-    second shape as reaching NOTHING, which is the shape three mutating tools
-    take, so the published join failed OPEN exactly where an overlay would rely
-    on it most.
-    """
-
-    return {
-        node.name: _direct_facade_attributes(node)
-        for node in tree.body
-        if isinstance(node, ast.ClassDef)
-    }
-
-
-def _handler_facade_operations(path: Path = MCP_HANDLERS) -> dict[str, list[str]]:
-    """Which facade verbs each MCP handler reaches, by handler name.
-
-    The flat `mcp_facade_operations` list says the MCP lane can reach a verb; it
-    does not say WHICH tool reaches it, so recovering the join meant trusting
-    the `cruxible_<verb>` / `handle_<verb>` naming convention, which nothing
-    guarantees. An overlay that decides per-verb whether a tenant may reach a
-    verb over MCP needs the join to be a fact in the artifact rather than a
-    spelling it infers.
-
-    The join is a REACHABILITY closure over the module, not a body-only read.
-    A handler reaches a verb three ways, and all three count the same to an
-    overlay deciding what a tenant may reach: it names `playbill_api.<verb>`
-    itself; it constructs a local adapter class whose methods name the verb
-    (the object is the handler's road to the facade, so naming the class is
-    naming the road); or it delegates to a sibling handler that does either.
-    A body-only walk published `[]` for the second and third shapes, which is
-    the shape three mutating tools take, so the join failed OPEN exactly where
-    an overlay would rely on it most.
-    """
-
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    shims = _shim_facade_operations(tree)
-    direct: dict[str, set[str]] = {}
-    delegates: dict[str, set[str]] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        reached = set(_direct_facade_attributes(node))
-        named = {item.id for item in ast.walk(node) if isinstance(item, ast.Name)}
-        for shim in named & set(shims):
-            reached |= shims[shim]
-        direct[node.name] = reached
-        delegates[node.name] = named - {node.name}
-
-    operations: dict[str, list[str]] = {}
-    for name in direct:
-        reached: set[str] = set()
-        pending = [name]
-        seen: set[str] = set()
-        while pending:
-            current = pending.pop()
-            if current in seen:
-                continue
-            seen.add(current)
-            reached |= direct.get(current, set())
-            pending.extend(delegates.get(current, set()) & set(direct))
-        if reached:
-            operations[name] = sorted(reached)
-    return operations
+    namespace = getattr(unwrapped, "__globals__", {})
+    for name in sorted({node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}):
+        target = namespace.get(name)
+        if inspect.isfunction(target) and target.__module__.startswith(_JOIN_MODULE_PREFIXES):
+            reached |= _client_operations(target, seen=visited)
+    return reached
 
 
 # The ratified surface records these Python labels alongside resolved wire schemas.
@@ -321,13 +265,13 @@ def _http_surface() -> list[dict[str, object]]:
 def _mcp_surface() -> list[dict[str, object]]:
     from mcp.server.fastmcp import FastMCP
 
+    from cruxible_core.mcp import handlers as mcp_handlers
     from cruxible_core.mcp.tools import register_tools
     from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
 
     server = FastMCP("playbill-v1-served-surface")
     register_tools(server)
     tools = getattr(server, "_tool_manager").list_tools()
-    handler_operations = _handler_facade_operations()
     result: list[dict[str, object]] = []
     for tool in tools:
         function = inspect.unwrap(tool.fn)
@@ -342,13 +286,13 @@ def _mcp_surface() -> list[dict[str, object]]:
                 "name": tool.name,
                 "permission": TOOL_PERMISSIONS[tool.name].name,
                 "delegate": delegate,
-                # The published verb-to-tool join, per tool, so an overlay reads
-                # it instead of inferring it from the two names matching.
-                "facade_operations": sorted(
+                # The published tool-to-client-operation join, per tool: MCP
+                # reaches the facade only through the daemon's routes.
+                "client_operations": sorted(
                     {
                         operation
                         for handler in handler_calls
-                        for operation in handler_operations.get(handler, ())
+                        for operation in _client_operations(getattr(mcp_handlers, handler))
                     }
                 ),
                 "input_schema_digest": _schema_digest(tool.parameters),
@@ -415,7 +359,6 @@ def generate_served_surface() -> dict[str, object]:
         "facade_verbs": _facade_operations(),
         "http_routes": _http_surface(),
         "mcp_tools": _mcp_surface(),
-        "mcp_facade_operations": _mcp_facade_operations(),
         "cli_leaves": _cli_surface(),
     }
 

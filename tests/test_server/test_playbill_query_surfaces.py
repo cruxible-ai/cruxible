@@ -59,7 +59,7 @@ def _rows(result: contracts.QueryResultRecord) -> list[tuple[str, object]]:
     return [(row["subject_id"], row["status"]) for row in result.rows]
 
 
-@pytest.mark.parametrize("surface", ["transport", "mcp-local", "mcp-remote", "cli", "sdk"])
+@pytest.mark.parametrize("surface", ["transport", "mcp", "cli", "sdk"])
 def test_every_surface_returns_the_same_page(
     served: tuple[CruxibleClient, str],
     monkeypatch: pytest.MonkeyPatch,
@@ -110,9 +110,7 @@ def test_every_surface_returns_the_same_page(
         )
         result = playbill.query(SUBJECT_KIND, where=WHERE, select=["status"]).page
     else:
-        monkeypatch.setattr(
-            handlers, "_get_client", lambda: None if surface == "mcp-local" else client
-        )
+        monkeypatch.setattr(handlers, "_get_client", lambda: client)
         result = handlers.handle_playbill_query(
             instance_id,
             kind=SUBJECT_KIND,
@@ -242,15 +240,12 @@ def test_the_spec_tool_answers_with_the_same_evaluation(
         instance_id,
         request=QueryRequest(spec=spec, evaluation_time=EVALUATION_TIME),
     )
-    for remote in (False, True):
-        monkeypatch.setattr(
-            handlers, "_get_client", lambda remote=remote: client if remote else None
-        )
-        through_tool = handlers.handle_playbill_query_spec(
-            instance_id, spec=spec, evaluation_time=EVALUATION_TIME
-        )
-        assert through_tool.receipt.mode == "spec"
-        assert through_tool.rows == through_sdk.rows
+    monkeypatch.setattr(handlers, "_get_client", lambda: client)
+    through_tool = handlers.handle_playbill_query_spec(
+        instance_id, spec=spec, evaluation_time=EVALUATION_TIME
+    )
+    assert through_tool.receipt.mode == "spec"
+    assert through_tool.rows == through_sdk.rows
 
     advertised = advertised_tool_names(
         mode=PermissionMode.ADMIN,

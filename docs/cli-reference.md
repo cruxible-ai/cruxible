@@ -475,7 +475,7 @@ skipped when it restarts, never fired late as a catch-up; a retired Trigger
 stops. Fires, which record the Trigger and the action, and pending one-shot
 deadlines are retained under each instance's `exhaust/triggers.sqlite3`; this
 append-only event log is not disposable worker state. Workers follow fires by
-action and resume from its sequences. Library mode fires no triggers.
+action and resume from its sequences.
 
 A `generation_accepted` schedule has no fields or predicate. It fires once at
 latest head when accepted generations advance; a burst coalesces. It skips
@@ -554,7 +554,9 @@ Serves the MCP tools over stdio. It is the same server as the `cruxible-mcp`
 script and reads the same environment (see [MCP tools](mcp-tools.md)); it exists
 so launchers that run a package by its own name, such as `uvx cruxible mcp`,
 reach the server. The root options and remembered CLI context do not configure
-it.
+it. Every tool runs on a daemon: with no transport configured, the server reuses
+the local daemon on `~/.cruxible/run/daemon.sock` or starts one (see
+[MCP tools](mcp-tools.md#the-daemon)).
 
 ## host and workspace
 
@@ -2026,7 +2028,7 @@ current that observation is: `current`, `lagging` (a worker is behind on
 generations or has not finished earlier sweep/retry work before another fire;
 this facet asks for
 attention), `stalled` (already a `consumer_stalled` row), or `not_running` when
-no consumer loop is running, as in a library read. There, worker rows stand as
+no consumer loop is running, as while a daemon shuts down. There, worker rows stand as
 of each worker's last pass. `detail.workers` lists each built-in worker's state
 and cursor, including disabled ones, and `detail.line_arms` counts the
 instance's armed Lines as `running`, `stalled` or `stopped` (the text header
@@ -2114,8 +2116,8 @@ coordinate's semantic root and whose approval requirement is not yet met, and
 which you could approve. "You" is the daemon's authenticated caller: the
 principal `whoami` reports. It must be active and `ordinary` in the accepted
 registry, must not be the candidate's author, and must not have approved it
-already. The caller is never a request field, so a queue read in library mode,
-or by a caller who is not a registered principal (an auth-off daemon's local
+already. The caller is never a request field, so a queue read by an unattributed
+request, or by a caller who is not a registered principal (an auth-off daemon's local
 `operator`, say), has no such rows. The repair is
 `cruxible proposal approve PROPOSAL_ID --signer-id PRINCIPAL`. Add
 `--key` with the path to your signing key: it stays in your own custody and the

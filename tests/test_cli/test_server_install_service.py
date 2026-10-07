@@ -504,3 +504,33 @@ def test_install_service_refuses_a_tcp_service_without_auth(
     assert result.exit_code == 2
     assert "service_install.tcp_requires_auth" in result.output
     assert "--socket PATH" in result.output
+
+
+def test_an_installed_service_is_found_only_with_its_unit_and_started_on_demand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The MCP adapter's auto-start prefers this service (`cruxible_core.mcp.daemon`)."""
+
+    from cruxible_core.server import service_install
+
+    platform = service_install.current_service_platform()
+    config = _config(tmp_path, platform)
+    state_root = Path(config.state_root)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "cruxible_core.server.service_install.subprocess.run",
+        lambda command, **_kwargs: calls.append(command),
+    )
+    assert service_install.installed_service_config(state_root) is None
+
+    install_service(config)
+    assert service_install.installed_service_config(state_root) == config
+    service_destination(platform).unlink()
+    assert service_install.installed_service_config(state_root) is None
+    install_service(config)
+
+    calls.clear()
+    service_install.start_installed_service(config)
+    (command,) = calls
+    assert "start" in command or "kickstart" in command

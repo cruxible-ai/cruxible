@@ -191,12 +191,7 @@ def test_the_mcp_orient_tool_carries_the_arms(stopped, monkeypatch) -> None:  # 
 
     instance, line, when = stopped
     stub = _Stub(instance)
-    monkeypatch.setattr(handlers, "_get_client", lambda: None)
-    monkeypatch.setattr(
-        handlers.playbill_api,
-        "playbill_orient",
-        lambda instance_id, **values: stub.orient(instance_id, **values),
-    )
+    monkeypatch.setattr(handlers, "_get_client", lambda: stub)
     server = create_server()
 
     async def exercise() -> str:

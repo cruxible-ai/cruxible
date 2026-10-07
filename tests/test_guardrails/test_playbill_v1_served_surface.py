@@ -105,11 +105,11 @@ SELF_ATTACKS: tuple[tuple[str, Callable[[dict[str, object]], None]], ...] = (
         lambda surface: _mutate_mcp(surface, "input_schema_digest", "sha256:" + "0" * 64),
     ),
     ("mcp-delegate", lambda surface: _mutate_mcp(surface, "delegate", "hidden.delegate")),
-    # The per-tool verb-to-tool join a cloud overlay reads: a tool quietly
-    # reaching one more facade verb is a widening of what MCP publishes.
+    # The per-tool client-operation join: a tool quietly reaching one more
+    # daemon operation is a widening of what MCP publishes.
     (
-        "mcp-facade-operations",
-        lambda surface: _mutate_mcp(surface, "facade_operations", ["playbill_hidden"]),
+        "mcp-client-operations",
+        lambda surface: _mutate_mcp(surface, "client_operations", ["hidden_operation"]),
     ),
     ("cli-hidden-leaf", _add_hidden_cli_leaf),
 )
@@ -131,18 +131,14 @@ def test_v1_surface_refuses_exact_inventory_drift(
         )
 
 
-# A mutating tool that publishes no facade verb is a hole in the join, and it is
-# a hole that fails OPEN: an overlay deciding per-verb what a tenant may reach
-# over MCP reads `[]` as "reaches nothing" and lets the call through. Three
-# GRAPH_WRITE / GOVERNED_WRITE tools published `[]` because they reach the
-# facade through a local adapter object rather than by naming `playbill_api`
-# themselves. Any future exception is declared HERE, with its reason -- and the
-# only admissible reason is that the tool genuinely touches no facade verb,
-# never that the generator cannot see the road it takes.
-MUTATING_TOOLS_REACHING_NO_FACADE_VERB: dict[str, str] = {}
+# A mutating tool that publishes no client operation is a hole in the join, and
+# it fails OPEN: an overlay reading the join sees `[]` as "reaches nothing".
+# Every MCP tool runs on the daemon through the client, so a mutating tool always
+# reaches at least one operation; an empty join means the generator lost the road.
+MUTATING_TOOLS_REACHING_NO_CLIENT_OPERATION: dict[str, str] = {}
 
 
-def test_no_mutating_tool_publishes_an_empty_facade_join(
+def test_no_mutating_tool_publishes_an_empty_client_join(
     live_surface: dict[str, object],
 ) -> None:
     tools = live_surface["mcp_tools"]
@@ -153,14 +149,14 @@ def test_no_mutating_tool_publishes_an_empty_facade_join(
         for tool in tools
         if isinstance(tool, dict)
         and tool["permission"] != "READ_ONLY"
-        and not tool["facade_operations"]
-        and tool["name"] not in MUTATING_TOOLS_REACHING_NO_FACADE_VERB
+        and not tool["client_operations"]
+        and tool["name"] not in MUTATING_TOOLS_REACHING_NO_CLIENT_OPERATION
     )
 
     assert unexplained == [], (
-        "these mutating tools publish no facade verb, so a per-verb overlay "
-        "reading the join lets them through unchecked; resolve the road the "
-        "handler takes to the facade, or declare the exception with its reason"
+        "these mutating tools publish no client operation, so an overlay reading the "
+        "join lets them through unchecked; resolve the road the handler takes to the "
+        "daemon, or declare the exception with its reason"
     )
 
 
