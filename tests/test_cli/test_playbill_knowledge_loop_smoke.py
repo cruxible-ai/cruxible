@@ -533,6 +533,18 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     #    Subject is admitted first because tagless Claim input resolves accepted
     #    dependencies instead of carrying a private direct-writer closure.
     claim_identities: list[str] = []
+    # The source catalog names the one file both Claims cite (bind checks it).
+    source_file = tmp_path / "claim-status.md"
+    source_file.write_text("status: ready\nstatus: blocked\n", encoding="utf-8")
+    (tmp_path / ".cruxible").mkdir(exist_ok=True)
+    (tmp_path / ".cruxible" / "sources.yaml").write_text(
+        "tag: playbill-source-catalog-v1\n"
+        "catalog_kind: portable\n"
+        "entries:\n"
+        f"  - name: {CLAIM_SOURCE_ID}\n"
+        "    locator: claim-status.md\n",
+        encoding="utf-8",
+    )
     for subject_id, value in (("wi-42", "ready"), ("wi-43", "blocked")):
         if subject_id == "wi-43":
             _author_and_accept(
@@ -547,11 +559,11 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
             tmp_path / f"claim-{subject_id}.json",
             _claim_authoring(subject_id, value).model_dump(mode="json"),
         )
-        source_file = tmp_path / f"claim-{subject_id}.md"
-        source_file.write_text(f"status: {value}\n", encoding="utf-8")
         bound = cruxible.json(
             "authoring",
             "bind",
+            "--workspace-root",
+            str(tmp_path),
             "--file",
             str(source_file),
             "--anchor",

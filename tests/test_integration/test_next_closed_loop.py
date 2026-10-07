@@ -163,7 +163,7 @@ EXPECTED_OPERATIONS = {
     "claim_contradicting_evidence_available": "cruxible.authoring.example",
     "claim_new_evidence_supporting": "cruxible.authoring.example",
     "claim_new_evidence_unreviewed": "cruxible.authoring.example",
-    "document_modified": "cruxible.document.propose",
+    "document_modified": "cruxible.sources.propose",
     # Restoring a bound file, or fixing its catalog locator, is a workspace edit.
     "workspace_binding_missing": "hand_edit",
     "unregistered_projection_block": "cruxible.block.repin",
