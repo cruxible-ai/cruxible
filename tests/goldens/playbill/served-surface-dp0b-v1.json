@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-10-06:v1-surface-s1",
-    "surface_digest": "sha256:c77a7153ac1f12afd2394ac7ec0f6dbe4d0850bbde237e840a0adc9c34129e2c"
+    "register_entry": "2026-10-06:v1-surface-s1-fixes",
+    "surface_digest": "sha256:57fc50ab5e1a0fe172daf7c44949a05b49747efe4896dcd12052e71dad52b027"
   },
   "surface": {
     "cli_leaves": [
@@ -1267,7 +1267,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetRequest",
         "request_schema_digest": "sha256:f5598f1017f484e14705eb9f3789d7918632e438ee76fcc1b58c7157e9bb2acc",
         "response_model": "cruxible_client.contracts.get_reads.GetResult",
-        "response_schema_digest": "sha256:3e468795dc3007e49f8e60a770b67ead25265bc571f196610dbc72ddd39fe652"
+        "response_schema_digest": "sha256:2d9cf07f32550d5868ae3144e1383a2b0cb3a5467f87b7ee8dea1c0e3467df0c"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.get_batch",
@@ -1279,7 +1279,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetBatchRequest",
         "request_schema_digest": "sha256:bbc6653e3c8d20543593902bcbaf191c2eee907a27af7fbcd5838653b74eed26",
         "response_model": "cruxible_client.contracts.get_reads.GetBatchResult",
-        "response_schema_digest": "sha256:73fa2bc3d8b5b66bf165c86839f0c6d5c5d6153837e14572bb6941600bf0ebb1"
+        "response_schema_digest": "sha256:9d7223ab17fbdb37dee2584c473ed764a07c2d10b6744475b740198cf94aad12"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.head",
@@ -2348,7 +2348,7 @@
         ],
         "input_schema_digest": "sha256:e45d5805e38d20c47bdba2d568a3910fa58c652d205ec5ff1da2f4b4b63b1b6b",
         "name": "cruxible_get",
-        "output_schema_digest": "sha256:e320a4c2d4e6803720f7133157d92671427ad16e5281aaa9c7eebf542b4ce81d",
+        "output_schema_digest": "sha256:6dc0d09ecdce20743d639ec49d5dfcc2cff08da0ace583432d7c7d63077fd320",
         "permission": "READ_ONLY"
       },
       {
