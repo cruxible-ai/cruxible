@@ -54,8 +54,6 @@ if TYPE_CHECKING:
     from cruxible_client.authoring.signing import ApprovalSigner, LocalEd25519ApprovalSigner
     from cruxible_client.authoring.workspace import (
         WorkspaceError,
-        inspect_workspace_floor,
-        materialize_floor,
         observe_next_workspace,
     )
     from cruxible_client.authoring.world import (
@@ -93,10 +91,8 @@ if TYPE_CHECKING:
     from cruxible_client.contracts.write import SlotRef
     from cruxible_client.transport.http import CruxibleClient
 
-from .provider_installation import install_provider_package
 
 __all__ = [
-    "install_provider_package",
     "ApprovalReviewMismatch",
     "ReviewedProposal",
     "ApprovalSigner",
@@ -140,9 +136,7 @@ __all__ = [
     "Prediction",
     "PredictionSettlement",
     "WorkspaceError",
-    "inspect_workspace_floor",
     "observe_next_workspace",
-    "materialize_floor",
     "ProcedureRef",
     "ProcedureBudget",
     "ProcedureDefinition",
@@ -291,9 +285,7 @@ def __getattr__(name: str) -> Any:
         return getattr(models, name)
     if name in {
         "WorkspaceError",
-        "inspect_workspace_floor",
         "observe_next_workspace",
-        "materialize_floor",
     }:
         from cruxible_client.authoring import workspace
 

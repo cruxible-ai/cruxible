@@ -880,9 +880,10 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.write": "write",
     "cruxible.floor.export": "floor export",
     "cruxible.block.depublish": "block depublish",
+    "cruxible.block.detach": "block detach",
     "cruxible.block.repin": "block repin",
     "cruxible.block.sync": "block sync",
-    "cruxible.document.propose": "document propose",
+    "cruxible.sources.propose": "sources propose",
     "cruxible.proposal.readmit": "proposal readmit",
     "cruxible.proposal.approve": "proposal approve",
     "cruxible.compiler.upgrade": "compiler upgrade",
@@ -898,17 +899,30 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
 # presented as a runnable one, which is the one thing `command` must never be.
 _REPAIR_COMMAND_OPERANDS: Mapping[str, tuple[str, ...]] = {
     "cruxible.authoring.bind": ("--payload-file", "PAYLOAD_FILE"),
-    "cruxible.document.propose": ("--envelope", "ENVELOPE_FILE"),
 }
 _REPAIR_COMMAND_PLACEHOLDERS: Mapping[str, str] = {
     "PAYLOAD_FILE": "payload_file",
-    "ENVELOPE_FILE": "envelope_file",
 }
 _ATTESTATION_REPAIR_EXAMPLES: Mapping[str, str] = {
     "adjudicate_contradicting_evidence": "claim-adjudicate-contradicting-evidence",
     "cite_supporting_evidence": "claim-cite-supporting-evidence",
     "adjudicate_unreviewed_evidence": "claim-adjudicate-unreviewed-evidence",
 }
+
+
+def _revision_name(source: str) -> str:
+    """The proposal name a modified-Document repair suggests for its source."""
+
+    return f"revise-{source}"
+
+
+def _repair_paths(values: Mapping[str, object]) -> list[str]:
+    """The workspace pages a page-scoped repair names, or none."""
+
+    paths = values.get("paths")
+    if not isinstance(paths, (list, tuple)):
+        return []
+    return [path for path in paths if isinstance(path, str) and path]
 
 
 def _repair_operands(operation: NextRepairOperation, values: Mapping[str, object]) -> list[str]:
@@ -949,9 +963,10 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.write": "cruxible_write",
     "cruxible.floor.export": "cruxible_floor_export",
     "cruxible.block.depublish": "cruxible_block_depublish",
+    "cruxible.block.detach": "cruxible_block_detach",
     "cruxible.block.repin": "cruxible_block_repin",
     "cruxible.block.sync": "cruxible_block_sync",
-    "cruxible.document.propose": "cruxible_document_propose",
+    "cruxible.sources.propose": "cruxible_sources_propose",
     "cruxible.proposal.readmit": "cruxible_proposal_readmit",
     "cruxible.proposal.approve": "cruxible_proposal_approve",
     "cruxible.compiler.upgrade": "cruxible_compiler_upgrade",
@@ -1143,8 +1158,14 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _mcp_call("cruxible_block_repin", source=text("source_id"), block=text("block_id"))
     if operation == "cruxible.block.sync" and values.get("all") is True:
         return _mcp_call("cruxible_block_sync", all_sources=True)
+    if operation == "cruxible.block.detach" and _repair_paths(values):
+        return _mcp_call("cruxible_block_detach", files=_repair_paths(values))
     if operation == "cruxible.floor.export":
         return _mcp_call("cruxible_floor_export", mode="write")
+    if operation == "cruxible.sources.propose" and (source := text("source_id")):
+        return _mcp_call(
+            "cruxible_sources_propose", source_name=source, proposal_name=_revision_name(source)
+        )
     if operation == "cruxible.claim.retire" and text("claim_id"):
         # Why it ends is the retirer's to say: `because` is the argument left to add.
         return _mcp_call("cruxible_retire", target=text("claim_id"))
@@ -1243,6 +1264,11 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _sdk_call("cx.block.repin", source, block)
     if operation == "cruxible.block.sync" and values.get("all") is True:
         return _sdk_call("cx.block.sync", all=True)
+    if operation == "cruxible.block.detach" and _repair_paths(values):
+        return _sdk_call("cx.block.detach", *_repair_paths(values))
+    if operation == "cruxible.block.depublish" and (source := text("source_id")):
+        block = text("block_id")
+        return None if block is None else _sdk_call("cx.block.depublish", source, block)
     return None
 
 
@@ -1289,6 +1315,11 @@ def _repair_command(
             parts.append("--all")
         else:
             return None
+    elif operation == "cruxible.block.detach":
+        paths = _repair_paths(values)
+        if not paths:
+            return None
+        parts.extend(shlex.quote(path) for path in paths)
     elif operation == "cruxible.authoring.example":
         # The runnable step is the template that starts the payload; with no
         # example named, a bare `authoring example` lists every name.
@@ -1348,6 +1379,13 @@ def _repair_command(
         if len(changes) != 1 or changes[0].get("op") != "retire":
             return None
         return f"cruxible retire {shlex.quote(str(changes[0]['target']))}"
+    elif operation == "cruxible.sources.propose":
+        # Without a named source the operator adds --source and --name.
+        source = values.get("source_id")
+        if isinstance(source, str) and source:
+            parts.extend(
+                ["--source", shlex.quote(source), "--name", shlex.quote(_revision_name(source))]
+            )
     elif operation == "cruxible.claim.retire":
         # Why it ends is the retirer's to say: `--because` is the operand left to add.
         claim_id = values.get("claim_id")
@@ -4362,8 +4400,11 @@ def _document_items(
                     "accepted_body_digest": document.body_digest,
                     "observed_source_digest": source.observed_source_digest,
                 },
+                # The catalogued file is the Document's next revision: propose
+                # it through the source road, which compiles the file's exact
+                # bytes against the accepted Document.
                 repair=PlaybillNextRepairV1(
-                    operation="cruxible.document.propose",
+                    operation="cruxible.sources.propose",
                     target=identity,
                     required_change="repropose_modified_document",
                     arguments={

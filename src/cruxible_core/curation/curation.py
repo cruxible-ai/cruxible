@@ -728,6 +728,13 @@ class CurationAcceptedFixedV1(_CurationLifecycleEvent):
 
 
 class CurationSuppressedV1(_CurationLifecycleEvent):
+    """A suppression recorded before scopes were renamed; read, never written.
+
+    ``pattern`` hid the item's lineage (its pattern's successor items) and
+    ``instance`` hid every item; both stay in force on replay until lifted with
+    an unsuppression.
+    """
+
     tag: Literal["playbill-curation-suppressed-v1"] = "playbill-curation-suppressed-v1"
     scope: Literal["item", "pattern", "instance"]
     until_generation: int | None = Field(default=None, ge=0)
@@ -736,6 +743,42 @@ class CurationSuppressedV1(_CurationLifecycleEvent):
     def _reproduces(self) -> CurationSuppressedV1:
         if self.event_id != _lifecycle_event_id(self.tag, self):
             raise ValueError("curation suppression event ID does not reproduce")
+        return self
+
+
+#: What a suppression hides: this item, or its whole lineage (this item and
+#: every successor the same pattern opens after it).
+CurationSuppressionScope: TypeAlias = Literal["item", "lineage"]
+
+
+class CurationSuppressedV2(_CurationLifecycleEvent):
+    tag: Literal["playbill-curation-suppressed-v2"] = "playbill-curation-suppressed-v2"
+    scope: CurationSuppressionScope
+    until_generation: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _reproduces(self) -> CurationSuppressedV2:
+        if self.event_id != _lifecycle_event_id(self.tag, self):
+            raise ValueError("curation suppression event ID does not reproduce")
+        return self
+
+
+class CurationUnsuppressedV1(_CurationLifecycleEvent):
+    """Lifts one suppression recorded on this item."""
+
+    tag: Literal["playbill-curation-unsuppressed-v1"] = "playbill-curation-unsuppressed-v1"
+    suppression_event_id: str
+
+    @field_validator("suppression_event_id")
+    @classmethod
+    def _suppression(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _reproduces(self) -> CurationUnsuppressedV1:
+        if self.event_id != _lifecycle_event_id(self.tag, self):
+            raise ValueError("curation unsuppression event ID does not reproduce")
         return self
 
 
@@ -811,12 +854,12 @@ def build_curation_suppressed(
     expected_latest_event_digest: str,
     actor_principal_id: str,
     reason: str,
-    scope: Literal["item", "pattern", "instance"],
+    scope: CurationSuppressionScope,
     until_generation: int | None,
     attribution_refs: tuple[str, ...] = (),
-) -> CurationSuppressedV1:
-    draft = CurationSuppressedV1.model_construct(
-        tag="playbill-curation-suppressed-v1",
+) -> CurationSuppressedV2:
+    draft = CurationSuppressedV2.model_construct(
+        tag="playbill-curation-suppressed-v2",
         event_id="sha256:" + "0" * 64,
         item_id=item_id,
         expected_latest_event_digest=expected_latest_event_digest,
@@ -826,7 +869,7 @@ def build_curation_suppressed(
         scope=scope,
         until_generation=until_generation,
     )
-    return CurationSuppressedV1(
+    return CurationSuppressedV2(
         event_id=_lifecycle_event_id(draft.tag, draft),
         item_id=item_id,
         expected_latest_event_digest=expected_latest_event_digest,
@@ -838,11 +881,43 @@ def build_curation_suppressed(
     )
 
 
+def build_curation_unsuppressed(
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    actor_principal_id: str,
+    reason: str,
+    suppression_event_id: str,
+    attribution_refs: tuple[str, ...] = (),
+) -> CurationUnsuppressedV1:
+    draft = CurationUnsuppressedV1.model_construct(
+        tag="playbill-curation-unsuppressed-v1",
+        event_id="sha256:" + "0" * 64,
+        item_id=item_id,
+        expected_latest_event_digest=expected_latest_event_digest,
+        actor_principal_id=actor_principal_id,
+        reason=reason,
+        attribution_refs=attribution_refs,
+        suppression_event_id=suppression_event_id,
+    )
+    return CurationUnsuppressedV1(
+        event_id=_lifecycle_event_id(draft.tag, draft),
+        item_id=item_id,
+        expected_latest_event_digest=expected_latest_event_digest,
+        actor_principal_id=actor_principal_id,
+        reason=reason,
+        attribution_refs=attribution_refs,
+        suppression_event_id=suppression_event_id,
+    )
+
+
 CurationOperationalPayload = Annotated[
     CurationPatternObservedV1
     | CurationOverruledV1
     | CurationAcceptedFixedV1
-    | CurationSuppressedV1,
+    | CurationSuppressedV1
+    | CurationSuppressedV2
+    | CurationUnsuppressedV1,
     Field(discriminator="tag"),
 ]
 _CURATION_PAYLOAD_ADAPTER: TypeAdapter[CurationOperationalPayload] = TypeAdapter(
@@ -851,8 +926,10 @@ _CURATION_PAYLOAD_ADAPTER: TypeAdapter[CurationOperationalPayload] = TypeAdapter
 
 
 class CurationSuppressionV1(_StrictCurationModel):
+    """One suppression in force on an item; ``instance`` only comes from a v1 event."""
+
     event_id: str
-    scope: Literal["item", "pattern", "instance"]
+    scope: Literal["item", "lineage", "instance"]
     until_generation: int | None = Field(default=None, ge=0)
     reason: str
     actor_principal_id: str
@@ -920,7 +997,7 @@ class CurationItemV1(_StrictCurationModel):
                     continue
                 if suppression.scope == "instance":
                     return True
-                if suppression.scope == "pattern" and owner.pattern_id == self.pattern_id:
+                if suppression.scope == "lineage" and owner.pattern_id == self.pattern_id:
                     return True
                 if suppression.scope == "item" and owner.item_id == self.item_id:
                     return True
@@ -979,18 +1056,26 @@ def replay_curation_items(
                     raise ValueError("curation item observation changed stable identity")
                 observations += 1
                 last_observation = payload
-            elif isinstance(payload, CurationSuppressedV1):
+            elif isinstance(payload, CurationSuppressedV1 | CurationSuppressedV2):
                 if status not in {"open", "quarantined"}:
                     raise ValueError("resolved curation item cannot be suppressed")
                 suppressions.append(
                     CurationSuppressionV1(
                         event_id=payload.event_id,
-                        scope=payload.scope,
+                        # A v1 ``pattern`` scope hid the same lineage.
+                        scope="lineage" if payload.scope == "pattern" else payload.scope,
                         until_generation=payload.until_generation,
                         reason=payload.reason,
                         actor_principal_id=payload.actor_principal_id,
                     )
                 )
+            elif isinstance(payload, CurationUnsuppressedV1):
+                remaining = [
+                    item for item in suppressions if item.event_id != payload.suppression_event_id
+                ]
+                if len(remaining) == len(suppressions):
+                    raise ValueError("curation unsuppression names no suppression of this item")
+                suppressions = remaining
             elif isinstance(payload, CurationOverruledV1):
                 if status not in {"open", "quarantined"}:
                     raise ValueError("curation item was resolved more than once")
@@ -1063,10 +1148,14 @@ __all__ = [
     "CurationPatternKind",
     "CurationPatternObservedV1",
     "CurationSuppressedV1",
+    "CurationSuppressedV2",
+    "CurationSuppressionScope",
+    "CurationUnsuppressedV1",
     "build_curation_detection",
     "build_curation_accepted_fixed",
     "build_curation_overruled",
     "build_curation_suppressed",
+    "build_curation_unsuppressed",
     "build_pattern_observation",
     "curation_detection_evidence_digest",
     "curation_item_id",

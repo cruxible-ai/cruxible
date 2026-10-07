@@ -2489,18 +2489,26 @@ class Cruxible:
     def refresh_workspace(
         self,
         *,
-        at: AcceptedCoordinate | api.AcceptedCoordinate,
+        at: AcceptedCoordinate | api.AcceptedCoordinate | None = None,
     ) -> api.FloorRefreshResult:
-        """Materialize the configured floor at an explicit accepted coordinate.
+        """Pull the configured floor, at the accepted head unless ``at`` pins one.
 
-        Reports the coordinate written, or a failed/not_configured status.
-        Does not advance this connection's read coordinate or check agent-owned
-        projection blocks; use block.sync() separately for that inspection.
+        The pull for setups the daemon does not deliver to (a remote daemon,
+        delivery off, MCP library mode). A daemon that delivers this workspace's
+        floor is its only writer: over the local socket it writes now (head only);
+        over TCP the refresh reports failed rather than writing a second copy.
+        Reports the coordinate written, or a failed/not_configured status. Does
+        not advance this connection's read coordinate or check projection blocks;
+        use block.sync() for that.
 
         Next: grep ``.cruxible/floor/current/`` for what it wrote.
         """
 
-        coordinate = api.AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+        coordinate = (
+            None
+            if at is None
+            else api.AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+        )
         return refresh_workspace_floor(
             self._client, self._instance_id, workspace=self._workspace_root, at=coordinate
         )
@@ -2509,7 +2517,7 @@ class Cruxible:
         """Activate one proposal: the daemon settles it, nothing local is written.
 
         The daemon's floor-refresh trigger delivers the floor to a local
-        workspace it serves; elsewhere ``cx.refresh_workspace(at=...)`` pulls it.
+        workspace it serves; elsewhere ``cx.refresh_workspace()`` pulls it.
         The receipt's coordinate becomes this live connection's last observation.
         Subsequent live reads select current head; use at(receipt.accepted_coordinate)
         for exact readback. Explicitly pinned contexts and World snapshots stay fixed.
@@ -3979,18 +3987,25 @@ class Cruxible:
         return result
 
     def _source_card(self, ref: SourceRef) -> KnowledgeCard:
-        self._read_at(ref.coordinate)
-        context = self._client.source_context(self._instance_id)
-        if _coordinate(context.accepted_coordinate) != ref.coordinate:
-            raise ValueError("source context no longer matches the explicit reference coordinate")
-        matches = [item for item in context.documents if item.get("source_id") == ref.address]
-        if len(matches) != 1:
-            raise ValueError(f"source {ref.address!r} did not resolve uniquely")
+        """A catalog source: its Document's card, or the catalog entry when it has none.
+
+        The catalog name lives only in the workspace's source catalog, so the
+        name resolves there; an entry that declares a Document reads that
+        Document at the ref's coordinate, and an evidence-only entry answers
+        the entry itself.
+        """
+
+        entry = self._sources.entry_for_source(ref.address)
+        if entry.document_id is not None:
+            result = self._get(f"Document:{entry.document_id}", "summary", None, ref.coordinate)
+            return KnowledgeCard(
+                RefKind.SOURCE,
+                ref.address,
+                _get_coordinate(result),
+                result.card if result.card is not None else result.proof,
+            )
         return KnowledgeCard(
-            RefKind.SOURCE,
-            ref.address,
-            _coordinate(context.accepted_coordinate),
-            matches[0],
+            RefKind.SOURCE, ref.address, ref.coordinate, entry.model_dump(mode="json")
         )
 
     def orient(
@@ -4194,12 +4209,32 @@ class Cruxible:
     def curation_list(
         self, *, limit: int | None = None, cursor: str | None = None
     ) -> api.CurationListResult:
-        """Read one page of the curation queue with one explicit attributed workspace scan.
+        """Read one page of the curation queue: a pure read of what detection recorded.
 
+        Detection runs on its own on accepted generations; ``result.detection`` says
+        when it last ran and ``inactive_detectors`` which detectors cannot run here.
         A truncated page carries ``next_cursor``; pass it back as ``cursor``.
 
         Next: ``cx.curation_overrule(...)``, ``cx.curation_accept_fixed(...)`` or
         ``cx.curation_suppress(...)`` on an item.
+        """
+
+        return self._client.list_curation(
+            self._instance_id,
+            access_profile=self._access_profile.model_dump(),
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def curation_observe(
+        self, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.CurationObserveResult:
+        """Record this workspace's declared blocks for block-churn detection.
+
+        Block churn is the one detector that needs the workspace, which the daemon
+        never reads; detection picks the scan up the next time it runs.
+
+        Next: ``cx.curation_list()`` after the next accepted generation.
         """
 
         access_profile = self._access_profile.model_dump()
@@ -4210,13 +4245,8 @@ class Cruxible:
             observation=observe_next_workspace(self._workspace_root),
             access_profile=access_profile,
         )
-        return self._client.list_curation(
-            self._instance_id,
-            evaluation_time=self._evaluation_time(),
-            access_profile=access_profile,
-            workspace_observation=observation,
-            limit=limit,
-            cursor=cursor,
+        return self._client.observe_curation(
+            self._instance_id, workspace_observation=observation, dry_run=dry_run, at=at
         )
 
     def audit(
@@ -4255,10 +4285,14 @@ class Cruxible:
         expected_latest_event_digest: str,
         reason: str,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> api.CurationActionResult:
-        """Record that a detector pattern is mechanically inapplicable.
+        """Record, permanently, that a detector pattern does not apply here.
 
-        Next: ``cx.curation_list()``; the item no longer asks.
+        ``dry_run`` checks the ruling and appends nothing; ``at`` pins the commit.
+
+        Next: ``cx.curation_list()``; the pattern is never raised again.
         """
 
         return self._client.overrule_curation(
@@ -4267,6 +4301,8 @@ class Cruxible:
             expected_latest_event_digest=expected_latest_event_digest,
             reason=reason,
             attribution_refs=attribution_refs,
+            dry_run=dry_run,
+            at=at,
         )
 
     def curation_accept_fixed(
@@ -4275,11 +4311,17 @@ class Cruxible:
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        accepted_proposal_id: str,
-        accepted_changeset_digest: str,
+        accepted_proposal_id: str | None = None,
+        accepted_changeset_digest: str | None = None,
+        accepted_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> api.CurationActionResult:
-        """Link an item to an exact already-accepted resolving ChangeSet.
+        """Link an item to the accepted change that fixed it.
+
+        Name the change by ``accepted_proposal_id`` (``accepted_changeset_digest``
+        pins it exactly) or by ``accepted_generation``; the daemon resolves the rest.
 
         Next: ``cx.curation_list()``; the item is resolved.
         """
@@ -4291,7 +4333,10 @@ class Cruxible:
             reason=reason,
             accepted_proposal_id=accepted_proposal_id,
             accepted_changeset_digest=accepted_changeset_digest,
+            accepted_generation=accepted_generation,
             attribution_refs=attribution_refs,
+            dry_run=dry_run,
+            at=at,
         )
 
     def curation_suppress(
@@ -4300,13 +4345,17 @@ class Cruxible:
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        scope: Literal["item", "pattern", "instance"],
+        scope: Literal["item", "lineage"],
         until_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> api.CurationActionResult:
-        """Hide matching open work without resolving or stopping detection.
+        """Hide an item (``item``) or its whole lineage (``lineage``) without resolving it.
 
-        Next: ``cx.curation_list()``; matching work is hidden until it lapses.
+        Detection keeps running; ``until_generation`` lets the suppression lapse.
+
+        Next: ``cx.curation_unsuppress(...)`` to lift it.
         """
 
         return self._client.suppress_curation(
@@ -4317,6 +4366,35 @@ class Cruxible:
             scope=scope,
             until_generation=until_generation,
             attribution_refs=attribution_refs,
+            dry_run=dry_run,
+            at=at,
+        )
+
+    def curation_unsuppress(
+        self,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        suppression_event_id: str | None = None,
+        attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> api.CurationActionResult:
+        """Lift a suppression on an item; name it when the item carries more than one.
+
+        Next: ``cx.curation_list()``; what it hid is listed again.
+        """
+
+        return self._client.unsuppress_curation(
+            self._instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            suppression_event_id=suppression_event_id,
+            attribution_refs=attribution_refs,
+            dry_run=dry_run,
+            at=at,
         )
 
     def _assert_coordinate(self, coordinate: AcceptedCoordinate) -> None:
@@ -4353,13 +4431,15 @@ class ProjectionBlocks:
         evaluation_time: datetime,
         body: str | bytes | None = None,
         compact: bool = True,
+        render: bool = False,
         dry_run: bool = False,
     ) -> ProjectionBlockStamp:
         """Refresh backing pins and optionally replace this block's authored body.
 
         Compact markers are the default: digest references with local manifests. Subsequent
-        repins preserve that format. ``dry_run`` returns the stamp it would write and
-        writes nothing.
+        repins preserve that format. ``render`` writes the body as a table or list from
+        the block's one query backing instead of ``body``. ``dry_run`` returns the stamp
+        it would write and writes nothing.
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
@@ -4395,17 +4475,15 @@ class ProjectionBlocks:
             coordinate=self._playbill.coordinate,
             body=body.encode("utf-8") if isinstance(body, str) else body,
             compact=compact,
+            render=render,
             dry_run=dry_run,
         )
 
-    def sync(
-        self,
-        *paths: str | Path,
-        all: bool = False,
-        check: bool = False,
-        detach: Sequence[str | Path] = (),
-    ) -> api.BlockSyncResult:
-        """Check every block; policy controls whether drift fails the check.
+    def sync(self, *paths: str | Path, all: bool = False) -> api.BlockSyncResult:
+        """Check each block against its backings; a pure check that writes nothing.
+
+        Each block reads unchanged, stale, dirty or skipped; a require_current
+        block's drift is a refusal.
 
         Next: ``cx.next(...)`` names each drifted block with its repair.
         """
@@ -4416,8 +4494,48 @@ class ProjectionBlocks:
             workspace=self._playbill._workspace_root,
             paths=paths,
             all_sources=all,
-            check=check,
-            detach_paths=detach,
+        )
+
+    def detach(self, *paths: str | Path, dry_run: bool = False) -> api.BlockSyncResult:
+        """Strip retired blocks' markers from these pages, keeping each body as prose.
+
+        Only blocks whose every backing is retired, or that belong to another
+        instance, are detached; live blocks are refused. Edits pages only.
+        ``dry_run`` reports what would change and edits nothing.
+
+        Next: ``cx.block.depublish(source, block)`` when the block is not coming back.
+        """
+
+        if not paths:
+            raise ValueError("name at least one page to detach retired blocks from")
+        return sync_projection_blocks(
+            self._playbill._client,
+            self._playbill._instance_id,
+            workspace=self._playbill._workspace_root,
+            check=dry_run,
+            detach_paths=paths,
+        )
+
+    def depublish(
+        self,
+        source: str | SourceRef,
+        block_id: str,
+        *,
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> api.BlockDepublishResult:
+        """Release the registration that demands one page block.
+
+        ``next`` reads that registration to call a removed marker a blocking
+        row; releasing it edits no page and retires no backing. ``dry_run``
+        previews; ``at`` pins a commit to the preview's coordinate.
+
+        Next: ``cx.block.detach(page)`` strips the markers if they remain.
+        """
+
+        source_id = _address(source, RefKind.SOURCE)
+        return self._playbill._client.depublish_block(
+            self._playbill._instance_id, source_id, block_id, dry_run=dry_run, at=at
         )
 
 

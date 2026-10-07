@@ -8,7 +8,6 @@ import os
 import re
 import shlex
 import subprocess
-import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -25,8 +24,6 @@ from cruxible_client import (
 )
 from cruxible_client._error_base import CoreError, printable
 from cruxible_client.artifacts import (
-    RegistryClient,
-    pack_artifact,
     unpack_artifact,
     write_layout,
 )
@@ -35,7 +32,7 @@ from cruxible_client.authoring.attestations import (
     local_attestation_signer_from_environment,
     principal_records,
 )
-from cruxible_client.authoring.bind import bind_working_selection_input
+from cruxible_client.authoring.bind import bind_catalogued_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.authoring.compact_query import (
     WHERE_SYNTAX,
@@ -51,6 +48,8 @@ from cruxible_client.authoring.examples import (
     document_example,
 )
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
+from cruxible_client.authoring.sdk_types import SourceSelectionError
+from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.authoring.signing import sign_runtime_credential_mint
 from cruxible_client.authoring.sources import (
     compile_client_source_context,
@@ -73,6 +72,7 @@ from cruxible_client.authoring.world_stub import render_world_stub_for
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
+from cruxible_client.contracts.authoring.models import BlockSyncResult
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
@@ -96,6 +96,7 @@ from cruxible_client.contracts.kits import (
     KitBuildRequest,
     KitChangeResult,
     KitRemoveRequest,
+    kit_version_key,
 )
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.procedures.results import ProcedureHaltTerminal
@@ -120,13 +121,12 @@ from cruxible_client.contracts.write import (
 from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
+    check_kit_updates,
     fetch_kit_image,
-    kit_reference,
-    push_kit,
     resolve_kit,
     write_kit_directory,
 )
-from cruxible_client.provider_installation import install_provider_package
+from cruxible_core.adapters.block_detach import detach_projection_pages
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, claim_type_input_template
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
 from cruxible_core.cli.commands._common import (
@@ -163,27 +163,12 @@ from cruxible_core.cli.principal_settings import (
     default_key_dir,
     write_principal_settings,
 )
+from cruxible_core.cli.provider_wheels import install_provider_wheel
 from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingSourceObservation,
 )
-from cruxible_core.coverage.claude_code import (
-    PostToolUseResponseError,
-    annotated_tool_output,
-    post_tool_use_response,
-    read_post_tool_use_event,
-)
 from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageResultV3
-from cruxible_core.coverage.indexes import CoverageScanBudget
-from cruxible_core.coverage.middleware import (
-    CoverageRuleTagError,
-    CoverageWorkspaceConfig,
-    FloorGenerationPairV1,
-    ResolveCoverage,
-    ResolveFloorGenerations,
-    coverage_middleware,
-    load_coverage_config,
-)
 from cruxible_core.coverage.render import (
     render_coverage_manifest,
     render_coverage_result,
@@ -796,30 +781,6 @@ def attach_workspace(
     click.echo(f"Config: {config_path}")
 
 
-@workspace_group.command("floor-delivery")
-@click.argument("state", type=click.Choice(["on", "off"]))
-@click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
-@json_option
-@handle_errors
-def workspace_floor_delivery(state: str, instance_id: str | None, output_json: bool) -> None:
-    """Choose whether the local daemon is the workspace floor's writer."""
-
-    if not _root_ctx_obj().get("server_socket"):
-        raise click.UsageError("workspace floor-delivery requires a local --server-socket")
-    selected = instance_id or _require_instance_id()
-    result = _dispatch_cli(
-        lambda client: client.set_floor_delivery(selected, enabled=state == "on"),
-        lambda: None,
-        allow_local=False,
-        command_name="cruxible workspace floor-delivery",
-    )
-    assert result is not None
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        click.echo(f"Floor delivery {state} for {selected}")
-
-
 @workspace_group.command("detach")
 @click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
 @change_control_options
@@ -1380,24 +1341,52 @@ def decommission_instance(
 
 @playbill_group.group("ledger")
 def ledger_group() -> None:
-    """Publish this instance's ledger, and read where it publishes to."""
+    """Publish this instance's ledger to a mirror reviewers can clone."""
 
 
 @ledger_group.command("set-mirror")
-@click.argument("url")
+@click.argument("url", required=False)
+@click.option(
+    "--clear",
+    is_flag=True,
+    help="Unbind the mirror so nothing more is published (what was sent stays sent).",
+)
 @change_control_options
 @json_option
 @handle_errors
-def set_ledger_mirror(url: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+def set_ledger_mirror(
+    url: str | None, clear: bool, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     """Bind the remote and wait boundedly for its initial publication attempt.
 
     The URL must carry no credential: the daemon reads its token from its own
-    environment, and this string is printed back by `ledger clone-url` to
-    anyone who may read the instance at all. Every accepted byte is sent there at
-    once and cannot be called back, so it previews first; commit that preview
-    with ``--commit --at OID``.
+    environment, and `orient` shows this string to anyone who may read the
+    instance at all. Every accepted byte is sent there at once and cannot be
+    called back, so it previews first; commit that preview with
+    ``--commit --at OID``. ``--clear`` (no URL) unbinds the mirror and commits
+    by default; preview it with ``--dry-run``.
     """
 
+    if clear == (url is not None):
+        raise click.UsageError("pass either URL or --clear")
+    if clear:
+        cleared = _server_call(
+            lambda client, instance_id: client.clear_ledger_mirror(
+                instance_id, dry_run=dry_run, at=at
+            ),
+            command_name="cruxible ledger set-mirror",
+        )
+        if output_json:
+            _emit_json(cleared.model_dump(mode="json"))
+            return
+        if cleared.status == "already_clear":
+            click.echo("No ledger mirror is bound.")
+            return
+        verb = "Would stop" if cleared.status == "would_clear" else "Stopped"
+        click.echo(f"{verb} publishing to {cleared.previous_mirror_url}.")
+        echo_preview_next(cleared.status, cleared.coordinate)
+        return
+    assert url is not None
     result = _server_call(
         lambda client, instance_id: client.set_ledger_mirror(
             instance_id, url=url, dry_run=dry_run, at=at
@@ -1412,27 +1401,6 @@ def set_ledger_mirror(url: str, dry_run: bool | None, at: str | None, output_jso
     if result.detail is not None:
         click.echo(f"Detail: {printable(result.detail)}")
     echo_preview_next(result.status, result.coordinate)
-
-
-@ledger_group.command("clone-url")
-@json_option
-@handle_errors
-def ledger_clone_url(output_json: bool) -> None:
-    """Print the ledger mirror a reviewer clones to read this instance's proposals."""
-
-    result = _server_call(
-        lambda client, instance_id: client.get_ledger_mirror(instance_id),
-        command_name="cruxible ledger clone-url",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    click.echo(result.mirror_url)
-    click.echo(
-        f"Publication: {result.status}; acknowledged request {result.published_sequence}, "
-        f"latest requested {result.requested_sequence}",
-        err=True,
-    )
 
 
 @ledger_group.command("publish")
@@ -1489,23 +1457,28 @@ def list_provider_packages(output_json: bool) -> None:
 
 @provider_group.command("install")
 @click.argument("package_or_wheel")
-@click.option("--lock", "lock_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--lock",
+    "lock_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="The lock file a local wheel was built with (required with a wheel).",
+)
 @click.option(
     "--dependency",
     "dependencies",
     multiple=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="A locked dependency wheel to transfer with a local wheel (repeatable).",
 )
-@click.option("--extra", "extras", multiple=True)
-@click.option("--reverify", is_flag=True, help="Recheck a retained installation explicitly.")
+@click.option("--extra", "extras", multiple=True, help="A package extra to install (repeatable).")
 @click.option(
-    "--dry-run",
-    is_flag=True,
-    help=(
-        "Resolve the package and, if it is already prepared here, evaluate the registration "
-        "it would propose; fetch, build, register and propose nothing. By name only."
-    ),
+    "--control-domain",
+    default="operator",
+    show_default=True,
+    help="The control domain the Provider definition records for this package.",
 )
+@click.option("--reverify", is_flag=True, help="Recheck a retained installation explicitly.")
+@change_control_options
 @json_option
 @handle_errors
 def install_provider(
@@ -1513,14 +1486,22 @@ def install_provider(
     lock_path: Path | None,
     dependencies: tuple[Path, ...],
     extras: tuple[str, ...],
+    control_domain: str,
     reverify: bool,
-    dry_run: bool,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     """Install a package by name (NAME or NAME==VERSION) or transfer a local wheel.
 
     By name, the package comes from the configured provider repository, or else
-    from the provider index (PyPI unless the operator configured indexes).
+    from the provider index (PyPI unless the operator configured indexes). The
+    install proposes the package's registration, which lands at once when the
+    approval policy requires no approval; otherwise it stops at proposed
+    (awaiting_approval) for the ordinary review and activation. ``--dry-run`` is
+    a validation-only preview by name: it resolves the package and, if it is
+    already prepared here, evaluates the registration it would propose; it
+    fetches, builds, registers and proposes nothing.
     """
     if package_or_wheel.endswith(".whl"):
         if lock_path is None:
@@ -1531,14 +1512,16 @@ def install_provider(
                 "daemon before anything can be evaluated"
             )
         result = _server_call(
-            lambda client, instance_id: install_provider_package(
+            lambda client, instance_id: install_provider_wheel(
                 client,
                 instance_id,
                 wheel=Path(package_or_wheel),
                 lock=lock_path,
                 dependency_wheels=dependencies,
                 extras=extras,
+                control_domain=control_domain,
                 reverify=reverify,
+                at=at,
             ),
             command_name="cruxible provider install",
         )
@@ -1550,8 +1533,10 @@ def install_provider(
             package=package,
             version=version if pinned else None,
             extras=tuple(sorted(set(extras))),
+            control_domain=control_domain,
             reverify=reverify,
-            dry_run=dry_run or None,
+            dry_run=dry_run,
+            at=at,
         )
         result = _server_call(
             lambda client, instance_id: client.install_provider(instance_id, request),
@@ -1581,24 +1566,62 @@ def kit_group() -> None:
     """Export and import definition kits."""
 
 
+_KIT_CONSEQUENCE_TEXT = {
+    "overwrites_your_edit": "overwrites your edit",
+    "re_adds_retired": "re-adds a definition you retired",
+    "takes_over_outside_definition": "takes over a definition you defined outside the kit",
+    "replaces_carried_definition": "replaces a definition the kit depends on",
+    "release_dropped": "the release dropped it",
+}
+
+
 def _echo_kit_change(result: KitChangeResult) -> None:
     version = "" if result.version is None else f" {result.version}"
-    click.echo(f"{result.kit_id}{version}: {result.status}")
+    transition = ""
+    if result.transition is not None:
+        transition = f" ({result.transition}"
+        if result.installed_version is not None:
+            transition += f" from {result.installed_version}"
+        transition += ")"
+    click.echo(f"{result.kit_id}{version}: {result.status}{transition}")
+    if result.provenance is not None:
+        provenance = result.provenance
+        click.echo(
+            f"Built by {provenance.principal_id or 'an unattributed principal'} on "
+            f"{provenance.instance_id} at {provenance.coordinate.git_oid[:12]} (claimed)"
+        )
+    groups: dict[str, list[str]] = {}
     for item in result.plan:
-        if item.action != "unchanged":
-            detail = "" if item.detail is None else f" ({printable(item.detail)})"
-            click.echo(f"  {item.action}: {item.path}{detail}")
+        if item.action == "unchanged":
+            continue
+        kind = (item.identity or item.path).partition(":")[0]
+        line = f"  {item.action}: {item.identity or item.path}"
+        notes = []
+        if item.consequence is not None:
+            notes.append(_KIT_CONSEQUENCE_TEXT[item.consequence])
+        if item.dependent_count:
+            notes.append(f"{item.dependent_count} dependent(s)")
+        if item.detail is not None:
+            notes.append(printable(item.detail))
+        if notes:
+            line += f" ({'; '.join(notes)})"
+        groups.setdefault(kind, []).append(line)
+    for kind in sorted(groups):
+        click.echo(f"{kind}:")
+        for line in groups[kind]:
+            click.echo(line)
     if result.detail:
         click.echo(printable(result.detail))
     if result.proposal_id:
         click.echo(f"Proposal: {result.proposal_id}")
-        if result.approval_required:
-            click.echo(
-                f"Next: cruxible proposal approve {result.proposal_id} "
-                "--signer-id ID --key FILE, then activate it."
-            )
-        else:
-            click.echo(f"Next: cruxible proposal activate {result.proposal_id}")
+        if result.status == "proposed":
+            if result.approval_required:
+                click.echo(
+                    f"Next: cruxible proposal approve {result.proposal_id} "
+                    "--signer-id ID --key FILE, then activate it."
+                )
+            else:
+                click.echo(f"Next: cruxible proposal activate {result.proposal_id}")
     echo_preview_next(result.status, result.coordinate)
 
 
@@ -1651,20 +1674,67 @@ def build_kit(
 @click.option(
     "--source", "source", default=None, help="Recorded origin; defaults to where KIT came from."
 )
+@click.option(
+    "--keep",
+    "keep",
+    multiple=True,
+    metavar="IDENTITY",
+    help=(
+        "Keep this instance's version of a definition (ClaimType:acme.account.seats) "
+        "instead of the release's, or keep one the release dropped (repeatable)."
+    ),
+)
+@click.option(
+    "--keep-local-edits",
+    is_flag=True,
+    help="Keep every definition edited here since the kit installed it.",
+)
+@click.option(
+    "--retire-dependents",
+    "retire_dependents",
+    multiple=True,
+    metavar="IDENTITY",
+    help="Retire a definition the release dropped together with its live dependents.",
+)
+@click.option(
+    "--allow-downgrade", is_flag=True, help="Install a release older than the installed one."
+)
 @change_control_options
 @json_option
 @handle_errors
 def add_kit(
-    kit: str, source: str | None, dry_run: bool | None, at: str | None, output_json: bool
+    kit: str,
+    source: str | None,
+    keep: tuple[str, ...],
+    keep_local_edits: bool,
+    retire_dependents: tuple[str, ...],
+    allow_downgrade: bool,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
 ) -> None:
-    """Propose installing or upgrading KIT as one change set.
+    """Install or upgrade KIT as one change set; it always proposes.
 
     KIT is a kit directory, an OCI image layout, or a registry reference such as
-    ``project-state:1.0.0`` or ``ghcr.io/acme/kits/foo@sha256:...``. It previews
-    by default; commit the preview with ``--commit --at OID``.
+    ``project-state:1.0.0`` or ``ghcr.io/acme/kits/foo@sha256:...``. A definition
+    this instance holds differently takes the release's version (the preview
+    says what that does: overwrites your edit, re-adds a retired definition,
+    takes over one defined outside the kit) unless --keep or --keep-local-edits
+    keeps yours; replaced definitions' dependents are carried along. The change
+    lands at once when the approval policy requires no approval, otherwise it
+    stops at proposed. It previews by default; commit with ``--commit --at OID``.
     """
     bundle, origin = resolve_kit(kit)
-    request = KitAddRequest(bundle=bundle, source=source or origin, dry_run=dry_run, at=at)
+    request = KitAddRequest(
+        bundle=bundle,
+        source=source or origin,
+        keep=tuple(sorted(set(keep))),
+        keep_local_edits=keep_local_edits,
+        retire_dependents=tuple(sorted(set(retire_dependents))),
+        allow_downgrade=allow_downgrade,
+        dry_run=dry_run,
+        at=at,
+    )
     result = _server_call(
         lambda client, instance_id: client.add_kit(instance_id, request),
         command_name="cruxible kit add",
@@ -1673,43 +1743,6 @@ def add_kit(
         _emit_json(result.model_dump(mode="json"))
     else:
         _echo_kit_change(result)
-
-
-@kit_group.command("push")
-@click.argument("kit")
-@click.argument("reference")
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Pack KIT and print the reference it would publish; contact no registry.",
-)
-@json_option
-@handle_errors
-def push_kit_cmd(kit: str, reference: str, dry_run: bool, output_json: bool) -> None:
-    """Publish KIT (a directory or OCI layout) to a registry REFERENCE.
-
-    Credentials come from CRUXIBLE_REGISTRY_USERNAME and CRUXIBLE_REGISTRY_PASSWORD,
-    for the one registry host named in CRUXIBLE_REGISTRY. A push leaves this
-    machine for good, so `--dry-run` packs the exact artifact and prints the
-    digest-pinned reference it would publish without contacting the registry.
-    """
-    bundle, _origin = resolve_kit(kit)
-    ref = kit_reference(reference)
-    if dry_run:
-        digest = pack_artifact(KIT_ARTIFACT, bundle).digest
-        pinned = str(ref.pinned(digest))
-        if output_json:
-            _emit_json({"status": "would_push", "reference": pinned, "digest": digest})
-        else:
-            click.echo(f"Would push {pinned}; nothing was sent.")
-        return
-    with RegistryClient() as registry:
-        digest = push_kit(bundle, ref, registry=registry)
-    pinned = str(ref.pinned(digest))
-    if output_json:
-        _emit_json({"reference": pinned, "digest": digest})
-    else:
-        click.echo(pinned)
 
 
 @kit_group.command("pull")
@@ -1738,13 +1771,24 @@ def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None
 
 
 @kit_group.command("status")
+@click.option(
+    "--offline", is_flag=True, help="Skip looking up newer releases in the kit's registry."
+)
 @json_option
 @handle_errors
-def kit_status(output_json: bool) -> None:
-    """List installed kits and any kit paths edited since install."""
-    result = _server_call(
-        lambda client, instance_id: client.kit_status(instance_id),
-        command_name="cruxible kit status",
+def kit_status(offline: bool, output_json: bool) -> None:
+    """List installed kits, paths edited since install, and newer releases available.
+
+    For a kit installed from a registry the client lists the repository's tags
+    (short timeout) to show the latest available version; installing it stays
+    explicit (kit add REFERENCE:VERSION).
+    """
+    result = check_kit_updates(
+        _server_call(
+            lambda client, instance_id: client.kit_status(instance_id),
+            command_name="cruxible kit status",
+        ),
+        offline=offline,
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1752,9 +1796,25 @@ def kit_status(output_json: bool) -> None:
     if not result.kits:
         click.echo("No kits installed.")
     for kit in result.kits:
-        click.echo(f"{kit.kit_id} {kit.version} {kit.content_digest}")
+        available = ""
+        if kit.update_check == "checked" and kit.latest_available is not None:
+            newer = kit_version_key(kit.latest_available) > kit_version_key(kit.version)
+            available = f"; latest {kit.latest_available} available" if newer else "; up to date"
+        elif kit.update_check != "checked":
+            available = f"; update check {kit.update_check.replace('_', ' ')}"
+        click.echo(f"{kit.kit_id} {kit.version} {kit.content_digest}{available}")
+        if kit.source is not None:
+            click.echo(f"  source: {kit.source}")
+        if kit.provenance is not None:
+            click.echo(
+                f"  built by {kit.provenance.principal_id or 'an unattributed principal'} on "
+                f"{kit.provenance.instance_id} at {kit.provenance.coordinate.git_oid[:12]} "
+                "(claimed)"
+            )
         for path in kit.drifted:
             click.echo(f"  edited locally: {path}")
+        for kept in kit.kept:
+            click.echo(f"  kept: {kept.identity} ({_KIT_CONSEQUENCE_TEXT[kept.consequence]})")
 
 
 @kit_group.command("remove")
@@ -1763,7 +1823,11 @@ def kit_status(output_json: bool) -> None:
 @json_option
 @handle_errors
 def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
-    """Propose retiring every artifact KIT_ID installed (previews by default)."""
+    """Retire every artifact KIT_ID installed (previews by default).
+
+    Lands at once when the approval policy requires no approval, otherwise it
+    stops at proposed.
+    """
     request = KitRemoveRequest(kit_id=kit_id, dry_run=dry_run, at=at)
     result = _server_call(
         lambda client, instance_id: client.remove_kit(instance_id, request),
@@ -2169,36 +2233,84 @@ def whoami(output_json: bool) -> None:
 
 @playbill_group.group("sources")
 def sources_group() -> None:
-    """Compile declared local files into path-free exact-byte bundles."""
+    """Compile catalogued workspace files into exact-byte Document proposals."""
 
 
 def _source_options(function: Callable[..., Any]) -> Callable[..., Any]:
-    function = click.option("--root", "repository_root", required=True)(function)
-    function = click.option("--local-catalog", default=None)(function)
-    function = click.option("--root-alias", multiple=True, help="Repeat NAME=PATH.")(function)
-    return click.option("--catalog", "portable_catalog", required=True)(function)
+    function = click.option(
+        "--root",
+        "repository_root",
+        default=None,
+        help="Workspace root the catalog's locators resolve against (default: this worktree).",
+    )(function)
+    function = click.option(
+        "--local-catalog",
+        default=None,
+        help="A local overlay catalog (default: .cruxible/sources.local.yaml when present).",
+    )(function)
+    function = click.option(
+        "--root-alias",
+        multiple=True,
+        help="NAME=PATH for a local catalog entry's root_alias (repeatable).",
+    )(function)
+    return click.option(
+        "--catalog",
+        "portable_catalog",
+        default=None,
+        help="The portable catalog (default: the workspace's .cruxible/sources.yaml).",
+    )(function)
+
+
+def _source_catalog_and_root(
+    portable_catalog: str | None, local_catalog: str | None, repository_root: str | None
+) -> tuple[SourceCatalog, Path]:
+    """The catalog the other commands use, discovered the same way unless named."""
+
+    if repository_root is not None:
+        root = Path(repository_root).expanduser().resolve()
+    else:
+        resolution = _local_git_workspace_root()
+        _emit_git_workspace_note(resolution)
+        root = resolution.workspace_root or Path.cwd().resolve()
+    if portable_catalog is not None:
+        return _catalog(portable_catalog, local_catalog), root
+    if local_catalog is not None:
+        raise click.UsageError("--local-catalog needs --catalog; omit both to discover them")
+    return WorkspaceSources(root).catalog, root
 
 
 @sources_group.command("compile")
 @_source_options
-@click.option("--output", required=True, type=click.Path(dir_okay=False))
+@click.option(
+    "--output",
+    required=True,
+    type=click.Path(dir_okay=False),
+    help="Where to write the bundle (refuses an existing file).",
+)
 @json_option
 @handle_errors
 def compile_sources(
-    portable_catalog: str,
+    portable_catalog: str | None,
     local_catalog: str | None,
     root_alias: tuple[str, ...],
-    repository_root: str,
+    repository_root: str | None,
     output: str,
     output_json: bool,
 ) -> None:
-    catalog = _catalog(portable_catalog, local_catalog)
+    """Freeze every catalogued Document's exact bytes into a bundle for sources propose.
+
+    Each entry that declares a Document compiles to its next revision against
+    the accepted head; evidence-only entries compile to nothing. Writes only
+    the local bundle file.
+    """
+
+    catalog, root = _source_catalog_and_root(portable_catalog, local_catalog, repository_root)
     bundle = _server_call(
         lambda client, instance_id: _compile_remote_context(
             client,
             instance_id,
             catalog=catalog,
-            repository_root=Path(repository_root),
+            repository_root=root,
             aliases=_root_aliases(root_alias),
         ),
         command_name="cruxible sources compile",
@@ -2215,58 +2327,122 @@ def compile_sources(
 @json_option
 @handle_errors
 def check_sources(
-    portable_catalog: str,
+    portable_catalog: str | None,
     local_catalog: str | None,
     root_alias: tuple[str, ...],
-    repository_root: str,
+    repository_root: str | None,
     output_json: bool,
 ) -> None:
-    catalog = _catalog(portable_catalog, local_catalog)
+    """Compare each catalogued Document's file with accepted and pending state; writes nothing.
+
+    Each source reads aligned, modified, ahead, pending, behind, diverged or
+    untracked.
+    """
+
+    catalog, root = _source_catalog_and_root(portable_catalog, local_catalog, repository_root)
 
     def call(client: CruxibleClient, instance_id: str) -> contracts.SourceCheckResult:
         bundle = _compile_remote_context(
             client,
             instance_id,
             catalog=catalog,
-            repository_root=Path(repository_root),
+            repository_root=root,
             aliases=_root_aliases(root_alias),
         )
         return client.check_source_bundle(instance_id, bundle=bundle.model_dump(mode="json"))
 
     result = _server_call(call, command_name="cruxible sources check")
-    _emit_json(result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for alignment in result.alignments:
+        click.echo(f"{alignment.get('name')}: {alignment.get('state')}")
+    if not result.alignments:
+        click.echo("No catalogued Documents to check.")
 
 
 @sources_group.command("propose")
 @click.option(
-    "--bundle", "bundle_path", required=True, type=click.Path(exists=True, dir_okay=False)
+    "--bundle",
+    "bundle_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="A bundle sources compile wrote (default: compile the workspace catalog now).",
 )
-@click.option("--source", "source_name", required=True)
-@click.option("--name", "proposal_name", required=True)
+@click.option("--source", "source_name", required=True, help="The catalog source to propose.")
+@click.option("--name", "proposal_name", required=True, help="The proposal's name.")
+@_source_options
 @change_control_options
 @json_option
 @handle_errors
 def propose_sources(
-    bundle_path: str,
+    bundle_path: str | None,
     source_name: str,
     proposal_name: str,
+    portable_catalog: str | None,
+    local_catalog: str | None,
+    root_alias: tuple[str, ...],
+    repository_root: str | None,
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
 ) -> None:
-    bundle = _read_model(bundle_path, SourceCompilationBundle)
-    result = _server_call(
-        lambda client, instance_id: client.propose_source_bundle(
+    """Propose one catalogued source as its Document's next revision.
+
+    Without --bundle the workspace catalog is compiled first, exactly as
+    sources compile does; with it, the frozen bundle is proposed as written.
+    An ordinary Document proposal, reviewed, approved and activated as usual;
+    the compilation it came from is recorded with it.
+    """
+
+    if bundle_path is not None and (
+        portable_catalog or local_catalog or root_alias or repository_root
+    ):
+        raise click.UsageError("a --bundle is proposed as written; it takes no catalog options")
+    frozen = None if bundle_path is None else _read_model(bundle_path, SourceCompilationBundle)
+    catalog_and_root = (
+        None
+        if frozen is not None
+        else _source_catalog_and_root(portable_catalog, local_catalog, repository_root)
+    )
+
+    def call(client: CruxibleClient, instance_id: str) -> contracts.ProposalInspection:
+        bundle = frozen
+        if bundle is None:
+            assert catalog_and_root is not None
+            catalog, root = catalog_and_root
+            bundle = _compile_remote_context(
+                client,
+                instance_id,
+                catalog=catalog,
+                repository_root=root,
+                aliases=_root_aliases(root_alias),
+            )
+        if source_name not in {item.source.name for item in bundle.documents}:
+            raise click.ClickException(
+                f"source {source_name!r} compiles to no Document: it is not catalogued, or its "
+                "entry is evidence-only (give it document_id, document_kind, title, "
+                "media_type and governance_scope to propose it)"
+            )
+        return client.propose_source_bundle(
             instance_id,
             bundle=bundle.model_dump(mode="json"),
             source_name=source_name,
             proposal_name=proposal_name,
             dry_run=dry_run,
             at=at,
-        ),
-        command_name="cruxible sources propose",
-    )
-    _emit_json(result.model_dump(mode="json"))
+        )
+
+    result = _server_call(call, command_name="cruxible sources propose")
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    admission = result.proposal.get("admission")
+    proposal_id = admission.get("proposal_id") if isinstance(admission, dict) else None
+    click.echo(f"{source_name}: {result.status}")
+    if proposal_id:
+        click.echo(f"Proposal: {proposal_id}")
+    echo_preview_next(result.status, result.accepted_coordinate)
 
 
 @playbill_group.group("principal")
@@ -3310,7 +3486,13 @@ def compile_authoring(payload: str, intent_id: str | None, output_json: bool) ->
     "--payload-file",
     required=True,
     type=PayloadFile(),
-    help="Claim stub whose source contains only the working tag and logical source_id.",
+    help="Claim stub whose source holds only the working tag and the catalog source_id.",
+)
+@click.option(
+    "--workspace-root",
+    default=None,
+    type=click.Path(file_okay=False),
+    help="The workspace whose source catalog names --file (default: this worktree).",
 )
 @json_option
 @handle_errors
@@ -3320,27 +3502,31 @@ def bind_authoring_selection(
     window_lines: int | None,
     occurrence: int | None,
     payload_file: str,
+    workspace_root: str | None,
     output_json: bool,
 ) -> None:
     """Bind a Claim to one exact anchor in a local file, then compile it.
 
     The payload file is a Claim stub whose source names only the working tag and
-    a logical source_id; bind reads --file, finds --anchor (--occurrence picks
-    one of several matches, --window-lines widens the cited window), derives the
-    exact observation and compiles the Claim as a new staged intent.
+    a logical source_id, which must be the name the workspace's source catalog
+    gives --file. Bind reads --file, finds --anchor (--occurrence picks one of
+    several matches, --window-lines widens the cited window), derives the exact
+    observation and compiles the Claim as a new staged intent.
     """
 
-    source = Path(source_path).expanduser()
-    try:
-        content = source.read_bytes()
-    except OSError as exc:
-        raise click.ClickException(f"Could not read {source}: {exc}") from exc
+    if workspace_root is not None:
+        workspace = Path(workspace_root).expanduser().resolve()
+    else:
+        resolution = _local_git_workspace_root()
+        _emit_git_workspace_note(resolution)
+        workspace = resolution.workspace_root or Path.cwd().resolve()
     parsed_input = _read_authoring_input(payload_file)
     if not isinstance(parsed_input, ClaimInput):
         raise click.ClickException("authoring bind accepts only a claim input")
-    payload = bind_working_selection_input(
+    payload = bind_catalogued_selection_input(
         parsed_input,
-        content=content,
+        workspace=workspace,
+        path=Path(source_path).expanduser().resolve(),
         anchor=anchor,
         window_lines=window_lines,
         occurrence=occurrence,
@@ -4350,7 +4536,7 @@ def depublish_projection(
 
     The registration is what `next` reads to decide a removed marker is a
     blocking row. Releasing it does not edit the page and does not touch the
-    block's backings: strip the markers with `block sync --detach` or by hand,
+    block's backings: strip the markers with `block detach PAGE` or by hand,
     and use this when the block itself is not coming back.
     """
 
@@ -4397,6 +4583,11 @@ def depublish_projection(
 )
 @click.option("--workspace-root", default=".", show_default=True, type=click.Path(file_okay=False))
 @click.option("--evaluation-time", default=None, help="Explicit absolute ISO-8601 instant.")
+@click.option(
+    "--render",
+    is_flag=True,
+    help="Write the block body as a table or list from its one --query backing.",
+)
 @click.option("--dry-run", is_flag=True, help="Compute and check the stamp; write nothing.")
 @json_option
 @handle_errors
@@ -4414,10 +4605,18 @@ def repin_projection(
     parameters: tuple[str, ...],
     workspace_root: str,
     evaluation_time: str | None,
+    render: bool,
     dry_run: bool,
     output_json: bool,
 ) -> None:
-    """Refresh one declaration marker without writing its body or closing line."""
+    """Stamp one block's marker from its backings and declare it to the instance.
+
+    The client reads the backings and computes the stamp, rewrites the opening
+    marker and then declares the block, creating its registration the first
+    time. The authored body is kept as written, unless ``--render`` writes it
+    from the block's one query backing (a table, or a list when the query
+    projects no fields).
+    """
 
     if (clear_claims and claims) or (clear_queries and queries) or (clear_artifacts and artifacts):
         raise click.ClickException("a backing category cannot be cleared and replaced together")
@@ -4477,6 +4676,7 @@ def repin_projection(
             currency_policy=currency_policy,
             backing_digest=backing_digest,
             evaluation_time=instant,
+            render=render,
             dry_run=dry_run,
         ),
         command_name="cruxible block repin",
@@ -4495,31 +4695,28 @@ def repin_projection(
 
 @block_group.command("sync")
 @click.argument("paths", nargs=-1, type=click.Path(dir_okay=False))
-@click.option("--all", "all_sources", is_flag=True, help="Synchronize every catalog source.")
+@click.option("--all", "all_sources", is_flag=True, help="Check every catalog source.")
 @click.option(
-    "--check",
-    is_flag=True,
-    help="Check without applying requested detach edits.",
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="The attached workspace whose pages are checked.",
 )
-@click.option(
-    "--detach",
-    "detach_paths",
-    multiple=True,
-    type=click.Path(dir_okay=False),
-    help="Strip markers from retired blocks while preserving their current body.",
-)
-@click.option("--workspace-root", default=".", show_default=True, type=click.Path(file_okay=False))
 @json_option
 @handle_errors
 def sync_projection(
     paths: tuple[str, ...],
     all_sources: bool,
-    check: bool,
-    detach_paths: tuple[str, ...],
     workspace_root: str,
     output_json: bool,
 ) -> None:
-    """Check dependencies and report drift under each block's currency policy."""
+    """Check each block against its backings and report drift; writes nothing.
+
+    Each block reads unchanged, stale (its backing moved: repin it), dirty (its
+    prose moved from the stamp: re-check and repin) or skipped (unstamped).
+    Exits non-zero on a refusal, which a require_current block's drift is.
+    """
 
     result = _server_call(
         lambda client, instance_id: sync_projection_blocks(
@@ -4528,25 +4725,70 @@ def sync_projection(
             workspace=workspace_root,
             paths=paths,
             all_sources=all_sources,
-            check=check,
-            detach_paths=(*detach_paths,),
         ),
         command_name="cruxible block sync",
+    )
+    _echo_block_sync(result, output_json=output_json)
+    if result.has_refusals:
+        raise click.exceptions.Exit(1)
+
+
+@block_group.command("detach")
+@click.argument("paths", nargs=-1, required=True, type=click.Path(dir_okay=False))
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="The attached workspace the pages belong to.",
+)
+@change_control_options
+@json_option
+@handle_errors
+def detach_projection(
+    paths: tuple[str, ...],
+    workspace_root: str,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
+) -> None:
+    """Strip retired blocks' markers from these pages, keeping each body as prose.
+
+    Only blocks whose every backing is retired, or that belong to another
+    instance, are detached; live blocks are refused. Edits pages only, never
+    governed state. ``--dry-run`` reports what would change; ``--commit --at``
+    commits only if the pages still hold the bytes the preview read.
+    """
+
+    root = Path(workspace_root).expanduser().resolve()
+    pages = tuple(Path(item).expanduser().resolve() for item in paths)
+    result = _server_call(
+        lambda client, instance_id: detach_projection_pages(
+            client, instance_id, root=root, pages=pages, dry_run=dry_run, at=at
+        ),
+        command_name="cruxible block detach",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        for item in result.items:
-            target = item.path
-            if item.block_id is not None:
-                target += f"#{item.block_id}"
-            suffix = "" if item.reason is None else f":{item.reason}"
-            click.echo(f"{target}: {item.outcome}{suffix}")
-            if item.repair is not None:
-                click.echo(f"  repair: {render_served_repair(item.repair)}")
-    # Warn findings stay advisory; explicit strict blocks gate this check.
-    if (check and result.would_change) or result.has_refusals:
+        _echo_block_sync(result.sync, output_json=False)
+        echo_preview_next(result.status, result.coordinate)
+    if result.sync.has_refusals:
         raise click.exceptions.Exit(1)
+
+
+def _echo_block_sync(result: BlockSyncResult, *, output_json: bool) -> None:
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for item in result.items:
+        target = item.path
+        if item.block_id is not None:
+            target += f"#{item.block_id}"
+        suffix = "" if item.reason is None else f":{item.reason}"
+        click.echo(f"{target}: {item.outcome}{suffix}")
+        if item.repair is not None:
+            click.echo(f"  repair: {render_served_repair(item.repair)}")
 
 
 def _echo_list_continuation(next_cursor: str | None) -> None:
@@ -5683,23 +5925,52 @@ def _echo_next_status(status: contracts.NextStatus) -> None:
 
 @playbill_group.group("curation")
 def curation_group() -> None:
-    """Inspect mechanically detected ontology-maintenance patterns."""
+    """Review the ontology-maintenance patterns curation detection records."""
+
+
+def _curation_ruling_options(function: Callable[..., Any]) -> Callable[..., Any]:
+    function = click.option(
+        "--attribution-ref",
+        "attribution_refs",
+        multiple=True,
+        help="A reference recorded with the ruling, such as a ticket or Claim ID (repeatable).",
+    )(function)
+    function = click.option("--reason", required=True, help="Why, recorded with the ruling.")(
+        function
+    )
+    return click.option(
+        "--expected-latest-event-digest",
+        required=True,
+        help="The item's latest_event_digest from curation list; refuses if it moved.",
+    )(function)
+
+
+def _echo_curation_action(result: contracts.CurationActionResult, done: str) -> None:
+    if result.status == "would_record":
+        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
+        echo_preview_next(result.status, result.coordinate)
+        return
+    click.echo(f"Curation item {result.item['item_id']}: {done}")
+
+
+def _curation_item_line(item: Mapping[str, Any]) -> str:
+    kind = str(item.get("pattern_kind", "")).removeprefix("playbill.curation.")
+    subject = item.get("subject") or {}
+    summary = f"{subject.get('kind', '')}:{subject.get('name', '')}"
+    status = "" if item.get("status") == "open" else f" [{item.get('status')}]"
+    return (
+        f"{item.get('item_id')}  {kind}  {summary}{status}  "
+        f"latest={item.get('latest_event_digest')}"
+    )
 
 
 @curation_group.command("list")
-@click.option(
-    "--workspace-root",
-    default=".",
-    show_default=True,
-    type=click.Path(file_okay=False),
-    help="Workspace scanned explicitly for declared-block observations.",
-)
 @click.option(
     "--access-profile",
     "access_profile_path",
     default=None,
     type=PayloadFile(),
-    help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
+    help="CoverageAccessProfile JSON/YAML (- for stdin); defaults to public and instance access.",
 )
 @click.option(
     "--limit",
@@ -5712,13 +5983,18 @@ def curation_group() -> None:
 @json_option
 @handle_errors
 def curation_list(
-    workspace_root: str,
     access_profile_path: str | None,
     limit: int,
     cursor: str | None,
     output_json: bool,
 ) -> None:
-    observation = observe_next_workspace(Path(workspace_root))
+    """List the open curation items detection recorded; a pure read.
+
+    Detection runs on its own on every accepted generation (the curation.detect
+    Trigger). Each line is the item ID, its pattern kind, its subject and the
+    latest_event_digest the rulings (overrule, accept-fixed, suppress) need.
+    """
+
     profile = (
         CoverageAccessProfile(
             profile_id="cli-curation",
@@ -5727,44 +6003,78 @@ def curation_list(
         if access_profile_path is None
         else _read_model(access_profile_path, CoverageAccessProfile).model_dump(mode="json")
     )
-
-    def _curation_at_scanned_coordinate(
-        client: CruxibleClient, instance_id: str
-    ) -> contracts.CurationListResult:
-        observed, _coordinate = observe_next_workspace_with_coverage(
-            client,
-            instance_id,
-            Path(workspace_root),
-            observation=observation,
-            access_profile=profile,
-        )
-        return client.list_curation(
-            instance_id,
-            evaluation_time=datetime.now(UTC).isoformat(),
-            access_profile=profile,
-            workspace_observation=observed,
-            limit=limit,
-            cursor=cursor,
-        )
-
     result = _server_call(
-        _curation_at_scanned_coordinate,
+        lambda client, instance_id: client.list_curation(
+            instance_id, access_profile=profile, limit=limit, cursor=cursor
+        ),
         command_name="cruxible curation list",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
+    detection = result.detection
+    ran = (
+        "never run"
+        if detection.detected_through_generation is None
+        else f"through generation {detection.detected_through_generation} "
+        f"at {detection.detected_at}"
+    )
     click.echo(
         f"Curation queue at generation {result.generation}: {len(result.items)} item(s); "
-        f"observed {result.observation_coverage['observed_block_count']} declared block(s)."
+        f"detection {detection.state} ({ran}), trigger {detection.trigger}."
     )
+    for item in result.items:
+        click.echo(f"  {_curation_item_line(item)}")
+    for inactive in result.inactive_detectors:
+        click.echo(f"Inactive: {inactive.pattern_kind} ({inactive.reason})")
     _echo_list_continuation(result.next_cursor)
+
+
+@curation_group.command("observe")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="The workspace whose declared blocks are scanned.",
+)
+@change_control_options
+@json_option
+@handle_errors
+def curation_observe(
+    workspace_root: str, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
+    """Record this workspace's declared blocks for block-churn detection.
+
+    Block churn is the one detector that needs the workspace, which the daemon
+    never reads; detection picks the recorded scan up when it next runs.
+    """
+
+    observation = observe_next_workspace(Path(workspace_root))
+
+    def call(client: CruxibleClient, instance_id: str) -> contracts.CurationObserveResult:
+        observed, _coordinate = observe_next_workspace_with_coverage(
+            client, instance_id, Path(workspace_root), observation=observation
+        )
+        return client.observe_curation(
+            instance_id, workspace_observation=observed, dry_run=dry_run, at=at
+        )
+
+    result = _server_call(call, command_name="cruxible curation observe")
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    verb = "Would record" if result.status == "would_record" else "Recorded"
+    click.echo(
+        f"{verb} {result.observation_coverage['observed_block_count']} declared block(s) "
+        f"at generation {result.generation}."
+    )
+    echo_preview_next(result.status, result.coordinate)
 
 
 @curation_group.command("overrule")
 @click.argument("item_id")
-@click.option("--expected-latest-event-digest", required=True)
-@click.option("--reason", required=True)
+@_curation_ruling_options
 @change_control_options
 @json_option
 @handle_errors
@@ -5772,16 +6082,20 @@ def curation_overrule(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
+    attribution_refs: tuple[str, ...],
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
 ) -> None:
+    """Close an item as not applying here, permanently: its pattern is never raised again."""
+
     result = _server_call(
         lambda client, instance_id: client.overrule_curation(
             instance_id,
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
             reason=reason,
+            attribution_refs=attribution_refs,
             dry_run=dry_run,
             at=at,
         ),
@@ -5790,19 +6104,24 @@ def curation_overrule(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if result.status == "would_record":
-        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
-        echo_preview_next(result.status, result.coordinate)
-        return
-    click.echo(f"Curation item {result.item['item_id']}: {result.item['status']}")
+    _echo_curation_action(result, str(result.item["status"]))
 
 
 @curation_group.command("accept-fixed")
 @click.argument("item_id")
-@click.option("--expected-latest-event-digest", required=True)
-@click.option("--reason", required=True)
-@click.option("--proposal-id", required=True)
-@click.option("--changeset-digest", required=True)
+@_curation_ruling_options
+@click.option("--proposal-id", default=None, help="The accepted proposal that fixed the item.")
+@click.option(
+    "--changeset-digest",
+    default=None,
+    help="Pins --proposal-id to its exact accepted ChangeSet (optional).",
+)
+@click.option(
+    "--generation",
+    type=click.IntRange(min=1),
+    default=None,
+    help="The accepted generation that fixed the item, instead of --proposal-id.",
+)
 @change_control_options
 @json_option
 @handle_errors
@@ -5810,12 +6129,22 @@ def curation_accept_fixed(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    proposal_id: str,
-    changeset_digest: str,
+    attribution_refs: tuple[str, ...],
+    proposal_id: str | None,
+    changeset_digest: str | None,
+    generation: int | None,
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
 ) -> None:
+    """Link an item to the accepted change that fixed it, closing it.
+
+    Name the change by --proposal-id or --generation; the daemon resolves the
+    rest. The change must postdate the item and touch its subject or evidence.
+    """
+
+    if (proposal_id is None) == (generation is None):
+        raise click.UsageError("name the fixing change with --proposal-id or --generation")
     result = _server_call(
         lambda client, instance_id: client.accept_fixed_curation(
             instance_id,
@@ -5824,6 +6153,8 @@ def curation_accept_fixed(
             reason=reason,
             accepted_proposal_id=proposal_id,
             accepted_changeset_digest=changeset_digest,
+            accepted_generation=generation,
+            attribution_refs=attribution_refs,
             dry_run=dry_run,
             at=at,
         ),
@@ -5832,19 +6163,23 @@ def curation_accept_fixed(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if result.status == "would_record":
-        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
-        echo_preview_next(result.status, result.coordinate)
-        return
-    click.echo(f"Curation item {result.item['item_id']}: {result.item['status']}")
+    _echo_curation_action(result, str(result.item["status"]))
 
 
 @curation_group.command("suppress")
 @click.argument("item_id")
-@click.option("--expected-latest-event-digest", required=True)
-@click.option("--reason", required=True)
-@click.option("--scope", type=click.Choice(("item", "pattern", "instance")), required=True)
-@click.option("--until-generation", type=click.IntRange(min=0))
+@_curation_ruling_options
+@click.option(
+    "--scope",
+    type=click.Choice(("item", "lineage")),
+    required=True,
+    help="item: hide this item; lineage: also hide every successor its pattern opens.",
+)
+@click.option(
+    "--until-generation",
+    type=click.IntRange(min=0),
+    help="The last generation the suppression hides through (default: until lifted).",
+)
 @change_control_options
 @json_option
 @handle_errors
@@ -5852,12 +6187,15 @@ def curation_suppress(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
+    attribution_refs: tuple[str, ...],
     scope: str,
     until_generation: int | None,
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
 ) -> None:
+    """Hide an item, or its lineage, without resolving it; detection keeps running."""
+
     result = _server_call(
         lambda client, instance_id: client.suppress_curation(
             instance_id,
@@ -5866,6 +6204,7 @@ def curation_suppress(
             reason=reason,
             scope=cast(Any, scope),
             until_generation=until_generation,
+            attribution_refs=attribution_refs,
             dry_run=dry_run,
             at=at,
         ),
@@ -5874,11 +6213,50 @@ def curation_suppress(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if result.status == "would_record":
-        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
-        echo_preview_next(result.status, result.coordinate)
+    _echo_curation_action(result, f"suppressed ({scope})")
+
+
+@curation_group.command("unsuppress")
+@click.argument("item_id")
+@_curation_ruling_options
+@click.option(
+    "--suppression",
+    "suppression_event_id",
+    default=None,
+    help="The suppression's event ID; needed only when the item carries more than one.",
+)
+@change_control_options
+@json_option
+@handle_errors
+def curation_unsuppress(
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    attribution_refs: tuple[str, ...],
+    suppression_event_id: str | None,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
+) -> None:
+    """Lift a suppression recorded on an item, so what it hid is listed again."""
+
+    result = _server_call(
+        lambda client, instance_id: client.unsuppress_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            suppression_event_id=suppression_event_id,
+            attribution_refs=attribution_refs,
+            dry_run=dry_run,
+            at=at,
+        ),
+        command_name="cruxible curation unsuppress",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(f"Curation item {result.item['item_id']}: suppressed ({scope})")
+    _echo_curation_action(result, "unsuppressed")
 
 
 @playbill_group.command("audit")
@@ -6038,6 +6416,8 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         f"Cruxible {result['instance']} generation={result['generation']} "
         f"at {result['coordinate']['git_oid'][:12]} accepted {result['accepted_at']}"
     ]
+    if result.get("mirror_url"):
+        lines.append(f"Ledger mirror: {result['mirror_url']}")
     floor = result.get("floor")
     if floor is not None:
         behind = floor["generations_behind"]
@@ -6244,7 +6624,7 @@ def world_stub(out_path: str | None) -> None:
 
 @playbill_group.group("floor")
 def floor_group() -> None:
-    """Materialize the deterministic greppable floor of accepted state."""
+    """The greppable floor of accepted state: export it, and choose who delivers it."""
 
 
 @floor_group.command("export")
@@ -6324,6 +6704,36 @@ def export_floor(
     click.echo(f"Coordinate: {written.coordinate.git_oid}")
 
 
+@floor_group.command("delivery")
+@click.argument("state", type=click.Choice(["on", "off"]))
+@click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
+@json_option
+@handle_errors
+def floor_delivery(state: str, instance_id: str | None, output_json: bool) -> None:
+    """Choose whether the local daemon writes this workspace's floor.
+
+    On (the default for an attached workspace), the daemon refreshes the floor
+    after every accepted generation and is its only writer, so ``floor export``
+    over TCP refuses. Off, nothing delivers it and ``floor export`` pulls it.
+    Needs the local --server-socket the workspace was attached through.
+    """
+
+    if not _root_ctx_obj().get("server_socket"):
+        raise click.UsageError("floor delivery requires a local --server-socket")
+    selected = instance_id or _require_instance_id()
+    result = _dispatch_cli(
+        lambda client: client.set_floor_delivery(selected, enabled=state == "on"),
+        lambda: None,
+        allow_local=False,
+        command_name="cruxible floor delivery",
+    )
+    assert result is not None
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        click.echo(f"Floor delivery {state} for {selected}")
+
+
 @playbill_group.group("coverage")
 def coverage_group() -> None:
     """Deliver what working files have to do with accepted state."""
@@ -6334,32 +6744,40 @@ def _coverage_options(function: Callable[..., Any]) -> Callable[..., Any]:
         "--bind",
         "bind_values",
         multiple=True,
-        help="Declare one binding as PATH=PLANE:IDENTITY. Repeat per working file.",
+        help="Override the catalog for one path as PATH=PLANE:IDENTITY (repeatable).",
     )(function)
     function = click.option(
         "--bindings",
         "bindings_path",
         default=None,
         type=PayloadFile(),
-        help="A mapping of working path to PLANE:IDENTITY.",
+        help="A mapping of working path to PLANE:IDENTITY overriding the catalog (- for stdin).",
     )(function)
     function = click.option(
         "--root",
-        default=".",
-        show_default=True,
+        default=None,
         type=click.Path(file_okay=False),
-        help="Working root every bound path is read under.",
+        help="Working root every bound path is read under (default: this worktree).",
     )(function)
     return function
 
 
 def _coverage_bindings(
+    root: Path,
     bind_values: tuple[str, ...],
     bindings_path: str | None,
 ) -> WorkingPathBindingsV1:
-    """Collect the declared path bindings; coverage never infers one."""
+    """The source catalog's bindings, overridden path by path by declared ones.
 
-    declared: dict[str, str] = {}
+    The catalog is the one path-to-source mapping; coverage never infers one.
+    """
+
+    try:
+        declared: dict[str, str] = WorkspaceSources(root).coverage_bindings()
+    except SourceSelectionError:
+        if not (bind_values or bindings_path):
+            raise
+        declared = {}
     if bindings_path is not None:
         for path, value in _read_mapping(bindings_path).items():
             if not isinstance(value, str):
@@ -6406,31 +6824,14 @@ def _resolved_coverage(
     observations: tuple[WorkingSourceObservation, ...],
     *,
     command_name: str,
-    scan_budget: CoverageScanBudget | None = None,
-    instance_id: str | None = None,
 ) -> CoverageResultV3:
-    def resolve(
-        client: CruxibleClient,
-        selected_instance_id: str,
-    ) -> contracts.CoverageResult:
-        return client.resolve_coverage(
-            selected_instance_id,
+    result = _server_call(
+        lambda client, instance_id: client.resolve_coverage(
+            instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
-            scan_budget=None if scan_budget is None else scan_budget.model_dump(mode="json"),
-        )
-
-    if instance_id is None:
-        result = _server_call(resolve, command_name=command_name)
-    else:
-        dispatched = _dispatch_cli(
-            lambda client: resolve(client, instance_id),
-            lambda: None,
-            allow_local=False,
-            command_name=command_name,
-        )
-        if dispatched is None:
-            raise click.ClickException("coverage resolver returned no result")
-        result = dispatched
+        ),
+        command_name=command_name,
+    )
     return CoverageResultV3.model_validate(result.result)
 
 
@@ -6443,33 +6844,54 @@ def _resolved_coverage(
     "grep_path",
     default=None,
     type=PayloadFile(),
-    help="A `grep -n` result batch to resolve as one operation.",
+    help="A `grep -n` result batch to resolve as one operation (- for stdin).",
 )
-@click.option("--all", "whole_working_set", is_flag=True, help="Resolve the whole declared scope.")
+@click.option("--all", "whole_working_set", is_flag=True, help="Resolve every bound file.")
+@click.option(
+    "--view",
+    type=click.Choice(["cards", "manifest"]),
+    default="cards",
+    show_default=True,
+    help=(
+        "cards: the governed spans and a summary; manifest: the coverage manifest "
+        "(epoch, health, completeness, scope)."
+    ),
+)
 @brief_option
 @json_option
 @handle_errors
 def resolve_coverage(
     bind_values: tuple[str, ...],
     bindings_path: str | None,
-    root: str,
+    root: str | None,
     files: tuple[str, ...],
     ranges: tuple[str, ...],
     grep_path: str | None,
     whole_working_set: bool,
+    view: str,
     output_brief: bool,
     output_json: bool,
 ) -> None:
     """Resolve what the working files you just read or changed are governed by.
 
-    Governed spans are annotated inline; the ungoverned majority is summarized
-    once. Resolving coverage changes no accepted state and appends no receipt.
+    Files are bound to their sources by the workspace's source catalog;
+    --bind and --bindings override it path by path. Governed spans are
+    annotated inline and the ungoverned majority is summarized once;
+    --all --view manifest renders the coverage manifest over every bound file.
+    Changes no accepted state. It writes the coverage manifest cache, and a
+    consumption receipt when the daemon runs with CRUXIBLE_CONSUMPTION_RECEIPTS=on.
     """
 
-    bindings = _coverage_bindings(bind_values, bindings_path)
+    if root is not None:
+        working_root = Path(root).expanduser().resolve()
+    else:
+        resolution = _local_git_workspace_root()
+        _emit_git_workspace_note(resolution)
+        working_root = resolution.workspace_root or Path.cwd().resolve()
+    bindings = _coverage_bindings(working_root, bind_values, bindings_path)
     observations = _coverage_observations(
         bindings,
-        root=Path(root).expanduser(),
+        root=working_root,
         files=files,
         ranges=ranges,
         grep_path=grep_path,
@@ -6492,148 +6914,11 @@ def resolve_coverage(
             ),
         )
         return
-    for line in render_coverage_result(result):
-        click.echo(line)
-
-
-@coverage_group.command("status")
-@_coverage_options
-@json_option
-@handle_errors
-def coverage_status(
-    bind_values: tuple[str, ...],
-    bindings_path: str | None,
-    root: str,
-    output_json: bool,
-) -> None:
-    """Render the coverage manifest: epoch, health, completeness, and scope."""
-
-    bindings = _coverage_bindings(bind_values, bindings_path)
-    observations = _coverage_observations(
-        bindings,
-        root=Path(root).expanduser(),
-        files=(),
-        ranges=(),
-        grep_path=None,
-        whole_working_set=True,
+    rendered = (
+        render_coverage_manifest(result) if view == "manifest" else render_coverage_result(result)
     )
-    result = _resolved_coverage(observations, command_name="cruxible coverage status")
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    for line in render_coverage_manifest(result):
+    for line in rendered:
         click.echo(line)
-
-
-@playbill_group.group("hook")
-def hook_group() -> None:
-    """Deprecated/parked harness adapter retained for compatibility."""
-
-    # PC-DEL3 parks this shipped Claude Code adapter. It remains registered and
-    # behavior-compatible, but new integrations should consume coverage through
-    # the client middleware rather than extending this vendor-specific surface.
-
-
-def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
-    """Resolve through the served operation, as every other coverage caller does.
-
-    The workspace's declared scan budget rides along here rather than inside the
-    middleware, because bounding how many bytes are hashed looking for relocated
-    content is a property of the operation, not of the adapter that calls it.
-    """
-
-    def resolve(observations: Sequence[WorkingSourceObservation]) -> CoverageResultV3:
-        return _resolved_coverage(
-            tuple(observations),
-            command_name="cruxible hook post-tool-use",
-            scan_budget=config.scan_budget,
-            instance_id=config.instance_id,
-        )
-
-    return resolve
-
-
-def _hook_floor_generation_resolver() -> ResolveFloorGenerations:
-    """Resolve old and current generations through the head read."""
-
-    def orientation(at: AcceptedCoordinate | None) -> int:
-        result = _server_call(
-            lambda client, instance_id: client.head(
-                instance_id, at=None if at is None else at.model_dump(mode="json")
-            ),
-            command_name="cruxible hook floor freshness",
-        )
-        return result.generation
-
-    def resolve(coordinate: AcceptedCoordinate) -> FloorGenerationPairV1:
-        floor_generation = orientation(coordinate)
-        current_generation = orientation(None)
-        return FloorGenerationPairV1(
-            floor_generation=floor_generation,
-            current_generation=current_generation,
-        )
-
-    return resolve
-
-
-@hook_group.command("post-tool-use")
-@click.option(
-    "--root",
-    default=".",
-    show_default=True,
-    type=click.Path(file_okay=False),
-    help="Workspace root holding .cruxible/coverage.json.",
-)
-def post_tool_use_hook(root: str) -> None:
-    """Annotate a Claude Code tool result with coverage, reading the hook JSON on stdin.
-
-    Wire this as a PostToolUse hook for Read, Grep, Edit, and Write; the
-    settings fragment is in `integrations/claude-code/`. Grep content-mode
-    results are annotated in place. Read, Edit, and Write are observed -- which
-    refreshes the local freshness manifest so the next Grep answers against a
-    current snapshot -- and their output is returned unchanged, because those
-    tools' result shapes cannot carry an annotation without fabricating file
-    content. The middleware API is the full-fidelity path for a harness that
-    owns its tool executor.
-
-    Always exits 0 and always emits one JSON object: a coverage failure may
-    never break the agent's tool call.
-    """
-
-    payload: Any = None
-    text = ""
-    diagnostic: str | None = None
-    try:
-        payload = json.loads(sys.stdin.read() or "null")
-        workspace = Path(root).expanduser()
-        event = read_post_tool_use_event(payload, workspace_root=workspace)
-        if event is not None:
-            config = load_coverage_config(workspace)
-            middleware = coverage_middleware(
-                root=workspace,
-                config=config,
-                resolve=_hook_resolver(config),
-                resolve_floor_generations=_hook_floor_generation_resolver(),
-            )
-            delivery = middleware.after_tool(event)
-            text = delivery.appended_coverage_text
-            if delivery.failure_code == "coverage_operation_unavailable":
-                if config.instance_id is None:
-                    try:
-                        _require_instance_id()
-                    except click.UsageError:
-                        diagnostic = "cruxible.coverage_hook.instance_id_missing"
-    except CoverageRuleTagError:
-        diagnostic = "cruxible.coverage_hook.rule_tag_invalid"
-        text = ""
-    except PostToolUseResponseError:
-        diagnostic = "cruxible.coverage_hook.tool_response_invalid"
-        text = ""
-    except Exception:  # noqa: BLE001 - fail open; a broken hook is not the agent's problem
-        text = ""
-    if diagnostic is not None:
-        click.echo(diagnostic, err=True)
-    _emit_json(post_tool_use_response(annotated_tool_output(payload, text)))
 
 
 __all__ = ["playbill_group"]

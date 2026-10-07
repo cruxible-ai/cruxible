@@ -381,7 +381,24 @@ _SDK_REPAIRS: tuple[tuple[str, dict[str, object]], ...] = (
     ("cruxible.claim.retire", {"claim_id": "CLM-0001"}),
     ("cruxible.block.repin", {"source_id": "SRC-1", "block_id": "b1", "claim_id": "CLM-0001"}),
     ("cruxible.block.sync", {"all": True}),
+    ("cruxible.block.detach", {"paths": ["docs/page.md"]}),
+    ("cruxible.block.depublish", {"source_id": "SRC-1", "block_id": "b1"}),
 )
+
+
+def test_block_detach_renders_on_every_surface() -> None:
+    from cruxible_core.service.discovery.next import _repair_command
+
+    arguments = {"paths": ["docs/page.md"]}
+    assert _repair_command("cruxible.block.detach", arguments=arguments) == (
+        "cruxible block detach docs/page.md"
+    )
+    assert _repair_command("cruxible.block.detach", arguments=arguments, surface="mcp") == (
+        'cruxible_block_detach(files=["docs/page.md"])'
+    )
+    assert _repair_command("cruxible.block.detach", arguments=arguments, surface="sdk") == (
+        'cx.block.detach("docs/page.md")'
+    )
 
 
 def test_every_sdk_rendered_repair_is_python() -> None:

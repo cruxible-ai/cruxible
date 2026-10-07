@@ -142,6 +142,12 @@ def write_mirror_state(root: Path, state: LedgerMirrorStateV1) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
+def clear_mirror_state(root: Path) -> None:
+    """Forget the last attempt, for a mirror that is no longer bound."""
+
+    (root / MIRROR_STATE_FILE).unlink(missing_ok=True)
+
+
 @contextmanager
 def mirror_lock(root: Path, *, publication: bool = False, review: bool = False) -> Iterator[None]:
     """Separate short state transactions from the long cross-process push lock."""
@@ -164,6 +170,7 @@ def mirror_lock(root: Path, *, publication: bool = False, review: bool = False) 
 __all__ = [
     "MIRROR_STATE_FILE",
     "LedgerMirrorStateV1",
+    "clear_mirror_state",
     "mirror_credential_environment",
     "mirror_lock",
     "read_mirror_state",

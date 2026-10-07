@@ -565,7 +565,7 @@ activate(proposal_id: str) -> api.ActivationReceipt
 
 Activates one proposal and returns its ActivationReceipt. Updates a live connection’s last observed coordinate.
 
-**Conditions and effects:** A daemon act: signs no approval and writes nothing locally. The daemon's floor-refresh trigger delivers the floor to a workspace it serves; elsewhere `cx.refresh_workspace(at=...)` pulls it. Use cx.at(receipt.accepted_coordinate) for exact readback.
+**Conditions and effects:** A daemon act: signs no approval and writes nothing locally. The daemon's floor-refresh trigger delivers the floor to a workspace it serves; elsewhere `cx.refresh_workspace()` pulls it. Use cx.at(receipt.accepted_coordinate) for exact readback.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -592,17 +592,17 @@ One page of proposals; follow `next_cursor` while `truncated`. Read one with `cx
 ```text
 refresh_workspace(
     *,
-    at: AcceptedCoordinate | api.AcceptedCoordinate,
+    at: AcceptedCoordinate | api.AcceptedCoordinate | None = None,
 ) -> api.FloorRefreshResult
 ```
 
-Exports/materializes the configured floor at the explicit accepted coordinate and reports written/failed/not_configured.
+Pulls the configured floor, at the accepted head unless `at` pins a coordinate, and reports refreshed/failed/not_configured. It is the SDK's pull for setups the daemon does not deliver to (a remote daemon, delivery off, MCP library mode).
 
-**Conditions and effects:** Writes client workspace files; does not advance the reading context or check/repin projection blocks.
+**Conditions and effects:** Writes client workspace files; does not advance the reading context or check/repin projection blocks. A daemon delivering this workspace's floor is its only writer: over the local socket it writes now (head only); over TCP the refresh reports `failed` instead of writing a second copy.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `at` | Required | Explicit accepted coordinate. Omission follows the live/pinned object semantics stated above. |
+| `at` | `None` (head) | An accepted coordinate to pin the pull to. |
 
 <a id="api-cruxible-file"></a>
 
@@ -957,11 +957,26 @@ Reads a bounded ranking of visible Claim-verification work.
 curation_list(*, limit: int | None = None, cursor: str | None = None) -> api.CurationListResult
 ```
 
-Performs an attributed workspace scan and reads one page of current operational
-curation work (default 25 items). A truncated page carries `next_cursor`; pass it
-back as `cursor`.
+Reads one page of the curation queue detection recorded (default 25 items); a pure
+read. Detection runs on its own on accepted generations: `detection` says when it
+last ran and whether its Trigger is live, `inactive_detectors` which detectors
+cannot run here and why. A truncated page carries `next_cursor`; pass it back as
+`cursor`.
 
-**Conditions and effects:** Operational state stays live even through a pinned accepted-reading context.
+**Conditions and effects:** Writes nothing and reads no clock. Operational state stays live even through a pinned accepted-reading context.
+
+<a id="api-cruxible-curation-observe"></a>
+
+### `Cruxible.curation_observe`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+curation_observe(*, dry_run: bool | None = None, at: str | None = None) -> api.CurationObserveResult
+```
+
+Scans this workspace's declared blocks and records them for block-churn detection,
+the one detector that needs the workspace the daemon never reads.
 
 <a id="api-cruxible-curation-overrule"></a>
 
@@ -976,12 +991,14 @@ curation_overrule(
     expected_latest_event_digest: str,
     reason: str,
     attribution_refs: tuple[str, ...] = (),
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> api.CurationActionResult
 ```
 
-Records that the detector pattern is mechanically inapplicable.
+Records, permanently, that a detected pattern does not apply here; it is never raised again.
 
-**Conditions and effects:** Requires matching latest-event digest and attribution; does not revise accepted knowledge.
+**Conditions and effects:** Requires matching latest-event digest and attribution; does not revise accepted knowledge. `dry_run` checks and appends nothing; `at` pins the commit.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -1002,23 +1019,27 @@ curation_accept_fixed(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    accepted_proposal_id: str,
-    accepted_changeset_digest: str,
+    accepted_proposal_id: str | None = None,
+    accepted_changeset_digest: str | None = None,
+    accepted_generation: int | None = None,
     attribution_refs: tuple[str, ...] = (),
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> api.CurationActionResult
 ```
 
-Records linkage to an exact already-accepted resolving ChangeSet.
+Links an item to the accepted change that fixed it, closing it.
 
-**Conditions and effects:** Requires proposal/digest identity and matching latest-event digest; does not accept that proposal itself.
+**Conditions and effects:** Name the change by `accepted_proposal_id` (pinned with `accepted_changeset_digest` if wanted) or by `accepted_generation`; the daemon resolves the rest. The change must postdate the item and touch its subject or evidence.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `item_id` | Required | Operational curation item identity. |
 | `expected_latest_event_digest` | Required | Optimistic-concurrency assertion on the item’s latest event. |
 | `reason` | Required | Attributed reason for refusal, retirement, or operational action as specified by the API. |
-| `accepted_proposal_id` | Required | Already-accepted resolving proposal identity. |
-| `accepted_changeset_digest` | Required | Exact already-accepted resolving ChangeSet digest. |
+| `accepted_proposal_id` | `None` | The accepted proposal that fixed the item. |
+| `accepted_changeset_digest` | `None` | Pins `accepted_proposal_id` to its exact accepted ChangeSet. |
+| `accepted_generation` | `None` | The accepted generation that fixed the item, instead of a proposal. |
 | `attribution_refs` | `()` | Retained references supporting attribution/reason for this operational action. |
 
 <a id="api-cruxible-curation-suppress"></a>
@@ -1033,24 +1054,47 @@ curation_suppress(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    scope: Literal['item', 'pattern', 'instance'],
+    scope: Literal['item', 'lineage'],
     until_generation: int | None = None,
     attribution_refs: tuple[str, ...] = (),
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> api.CurationActionResult
 ```
 
-Records operational suppression of matching open work for the requested scope and optional generation boundary.
+Hides an item (`item`) or its whole lineage, the successors its pattern opens after a fix (`lineage`), until `until_generation` or until lifted.
 
-**Conditions and effects:** Does not resolve the item, stop detection, or make its underlying Claims correct.
+**Conditions and effects:** Does not resolve the item, stop detection, or make its underlying Claims correct. `curation_unsuppress` lifts it.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `item_id` | Required | Operational curation item identity. |
 | `expected_latest_event_digest` | Required | Optimistic-concurrency assertion on the item’s latest event. |
 | `reason` | Required | Attributed reason for refusal, retirement, or operational action as specified by the API. |
-| `scope` | Required | Suppression scope: item, pattern, or instance. |
+| `scope` | Required | Suppression scope: item or lineage. |
 | `until_generation` | `None` | Optional suppression generation boundary. |
 | `attribution_refs` | `()` | Retained references supporting attribution/reason for this operational action. |
+
+<a id="api-cruxible-curation-unsuppress"></a>
+
+### `Cruxible.curation_unsuppress`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+curation_unsuppress(
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    suppression_event_id: str | None = None,
+    attribution_refs: tuple[str, ...] = (),
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> api.CurationActionResult
+```
+
+Lifts a suppression on an item, so what it hid is listed again; name it when the item carries more than one.
 
 ## Procedure entry points
 
@@ -3127,7 +3171,7 @@ Import: `cruxible_client.authoring.selectors.WorkspaceSources`. [Source](src/cru
 
 <a id="api-workspacesources-document-entries"></a>
 
-### `WorkspaceSources.document_entries`
+### `WorkspaceSources.source_entries`
 
 [Source](src/cruxible_client/authoring/selectors.py)
 
@@ -3713,12 +3757,14 @@ the backing class and an empty sequence removes it. Query-only and artifact
 backings are valid. `currency_policy` distinguishes `warn` from `require_current`.
 Compact markers are the default; their local manifests are part of the view.
 
-Sync checks declared block backings and reports drift. It does not regenerate
-the author’s prose or silently repin. It never raises on drift: read
-`has_refusals` (a blocking finding under the configured currency policy) and
-`would_change`. `detach` is an explicit local mutation, and `check=True` reports
-what it would change without making it. `repin(..., dry_run=True)` returns the
-stamp it would write and writes nothing. The marker grammar is in the CLI
+Sync checks declared block backings and reports drift; it writes nothing. It
+does not regenerate the author’s prose or silently repin. It never raises on
+drift: read `has_refusals` (a blocking finding under the configured currency
+policy). `detach` is the explicit local page edit, and `dry_run=True` reports
+what it would change without making it; `depublish` releases a block's
+registration at the daemon. `repin(..., render=True)` writes the body from the
+block's one query backing, and `repin(..., dry_run=True)` returns the stamp it
+would write and writes nothing. The marker grammar is in the CLI
 reference under "Projection block markers"; MCP agents use the
 `cruxible_block_repin`, `cruxible_block_sync` (read-only) and
 `cruxible_block_detach` (the page edit, previewed) tools, which
@@ -3749,13 +3795,16 @@ repin(
     evaluation_time: datetime,
     body: str | bytes | None = None,
     compact: bool = True,
+    render: bool = False,
+    dry_run: bool = False,
 ) -> ProjectionBlockStamp
 ```
 
 Refresh backing pins and optionally replace this block's authored body.
 
 Compact markers are the default: digest references with local manifests. Subsequent
-repins preserve that format.
+repins preserve that format. `render` writes the body as a table or list from the
+block's one query backing instead of `body`.
 
 <a id="api-projectionblocks-sync"></a>
 
@@ -3764,15 +3813,34 @@ repins preserve that format.
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-sync(
-    *paths: str | Path,
-    all: bool = False,
-    check: bool = False,
-    detach: Sequence[str | Path] = (),
-) -> api.BlockSyncResult
+sync(*paths: str | Path, all: bool = False) -> api.BlockSyncResult
 ```
 
-Check every block; policy controls whether drift fails the check.
+Check each block against its backings; a pure check that writes nothing.
+
+<a id="api-projectionblocks-detach"></a>
+
+### `ProjectionBlocks.detach`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+detach(*paths: str | Path, dry_run: bool = False) -> api.BlockSyncResult
+```
+
+Strip retired blocks' markers from these pages, keeping each body as prose; live blocks are refused.
+
+<a id="api-projectionblocks-depublish"></a>
+
+### `ProjectionBlocks.depublish`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+depublish(source: str | SourceRef, block_id: str, *, dry_run: bool | None = None, at: str | None = None) -> api.BlockDepublishResult
+```
+
+Release the registration that demands one page block; edits no page and retires no backing.
 
 ## Signing capabilities
 
@@ -4979,17 +5047,17 @@ publish_ledger(instance_id: str, *, timeout: float=60.0) -> contracts.LedgerMirr
 
 HTTP: `POST f'/api/v1/{instance_id}/ledger/publish'`.
 
-<a id="api-cruxibleclient-get-ledger-mirror"></a>
+<a id="api-cruxibleclient-clear-ledger-mirror"></a>
 
-### `CruxibleClient.get_ledger_mirror`
+### `CruxibleClient.clear_ledger_mirror`
 
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-get_ledger_mirror(instance_id: str) -> contracts.LedgerMirror
+clear_ledger_mirror(instance_id: str, *, dry_run: bool | None=None, at: str | None=None) -> contracts.LedgerMirrorCleared
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/ledger/mirror'`.
+HTTP: `POST f'/api/v1/{instance_id}/ledger/mirror/clear'`.
 
 <a id="api-cruxibleclient-list-provider-packages"></a>
 
@@ -5867,13 +5935,31 @@ HTTP: `POST f'/api/v1/{instance_id}/since'`.
 list_curation(
     instance_id: str,
     *,
-    evaluation_time: str,
     access_profile: Mapping[str, Any],
-    workspace_observation: Mapping[str, Any] | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
 ) -> contracts.CurationListResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/curation/list'`.
+
+<a id="api-cruxibleclient-observe-curation"></a>
+
+### `CruxibleClient.observe_curation`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+observe_curation(
+    instance_id: str,
+    *,
+    workspace_observation: Mapping[str, Any],
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.CurationObserveResult
+```
+
+HTTP: `POST f'/api/v1/{instance_id}/curation/observe'`.
 
 <a id="api-cruxibleclient-audit"></a>
 
@@ -5930,8 +6016,9 @@ accept_fixed_curation(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    accepted_proposal_id: str,
-    accepted_changeset_digest: str,
+    accepted_proposal_id: str | None = None,
+    accepted_changeset_digest: str | None = None,
+    accepted_generation: int | None = None,
     attribution_refs: tuple[str, ...] = (),
 ) -> contracts.CurationActionResult
 ```
@@ -5951,13 +6038,33 @@ suppress_curation(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    scope: Literal['item', 'pattern', 'instance'],
+    scope: Literal['item', 'lineage'],
     until_generation: int | None = None,
     attribution_refs: tuple[str, ...] = (),
 ) -> contracts.CurationActionResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/curation/suppress'`.
+
+<a id="api-cruxibleclient-unsuppress-curation"></a>
+
+### `CruxibleClient.unsuppress_curation`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+unsuppress_curation(
+    instance_id: str,
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    suppression_event_id: str | None = None,
+    attribution_refs: tuple[str, ...] = (),
+) -> contracts.CurationActionResult
+```
+
+HTTP: `POST f'/api/v1/{instance_id}/curation/unsuppress'`.
 
 <a id="api-cruxibleclient-resolve-coverage"></a>
 
@@ -6036,7 +6143,6 @@ include constructor/validator definitions for request and response contracts.
 
 | Root import | Definition / availability |
 |---|---|
-| `install_provider_package` | `cruxible_client.provider_installation` · [Source](src/cruxible_client/provider_installation.py) |
 | `ApprovalReviewMismatch` | `cruxible_client.authoring.approval` · [Source](src/cruxible_client/authoring/approval.py) |
 | `ReviewedProposal` | `cruxible_client.authoring.approval` · [Source](src/cruxible_client/authoring/approval.py) |
 | `ApprovalSigner` | `cruxible_client.authoring.signing` · [Source](src/cruxible_client/authoring/signing.py) |
@@ -6078,9 +6184,7 @@ include constructor/validator definitions for request and response contracts.
 | `Prediction` | `cruxible_client.authoring.sdk` · [Source](src/cruxible_client/authoring/sdk.py) |
 | `PredictionSettlement` | `cruxible_client.authoring.sdk` · [Source](src/cruxible_client/authoring/sdk.py) |
 | `WorkspaceError` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
-| `inspect_workspace_floor` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
 | `observe_next_workspace` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
-| `materialize_floor` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
 | `ProcedureRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ProcedureBudget` | `cruxible_client.contracts.procedures.models` · [Source](src/cruxible_client/contracts/procedures/models.py) |
 | `ProcedureDefinitionV3` | `cruxible_client.contracts.procedures.models` · [Source](src/cruxible_client/contracts/procedures/models.py) |
@@ -6785,14 +6889,6 @@ configured_floor_path(workspace: 'str | Path') -> 'str | None'
 
 Return the declared v2 floor path, or `None` when absent/unconfigured.
 
-#### `inspect_workspace_floor`
-
-```text
-inspect_workspace_floor(workspace: 'str | Path', *, current_coordinate: 'contracts.AcceptedCoordinate | None') -> 'contracts.WorkspaceFloorStatus'
-```
-
-Compare the installed configured floor with a daemon coordinate.
-
 #### `observe_next_workspace`
 
 ```text
@@ -6832,14 +6928,6 @@ coverage is complete only when every Document source can be read and its
 complete marker set parses. Missing or malformed evidence removes that
 kind from `complete_kinds` instead of manufacturing absence.
 
-#### `materialize_floor`
-
-```text
-materialize_floor(workspace: 'str | Path', *, export: 'contracts.FloorExport', force: 'bool' = True) -> 'contracts.WorkspaceFloorWriteResult'
-```
-
-Verify and exactly replace one workspace-relative floor directory.
-
 #### `record_floor_output`
 
 ```text
@@ -6857,8 +6945,7 @@ refresh_workspace_floor(client: '_FloorClient', instance_id: 'str', *, workspace
 Refresh only the local floor and report the coordinate actually written.
 
 A pinned request refuses a mismatched export before touching local files.
-inspect_workspace_floor reports the installed coordinate independently,
-including after a failed refresh. No projection prose or declaration changes.
+No projection prose or declaration changes.
 
 #### `validate_workspace_config_write`
 
@@ -6966,18 +7053,6 @@ The sanctioned entry point for a caller that holds a client rather than a
 caller has to reach for a private constructor. The workspace is only the
 root a relative source selection would resolve against; this reads nothing
 from it, so a directory with no Cruxible workspace is fine.
-
-### Module `cruxible_client.provider_installation`
-
-[Source](src/cruxible_client/provider_installation.py)
-
-#### `install_provider_package`
-
-```text
-install_provider_package(client: 'CruxibleClient', instance_id: str, *, wheel: pathlib._local.Path, lock: pathlib._local.Path, dependency_wheels: tuple[pathlib._local.Path, ...] = (), extras: tuple[str, ...] = (), control_domain: str = 'operator', reverify: bool = False) -> cruxible_client.contracts.provider_installation.ProviderInstallResult
-```
-
-Paths are consumed here on the client; the daemon receives only CAS references.
 
 ### Contract model index
 

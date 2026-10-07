@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.provider_installation import install_provider_package
 from cruxible_client.transport.http import CruxibleClient
+from cruxible_core.cli.provider_wheels import install_provider_wheel
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.runtime.provider_runtime import PROVIDER_RUNTIME_CONFIG_PATH
 from tests.support.provider_checkout import checkout_predates_embedded_wheel_locks
@@ -69,7 +69,7 @@ def test_transfer_install_and_restart_reuse(
         lock=repository / "packages/cruxible-provider-workspace/uv.lock",
         dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
     )
-    result = install_provider_package(client, instance_id, **arguments)
+    result = install_provider_wheel(client, instance_id, **arguments)
     assert result.registered, result
     assert result.status == "ready", result
     operator = get_playbill_manager().provider_runtime_operator()
@@ -83,7 +83,7 @@ def test_transfer_install_and_restart_reuse(
     monkeypatch.setattr(service, "prepare_provider_package", forbidden)
     monkeypatch.setattr(service, "verify_provider_installation", forbidden)
     get_playbill_manager().clear()
-    again = install_provider_package(client, instance_id, **arguments)
+    again = install_provider_wheel(client, instance_id, **arguments)
     assert again.installation_id == result.installation_id
     assert again.registered and again.status == "ready"
 
@@ -193,7 +193,7 @@ def test_installed_workspace_operation_runs_in_real_child(
     client._client = http
     repository = provider_checkout.repository
     wheels = provider_checkout.wheels
-    result = install_provider_package(
+    result = install_provider_wheel(
         client,
         instance_id,
         wheel=next(wheels.glob("cruxible_provider_workspace-*.whl")),
@@ -253,7 +253,7 @@ def test_relocated_installation_reverifies_and_runs_after_restart(
         lock=lock,
         dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
     )
-    installed = install_provider_package(client, instance_id, **arguments)
+    installed = install_provider_wheel(client, instance_id, **arguments)
     assert installed.status == "ready", installed
     manager = get_playbill_manager()
     original = manager.provider_runtime_operator()
@@ -288,7 +288,7 @@ def test_relocated_installation_reverifies_and_runs_after_restart(
         raise AssertionError("relocation must reuse the installed environment")
 
     monkeypatch.setattr(service, "prepare_provider_package", no_rebuild)
-    verified = install_provider_package(client, instance_id, **arguments, reverify=True)
+    verified = install_provider_wheel(client, instance_id, **arguments, reverify=True)
     assert verified.status == "ready", verified
     assert verified.installation_id == installed.installation_id
     (current,) = operator.config.deployments
@@ -299,7 +299,7 @@ def test_relocated_installation_reverifies_and_runs_after_restart(
     operator = ProviderRuntimeOperator(relocated)
     monkeypatch.setattr(manager, "provider_runtime_operator", lambda operator=operator: operator)
     monkeypatch.setattr(service, "verify_provider_installation", no_rebuild)
-    again = install_provider_package(client, instance_id, **arguments)
+    again = install_provider_wheel(client, instance_id, **arguments)
     assert again.status == "ready", again
     assert json.loads(prepared.read_bytes())["deployment"]["installation_verification"] == (
         current.installation_verification.model_dump(mode="json")
@@ -328,7 +328,7 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
     repository = provider_checkout.repository
     runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
     wheel, lock = build_local_call(tmp_path, repository)
-    result = install_provider_package(
+    result = install_provider_wheel(
         client, instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
     )
     assert result.status == "ready"
@@ -345,7 +345,7 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
     ) == {"n": 3}
     operator = get_playbill_manager().provider_runtime_operator()
     second, second_lock = build_local_call(tmp_path, repository, name="other-local-call")
-    shared = install_provider_package(
+    shared = install_provider_wheel(
         client, instance_id, wheel=second, lock=second_lock, dependency_wheels=(runtime,)
     )
     assert shared.status == "ready"
@@ -353,7 +353,7 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
     assert len(interface["providers"]) == 2
     old = dict(operator.deployments)
     updated, lock = build_local_call(tmp_path, repository, increment=2)
-    result2 = install_provider_package(
+    result2 = install_provider_wheel(
         client, instance_id, wheel=updated, lock=lock, dependency_wheels=(runtime,)
     )
     assert result2.status == "blocked"
@@ -385,7 +385,7 @@ def test_installed_web_source_fetches_local_http_and_retains_capture(
     client._client = http
     repository = provider_checkout.repository
     wheels = provider_checkout.wheels
-    installed = install_provider_package(
+    installed = install_provider_wheel(
         client,
         instance_id,
         wheel=next(wheels.glob("cruxible_provider_web-*.whl")),
@@ -538,7 +538,7 @@ def test_install_retry_reuses_pending_registration_until_approval(
         lock=lock,
         dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
     )
-    pending = install_provider_package(client, instance_id, **arguments)
+    pending = install_provider_wheel(client, instance_id, **arguments)
     assert pending.status == "awaiting_approval"
     assert pending.installed and not pending.registered
 
@@ -549,11 +549,11 @@ def test_install_retry_reuses_pending_registration_until_approval(
         "cruxible_core.service.procedures.provider_installation.prepare_provider_package", forbidden
     )
     get_playbill_manager().clear()
-    again = install_provider_package(client, instance_id, **arguments)
+    again = install_provider_wheel(client, instance_id, **arguments)
     assert again.proposal_id == pending.proposal_id
     assert again.candidate_digest == pending.candidate_digest
     _approve_and_activate(http, instance_id, reviewer, pending.proposal_id)
-    accepted = install_provider_package(client, instance_id, **arguments)
+    accepted = install_provider_wheel(client, instance_id, **arguments)
     assert accepted.status == "ready" and accepted.registered
 
 
@@ -660,7 +660,7 @@ def test_malformed_wheel_is_a_typed_refusal_before_registration(installer_http, 
     lock = tmp_path / "uv.lock"
     lock.write_text("version = 1\n")
     with pytest.raises(ConfigError, match="metadata or lock is invalid"):
-        install_provider_package(client, instance_id, wheel=wheel, lock=lock)
+        install_provider_wheel(client, instance_id, wheel=wheel, lock=lock)
     assert not get_playbill_manager().provider_runtime_operator().config.deployments
 
 
@@ -675,7 +675,7 @@ def test_local_install_does_not_report_container_only_operation_ready(
     repository = provider_checkout.repository
     wheels = provider_checkout.wheels
     wheel, lock = build_local_call(tmp_path, repository, backends=("container",))
-    result = install_provider_package(
+    result = install_provider_wheel(
         client,
         instance_id,
         wheel=wheel,

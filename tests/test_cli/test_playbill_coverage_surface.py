@@ -194,8 +194,6 @@ def _govern_a_foreign_span(
         ).model_dump(mode="json"),
     )
 
-    presented = tmp_path / "presented.md"
-    presented.write_bytes(FOREIGN_BYTES)
     authoring = ClaimInput(
         kind="claim",
         subject="project.work_item/wi-77",
@@ -210,11 +208,22 @@ def _govern_a_foreign_span(
         citation_role="evidence",
     )
     stub = _write(tmp_path / "foreign-claim.json", authoring.model_dump(mode="json"))
+    # The presented file is catalogued, evidence-only, under the stub's source name.
+    catalog = tmp_path / "presented-workspace" / ".cruxible" / "sources.yaml"
+    catalog.parent.mkdir(parents=True, exist_ok=True)
+    (catalog.parent.parent / "presented.md").write_bytes(FOREIGN_BYTES)
+    catalog.write_text(
+        "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n"
+        f"  - name: {identity}\n    locator: presented.md\n",
+        encoding="utf-8",
+    )
     preflight = cruxible.json(
         "authoring",
         "bind",
         "--file",
-        str(presented),
+        str(catalog.parent.parent / "presented.md"),
+        "--workspace-root",
+        str(catalog.parent.parent),
         "--anchor",
         GOVERNED_LINE.decode("utf-8").strip(),
         "--payload-file",
@@ -525,7 +534,7 @@ def test_cli_coverage_never_lets_identical_bytes_in_a_foreign_source_read_as_exa
     assert foreign["grants_mutation_authority"] is False
 
 
-def test_cli_coverage_status_renders_the_manifest_over_the_declared_scope(
+def test_cli_coverage_manifest_view_renders_the_boundary_over_the_catalogued_scope(
     served_cli: _Cli,  # noqa: F811
     tmp_path: Path,
 ) -> None:
@@ -538,15 +547,22 @@ def test_cli_coverage_status_renders_the_manifest_over_the_declared_scope(
     (workspace / WORKING_PATH).write_bytes(GOVERNED_BYTES)
     (workspace / "notes.txt").write_bytes(b"ordinary working notes\n")
 
+    # The source catalog binds both files; --view manifest renders the boundary.
+    (workspace / ".cruxible").mkdir()
+    (workspace / ".cruxible" / "sources.yaml").write_text(
+        "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n"
+        f"  - name: {WORKING_SOURCE.removeprefix('external:')}\n    locator: {WORKING_PATH}\n"
+        "  - name: workspace.notes\n    locator: notes.txt\n",
+        encoding="utf-8",
+    )
     status = cruxible.run(
         "coverage",
-        "status",
+        "resolve",
+        "--all",
+        "--view",
+        "manifest",
         "--root",
         str(workspace),
-        "--bind",
-        f"{WORKING_PATH}={WORKING_SOURCE}",
-        "--bind",
-        "notes.txt=external:workspace.notes",
     ).stdout
 
     lines = status.strip().splitlines()

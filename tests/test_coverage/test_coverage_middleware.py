@@ -26,12 +26,10 @@ from cruxible_core.coverage.adapter import (
     coverage_span_requests,
 )
 from cruxible_core.coverage.contracts import (
-    CoverageError,
     CoverageRequestV1,
     CoverageResultV3,
 )
 from cruxible_core.coverage.middleware import (
-    CONFIG_RELATIVE_PATH,
     CoverageExactPathRuleV1,
     CoveragePathPrefixRuleV1,
     CoverageWorkspaceConfigV1,
@@ -42,7 +40,6 @@ from cruxible_core.coverage.middleware import (
     HarnessToolEventV1,
     coverage_middleware,
     grep_event,
-    load_coverage_config,
 )
 from cruxible_core.coverage.render import (
     UNAVAILABLE_NOTE_PREFIX,
@@ -219,42 +216,6 @@ def test_ambiguous_rules_are_refused_at_load_rather_than_resolved_by_file_order(
         )
 
 
-def test_the_config_round_trips_through_the_committed_file_shape(workspace: Path) -> None:
-    (workspace / ".cruxible").mkdir()
-    socket = workspace / ".b2-cruxible-workspace.sock"
-    (workspace / CONFIG_RELATIVE_PATH).write_text(
-        json.dumps(
-            {
-                "instance_id": "inst_0123456789abcdef",
-                "server_socket": str(socket),
-                "scan_budget": {"max_scanned_bytes": 4096},
-                "max_observed_paths": 8,
-                "rules": [
-                    {
-                        "tag": "playbill-coverage-path-prefix-rule-v1",
-                        "path_prefix": "corpus/",
-                        "plane": "external",
-                        "identity_prefix": "corpus.",
-                        "normalizer": "playbill-coverage-path-identity-v1",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    loaded = load_coverage_config(workspace)
-
-    assert loaded.instance_id == "inst_0123456789abcdef"
-    assert loaded.server_socket == str(socket)
-    assert loaded.source_for("corpus/handbook.md").identity == "corpus.handbook.md"  # type: ignore[union-attr]
-    # Both budgets survive the round trip: the scan budget rides to the
-    # operation with the caller's resolver, and the path bound is applied here.
-    assert loaded.scan_budget is not None
-    assert loaded.scan_budget.max_scanned_bytes == 4096
-    assert loaded.max_observed_paths == 8
-
-
 @pytest.mark.parametrize("model", [CoverageWorkspaceConfigV1, CoverageWorkspaceConfigV2])
 def test_workspace_config_refuses_two_transport_bindings(
     model: type[CoverageWorkspaceConfigV1] | type[CoverageWorkspaceConfigV2],
@@ -264,27 +225,6 @@ def test_workspace_config_refuses_two_transport_bindings(
             server_url="https://playbill.example.test",
             server_socket=".b2-playbill.sock",
         )
-
-
-def test_v2_config_adds_only_the_optional_normalized_floor_output(workspace: Path) -> None:
-    (workspace / ".cruxible").mkdir()
-    (workspace / CONFIG_RELATIVE_PATH).write_text(
-        json.dumps(
-            {
-                "tag": "playbill-coverage-workspace-config-v2",
-                "floor_output": {
-                    "tag": "playbill-floor-output-v1",
-                    "format": "playbill-floor-export-v2",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    loaded = load_coverage_config(workspace)
-
-    assert isinstance(loaded, CoverageWorkspaceConfigV2)
-    assert loaded.floor_output == FloorOutputV1()
 
 
 def test_floor_output_refuses_the_obsolete_path_field() -> None:
@@ -314,11 +254,6 @@ def test_the_declared_path_bound_clips_how_many_sources_one_event_observes(
     )
 
     assert len(recorder.observed) == 2
-
-
-def test_a_missing_configuration_is_a_typed_refusal_not_a_silent_default(tmp_path: Path) -> None:
-    with pytest.raises(CoverageError, match="could not be read"):
-        load_coverage_config(tmp_path)
 
 
 # -- the four event reductions ---------------------------------------------

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-from pathlib import Path
 from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
@@ -19,9 +18,7 @@ from cruxible_client.contracts.source_catalog import (
     CompiledSourceDocument,
     SourceAlignment,
     SourceAlignmentState,
-    SourceCatalog,
     SourceCompilationBundle,
-    compile_source_catalog,
     content_digest_bytes,
 )
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -75,25 +72,6 @@ def service_playbill_source_context(instance: PlaybillInstance) -> SourceContext
         documents=tuple(
             documents[key] for key in sorted(documents, key=lambda item: item.encode())
         ),
-    )
-
-
-def service_compile_playbill_sources(
-    instance: PlaybillInstance,
-    *,
-    catalog: SourceCatalog,
-    repository_root: Path,
-    root_aliases: dict[str, Path] | None = None,
-) -> SourceCompilationBundle:
-    """Compile local declared files without changing CAS, exhaust, or accepted state."""
-
-    coordinate = instance.accepted_coordinate()
-    return compile_source_catalog(
-        catalog,
-        repository_root=repository_root,
-        root_aliases=root_aliases or {},
-        accepted_base=AcceptedCoordinate.from_internal(coordinate),
-        accepted_documents=_accepted_documents(instance, coordinate),
     )
 
 
@@ -254,7 +232,6 @@ __all__ = [
     "SourceContext",
     "SourceCheckResult",
     "service_check_playbill_source_bundle",
-    "service_compile_playbill_sources",
     "service_propose_playbill_source_bundle",
     "service_playbill_source_context",
 ]

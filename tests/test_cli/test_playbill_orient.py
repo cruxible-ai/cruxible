@@ -99,6 +99,21 @@ def test_an_interfaces_page_prints_each_contract_and_who_implements_it() -> None
     assert "  out: content: object" in text
 
 
+def test_orient_prints_the_ledger_mirror_a_reviewer_clones() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    header = {
+        "instance": "inst",
+        "generation": 3,
+        "coordinate": {"git_oid": "a" * 64},
+        "accepted_at": "2026-09-29T00:00:00Z",
+        "next": [],
+    }
+    bound = _render_orient({**header, "mirror_url": "https://forge.test/ledger.git"})
+    assert "Ledger mirror: https://forge.test/ledger.git" in bound
+    assert "Ledger mirror" not in _render_orient(header)
+
+
 def test_orient_refuses_a_wrong_kind_with_the_nearest_names(
     served_cli: _Cli,  # noqa: F811
     tmp_path: Path,

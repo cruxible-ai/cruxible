@@ -65,6 +65,14 @@ class _StubClient:
             generation=3,
         )
 
+    def host_workspace_registration(
+        self, instance_id: str, *, workspace_root: str | None = None
+    ) -> contracts.HostWorkspaceRegistration:
+        # Delivery off: the floor export is this client's to write.
+        return contracts.HostWorkspaceRegistration(
+            instance_id=instance_id, status="not_registered", delivers_here=False
+        )
+
 
 def _workspace(tmp_path: Path) -> Path:
     root = tmp_path / "workspace"

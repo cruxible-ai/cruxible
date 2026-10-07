@@ -27,7 +27,6 @@ from cruxible_client.contracts.workspace_layout import (
 )
 from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import cli
-from cruxible_core.coverage.middleware import load_coverage_config
 from cruxible_core.mcp.workspace import (
     MCP_WORKSPACE_ROOT_ENV,
     mcp_git_workspace_root,
@@ -87,8 +86,6 @@ def test_selection_reads_and_writes_refuse_a_0_3_instance(tmp_path: Path, name: 
         WorkspaceSources(root)
     with pytest.raises(WorkspaceDirectoryConflict):
         write_workspace_config(root, instance_id="inst", server_socket=str(tmp_path / "s.sock"))
-    with pytest.raises(WorkspaceDirectoryConflict):
-        load_coverage_config(root)
     # Nothing was created beside the 0.3 instance's files.
     assert sorted(path.name for path in (root / ".cruxible").iterdir()) == before
 
@@ -293,7 +290,6 @@ def test_a_relocated_daemon_state_root_is_no_workspace(
             lambda: mcp_git_workspace_root({MCP_WORKSPACE_ROOT_ENV: str(project)}),
             lambda: resolve_workspace_path(".", root=project, kind="directory"),
             lambda: WorkspaceSources(project),
-            lambda: load_coverage_config(project),
         ):
             with pytest.raises(WorkspaceDirectoryConflict):
                 selected()

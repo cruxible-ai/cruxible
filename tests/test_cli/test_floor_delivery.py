@@ -18,7 +18,7 @@ def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
     calls = []
 
     class Client:
-        def host_workspace_registration(self, instance_id):
+        def host_workspace_registration(self, instance_id, workspace_root=None):
             return contracts.HostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="registered",
@@ -33,16 +33,15 @@ def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: Client())
     arguments = (
-        ["attach", *(["--no-floor-delivery"] if command == "attach-off" else [])]
+        ["workspace", "attach", *(["--no-floor-delivery"] if command == "attach-off" else [])]
         if command.startswith("attach")
-        else ["floor-delivery", command]
+        else ["floor", "delivery", command]
     )
     result = CliRunner().invoke(
         cli,
         [
             "--server-socket",
             str(tmp_path / "socket"),
-            "workspace",
             *arguments,
             "--instance-id",
             "inst_floor",
@@ -59,15 +58,15 @@ def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
         assert payload["floor_delivery"] == (command == "on")
 
 
-def test_workspace_delivery_control_refuses_remote_transport(tmp_path, monkeypatch):
+def test_floor_delivery_control_refuses_remote_transport(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(
         cli,
         [
             "--server-url",
             "http://test",
-            "workspace",
-            "floor-delivery",
+            "floor",
+            "delivery",
             "on",
             "--instance-id",
             "inst_floor",

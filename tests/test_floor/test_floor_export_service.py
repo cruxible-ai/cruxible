@@ -1,4 +1,4 @@
-"""PC-G-S1a deterministic floor projection from accepted Cruxible state."""
+"""Deterministic floor discovery cards from accepted Cruxible state."""
 
 from __future__ import annotations
 
@@ -8,9 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV1
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.floor import FloorManifest
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.authoring.documents import (
@@ -22,11 +21,8 @@ from cruxible_core.service.floor.floor import (
     COVERAGE_MANIFEST_PATH,
     MANIFEST_PATH,
     PlaybillFloorCoverageManifestV2,
-    PlaybillFloorManifestV1,
-    PlaybillFloorManifestV2,
     PlaybillProcedureFloorCardV1,
     _procedure_cards,
-    render_floor_json_v1,
     render_floor_json_v2,
 )
 from cruxible_core.service.floor.floor import (
@@ -46,8 +42,8 @@ from tests.test_ledger.test_activation import _sign
 
 
 def service_export_playbill_floor(*args, **kwargs):
-    # Frozen v2 regression corpus; v4 has its own completeness tests.
-    return _export(*args, format_version=2, **kwargs)
+    # The discovery cards; the grep floor has its own completeness tests.
+    return _export(*args, include=("discovery",), **kwargs)
 
 
 CARD_PATH = "claim-types/project.work_item/status.card.json"
@@ -68,8 +64,8 @@ def _instance_with_query(tmp_path: Path):
     return instance, owner
 
 
-def _manifest(floor: dict[str, bytes]) -> PlaybillFloorManifestV2:
-    return PlaybillFloorManifestV2.model_validate(json.loads(floor[MANIFEST_PATH]))
+def _manifest(floor: dict[str, bytes]) -> FloorManifest:
+    return FloorManifest.model_validate(json.loads(floor[MANIFEST_PATH]))
 
 
 def _instance_with_procedure(tmp_path: Path):
@@ -128,7 +124,7 @@ def test_manifest_binds_every_file_to_the_accepted_coordinate(tmp_path: Path) ->
 
     manifest = _manifest(floor)
     assert manifest.coordinate == accepted
-    assert manifest.format == "playbill-floor-export-v2"
+    assert manifest.format == "playbill-floor-export-v6"
     listed = {item.path for item in manifest.files}
     assert listed == set(floor) - {MANIFEST_PATH}
     assert all(item.content_digest.startswith("sha256:") for item in manifest.files)
@@ -139,56 +135,11 @@ def test_manifest_binds_every_file_to_the_accepted_coordinate(tmp_path: Path) ->
     )
 
 
-def test_v2_json_render_is_pretty_stable_and_v1_spelling_is_unchanged() -> None:
+def test_floor_json_render_is_pretty_and_stable() -> None:
     payload = {"z": [2, 1], "a": "é"}
 
-    assert render_floor_json_v1(payload) == canonical_bytes(payload) + b"\n"
     assert render_floor_json_v2(payload) == (
         '{\n  "a": "é",\n  "z": [\n    2,\n    1\n  ]\n}\n'.encode()
-    )
-    assert (
-        PlaybillFloorManifestV1.model_validate(
-            {
-                "tag": "playbill-floor-manifest-v1",
-                "format": "playbill-floor-export-v1",
-                "coordinate": {
-                    "git_oid": "1" * 64,
-                    "semantic_root": "sha256:" + "2" * 64,
-                    "generation_root": "sha256:" + "3" * 64,
-                    "compiler_digest": "sha256:" + "4" * 64,
-                },
-                "files": [],
-                "floor_digest": "sha256:" + "5" * 64,
-            }
-        ).format
-        == "playbill-floor-export-v1"
-    )
-
-
-def test_floor_client_envelope_defaults_to_v2_and_still_reads_v1() -> None:
-    coordinate = contracts.AcceptedCoordinate(
-        git_oid="1" * 64,
-        semantic_root="sha256:" + "2" * 64,
-        generation_root="sha256:" + "3" * 64,
-        compiler_digest="sha256:" + "4" * 64,
-    )
-
-    assert (
-        contracts.FloorExport(
-            coordinate=coordinate,
-            manifest={},
-            files=[],
-        ).tag
-        == "playbill-floor-export-v2"
-    )
-    assert (
-        contracts.FloorExport(
-            tag="playbill-floor-export-v1",
-            coordinate=coordinate,
-            manifest={},
-            files=[],
-        ).tag
-        == "playbill-floor-export-v1"
     )
 
 
@@ -332,5 +283,3 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
         at=card.accepted_coordinate,
     )
     assert selected == {PROCEDURE_CARD_PATH: floor[PROCEDURE_CARD_PATH]}
-    (render_floor_json_v1,)
-    (render_floor_json_v2,)

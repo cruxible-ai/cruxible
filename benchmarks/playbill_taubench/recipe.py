@@ -48,8 +48,10 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -312,6 +314,22 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             "Working notes nobody governs.",
         ),
     }
+    # Bind reads a file through the workspace's source catalog, the one mapping
+    # from a file to its source name. The bundle keeps its bodies catalog-free
+    # (they are the arms' corpus), so binding runs in a scratch workspace that
+    # catalogs each working source as evidence-only.
+    catalog_root = Path(tempfile.mkdtemp(prefix="taubench-seed-"))
+    shutil.copytree(bundle_dir / SEED_BODY_DIRECTORY, catalog_root, dirs_exist_ok=True)
+    (catalog_root / ".cruxible").mkdir(exist_ok=True)
+    (catalog_root / ".cruxible" / "sources.yaml").write_text(
+        "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n"
+        + "".join(
+            f"  - name: {source_id}\n"
+            f"    locator: {file_path.relative_to(bundle_dir / SEED_BODY_DIRECTORY).as_posix()}\n"
+            for source_id, file_path, _anchor in working_sources.values()
+        ),
+        encoding="utf-8",
+    )
     for path in sorted((bundle_dir / "claims").glob("*.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
         source = payload["source"]
@@ -323,7 +341,9 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
                 "authoring",
                 "bind",
                 "--file",
-                str(file_path),
+                str(catalog_root / file_path.relative_to(bundle_dir / SEED_BODY_DIRECTORY)),
+                "--workspace-root",
+                str(catalog_root),
                 "--anchor",
                 anchor,
                 "--payload-file",
@@ -338,6 +358,8 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             "playbill_authoring_submit",
             str(submitted["status"]["proposal_id"]),
         )
+
+    shutil.rmtree(catalog_root, ignore_errors=True)
 
     for path in sorted((bundle_dir / "query-definitions").glob("*.json")):
         record(
@@ -473,8 +495,13 @@ def build_arm(
         _copy_tree(surface, workspace / ".cruxible/floor")
         config_path = workspace / CONFIG_RELATIVE_PATH
         config_path.parent.mkdir(parents=True, exist_ok=True)
+        # The workspace config holds the floor profile only; the path rules are
+        # this harness's own and reach the middleware by injection below.
+        workspace_config = {
+            key: value for key, value in coverage_config(bundle_dir).items() if key != "rules"
+        }
         config_path.write_text(
-            json.dumps(coverage_config(bundle_dir), indent=2, sort_keys=True) + "\n",
+            json.dumps(workspace_config, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         client = _common._get_client()

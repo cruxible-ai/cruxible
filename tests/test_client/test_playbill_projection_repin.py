@@ -529,3 +529,139 @@ def test_a_dry_run_repin_computes_the_stamp_and_writes_nothing(tmp_path: Path) -
     committed = _repin(client, tmp_path, claims=("CLM-first",))
     assert committed == previewed
     assert len(client.declared) == 1
+
+
+def _row(subject: str, **fields: object) -> Any:
+    from cruxible_client.contracts.query.results import QueryResultRow
+
+    return QueryResultRow.model_validate(
+        {
+            "bindings": [],
+            "result_subject_identity": subject,
+            "fields": [
+                {"name": name, "state": "present", "value": value}
+                if value is not None
+                else {"name": name, "state": "absent"}
+                for name, value in fields.items()
+            ],
+        }
+    )
+
+
+def test_rendered_bodies_are_tables_lists_or_a_no_rows_line() -> None:
+    from cruxible_client.authoring.blocks import render_query_block_body
+
+    table = render_query_block_body(
+        (_row("Subject:a/1", status="ready", note="x | y"), _row("Subject:a/2", status=None))
+    )
+    assert table == (
+        b"| subject | status | note |\n"
+        b"|---|---|---|\n"
+        b"| Subject:a/1 | ready | x \\| y |\n"
+        b"| Subject:a/2 |  |  |\n"
+    )
+    assert render_query_block_body((_row("Subject:a/1"),)) == b"- Subject:a/1\n"
+    assert render_query_block_body(()) == b"_No rows._\n"
+
+
+def test_render_writes_the_body_from_the_one_query_backing(tmp_path: Path) -> None:
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+
+    stamp = repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        source_id="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+
+    (block,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
+    )
+    assert source.read_bytes()[block.body_start : block.body_end] == b"_No rows._\n"
+    assert stamp.body_digest == "sha256:" + hashlib.sha256(b"_No rows._\n").hexdigest()
+    with pytest.raises(ProjectionRepinError, match="exactly one query backing"):
+        repin_projection_block(
+            client,  # type: ignore[arg-type]
+            "inst_projection",
+            workspace=tmp_path,
+            source_id="corpus.runbook",
+            block_id="summary",
+            queries=(),
+            claims=("CLM-1",),
+            evaluation_time=NOW,
+            render=True,
+        )
+
+
+def test_sdk_block_depublish_releases_the_registration_through_the_daemon(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _RepinClient()
+    calls: list[tuple[Any, ...]] = []
+
+    def depublish(instance_id: str, source_id: str, block_id: str, **kwargs: Any) -> Any:
+        calls.append((instance_id, source_id, block_id, kwargs))
+        return api.BlockDepublishResult(
+            source_id=source_id, block_id=block_id, outcome="depublished", coordinate=COORDINATE
+        )
+
+    client.depublish_block = depublish  # type: ignore[attr-defined]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client, instance_id="inst_projection", workspace=tmp_path, clock=lambda: NOW
+    )
+
+    result = playbill.block.depublish("corpus.runbook", "summary", dry_run=True)
+
+    assert result.outcome == "depublished"
+    assert calls == [
+        ("inst_projection", "corpus.runbook", "summary", {"dry_run": True, "at": None})
+    ]
+    with pytest.raises(ValueError, match="at least one page"):
+        playbill.block.detach()
+
+
+def test_sdk_get_source_ref_reads_its_document_or_its_evidence_only_entry(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.authoring.sdk_types import RefKind, SourceRef
+    from cruxible_client.contracts.get_reads import GetCoordinate, GetResult
+
+    _workspace(tmp_path)
+    catalog = tmp_path / ".cruxible" / "sources.yaml"
+    catalog.write_text(
+        catalog.read_text() + "  - name: corpus.notes\n    locator: notes.md\n", encoding="utf-8"
+    )
+    client = _RepinClient()
+    read: list[str] = []
+
+    def get(_instance_id: str, *, request: Any) -> GetResult:
+        read.append(request.ref)
+        return GetResult(
+            ref=request.ref,
+            kind="document",
+            detail="summary",
+            proof={"document_id": "runbook"},
+            coordinate=GetCoordinate(git_oid=COORDINATE.git_oid[:12], generation=7),
+            accepted_coordinate=COORDINATE,
+            evaluation_time=NOW,
+        )
+
+    client.get = get  # type: ignore[method-assign]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client, instance_id="inst_projection", workspace=tmp_path, clock=lambda: NOW
+    )
+
+    document = playbill.get(SourceRef("corpus.runbook", COORDINATE))
+    entry = playbill.get(SourceRef("corpus.notes", COORDINATE))
+
+    assert read == ["Document:runbook"]
+    assert (document.kind, document.identity) == (RefKind.SOURCE, "corpus.runbook")
+    assert document.value == {"document_id": "runbook"}
+    assert entry.value["locator"] == "notes.md"
+    assert entry.value["document_id"] is None

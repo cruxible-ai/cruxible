@@ -295,17 +295,20 @@ def test_delivery_and_deliver_now_share_admission_but_instances_proceed(
     monkeypatch.setattr(routes, "resolve_server_instance_id", lambda instance_id: instance_id)
     monkeypatch.setattr(routes.playbill_api, "playbill_floor_delta", delta)
 
+    def deliver_now():  # type: ignore[no-untyped-def]
+        # What the deliver-now route runs once floor admission admits it.
+        with FLOOR_ADMISSION.hold(instance.descriptor.instance_id):
+            return host_api.deliver_playbill_floor_now_admitted(
+                instance.descriptor.instance_id, workspace_attachment_authorized=True
+            )
+
     def delta_route():  # type: ignore[no-untyped-def]
         return asyncio.run(routes.floor_delta(instance.descriptor.instance_id, FloorDeltaRequest()))
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         first = pool.submit(refresh_floor, instance, instance.descriptor.instance_id)
         assert entered.wait(10)
-        queued = pool.submit(
-            host_api.deliver_playbill_floor_now,
-            instance.descriptor.instance_id,
-            workspace_attachment_authorized=True,
-        )
+        queued = pool.submit(deliver_now)
         routed = pool.submit(delta_route)
         other = pool.submit(refresh_floor, other_instance, "inst_other")
         assert other.result(timeout=10).written.status == "written"
@@ -349,11 +352,11 @@ def test_delivery_authority_requires_the_local_attachment_gate(world, monkeypatc
     instance, _, registry = world
     monkeypatch.setattr(host_api, "get_registry", lambda: registry)
     with pytest.raises(ConfigError, match="Unix socket"):
-        host_api.set_playbill_floor_delivery(instance.descriptor.instance_id, enabled=True)
+        host_api.set_playbill_floor_delivery_admitted(instance.descriptor.instance_id, enabled=True)
     with pytest.raises(ConfigError, match="Unix socket"):
-        host_api.deliver_playbill_floor_now(instance.descriptor.instance_id)
+        host_api.deliver_playbill_floor_now_admitted(instance.descriptor.instance_id)
     assert registry.get(instance.descriptor.instance_id).floor_delivery
-    result = host_api.set_playbill_floor_delivery(
+    result = host_api.set_playbill_floor_delivery_admitted(
         instance.descriptor.instance_id, enabled=True, workspace_attachment_authorized=True
     )
     assert result.floor_delivery
@@ -495,15 +498,15 @@ def test_deliver_now_refuses_a_pinned_coordinate_with_a_runnable_repair(world, m
         host_api, "get_playbill_manager", lambda: SimpleNamespace(get=lambda _: instance)
     )
     with pytest.raises(RequestRefusedError, match="current accepted head") as refused:
-        host_api.deliver_playbill_floor_now(
+        host_api.deliver_playbill_floor_now_admitted(
             instance_id, at=pinned, workspace_attachment_authorized=True
         )
     assert "use get or query with at" in str(refused.value)
-    assert "floor-delivery off" in str(refused.value)
+    assert "floor delivery off" in str(refused.value)
     status, envelope = error_to_response(refused.value)
     assert status == 400
     assert envelope.error_code == "cruxible.floor.delivery_head_only"
-    assert envelope.repair.operation == "cruxible.workspace.floor-delivery"
+    assert envelope.repair.operation == "cruxible.floor.delivery"
     assert envelope.repair.arguments == {"state": "off", "instance_id": instance_id}
     client_error = response_to_error(status, envelope)
     assert client_error.error_code == envelope.error_code

@@ -8,6 +8,7 @@ from typing import Any, get_args
 import pytest
 
 from cruxible_client import contracts
+from cruxible_client.authoring.bind import AuthoringBindError
 from cruxible_client.authoring.examples import AuthoringExampleName, authoring_example
 from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_core.mcp import handlers
@@ -94,6 +95,14 @@ def test_flow_a_bind_reads_workspace_and_sends_only_the_lowered_payload(
     source = workspace / "corpus/decision.md"
     source.parent.mkdir(parents=True)
     source.write_text("before\nThe decision is ready.\nafter\n", encoding="utf-8")
+    payload = ClaimInput.model_validate(authoring_example("claim-flow-a").model_dump(mode="json"))
+    (workspace / ".cruxible").mkdir()
+    # The source catalog names the file; an evidence-only entry is enough to bind.
+    (workspace / ".cruxible" / "sources.yaml").write_text(
+        "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n"
+        f"  - name: {payload.source.source_id}\n    locator: corpus/decision.md\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
     captured: dict[str, Any] = {}
 
@@ -109,7 +118,6 @@ def test_flow_a_bind_reads_workspace_and_sends_only_the_lowered_payload(
             return stub_preflight_result()
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
-    payload = ClaimInput.model_validate(authoring_example("claim-flow-a").model_dump(mode="json"))
 
     result = handlers.handle_playbill_authoring_bind(
         "inst_test",
@@ -122,6 +130,18 @@ def test_flow_a_bind_reads_workspace_and_sends_only_the_lowered_payload(
     assert result.verdict == "passed"
     assert captured["source"]["tag"] == "playbill-working-selection-observation-v1"
     assert "source_content_digest" in captured["source"]["coordinate"]
+
+    misnamed = payload.model_copy(
+        update={"source": payload.source.model_copy(update={"source_id": "corpus.typo"})}
+    )
+    with pytest.raises(AuthoringBindError, match="source catalog names"):
+        handlers.handle_playbill_authoring_bind(
+            "inst_test",
+            source_path="corpus/decision.md",
+            anchor="The decision is ready.",
+            payload=misnamed,
+            window_lines=None,
+        )
 
 
 def test_readmit_and_migration_delegate_to_existing_client_routes(

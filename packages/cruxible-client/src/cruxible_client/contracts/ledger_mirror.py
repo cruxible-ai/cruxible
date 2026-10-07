@@ -78,7 +78,7 @@ def validate_mirror_url(value: str) -> str:
 
     HTTPS carrying userinfo is refused rather than accepted-and-stripped. A URL
     with a token in it is a secret that has already been written down, and
-    ``ledger clone-url`` prints this string back to anyone who may read the
+    ``orient`` prints this string back to anyone who may read the
     instance. Plain HTTP is refused for the same reason: the credential the
     daemon supplies would cross the wire in the clear.
     """

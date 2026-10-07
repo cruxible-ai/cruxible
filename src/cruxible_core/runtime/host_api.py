@@ -288,8 +288,14 @@ def playbill_host_workspace_registration(
     instance_id: str,
     *,
     expose_workspace_path: bool = False,
+    workspace_root: str | None = None,
 ) -> contracts.HostWorkspaceRegistration:
-    """Report daemon registration separately from client workspace configuration."""
+    """Report daemon registration separately from client workspace configuration.
+
+    With ``workspace_root``, also answer whether the daemon delivers that
+    workspace's floor, so a client on any transport can defer to the single
+    writer without the daemon echoing its own path.
+    """
 
     check_permission(
         "cruxible_host_workspace_registration",
@@ -306,6 +312,14 @@ def playbill_host_workspace_registration(
             record.workspace_root
             if expose_workspace_path and record.workspace_root is not None
             else None
+        ),
+        delivers_here=(
+            None
+            if workspace_root is None
+            else bool(record.floor_delivery)
+            and record.workspace_root is not None
+            and Path(record.workspace_root).resolve(strict=False)
+            == Path(workspace_root).resolve(strict=False)
         ),
     )
 
@@ -436,29 +450,13 @@ def playbill_host_workspace_attach(
     )
 
 
-def set_playbill_floor_delivery(
+def set_playbill_floor_delivery_admitted(
     instance_id: str,
     *,
     enabled: bool,
     workspace_attachment_authorized: bool = False,
 ) -> contracts.HostWorkspaceRegistration:
-    """Opt a local workspace into its daemon's sole floor writer."""
-
-    with FLOOR_ADMISSION.hold(instance_id):
-        return _set_playbill_floor_delivery_admitted(
-            instance_id,
-            enabled=enabled,
-            workspace_attachment_authorized=workspace_attachment_authorized,
-        )
-
-
-def _set_playbill_floor_delivery_admitted(
-    instance_id: str,
-    *,
-    enabled: bool,
-    workspace_attachment_authorized: bool = False,
-) -> contracts.HostWorkspaceRegistration:
-    """Set delivery with floor admission already held by the caller."""
+    """Set delivery; the caller (the route) already holds floor admission."""
 
     check_permission("cruxible_workspace_floor_delivery", instance_id=instance_id)
     if not workspace_attachment_authorized:
@@ -467,32 +465,14 @@ def _set_playbill_floor_delivery_admitted(
     return playbill_host_workspace_registration(instance_id, expose_workspace_path=True)
 
 
-def deliver_playbill_floor_now(
+def deliver_playbill_floor_now_admitted(
     instance_id: str,
     *,
     include: tuple[contracts.FloorExportPart, ...] = (),
     at: contracts.AcceptedCoordinate | None = None,
     workspace_attachment_authorized: bool = False,
 ) -> contracts.FloorDeliveryResult:
-    """Synchronously run the same floor delivery that follows Trigger fires."""
-
-    with FLOOR_ADMISSION.hold(instance_id):
-        return _deliver_playbill_floor_now_admitted(
-            instance_id,
-            include=include,
-            at=at,
-            workspace_attachment_authorized=workspace_attachment_authorized,
-        )
-
-
-def _deliver_playbill_floor_now_admitted(
-    instance_id: str,
-    *,
-    include: tuple[contracts.FloorExportPart, ...] = (),
-    at: contracts.AcceptedCoordinate | None = None,
-    workspace_attachment_authorized: bool = False,
-) -> contracts.FloorDeliveryResult:
-    """Deliver with floor admission already held by the caller."""
+    """Run the delivery that follows Trigger fires now; the caller holds floor admission."""
 
     check_permission("cruxible_floor_deliver_now", instance_id=instance_id)
     if not workspace_attachment_authorized:
@@ -737,8 +717,8 @@ __all__ = [
     "attach_workspace",
     "create_playbill_host",
     "playbill_host_workspace_attach",
-    "set_playbill_floor_delivery",
-    "deliver_playbill_floor_now",
+    "set_playbill_floor_delivery_admitted",
+    "deliver_playbill_floor_now_admitted",
     "playbill_host_workspace_detach",
     "playbill_host_workspace_registration",
     "show_playbill_host",

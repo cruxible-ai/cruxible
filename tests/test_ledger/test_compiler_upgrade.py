@@ -478,12 +478,11 @@ def test_provider_installation_uses_accepted_compiler_after_upgrade_and_reopen(
         ProviderInstallRequest,
         ProviderWheelObject,
     )
-    from cruxible_core.compiler.compiler import PROVIDER_PACKAGE_COMPILER
     from cruxible_core.errors import ConfigError
     from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
     from cruxible_core.service.procedures import provider_installation
 
-    instance, _, reviewer = old_instance(tmp_path, monkeypatch, UPGRADE_COMPILER)
+    instance, _, reviewer = old_instance(tmp_path, monkeypatch, AUTHORITY_VERBS_COMPILER)
     operator = ProviderRuntimeOperator(tmp_path / "operator")
     request = ProviderInstallRequest(
         wheel=ProviderWheelObject(filename="demo-1-py3-none-any.whl", digest="sha256:" + "a" * 64),
@@ -501,19 +500,19 @@ def test_provider_installation_uses_accepted_compiler_after_upgrade_and_reopen(
             current, operator=operator, request=request, actor_id="owner", timestamp=TIMESTAMP
         )
 
-    with pytest.raises(ConfigError, match="explicit upgrade"):
+    with pytest.raises(ConfigError, match="compiler upgrade"):
         install(instance)
     assert not reached
-    proposal = propose(instance, PROVIDER_PACKAGE_COMPILER)
+    proposal = propose(instance, GOVERNED_TRIGGERS_COMPILER)
     approve(instance, proposal, reviewer)
     receipt = service_activate_playbill_proposal(
         instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
     )
     assert receipt.status == "accepted"
-    assert instance.descriptor.compiler == UPGRADE_COMPILER
+    assert instance.descriptor.compiler == AUTHORITY_VERBS_COMPILER
     install(instance)
     install(PlaybillInstance.open(instance.root, trust_root=instance.trust_root))
-    assert reached == [PROVIDER_PACKAGE_COMPILER, PROVIDER_PACKAGE_COMPILER]
+    assert reached == [GOVERNED_TRIGGERS_COMPILER, GOVERNED_TRIGGERS_COMPILER]
 
 
 def test_the_governed_triggers_upgrade_waits_for_every_embedded_trigger_line_to_retire(

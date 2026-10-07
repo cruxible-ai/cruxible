@@ -103,7 +103,6 @@ def test_query_facts_match_source_replay_and_read_each_record_once(instance, mon
 
 
 def test_floor_reuses_query_claims_instead_of_materializing_another_list(instance, monkeypatch):
-    instance.floor_export_memo.clear()
     instance.floor_structure_memo.clear()
 
     def forbidden(*args, **kwargs):

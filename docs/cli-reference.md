@@ -144,7 +144,7 @@ exempt. By that principle these are exempt:
   already shown by `get PROPOSAL_ID`;
 - `proposal activate`: its preview is the proposal's evaluation, already
   shown; the commit-time `at` check covers the head moving under it;
-- `workspace floor-delivery on|off`: its effect is its input;
+- `floor delivery on|off`: its effect is its input;
 - floor deliver-now: its result is fully determined by the accepted head (the
   floor is a pure function of the accepted coordinate), it is idempotent, and
   it writes only the derived, regenerable `.cruxible/floor`.
@@ -489,13 +489,17 @@ usual Trigger authoring flow; existing instances are unchanged.
 
 `floor.refresh` warms the floor index on every daemon. Workspace delivery is
 on by default for an attached workspace. Use `workspace attach --no-floor-delivery`
-or `cruxible workspace floor-delivery off` through the local Unix socket
+or `cruxible floor delivery off` through the local Unix socket
 to opt out; `on` enables delivery again. Detaching clears it, and a later attachment
 defaults on again. Host inspection and daemon status label it "on (default)" or
 "off (opted out)". With delivery
-on, the daemon writes only `.cruxible/floor`, and local client floor writes ask
-it to deliver immediately. Remote clients and workspaces with delivery off keep
-applying deltas locally. Both writers create `.cruxible/floor/.gitignore` containing
+on, the daemon is the floor's only writer: it writes only `.cruxible/floor`,
+and a `floor export` over the local socket asks it to deliver immediately, while
+one over TCP refuses rather than write a second copy (the registration route
+answers `delivers_here` for the caller's workspace root without echoing the
+daemon's path). Workspaces the daemon does not deliver to (a remote daemon,
+delivery off, MCP library mode) pull the floor with `floor export`, MCP
+`cruxible_floor_export mode=write`, or SDK `cx.refresh_workspace()`. Both writers create `.cruxible/floor/.gitignore` containing
 `*`, which ignores the entire floor, including itself, in Git. It is local metadata
 outside the accepted floor manifest and survives delta applies and full repairs.
 A failed apply stalls the floor consumer with `cruxible floor export` as its
@@ -565,7 +569,6 @@ cruxible host create [--instance-id ID] [--workspace DIR] [--replace] [--dry-run
 cruxible host show INSTANCE [--json]
 cruxible workspace attach [--instance-id ID] [--replace] [--no-floor-delivery]
   [--dry-run|--commit] [--at DIGEST]
-cruxible workspace floor-delivery STATE [--instance-id ID] [--json]
 cruxible workspace detach [--instance-id ID] [--dry-run|--commit] [--at DIGEST] [--json]
 ~~~
 
@@ -584,7 +587,7 @@ the writer adds `.cruxible/coverage.json` to this repository's machine-local
 
 Daemon floor delivery is on by default when a local workspace is registered.
 `workspace attach` enables it unless `--no-floor-delivery` is supplied;
-`workspace floor-delivery STATE` takes `on` or `off`: `off` opts out after
+`floor delivery STATE` takes `on` or `off`: `off` opts out after
 attachment, and `on` restores it.
 
 A TCP client never sends its local path to the daemon. Implicit attachment from
@@ -756,7 +759,7 @@ coordinate: `--commit --at OID` (see [Previews](#previews)).
 
 ~~~text
 cruxible ledger set-mirror URL [--dry-run|--commit] [--at OID]
-cruxible ledger clone-url
+cruxible ledger set-mirror --clear [--dry-run|--commit] [--at OID] [--json]
 cruxible ledger publish [--timeout 0..60] [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
@@ -831,8 +834,7 @@ exact `published_refs` acknowledged by the remote. The barrier succeeded when
 may still be `pending` or `publishing`. Failure is `behind`; timeout returns the
 actual pending/publishing status. A destination change interrupts the old wait.
 A success acknowledges that snapshot at that time, not permanent remote durability.
-`clone-url` keeps stdout as the URL and reports publication status on stderr;
-`--json` returns both. Missing local status is rebuilt; it is not ledger authority.
+Missing local status is rebuilt; it is not ledger authority.
 
 The URL never carries a credential. `https://user:token@host/...` is refused,
 as is plain `http://`, `ext::` and anything whose host or user begins with a
@@ -852,19 +854,21 @@ because Git refuses a push between repositories with different hash algorithms.
 `set-mirror` publishes immediately, so a wrong credential or an unreachable host
 is reported at once rather than at the next governed write. It stays bound
 either way: a remote that is temporarily unreachable is not a wrong remote.
-`clone-url` prints the URL a reviewer clones and refuses with the typed
-`cruxible.ledger.mirror_unset` when the instance publishes nowhere; the same
-value rides `cruxible orient --json` as `mirror_url`, so an agent
-that has just oriented already has it. The equivalent surfaces are
-`POST`/`GET /{instance}/ledger/mirror` and the `mirror_url` field on
-the init body.
+`cruxible orient` prints the URL a reviewer clones (`mirror_url` in
+`--json`), and `cruxible next` reports the mirror's health with its repair.
+`set-mirror --clear` unbinds the mirror: nothing more is published, and what
+was already sent stays on the remote. It commits by default; `--dry-run`
+previews it. The equivalent surfaces are `POST /{instance}/ledger/mirror`,
+`POST /{instance}/ledger/mirror/clear` and the `mirror_url` field on the init
+body.
 
 ## provider
 
 ~~~text
 cruxible provider list [--json]
 cruxible provider install NAME[==VERSION] | WHEEL [--lock FILE]
-  [--dependency WHEEL]... [--extra NAME]... [--reverify] [--dry-run] [--json]
+  [--dependency WHEEL]... [--extra NAME]... [--control-domain NAME] [--reverify]
+  [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 Installation requires **ADMIN**. A package name resolves through the daemon's
@@ -880,9 +884,15 @@ CAS, so this also works against a remote daemon.
 
 The shared installer prepares an exact Python environment, verifies it once,
 checks package classifiers in supervised children, and proposes the package's
-node-type interfaces and Provider definition through ordinary acceptance.
-It returns `ready`, `awaiting_approval`, or `blocked`, with per-operation missing
-requirements. Missing browser resources remain explicit; Python extras do not
+provider interfaces and Provider definition through ordinary acceptance.
+The registration lands at once when the approval policy requires no approval
+(`ready`); otherwise it stops at proposed (`awaiting_approval`) for the ordinary
+review and activation. It returns `ready`, `awaiting_approval`, or `blocked`,
+with per-operation missing requirements. `--control-domain` names the control
+domain the Provider definition records (default `operator`); `--at OID` commits
+only if accepted state is still the coordinate a preview answered at.
+Installation requires the current compiler; an instance on an older one runs
+`cruxible compiler upgrade` first. Missing browser resources remain explicit; Python extras do not
 install browsers. Credentials, grants, and invocation remain separate.
 
 Retries reuse the prepared installation and an open registration proposal.
@@ -891,9 +901,8 @@ Runs reuse the retained verification record without hashing the environment.
 Treat installed environments as immutable; `--reverify` detects manual changes
 and refuses drift instead of silently resealing or repairing it.
 
-SDK: `install_provider_package(client, instance_id, wheel=..., lock=...,
-dependency_wheels=(...))`, or `client.install_provider` with a typed
-request. MCP: `cruxible_provider_catalog` and
+Installing is an operator job, so the SDK has no install method; the transport
+`client.install_provider` takes a typed request. MCP: `cruxible_provider_list` and
 `cruxible_provider_install`. HTTP: `GET /{instance}/providers`
 and `POST /{instance}/providers/install`.
 
@@ -902,10 +911,11 @@ and `POST /{instance}/providers/install`.
 ~~~text
 cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
   --out KIT_DIR [--json]
-cruxible kit add KIT [--source TEXT] [--dry-run|--commit] [--at OID] [--json]
-cruxible kit push KIT REFERENCE [--dry-run] [--json]
+cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
+  [--retire-dependents IDENTITY]... [--allow-downgrade]
+  [--dry-run|--commit] [--at OID] [--json]
 cruxible kit pull REFERENCE --out DIR [--layout] [--json]
-cruxible kit status [--json]
+cruxible kit status [--offline] [--json]
 cruxible kit remove ID [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
@@ -917,8 +927,9 @@ reference. A bare name such as `project-state:1.0.0` resolves under
 Distributed, a kit is an OCI artifact (`application/vnd.cruxible.kit.v1`): the
 manifest is its config blob and the artifacts are one deterministic,
 uncompressed tar layer, so rebuilding a release gives the same manifest digest.
-`push` publishes a kit and prints the reference pinned to that digest; `pull`
-fetches and verifies one into a kit directory (or, with `--layout`, an OCI image
+There is no public publishing in v1: official kits are published by internal
+release tooling, which never moves an existing version tag to different content.
+`pull` fetches and verifies a kit into a kit directory (or, with `--layout`, an OCI image
 layout for offline transfer) without installing it. Every blob is checked
 against its digest, a digest reference must match the manifest pulled, and blobs
 are cached by digest under `CRUXIBLE_ARTIFACT_CACHE` (default
@@ -944,33 +955,59 @@ identity starts with an `--owns` prefix, plus every definition those pin, as
 snapshots with no predecessor that pin only the release's own digests; a pin into
 anything a kit cannot carry refuses the build. The release content digest
 therefore names the same definitions wherever the kit is installed, and any
-release can be installed on its own.
+release can be installed on its own. The manifest records where it was built
+(the building instance, its accepted coordinate and the building principal),
+shown by the install preview and `kit status`: claimed, not proven, and not part
+of the release identity.
 
-`add` diffs the release against this instance and proposes that diff as one
-change set: a missing definition is added as released, a changed one is replaced
-by a successor naming this instance's current digest, and one the kit installed
-that the release dropped is retired. Pins are remapped to the digests this
-instance actually holds. Every live artifact in this instance that pins a
-replaced kit definition takes one successor in the same change set, carried to
-the kit's final definitions as a succession would carry it; the SDK/MCP request's
-`dependents` names any that should be retired instead, and a dependent of a
-retired definition must be named. A definition the kit only carries (it pins it but
-does not own it) is added when absent and must otherwise match. A path edited
-since install, one defined outside the kit, and another kit's overlapping `owns`
-prefix are conflicts that block the change. `add` only proposes: activation, and
-any approval the instance's policy requires, are the ordinary `cruxible proposal
-approve` and `activate` steps. It records a `kit_receipt` Document,
-`documents/kit-<id>.json`, with each path's release digest and installed digest.
-A kit carries definitions only, so it never needs a Provider installed first.
+`add` diffs the release against this instance and always proposes that diff as
+one change set: a missing definition is added as released, a changed one is
+replaced by a successor naming this instance's current digest, and pins are
+remapped to the digests this instance actually holds. A definition this instance
+holds differently takes the release's version as a successor of its own, and the
+preview says what that does here: `overwrites your edit` (edited since install,
+compared by content, so a reverted edit is no edit), `re-adds a definition you
+retired`, `takes over a definition you defined outside the kit`, or `replaces a
+definition the kit depends on`. `--keep IDENTITY` (such as
+`ClaimType:acme.account.seats`, repeatable) and `--keep-local-edits` keep this
+instance's version instead; the receipt records each kept divergence, so a later
+release that leaves that definition as it was does not ask again. Every live
+artifact pinning a replaced definition takes one successor in the same change set,
+carried to the kit's final definitions; the preview counts each definition's
+dependents rather than listing them.
 
-`status` lists installed kits and the kit paths edited locally. `remove`
-proposes retiring what a kit owns (never what it only carries); the dependency
-closure refuses it while live Claims depend on those definitions. Removing a kit
-that is not installed refuses with `cruxible.kit.not_installed`, naming the
-installed kits.
+A definition the kit installed that the release dropped retires when nothing
+live depends on it. Dependents include the live ClaimTypes whose evidence rules
+admit captures under a dropped CaptureContract (by identity or exact digest),
+though no pin names it. One with live dependents is kept until a decision names it:
+`--keep IDENTITY` keeps it live, `--retire-dependents IDENTITY` retires it and its
+dependents. A kept definition stays the kit's even when a later release narrows
+its prefixes. Changing a definition another installed kit owns or holds, or
+owning a prefix that overlaps another kit's or takes in a definition it holds,
+blocks the change. `add` refuses a release older than
+the installed one unless `--allow-downgrade`, and the preview names the transition
+(install, upgrade, downgrade, reinstall).
 
-MCP: `cruxible_kit_build`, `cruxible_kit_status`,
-`cruxible_kit_add` and `cruxible_kit_remove`. HTTP:
+`add` and `remove` land at once when the instance's approval policy requires no
+approval, like provider install and value writes; otherwise they stop at
+proposed for the ordinary `cruxible proposal approve` and `activate` steps. `add`
+records a `kit_receipt` Document, `documents/kit-<id>.json`, with each path's
+release digest, installed digest and content digest. A kit carries definitions
+only, so it never needs a Provider installed first.
+
+`status` lists installed kits, the kit paths edited locally, the divergences kept
+on purpose, and where each release was built. For a kit installed from a registry
+the client lists the repository's tags (MAJOR.MINOR.PATCH, short timeout) and
+shows the latest available version; `--offline` skips the check, and a kit from a
+directory or layout shows its local source. Installing an update stays explicit:
+`kit add REFERENCE:VERSION`. `remove` retires what a kit owns (never what it only
+carries); a path edited since install, or the dependency closure while live Claims
+depend on those definitions, blocks it. Removing a kit that is not installed
+refuses with `cruxible.kit.not_installed`, naming the installed kits.
+
+MCP: `cruxible_kit_build`, `cruxible_kit_status` (with the same update check,
+`offline`), `cruxible_kit_add` (by registry `reference`, which the adapter pulls,
+or inline `bundle`) and `cruxible_kit_remove`. HTTP:
 `POST /{instance}/kits/build`, `GET /{instance}/kits`,
 `POST /{instance}/kits` and `POST /{instance}/kits/remove`.
 SDK: `read_kit_directory` and `write_kit_directory` in `cruxible_client.kits`,
@@ -1157,7 +1194,7 @@ cruxible authoring example claim-cite-supporting-evidence
   --attestation-claim-id CLAIM_ID --capture-digest DIGEST
 cruxible authoring compile PAYLOAD [--intent-id INTENT_ID]
 cruxible authoring bind --file PATH --anchor TEXT [--occurrence N]
-  [--window-lines N]
+  [--window-lines N] [--workspace-root DIR]
   --payload-file CLAIM_STUB
 cruxible authoring preflight INTENT_ID
 cruxible authoring rebase INTENT_ID
@@ -1176,6 +1213,12 @@ to the accepted head, and `submit --intent-id ID` submits it. `get` and `list`
 find staged work again after the context that started it is gone.
 `authoring example` prints a model-generated template for NAME, or lists the
 names without one.
+
+`authoring bind` reads `--file` through the workspace's source catalog (the
+current worktree's, or `--workspace-root`'s): the stub's `source_id` must be the
+name the catalog gives that file, so a mistyped name is refused instead of
+minting a citation `next` and coverage never match. An evidence-only catalog
+entry (`name` and `locator`) is enough.
 
 A Claim input names the Claim it revises with `revises`, a Claim ID; omit it
 to state a new Claim. `authoring example claim-revision` prints one. The three
@@ -1782,11 +1825,21 @@ to clear the row.
 cruxible block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
   [--backing SHA256] [--params CANONICAL_JSON]... [--workspace-root DIR]
   [--evaluation-time TS] [--artifact ID]... [--currency-policy warn|require_current]
-  [--clear-claims] [--clear-queries] [--clear-artifacts] [--dry-run]
-cruxible block sync [PATH]... [--all] [--check]
-  [--detach PATH]... [--workspace-root DIR]
-cruxible block depublish SOURCE_ID BLOCK_ID [--json]
+  [--clear-claims] [--clear-queries] [--clear-artifacts] [--render] [--dry-run]
+cruxible block sync [PATH]... [--all] [--workspace-root DIR] [--json]
+cruxible block detach PATH... [--workspace-root DIR] [--dry-run|--commit] [--at DIGEST] [--json]
+cruxible block depublish SOURCE_ID BLOCK_ID [--dry-run|--commit] [--at OID] [--json]
 ~~~
+
+Blocks are authored and stamped; nothing regenerates them. The workflow: write
+the markers and the prose (or `repin --render` for a rendered table or list),
+`repin` to stamp, let `next` or `block sync` report a block stale or dirty,
+re-check it and repin; `block detach` and `block depublish` when its backings
+are gone. The client, not the daemon, computes every stamp: `repin` reads the
+backings, writes the marker and then declares the block to the instance.
+`--render` writes the body from the block's one `--query` backing: a Markdown
+table of the result Subjects and their projected fields, or a bulleted list of
+Subjects when the query projects none, and `_No rows._` when it returns none.
 
 ### The two roads a governed passage takes
 
@@ -1819,9 +1872,9 @@ concrete. Prose outside every window is the author's own and stays citable.
 `block repin --claim ID --claim ID ...` is how a projection block is created.
 Write the marker pair by hand around the prose you want governed (see
 [Projection block markers](#projection-block-markers)), then repin it naming
-every backing: the daemon re-reads and re-proves each Claim at the
-accepted coordinate, stamps the marker, and registers the block with the
-instance. Up to 512 backings fit in one block
+every backing: the client re-reads and re-proves each Claim at the
+accepted coordinate, computes the stamp, writes the marker, and registers the
+block with the instance. Up to 512 backings fit in one block
 (`MAX_PROJECTION_BACKINGS_PER_BLOCK`, inside a 128 KiB stamp), and a block that
 would need more refuses rather than truncating. **`repin` mints no Claim.** It
 declares that this passage reflects Claims that already exist, which is exactly
@@ -1861,9 +1914,10 @@ no field for it.
 On MCP the same adapter runs in the MCP server process:
 `cruxible_block_repin` takes the block and its page (`file`,
 workspace-relative, or `source`, its catalog id) and computes the stamp there,
-so an agent never builds one; `cruxible_block_sync` is `block sync`
-without `--detach`, a read that edits no page. Detaching is the write-tier
-`cruxible_block_detach` (`files`, `dry_run`, `at`): its preview
+so an agent never builds one (`render: true` is `--render`);
+`cruxible_block_sync` is `block sync`, a read that edits no page. Detaching is
+`block detach` and the write-tier `cruxible_block_detach` (`files`, `dry_run`,
+`at`): its preview
 reports what the edit would change and is pinned to the pages' bytes, and a
 commit with `at` refuses if a page changed since. `--dry-run` (MCP `dry_run`)
 on a repin computes and checks the stamp and writes nothing: no manifest, no
@@ -1909,15 +1963,17 @@ check with diagnostic details. A dirty body does not suppress dependency checks,
 and one failed dependency does not hide the others. Repin acknowledges a reviewed
 body and refreshes its dependencies; there is no separate accept-local bypass.
 
-`--check` suppresses explicit detach edits. Advisory findings remain visible
-without a nonzero exit; `require_current` findings and integrity errors fail the
-check. An unreadable or ambiguous lineage remains an incomplete check, with
+`block sync` writes nothing. Advisory findings remain visible without a nonzero
+exit; `require_current` findings and integrity errors fail the check. An unreadable or ambiguous lineage remains an incomplete check, with
 exact successor candidates where available. `repin --backing DIGEST` selects a
 live successor explicitly.
 
-`--detach PATH` removes markers from a retired block or a declaration belonging
-to a different instance, preserving its prose and all bytes outside the block.
-It uses a whole-file compare-and-swap. It does not rewrite or approve prose.
+`block detach PATH...` removes markers from a retired block or a declaration
+belonging to a different instance, preserving its prose and all bytes outside
+the block; live blocks are refused. It uses a whole-file compare-and-swap and
+does not rewrite or approve prose. `--dry-run` reports what would change and is
+pinned to the pages' bytes; `--commit --at DIGEST` refuses if a page changed
+since that preview.
 
 ### Depublishing
 
@@ -1934,7 +1990,7 @@ it records that this instance stands behind this marker. It is also the identity
 `workspace detach` refuses on, so a worktree cannot move out from under markers
 a host still owns.
 
-It edits no page and retires no Claim. Strip the markers (`block sync --detach`,
+It edits no page and retires no Claim. Strip the markers (`block detach`,
 or by hand), retire the backing Claim through the ordinary retirement road if
 the statement is also being withdrawn, and depublish when the block itself is
 not coming back. A registration whose backing Claim is already retired no longer
@@ -1947,7 +2003,7 @@ side effect of a ledger release -- so between the two steps `cruxible next`
 reports the marker as `unregistered_projection_block` with the repair
 `remove_or_register_projection_block`. That is a warning rather than a blocking
 row, and it is the opposite instruction to the row it replaces, which asked for
-the frame to be restored. Remove the marker pair with `block sync --detach PATH`
+the frame to be restored. Remove the marker pair with `block detach PATH`
 or by hand and it clears.
 
 ## next
@@ -2133,26 +2189,57 @@ the row.
 ## curation
 
 ~~~text
-cruxible curation list [--workspace-root PATH] [--limit N] [--cursor CURSOR]
-  [--json]
+cruxible curation list [--access-profile FILE] [--limit N] [--cursor CURSOR] [--json]
+cruxible curation observe [--workspace-root PATH] [--dry-run|--commit] [--at DIGEST] [--json]
 cruxible curation overrule ITEM_ID
-  --expected-latest-event-digest DIGEST --reason TEXT [--json]
+  --expected-latest-event-digest DIGEST --reason TEXT [--attribution-ref REF]...
+  [--dry-run|--commit] [--at OID] [--json]
 cruxible curation accept-fixed ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT
-  --proposal-id DIGEST --changeset-digest DIGEST [--json]
+  (--proposal-id DIGEST [--changeset-digest DIGEST] | --generation N)
+  [--attribution-ref REF]... [--dry-run|--commit] [--at OID] [--json]
 cruxible curation suppress ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT
-  --scope item|pattern|instance [--until-generation N] [--json]
+  --scope item|lineage [--until-generation N] [--attribution-ref REF]... [--json]
+cruxible curation unsuppress ITEM_ID
+  --expected-latest-event-digest DIGEST --reason TEXT [--suppression EVENT_ID]
+  [--attribution-ref REF]... [--json]
 ~~~
 
-Lists the mechanical curation queue and explicitly submits the declared-block
-observation produced by the client-side workspace scanner. The daemon does not
-read workspace files. The queue is paged (default 25 items, at most 200); a cut
-page has `truncated: true` and a `next_cursor` for `--cursor`, which continues
-only while accepted state and the queue itself are unchanged; otherwise it is
-refused as `cruxible.list.cursor_stale`. The lifecycle commands append attributed
-operational events; they do not create governed proposals or mutate accepted
-knowledge.
+Detection runs on its own: the `curation.detect` internal action, fired by the
+seeded `curation-detect` Trigger on every accepted generation, runs every
+detector at the head and records what it found, evaluated at the fire's recorded
+instant. `curation list` is a pure read of that queue: it prints each item's ID,
+pattern kind, subject and `latest_event_digest` (what every ruling needs), when
+detection last ran (`current`, `behind` or `never_run`) and whether its Trigger
+is live, and the detectors that cannot run here and why (dead vocabulary needs
+`CRUXIBLE_CONSUMPTION_RECEIPTS=on`; block churn needs a recorded workspace scan).
+An instance created before the seeded Trigger needs it proposed once (`next`
+reports `curation.detect` as unscheduled).
+
+Block churn is the one detector that reads the workspace, which the daemon never
+does: `curation observe` scans the workspace's declared blocks client-side and
+records them, with the scan's accounting, for detection to read when it next
+runs.
+
+The queue is paged (default 25 items, at most 200); a cut page has
+`truncated: true` and a `next_cursor` for `--cursor`, which continues only while
+accepted state and the queue itself are unchanged; otherwise it is refused as
+`cruxible.list.cursor_stale`.
+
+The rulings append attributed operational events; they do not create governed
+proposals or mutate accepted knowledge. `overrule` closes an item permanently:
+its pattern is never raised again. `accept-fixed` links an item to the accepted
+change that fixed it, named by proposal (pinned with `--changeset-digest` if
+wanted) or by `--generation`; the change must postdate the item and touch its
+subject or evidence. Detection never closes an item itself, even one whose
+artifact a later change retired: closing a fixed pattern is always this
+attributed ruling. `suppress` hides the item (`item`) or its whole lineage,
+the successors its pattern opens after a fix (`lineage`), until
+`--until-generation` or until `unsuppress` lifts it; detection keeps running.
+`unsuppress` names the item that recorded the suppression, even once that item
+is fixed: a lineage suppression on a resolved item keeps hiding its successors
+until lifted there.
 
 ## audit
 
@@ -2411,8 +2498,16 @@ advances; the cursor binds the lower bound, access profile, and page budgets.
 ## floor
 
 ~~~text
-cruxible floor export [--force] [--with-discovery]
+cruxible floor export [--force] [--with-discovery] [--json]
+cruxible floor delivery STATE [--instance-id ID] [--json]
 ~~~
+
+The floor has one writer. A local daemon with a registered workspace and
+delivery on writes it after every accepted generation (the `floor-refresh`
+Trigger), and `floor export` over its socket only asks it to deliver now; over
+TCP the export refuses, naming `floor delivery off` as the way to write from the
+client. Everywhere else `floor export` is the pull. `floor delivery` (local
+socket only) chooses between the two.
 
 Writes the deterministic greppable floor of accepted state to the fixed derived
 cache `.cruxible/floor/` under the current workspace. The floor is the
@@ -2554,16 +2649,18 @@ byte-identical.
 cruxible coverage resolve
   [--bind PATH=PLANE:IDENTITY]... [--bindings FILE] [--root DIR]
   [--file PATH]... [--range PATH:START-END]...
-  [--grep-results FILE] [--all]
-cruxible coverage status
-  [--bind PATH=PLANE:IDENTITY]... [--bindings FILE] [--root DIR]
+  [--grep-results FILE] [--all] [--view cards|manifest] [--brief] [--json]
 ~~~
 
 resolve answers what the working files you just read or changed have to do with
-accepted state. Every working path is bound to a logical source by an explicit
-declaration -- coverage never infers a binding from a filename, because
-identical bytes in another file are precisely not the same source. The CLI reads
-and hashes the bytes locally; the daemon reads no client filesystem.
+accepted state. Every working path is bound to a logical source by a
+declaration, never inferred from a filename, because identical bytes in another
+file are precisely not the same source. The declaration is the workspace's
+source catalog (`.cruxible/sources.yaml`): each catalogued file binds to
+`external:<name>`, the identity file evidence is cited under. `--bind` and
+`--bindings` (a mapping, `-` for stdin) override it path by path, for example to
+bind a file to a ledger path. The CLI reads and hashes the bytes locally; the
+daemon reads no client filesystem.
 
 Governed spans are annotated inline in card order. Ungoverned results are
 summarized once per operation, never one line per result:
@@ -2578,55 +2675,18 @@ A `none` is factual only inside a complete boundary, so a span whose health is
 `partial`, `stale`, `denied`, or `unavailable` prints that health and its reason
 codes rather than reading as an absence.
 
-status renders the coverage manifest over the whole declared scope: epoch,
-health, completeness, and the sources a `none` would have been factual inside.
+`--all --view manifest` renders the coverage manifest over every bound file:
+epoch, health, completeness, and the sources a `none` would have been factual
+inside.
 
-Resolving coverage changes no accepted state and appends no receipt.
+Resolving coverage changes no accepted state. It writes the local coverage
+manifest cache, and appends a consumption receipt when the daemon runs with
+`CRUXIBLE_CONSUMPTION_RECEIPTS=on`.
 
-## hook
-
-~~~text
-cruxible hook post-tool-use [--root DIR]
-~~~
-
-Reads one Claude Code PostToolUse payload on stdin and writes the hook response
-on stdout, binding working paths through `.cruxible/coverage.json` at the
-workspace root. Wire it with the settings fragment in
-`integrations/claude-code/`.
-
-This vendor-specific hook is deprecated and parked: it remains compatible, but
-new harnesses should use the client coverage middleware rather than extend it.
-
-Grep content-mode results are annotated in place: the cards are appended to the
-result's own text and every other field is passed through unchanged. Read, Edit,
-and Write are observed only -- their paths are resolved, which refreshes the
-local freshness manifest so the next Grep answers against a current snapshot --
-and their output is returned unmodified, because those tools' result shapes
-carry no field that can hold an annotation without fabricating file content.
-`additionalContext` is never used: it would arrive as a system reminder, which
-is the instruction channel rather than the data channel.
-
-The command always exits 0 and always emits one JSON object. A coverage failure
-degrades to the original output plus, where a channel exists, one
-`Cruxible coverage: unavailable` line; it never breaks the agent's tool call.
-The parked hook writes one actionable code to stderr only when its own adapter
-input is malformed:
-
-- `cruxible.coverage_hook.instance_id_missing`: add `instance_id` to
-  `.cruxible/coverage.json`, or select one with the CLI context/environment.
-- `cruxible.coverage_hook.rule_tag_invalid`: use the exact-path or path-prefix
-  rule tags shown in the integration README.
-- `cruxible.coverage_hook.tool_response_invalid`: the Grep hook must receive its
-  structured response object; fix the harness envelope rather than parsing text.
-
-The workspace config's `instance_id` is the hook's selected instance. General
-CLI and SDK target selection also reads `server_url` or `server_socket` from an
-attached workspace after explicit flags and environment and before remembered
-global context.
-
-For a harness that owns its tool executor, the vendor-neutral middleware in
-`cruxible_core.coverage.middleware` is the full-fidelity path and
-covers all four tool kinds, including same-turn edit drift.
+`.cruxible/coverage.json` holds the workspace's instance, transport and floor
+profile only; it carries no path rules (the Claude Code hook that read them is
+gone). A harness that owns its tool executor embeds the vendor-neutral
+middleware in `cruxible_core.coverage.middleware` and passes its own rules.
 
 ## proposal
 
@@ -2794,13 +2854,29 @@ trusted and could load another principal's settings. See the
 ## sources
 
 ~~~text
-cruxible sources check ...
-cruxible sources compile ...
-cruxible sources propose ...
+cruxible sources check [--catalog FILE] [--local-catalog FILE] [--root DIR]
+  [--root-alias NAME=PATH]... [--json]
+cruxible sources compile --output FILE [--catalog FILE] [--local-catalog FILE]
+  [--root DIR] [--root-alias NAME=PATH]... [--json]
+cruxible sources propose --source NAME --name NAME [--bundle FILE]
+  [--catalog FILE] [--root DIR] [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
-Compilation reads declared local files client-side and emits a path-free bundle.
-The daemon never reads a submitted client path.
+The source catalog (`.cruxible/sources.yaml` or `sources.yaml`, plus an optional
+`.cruxible/sources.local.yaml` overlay) is the one mapping from workspace files to
+logical sources. Every command discovers it the same way; `--catalog` names
+another. An entry needs only `name` and `locator` to be cited as evidence
+(`set --evidence-file`, `cx.file`), covered (`coverage resolve`) and watched by
+`next`; adding `document_id`, `document_kind`, `title`, `media_type` and
+`governance_scope` (all five together) makes it a Document that compiles and
+can be proposed.
+
+`sources compile` reads the catalogued Documents' bytes client-side and writes a
+path-free bundle; `sources check` reports each one's alignment (aligned,
+modified, ahead, pending, behind, diverged, untracked); `sources propose` proposes
+one source as its Document's next revision, compiling the catalog first unless
+`--bundle` names a frozen one. This is the repair `next` names for a
+`document_modified` row. The daemon never reads a submitted client path.
 
 Governance and provenance explanations are `get` details:
 `cruxible get Document:NAME --detail why`, `get KIND/ID --detail why`,

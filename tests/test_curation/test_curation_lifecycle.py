@@ -34,16 +34,19 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.service.discovery.curation import (
     CurationError,
     CurationItemAlreadyResolved,
+    CurationSuppressionInvalid,
     PlaybillCurationAcceptFixedRequestV1,
     PlaybillCurationListRequestV1,
     PlaybillCurationOverruleRequestV1,
     PlaybillCurationSuppressRequestV1,
+    PlaybillCurationUnsuppressRequestV1,
     service_accept_fixed_playbill_curation,
-    service_list_playbill_curation,
     service_overrule_playbill_curation,
     service_suppress_playbill_curation,
+    service_unsuppress_playbill_curation,
 )
 from tests.core_support._support import initialize_local
+from tests.support.curation import detect_and_list
 
 NOW = datetime(2026, 8, 26, 16, 0, tzinfo=UTC)
 
@@ -518,7 +521,7 @@ def test_suppression_is_non_resolving_and_compare_and_append_is_mandatory(
             item_id=item.item_id,
             expected_latest_event_digest=item.latest_event_digest,
             reason="operator is handling this pattern elsewhere",
-            scope="pattern",
+            scope="lineage",
             until_generation=10,
         ),
         actor_context=_actor(),
@@ -631,13 +634,12 @@ def _serve_detection(
             coverage=coverage,
         ),
     )
-    return service_list_playbill_curation(
+    return detect_and_list(
         instance,
         request=PlaybillCurationListRequestV1(
-            evaluation_time=NOW,
             access_profile=CoverageAccessProfile(profile_id="test-curation"),
         ),
-        actor_context=_actor(),
+        evaluation_time=NOW,
     )
 
 
@@ -682,7 +684,7 @@ def test_redetection_advances_one_item_and_suppressed_queue_reopens_after_bounda
     assert visible.items[0].last_observed_generation == 2
 
 
-def test_item_and_instance_suppression_scopes_apply_in_the_served_fold(
+def test_item_suppression_hides_until_unsuppressed_in_the_served_fold(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -722,24 +724,139 @@ def test_item_and_instance_suppression_scopes_apply_in_the_served_fold(
     )
     assert [row.subject.name for row in item_hidden.items] == ["project.work_item.priority"]
 
-    remaining = item_hidden.items[0]
-    service_suppress_playbill_curation(
+    hidden = next(
+        item
+        for item in replay_curation_items(
+            instance.review_operational_store().events(family="curation")
+        )
+        if item.item_id == first.item_id
+    )
+    lifted = service_unsuppress_playbill_curation(
         instance,
-        request=PlaybillCurationSuppressRequestV1(
-            item_id=remaining.item_id,
-            expected_latest_event_digest=remaining.latest_event_digest,
-            reason="hide this queue instance",
-            scope="instance",
+        request=PlaybillCurationUnsuppressRequestV1(
+            item_id=hidden.item_id,
+            expected_latest_event_digest=hidden.latest_event_digest,
+            reason="the item is ours to handle again",
         ),
         actor_context=_actor(),
     )
-    all_hidden = _serve_detection(
+    assert lifted.item.suppressions == ()
+    shown = _serve_detection(
         instance,
         monkeypatch,
         generation=0,
         detections=(_detection(), _detection("project.work_item.priority")),
     )
-    assert all_hidden.items == ()
+    assert sorted(row.subject.name for row in shown.items) == [
+        "project.work_item.priority",
+        "project.work_item.status",
+    ]
+    with pytest.raises(CurationSuppressionInvalid, match="carries 0 suppressions"):
+        service_unsuppress_playbill_curation(
+            instance,
+            request=PlaybillCurationUnsuppressRequestV1(
+                item_id=lifted.item.item_id,
+                expected_latest_event_digest=lifted.item.latest_event_digest,
+                reason="nothing left to lift",
+            ),
+            actor_context=_actor(),
+        )
+
+
+def test_a_lineage_suppression_lifts_from_its_resolved_owner_after_a_recurrence(
+    tmp_path: Path,
+) -> None:
+    """F-003: suppress the lineage, fix the item, see it recur hidden, then lift it."""
+
+    instance, item = _seed_item(tmp_path)
+    store = instance.review_operational_store()
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    suppressed = service_suppress_playbill_curation(
+        instance,
+        request=PlaybillCurationSuppressRequestV1(
+            item_id=item.item_id,
+            expected_latest_event_digest=item.latest_event_digest,
+            reason="defer the whole lineage",
+            scope="lineage",
+        ),
+        actor_context=_actor(),
+    ).item
+    fixed = build_curation_accepted_fixed(
+        item_id=item.item_id,
+        expected_latest_event_digest=suppressed.latest_event_digest,
+        actor_principal_id="curator",
+        reason="fixed",
+        accepted_proposal_id="sha256:" + "2" * 64,
+        accepted_changeset_digest="sha256:" + "3" * 64,
+        resolved_generation=1,
+        affected_members=(
+            CurationAffectedMemberV1(
+                path="claim-types/project.work_item.status.json",
+                disposition="replace",
+                predecessor_artifact_digest="sha256:" + "4" * 64,
+                candidate_artifact_digest="sha256:" + "5" * 64,
+            ),
+        ),
+    )
+    resolved = store.append(
+        family="curation",
+        partition_id=item.item_id,
+        event_id=fixed.event_id,
+        payload=fixed,
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=suppressed.latest_event_digest,
+    )
+    successor = build_pattern_observation(
+        detection=_detection(), predecessor_item_id=item.item_id, accepted_generation=2
+    )
+    store.append(
+        family="curation",
+        partition_id=successor.item_id,
+        event_id=successor.event_id,
+        payload=successor,
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=None,
+    )
+
+    def recurrence():  # type: ignore[no-untyped-def]
+        items = replay_curation_items(store.events(family="curation"))
+        return next(entry for entry in items if entry.item_id == successor.item_id), items
+
+    child, items = recurrence()
+    assert child.suppressed_at(2, all_items=items)
+    suppression_id = suppressed.suppressions[0].event_id
+    with pytest.raises(CurationSuppressionInvalid, match=f"predecessor {item.item_id}"):
+        service_unsuppress_playbill_curation(
+            instance,
+            request=PlaybillCurationUnsuppressRequestV1(
+                item_id=child.item_id,
+                expected_latest_event_digest=child.latest_event_digest,
+                reason="lift from the successor",
+                suppression_event_id=suppression_id,
+            ),
+            actor_context=_actor(),
+        )
+
+    lifted = service_unsuppress_playbill_curation(
+        instance,
+        request=PlaybillCurationUnsuppressRequestV1(
+            item_id=item.item_id,
+            expected_latest_event_digest=resolved.event_digest,
+            reason="resume the lineage",
+        ),
+        actor_context=_actor(),
+    )
+
+    assert lifted.item.status == "accepted_fixed"
+    assert lifted.item.suppressions == ()
+    child, items = recurrence()
+    assert not child.suppressed_at(2, all_items=items)
 
 
 def test_overrule_stays_silent_on_redetection_and_detector_identity_is_versioned(
@@ -808,7 +925,7 @@ _MATRIX_STATUSES = (
 _MATRIX_ACTIONS = (
     "overrule",
     "suppress_item",
-    "suppress_pattern",
+    "suppress_lineage",
     "accept_fixed",
     "redetect",
 )
@@ -957,14 +1074,14 @@ def test_every_accepted_public_curation_action_preserves_replay(
                 ),
                 actor_context=_actor(),
             )
-        elif action in {"suppress_item", "suppress_pattern"}:
+        elif action in {"suppress_item", "suppress_lineage"}:
             service_suppress_playbill_curation(
                 instance,
                 request=PlaybillCurationSuppressRequestV1(
                     item_id=target.item_id,
                     expected_latest_event_digest=target.latest_event_digest,
                     reason=f"matrix {status} {action}",
-                    scope="item" if action == "suppress_item" else "pattern",
+                    scope="item" if action == "suppress_item" else "lineage",
                 ),
                 actor_context=_actor(),
             )

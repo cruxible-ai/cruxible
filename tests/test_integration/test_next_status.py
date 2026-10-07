@@ -549,6 +549,7 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     seeded = _status(instance, _request(instance))
     assert seeded.triggers.state == "scheduled" and _attention(seeded) == ()
     assert seeded.triggers.detail["scheduled"] == {
+        "curation.detect": ["Trigger:curation-detect"],
         "evidence.sweep": ["Trigger:evidence-sweep"],
         "floor.refresh": ["Trigger:floor-refresh"],
         "prediction.anchor_retry": ["Trigger:prediction-anchor-retry"],
@@ -570,6 +571,7 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     )
     # The daemon's cadences are whatever the accepted Triggers say, per generation.
     assert [(item.action, item.schedule) for item in internal_triggers(instance)] == [
+        ("curation.detect", GenerationAcceptedSchedule()),
         ("evidence.sweep", CadenceSchedule(interval_seconds=600)),
         ("floor.refresh", GenerationAcceptedSchedule()),
     ]
@@ -577,6 +579,7 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     facet = unscheduled.triggers
     assert facet.state == "unscheduled" and not unscheduled.blocking
     assert facet.detail["scheduled"] == {
+        "curation.detect": ["Trigger:curation-detect"],
         "evidence.sweep": ["Trigger:evidence-sweep"],
         "floor.refresh": ["Trigger:floor-refresh"],
     }
@@ -605,6 +608,7 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     restored = _status(instance, _request(instance))
     assert restored.triggers.state == "scheduled" and _attention(restored) == ()
     assert restored.triggers.detail["scheduled"] == {
+        "curation.detect": ["Trigger:curation-detect"],
         "evidence.sweep": ["Trigger:evidence-sweep"],
         "floor.refresh": ["Trigger:floor-refresh"],
         "prediction.anchor_retry": ["Trigger:anchor-retry-often"],

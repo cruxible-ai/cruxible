@@ -580,8 +580,8 @@ def test_retired_block_refuses_then_detaches_markers_without_changing_body(tmp_p
     )
     assert refused.items[0].reason == "block_backing_retired"
     assert refused.items[0].repair == RepairOperation(
-        operation="cruxible.block.sync",
-        arguments={"paths": [refused.items[0].path], "detach": True},
+        operation="cruxible.block.detach",
+        arguments={"paths": [refused.items[0].path]},
     )
 
     detached = sync_projection_blocks(

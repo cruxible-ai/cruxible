@@ -1,4 +1,8 @@
-"""Transfer locally built provider wheels to any selected daemon through its CAS."""
+"""Transfer locally built provider wheels to any selected daemon through its CAS.
+
+An operator job, so it lives with the CLI rather than the SDK: `provider install
+WHEEL --lock FILE` reads the paths here and the daemon receives only CAS references.
+"""
 
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -13,7 +17,7 @@ if TYPE_CHECKING:
     from cruxible_client.transport.http import CruxibleClient
 
 
-def install_provider_package(
+def install_provider_wheel(
     client: "CruxibleClient",
     instance_id: str,
     *,
@@ -23,6 +27,7 @@ def install_provider_package(
     extras: tuple[str, ...] = (),
     control_domain: str = "operator",
     reverify: bool = False,
+    at: str | None = None,
 ) -> ProviderInstallResult:
     """Paths are consumed here on the client; the daemon receives only CAS references."""
 
@@ -44,5 +49,6 @@ def install_provider_package(
             extras=tuple(sorted(set(extras))),
             control_domain=control_domain,
             reverify=reverify,
+            at=at,
         ),
     )

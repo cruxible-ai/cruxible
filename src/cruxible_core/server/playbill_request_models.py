@@ -83,6 +83,13 @@ class LedgerMirrorRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
+class LedgerMirrorClearRequest(_StrictPlaybillRequest):
+    """Stop publishing to the bound mirror. Commits by default; preview with dry_run."""
+
+    dry_run: DryRun = None
+    at: PreviewAt = None
+
+
 class LedgerPublishRequest(_StrictPlaybillRequest):
     """Wait at most this many seconds for the configured mirror to acknowledge."""
 
@@ -300,11 +307,16 @@ class NextRequest(_StrictPlaybillRequest):
 
 class CurationListRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-curation-list-request-v1"] = "playbill-curation-list-request-v1"
-    evaluation_time: datetime
     access_profile: dict[str, Any]
-    workspace_observation: dict[str, Any] | None = None
     limit: int = Field(default=CURATION_LIST_DEFAULT_LIMIT, ge=1, le=CURATION_LIST_MAX_LIMIT)
     cursor: str | None = Field(default=None, max_length=4096)
+
+
+class CurationObserveRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-curation-observe-request-v1"] = "playbill-curation-observe-request-v1"
+    workspace_observation: dict[str, Any]
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class AuditRequest(_StrictPlaybillRequest):
@@ -346,8 +358,9 @@ class CurationAcceptFixedRequest(_StrictPlaybillRequest):
     item_id: str
     expected_latest_event_digest: str
     reason: str
-    accepted_proposal_id: str
-    accepted_changeset_digest: str
+    accepted_proposal_id: str | None = None
+    accepted_changeset_digest: str | None = None
+    accepted_generation: int | None = None
     attribution_refs: tuple[str, ...] = ()
     dry_run: DryRun = None
     at: PreviewAt = None
@@ -358,8 +371,21 @@ class CurationSuppressRequest(_StrictPlaybillRequest):
     item_id: str
     expected_latest_event_digest: str
     reason: str
-    scope: Literal["item", "pattern", "instance"]
+    scope: Literal["item", "lineage"]
     until_generation: int | None = None
+    attribution_refs: tuple[str, ...] = ()
+    dry_run: DryRun = None
+    at: PreviewAt = None
+
+
+class CurationUnsuppressRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-curation-unsuppress-request-v1"] = (
+        "playbill-curation-unsuppress-request-v1"
+    )
+    item_id: str
+    expected_latest_event_digest: str
+    reason: str
+    suppression_event_id: str | None = None
     attribution_refs: tuple[str, ...] = ()
     dry_run: DryRun = None
     at: PreviewAt = None
@@ -395,7 +421,5 @@ class FloorDeltaRequest(_StrictPlaybillRequest):
 
 class FloorExportRequest(_StrictPlaybillRequest):
     at: AcceptedCoordinate | None = None
-    format_version: Literal[2, 5] = 5
-    # Opt-in parts of a v5 floor; "discovery" adds the discovery cards.
+    # Opt-in parts of the floor; "discovery" adds the discovery cards.
     include: tuple[FloorExportPart, ...] = ()
-    review_notes_oid: str | None = None

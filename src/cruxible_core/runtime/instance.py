@@ -137,6 +137,7 @@ from cruxible_core.ledger.checkpoints import (
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.ledger.ledger_mirror import (
     LedgerMirrorStateV1,
+    clear_mirror_state,
     mirror_credential_environment,
     mirror_lock,
     read_mirror_state,
@@ -351,7 +352,6 @@ class PlaybillInstance:
         # Immutable-coordinate exports survive head movement; keys include their
         # review-context snapshot and access profile. Bounded by the floor service.
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
-        self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         # The last export's per-Subject current/ renders, so the next export at a
         # later coordinate re-renders only what the change records touched.
         self.floor_current_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
@@ -959,6 +959,32 @@ class PlaybillInstance:
                 confirm_head(self._ledger.read_main())
             self._rewrite_descriptor(mirror_url=validated)
         return self.publish_ledger_mirror()
+
+    def clear_ledger_mirror(
+        self, *, confirm_head: Callable[[str], None] | None = None
+    ) -> str | None:
+        """Unbind the mirror so nothing more is published, returning the URL it had.
+
+        What was already sent stays on the remote: clearing stops future
+        publication and forgets the last attempt, it calls nothing back. Clearing
+        an instance with no mirror is a no-op that returns None.
+        """
+
+        self.require_writable()
+        previous = self._persisted_descriptor().mirror_url
+        if previous is None or is_previewing():
+            return previous
+        with self._ledger.activation_lock():
+            if confirm_head is not None:
+                confirm_head(self._ledger.read_main())
+            # The state lock orders this against a publisher deciding whether
+            # the descriptor still names the remote it is about to push to.
+            with mirror_lock(self.root):
+                self._rewrite_descriptor(mirror_url=None)
+                clear_mirror_state(self.root)
+        with self._mirror_condition:
+            self._mirror_condition.notify_all()
+        return previous
 
     def ledger_mirror_state(self) -> LedgerMirrorStateV1 | None:
         """Report acknowledgement and local ref lag, including note-only changes."""

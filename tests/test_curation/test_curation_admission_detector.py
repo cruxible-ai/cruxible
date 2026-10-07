@@ -14,15 +14,14 @@ from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_t
 from cruxible_client.contracts.claims import LiteralClaimObject, parse_claim, render_claim
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.curation.curation_detectors import _attempt_subject_from_path
-from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
     service_list_playbill_curation,
 )
-from cruxible_core.service.discovery.next import NextWorkspaceObservation
 from tests.core_support._claim_authoring_support import service_propose_playbill_claim
 from tests.core_support._knowledge_loop_support import TIMESTAMP, authoring, seed_claims
+from tests.support.curation import detect_and_list
 
 NOW = datetime(2026, 8, 26, 17, tzinfo=UTC)
 
@@ -117,19 +116,12 @@ def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
         instance._ledger.object_exists(item.admission.candidate_commit_oid) for item in refused
     )
 
-    result = service_list_playbill_curation(
+    result = detect_and_list(
         instance,
         request=PlaybillCurationListRequestV1(
-            evaluation_time=NOW,
             access_profile=CoverageAccessProfile(profile_id="test-curation"),
         ),
-        actor_context=GovernedActorContext(
-            actor_type="human_user",
-            actor_id="curator",
-            org_id="org-test",
-            operation_id="op-list",
-            timestamp=NOW,
-        ),
+        evaluation_time=NOW,
     )
 
     clusters = [
@@ -179,19 +171,12 @@ def test_claim_type_refusals_are_labeled_schema_side(tmp_path: Path) -> None:
             "cruxible.claim_type.freshness_horizon_invalid"
         )
 
-    result = service_list_playbill_curation(
+    result = detect_and_list(
         instance,
         request=PlaybillCurationListRequestV1(
-            evaluation_time=NOW,
             access_profile=CoverageAccessProfile(profile_id="test-curation"),
         ),
-        actor_context=GovernedActorContext(
-            actor_type="human_user",
-            actor_id="curator",
-            org_id="org-test",
-            operation_id="op-schema-list",
-            timestamp=NOW,
-        ),
+        evaluation_time=NOW,
     )
 
     schema = next(
@@ -216,33 +201,21 @@ def test_restricted_curation_profile_short_circuits_without_count_leakage(
         "cruxible_core.service.discovery.curation.run_curation_detectors",
         must_not_run,
     )
+    # The list is a pure read: it never reaches the detectors at all.
     result = service_list_playbill_curation(
         instance,
         request=PlaybillCurationListRequestV1(
-            evaluation_time=NOW,
             access_profile=CoverageAccessProfile(
                 profile_id="public-only",
                 permitted_access_classes=("public",),
                 disclose_restricted_existence=False,
             ),
-            workspace_observation=NextWorkspaceObservation(source_observations=()),
-        ),
-        actor_context=GovernedActorContext(
-            actor_type="human_user",
-            actor_id="curator",
-            org_id="org-test",
-            operation_id="op-restricted-list",
-            timestamp=NOW,
         ),
     )
 
     assert result.items == ()
     assert result.detector_coverage == ()
-    assert result.observation_coverage.model_dump(mode="json") == {
-        "tag": "playbill-curation-observation-coverage-v1",
-        "source_count": 0,
-        "observed_block_count": 0,
-        "omitted_source_count": 0,
-        "omissions": [],
-    }
+    assert result.inactive_detectors == ()
+    assert result.observation_coverage is None
+    assert result.detection.state == "never_run"
     assert instance.review_operational_store().events() == ()

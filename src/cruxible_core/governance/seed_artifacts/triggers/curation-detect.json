@@ -1,0 +1,19 @@
+{
+  "artifact_format": "playbill-trigger-v1",
+  "identity": {
+    "kind": "Trigger",
+    "name": "curation-detect"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "pins": [],
+  "schedule": {
+    "kind": "generation_accepted"
+  },
+  "target": {
+    "action": "curation.detect",
+    "kind": "action"
+  }
+}

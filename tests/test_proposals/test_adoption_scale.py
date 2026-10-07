@@ -36,7 +36,7 @@ def test_the_miniature_fixture_has_its_declared_composition(tmp_path: Path) -> N
         "documents/": MINIATURE.documents,
         "query-definitions/": MINIATURE.query_definitions,
         "capture-contracts/": 1,
-        "triggers/": 3,
+        "triggers/": 4,
         "claims/": MINIATURE.seed_claims + MINIATURE.generations * MINIATURE.claims_per_generation,
     }
     for prefix, expected in kinds.items():
@@ -54,6 +54,11 @@ def test_the_miniature_fixture_has_its_declared_composition(tmp_path: Path) -> N
         )
         for trigger in triggers
     } == {
+        "curation-detect": (
+            "live",
+            {"kind": "action", "action": "curation.detect"},
+            {"kind": "generation_accepted"},
+        ),
         "evidence-sweep": (
             "live",
             {"kind": "action", "action": "evidence.sweep"},

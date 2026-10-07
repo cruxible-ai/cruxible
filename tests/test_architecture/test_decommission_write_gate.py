@@ -84,6 +84,7 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             # instance accepts neither. Publishing itself stays open: it copies
             # state that is already accepted, which is exactly the observation
             # plane a dead instance keeps serving.
+            "PlaybillInstance.clear_ledger_mirror",
             "PlaybillInstance.set_ledger_mirror",
         }
     ),
@@ -130,7 +131,9 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
         {
             "service_overrule_playbill_curation",
             "service_suppress_playbill_curation",
+            "service_unsuppress_playbill_curation",
             "service_accept_fixed_playbill_curation",
+            "service_observe_playbill_curation_blocks",
         }
     ),
     "cruxible_core/service/procedures/measurements.py": frozenset(

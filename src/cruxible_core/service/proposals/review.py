@@ -639,7 +639,7 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
                 f"  git notes --ref={NOTE_REFS['evaluation']} show cruxible-ledger/proposals/{key}",
                 f"  git notes --ref={NOTE_REFS['approval']} show cruxible-ledger/proposals/{key}",
                 "",
-                "From a clone of the ledger mirror instead (cruxible ledger clone-url),",
+                "From a clone of the ledger mirror instead (its URL is in cruxible orient),",
                 "fetch the notes once and read them off the proposal branch:",
                 "  git fetch origin '+refs/notes/*:refs/notes/*'",
                 f"  git diff origin/main...origin/proposals/{key}",

@@ -223,6 +223,13 @@ INTERNAL_ACTIONS: Final[Mapping[str, InternalActionSpec]] = MappingProxyType(
                 consumer="next",
                 part="prediction",
             ),
+            InternalActionSpec(
+                name="curation.detect",
+                input=NoTriggerInput(),
+                effect="findings",
+                consumer="next",
+                part="curation",
+            ),
         )
     }
 )

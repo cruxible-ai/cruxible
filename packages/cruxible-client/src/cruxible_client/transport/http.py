@@ -368,8 +368,16 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.HostWorkspaceAttachResult)
 
-    def host_workspace_registration(self, instance_id: str) -> contracts.HostWorkspaceRegistration:
-        response = self._client.get(f"/api/v1/{instance_id}/workspace-registration")
+    def host_workspace_registration(
+        self, instance_id: str, *, workspace_root: str | None = None
+    ) -> contracts.HostWorkspaceRegistration:
+        """The daemon's workspace registration; naming ``workspace_root`` also
+        answers whether the daemon delivers that workspace's floor."""
+
+        response = self._client.get(
+            f"/api/v1/{instance_id}/workspace-registration",
+            params={} if workspace_root is None else {"workspace_root": workspace_root},
+        )
         return self._parse_model(response, contracts.HostWorkspaceRegistration)
 
     def set_floor_delivery(
@@ -568,6 +576,17 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.LedgerMirror)
 
+    def clear_ledger_mirror(
+        self, instance_id: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> contracts.LedgerMirrorCleared:
+        """Unbind the mirror so nothing more is published; what was sent stays sent."""
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/ledger/mirror/clear",
+            json=_change_control(dry_run, at),
+        )
+        return self._parse_model(response, contracts.LedgerMirrorCleared)
+
     def publish_ledger(
         self,
         instance_id: str,
@@ -582,10 +601,6 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/ledger/publish",
             json={"timeout": timeout, **_change_control(dry_run, at)},
         )
-        return self._parse_model(response, contracts.LedgerMirror)
-
-    def get_ledger_mirror(self, instance_id: str) -> contracts.LedgerMirror:
-        response = self._client.get(f"/api/v1/{instance_id}/ledger/mirror")
         return self._parse_model(response, contracts.LedgerMirror)
 
     def list_provider_packages(self, instance_id: str) -> ProviderCatalog:
@@ -1599,20 +1614,14 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        evaluation_time: str,
         access_profile: Mapping[str, Any],
-        workspace_observation: Mapping[str, Any] | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> contracts.CurationListResult:
         """One page of the curation queue; follow ``next_cursor`` while ``truncated``."""
         body: dict[str, Any] = {
             "tag": "playbill-curation-list-request-v1",
-            "evaluation_time": evaluation_time,
             "access_profile": dict(access_profile),
-            "workspace_observation": (
-                None if workspace_observation is None else dict(workspace_observation)
-            ),
         }
         if limit is not None:
             body["limit"] = limit
@@ -1623,6 +1632,25 @@ class CruxibleClient:
             json=body,
         )
         return self._parse_model(response, contracts.CurationListResult)
+
+    def observe_curation(
+        self,
+        instance_id: str,
+        *,
+        workspace_observation: Mapping[str, Any],
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> contracts.CurationObserveResult:
+        """Record one workspace scan's declared blocks for block-churn detection."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/curation/observe",
+            json={
+                "tag": "playbill-curation-observe-request-v1",
+                "workspace_observation": dict(workspace_observation),
+                **_change_control(dry_run, at),
+            },
+        )
+        return self._parse_model(response, contracts.CurationObserveResult)
 
     def audit(
         self,
@@ -1703,12 +1731,15 @@ class CruxibleClient:
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        accepted_proposal_id: str,
-        accepted_changeset_digest: str,
+        accepted_proposal_id: str | None = None,
+        accepted_changeset_digest: str | None = None,
+        accepted_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
         dry_run: bool | None = None,
         at: str | None = None,
     ) -> contracts.CurationActionResult:
+        """Link an item to its fixing change, by proposal (optionally pinned to its
+        ChangeSet) or by accepted generation."""
         response = self._client.post(
             f"/api/v1/{instance_id}/curation/accept-fixed",
             json={
@@ -1718,6 +1749,7 @@ class CruxibleClient:
                 "reason": reason,
                 "accepted_proposal_id": accepted_proposal_id,
                 "accepted_changeset_digest": accepted_changeset_digest,
+                "accepted_generation": accepted_generation,
                 "attribution_refs": list(attribution_refs),
                 **_change_control(dry_run, at),
             },
@@ -1731,7 +1763,7 @@ class CruxibleClient:
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        scope: Literal["item", "pattern", "instance"],
+        scope: Literal["item", "lineage"],
         until_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
         dry_run: bool | None = None,
@@ -1746,6 +1778,33 @@ class CruxibleClient:
                 "reason": reason,
                 "scope": scope,
                 "until_generation": until_generation,
+                "attribution_refs": list(attribution_refs),
+                **_change_control(dry_run, at),
+            },
+        )
+        return self._parse_model(response, contracts.CurationActionResult)
+
+    def unsuppress_curation(
+        self,
+        instance_id: str,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        suppression_event_id: str | None = None,
+        attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> contracts.CurationActionResult:
+        """Lift one suppression on an item (the only one, unless named)."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/curation/unsuppress",
+            json={
+                "tag": "playbill-curation-unsuppress-request-v1",
+                "item_id": item_id,
+                "expected_latest_event_digest": expected_latest_event_digest,
+                "reason": reason,
+                "suppression_event_id": suppression_event_id,
                 "attribution_refs": list(attribution_refs),
                 **_change_control(dry_run, at),
             },
@@ -1812,17 +1871,13 @@ class CruxibleClient:
         instance_id: str,
         *,
         at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
-        format_version: Literal[2, 5] = 5,
         include: Sequence[contracts.FloorExportPart] = (),
-        review_notes_oid: str | None = None,
     ) -> contracts.FloorExport:
         response = self._client.post(
             f"/api/v1/{instance_id}/floor/export",
             json={
                 "at": self._coordinate_body(at),
-                "format_version": format_version,
                 **({"include": sorted(set(include))} if include else {}),
-                "review_notes_oid": review_notes_oid,
             },
         )
         return self._parse_model(response, contracts.FloorExport)

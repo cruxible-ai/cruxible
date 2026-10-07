@@ -83,6 +83,16 @@ class FakeRegistry:
             )
             return httpx.Response(401, headers={"www-authenticate": challenge})
         parts = url.path.split("/")
+        if parts[-2:] == ["tags", "list"]:
+            repository = "/".join(parts[2:-2])
+            tags = sorted(
+                {
+                    tag
+                    for (repo, tag) in self.manifests
+                    if repo == repository and not tag.startswith("sha256:")
+                }
+            )
+            return httpx.Response(200, json={"name": repository, "tags": tags})
         # /v2/<repo...>/<kind>/<ref>
         kind_index = max(
             index for index, part in enumerate(parts) if part in {"blobs", "manifests"}
@@ -444,3 +454,39 @@ def test_a_negative_size_cannot_offset_an_oversized_blob_in_the_budget(tmp_path:
         with pytest.raises(ValueError, match="negative"):
             client.pull(parse_reference("registry.test/t/n:1"))
     assert registry.blob_gets == 0
+
+
+def test_kit_status_reports_the_latest_release_of_registry_kits_only(tmp_path: Path) -> None:
+    from cruxible_client.contracts.kits import InstalledKit, KitStatus
+    from cruxible_client.kits import check_kit_updates
+
+    registry = FakeRegistry()
+    bundle = _bundle()
+    with registry.client(tmp_path / "cache") as client:
+        for tag in ("1.0.0", "1.2.0", "1.10.0", "latest"):
+            ref = parse_reference(f"registry.test/cruxible-ai/kits/acme:{tag}")
+            digest = client.push(pack_artifact(KIT_ARTIFACT, bundle), ref)
+        installed = KitStatus(
+            kits=(
+                InstalledKit(
+                    kit_id="acme",
+                    version="1.0.0",
+                    content_digest="sha256:" + "1" * 64,
+                    source=f"registry.test/cruxible-ai/kits/acme@{digest}",
+                ),
+                InstalledKit(
+                    kit_id="local",
+                    version="1.0.0",
+                    content_digest="sha256:" + "2" * 64,
+                    source="local-1.0.0",
+                ),
+            )
+        )
+        checked = check_kit_updates(installed, registry=client)
+        offline = check_kit_updates(installed, offline=True, registry=client)
+
+    assert [(kit.update_check, kit.latest_available) for kit in checked.kits] == [
+        ("checked", "1.10.0"),
+        ("local_source", None),
+    ]
+    assert [kit.update_check for kit in offline.kits] == ["offline", "local_source"]

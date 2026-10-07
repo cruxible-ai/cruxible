@@ -67,7 +67,7 @@ from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.workspace_layout import FLOOR_PATH, ensure_workspace_directory
@@ -427,35 +427,6 @@ def _logical_source(plane: str, identity: str) -> LogicalSourceIdentity | None:
         return None
 
 
-def load_coverage_config(root: Path) -> CoverageWorkspaceConfig:
-    """Read `.cruxible/coverage.json` from a workspace root."""
-
-    path = ensure_workspace_directory(root.expanduser().resolve()) / CONFIG_RELATIVE_PATH
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise CoverageError(f"coverage configuration could not be read: {path}") from exc
-    except json.JSONDecodeError as exc:
-        raise CoverageError(f"coverage configuration is not valid JSON: {path}") from exc
-    if not isinstance(payload, dict):
-        raise CoverageError(f"coverage configuration must be one mapping: {path}")
-    try:
-        if payload.get("tag", "playbill-coverage-workspace-config-v1") == (
-            "playbill-coverage-workspace-config-v1"
-        ):
-            return CoverageWorkspaceConfigV1.model_validate(payload)
-        return CoverageWorkspaceConfigV2.model_validate(payload)
-    except ValidationError as exc:
-        if any(
-            item.get("type") == "union_tag_invalid" and tuple(item.get("loc", ()))[:1] == ("rules",)
-            for item in exc.errors(include_url=False)
-        ):
-            raise CoverageRuleTagError("coverage configuration rule tag is not recognized") from exc
-        raise CoverageError(f"coverage configuration is not valid: {exc}") from exc
-    except ValueError as exc:
-        raise CoverageError(f"coverage configuration is not valid: {exc}") from exc
-
-
 # -- the harness event model ------------------------------------------------
 
 
@@ -799,14 +770,18 @@ def coverage_middleware(
     *,
     root: Path,
     resolve: ResolveCoverage,
-    config: CoverageWorkspaceConfig | None = None,
+    config: CoverageWorkspaceConfig,
     resolve_floor_generations: ResolveFloorGenerations | None = None,
 ) -> CoverageMiddlewareV1:
-    """Build a middleware over a workspace, loading its configuration if needed."""
+    """Build a middleware over a workspace from the harness's own configuration.
+
+    The harness that owns its tool executor passes its path rules here; nothing
+    reads them from the workspace's ``.cruxible/coverage.json``.
+    """
 
     return CoverageMiddlewareV1(
         root=root,
-        config=config if config is not None else load_coverage_config(root),
+        config=config,
         resolve=resolve,
         resolve_floor_generations=resolve_floor_generations,
     )
@@ -835,5 +810,4 @@ __all__ = [
     "ResolveFloorGenerations",
     "coverage_middleware",
     "grep_event",
-    "load_coverage_config",
 ]
