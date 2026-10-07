@@ -30,7 +30,7 @@ from cruxible_client.contracts.procedures.source_compiler import (
     compile_source,
 )
 from cruxible_client.contracts.procedures.source_program import (
-    ProcedureSource,
+    ProcedureSourceProgram,
     SourceBinding,
     SourceClaimType,
     SourceDiagnostic,
@@ -271,7 +271,7 @@ def resolve_source(
         )
         kinds.update(claim_type.allowed_subject_kinds)
         kinds.update(claim_type.allowed_object_subject_kinds)
-    program = ProcedureSource(
+    program = ProcedureSourceProgram(
         rules=rules,
         text=request.text,
         # Retain a portable source coordinate. The caller's filesystem location

@@ -47,7 +47,7 @@ from cruxible_client.contracts.procedures.models import (
     derived_terminal_capability,
 )
 from cruxible_client.contracts.procedures.source_program import (
-    ProcedureSource,
+    ProcedureSourceProgram,
     SourceBinding,
     SourceMapEntry,
     SourceSpan,
@@ -324,7 +324,7 @@ class ProcedurePreview(BaseModel):
     budget: ProcedureBudget
     hard_caps: ProcedureHardCaps
     errors: tuple[CompositionDiagnostic, ...] = ()
-    source: ProcedureSource | None = None
+    source: ProcedureSourceProgram | None = None
     source_map: tuple[SourceMapEntry, ...] = ()
     state_dependencies: tuple[ProcedureStateDependency, ...] = ()
     binding_requirements: tuple[ProcedureBindingRequirement, ...] = ()

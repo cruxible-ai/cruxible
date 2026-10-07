@@ -20,7 +20,7 @@ from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.measurements import (
     ProcedureMeasurementDeclaration,
 )
-from cruxible_client.contracts.procedures.source_program import ProcedureSource
+from cruxible_client.contracts.procedures.source_program import ProcedureSourceProgram
 from cruxible_client.contracts.query.grammar import QueryBudgets
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -818,7 +818,7 @@ class ProcedureDefinition(_StrictProcedureModel):
     hard_caps: ProcedureHardCaps
     terminal_capability: Literal[1, 2, 3]
     annotations: object = Field(default_factory=dict)
-    source: ProcedureSource | None = None
+    source: ProcedureSourceProgram | None = None
 
     @field_validator("name")
     @classmethod

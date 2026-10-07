@@ -3529,8 +3529,11 @@ class Cruxible:
 
         Declare owned input/output schemas in ``definition.contracts`` and use
         ``carried_contract`` references in its graph. ``accepted`` references
-        resolve at the intent base; ``slot`` references remain deferred. Exact
-        pins belong to accepted graphs and are never silently converted into
+        resolve at the intent base. A Provider position left as a ``slot``
+        makes the definition a Blueprint (``BlueprintInput``); a Procedure binds
+        every slot, by instantiating a Blueprint (``BlueprintInstanceInput``) or
+        by binding each declared slot of a ``ProcedureSource``. Exact pins
+        belong to accepted graphs and are never silently converted into
         references to a potentially different version.
 
         Activation, retirement, and the optional acquisition-policy name are

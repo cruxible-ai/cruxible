@@ -27,7 +27,7 @@ from cruxible_client.contracts.procedures.models import (
     derived_terminal_capability,
 )
 from cruxible_client.contracts.procedures.source_program import (
-    ProcedureSource,
+    ProcedureSourceProgram,
     SourceClaimType,
     SourceContract,
     SourceDiagnostic,
@@ -287,7 +287,9 @@ def _assignable(actual: ValueType, expected: ValueType) -> bool:
 
 
 class _Compiler:
-    def __init__(self, program: ProcedureSource, input: SourceContract, output: SourceContract):
+    def __init__(
+        self, program: ProcedureSourceProgram, input: SourceContract, output: SourceContract
+    ):
         self.program = program
         self.input, self.output = input, output
         self.nodes: list[dict[str, Any]] = []
@@ -1668,7 +1670,7 @@ class _Compiler:
 
 
 def _compile_source(
-    program: ProcedureSource,
+    program: ProcedureSourceProgram,
     *,
     name: str,
     input: SourceContract,
@@ -1789,7 +1791,7 @@ def _compile_source(
 
 
 def compile_source(
-    program: ProcedureSource,
+    program: ProcedureSourceProgram,
     *,
     name: str,
     input: SourceContract,

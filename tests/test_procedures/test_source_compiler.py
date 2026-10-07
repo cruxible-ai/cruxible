@@ -17,7 +17,10 @@ from cruxible_client.contracts.procedures.contract_schema import ContractSchema,
 from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.source_compiler import SourceCompileError, compile_source
-from cruxible_client.contracts.procedures.source_program import ProcedureSource, SourceContract
+from cruxible_client.contracts.procedures.source_program import (
+    ProcedureSourceProgram,
+    SourceContract,
+)
 from cruxible_core.procedures.execution import ProcedureExecutor
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
@@ -49,7 +52,7 @@ OUTPUT = SourceContract(
 
 def compile(text, *, output=OUTPUT, bindings=None):
     return compile_source(
-        ProcedureSource(
+        ProcedureSourceProgram(
             text=textwrap.dedent(text),
             filename="example.py",
             first_line=40,
@@ -214,7 +217,7 @@ def test_graph_six_checks_nested_runtime_values(tmp_path):
     )
     input = SourceContract(name="input", schema=schema)
     compiled = compile_source(
-        ProcedureSource(
+        ProcedureSourceProgram(
             text="def example(request):\n    return Output.value(value='ok')\n",
             filename="example.py",
             function="example",
@@ -335,7 +338,7 @@ def test_capture_terminal_has_declared_result_and_requires_material_schema():
             ),
         ),
     )
-    program = ProcedureSource(
+    program = ProcedureSourceProgram(
         text=textwrap.dedent("""
         def example(request, bindings):
             observation = source(bindings.fetch,
@@ -385,7 +388,7 @@ def test_field_read_is_an_admitted_selection_not_a_whole_world_query(tmp_path):
     from cruxible_client.contracts.query.grammar import QueryBudgets
     from cruxible_core.procedures.execution import StateTapReadResultV1
 
-    program = ProcedureSource(
+    program = ProcedureSourceProgram(
         text=textwrap.dedent("""
         def example(request, world):
             asset = world.security.asset['app']
@@ -529,7 +532,7 @@ def test_checked_source_refuses_silent_mistakes_without_rewriting_history(body, 
             fields={"priority": PropertySchema(type="string", enum=["routine", "urgent"])}
         ),
     )
-    source = ProcedureSource(
+    source = ProcedureSourceProgram(
         text="def example(request):\n    " + body + "\n",
         filename="checks.py",
         first_line=90,
@@ -555,7 +558,7 @@ def test_checked_source_refuses_silent_mistakes_without_rewriting_history(body, 
 
 
 def test_checked_source_has_explicit_returns_and_keeps_branch_local_bindings(tmp_path):
-    source = ProcedureSource(
+    source = ProcedureSourceProgram(
         rules="cruxible.procedure-source.v2",
         text="""def example(request):
     if request.choice:

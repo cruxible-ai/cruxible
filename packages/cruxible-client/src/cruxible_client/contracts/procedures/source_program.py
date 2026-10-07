@@ -101,7 +101,7 @@ class SourceClaimType(_Closed):
     _versions = field_validator("version")(lambda value: ArtifactDigest.from_tagged(value).tagged)
 
 
-class ProcedureSource(_Closed):
+class ProcedureSourceProgram(_Closed):
     """Source plus explicit data dependencies; no closures or executable imports."""
 
     rules: Literal["cruxible.procedure-source.v1", "cruxible.procedure-source.v2"] = (

@@ -307,7 +307,7 @@ def test_source_with_an_open_slot_compiles_to_a_blueprint_and_instantiates_by_re
     from cruxible_client.contracts.procedures.models import iter_pin_bindings
     from cruxible_client.contracts.procedures.source_compiler import compile_source
     from cruxible_client.contracts.procedures.source_program import (
-        ProcedureSource,
+        ProcedureSourceProgram,
         SourceProviderBinding,
         SourceSlotBinding,
     )
@@ -325,7 +325,7 @@ def test_source_with_an_open_slot_compiles_to_a_blueprint_and_instantiates_by_re
         effect_class=registration.effect_class,
         operation=read_provider_operation_contract(registration.interface_bytes_hex),
     )
-    program = ProcedureSource(
+    program = ProcedureSourceProgram(
         text=textwrap.dedent("""
         def example(request, bindings):
             looked = call(bindings.lookup, input=bindings.lookup.input())
@@ -435,6 +435,9 @@ def test_procedure_source_declares_slots_and_builds_a_blueprint_until_each_is_bo
         interface_digest="sha256:" + "1" * 64,
         implementation_digest="sha256:" + "2" * 64,
     ).model_copy(update={"coordinate": coordinate})
+    # S3 review a F-005: a slot binds only a Provider serving the interface it declares.
+    with pytest.raises(ValueError, match="declares interface"):
+        source.bind(fetch=binding.model_copy(update={"interface": "totally.other.interface"}))
     bound = source.bind(fetch=binding)
     assert not bound.is_blueprint
     world = SimpleNamespace(_playbill=SimpleNamespace(_assert_coordinate=lambda value: None))
