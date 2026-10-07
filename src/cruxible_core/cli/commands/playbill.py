@@ -3247,18 +3247,6 @@ def get_authoring_intent(intent_id: str, output_json: bool) -> None:
     _emit_json(result.model_dump(mode="json"))
 
 
-@authoring_group.command("resume")
-@click.argument("intent_id")
-@json_option
-@handle_errors
-def resume_authoring_intent(intent_id: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.resume_authoring_intent(instance_id, intent_id),
-        command_name="cruxible authoring resume",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
 @authoring_group.command("list")
 @json_option
 @handle_errors
@@ -3378,8 +3366,8 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: 
         ).intent
         if intent.get("base_coordinate") != result.certificate.get("accepted_coordinate"):
             click.echo(
-                f"Hint: run cruxible authoring rebase {intent_id}; resume does not advance "
-                "a stale intent coordinate.",
+                f"Hint: run cruxible authoring rebase {intent_id}; a stale intent "
+                "coordinate advances only through rebase.",
                 err=True,
             )
 

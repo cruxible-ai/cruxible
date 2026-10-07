@@ -1251,17 +1251,6 @@ def handle_playbill_authoring_get(
     )
 
 
-def handle_playbill_authoring_resume(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord:
-    return _dispatch_remote_or_local(
-        lambda client: client.resume_authoring_intent(instance_id, intent_id),
-        lambda: playbill_api.playbill_authoring_resume(instance_id, intent_id),
-        operation_name="cruxible_authoring_resume",
-    )
-
-
 def handle_playbill_authoring_list_pending(
     instance_id: str,
 ) -> contracts.AuthoringIntentListRecord:

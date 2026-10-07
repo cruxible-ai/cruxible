@@ -571,9 +571,7 @@ def test_eighty_members_of_every_kind_become_exactly_one_generation(tmp_path: Pa
         assert subject_path(SUBJECT_KIND, subject.subject.subject_id) in tree
     for predicate in predicates:
         assert claim_type_path(predicate) in tree
-    for item in coordinator.resume(
-        intent.intent_id, actor=actor
-    ).intent.change_set_claim_identities:
+    for item in coordinator.get(intent.intent_id, actor=actor).intent.change_set_claim_identities:
         assert claim_path(item.claim_id) in tree
     for retired_id in seeded[:2]:
         retired = parse_claim(tree[claim_path(retired_id)], path=claim_path(retired_id))

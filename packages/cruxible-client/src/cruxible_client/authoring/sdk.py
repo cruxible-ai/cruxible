@@ -2628,11 +2628,11 @@ class Cruxible:
 
         Restores the daemon's latest revision, preflight and observed proposal.
         Python call-site locations are process-local and are not reconstructed.
-        Review, approval, acceptance and workspace refresh remain explicit.
+        Review, approval and activation remain explicit.
 
         Next: ``intent.status()``, then ``intent.submit()`` if it was never submitted.
         """
-        raw = self._client.resume_authoring_intent(self._instance_id, intent_id).intent
+        raw = self._client.get_authoring_intent(self._instance_id, intent_id).intent
         preflight = raw.get("last_preflight")
         return Intent(
             self,

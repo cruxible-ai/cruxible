@@ -5721,21 +5721,6 @@ get_authoring_intent(instance_id: str, intent_id: str) -> contracts.AuthoringInt
 
 HTTP: `GET f'/api/v1/{instance_id}/authoring/intents/{intent_id}'`.
 
-<a id="api-cruxibleclient-resume-authoring-intent"></a>
-
-### `CruxibleClient.resume_authoring_intent`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-resume_authoring_intent(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/authoring/intents/{intent_id}/resume'`.
-
 <a id="api-cruxibleclient-list-pending-authoring-intents"></a>
 
 ### `CruxibleClient.list_pending_authoring_intents`

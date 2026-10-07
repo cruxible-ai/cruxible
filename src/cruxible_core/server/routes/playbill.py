@@ -816,19 +816,6 @@ def get_authoring_intent(
     return playbill_api.playbill_authoring_get(resolve_server_instance_id(instance_id), intent_id)
 
 
-@router.get(
-    "/{instance_id}/authoring/intents/{intent_id}/resume",
-    response_model=contracts.AuthoringIntentViewRecord,
-)
-def resume_authoring_intent(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord:
-    return playbill_api.playbill_authoring_resume(
-        resolve_server_instance_id(instance_id), intent_id
-    )
-
-
 @router.post(
     "/{instance_id}/authoring/intents/{intent_id}/rebase",
     response_model=contracts.AuthoringIntentViewRecord,

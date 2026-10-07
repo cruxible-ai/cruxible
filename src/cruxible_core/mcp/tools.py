@@ -717,17 +717,6 @@ def register_tools(
         return handlers.handle_playbill_authoring_get(require_instance_id(instance_id), intent_id)
 
     @_tool
-    def cruxible_authoring_resume(
-        instance_id: InstanceId = None,
-        *,
-        intent_id: str,
-    ) -> contracts.AuthoringIntentViewRecord:
-        """Resume one durable authoring continuation."""
-        return handlers.handle_playbill_authoring_resume(
-            require_instance_id(instance_id), intent_id
-        )
-
-    @_tool
     def cruxible_authoring_list_pending(
         instance_id: InstanceId = None,
     ) -> contracts.AuthoringIntentListRecord:

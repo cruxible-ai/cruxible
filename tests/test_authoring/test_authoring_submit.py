@@ -106,7 +106,7 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
     accepted = coordinator.status(intent.intent_id, actor=actor)
     assert accepted.state == "accepted"
     assert accepted.accepted_generation == activated.accepted_coordinate
-    assert coordinator.resume(intent.intent_id, actor=actor).intent.candidate_status == accepted
+    assert coordinator.get(intent.intent_id, actor=actor).intent.candidate_status == accepted
     assert coordinator.list_pending(actor=actor).intents == ()
 
 

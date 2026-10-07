@@ -618,7 +618,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "Print an authoring payload template.",
             ),
             "get": _command("playbill", "get_authoring_intent", "Read one authoring intent."),
-            "resume": _command("playbill", "resume_authoring_intent", "Resume durable authoring."),
             "list": _command(
                 "playbill",
                 "list_pending_authoring_intents",

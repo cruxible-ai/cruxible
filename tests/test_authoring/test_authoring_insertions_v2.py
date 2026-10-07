@@ -274,7 +274,7 @@ def _submitted_publication(
             proposal_id=submitted.status.proposal_id,
             candidate_digest=submitted.status.candidate_digest,
         )
-    resumed = coordinator.resume(intent.intent_id, actor=actor).intent
+    resumed = coordinator.get(intent.intent_id, actor=actor).intent
     assert resumed.insertion_expectations == ()
     return instance, owner, coordinator, actor, intent.intent_id, preimage, clock
 
@@ -876,7 +876,7 @@ def test_abandon_is_idempotent_and_retains_one_terminal_tombstone(
     # one tombstone, and no second abandonment beside it.
     excluded = {"intent": {"candidate_status"}}
     assert retry.model_dump(exclude=excluded) == abandoned.model_dump(exclude=excluded)
-    resumed = coordinator.resume(intent_id, actor=actor).intent
+    resumed = coordinator.get(intent_id, actor=actor).intent
     assert resumed.insertion_expectation == abandoned.expectation
 
 
@@ -917,7 +917,7 @@ def test_a_terminal_publication_refuses_every_transition_but_its_one_exit(
     # And once it is out, it is out: nothing transitions off an abandoned
     # expectation, which is what the deleted assertion proved through
     # `prepare_publication`.
-    resumed = coordinator.resume(intent_id, actor=actor).intent
+    resumed = coordinator.get(intent_id, actor=actor).intent
     for state in ("expired", "claim_currency_changed", "bound"):
         with pytest.raises(PublicationTerminalStateRefused):
             mark_publication_terminal(resumed, abandoned, state=state, finalized_at=finalized_at)

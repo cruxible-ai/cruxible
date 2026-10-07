@@ -1478,16 +1478,6 @@ def playbill_authoring_get(
     return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_authoring_resume(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_authoring_resume", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.resume(intent_id, actor=actor)
-    return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
-
-
 def playbill_authoring_list_pending(
     instance_id: str,
 ) -> contracts.AuthoringIntentListRecord:

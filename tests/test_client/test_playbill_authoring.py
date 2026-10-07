@@ -199,7 +199,7 @@ def test_client_speaks_tagless_input_request_variants() -> None:
     assert all(json.loads(item.content)["input"] == input_value for item in captured)
 
 
-def test_client_get_resume_list_and_status_are_path_only_reads() -> None:
+def test_client_get_list_and_status_are_path_only_reads() -> None:
     captured: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -221,12 +221,11 @@ def test_client_get_resume_list_and_status_are_path_only_reads() -> None:
 
     client = _client(handler)
     client.get_authoring_intent("inst", INTENT_ID)
-    client.resume_authoring_intent("inst", INTENT_ID)
     client.list_pending_authoring_intents("inst")
     status = client.authoring_intent_status("inst", INTENT_ID)
 
     assert status.state == "draft"
-    assert [item.method for item in captured] == ["GET", "GET", "GET", "GET"]
+    assert [item.method for item in captured] == ["GET", "GET", "GET"]
     assert all(not item.content for item in captured)
 
 

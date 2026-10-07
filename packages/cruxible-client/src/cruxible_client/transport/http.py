@@ -1097,14 +1097,6 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/authoring/intents/{intent_id}")
         return self._parse_model(response, contracts.AuthoringIntentViewRecord)
 
-    def resume_authoring_intent(
-        self,
-        instance_id: str,
-        intent_id: str,
-    ) -> contracts.AuthoringIntentViewRecord:
-        response = self._client.get(f"/api/v1/{instance_id}/authoring/intents/{intent_id}/resume")
-        return self._parse_model(response, contracts.AuthoringIntentViewRecord)
-
     def list_pending_authoring_intents(
         self,
         instance_id: str,

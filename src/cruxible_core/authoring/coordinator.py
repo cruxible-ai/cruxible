@@ -405,9 +405,6 @@ class AuthoringIntentCoordinator:
         )
         return AuthoringIntentView(intent=intent)
 
-    def resume(self, intent_id: str, *, actor: AuthenticatedActor) -> AuthoringIntentView:
-        return self.get(intent_id, actor=actor)
-
     def list_pending(self, *, actor: AuthenticatedActor) -> AuthoringIntentList:
         reduced = tuple(
             self._refresh_protocol(intent, actor=actor)

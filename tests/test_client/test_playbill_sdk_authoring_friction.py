@@ -182,7 +182,7 @@ def test_resume_restores_server_revision_without_repeating_work(pb, monkeypatch,
     def forbidden(*args, **kwargs):
         pytest.fail("Reopening must not compile, prepare, submit, or query status again")
 
-    monkeypatch.setattr(pb._client, "resume_authoring_intent", resume, raising=False)
+    monkeypatch.setattr(pb._client, "get_authoring_intent", resume, raising=False)
     for name in (
         "compile_authoring",
         "preflight_authoring_intent",
