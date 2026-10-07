@@ -13,18 +13,23 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from .canonical import Sha256Value, canonical_digest
 from .change_control import DryRun, PreviewAt
 from .get_reads import GetCoordinate
 from .projection import AcceptedCoordinate
+from .provider_installation import ProviderWheelObject
 
 KIT_MANIFEST_FILE = "cruxible-kit.json"
 KIT_ARTIFACT_DIRECTORY = "artifacts"
+#: Where a kit directory (and a kit artifact's layer) holds its bundled provider
+#: packages: built wheels and uv locks, never source.
+KIT_PROVIDER_DIRECTORY = "providers"
 KIT_RECEIPT_DOCUMENT_KIND = "kit_receipt"
 
 # The definition families a kit may carry. Authority (governance, principals,
@@ -123,6 +128,122 @@ class KitArtifact(_Strict):
         return _digest(value)
 
 
+def _plain_filename(value: str) -> str:
+    if (
+        not value
+        or value in {".", ".."}
+        or "/" in value
+        or "\\" in value
+        or not value.isprintable()
+    ):
+        raise ValueError(f"{value!r} is not a plain file name")
+    return value
+
+
+class KitProviderFile(_Strict):
+    """One file of a bundled provider package, by name and exact sha256.
+
+    The sha256 is also its body-store digest: ``kit add`` reads the file from the
+    daemon's body store under it, where the CLI and MCP adapters stage it.
+    """
+
+    filename: str
+    sha256: str
+
+    @field_validator("filename")
+    @classmethod
+    def _filename(cls, value: str) -> str:
+        return _plain_filename(value)
+
+    @field_validator("sha256")
+    @classmethod
+    def _sha256(cls, value: str) -> str:
+        return _digest(value)
+
+
+class KitProvider(_Strict):
+    """One provider package a kit bundles: its built wheel and the uv lock it was
+    built with, plus the wheels of the first-party dependencies that lock names by
+    path. Registry dependencies are never bundled: the daemon resolves them by
+    name from its provider index (PyPI unless the operator configured one),
+    pinned by the lock's hashes.
+
+    ``kit add`` installs it before the kit's definitions, through the ordinary
+    transfer install, so the Provider and ProviderInterfaces it registers are the
+    ones the kit's Procedures and Blueprints pin.
+    """
+
+    provider_id: str
+    package: str
+    version: str
+    wheel: KitProviderFile
+    lock: KitProviderFile
+    dependencies: tuple[KitProviderFile, ...] = ()
+    #: The ProviderInterfaces the package registers.
+    interfaces: tuple[str, ...] = ()
+
+    @field_validator("wheel")
+    @classmethod
+    def _wheel(cls, value: KitProviderFile) -> KitProviderFile:
+        if not value.filename.endswith(".whl"):
+            raise ValueError("a bundled provider is a built wheel")
+        return value
+
+    @field_validator("dependencies")
+    @classmethod
+    def _dependencies(cls, value: tuple[KitProviderFile, ...]) -> tuple[KitProviderFile, ...]:
+        if any(not item.filename.endswith(".whl") for item in value):
+            raise ValueError("a bundled provider dependency is a built wheel")
+        _sorted_unique(tuple(item.filename for item in value), label="provider dependencies")
+        return value
+
+    @field_validator("interfaces")
+    @classmethod
+    def _interfaces(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _sorted_unique(value, label="provider interfaces")
+
+    def files(self) -> tuple[KitProviderFile, ...]:
+        return (self.wheel, self.lock, *self.dependencies)
+
+
+def _provider_files(providers: tuple[KitProvider, ...]) -> dict[str, str]:
+    """Every bundled file name -> its sha256; one name never holds two contents."""
+
+    files: dict[str, str] = {}
+    for provider in providers:
+        for item in provider.files():
+            if files.setdefault(item.filename, item.sha256) != item.sha256:
+                raise ValueError(f"bundled provider file {item.filename} names two contents")
+    return files
+
+
+class KitProviderFileBytes(_Strict):
+    filename: str
+    content_base64: str
+
+    @field_validator("filename")
+    @classmethod
+    def _filename(cls, value: str) -> str:
+        return _plain_filename(value)
+
+    @field_validator("content_base64")
+    @classmethod
+    def _content(cls, value: str) -> str:
+        try:
+            base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("bundled provider file content must be canonical base64") from exc
+        return value
+
+    @property
+    def content(self) -> bytes:
+        return base64.b64decode(self.content_base64, validate=True)
+
+    @classmethod
+    def of(cls, filename: str, content: bytes) -> KitProviderFileBytes:
+        return cls(filename=filename, content_base64=base64.b64encode(content).decode("ascii"))
+
+
 class KitProvenance(_Strict):
     """Where a release was built: claimed by the builder, not proven.
 
@@ -149,6 +270,8 @@ class KitManifest(_Strict):
     # Identity prefixes this kit defines, each ending in a dot (``dev.``).
     owns: tuple[str, ...]
     artifacts: tuple[KitArtifact, ...]
+    #: Provider packages the kit bundles (wheel and lock), sorted by provider id.
+    providers: tuple[KitProvider, ...] = Field(default=(), exclude_if=lambda value: not value)
     provenance: KitProvenance | None = None
 
     @field_validator("kit_id")
@@ -171,6 +294,18 @@ class KitManifest(_Strict):
     def _artifacts(cls, value: tuple[KitArtifact, ...]) -> tuple[KitArtifact, ...]:
         _sorted_unique(tuple(item.path for item in value), label="kit artifact paths")
         return value
+
+    @field_validator("providers")
+    @classmethod
+    def _providers(cls, value: tuple[KitProvider, ...]) -> tuple[KitProvider, ...]:
+        _sorted_unique(tuple(item.provider_id for item in value), label="kit providers")
+        _provider_files(value)
+        return value
+
+    def provider_files(self) -> dict[str, str]:
+        """Every bundled provider file name -> its sha256."""
+
+        return _provider_files(self.providers)
 
     @property
     def content_digest(self) -> str:
@@ -217,11 +352,19 @@ class KitArtifactBytes(_Strict):
 
 
 class KitBundle(_Strict):
-    """A manifest and the exact bytes of every artifact it names."""
+    """A manifest and the exact bytes of every artifact it names.
+
+    ``provider_files`` holds the bundled provider packages' bytes, or nothing: a
+    bundle sent to ``kit add`` carries none, because the adapter stages each file
+    in the daemon's body store first.
+    """
 
     tag: Literal["playbill-kit-bundle-v1"] = "playbill-kit-bundle-v1"
     manifest: KitManifest
     artifacts: tuple[KitArtifactBytes, ...]
+    provider_files: tuple[KitProviderFileBytes, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator("artifacts")
     @classmethod
@@ -235,8 +378,26 @@ class KitBundle(_Strict):
             raise ValueError("kit bundle bytes must cover exactly the manifest's artifacts")
         return value
 
+    @model_validator(mode="after")
+    def _provider_bytes(self) -> KitBundle:
+        if not self.provider_files:
+            return self
+        names = tuple(item.filename for item in self.provider_files)
+        _sorted_unique(names, label="bundled provider files")
+        expected = self.manifest.provider_files()
+        if set(names) != set(expected):
+            raise ValueError("bundled provider bytes must cover exactly the manifest's files")
+        for item in self.provider_files:
+            actual = Sha256Value(hashlib.sha256(item.content).hexdigest()).tagged
+            if actual != expected[item.filename]:
+                raise ValueError(f"bundled provider file {item.filename} differs from its sha256")
+        return self
+
     def contents(self) -> dict[str, bytes]:
         return {item.path: item.content for item in self.artifacts}
+
+    def provider_contents(self) -> dict[str, bytes]:
+        return {item.filename: item.content for item in self.provider_files}
 
 
 class KitInstalledArtifact(_Strict):
@@ -322,6 +483,8 @@ class KitReceipt(_Strict):
     source: str | None = None
     kept: tuple[KitKeptDivergence, ...] = ()
     provenance: KitProvenance | None = None
+    #: The provider packages the installed release bundled.
+    providers: tuple[KitProvider, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @field_validator("kit_id")
     @classmethod
@@ -344,12 +507,34 @@ class KitReceipt(_Strict):
         return {item.path: item.installed_digest for item in self.artifacts}
 
 
+class KitBuildProvider(_Strict):
+    """A provider package to bundle, staged in the body store: the built wheel, the
+    uv lock it was built with, and the wheels of the dependencies that lock names
+    by path (``provider install WHEEL --lock FILE`` takes the same three)."""
+
+    wheel: ProviderWheelObject
+    lock_digest: str
+    dependencies: tuple[ProviderWheelObject, ...] = ()
+
+    @field_validator("lock_digest")
+    @classmethod
+    def _lock_digest(cls, value: str) -> str:
+        return _digest(value)
+
+
 class KitBuildRequest(_Strict):
-    """Export this instance's definitions under ``owns`` as one kit release."""
+    """Export this instance's definitions under ``owns`` as one kit release.
+
+    ``providers`` bundles provider packages with the release. Every Provider a
+    carried Procedure pins must be bundled (the same wheel this instance
+    installed), and every ProviderInterface the kit carries must be exactly what
+    a bundled wheel registers.
+    """
 
     kit_id: str
     version: str
     owns: tuple[str, ...]
+    providers: tuple[KitBuildProvider, ...] = ()
 
     @field_validator("kit_id")
     @classmethod
@@ -397,6 +582,16 @@ class KitAddRequest(_Strict):
     dry_run: DryRun = None
     at: PreviewAt = None
 
+    @field_validator("bundle")
+    @classmethod
+    def _staged(cls, value: KitBundle) -> KitBundle:
+        if value.provider_files:
+            raise ValueError(
+                "bundled provider files travel through the body store: stage each one "
+                "(the CLI and MCP adapters do) and send the bundle without them"
+            )
+        return value
+
     @field_validator("keep", "retire_dependents")
     @classmethod
     def _identities(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
@@ -439,6 +634,22 @@ class KitPathPlan(_Strict):
 
 KitTransition = Literal["install", "upgrade", "downgrade", "reinstall"]
 
+#: What a kit change does with one bundled provider: ``unchanged`` (this build
+#: is installed), ``install`` (installed and registered now), ``would_install``
+#: (a preview), ``awaiting_approval`` (its install proposal needs approval),
+#: ``blocked`` (a different build of it is installed, or its install refused).
+KitProviderAction = Literal["unchanged", "install", "would_install", "awaiting_approval", "blocked"]
+
+
+class KitProviderStep(_Strict):
+    provider_id: str
+    package: str
+    version: str
+    action: KitProviderAction
+    #: The install proposal, when it awaits approval or was refused.
+    proposal_id: str | None = None
+    detail: str | None = None
+
 
 class KitChangeResult(_Strict):
     """What a kit add or remove changed, or why it changed nothing."""
@@ -449,15 +660,28 @@ class KitChangeResult(_Strict):
     # A kit change lands at once (``accepted``) when the instance's approval
     # policy requires no approval, like provider install and value writes;
     # otherwise it stops at ``proposed`` for the ordinary review and activation.
-    # A preview (the default) answers would_propose or would_block and proposes
-    # nothing; commit with dry_run=false and at=<coordinate>.
-    status: Literal["unchanged", "proposed", "accepted", "blocked", "would_propose", "would_block"]
+    # A kit that bundles providers installs them first: when an install awaits
+    # approval the change stops at ``awaiting_providers`` and proposes the
+    # definitions once they land (run kit add again). A preview (the default)
+    # answers would_propose or would_block and proposes nothing; commit with
+    # dry_run=false and at=<coordinate>.
+    status: Literal[
+        "unchanged",
+        "proposed",
+        "accepted",
+        "blocked",
+        "awaiting_providers",
+        "would_propose",
+        "would_block",
+    ]
     proposal_id: str | None = None
     approval_required: bool = False
     #: From the installed version to this release's (None for a removal).
     transition: KitTransition | None = None
     installed_version: str | None = None
     provenance: KitProvenance | None = None
+    #: The bundled provider packages, installed before the definitions.
+    providers: tuple[KitProviderStep, ...] = ()
     plan: tuple[KitPathPlan, ...] = ()
     detail: str | None = None
     #: The accepted coordinate this change was evaluated at.
@@ -470,6 +694,21 @@ class KitChangeResult(_Strict):
 KitUpdateCheck = Literal["not_checked", "checked", "offline", "local_source", "unavailable"]
 
 
+#: A bundled provider here: ``installed`` (this build is the live Provider),
+#: ``differs`` (another build of it is), ``missing`` (none is live).
+KitProviderInstallState = Literal["installed", "differs", "missing"]
+
+
+class KitProviderStatus(_Strict):
+    provider_id: str
+    package: str
+    version: str
+    wheel_sha256: str
+    state: KitProviderInstallState
+    #: The live Provider's package version, when another build of it is installed.
+    installed_version: str | None = None
+
+
 class InstalledKit(_Strict):
     kit_id: str
     version: str
@@ -479,6 +718,8 @@ class InstalledKit(_Strict):
     drifted: tuple[str, ...] = ()
     provenance: KitProvenance | None = None
     kept: tuple[KitKeptDivergence, ...] = ()
+    #: The provider packages the release bundled, and whether each is installed.
+    providers: tuple[KitProviderStatus, ...] = ()
     #: Filled by the CLI and MCP adapters from the registry's tags.
     latest_available: str | None = None
     update_check: KitUpdateCheck = "not_checked"

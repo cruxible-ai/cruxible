@@ -14,7 +14,7 @@ definition only moved in lineage compares equal and stays untouched.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -47,6 +47,10 @@ from cruxible_client.contracts.kits import (
     KitManifest,
     KitPathPlan,
     KitProvenance,
+    KitProvider,
+    KitProviderFileBytes,
+    KitProviderStatus,
+    KitProviderStep,
     KitReceipt,
     KitRemoveRequest,
     KitStatus,
@@ -58,6 +62,17 @@ from cruxible_client.contracts.kits import (
 )
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.projection import AcceptedCoordinate as ServedCoordinate
+from cruxible_client.contracts.provider_installation import (
+    ProviderInstallRequest,
+    ProviderInstallResult,
+    ProviderWheelObject,
+)
+from cruxible_client.contracts.providers import (
+    ProviderLocalDistributionPin,
+    ProviderV2,
+    parse_provider,
+    provider_digest,
+)
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.claims.artifact_references import (
     move_references,
@@ -72,9 +87,13 @@ from cruxible_core.claims.claim_type_migrations import (
     dependent_closure_inventory,
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
-from cruxible_core.errors import DataValidationError, RequestRefusedError
+from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+from cruxible_core.providers.package_inspection import (
+    InspectedProviderPackage,
+    inspect_provider_package,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
@@ -90,6 +109,7 @@ _INDEXED_PREFIXES: tuple[str, ...] = (
     "resolution-contracts/",
 )
 _RECEIPT_ACCESS = BodyAccessContext(principal_id="kit-receipt", can_read_body=True)
+_PROVIDER_FILE_ACCESS = BodyAccessContext(principal_id="kit-provider", can_read_body=True)
 _RECEIPT_SCOPE = ("kit",)
 _SNAPSHOT_LIFECYCLE = {"predecessor_digest": None, "state": "live"}
 
@@ -196,13 +216,37 @@ def _dependency_order(
         yield from visit(path)
 
 
+def _require_staged(instance: PlaybillInstance, files: Mapping[str, str], operation: str) -> None:
+    """Refuse unless every named file (name -> sha256) is in the body store."""
+
+    missing = sorted(
+        name
+        for name, digest in files.items()
+        if instance.body_store().availability(digest) != "present"
+    )
+    if missing:
+        raise RequestRefusedError(
+            "cruxible.kit.provider_files_not_staged",
+            f"{', '.join(missing)} not in this instance's body store; stage each file first "
+            f"(the CLI and MCP {operation.rpartition('.')[2]} adapters stage what they send)",
+            repair=RepairOperation(operation=operation),
+        )
+
+
+def _staged(instance: PlaybillInstance, digest: str, name: str) -> bytes:
+    _require_staged(instance, {name: digest}, "cruxible.kit.build")
+    return instance.body_store().read(digest, access=_PROVIDER_FILE_ACCESS)
+
+
 def service_build_kit(
     instance: PlaybillInstance, request: KitBuildRequest, *, principal_id: str | None = None
 ) -> KitBuildResult:
     """Export owned definitions at the accepted head as one release of ``kit_id``.
 
     The manifest records where it was built (this instance, the accepted
-    coordinate, the building principal): claimed, not proven.
+    coordinate, the building principal): claimed, not proven. Each provider
+    package named in ``request.providers`` is read from the body store, recorded
+    in the manifest and carried as bytes in the returned bundle.
     """
 
     coordinate = instance.accepted_coordinate()
@@ -214,7 +258,105 @@ def service_build_kit(
         ),
         principal_id=principal_id,
     )
-    return KitBuildResult(bundle=build_kit(tree, request, provenance=provenance))
+    packages = []
+    files: dict[str, bytes] = {}
+    for item in request.providers:
+        wheel = _staged(instance, item.wheel.digest, item.wheel.filename)
+        lock = _staged(instance, item.lock_digest, "the provider lock")
+        dependencies = tuple(
+            (dependency.filename, _staged(instance, dependency.digest, dependency.filename))
+            for dependency in item.dependencies
+        )
+        inspected = inspect_provider_package(
+            wheel=(item.wheel.filename, wheel), lock=lock, dependencies=dependencies
+        )
+        packages.append(inspected)
+        files[inspected.provider.wheel.filename] = wheel
+        files[inspected.provider.lock.filename] = lock
+        files.update(dependencies)
+    bundle = build_kit(tree, request, provenance=provenance, providers=tuple(packages))
+    return KitBuildResult(
+        bundle=bundle.model_copy(
+            update={
+                "provider_files": tuple(
+                    KitProviderFileBytes.of(name, files[name]) for name in sorted(files)
+                )
+            }
+        )
+        if files
+        else bundle
+    )
+
+
+def _bundled_provider_pins(
+    path: str,
+    state: ArtifactDependencyStateV1,
+    tree_providers: Mapping[str, ArtifactDependencyStateV1],
+    tree: Mapping[str, bytes],
+    bundled: Mapping[str, InspectedProviderPackage],
+) -> None:
+    """Every Provider a carried definition pins is bundled, as the build installed here.
+
+    A kit never carries a Provider: on install it pins the Provider its bundled
+    wheel registers, so that wheel must be the one this instance installed.
+    """
+
+    for pin in state.pins:
+        if pin.target.kind != "Provider":
+            continue
+        package = bundled.get(pin.target.name)
+        if package is None:
+            raise RequestRefusedError(
+                "cruxible.kit.provider_not_bundled",
+                f"{path} pins Provider {pin.target.name}, which this kit does not bundle; "
+                "bundle its package (kit build --provider DIR)",
+                repair=RepairOperation(operation="cruxible.kit.build"),
+            )
+        provider_path_here = f"providers/{pin.target.name}.json"
+        held = tree_providers.get(provider_path_here)
+        provider = (
+            None
+            if held is None or held.artifact_digest != pin.artifact_digest
+            else parse_provider(tree[provider_path_here], path=provider_path_here)
+        )
+        if not isinstance(provider, ProviderV2) or (
+            provider.runtime_artifact.distribution.sha256 != package.provider.wheel.sha256
+        ):
+            raise RequestRefusedError(
+                "cruxible.kit.provider_build_differs",
+                f"{path} pins Provider {pin.target.name} installed here from another build "
+                f"than the bundled {package.provider.wheel.filename}; bundle the wheel this "
+                "instance installed, or install the bundled one here first",
+                repair=RepairOperation(operation="cruxible.provider.install"),
+            )
+
+
+def _bundled_interface(
+    path: str, content: bytes, bundled: tuple[InspectedProviderPackage, ...]
+) -> None:
+    """A carried ProviderInterface is exactly what a bundled wheel registers.
+
+    Otherwise installing that wheel would propose a successor over the kit's
+    interface (or the kit's would overwrite the package's).
+    """
+
+    registered = [package for package in bundled if path in package.interfaces]
+    if not registered:
+        raise RequestRefusedError(
+            "cruxible.kit.interface_not_bundled",
+            f"the kit carries {path}, which no bundled provider package registers; bundle "
+            "the package that registers it (kit build --provider DIR)",
+            repair=RepairOperation(operation="cruxible.kit.build"),
+        )
+    if all(package.interfaces[path] != content for package in registered):
+        names = ", ".join(package.provider.wheel.filename for package in registered)
+        raise RequestRefusedError(
+            "cruxible.kit.interface_differs",
+            f"{path} here differs from what installing {names} registers; install the "
+            "bundled wheel here so this instance holds what it registers, or bundle the "
+            "build that registered this interface",
+            repair=RepairOperation(operation="cruxible.provider.install"),
+        )
 
 
 def build_kit(
@@ -222,21 +364,35 @@ def build_kit(
     request: KitBuildRequest,
     *,
     provenance: KitProvenance | None = None,
+    providers: tuple[InspectedProviderPackage, ...] = (),
 ) -> KitBundle:
     """Export the owned definitions of one accepted tree as a self-contained release.
 
     Owned live definitions and everything they pin become lineage-free
-    snapshots; each pin moves to the snapshot digest of what it names.
+    snapshots; each pin moves to the snapshot digest of what it names. A pin
+    into a Provider stays as it is and names a bundled package instead.
     """
 
+    bundled: dict[str, InspectedProviderPackage] = {}
+    for package in providers:
+        if bundled.setdefault(package.provider.provider_id, package) is not package:
+            raise DataValidationError(
+                f"two bundled packages register Provider {package.provider.provider_id}"
+            )
     states: dict[str, ArtifactDependencyStateV1] = {}
     payloads: dict[str, dict[str, Any]] = {}
+    tree_providers: dict[str, ArtifactDependencyStateV1] = {}
     for path in tree:
         if path.endswith(".json") and path.startswith(_INDEXED_PREFIXES):
             state = parse_dependency_artifact(path, tree[path])
-            if state is not None:
-                states[path] = state
-                payloads[path] = json.loads(tree[path])
+            if state is None:
+                continue
+            if path.startswith("providers/"):
+                # Never carried: a bundled package registers it on install.
+                tree_providers[path] = state
+                continue
+            states[path] = state
+            payloads[path] = json.loads(tree[path])
     roots = {
         path
         for path, state in states.items()
@@ -257,11 +413,14 @@ def build_kit(
                 )
             if states[dependency].lifecycle.state != "live":
                 raise DataValidationError(f"{path} pins retired {dependency}")
+        _bundled_provider_pins(path, states[path], tree_providers, tree, bundled)
         payload = _substitute(path, payloads[path], remap)
         payload["lifecycle"] = dict(_SNAPSHOT_LIFECYCLE)
         content, digest = _render(path, payload)
         if digest != states[path].artifact_digest:
             remap[states[path].artifact_digest] = digest
+        if path.startswith("provider-interfaces/"):
+            _bundled_interface(path, content, providers)
         built[path] = content
     manifest = KitManifest(
         kit_id=request.kit_id,
@@ -273,6 +432,7 @@ def build_kit(
             )
             for path in sorted(built)
         ),
+        providers=tuple(bundled[name].provider for name in sorted(bundled)),
         provenance=provenance,
     )
     return KitBundle(
@@ -381,6 +541,7 @@ def _diff_release(
     kept: Mapping[str, KitKeptDivergence],
     keep: frozenset[str],
     keep_local_edits: bool,
+    preset: Mapping[str, str] | None = None,
 ) -> tuple[_Diff, set[str]]:
     """Plan every release path against the tree; returns the diff and the owned paths.
 
@@ -394,6 +555,9 @@ def _diff_release(
     payloads = {path: json.loads(content) for path, content in contents.items()}
     owned = {path for path, state in states.items() if _owned(state, owns)}
     diff = _Diff()
+    # Digests the release pins outside itself, already moved to this instance's
+    # (a bundled provider's Provider).
+    diff.installed.update(preset or {})
     for path, _pinned in _dependency_order(states, payloads):
         release_digest = states[path].artifact_digest
         identity = states[path].identity.qualified
@@ -793,6 +957,7 @@ def _submit(
     transition: KitTransition | None = None,
     installed_version: str | None = None,
     provenance: KitProvenance | None = None,
+    providers: tuple[KitProviderStep, ...] = (),
 ) -> KitChangeResult:
     assert mode.head is not None
     base = mode.head
@@ -800,6 +965,7 @@ def _submit(
         "transition": transition,
         "installed_version": installed_version,
         "provenance": provenance,
+        "providers": providers,
     }
     body = instance.store_document_body(pretty_canonical_bytes(receipt.model_dump(mode="json")))
     shell = DocumentShell(
@@ -893,16 +1059,164 @@ def _transition(installed: str | None, release: str) -> KitTransition:
     return "upgrade" if after > before else "downgrade" if after < before else "reinstall"
 
 
+#: Installs one bundled provider package through the ordinary transfer install
+#: (the API layer checks the install permission before it runs).
+ProviderInstaller = Callable[[ProviderInstallRequest], ProviderInstallResult]
+
+_ProviderState = Literal["installed", "differs", "missing", "retired"]
+
+
+def _provider_here(
+    tree: Mapping[str, bytes], provider: KitProvider
+) -> tuple[_ProviderState, str | None, str | None]:
+    """Whether this bundled build is the live Provider here: (state, digest, version)."""
+
+    path = f"providers/{provider.provider_id}.json"
+    raw = tree.get(path)
+    if raw is None:
+        return "missing", None, None
+    held = parse_provider(raw, path=path)
+    digest = provider_digest(held).tagged
+    if held.lifecycle.state != "live":
+        return "retired", digest, None
+    if not isinstance(held, ProviderV2):
+        return "differs", digest, None
+    runtime = held.runtime_artifact
+    same = (
+        isinstance(runtime.distribution, ProviderLocalDistributionPin)
+        and runtime.distribution.sha256 == provider.wheel.sha256
+        and runtime.local_env is not None
+        and runtime.local_env.lock_sha256 == provider.lock.sha256
+    )
+    return ("installed" if same else "differs"), digest, runtime.distribution.version
+
+
+def _provider_steps(
+    tree: Mapping[str, bytes], manifest: KitManifest
+) -> tuple[list[KitProviderStep], list[KitProvider]]:
+    """One step per bundled provider, and the ones still to install.
+
+    A different build of a bundled provider is refused rather than replaced:
+    replacing a Provider owes a successor of every live Procedure pinning it,
+    which an install does not carry, and the build here may serve Procedures
+    outside the kit. The operator decides that change with provider install.
+    """
+
+    steps = []
+    missing = []
+    for provider in manifest.providers:
+        state, _digest, version = _provider_here(tree, provider)
+        named = {
+            "provider_id": provider.provider_id,
+            "package": provider.package,
+            "version": provider.version,
+        }
+        if state == "installed":
+            steps.append(KitProviderStep(**named, action="unchanged"))
+        elif state == "missing":
+            missing.append(provider)
+            steps.append(KitProviderStep(**named, action="would_install"))
+        else:
+            steps.append(
+                KitProviderStep(
+                    **named,
+                    action="blocked",
+                    detail=f"Provider {provider.provider_id} is retired here; installing the "
+                    "kit would restore it"
+                    if state == "retired"
+                    else f"another build of {provider.provider_id} ({version}) is installed "
+                    f"here; the kit bundles {provider.package} {provider.version} "
+                    f"({provider.wheel.sha256[:19]}). Replace it with provider install, "
+                    "carrying the Procedures that pin it, then add the kit again",
+                )
+            )
+    return steps, missing
+
+
+def _install_providers(
+    instance: PlaybillInstance,
+    missing: list[KitProvider],
+    steps: list[KitProviderStep],
+    install: ProviderInstaller | None,
+) -> list[KitProviderStep]:
+    """Install each missing bundled provider through the transfer install path."""
+
+    if install is None:
+        raise ConfigError("this daemon cannot install the kit's bundled providers")
+    _require_staged(
+        instance,
+        {item.filename: item.sha256 for provider in missing for item in provider.files()},
+        "cruxible.kit.add",
+    )
+    by_id = {step.provider_id: index for index, step in enumerate(steps)}
+    for provider in missing:
+        result = install(
+            ProviderInstallRequest(
+                wheel=ProviderWheelObject(
+                    filename=provider.wheel.filename, digest=provider.wheel.sha256
+                ),
+                lock_digest=provider.lock.sha256,
+                dependencies=tuple(
+                    ProviderWheelObject(filename=item.filename, digest=item.sha256)
+                    for item in provider.dependencies
+                ),
+                dry_run=False,
+            )
+        )
+        index = by_id[provider.provider_id]
+        if result.registered:
+            update: dict[str, object] = {"action": "install", "detail": result.detail}
+        elif result.status == "awaiting_approval":
+            update = {"action": "awaiting_approval", "proposal_id": result.proposal_id}
+        else:
+            update = {
+                "action": "blocked",
+                "proposal_id": result.proposal_id,
+                "detail": result.detail or f"install {result.status}",
+            }
+        steps[index] = steps[index].model_copy(update=update)
+    return steps
+
+
+def _provider_remap(
+    tree: Mapping[str, bytes],
+    contents: Mapping[str, bytes],
+    manifest: KitManifest,
+) -> dict[str, str]:
+    """Release Provider pin digest -> the digest of the bundled build installed here.
+
+    A Provider's digest includes the environment its package materialized in
+    (platform, machine, Python), so it differs between hosts while its
+    implementation digests (interface, entrypoint, wheel sha256) do not: a
+    release Procedure's Provider pin moves to the same build installed here.
+    """
+
+    held = {}
+    for provider in manifest.providers:
+        state, digest, _version = _provider_here(tree, provider)
+        if state == "installed" and digest is not None:
+            held[provider.provider_id] = digest
+    remap: dict[str, str] = {}
+    for path, content in contents.items():
+        for pin in _artifact_state(path, content).pins:
+            if pin.target.kind == "Provider" and pin.target.name in held:
+                remap[pin.artifact_digest] = held[pin.target.name]
+    return remap
+
+
 def service_add_kit(
     instance: PlaybillInstance,
     request: KitAddRequest,
     *,
     actor_id: str,
     timestamp: str,
+    install_provider: ProviderInstaller | None = None,
 ) -> KitChangeResult:
     """Propose the diff that brings this instance to one kit release.
 
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
+    A kit bundling provider packages installs the missing ones first, through
+    ``install_provider``; the definitions follow once they land.
     """
 
     with change_scope(
@@ -913,7 +1227,14 @@ def service_add_kit(
         operation="cruxible.kit.add",
         describe=f"installing kit {request.bundle.manifest.kit_id}",
     ) as mode:
-        return _add_kit(instance, mode, request, actor_id=actor_id, timestamp=timestamp)
+        return _add_kit(
+            instance,
+            mode,
+            request,
+            actor_id=actor_id,
+            timestamp=timestamp,
+            install_provider=install_provider,
+        )
 
 
 def _add_kit(
@@ -923,6 +1244,7 @@ def _add_kit(
     *,
     actor_id: str,
     timestamp: str,
+    install_provider: ProviderInstaller | None = None,
 ) -> KitChangeResult:
     assert mode.head is not None
     bundle = request.bundle
@@ -933,12 +1255,55 @@ def _add_kit(
     shell, receipt = (None, None) if found is None else found
     installed_version = None if receipt is None or not receipt.artifacts else receipt.version
     transition = _transition(installed_version, manifest.version)
-    described = {
+    steps, missing = _provider_steps(tree, manifest)
+    described: dict[str, object] = {
         "transition": transition,
         "installed_version": installed_version,
         "provenance": manifest.provenance,
+        "providers": tuple(steps),
     }
+    # The definitions pin what the bundled providers register, so they are
+    # proposed only once those are live. A preview cannot install, so it plans
+    # the definitions without evaluating them.
+    awaiting_install = bool(missing) and not any(step.action == "blocked" for step in steps)
+    if awaiting_install and not mode.previewing:
+        steps = _install_providers(instance, missing, steps, install_provider)
+        described["providers"] = tuple(steps)
+        pending = [step for step in steps if step.action in {"awaiting_approval", "blocked"}]
+        if pending:
+            return KitChangeResult(
+                kit_id=manifest.kit_id,
+                version=manifest.version,
+                status="blocked"
+                if any(step.action == "blocked" for step in pending)
+                else "awaiting_providers",
+                detail="the kit's definitions are proposed once its bundled providers are "
+                "installed: "
+                + "; ".join(
+                    f"{step.provider_id} {step.action.replace('_', ' ')}"
+                    + ("" if step.detail is None else f" ({step.detail})")
+                    for step in pending
+                ),
+                coordinate=mode.coordinate,
+                **described,  # type: ignore[arg-type]
+            )
+        # The installs moved the head; the definitions are pinned to the head
+        # they produced.
+        mode = ChangeMode(
+            instance,
+            previewing=False,
+            at=None if mode.at is None else instance.accepted_coordinate().git_oid,
+            kind="derived",
+            operation="cruxible.kit.add",
+            describe=f"installing kit {manifest.kit_id}",
+        )
+        assert mode.head is not None
+        tree = instance.immutable_tree_at(mode.head.git_oid)
+        awaiting_install = False
     blocked = _ownership_conflicts(instance, tree, manifest)
+    blocked.extend(
+        f"{step.provider_id}: {step.detail}" for step in steps if step.action == "blocked"
+    )
     if transition == "downgrade" and not request.allow_downgrade:
         blocked.append(
             f"release {manifest.version} is older than installed {installed_version}; "
@@ -955,6 +1320,7 @@ def _add_kit(
         kept=kept,
         keep=keep,
         keep_local_edits=request.keep_local_edits,
+        preset=_provider_remap(tree, contents, manifest),
     )
     retire_with = _settle_dropped(
         tree,
@@ -966,6 +1332,12 @@ def _add_kit(
         kept=kept,
     )
     blocked.extend(_foreign_takeovers(instance, tree, manifest.kit_id, diff))
+    blocked.extend(
+        f"{item.path} here differs from what the kit's bundled provider registers; it came "
+        "from another package, so the kit cannot take it over"
+        for item in diff.plan
+        if item.action == "replace" and item.path.startswith("provider-interfaces/")
+    )
     writes, refused = _settle_dependents(tree, diff, retire_with=retire_with)
     blocked.extend(refused)
     plan = tuple(sorted(diff.plan, key=lambda item: item.path))
@@ -1011,7 +1383,19 @@ def _add_kit(
         source=request.source,
         kept=tuple(sorted(diff.kept, key=lambda item: item.path)),
         provenance=manifest.provenance,
+        providers=manifest.providers,
     )
+    if awaiting_install:
+        return KitChangeResult(
+            kit_id=manifest.kit_id,
+            version=manifest.version,
+            status="would_propose",
+            plan=plan,
+            detail="a commit installs the bundled providers first, then proposes the "
+            "definitions, which are evaluated once those are installed",
+            coordinate=mode.coordinate,
+            **described,  # type: ignore[arg-type]
+        )
     if not writes and receipt is not None and receipt == receipt_body:
         return KitChangeResult(
             kit_id=manifest.kit_id,
@@ -1113,7 +1497,9 @@ def _remove_kit(
         mode,
         kit_id=request.kit_id,
         version=receipt.version,
-        receipt=receipt.model_copy(update={"artifacts": (), "carried": (), "kept": ()}),
+        receipt=receipt.model_copy(
+            update={"artifacts": (), "carried": (), "kept": (), "providers": ()}
+        ),
         previous_receipt=shell,
         writes=diff.writes,
         plan=plan,
@@ -1136,6 +1522,19 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
             if entry.path not in tree
             or _installed_content(entry, tree) != kit_content_digest(json.loads(tree[entry.path]))
         )
+        providers = []
+        for provider in receipt.providers:
+            state, _digest, version = _provider_here(tree, provider)
+            providers.append(
+                KitProviderStatus(
+                    provider_id=provider.provider_id,
+                    package=provider.package,
+                    version=provider.version,
+                    wheel_sha256=provider.wheel.sha256,
+                    state="missing" if state == "retired" else state,
+                    installed_version=version if state == "differs" else None,
+                )
+            )
         kits.append(
             InstalledKit(
                 kit_id=receipt.kit_id,
@@ -1145,6 +1544,7 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
                 drifted=drifted,
                 provenance=receipt.provenance,
                 kept=receipt.kept,
+                providers=tuple(providers),
             )
         )
     return KitStatus(kits=tuple(kits))

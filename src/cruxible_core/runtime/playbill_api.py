@@ -818,6 +818,22 @@ def playbill_kit_status(instance_id: str) -> KitStatus:
 
 def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResult:
     check_permission("cruxible_kit_add", instance_id=instance_id)
+
+    def install(provider: ProviderInstallRequest) -> ProviderInstallResult:
+        # A bundled provider installs like any transferred wheel: the same
+        # permission and hosted-execution gate as provider install.
+        check_permission("cruxible_provider_install", instance_id=instance_id)
+        enforce_customer_code_execution_supported()
+        manager = get_playbill_manager()
+        return service_install_provider(
+            manager.get(instance_id),
+            operator=manager.provider_runtime_operator(),
+            request=provider,
+            actor_id=_actor_id(instance_id),
+            timestamp=canonical_candidate_timestamp(utc_now()),
+            registry_index_default=True,
+        )
+
     with change_entry(request.dry_run, "derived"):
         return _proposal_validation_boundary(
             "kit add",
@@ -826,6 +842,7 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
                 request,
                 actor_id=_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
+                install_provider=install,
             ),
         )
 

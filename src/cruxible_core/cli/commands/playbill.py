@@ -124,6 +124,7 @@ from cruxible_client.kits import (
     check_kit_updates,
     fetch_kit_image,
     resolve_kit,
+    stage_kit_providers,
     write_kit_directory,
 )
 from cruxible_core.adapters.block_detach import detach_projection_pages
@@ -163,7 +164,10 @@ from cruxible_core.cli.principal_settings import (
     default_key_dir,
     write_principal_settings,
 )
-from cruxible_core.cli.provider_wheels import install_provider_wheel
+from cruxible_core.cli.provider_wheels import (
+    install_provider_wheel,
+    stage_kit_provider_directory,
+)
 from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingSourceObservation,
@@ -1583,6 +1587,14 @@ def _echo_kit_change(result: KitChangeResult) -> None:
             transition += f" from {result.installed_version}"
         transition += ")"
     click.echo(f"{result.kit_id}{version}: {result.status}{transition}")
+    for step in result.providers:
+        line = f"  provider {step.provider_id} ({step.package} {step.version}): "
+        line += step.action.replace("_", " ")
+        if step.proposal_id is not None:
+            line += f", proposal {step.proposal_id}"
+        if step.detail is not None:
+            line += f" ({printable(step.detail)})"
+        click.echo(line)
     if result.provenance is not None:
         provenance = result.provenance
         click.echo(
@@ -1637,6 +1649,17 @@ def _echo_kit_change(result: KitChangeResult) -> None:
 @click.option(
     "--out", "out", required=True, type=click.Path(path_type=Path), help="New kit directory."
 )
+@click.option(
+    "--provider",
+    "providers",
+    multiple=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help=(
+        "A provider package directory to bundle (repeatable): its pyproject.toml, its "
+        "uv.lock, and in dist/ its built wheel plus the wheel of each dependency the lock "
+        "names by path. The kit carries the wheels and lock, never source."
+    ),
+)
 @json_option
 @handle_errors
 def build_kit(
@@ -1644,26 +1667,39 @@ def build_kit(
     version: str,
     owns: tuple[str, ...],
     out: Path,
+    providers: tuple[Path, ...],
     output_json: bool,
 ) -> None:
-    """Export this instance's owned definitions as one self-contained kit release."""
+    """Export this instance's owned definitions as one self-contained kit release.
+
+    Every Provider a carried Procedure pins must be bundled with --provider (the
+    same build this instance installed), and every ProviderInterface the kit
+    carries must be exactly what a bundled wheel registers; kit add installs the
+    bundled providers before the definitions.
+    """
     if out.exists():
         raise click.UsageError(f"{out} already exists")
-    request = KitBuildRequest(
-        kit_id=kit_id,
-        version=version,
-        owns=tuple(sorted(set(owns))),
-    )
-    bundle = _server_call(
-        lambda client, instance_id: client.build_kit(instance_id, request),
-        command_name="cruxible kit build",
-    ).bundle
+
+    def build(client: Any, instance_id: str) -> Any:
+        request = KitBuildRequest(
+            kit_id=kit_id,
+            version=version,
+            owns=tuple(sorted(set(owns))),
+            providers=tuple(
+                stage_kit_provider_directory(client, instance_id, directory)
+                for directory in providers
+            ),
+        )
+        return client.build_kit(instance_id, request)
+
+    bundle = _server_call(build, command_name="cruxible kit build").bundle
     write_kit_directory(bundle, out)
     if output_json:
         _emit_json(bundle.manifest.model_dump(mode="json"))
     else:
         click.echo(
             f"{kit_id} {version}: {len(bundle.artifacts)} artifacts, "
+            f"{len(bundle.manifest.providers)} provider package(s), "
             f"{bundle.manifest.content_digest}"
         )
 
@@ -1721,23 +1757,36 @@ def add_kit(
     takes over one defined outside the kit) unless --keep or --keep-local-edits
     keeps yours; replaced definitions' dependents are carried along. The change
     lands at once when the approval policy requires no approval, otherwise it
-    stops at proposed. It previews by default; commit with ``--commit --at OID``.
+    stops at proposed. A kit that bundles provider packages installs the missing
+    ones first (admin permission, the transfer install; registry dependencies
+    resolve from the daemon's provider index, PyPI unless configured) and
+    proposes the definitions once they land; an install awaiting approval stops
+    at awaiting_providers (run kit add again after activating it). It previews by
+    default; commit with ``--commit --at OID``.
     """
     bundle, origin = resolve_kit(kit)
-    request = KitAddRequest(
-        bundle=bundle,
-        source=source or origin,
-        keep=tuple(sorted(set(keep))),
-        keep_local_edits=keep_local_edits,
-        retire_dependents=tuple(sorted(set(retire_dependents))),
-        allow_downgrade=allow_downgrade,
-        dry_run=dry_run,
-        at=at,
-    )
-    result = _server_call(
-        lambda client, instance_id: client.add_kit(instance_id, request),
-        command_name="cruxible kit add",
-    )
+
+    def add(client: Any, instance_id: str) -> Any:
+        # A commit installs the bundled providers, so it stages their files;
+        # a preview installs nothing and sends none.
+        staged = (
+            stage_kit_providers(client, instance_id, bundle)
+            if dry_run is False
+            else bundle.model_copy(update={"provider_files": ()})
+        )
+        request = KitAddRequest(
+            bundle=staged,
+            source=source or origin,
+            keep=tuple(sorted(set(keep))),
+            keep_local_edits=keep_local_edits,
+            retire_dependents=tuple(sorted(set(retire_dependents))),
+            allow_downgrade=allow_downgrade,
+            dry_run=dry_run,
+            at=at,
+        )
+        return client.add_kit(instance_id, request)
+
+    result = _server_call(add, command_name="cruxible kit add")
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
@@ -1809,6 +1858,14 @@ def kit_status(offline: bool, output_json: bool) -> None:
                 f"  built by {kit.provenance.principal_id or 'an unattributed principal'} on "
                 f"{kit.provenance.instance_id} at {kit.provenance.coordinate.git_oid[:12]} "
                 "(claimed)"
+            )
+        for provider in kit.providers:
+            state: str = provider.state
+            if provider.installed_version is not None:
+                state += f" (installed: {provider.installed_version})"
+            click.echo(
+                f"  provider {provider.provider_id} ({provider.package} {provider.version}): "
+                f"{state}"
             )
         for path in kit.drifted:
             click.echo(f"  edited locally: {path}")

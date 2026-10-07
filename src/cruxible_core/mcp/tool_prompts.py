@@ -19,7 +19,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_kit_build": (
         "Use when you want to export the definitions under owned identity prefixes as a "
         "kit release another instance can install. A release is a lineage-free snapshot; "
-        "its manifest records where it was built."
+        "its manifest records where it was built. providers bundles provider packages "
+        "(wheel, lock and path-dependency wheels, staged with body_store first): every "
+        "Provider a carried Procedure pins must be bundled."
     ),
     "cruxible_kit_status": (
         "Use when you need the installed kits, the kit paths edited since install, what was "
@@ -29,7 +31,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you want to install or upgrade a kit, by registry reference or bundle. It "
         "always proposes: a definition held differently takes the release's version unless "
         "kept (keep, keep_local_edits); the plan says what each change does and counts "
-        "dependents. It lands at once when the approval policy requires no approval."
+        "dependents. It lands at once when the approval policy requires no approval. A kit "
+        "bundling provider packages installs them first (admin; a commit stages their files), "
+        "then proposes the definitions; an install awaiting approval stops at "
+        "awaiting_providers."
     ),
     "cruxible_claim_type_upgrade": (
         "Use to move ClaimTypes before v7 to v7, which states revision_evidence "

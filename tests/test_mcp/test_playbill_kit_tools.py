@@ -66,3 +66,33 @@ def test_kit_status_runs_the_update_check_in_the_adapter(monkeypatch: pytest.Mon
     handlers.handle_playbill_kit_status("inst", offline=True)
 
     assert checked == [True]
+
+
+def test_kit_add_stages_a_pulled_kits_bundled_providers_when_it_commits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.test_cli.test_playbill_kit_commands import (
+        _provider_bundle,
+        _provider_files,
+        _StagingClient,
+    )
+
+    bundle = _provider_bundle()
+    image = pack_artifact(KIT_ARTIFACT, bundle)
+
+    class StubClient(_StagingClient):
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            self.sent.append(request)
+            return KitChangeResult(kit_id="acme", version="1.0.0", status="accepted")
+
+    client = StubClient()
+    monkeypatch.setattr(handlers, "fetch_kit_image", lambda ref: (image, "acme@" + image.digest))
+    bind_mcp_daemon(monkeypatch, client)
+
+    handlers.handle_playbill_kit_add("inst", reference="acme:1.0.0")
+    assert client.stored == []
+    handlers.handle_playbill_kit_add("inst", reference="acme:1.0.0", dry_run=False)
+
+    assert sorted(client.stored) == sorted(_provider_files().values())
+    assert [request.bundle.manifest for request in client.sent] == [bundle.manifest] * 2
+    assert all(not request.bundle.provider_files for request in client.sent)
