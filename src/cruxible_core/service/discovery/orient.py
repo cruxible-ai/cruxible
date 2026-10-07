@@ -262,7 +262,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
             OrientProcedure(
                 name=item.identity.removeprefix("Procedure:"),
                 lifecycle="retired" if item.lifecycle == "retired" else "live",
-                runnable="directly_runnable" if item.directly_runnable else "binding_required",
+                runnable=item.runnable,
             )
             for item in sorted(typed.procedure_inventory(), key=lambda item: item.identity)
         )

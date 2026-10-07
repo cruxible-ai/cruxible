@@ -17,12 +17,11 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
-from cruxible_client.contracts.procedures.graph import analyze_procedure_v4
+from cruxible_client.contracts.procedures.graph import analyze_procedure
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
     CaptureEgressNode,
     InvokeNode,
-    ProcedureDefinitionV5,
     ProcedurePinSlotRef,
 )
 from cruxible_client.contracts.procedures.source_compiler import (
@@ -144,9 +143,9 @@ def resolve_source(
             )
         if identity in child_shapes:
             return child_shapes[identity]
-        if not child.directly_runnable or not isinstance(child.definition, ProcedureDefinitionV5):
+        if child.definition.open_slots or child.definition.pin_slots:
             fail(f"{identity} must have exact bindings and explicit operation contracts")
-        graph = analyze_procedure_v4(child.definition)
+        graph = analyze_procedure(child.definition)
         leaves = [
             node
             for node in child.definition.nodes
@@ -216,7 +215,7 @@ def resolve_source(
                             return contract.contract_schema
                 fail(f"{selected.name} has no exact owned input/output Contract")
 
-            if not child.directly_runnable:
+            if child.definition.open_slots or child.definition.pin_slots:
                 fail(f"{selected.name} has unresolved slots")
             capture_terminal, required_rung = child_shape(
                 child, (request.name.removeprefix("Procedure:"),)

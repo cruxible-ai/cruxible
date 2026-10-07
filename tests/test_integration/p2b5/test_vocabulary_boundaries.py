@@ -179,7 +179,7 @@ def test_compiler_invariant_break_projects_from_the_public_executor(
     prepared = _prepare(accepted, fixture, _StateReader())
     monkeypatch.setattr(
         execution_module,
-        "analyze_procedure_v3",
+        "analyze_procedure",
         lambda _definition: SimpleNamespace(
             edges={accepted.procedure.definition.nodes[0].node_id: {"next": "missing"}}
         ),

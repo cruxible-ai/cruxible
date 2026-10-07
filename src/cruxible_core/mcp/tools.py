@@ -90,7 +90,6 @@ from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
 from cruxible_core.mcp.target import MCP_INSTANCE_ENV, require_instance_id
 from cruxible_core.mcp.tool_prompts import tool_description
 from cruxible_core.service.discovery.next import NextWorkspaceObservation
-from cruxible_core.service.procedures.procedure_runs import ProcedureSlotBindingRequest
 
 
 class McpBlockQuery(BaseModel):
@@ -1148,34 +1147,6 @@ def register_tools(
             cursor=cursor,
             at=_read_at(at),
             evaluation_time=evaluation_time,
-        )
-
-    @_tool
-    def cruxible_procedure_readiness(
-        instance_id: InstanceId = None,
-        *,
-        name: str,
-        evaluation_time: str,
-    ) -> contracts.ProcedureReadiness:
-        """Inspect one accepted Procedure's bindings and executable profile."""
-        return handlers.handle_playbill_procedure_readiness(
-            require_instance_id(instance_id),
-            name,
-            evaluation_time=evaluation_time,
-        )
-
-    @_tool
-    def cruxible_procedure_bind(
-        instance_id: InstanceId = None,
-        *,
-        name: str,
-        bindings: list[ProcedureSlotBindingRequest],
-    ) -> contracts.ProcedureBindResult:
-        """Propose exact accepted bindings for one Procedure's open slots."""
-        return handlers.handle_playbill_procedure_bind(
-            require_instance_id(instance_id),
-            name,
-            bindings=[item.model_dump(mode="json") for item in bindings],
         )
 
     @_tool

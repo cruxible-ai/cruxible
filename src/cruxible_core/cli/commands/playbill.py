@@ -211,7 +211,6 @@ from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
 from cruxible_core.server.config import get_runtime_bearer_token, get_server_state_root
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
-    ProcedureBindRequest,
 )
 from cruxible_core.service.proposals.review import (
     ProposalReview,
@@ -4882,50 +4881,7 @@ def query_group(
 
 @playbill_group.group("procedure")
 def procedure_group() -> None:
-    """Inspect, bind, run, and measure accepted Procedures."""
-
-
-@procedure_group.command("readiness")
-@click.argument("name")
-@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
-@json_option
-@handle_errors
-def procedure_readiness(name: str, evaluation_time: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.procedure_readiness(
-            instance_id,
-            name,
-            evaluation_time=evaluation_time,
-        ),
-        command_name="cruxible procedure readiness",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    click.echo(f"{name}: {result.state}")
-    click.echo(f"Next: {result.next_operation['kind']}")
-    for slot in result.required_slots:
-        click.echo(f"Required slot: {slot}")
-    for node in result.unsupported_nodes:
-        click.echo(f"Unsupported node: {node['node_id']} ({node['kind']})")
-
-
-@procedure_group.command("bind")
-@click.argument("name")
-@click.argument("request_file", type=PayloadFile())
-@json_option
-@handle_errors
-def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
-    request = _read_model(request_file, ProcedureBindRequest)
-    result = _server_call(
-        lambda client, instance_id: client.bind_procedure(
-            instance_id,
-            name,
-            bindings=[item.model_dump(mode="json") for item in request.bindings],
-        ),
-        command_name="cruxible procedure bind",
-    )
-    _emit_json(result.model_dump(mode="json"))
+    """Run and measure accepted Procedures; read one with cruxible get Procedure:<name>."""
 
 
 #: Repair arguments a CLI leaf takes as its positional operand.

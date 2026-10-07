@@ -399,7 +399,6 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "query",
         "procedure_readiness",
         "preview_procedure_source",
-        "bind_procedure",
         "run_procedure",
         "get_procedure_run",
         "check_line",

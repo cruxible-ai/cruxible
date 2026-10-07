@@ -329,13 +329,23 @@ class GetProcedureTrackRecord(_StrictGetModel):
     promotion_digest: str
 
 
+class GetProcedureNode(_StrictGetModel):
+    """One node the direct run lane does not execute, and where it can run."""
+
+    node_id: str
+    kind: str
+    runs_on: Literal["line", "nowhere"]
+
+
 class GetProcedureCard(_StrictGetModel):
     procedure: str
     description: str | None = Field(default=None, exclude_if=_omit_none)
     inputs: dict[str, Any]
-    readiness: str
-    required_slots: tuple[str, ...] = ()
-    unsupported_nodes: int = 0
+    #: ``direct``: ``procedure run``; ``line``: only as a Line (its terminals act
+    #: outward under the Line's authority); ``unsupported``: no run path admits it.
+    runnable: Literal["direct", "line", "unsupported"]
+    #: The nodes behind a ``line`` or ``unsupported`` answer.
+    unsupported_nodes: tuple[GetProcedureNode, ...] = ()
     #: Accepted promotions of this Procedure's runs, by promotion name.
     track_record: tuple[GetProcedureTrackRecord, ...] = ()
     next: tuple[str, ...] = ()
@@ -648,6 +658,7 @@ __all__ = [
     "GetHistory",
     "GetPrincipalCard",
     "GetProcedureCard",
+    "GetProcedureNode",
     "GetProcedureRuntimePolicyCard",
     "GetProcedureTrackRecord",
     "GetProviderInterfaceCard",

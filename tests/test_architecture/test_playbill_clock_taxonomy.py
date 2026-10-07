@@ -16,13 +16,11 @@ from tests.support.clock_taxonomy import (
 )
 
 from cruxible_core.cli.commands.playbill import (
-    procedure_readiness,
     run_line,
     run_procedure,
 )
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
-    ProcedureReadinessRequestV1,
     ProcedureRunRequest,
 )
 
@@ -139,7 +137,6 @@ def test_a_required_served_instant_is_never_optional_on_its_cli_leaf() -> None:
 
     looser: list[str] = []
     for command, model, field_name in (
-        (procedure_readiness, ProcedureReadinessRequestV1, "evaluation_time"),
         (run_procedure, ProcedureRunRequest, "evaluation_time"),
         (run_line, LineRunRequest, "evaluation_time"),
     ):

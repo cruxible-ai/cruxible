@@ -232,9 +232,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("JournalWriterStateV1", "generation"): "SETTLEMENT ORDER",
     ("LineEgressReadingV1", "sequence"): "SETTLEMENT ORDER",
     ("LineRunRequest", "evaluation_time"): "EVALUATION INSTANT",
-    ("CadenceTriggerPolicy", "interval_seconds"): "VALIDITY WINDOW",
     ("CadenceSchedule", "interval_seconds"): "VALIDITY WINDOW",
-    ("WindowCloseTriggerPolicyV1", "window_seconds"): "VALIDITY WINDOW",
     ("MemberLawEvaluation", "evaluation_time"): "EVALUATION INSTANT",
     ("AuditEvidenceRef", "generation"): "SETTLEMENT ORDER",
     ("AuditFactors", "first_accepted_generation"): "SETTLEMENT ORDER",
@@ -273,7 +271,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("NextRequestV1", "expiring_within"): "VALIDITY WINDOW",
     ("NextResult", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillNextResultV1", "evaluation_time"): "EVALUATION INSTANT",
-    ("ProcedureReadiness", "evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureRunState", "evaluation_time"): "EVALUATION INSTANT",
     # When the daemon last tried to push. An assertion about an attempt, not a
     # coordinate: the mirror is a copy of accepted state and its timing orders
@@ -373,8 +370,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureMeasurementDeclaration", "check_after"): "VALIDITY WINDOW",
     ("ProcedureMeasurementDeclaration", "expires_after"): "VALIDITY WINDOW",
     ("ProcedureMeasurementReviewTrigger", "window"): "VALIDITY WINDOW",
-    ("ProcedureReadinessRequestV1", "evaluation_time"): "EVALUATION INSTANT",
-    ("ProcedureReadinessResultV1", "evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureReadingV1", "observed_at"): "ASSERTION TIME",
     ("ProcedureReadingV1", "recorded_at"): "ASSERTION TIME",
     ("ProcedureResolutionDispositionV1", "recorded_at"): "ASSERTION TIME",

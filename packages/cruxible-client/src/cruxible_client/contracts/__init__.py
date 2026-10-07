@@ -151,7 +151,11 @@ from cruxible_client.contracts.predictions import (
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifactAny as _ProcedureArtifactAny,
+    ProcedureArtifact as _ProcedureArtifact,
+)
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureNodeSupport,
+    ProcedureRunnable,
 )
 from cruxible_client.contracts.procedures.readings import (
     ProcedureMeasurementContractStatus as ProcedureMeasurementContractStatus,
@@ -185,7 +189,6 @@ from cruxible_client.contracts.procedures.readings import (
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureChildInvocation,
-    ProcedurePendingSuccessor,
     ProcedureRunAttribution,
     ProcedureRunAttributionWithheld,
     ProcedureRunReceipt,
@@ -1249,20 +1252,20 @@ class BlockDepublishResult(BaseModel):
 
 
 class ProcedureReadiness(BaseModel):
+    """How one accepted Procedure can run, with its exact artifact (SDK internal read)."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-procedure-readiness-result-v1"] = (
         "playbill-procedure-readiness-result-v1"
     )
     coordinate: AcceptedCoordinate
-    evaluation_time: str
     procedure_identity: dict[str, Any]
     procedure_artifact_digest: str
     definition_digest: str
-    artifact: _ProcedureArtifactAny | None = None
-    state: Literal["ready", "binding_required", "unsupported"]
-    required_slots: list[str]
-    unsupported_nodes: list[dict[str, Any]]
+    artifact: _ProcedureArtifact
+    runnable: ProcedureRunnable
+    unsupported_nodes: list[ProcedureNodeSupport]
     next_operation: dict[str, Any]
 
 
@@ -1274,16 +1277,6 @@ class PolicyInForceList(BaseModel):
     policies: list[PolicyInForce]
     truncated: bool = False
     next_cursor: str | None = None
-
-
-class ProcedureBindResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-procedure-bind-result-v2"] = "playbill-procedure-bind-result-v2"
-    accepted_digest: str
-    accepted_readiness: ProcedureReadiness
-    pending: "ProcedurePendingSuccessor | None" = None
-    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
 class ProcedureRunState(BaseModel):

@@ -45,7 +45,7 @@
       "role": "contract-out"
     },
     "description": "Read governed work-item state through the accepted query.",
-    "graph_format": 3,
+    "graph_format": 6,
     "hard_caps": {
       "max_capture_bytes": 0,
       "max_items": 200,
@@ -78,7 +78,7 @@
           "role": "contract-out"
         },
         "fields": {
-          "rows": "$steps.query.rows"
+          "rows": "$steps.query.result.rows"
         },
         "kind": "project",
         "next": null,

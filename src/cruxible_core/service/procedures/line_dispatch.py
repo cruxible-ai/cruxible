@@ -32,7 +32,6 @@ from cruxible_client.contracts.line_dispatch import (
     LineTriggerCheckRequest,
     LineTriggerCheckResult,
     LineTriggerOccurrence,
-    is_current_arm_principal_record,
 )
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.results import (
@@ -261,13 +260,6 @@ def _segment(
         detail=None,
         scan=None,
     )
-
-
-ARM_REQUIRES_REARM = (
-    "This arm was recorded before arms named their provenance, so the authority it "
-    "would run under cannot be established; rearm the Line (`cruxible line arm "
-    "LINE`) to resume."
-)
 
 
 def _roll_over(
@@ -792,17 +784,12 @@ def service_match_listening_lines(
             continue
         pins = line_trigger_pins(triggers)
         stop: tuple[LineArmStopReason, str] | None
-        if not is_current_arm_principal_record(session.get("armed_by")):
-            # Checked before the arm can be rolled across a restart: a record
-            # without provenance never becomes the implicit operator's arm.
-            stop = ("arm_requires_rearm", ARM_REQUIRES_REARM)
-        else:
-            stop = _arm_stop(
-                session,
-                occurrence_epoch=accepted.line.occurrence_epoch,
-                line_artifact_digest=accepted.artifact_digest,
-                trigger_pins=pins,
-            )
+        stop = _arm_stop(
+            session,
+            occurrence_epoch=accepted.line.occurrence_epoch,
+            line_artifact_digest=accepted.artifact_digest,
+            trigger_pins=pins,
+        )
         if stop is not None:
             with line_arm_boundary(instance.root, session["line_id"]), store.locked() as conn:
                 current = _active_session(conn, session["line_id"])

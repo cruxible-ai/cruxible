@@ -1355,8 +1355,6 @@ separate from freeform prose; sync does not render Markdown or HTML.
 ## procedure
 
 ~~~text
-cruxible procedure readiness NAME --evaluation-time TS
-cruxible procedure bind NAME REQUEST_FILE
 cruxible procedure run NAME INPUT_FILE --evaluation-time TS
 cruxible procedure status RUN_ID
 cruxible procedure measure NAME [--run-id RUN_ID] [--measurement NAME]...
@@ -1365,13 +1363,16 @@ cruxible procedure readings NAME [--run-id RUN_ID] [--measurement NAME]...
   [--limit N] [--cursor C] [--json]
 ~~~
 
-The served lanes run deterministic `state_tap`, `transform`, `project`, `guard`,
-`repeat` and `halt` graphs, plus `source` on a graph-v4 definition: a Procedure
-may READ an external source through an accepted Provider. On the DIRECT lane
-the effectful terminals -- `emit_capture`, `post_inbox`, `propose_change_set`,
-`settle_change_set` -- are not served, and `readiness` lists them as
-unsupported nodes before execution: a direct invocation carries no requested
-rung, no occurrence, and no mandate coordinate, and none is fabricated for it.
+Read a Procedure with `cruxible get Procedure:NAME`: its card says how it runs
+(`runnable`): `direct` (`procedure run`), `line` (only as a Line), or
+`unsupported` (no run path admits it, e.g. an `exhaust_tap` node), with the
+nodes behind that answer. Procedures are graph format 6 and pin every Provider
+exactly; open slots belong only to a Blueprint. The direct lane runs `state_tap`,
+`state_claim`, `transform`, `project`, `guard`, `repeat`, `select`, `constant`,
+`return`, `invoke`, `halt`, `source` and `call` nodes. The effectful terminals --
+`emit_capture`, `post_inbox`, `propose_change_set`, `settle_change_set` -- run
+only as a Line: a direct invocation carries no requested authority, no
+occurrence, and no mandate coordinate, and none is fabricated for it.
 The Line lane serves `propose_change_set`, and `settle_change_set` under a live
 settle ProcedureMandate; see `cruxible line`.
 

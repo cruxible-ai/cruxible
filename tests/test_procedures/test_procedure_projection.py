@@ -43,7 +43,7 @@ from cruxible_core.compiler.projection_artifacts import (
 from tests.test_procedures.test_line_specs import _accepted_procedure, _line
 
 
-def test_pc_d_projects_procedure_graph_line_and_exact_source_mappings() -> None:
+def test_projects_procedure_graph_line_and_exact_source_mappings() -> None:
     accepted, _query_pin, _interfaces = _accepted_procedure()
     line, _accepted, _line_interfaces = _line()
     procedure_content = render_procedure(accepted.procedure)
@@ -54,8 +54,8 @@ def test_pc_d_projects_procedure_graph_line_and_exact_source_mappings() -> None:
             accepted.path: procedure_content,
             "lines/triage-hourly.json": line_content,
         },
-        registry=projection_registry_for_compiler(PC_D_COMPILER),
-        artifact_kinds=P2_C_ARTIFACT_KINDS,
+        registry=projection_registry_for_compiler(GOVERNED_TRIGGERS_COMPILER),
+        artifact_kinds=artifact_kinds_for_compiler(GOVERNED_TRIGGERS_COMPILER),
     )
 
     assert tuple((row.kind, row.identity) for row in projection.envelopes) == (

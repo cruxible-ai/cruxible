@@ -222,7 +222,9 @@ class OrientDocument(_StrictOrientModel):
 class OrientProcedure(_StrictOrientModel):
     name: str
     lifecycle: Literal["live", "retired"]
-    runnable: Literal["directly_runnable", "binding_required"]
+    #: ``direct``: procedure run; ``line``: only as a Line (its terminals act
+    #: outward); ``unsupported``: no run path admits it.
+    runnable: Literal["direct", "line", "unsupported"]
 
 
 class OrientInterfaceProvider(_StrictOrientModel):

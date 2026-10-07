@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
+import tests.core_support._p2b1_support as p2b1_support
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayload,
     ClaimDependencyDrafts,
     ExistingCaptureCitationSource,
 )
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
@@ -21,7 +26,12 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
 )
 from cruxible_client.contracts.procedures.artifacts import render_procedure
-from cruxible_client.contracts.provider_interfaces import render_provider_interface
+from cruxible_client.contracts.provider_contracts import ACQUISITION_RESULT
+from cruxible_client.contracts.provider_interfaces import (
+    ProviderInterfaceRegistrationV1,
+    provider_interface_definition_digest,
+    render_provider_interface,
+)
 from cruxible_client.contracts.providers import provider_path, render_provider
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -45,6 +55,7 @@ from tests.core_support._p2b1_support import (
 )
 from tests.core_support._pc_c_support import capture_contract
 from tests.core_support._support import generate_client
+from tests.support.procedures import PERMISSIVE_CONTRACT
 from tests.test_authoring.test_authoring_existing_capture import _activate
 from tests.test_authoring.test_authoring_preflight import _working_payload
 from tests.test_claims.test_claim_attestation_service import _request
@@ -84,8 +95,36 @@ def _instance(root: Path) -> tuple[PlaybillInstance, object]:
     )
 
 
+_DEMO_INTERFACE_REGISTRATION = p2b1_support.interface_registration
+
+
+def _acquisition_registration() -> ProviderInterfaceRegistrationV1:
+    """The demo interface, declaring the acquisition result a Source is checked against."""
+
+    base = _DEMO_INTERFACE_REGISTRATION()
+    definition = json.loads(bytes.fromhex(base.interface_bytes_hex))
+    definition["contracts"] = {
+        "input": PERMISSIVE_CONTRACT.model_dump(mode="json"),
+        "output": ACQUISITION_RESULT,
+    }
+    definition["effect_class"] = base.effect_class
+    interface_hex = canonical_bytes(definition).hex()
+    return ProviderInterfaceRegistrationV1.model_validate(
+        {
+            **base.model_dump(mode="json"),
+            "interface_bytes_hex": interface_hex,
+            "interface_digest": provider_interface_definition_digest(interface_hex),
+        }
+    )
+
+
+@pytest.fixture
+def acquisition_demo(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(p2b1_support, "interface_registration", _acquisition_registration)
+
+
 def test_both_v2_producer_arms_verify_through_every_live_production_consumer(
-    tmp_path: Path,
+    tmp_path: Path, acquisition_demo: None
 ) -> None:
     instance, owner = _instance(tmp_path)
     contract = capture_contract()

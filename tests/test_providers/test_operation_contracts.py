@@ -6,9 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-from cruxible_client.contracts.procedures.models import ProcedureDefinitionV4, ProcedureDefinitionV5
 from cruxible_client.contracts.provider_contracts import (
     ProviderOperationContract,
     read_provider_operation_contract,
@@ -16,6 +14,7 @@ from cruxible_client.contracts.provider_contracts import (
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
 from tests.core_support._p2b1_support import install_demo_classifier
+from tests.support.procedures import accepted_procedure
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
@@ -35,54 +34,14 @@ def operation():
 
 def call_procedure(*, repeat=False, payload=None):
     accepted = _accepted_one_provider(repeat=repeat)
+    if payload is None:
+        return accepted
     raw = accepted.procedure.definition.model_dump(mode="json", by_alias=True)
-    raw["graph_format"] = 5
     if repeat:
-        raw["nodes"][0]["body"][0]["operation"] = "call"
-        if payload is not None:
-            raw["nodes"][0]["body"][0]["spec"] = payload
+        raw["nodes"][0]["body"][0]["spec"] = payload
     else:
-        raw["nodes"][0]["kind"] = "call"
-        if payload is not None:
-            raw["nodes"][0]["input"] = payload
-    definition = ProcedureDefinitionV5.model_validate(raw)
-    procedure = accepted.procedure.model_copy(
-        update={
-            "definition": definition,
-            "definition_digest": compute_procedure_definition_digest(definition).tagged,
-        }
-    )
-    return accepted.model_copy(
-        update={
-            "procedure": procedure,
-            "artifact_digest": procedure_artifact_digest(procedure).tagged,
-        }
-    )
-
-
-@pytest.mark.parametrize("repeat", [False, True])
-def test_new_call_grammar_does_not_reinterpret_old_provider_graphs(repeat):
-    old = _accepted_one_provider(repeat=repeat).procedure.definition
-    old_bytes = canonical_bytes(old.model_dump(mode="json", by_alias=True))
-    old_digest = compute_procedure_definition_digest(old)
-    current = call_procedure(repeat=repeat).procedure.definition
-    assert compute_procedure_definition_digest(current) != old_digest
-    assert (
-        canonical_bytes(
-            ProcedureDefinitionV4.model_validate_json(old_bytes).model_dump(
-                mode="json", by_alias=True
-            )
-        )
-        == old_bytes
-    )
-    assert (
-        compute_procedure_definition_digest(ProcedureDefinitionV4.model_validate_json(old_bytes))
-        == old_digest
-    )
-    with pytest.raises(ValidationError):
-        ProcedureDefinitionV5.model_validate(
-            {**old.model_dump(mode="json", by_alias=True), "graph_format": 5}
-        )
+        raw["nodes"][0]["input"] = payload
+    return accepted_procedure(raw, activation_policy=accepted.procedure.activation_policy)
 
 
 class BadOutput(_Invoker):
@@ -237,7 +196,7 @@ def test_specialization_and_carried_schemas_match_before_execution(case):
             check_provider_node_contract(node, interface, procedure)
 
 
-def test_previous_compiler_cannot_project_the_call_grammar():
+def test_previous_compiler_cannot_project_a_graph_v6_procedure():
     from cruxible_client.contracts.errors import ProjectionFormatError
     from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
     from cruxible_core.compiler.compiler import (
@@ -248,7 +207,9 @@ def test_previous_compiler_cannot_project_the_call_grammar():
     from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 
     procedure = call_procedure().procedure
-    with pytest.raises(ProjectionFormatError, match="graph-v5"):
+    with pytest.raises(
+        ProjectionFormatError, match="graph-v6 Procedures require compiler revision"
+    ):
         parse_projection_tree(
             {procedure_path(procedure.identity.name): render_procedure(procedure)},
             artifact_kinds=artifact_kinds_for_compiler(UPGRADE_COMPILER),

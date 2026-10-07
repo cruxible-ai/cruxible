@@ -202,7 +202,6 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
 # every served refusal producer -- core service, client authoring, CLI -- reads
 # the same one instead of re-inventing prose at its own boundary.
 RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
-    "binding_required": RepairOperation(operation="cruxible.procedure.bind"),
     "line_mandate_required": RepairOperation(
         operation="cruxible.authoring.example",
         arguments={"example": "procedure-mandate"},

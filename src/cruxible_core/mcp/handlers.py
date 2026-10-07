@@ -151,8 +151,6 @@ from cruxible_core.service.change_preview import state_change_scope
 from cruxible_core.service.discovery.since import validate_playbill_since_request
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
-    ProcedureBindRequest,
-    ProcedureReadinessRequestV1,
     ProcedureRunRequest,
 )
 
@@ -363,7 +361,6 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_curation_suppress": TypeAdapter(CurationSuppressRequest),
     "cruxible_capture_read": TypeAdapter(CaptureReadRequest),
     "cruxible_prediction_propose": TypeAdapter(contracts.PredictRequest),
-    "cruxible_procedure_bind": TypeAdapter(ProcedureBindRequest),
     "cruxible_proposal_readmit": TypeAdapter(ProposalReadmitRequest),
     "cruxible_proposal_withdraw": TypeAdapter(ProposalWithdrawRequest),
     "cruxible_claim_type_propose": TypeAdapter(ProposeClaimTypeInputRequest),
@@ -1680,49 +1677,6 @@ def handle_playbill_query_spec(
         lambda client: client.query(instance_id, request=request),
         lambda: playbill_api.playbill_query(instance_id, request=request),
         operation_name="cruxible_query_spec",
-    )
-
-
-def handle_playbill_procedure_readiness(
-    instance_id: str,
-    name: str,
-    *,
-    evaluation_time: str,
-) -> contracts.ProcedureReadiness:
-    evaluated_at = parse_datetime(evaluation_time)
-    if evaluated_at is None:  # pragma: no cover - required public argument
-        raise DataValidationError("Procedure readiness requires evaluation_time")
-    return _dispatch_remote_or_local(
-        lambda client: client.procedure_readiness(
-            instance_id,
-            name,
-            evaluation_time=evaluated_at.isoformat(),
-        ),
-        lambda: playbill_api.playbill_procedure_readiness(
-            instance_id,
-            name,
-            request=ProcedureReadinessRequestV1(evaluation_time=evaluated_at),
-        ),
-        operation_name="cruxible_procedure_readiness",
-    )
-
-
-def handle_playbill_procedure_bind(
-    instance_id: str,
-    name: str,
-    *,
-    bindings: list[dict[str, Any]],
-) -> contracts.ProcedureBindResult:
-    request = ProcedureBindRequest.model_validate({"bindings": bindings})
-    return _dispatch_remote_or_local(
-        lambda client: client.bind_procedure(
-            instance_id,
-            name,
-            bindings=[item.model_dump(mode="json") for item in request.bindings],
-        ),
-        lambda: playbill_api.playbill_procedure_bind(instance_id, name, request=request),
-        operation_name="cruxible_procedure_bind",
-        local_payload=request.model_dump(mode="json"),
     )
 
 

@@ -60,7 +60,6 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("authoring", "preflight"): "active",
     ("authoring", "rebase"): "active",
     ("authoring", "submit"): "active",
-    ("procedure", "bind"): "active",
     ("procedure", "run"): "active",
     ("procedure", "measure"): "active",
     ("line", "run"): "active",

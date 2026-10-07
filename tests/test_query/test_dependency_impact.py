@@ -40,12 +40,12 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
-    ProcedureArtifactV1,
+    ProcedureArtifact,
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
-    LineSpecV1,
+    LineSpec,
     line_spec_digest,
     line_spec_path,
 )
@@ -215,7 +215,7 @@ def _pinning_procedure(row: ClaimFactRowV1) -> AcceptedProcedure:
             ),
         )
     ]
-    procedure = ProcedureArtifactV1.model_validate(payload)
+    procedure = ProcedureArtifact.model_validate(payload)
     return AcceptedProcedure(
         path=accepted.path,
         procedure=procedure,
@@ -243,7 +243,7 @@ def _pinning_line(procedure: AcceptedProcedure, row: ClaimFactRowV1) -> Accepted
     payload = line.model_dump(mode="json")
     payload["procedure"] = procedure_pin.model_dump(mode="json")
     payload["pins"] = [item.model_dump(mode="json") for item in pins]
-    pinned = LineSpecV1.model_validate(payload)
+    pinned = LineSpec.model_validate(payload)
     return AcceptedLineSpec(
         path=line_spec_path(pinned.identity.name),
         line=pinned,

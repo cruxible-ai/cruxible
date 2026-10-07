@@ -115,8 +115,8 @@ def test_write_refusal_error_carries_its_repair() -> None:
     }
 
 
-def test_one_slot_ref_names_a_subject_field_and_procedure_slots_are_named_apart() -> None:
-    """R11: one SlotRef, the write contract's, everywhere; a Procedure slot has its own name."""
+def test_one_slot_ref_names_a_subject_field_everywhere() -> None:
+    """R11: one SlotRef, the write contract's, everywhere; no Procedure slot reference ships."""
 
     import cruxible_client
     from cruxible_client.authoring import sdk, sdk_types
@@ -125,7 +125,8 @@ def test_one_slot_ref_names_a_subject_field_and_procedure_slots_are_named_apart(
     assert sdk.SlotRef is SlotRef
     assert not hasattr(sdk_types, "SlotRef")
     assert not hasattr(sdk, "WriteSlotRef")
-    assert cruxible_client.ProcedureSlotRef is sdk_types.ProcedureSlotRef
+    assert not hasattr(cruxible_client, "ProcedureSlotRef")
+    assert not hasattr(sdk_types, "ProcedureSlotRef")
 
 
 def test_expect_is_one_value_or_every_value_and_travels_through_the_batch() -> None:

@@ -78,7 +78,6 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("authoring", "preflight"): "active",
     ("authoring", "rebase"): "active",
     ("authoring", "submit"): "active",
-    ("procedure", "bind"): "active",
     ("procedure", "run"): "active",
     ("procedure", "measure"): "active",
     ("line", "run"): "active",
@@ -662,12 +661,8 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "Query accepted state: values with flags, a spec, or a named query.",
     ),
     "procedure": _group(
-        "Inspect, bind, run, and measure accepted Procedures.",
+        "Run and measure accepted Procedures; read one with cruxible get Procedure:<name>.",
         {
-            "readiness": _command(
-                "playbill", "procedure_readiness", "Inspect Procedure readiness."
-            ),
-            "bind": _command("playbill", "bind_procedure", "Bind accepted artifacts to slots."),
             "run": _command("playbill", "run_procedure", "Run an accepted Procedure."),
             "status": _command("playbill", "procedure_run_status", "Read one Procedure run state."),
             "measure": _command(

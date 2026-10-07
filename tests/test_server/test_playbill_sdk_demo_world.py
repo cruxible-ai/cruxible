@@ -23,7 +23,12 @@ from cruxible_client import (
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
-from cruxible_client.authoring.inputs import ClaimInput, ProcedureInput, QueryDefinitionInput
+from cruxible_client.authoring.inputs import (
+    CarriedContractInput,
+    ClaimInput,
+    ProcedureInput,
+    QueryDefinitionInput,
+)
 from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -32,7 +37,6 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import PreflightResult
-from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     CanonicalDuration,
@@ -41,20 +45,14 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import claim_type_digest
-from cruxible_client.contracts.get_reads import GetRequest
+from cruxible_client.contracts.get_reads import GetProcedureCard, GetRequest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
-    ProcedureDefinitionV3,
     ProcedureHardCaps,
-    ProcedurePinSlot,
-    ProcedurePinSlotRef,
-    ProjectNode,
-    StateTapNodeV3,
-    TransformNode,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEvaluationPolicy
 from cruxible_client.contracts.query.grammar import (
@@ -75,10 +73,6 @@ from tests.core_support._claim_type_support import (
     defaulted_claim_type_input_example,
 )
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
-
-
-def _digest(label: str) -> str:
-    return typed_digest(ArtifactDigest, "playbill-sdk-demo-v1", {"label": label}).tagged
 
 
 def _catalog(workspace: Path) -> None:
@@ -336,76 +330,72 @@ def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
     assert payload["lint"]["warnings"] == []
 
 
-def _abstract_assess_procedure() -> ProcedureDefinitionV3:
-    contract_in = ProcedurePinSlotRef(slot_name="contract-in")
-    contract_out = ProcedurePinSlotRef(slot_name="contract-out")
-    query = ProcedurePinSlotRef(slot_name="policy-query")
-    return ProcedureDefinitionV3(
-        name="secops.vuln.assess",
-        description="Classify a vulnerability from governed policy and service facts.",
-        contract_in=contract_in,
-        contract_out=contract_out,
-        nodes=(
-            StateTapNodeV3(
-                node_id="read-policy",
-                query=query,
-                parameters={},
-                as_="policy_rows",
-                next="classify",
-            ),
-            TransformNode(
-                node_id="classify",
-                transform_kind="adapter",
-                contract_in=contract_in,
-                contract_out=contract_out,
-                spec={
-                    "tag": "playbill-transform-adapter-spec-v1",
-                    "value": {"input": "$steps.policy_rows"},
+def _assess_procedure(query: str) -> ProcedureInput:
+    """The assess Procedure over the accepted policy query, its Contracts carried."""
+
+    def carried(name: str, role: str) -> dict[str, str]:
+        return {"kind": "carried_contract", "name": name, "role": role}
+
+    contract_in = carried("assess-input", "contract-in")
+    contract_out = carried("assess-result", "contract-out")
+    return ProcedureInput(
+        kind="procedure",
+        definition={
+            "graph_format": 6,
+            "name": "secops.vuln.assess",
+            "description": "Classify a vulnerability from governed policy and service facts.",
+            "contract_in": contract_in,
+            "contract_out": contract_out,
+            "nodes": [
+                {
+                    "kind": "state_tap",
+                    "node_id": "read-policy",
+                    "query": {"kind": "accepted", "role": "query", "target": query},
+                    "parameters": {},
+                    "as": "policy_rows",
+                    "next": "classify",
                 },
-                as_="decision",
-                next="result",
-            ),
-            ProjectNode(
-                node_id="result",
-                fields={"lane": "$steps.decision.lane"},
-                contract_out=contract_out,
-                as_="result",
-            ),
+                {
+                    "kind": "transform",
+                    "node_id": "classify",
+                    "transform_kind": "adapter",
+                    "contract_in": contract_in,
+                    "contract_out": contract_out,
+                    "spec": {
+                        "tag": "playbill-transform-adapter-spec-v1",
+                        "value": {"input": "$steps.policy_rows"},
+                    },
+                    "as": "decision",
+                    "next": "result",
+                },
+                {
+                    "kind": "project",
+                    "node_id": "result",
+                    "fields": {"lane": "$steps.decision.lane"},
+                    "contract_out": contract_out,
+                    "as": "result",
+                },
+            ],
+            "returns": "result",
+            "budget": ProcedureBudget(
+                wall_clock=CanonicalDuration(microseconds=1_000_000),
+                max_provider_calls=0,
+                max_capture_bytes=0,
+            ).model_dump(mode="json"),
+            "hard_caps": ProcedureHardCaps(
+                max_wall_clock=CanonicalDuration(microseconds=2_000_000),
+                max_provider_calls=0,
+                max_capture_bytes=0,
+                max_items=200,
+                max_repeat_attempts=1,
+            ).model_dump(mode="json"),
+            "terminal_capability": 1,
+        },
+        contracts=(
+            CarriedContractInput(name="assess-input", fields={}, allow_extra=True),
+            CarriedContractInput(name="assess-result", fields={}, allow_extra=True),
         ),
-        returns="result",
-        pin_slots=(
-            ProcedurePinSlot(
-                slot_name="contract-in",
-                pin_role="contract-in",
-                artifact_kind="Contract",
-                interface_digest=_digest("contract-in"),
-            ),
-            ProcedurePinSlot(
-                slot_name="contract-out",
-                pin_role="contract-out",
-                artifact_kind="Contract",
-                interface_digest=_digest("contract-out"),
-            ),
-            ProcedurePinSlot(
-                slot_name="policy-query",
-                pin_role="query",
-                artifact_kind="QueryDefinition",
-                interface_digest=_digest("policy-query"),
-            ),
-        ),
-        budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=1_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-        ),
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=1,
+        activation_policy="drain",
     )
 
 
@@ -1035,11 +1025,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     }
 
     procedure = pb.procedure(
-        definition=ProcedureInput(
-            kind="procedure",
-            definition=_abstract_assess_procedure().model_dump(mode="json", by_alias=True),
-            activation_policy="drain",
-        ),
+        definition=_assess_procedure(query.identity.qualified),
     ).prepare()
     assert not procedure.refused, procedure.diagnostics
     procedure.submit()
@@ -1052,9 +1038,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         policy_subject.address
     )
     accepted = pb.accepted_procedure("secops.vuln.assess")
-    assert accepted.readiness().state == "binding_required"
-    assert accepted.readiness().required_slots == [
-        "contract-in",
-        "contract-out",
-        "policy-query",
-    ]
+    card = pb.get(accepted.ref).value
+    assert isinstance(card, GetProcedureCard)
+    assert card.runnable == "direct"
+    assert card.unsupported_nodes == ()

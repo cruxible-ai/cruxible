@@ -103,7 +103,6 @@ from cruxible_core.server.playbill_request_models import (
 from cruxible_core.server.routes import resolve_server_instance_id
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
-    ProcedureBindRequest,
     ProcedureReadinessRequestV1,
     ProcedureRunRequest,
 )
@@ -970,7 +969,6 @@ def procedure_source_preview(
 def procedure_readiness(
     instance_id: str,
     name: str,
-    evaluation_time: datetime,
     git_oid: str | None = None,
     semantic_root: str | None = None,
     generation_root: str | None = None,
@@ -981,24 +979,7 @@ def procedure_readiness(
         name,
         request=ProcedureReadinessRequestV1(
             at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-            evaluation_time=evaluation_time,
         ),
-    )
-
-
-@router.post(
-    "/{instance_id}/procedures/{name}/bind",
-    response_model=contracts.ProcedureBindResult,
-)
-def bind_procedure(
-    instance_id: str,
-    name: str,
-    req: ProcedureBindRequest,
-) -> contracts.ProcedureBindResult:
-    return playbill_api.playbill_procedure_bind(
-        resolve_server_instance_id(instance_id),
-        name,
-        request=req,
     )
 
 

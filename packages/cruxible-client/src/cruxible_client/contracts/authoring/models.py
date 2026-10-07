@@ -1086,25 +1086,6 @@ class TriggerAuthoringPayload(_StrictAuthoringModel):
         return self
 
 
-class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
-    tag: Literal["playbill-procedure-authoring-payload-v1"] = (
-        "playbill-procedure-authoring-payload-v1"
-    )
-    definition: dict[str, object]
-    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
-    retire: bool = False
-
-    @field_validator("definition", mode="before")
-    @classmethod
-    def _definition(cls, value: object) -> dict[str, object]:
-        normalized = normalize_canonical(value)
-        if not isinstance(normalized, dict):
-            raise ValueError("Procedure authoring definition must be a canonical object")
-        if "name" not in normalized:
-            raise ValueError("Procedure authoring definition requires a semantic name")
-        return cast(dict[str, object], normalized)
-
-
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
     """A Procedure envelope input, plus the acquisition policy that envelope pins.
 
@@ -1387,7 +1368,6 @@ AuthoringChangeSetMember: TypeAlias = Annotated[
     | SourceAcquisitionPolicyAuthoringPayload
     | LineAuthoringPayload
     | TriggerAuthoringPayload
-    | ProcedureAuthoringPayloadV1
     | ProcedureAuthoringPayload,
     Field(discriminator="tag"),
 ]
@@ -1522,7 +1502,6 @@ AuthoringPayload = Annotated[
     ClaimAuthoringPayloadV1
     | ClaimAuthoringPayloadV2
     | ClaimAuthoringPayload
-    | ProcedureAuthoringPayloadV1
     | ProcedureAuthoringPayload
     | ResolutionContractAuthoringPayload
     | AttestationAuthoringPayload
@@ -2790,7 +2769,6 @@ __all__ = [
     "BlockSyncSuccessorCandidate",
     "PreflightCertificate",
     "PreflightResult",
-    "ProcedureAuthoringPayloadV1",
     "ProcedureAuthoringPayload",
     "ApprovalPolicyAuthoringPayload",
     "ProcedureRuntimePolicyAuthoringPayload",

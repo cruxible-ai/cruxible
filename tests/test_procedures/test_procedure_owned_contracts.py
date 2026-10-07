@@ -9,7 +9,6 @@ import pytest
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
-    ArtifactLifecycle,
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
@@ -17,13 +16,11 @@ from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
-    ProcedureArtifactV1,
     ProcedureOwnedContract,
-    evaluate_procedure_law,
-    parse_procedure,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
     procedure_path,
+    procedure_runnability,
     render_procedure,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
@@ -33,13 +30,13 @@ from cruxible_client.contracts.procedures.contracts import (
     _validate_payload,
     _validate_payload_with_budget,
 )
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
-    ProcedureDefinitionV3,
+    ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    StateTapNodeV3,
+    StateTapNode,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.exhaust import (
@@ -70,7 +67,7 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
-from tests.core_support._support import client_material, initialize_local
+from tests.core_support._support import client_material
 from tests.test_ledger.test_activation import _sign
 
 READ_TIME = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
@@ -227,12 +224,12 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
         target=ArtifactIdentity(kind="QueryDefinition", name=QUERY_NAME),
         artifact_digest=query_digest,
     )
-    definition = ProcedureDefinitionV3(
+    definition = ProcedureDefinition(
         name="query-work-items",
         contract_in=contract_in,
         contract_out=contract_out,
         nodes=(
-            StateTapNodeV3(
+            StateTapNode(
                 node_id="read",
                 query=query,
                 parameters={},
@@ -241,7 +238,7 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
             ),
             ProjectNode(
                 node_id="project",
-                fields={"rows": "$steps.query.rows"},
+                fields={"rows": "$steps.query.result.rows"},
                 contract_out=contract_out,
                 as_="result",
             ),
@@ -265,7 +262,7 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
     procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
-        definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
         pins=tuple(
             sorted(
                 (contract_in, contract_out, query),
@@ -355,11 +352,10 @@ def test_query_only_procedure_runs_through_daemon_query_without_provider(
         run_index_path=tmp_path / "procedure-run-index.sqlite",
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
-        provider_executor=None,
     )
 
-    assert accepted.procedure.directly_runnable is True
-    assert result.status == "succeeded"
+    assert procedure_runnability(accepted.procedure.definition) == ("direct", ())
+    assert result.status == "succeeded", result.refusal
     assert result.output is not None
     assert len(result.output["rows"]) == 2  # type: ignore[index]
 
@@ -400,85 +396,6 @@ def _activate_procedure(instance, owner, procedure, *, sequence: int, timestamp:
     assert publisher.activate(bundle, projection, base=base).status == "accepted"
     instance.refresh()
     return result, base
-
-
-def test_mixed_procedure_v1_v2_ledger_replays_each_historical_wire(tmp_path: Path) -> None:
-    instance, owner = initialize_local(tmp_path)
-    placeholder_query_digest = typed_digest(
-        ArtifactDigest,
-        "playbill-procedure-succession-test-v1",
-        {"query": "placeholder"},
-    ).tagged
-    v2 = _accepted_query_procedure(placeholder_query_digest).procedure
-    assert isinstance(v2, ProcedureArtifact)
-    v1 = ProcedureArtifactV1(
-        identity=v2.identity,
-        definition=v2.definition,
-        definition_digest=v2.definition_digest,
-        pins=v2.pins,
-        activation_policy=v2.activation_policy,
-    )
-    first, genesis = _activate_procedure(
-        instance,
-        owner,
-        v1,
-        sequence=1,
-        timestamp="2026-08-21T12:00:00.000000Z",
-    )
-    v1_coordinate = instance.accepted_coordinate()
-    successor = v2.model_copy(
-        update={
-            "lifecycle": ArtifactLifecycle(predecessor_digest=procedure_artifact_digest(v1).tagged)
-        }
-    )
-    second, _base = _activate_procedure(
-        instance,
-        owner,
-        successor,
-        sequence=2,
-        timestamp="2026-08-21T13:00:00.000000Z",
-    )
-
-    path = procedure_path(v1.identity.name)
-    assert isinstance(
-        parse_procedure(instance.tree_at(v1_coordinate.git_oid)[path], path=path),
-        ProcedureArtifactV1,
-    )
-    assert isinstance(
-        parse_procedure(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path),
-        ProcedureArtifact,
-    )
-    assert first.candidate is not None
-    assert second.candidate is not None
-    assert first.candidate.law_evidence[0].law_identifier == "playbill.procedure.v1"
-    assert second.candidate.law_evidence[0].law_identifier == "playbill.procedure.v2"
-    assert genesis.git_oid != v1_coordinate.git_oid
-
-
-def test_procedure_v2_lineage_cannot_drop_its_owned_contract_closure() -> None:
-    v2 = _accepted_query_procedure(
-        typed_digest(
-            ArtifactDigest,
-            "playbill-procedure-succession-test-v1",
-            {"query": "placeholder"},
-        ).tagged
-    )
-    legacy_successor = ProcedureArtifactV1(
-        identity=v2.procedure.identity,
-        definition=v2.procedure.definition,
-        definition_digest=v2.procedure.definition_digest,
-        pins=v2.procedure.pins,
-        activation_policy=v2.procedure.activation_policy,
-        lifecycle=ArtifactLifecycle(predecessor_digest=v2.artifact_digest),
-    )
-
-    result = evaluate_procedure_law(
-        legacy_successor,
-        path=v2.path,
-        predecessor=v2,
-    )
-    assert result.verdict == "refused"
-    assert result.diagnostics[0].code == "cruxible.procedure.wire_downgrade"
 
 
 @pytest.mark.parametrize(

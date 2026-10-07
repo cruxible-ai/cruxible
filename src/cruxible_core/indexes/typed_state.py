@@ -51,7 +51,11 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     parse_procedure_runtime_policy,
     procedure_runtime_policy_digest,
 )
-from cruxible_client.contracts.procedures.artifacts import parse_procedure
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureRunnable,
+    parse_procedure,
+    procedure_runnability,
+)
 from cruxible_client.contracts.procedures.line_specs import (
     line_identity_digest,
     line_requested_rung,
@@ -186,7 +190,7 @@ OWNER_CODECS = (
                 "activation_policy",
                 "TEXT NOT NULL CHECK(activation_policy IN ('drain','abort','snapshot','epoch-check'))",
             ),
-            ("directly_runnable", "INTEGER NOT NULL CHECK(directly_runnable IN (0,1))"),
+            ("runnable", "TEXT NOT NULL CHECK(runnable IN ('direct','line','unsupported'))"),
         ),
     ),
     OwnerCodec(
@@ -559,7 +563,7 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
     if owner.kind == "procedure":
         result.update(
             definition_format=str(source.definition.graph_format),
-            directly_runnable=int(source.directly_runnable),
+            runnable=procedure_runnability(source.definition)[0],
         )
     if owner.kind in ("line", "procedure-mandate"):
         result.update(
@@ -823,7 +827,7 @@ class ProcedureInventoryRow:
     identity: str
     path: str
     lifecycle: str
-    directly_runnable: bool
+    runnable: ProcedureRunnable
 
 
 class TypedStateReader:
@@ -1121,9 +1125,9 @@ class TypedStateReader:
     def procedure_inventory(self) -> tuple[ProcedureInventoryRow, ...]:
         """Return the accepted Procedure catalog without decoding graph bytes."""
         return tuple(
-            ProcedureInventoryRow(row[0], row[1], row[2], bool(row[3]))
+            ProcedureInventoryRow(row[0], row[1], row[2], row[3])
             for row in self.connection.execute(
-                "SELECT identity,path,lifecycle,directly_runnable FROM procedures ORDER BY path"
+                "SELECT identity,path,lifecycle,runnable FROM procedures ORDER BY path"
             )
         )
 

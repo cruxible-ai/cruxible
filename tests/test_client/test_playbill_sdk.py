@@ -454,7 +454,7 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
 
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-    from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3, ProjectNode
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition, ProjectNode
     from tests.test_procedures.test_procedure_execution import (
         _budget,
         _hard_caps,
@@ -467,7 +467,7 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
     co = _owned_contract("output", {"ok": PropertySchema(type="bool")})
     pi, po = _owned_pin("contract-in", ci), _owned_pin("contract-out", co)
     artifact = _owned_accepted(
-        ProcedureDefinitionV3(
+        ProcedureDefinition(
             name="daily-summary",
             contract_in=pi,
             contract_out=po,
@@ -650,7 +650,7 @@ def test_procedure_run_track_record_reads_the_procedure_card_from_get(tmp_path: 
                 card=GetProcedureCard(
                     procedure="daily-summary",
                     inputs={"input": "daily-summary-input"},
-                    readiness="ready",
+                    runnable="direct",
                     track_record=(entry,),
                 ),
                 coordinate=GetCoordinate(git_oid="a" * 12, generation=3),

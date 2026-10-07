@@ -59,7 +59,6 @@ from cruxible_client.authoring.sdk_types import (
     PendingClaimTypeRef,
     PendingSubjectRef,
     ProcedureRef,
-    ProcedureSlotRef,
     QueryRef,
     ReferenceKindError,
     ReferentSensitivity,
@@ -129,7 +128,6 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSource,
     LineAuthoringPayload,
     ProcedureAuthoringPayload,
-    ProcedureAuthoringPayloadV1,
     ProcedureMandateAuthoringPayload,
     QueryDefinitionAuthoringPayload,
     ResolutionContractAuthoringPayload,
@@ -223,7 +221,7 @@ from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidence,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifactAny,
+    ProcedureArtifact,
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.results import ProcedureTerminalEgress
@@ -417,8 +415,6 @@ def _expectation(
     if isinstance(value, str):
         return None
     _address(value, expected)
-    if expected is RefKind.SLOT:
-        return None
     if isinstance(value, (PendingSubjectRef, PendingClaimTypeRef)):
         # A same-set definition did not exist at the coordinate this ref names,
         # so asserting it there would refuse in preflight against the base tree.
@@ -636,7 +632,6 @@ class _IntentDraft:
         ClaimAuthoringPayloadV1
         | ClaimAuthoringPayloadV2
         | ClaimAuthoringPayload
-        | ProcedureAuthoringPayloadV1
         | ProcedureAuthoringPayload
         | SubjectAuthoringPayload
         | ChangeSetAuthoringPayload
@@ -1072,7 +1067,7 @@ class ChangeSetDraft:
         Next: ``.line(name=..., procedure=...)`` to run it, then ``.submit()``.
         """
         draft = self._playbill.procedure(definition=definition)
-        assert isinstance(draft.payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayload))
+        assert isinstance(draft.payload, ProcedureAuthoringPayload)
         self._members.append(
             _ChangeSetMember(
                 payload=draft.payload,
@@ -1124,9 +1119,8 @@ class ChangeSetDraft:
         CaptureContract event, and every Trigger aimed at it must fire on it.
         Missing or ineligible trigger material refuses admission, without a re-fetch.
 
-        Lowering refuses a Procedure that is not graph-v4/v5/v6 and one whose
-        Source nodes leave a Provider slot open: the Line pins exactly what the
-        Procedure names, and an open slot is nothing to pin.
+        Lowering refuses a Procedure with an ``exhaust_tap`` node: no run path
+        admits one, so the Line could never run.
         ``acquisition_policy`` is required only when the Procedure has Source
         nodes. ``parameters`` is the Procedure's input record; lowering checks it
         against the Procedure's input contract. ``max_authority`` (observe,
@@ -3530,50 +3524,15 @@ class Cruxible:
         if not isinstance(definition, ProcedureInput):
             raise TypeError("procedure definition must be a ProcedureInput or authoring Sequence")
         payload = lower_authoring_input(definition)
-        assert isinstance(payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayload))
-        # `source` is served by the graph-v4/v5 observation path: a v3 Source
-        # node names no interface or implementation, so nothing can plan its
-        # Provider occurrence. Keep it out of the v3 allow-list rather than
-        # letting authoring succeed on a graph no run lane can admit.
-        allowed = {"state_tap", "transform", "project", "guard", "repeat", "halt"}
-        if definition.definition.get("graph_format") in {4, 5}:
-            # Effectful terminals are served on the Line lane: direct runs
-            # refuse them at admission. The shared compiler enforces that each
-            # terminal ends its path; the SDK must allow authoring that path.
-            allowed = allowed | {
-                "source",
-                "emit_capture",
-                "propose_change_set",
-                "settle_change_set",
-            }
-        if definition.definition.get("graph_format") == 5:
-            allowed = allowed | {"call"}
-        nodes = definition.definition.get("nodes")
+        assert isinstance(payload, ProcedureAuthoringPayload)
         if "source_request" in definition.definition:
             from cruxible_client.contracts.procedures.source_requests import (
                 ProcedureSourceRequest,
             )
 
             ProcedureSourceRequest.model_validate(definition.definition["source_request"])
-            nodes = ()
-        if not isinstance(nodes, list | tuple):
+        elif not isinstance(definition.definition.get("nodes"), list | tuple):
             raise ValueError("Procedure input must declare its nodes")
-        unsupported = tuple(
-            node.get("node_id")
-            for node in nodes
-            if isinstance(node, Mapping) and node.get("kind") not in allowed
-        )
-        if unsupported:
-            raise CapabilityNotServed(
-                code="cruxible.sdk.procedure_capability_not_served",
-                capability=f"procedure nodes {unsupported}",
-                repair=(
-                    "Use only state_tap, transform, project, guard, repeat, and halt nodes "
-                    "on the served SDK lane, plus source, emit_capture, propose_change_set, "
-                    "and settle_change_set on a graph-v4/v5 definition, and call on a graph-v5 "
-                    "definition."
-                ),
-            )
         return ProcedureDraft(
             self,
             payload,
@@ -4493,18 +4452,16 @@ class Procedure:
         self._playbill = cx
         self._name = name
         self._coordinate = coordinate
-        self._artifact: ProcedureArtifactAny | None = None
+        self._artifact: ProcedureArtifact | None = None
 
     @property
-    def definition(self) -> ProcedureArtifactAny:
+    def definition(self) -> ProcedureArtifact:
         """Exact accepted definition used for typed inputs and nested bindings.
 
         Next: ``procedure.input(...)`` to build a typed input.
         """
         if self._artifact is None:
-            reading = self.readiness()
-            if reading.artifact is None:
-                raise ValueError("Daemon did not return the accepted Procedure definition")
+            reading = self._readiness()
             if (
                 procedure_artifact_digest(reading.artifact).tagged
                 != reading.procedure_artifact_digest
@@ -4527,59 +4484,19 @@ class Procedure:
     def ref(self) -> ProcedureRef:
         """This Procedure as a typed ref. Next: ``cx.get(procedure.ref)``."""
 
-        coordinate = self._coordinate or _coordinate(self.readiness().coordinate)
+        coordinate = self._coordinate or _coordinate(self._readiness().coordinate)
         return ProcedureRef(self._name, coordinate)
 
-    def readiness(self) -> api.ProcedureReadiness:
-        """Whether this Procedure can run now, and which slots still need binding.
-
-        Next: ``procedure.bind(bindings=...)`` for open slots, else ``procedure.run(...)``.
-        """
-
+    def _readiness(self) -> api.ProcedureReadiness:
+        # The exact accepted artifact behind ``definition`` and ``input``; the
+        # public read of how it can run is ``cx.get(procedure.ref)``.
         requested = self._playbill._read_at(self._coordinate)
         result = self._playbill._client.procedure_readiness(
             self._playbill._instance_id,
             self._name,
-            evaluation_time=self._playbill._evaluation_time(),
             at=requested,
         )
         self._playbill._observe_read(_coordinate(result.coordinate), expected=requested)
-        return result
-
-    def bind(
-        self, *, bindings: Mapping[str | ProcedureSlotRef, TypedRef]
-    ) -> api.ProcedureBindResult:
-        # Binding is a current-state write with the existing daemon admission
-        # contract, not a snapshot read. Preserve its observed-reference guard.
-        """Bind this Procedure's open slots to accepted things.
-
-        Next: ``procedure.readiness()``, then ``procedure.run(...)``.
-        """
-
-        coordinate = self._coordinate or self._playbill.coordinate
-        self._playbill._assert_coordinate(coordinate)
-        rows: list[dict[str, object]] = []
-        for key, value in bindings.items():
-            slot = key if isinstance(key, str) else _address(key, RefKind.SLOT)
-            if isinstance(key, ProcedureSlotRef) and key.coordinate != coordinate:
-                raise ValueError("procedure binding references must match its observed coordinate")
-            if isinstance(value, ProcedureSlotRef):
-                raise ReferenceKindError("a slot cannot be bound to another slot")
-            if value.coordinate != coordinate:
-                raise ValueError("procedure binding references must match its observed coordinate")
-            target_kind = _REFERENCE_KINDS.get(value.kind)
-            if target_kind is None:
-                raise ReferenceKindError(f"cannot bind {value.kind.value} to a procedure slot")
-            rows.append(
-                {
-                    "slot_name": slot,
-                    "target": {"kind": target_kind, "name": value.address},
-                }
-            )
-        rows.sort(key=lambda item: str(item["slot_name"]).encode("utf-8"))
-        result = self._playbill._client.bind_procedure(
-            self._playbill._instance_id, self._name, bindings=rows
-        )
         return result
 
     def run(

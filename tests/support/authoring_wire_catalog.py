@@ -83,7 +83,6 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "PreflightCertificate",
     "PreflightResult",
     "ProcedureAuthoringPayload",
-    "ProcedureAuthoringPayloadV1",
     "ProcedureMandateAuthoringPayload",
     "ProcedureRuntimePolicyAuthoringPayload",
     "ProjectionCheckRequest",

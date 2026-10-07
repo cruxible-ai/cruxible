@@ -92,8 +92,8 @@ from tests.core_support._adoption_fixture import _query_definition
 from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type, _subject
+from tests.test_indexes.test_projection_next import _accepted_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree
-from tests.test_integration.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_ledger.test_activation import _sign
 
 
@@ -1417,7 +1417,7 @@ def test_migration_surfaces_nonblocking_policy_and_source_lint(
     }
 
 
-def test_automatic_migration_names_graph_v4_procedure_support_gap() -> None:
+def test_automatic_migration_never_rewrites_a_procedure_dependent() -> None:
     accepted = _accepted_procedure()
     content = render_procedure(accepted.procedure)
     current = parse_dependency_artifact(accepted.path, content)
@@ -1425,7 +1425,7 @@ def test_automatic_migration_names_graph_v4_procedure_support_gap() -> None:
 
     with pytest.raises(
         ClaimTypeMigrationDependentInvalid,
-        match="automatic migration of graph-v4 Procedure dependent",
+        match="automatic migration of Procedure dependent .* supply an explicit successor",
     ):
         _canonical_successor_bytes(
             current=current,

@@ -15,12 +15,8 @@ from cruxible_client.contracts.laws import (
     CLAIM_TYPE_LAW_V3,
     CLAIM_TYPE_LAW_V4,
     DOCUMENT_LAW,
-    LINE_LAW,
-    LINE_LAW_V2,
-    PROCEDURE_LAW,
-    PROCEDURE_LAW_REVISION_5,
+    LINE_V6_ACCEPTANCE_LAW,
     PROCEDURE_LAW_V2,
-    PROCEDURE_LAW_V2_REVISION_5,
     PROCEDURE_RUNTIME_POLICY_LAW,
     PROVIDER_INTERFACE_LAW,
     PROVIDER_LAW_V2,
@@ -64,28 +60,17 @@ def test_unknown_or_substituted_acceptance_law_refuses() -> None:
         )
 
 
-def test_pc_d_procedure_and_line_laws_are_exact_historical_coordinates() -> None:
-    assert (
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-procedure-v1").coordinate
-        == PROCEDURE_LAW
-    )
+def test_procedure_law_is_the_one_v2_envelope_coordinate() -> None:
     assert (
         ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-procedure-v2").coordinate
         == PROCEDURE_LAW_V2
     )
     assert (
         ACCEPTANCE_LAWS.require_historical(
-            identifier=PROCEDURE_LAW_REVISION_5.identifier,
-            digest=PROCEDURE_LAW_REVISION_5.digest,
+            identifier=PROCEDURE_LAW_V2.identifier,
+            digest=PROCEDURE_LAW_V2.digest,
         ).coordinate
-        == PROCEDURE_LAW_REVISION_5
-    )
-    assert (
-        ACCEPTANCE_LAWS.require_historical(
-            identifier=PROCEDURE_LAW_V2_REVISION_5.identifier,
-            digest=PROCEDURE_LAW_V2_REVISION_5.digest,
-        ).coordinate
-        == PROCEDURE_LAW_V2_REVISION_5
+        == PROCEDURE_LAW_V2
     )
 
 
@@ -98,7 +83,10 @@ def test_p2_b1_provider_interface_and_line_successor_laws_are_current() -> None:
         ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-provider-interface-v1").coordinate
         == PROVIDER_INTERFACE_LAW
     )
-    assert ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-line-v2").coordinate == LINE_LAW_V2
+    assert (
+        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-line-v6").coordinate
+        == LINE_V6_ACCEPTANCE_LAW.coordinate
+    )
 
 
 def test_claim_v2_and_v3_laws_remain_independently_replayable() -> None:
@@ -117,7 +105,6 @@ def test_claim_v2_and_v3_laws_remain_independently_replayable() -> None:
         ).coordinate
         == CLAIM_LAW_V3_REVISION_7
     )
-    assert ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-line-v1").coordinate == LINE_LAW
 
 
 def test_claim_type_v1_v3_and_v4_survive_but_removed_v2_has_no_acceptance_law() -> None:

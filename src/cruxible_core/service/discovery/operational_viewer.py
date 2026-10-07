@@ -17,9 +17,7 @@ from dataclasses import dataclass, field
 
 from cruxible_client.contracts.line_dispatch import (
     LineArmPrincipal,
-    is_current_arm_principal_record,
 )
-from cruxible_client.contracts.operational_reads import ArmPrincipalKind
 
 
 @dataclass(frozen=True)
@@ -69,15 +67,4 @@ def may_see_arming(viewer: OperationalViewer | None, principal: LineArmPrincipal
     return viewer is not None and viewer.may_see(principal)
 
 
-def arm_principal_kind(record: object, principal: LineArmPrincipal) -> ArmPrincipalKind:
-    """The kind a card shows for a persisted ``armed_by``.
-
-    A record persisted before arms named their provenance parses under the
-    current model with a defaulted tag, so it would read as the implicit local
-    operator; it is shown as ``unverified`` instead, as dispatch treats it.
-    """
-
-    return principal.kind if is_current_arm_principal_record(record) else "unverified"
-
-
-__all__ = ["OperationalViewer", "arm_principal_kind", "may_see_arming"]
+__all__ = ["OperationalViewer", "may_see_arming"]

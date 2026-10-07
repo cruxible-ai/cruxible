@@ -25,7 +25,7 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-from cruxible_client.contracts.procedures.models import ProcedureDefinitionV5
+from cruxible_client.contracts.procedures.models import ProcedureDefinition
 from cruxible_client.contracts.provider_interfaces import (
     provider_interface_digest,
     provider_interface_path,
@@ -226,7 +226,6 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
         policy_pin=source._policy_pin(policy),
     )
     raw = procedure.definition.model_dump(mode="json", by_alias=True)
-    raw["graph_format"] = 5
     raw["nodes"][0].update(
         {
             "interface_digest": registration.interface_digest,
@@ -235,7 +234,7 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
         }
     )
     raw["nodes"][1]["fields"] = {"severity": f"$steps.{source.SOURCE_ALIAS}.derived.text"}
-    definition = ProcedureDefinitionV5.model_validate(raw)
+    definition = ProcedureDefinition.model_validate(raw)
     procedure = procedure.model_copy(
         update={
             "definition": definition,
@@ -362,7 +361,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
 
     raw = {
         **example.definition,
-        "graph_format": 5,
+        "graph_format": 6,
         "returns": "result",
         "contract_out": carried("contract-out"),
         "nodes": [

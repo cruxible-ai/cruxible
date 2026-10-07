@@ -97,12 +97,8 @@ class RunRow(_StrictOperationalModel):
     nodes_done: int = Field(ge=0)
 
 
-#: Who armed a Line, as a card shows it. ``unverified`` is an arm persisted
-#: before arms recorded their provenance: it is never resolved as any
-#: principal, and stops with ``arm_requires_rearm`` until it is rearmed.
-ArmPrincipalKind: TypeAlias = Literal[
-    "runtime_credential", "principal_claim", "local_operator", "unverified"
-]
+#: Who armed a Line, as a card shows it.
+ArmPrincipalKind: TypeAlias = Literal["runtime_credential", "principal_claim", "local_operator"]
 
 
 class GetLineArm(_StrictOperationalModel):

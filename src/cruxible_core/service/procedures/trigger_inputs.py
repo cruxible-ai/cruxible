@@ -17,7 +17,6 @@ from cruxible_client.contracts.captures import CaptureContract
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
-    trigger_capture_selector,
     trigger_capture_source,
 )
 from cruxible_client.contracts.procedures.windows import LineTriggerBinding
@@ -51,7 +50,7 @@ def bind_trigger_capture(
 ) -> LandedCaptureRunMaterialV1:
     """A trigger input must select its exact event; defaults and re-fetch are not substitutions."""
     node = trigger_capture_source(line, procedure)
-    selector = trigger_capture_selector(line)
+    selector = line.trigger_event
     if binding is None or binding.event is None or selector is None:
         raise TriggerCaptureRefused(
             "trigger_capture_invalid", "trigger_capture_input: an exact retained event is required"

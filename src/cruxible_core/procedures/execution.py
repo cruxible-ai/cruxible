@@ -59,15 +59,15 @@ from cruxible_client.contracts.procedures.contracts import (
     ProcedureContractItemBudgetExceeded,
     ValidatedProcedureContract,
 )
-from cruxible_client.contracts.procedures.graph import analyze_procedure_v3, analyze_procedure_v4
+from cruxible_client.contracts.procedures.graph import analyze_procedure
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     line_identity_digest,
 )
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
+    CallNode,
     CaptureEgressNode,
-    CaptureEgressNodeV3,
     ClaimTapNode,
     ConstantNode,
     ExhaustTapNode,
@@ -83,19 +83,12 @@ from cruxible_client.contracts.procedures.models import (
     ProcedurePinSlotRef,
     ProjectNode,
     ProposeChangeSetNode,
-    ProposeChangeSetNodeV3,
-    ProviderNode,
-    ProviderNodeV3,
-    RepeatBodyNodeV3,
-    RepeatBodyNodeV4,
-    RepeatNodeV3,
-    RepeatNodeV4,
+    RepeatBodyNode,
+    RepeatNode,
     ReturnNode,
     SelectNode,
     SourceNode,
-    SourceNodeV3,
     StateTapNode,
-    StateTapNodeV3,
     TransformNode,
     authority_for_rung,
     iter_pin_bindings,
@@ -167,7 +160,6 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.acquisition import (
     ProcedureCaptureMaterialV1,
-    ProcedureSourceAcquirerProtocol,
     ProcedureSourceAcquisitionResultV1,
     apply_acquisition_result,
 )
@@ -1214,19 +1206,6 @@ class StateTapReaderProtocol(Protocol):
     ) -> StateTapReadResultV1: ...
 
 
-class ProviderExecutorProtocol(Protocol):
-    def execute_provider(
-        self,
-        *,
-        provider: ArtifactPin,
-        environment: ArtifactPin,
-        contract_in: ArtifactPin,
-        contract_out: ArtifactPin,
-        payload: CanonicalValue,
-        actor_context: GovernedActorContext,
-    ) -> ProviderInvocationResultV1: ...
-
-
 class ProviderRuntimeInvokerProtocol(Protocol):
     def bind_provider(
         self,
@@ -1984,36 +1963,20 @@ def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
     ).tagged
 
 
-def _exact_pin(
-    binding: ArtifactPin | ProcedurePinSlotRef,
-    *,
-    label: str,
-    slot_pins: Mapping[str, ArtifactPin] | None = None,
-) -> ArtifactPin:
-    """Resolve one binding to an exact pin, using the LineSpec closure when bound."""
+def _exact_pin(binding: ArtifactPin | ProcedurePinSlotRef, *, label: str) -> ArtifactPin:
+    """An accepted Procedure pins every dependency exactly; only a Blueprint has slots."""
 
     if isinstance(binding, ProcedurePinSlotRef):
-        bound = None if slot_pins is None else slot_pins.get(binding.slot_name)
-        if bound is None:
-            raise ExecutionError(f"line_binding_required: {label} uses a LineSpec pin slot")
-        return bound
+        raise ExecutionError(f"{label} has an open slot {binding.slot_name!r}")
     return binding
 
 
-def _node_pin_sets(
-    accepted: AcceptedProcedure,
-    slot_pins: Mapping[str, ArtifactPin] | None = None,
-) -> tuple[ProcedureNodePinSetV1, ...]:
+def _node_pin_sets(accepted: AcceptedProcedure) -> tuple[ProcedureNodePinSetV1, ...]:
     result: list[ProcedureNodePinSetV1] = []
     for node in accepted.procedure.definition.nodes:
         bindings = iter_pin_bindings(node)
         pins = tuple(
-            _exact_pin(
-                item,
-                label=f"Procedure node {node.node_id!r}",
-                slot_pins=slot_pins,
-            )
-            for item in bindings
+            _exact_pin(item, label=f"Procedure node {node.node_id!r}") for item in bindings
         )
         result.append(
             ProcedureNodePinSetV1(
@@ -2033,24 +1996,16 @@ def _node_pin_sets(
     return tuple(sorted(result, key=lambda item: item.node_id.encode("utf-8")))
 
 
-def resolve_procedure_pin(
-    binding: ArtifactPin | ProcedurePinSlotRef,
-    *,
-    label: str,
-    slot_pins: Mapping[str, ArtifactPin] | None = None,
-) -> ArtifactPin:
-    """Public seam for resolving one v3 binding under an accepted LineSpec closure."""
+def resolve_procedure_pin(binding: ArtifactPin | ProcedurePinSlotRef, *, label: str) -> ArtifactPin:
+    """Public seam for resolving one node binding to its exact pin."""
 
-    return _exact_pin(binding, label=label, slot_pins=slot_pins)
+    return _exact_pin(binding, label=label)
 
 
-def procedure_node_pin_sets(
-    accepted: AcceptedProcedure,
-    slot_pins: Mapping[str, ArtifactPin] | None = None,
-) -> tuple[ProcedureNodePinSetV1, ...]:
+def procedure_node_pin_sets(accepted: AcceptedProcedure) -> tuple[ProcedureNodePinSetV1, ...]:
     """Public seam for the exact per-node pin commitment one run must reproduce."""
 
-    return _node_pin_sets(accepted, slot_pins)
+    return _node_pin_sets(accepted)
 
 
 def accepted_procedure_pin_set_digest(accepted: AcceptedProcedure) -> str:
@@ -2060,7 +2015,7 @@ def accepted_procedure_pin_set_digest(accepted: AcceptedProcedure) -> str:
 
 
 def state_tap_parameters(
-    node: StateTapNodeV3 | ClaimTapNode,
+    node: StateTapNode | ClaimTapNode,
     *,
     invocation_input: object,
     values: dict[str, CanonicalValue],
@@ -2082,7 +2037,7 @@ def state_tap_parameters(
     return normalize_canonical(node.parameters)
 
 
-def state_tap_view(node: StateTapNodeV3 | ClaimTapNode, value: object) -> CanonicalValue:
+def state_tap_view(node: StateTapNode | ClaimTapNode, value: object) -> CanonicalValue:
     if isinstance(node, StateTapNode):
         from cruxible_client.contracts.query.results import ClaimQueryResult
         from cruxible_core.query.engine import query_execution_receipt
@@ -2112,7 +2067,6 @@ def bind_accepted_state_materials(
     state_reader: StateTapReaderProtocol,
     bodies: ContentAddressedBodyStore,
     invocation_input: object = None,
-    slot_pins: Mapping[str, ArtifactPin] | None = None,
 ) -> tuple[AcceptedStateRunMaterialV2, ...]:
     """Read and retain every accepted-state tap this run will observe.
 
@@ -2126,12 +2080,10 @@ def bind_accepted_state_materials(
     for node in accepted.procedure.definition.nodes:
         if isinstance(node, ConstantNode):
             values[node.as_] = normalize_canonical(node.fields)
-        if not isinstance(node, StateTapNodeV3 | ClaimTapNode):
+        if not isinstance(node, StateTapNode | ClaimTapNode):
             continue
         binding = node.claim_type if isinstance(node, ClaimTapNode) else node.query
-        query = resolve_procedure_pin(
-            binding, slot_pins=slot_pins, label=f"state read {node.node_id!r}"
-        )
+        query = resolve_procedure_pin(binding, label=f"state read {node.node_id!r}")
         parameters = state_tap_parameters(node, invocation_input=invocation_input, values=values)
         try:
             if isinstance(node, ClaimTapNode):
@@ -2210,8 +2162,8 @@ def prepare_direct_procedure_run(
     """Bind exact accepted state and all pins for an actor-authenticated direct run."""
 
     procedure = accepted.procedure
-    if not procedure.directly_runnable:
-        raise ExecutionError("line_binding_required: Procedure has unresolved pin slots")
+    if procedure.definition.open_slots:
+        raise ExecutionError("a Blueprint's open slots cannot run; instantiate it first")
     if procedure_artifact_digest(procedure).tagged != accepted.artifact_digest:
         raise ExecutionError("accepted Procedure artifact digest does not reproduce")
 
@@ -2507,16 +2459,13 @@ class ProcedureExecutor:
         fencing_token: str,
         activation_authority: ProcedureActivationAuthorityProtocol,
         contract_validator: ContractValidatorProtocol,
-        provider_executor: ProviderExecutorProtocol | None = None,
         provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
         provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol]
         | None = None,
         provider_classifier_registry: ProviderBucketClassifierRegistry | None = None,
         capture_contracts: Mapping[str, CaptureContract] | None = None,
-        source_acquirer: ProcedureSourceAcquirerProtocol | None = None,
         acquisition_policy: SourceAcquisitionPolicy | None = None,
         default_authorizations: tuple[str, ...] = (),
-        slot_pins: Mapping[str, ArtifactPin] | None = None,
         effective_rung: EffectiveRungV1 | None = None,
         egress_sink: TerminalEgressSinkProtocol | None = None,
         declared_effect_grants: tuple[str, ...] = (),
@@ -2532,17 +2481,14 @@ class ProcedureExecutor:
         self.fencing_token = fencing_token
         self.activation_authority = activation_authority
         self.contract_validator = contract_validator
-        self.provider_executor = provider_executor
         self.provider_runtime_invoker = provider_runtime_invoker
         self.provider_runtime_invoker_factory = provider_runtime_invoker_factory
         self.provider_classifier_registry = (
             provider_classifier_registry or PROVIDER_BUCKET_CLASSIFIER_REGISTRY
         )
         self.capture_contracts = dict(capture_contracts or {})
-        self.source_acquirer = source_acquirer
         self.acquisition_policy = acquisition_policy
         self.default_authorizations = default_authorizations
-        self.slot_pins: Mapping[str, ArtifactPin] = slot_pins or {}
         self.effective_rung = effective_rung
         self.egress_sink = egress_sink
         self.declared_effect_grants = declared_effect_grants
@@ -2557,9 +2503,9 @@ class ProcedureExecutor:
         *,
         label: str,
     ) -> ArtifactPin:
-        """Resolve one node binding through this run's accepted LineSpec closure."""
+        """Resolve one node binding to its exact accepted pin."""
 
-        return _exact_pin(binding, label=label, slot_pins=self.slot_pins)
+        return _exact_pin(binding, label=label)
 
     def execute(
         self,
@@ -3144,9 +3090,7 @@ class ProcedureExecutor:
                     "pin_binding_mismatch",
                     "Procedure admission pins differ from the accepted artifact.",
                 )
-        elif not set(procedure.pins).issubset(set(admission.full_pins)) or not set(
-            self.slot_pins.values()
-        ).issubset(set(admission.full_pins)):
+        elif not set(procedure.pins).issubset(set(admission.full_pins)):
             raise ProcedureBoundaryRefused(
                 "pin_binding_mismatch",
                 "Line run pins must close the accepted Procedure pins exactly.",
@@ -3168,7 +3112,7 @@ class ProcedureExecutor:
                 )
             ):
                 raise ExecutionError("Line run budget exceeds the Procedure hard caps")
-        if _node_pin_sets(accepted, self.slot_pins) != admission.node_pin_sets:
+        if _node_pin_sets(accepted) != admission.node_pin_sets:
             raise ProcedureBoundaryRefused(
                 "pin_binding_mismatch",
                 "Procedure node pins changed after admission.",
@@ -3176,7 +3120,7 @@ class ProcedureExecutor:
         if admission.resource_budget is not None:
             for node in procedure.definition.nodes:
                 if (
-                    isinstance(node, (RepeatNodeV3, RepeatNodeV4))
+                    isinstance(node, RepeatNode)
                     and node.max_attempts > admission.resource_budget.repeat_attempts_cap
                 ):
                     raise ProcedureBoundaryRefused(
@@ -3209,7 +3153,7 @@ class ProcedureExecutor:
                 ),
             )
             for node in procedure.definition.nodes
-            if isinstance(node, StateTapNodeV3 | ClaimTapNode)
+            if isinstance(node, StateTapNode | ClaimTapNode)
         }
         actual_state_inputs = {item.input_name: item for item in admission.accepted_state_inputs}
         if set(actual_state_inputs) != set(expected_state_inputs):
@@ -3265,7 +3209,7 @@ class ProcedureExecutor:
             for node in accepted.procedure.definition.nodes
             if isinstance(
                 node,
-                ClaimTapNode | StateTapNodeV3 | SourceNodeV3 | SourceNode | ExhaustTapNode,
+                ClaimTapNode | StateTapNode | SourceNode | ExhaustTapNode,
             )
         }
         for run_input in admission.run_inputs:
@@ -3277,9 +3221,7 @@ class ProcedureExecutor:
                 )
             try:
                 validate_node_input_plane(node, run_input)
-                if isinstance(run_input, LandedCaptureRunInputV1) and isinstance(
-                    node, SourceNodeV3 | SourceNode
-                ):
+                if isinstance(run_input, LandedCaptureRunInputV1) and isinstance(node, SourceNode):
                     pin = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
                     if pin.artifact_digest != run_input.capture_contract_digest:
                         raise ValueError("landed Capture does not match the Source CaptureContract")
@@ -3394,11 +3336,7 @@ class ProcedureExecutor:
         started_ns: int,
     ) -> CanonicalValue:
         definition = accepted.procedure.definition
-        graph = (
-            analyze_procedure_v3(definition)
-            if definition.graph_format == 3
-            else analyze_procedure_v4(definition)
-        )
+        graph = analyze_procedure(definition)
         nodes = {node.node_id: node for node in definition.nodes}
         current = definition.nodes[0].node_id
         while True:
@@ -3564,16 +3502,13 @@ class ProcedureExecutor:
                 started_ns=started_ns,
             )
             return None
-        if isinstance(node, StateTapNodeV3 | ClaimTapNode):
+        if isinstance(node, StateTapNode | ClaimTapNode):
             if node.as_ not in state.outputs:
                 raise ExecutionError("admitted state_tap material is absent")
             self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
             return None
         if isinstance(node, SourceNode):
             self._run_source_v4(node, admission=admission, state=state, records=records)
-            return None
-        if isinstance(node, SourceNodeV3):
-            self._run_source(node, admission=admission, state=state, records=records)
             return None
         if isinstance(node, ExhaustTapNode):
             if node.as_ not in state.outputs:
@@ -3586,16 +3521,8 @@ class ProcedureExecutor:
             return None
         if isinstance(node, HaltNode):
             return None
-        if isinstance(node, ProviderNode):
+        if isinstance(node, CallNode):
             self._run_provider_v4(
-                node,
-                admission=admission,
-                state=state,
-                records=records,
-            )
-            return None
-        if isinstance(node, ProviderNodeV3):
-            self._run_provider(
                 node,
                 admission=admission,
                 state=state,
@@ -3717,7 +3644,7 @@ class ProcedureExecutor:
                 },
             )
             return "on_true" if verdict else "on_false"
-        if isinstance(node, RepeatNodeV3 | RepeatNodeV4):
+        if isinstance(node, RepeatNode):
             self._run_repeat(
                 node,
                 admission=admission,
@@ -3728,11 +3655,11 @@ class ProcedureExecutor:
             return None
         if isinstance(
             node,
-            CaptureEgressNodeV3 | InboxEgressNode | ProposeChangeSetNodeV3,
+            CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
         ):
             self._run_terminal(node, admission=admission, state=state, records=records)
             return None
-        raise ExecutionError(f"unsupported graph-v3 node {type(node).__name__}")
+        raise ExecutionError(f"unsupported Procedure node {type(node).__name__}")
 
     @staticmethod
     def _extend_alias(
@@ -3743,85 +3670,6 @@ class ProcedureExecutor:
         current = state.provenance.get(alias)
         state.provenance[alias] = (
             AliasProvenanceV1(whole=extra) if current is None else current.merged(extra)
-        )
-
-    def _run_source(
-        self,
-        node: SourceNodeV3,
-        *,
-        admission: ProcedureRunAdmissionV1,
-        state: _RunState,
-        records: list[StoredProcedureJournalRecordV1],
-    ) -> None:
-        """Consume an admitted landed Capture, or really acquire one now."""
-
-        if node.as_ in state.outputs:
-            self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
-            return
-        if admission.invocation_origin != "line":
-            raise _RunRefusal(
-                "line_binding_required",
-                "Source acquisition requires a Line binding and an acquisition policy.",
-                node_id=node.node_id,
-            )
-        rule = self._acquisition_rule(node.as_)
-        if self.source_acquirer is None or rule is None:
-            raise _RunRefusal(
-                "source_acquisition_unavailable",
-                "No acquirer or declared acquisition rule serves this source node.",
-                node_id=node.node_id,
-            )
-        capture_contract = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
-        provider = self._pin(node.provider, label=f"source {node.node_id!r} provider")
-        request = _resolve_template(
-            node.request,
-            input_payload=state.input_payload,
-            outputs=state.outputs,
-        )
-        result = self.source_acquirer.acquire(
-            node_id=node.node_id,
-            input_name=node.as_,
-            capture_contract=capture_contract,
-            provider=provider,
-            request=request,
-            run_id=admission.run_id,
-            bound_generation=admission.accepted_coordinate.generation_root,
-            observed_at=self.clock.now(),
-        )
-        decision = apply_acquisition_result(
-            rule,
-            result,
-            default_authorized=rule.input_name in self.default_authorizations,
-            evaluation_time=(
-                admission.occurrence_evaluation_time
-                if isinstance(admission, ProcedureRunAdmissionV3)
-                else admission.admitted_at
-            ),
-        )
-        self._append_event(
-            admission,
-            records,
-            "source_acquisition",
-            {
-                "tag": "playbill-procedure-source-acquisition-v1",
-                "node_id": node.node_id,
-                "input_name": node.as_,
-                "result": result.model_dump(mode="json", exclude={"acquisition"}),
-                "decision": decision.model_dump(mode="json"),
-                "audit": {
-                    "deployment_digest": admission.deployment_snapshot_digest,
-                    "recorded_at": format_datetime(self.clock.now()),
-                },
-            },
-        )
-        self._bind_acquisition(
-            node,
-            admission=admission,
-            state=state,
-            records=records,
-            rule=rule,
-            result=result,
-            decision=decision,
         )
 
     def _run_source_v4(
@@ -4161,7 +4009,7 @@ class ProcedureExecutor:
 
     def _bind_acquisition(
         self,
-        node: SourceNodeV3 | SourceNode,
+        node: SourceNode,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -4448,7 +4296,7 @@ class ProcedureExecutor:
 
     def _run_terminal(
         self,
-        node: CaptureEgressNodeV3 | InboxEgressNode | ProposeChangeSetNodeV3,
+        node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -4697,7 +4545,7 @@ class ProcedureExecutor:
 
     def _terminal_egress_request(
         self,
-        node: CaptureEgressNodeV3 | InboxEgressNode | ProposeChangeSetNodeV3,
+        node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
         *,
         admission: ProcedureRunAdmissionV1,
         rung: EffectiveRungV1,
@@ -4715,7 +4563,7 @@ class ProcedureExecutor:
         """
 
         bound_pin: ArtifactPin | None = None
-        if isinstance(node, CaptureEgressNodeV3):
+        if isinstance(node, CaptureEgressNode):
             bound_pin = self._pin(
                 node.capture_contract,
                 label=f"emit_capture {node.node_id!r} CaptureContract",
@@ -4745,7 +4593,7 @@ class ProcedureExecutor:
             ),
             prepared_at=self.clock.now(),
         )
-        if isinstance(admission, ProcedureRunAdmissionV5) and isinstance(node, CaptureEgressNodeV3):
+        if isinstance(admission, ProcedureRunAdmissionV5) and isinstance(node, CaptureEgressNode):
             return (
                 build_terminal_egress_request_v2(
                     request,
@@ -4758,7 +4606,7 @@ class ProcedureExecutor:
             )
         if (
             isinstance(admission, ProcedureRunAdmissionV5)
-            and isinstance(node, ProposeChangeSetNodeV3)
+            and isinstance(node, ProposeChangeSetNode)
             and isinstance(self.egress_sink, TerminalEgressPreparerProtocol)
         ):
             prepared = self.egress_sink.prepare_terminal_egress(
@@ -4780,7 +4628,7 @@ class ProcedureExecutor:
 
     def _record_terminal_items(
         self,
-        node: CaptureEgressNodeV3 | InboxEgressNode | ProposeChangeSetNodeV3,
+        node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -5312,7 +5160,7 @@ class ProcedureExecutor:
 
     def _run_provider_v4(
         self,
-        node: ProviderNode,
+        node: CallNode,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -5349,125 +5197,9 @@ class ProcedureExecutor:
         state.outputs[node.as_] = output
         state.provenance[node.as_] = AliasProvenanceV1(whole=_base_tokens(node, state, node.input))
 
-    def _run_provider(
-        self,
-        node: ProviderNodeV3,
-        *,
-        admission: ProcedureRunAdmissionV1,
-        state: _RunState,
-        records: list[StoredProcedureJournalRecordV1],
-    ) -> None:
-        if self.provider_executor is None:
-            raise _RunRefusal(
-                "provider_unavailable",
-                "No Provider executor is registered for this Procedure runtime.",
-                node_id=node.node_id,
-            )
-        provider = self._pin(node.provider, label=f"provider {node.node_id!r}")
-        environment = self._pin(node.environment, label=f"provider {node.node_id!r} environment")
-        contract_in = self._pin(node.contract_in, label=f"provider {node.node_id!r} input")
-        contract_out = self._pin(node.contract_out, label=f"provider {node.node_id!r} output")
-        resolved = normalize_canonical(
-            _resolve_template(
-                node.input,
-                input_payload=state.input_payload,
-                outputs=state.outputs,
-            )
-        )
-        payload = _validate_node_contract(
-            self.contract_validator,
-            contract=contract_in,
-            payload=resolved,
-            direction="input",
-            node_id=node.node_id,
-            max_items=_effective_max_items(admission),
-            observe_items=state.observe_items,
-        )
-        if state.provider_calls >= admission.budget.max_provider_calls:
-            raise _BudgetExceeded(
-                "max_provider_calls",
-                limit=admission.budget.max_provider_calls,
-                observed=state.provider_calls + 1,
-                node_id=node.node_id,
-            )
-        state.provider_calls += 1
-        effect_policy = node.effect_policy
-        effectful = effect_policy is not None
-        effect_id = typed_digest(
-            ArtifactDigest,
-            "playbill-procedure-effect-intent-v1",
-            {
-                "run_id": admission.run_id,
-                "node_id": node.node_id,
-                "provider_digest": provider.artifact_digest,
-                "environment_digest": environment.artifact_digest,
-                "input_digest": run_value_digest("provider-input", payload),
-            },
-        ).tagged
-        if effect_policy is not None:
-            self._checkpoint_current(admission, effect=True)
-            self._append_event(
-                admission,
-                records,
-                "effect_intent",
-                {
-                    "effect_id": effect_id,
-                    "node_id": node.node_id,
-                    "provider": provider.model_dump(mode="json"),
-                    "environment": environment.model_dump(mode="json"),
-                    "effect_policy": self._pin(
-                        effect_policy,
-                        label=f"provider {node.node_id!r} effect policy",
-                    ).model_dump(mode="json"),
-                    "input_digest": run_value_digest("provider-input", payload),
-                },
-            )
-            refusal = effect_dispatch_refusal(
-                invocation_origin=admission.invocation_origin,
-                actor_context=admission.actor_context,
-                declared_effect_grants=self.declared_effect_grants,
-            )
-            if refusal is not None:
-                raise _RunRefusal(
-                    cast(ProcedureNodeRefusalCode, refusal[0]),
-                    refusal[1],
-                    node_id=node.node_id,
-                )
-        result = self.provider_executor.execute_provider(
-            provider=provider,
-            environment=environment,
-            contract_in=contract_in,
-            contract_out=contract_out,
-            payload=payload,
-            actor_context=admission.actor_context,
-        )
-        output = _validate_node_contract(
-            self.contract_validator,
-            contract=contract_out,
-            payload=normalize_canonical(result.output),
-            direction="output",
-            node_id=node.node_id,
-            max_items=_effective_max_items(admission),
-            observe_items=state.observe_items,
-        )
-        state.outputs[node.as_] = output
-        state.provenance[node.as_] = AliasProvenanceV1(whole=_base_tokens(node, state, node.input))
-        if effectful:
-            self._append_event(
-                admission,
-                records,
-                "effect_result",
-                {
-                    "effect_id": effect_id,
-                    "node_id": node.node_id,
-                    "output_digest": run_value_digest("provider-output", output),
-                    "trace": result.trace,
-                },
-            )
-
     def _run_repeat(
         self,
-        node: RepeatNodeV3 | RepeatNodeV4,
+        node: RepeatNode,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -5546,7 +5278,7 @@ class ProcedureExecutor:
 
     def _run_repeat_body(
         self,
-        body: RepeatBodyNodeV3 | RepeatBodyNodeV4,
+        body: RepeatBodyNode,
         *,
         repeat_node_id: str,
         admission: ProcedureRunAdmissionV1,
@@ -5621,7 +5353,7 @@ class ProcedureExecutor:
                 base=_base_tokens(body, local_state, declared_spec),
             )
             return
-        if isinstance(body, RepeatBodyNodeV4):
+        if body.operation == "call":
             contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
             contract_out = self._pin(body.contract_out, label=f"repeat {body.node_id!r} output")
             validated_input = _validate_node_contract(
@@ -5656,46 +5388,7 @@ class ProcedureExecutor:
                 whole=_base_tokens(body, local_state, body.spec)
             )
             return
-        if self.provider_executor is None or body.provider is None or body.environment is None:
-            raise _RunRefusal(
-                "provider_unavailable",
-                "Repeat provider operation has no registered executor.",
-                node_id=body.node_id,
-            )
-        provider = self._pin(body.provider, label=f"repeat {body.node_id!r} provider")
-        environment = self._pin(body.environment, label=f"repeat {body.node_id!r} environment")
-        contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
-        contract_out = self._pin(body.contract_out, label=f"repeat {body.node_id!r} output")
-        if state.provider_calls >= admission.budget.max_provider_calls:
-            raise _BudgetExceeded(
-                "max_provider_calls",
-                limit=admission.budget.max_provider_calls,
-                observed=state.provider_calls + 1,
-                node_id=body.node_id,
-            )
-        state.provider_calls += 1
-        validated_input = normalize_canonical(
-            self.contract_validator.validate_contract(
-                contract=contract_in,
-                payload=spec,
-                direction="input",
-            )
-        )
-        result = self.provider_executor.execute_provider(
-            provider=provider,
-            environment=environment,
-            contract_in=contract_in,
-            contract_out=contract_out,
-            payload=validated_input,
-            actor_context=admission.actor_context,
-        )
-        local_outputs[body.as_] = normalize_canonical(
-            self.contract_validator.validate_contract(
-                contract=contract_out,
-                payload=normalize_canonical(result.output),
-                direction="output",
-            )
-        )
+        raise ExecutionError(f"unsupported repeat operation {body.operation!r}")
 
     def _append_event(
         self,
@@ -5934,7 +5627,7 @@ def _base_tokens(
 
 
 def _transform_provenance(
-    node: TransformNode | RepeatBodyNodeV3 | RepeatBodyNodeV4,
+    node: TransformNode | RepeatBodyNode,
     *,
     state: _RunState,
     lineage: tuple[tuple[tuple[str, int], ...], ...] | None,
@@ -5995,9 +5688,9 @@ def _projected_provenance(
 
 
 def _terminal_item_templates(
-    node: CaptureEgressNodeV3 | InboxEgressNode | ProposeChangeSetNodeV3,
+    node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
 ) -> object:
-    if isinstance(node, ProposeChangeSetNodeV3):
+    if isinstance(node, ProposeChangeSetNode):
         return list(node.candidate_templates)
     return node.input
 
@@ -6796,7 +6489,6 @@ __all__ = [
     "ProcedureRunRefusalV1",
     "ProcedureRunResultV1",
     "ProcedureRunStatusV1",
-    "ProviderExecutorProtocol",
     "ProviderInvocationResultV1",
     "StateTapReaderProtocol",
     "SystemProcedureClock",

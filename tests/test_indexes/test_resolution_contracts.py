@@ -23,16 +23,10 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
-    ProcedureArtifactV1,
-    procedure_artifact_digest,
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.graph import (
-    compute_procedure_definition_digest_v3,
-    compute_procedure_definition_digest_v4,
-    compute_procedure_node_digests_v4,
-)
+from cruxible_client.contracts.procedures.graph import compute_procedure_node_digests
 from cruxible_client.contracts.procedures.measurements import (
     AcceptedQueryProcedureMeasurement,
     ProcedureMeasurementDeclaration,
@@ -43,12 +37,10 @@ from cruxible_client.contracts.procedures.models import (
     GuardPredicate,
     PredicateOperand,
     ProcedureBudget,
-    ProcedureDefinitionV3,
-    ProcedureDefinitionV4,
+    ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    StateTapNodeV3,
-    iter_pin_bindings,
+    StateTapNode,
 )
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -73,6 +65,7 @@ from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmiss
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.storage.cas import ContentAddressedBodyStore
 from tests.core_support._support import client_material, initialize_local
+from tests.support.procedures import accepted_procedure
 from tests.test_ledger.test_activation import _sign
 
 NOW = datetime(2026, 8, 17, 14, 0, tzinfo=timezone.utc)
@@ -147,12 +140,12 @@ def _measurement(
 def _accepted() -> AcceptedProcedure:
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
-    definition = ProcedureDefinitionV3(
+    definition = ProcedureDefinition(
         name="measured-procedure",
         contract_in=contract_in,
         contract_out=contract_out,
         nodes=(
-            StateTapNodeV3(
+            StateTapNode(
                 node_id="read",
                 query=_pin("query", "QueryDefinition", "state"),
                 as_="rows",
@@ -213,50 +206,7 @@ def _accepted() -> AcceptedProcedure:
         ),
         terminal_capability=1,
     )
-    pins = tuple(
-        sorted(
-            {
-                binding
-                for binding in iter_pin_bindings(definition)
-                if isinstance(binding, ArtifactPin)
-            },
-            key=lambda pin: (
-                pin.role.encode(),
-                pin.target.qualified.encode(),
-                pin.artifact_digest.encode(),
-            ),
-        )
-    )
-    procedure = ProcedureArtifactV1(
-        identity=ArtifactIdentity(kind="Procedure", name=definition.name),
-        definition=definition,
-        definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-        pins=pins,
-        activation_policy="snapshot",
-    )
-    return AcceptedProcedure(
-        path=procedure_path(definition.name),
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
-
-
-def _accepted_v4() -> AcceptedProcedure:
-    historical = _accepted()
-    payload = historical.procedure.definition.model_dump(mode="python", by_alias=True)
-    payload["graph_format"] = 4
-    definition = ProcedureDefinitionV4.model_validate(payload)
-    procedure = historical.procedure.model_copy(
-        update={
-            "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
-        }
-    )
-    return AcceptedProcedure(
-        path=historical.path,
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
+    return accepted_procedure(definition, activation_policy="snapshot")
 
 
 def test_accepted_measurements_derive_exact_semantic_grains_and_windows() -> None:
@@ -287,14 +237,14 @@ def test_accepted_measurements_derive_exact_semantic_grains_and_windows() -> Non
     )
 
 
-def test_graph_v4_measurements_use_v4_node_and_subtree_digests() -> None:
-    accepted = _accepted_v4()
+def test_measurements_use_node_and_subtree_digests() -> None:
+    accepted = _accepted()
     activations = derive_resolution_activations(
         accepted,
         accepted_coordinate=_coordinate(),
         activated_at=NOW,
     )
-    expected = compute_procedure_node_digests_v4(accepted.procedure.definition)
+    expected = compute_procedure_node_digests(accepted.procedure.definition)
 
     arm, node, unit = activations
     assert arm.from_node_local_digest == expected["gate"].local_digest

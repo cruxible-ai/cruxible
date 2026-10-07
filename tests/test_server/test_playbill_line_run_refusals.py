@@ -95,10 +95,8 @@ def _served_line(
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={"status": "open"},
-        slot_bindings=(),
         acquisition_policy=policy_pin,
         max_authority="propose",
-        provider_implementation_closures=(),
         budgets={
             "max_capture_bytes": 0,
             "max_items": 100,
@@ -139,7 +137,7 @@ def _body(digest: str) -> dict[str, object]:
     # No asserted instant: the occurrence's EVALUATION INSTANT is the daemon's.
     return {
         "tag": "playbill-line-run-request-v1",
-        "line_identity_digest": digest,
+        "line": digest,
         "occurrence_id": None,
         "evaluation_time": None,
     }
@@ -217,7 +215,7 @@ def test_an_instant_outside_the_daemon_skew_bound_refuses_typed_over_http(
         f"/api/v1/{instance_id}/lines/{_ABSENT}/runs",
         json={
             "tag": "playbill-line-run-request-v1",
-            "line_identity_digest": _ABSENT,
+            "line": _ABSENT,
             "occurrence_id": None,
             "evaluation_time": "2099-01-01T00:00:00Z",
         },
@@ -246,7 +244,7 @@ def test_the_daemon_not_the_caller_configures_the_evaluation_instant_skew(
     asserted = datetime.now(UTC) + timedelta(seconds=60)
     body = {
         "tag": "playbill-line-run-request-v1",
-        "line_identity_digest": _ABSENT,
+        "line": _ABSENT,
         "occurrence_id": None,
         "evaluation_time": asserted.isoformat().replace("+00:00", "Z"),
     }

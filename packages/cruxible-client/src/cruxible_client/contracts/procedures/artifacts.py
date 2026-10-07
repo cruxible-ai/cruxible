@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from typing import Annotated, Literal, TypeAlias
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -37,11 +37,10 @@ from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
-    ProcedureDefinitionAny,
-    ProcedureDefinitionV4,
+    CallNode,
+    ProcedureDefinition,
     ProcedurePinSlotRef,
-    ProviderNode,
-    RepeatNodeV4,
+    RepeatNode,
     SourceNode,
     iter_pin_bindings,
 )
@@ -69,70 +68,6 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
         pin.target.qualified.encode("utf-8"),
         pin.artifact_digest.encode("ascii"),
     )
-
-
-class ProcedureArtifactV1(_StrictProcedureArtifactModel):
-    artifact_format: Literal["playbill-procedure-v1"] = "playbill-procedure-v1"
-    identity: ArtifactIdentity
-    definition: ProcedureDefinitionAny
-    definition_digest: str
-    pins: tuple[ArtifactPin, ...]
-    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
-    lifecycle: ArtifactLifecycle = ArtifactLifecycle()
-
-    @field_validator("definition_digest")
-    @classmethod
-    def _definition_digest(cls, value: str) -> str:
-        ArtifactDigest.from_tagged(value)
-        return value
-
-    @field_validator("pins")
-    @classmethod
-    def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
-        if value != tuple(sorted(value, key=_pin_key)):
-            raise ValueError("Procedure pins must be canonically sorted")
-        keys = tuple((pin.role, pin.target.qualified) for pin in value)
-        if len(set(keys)) != len(keys):
-            raise ValueError("Procedure pins must be unique by role and target")
-        return value
-
-    @model_validator(mode="after")
-    def _correspondence(self) -> "ProcedureArtifactV1":
-        if self.identity.kind != "Procedure" or not _PROCEDURE_NAME_RE.fullmatch(
-            self.identity.name
-        ):
-            raise ValueError("Procedure identity must be path-addressable")
-        if self.definition.name != self.identity.name:
-            raise ValueError("Procedure definition name must match stable artifact identity")
-        expected = compute_procedure_definition_digest(self.definition).tagged
-        if self.definition_digest != expected:
-            raise ValueError("Procedure definition_digest does not reproduce its graph format")
-        declared_exact = {
-            (pin.role, pin.target.qualified, pin.artifact_digest) for pin in self.pins
-        }
-        referenced_exact = {
-            (binding.role, binding.target.qualified, binding.artifact_digest)
-            for binding in iter_pin_bindings(self.definition)
-            if isinstance(binding, ArtifactPin)
-        }
-        if not referenced_exact.issubset(declared_exact):
-            raise ValueError("Procedure definition contains exact pins absent from its envelope")
-        declared_slots = {slot.slot_name for slot in self.definition.pin_slots}
-        referenced_slots = {
-            binding.slot_name
-            for binding in iter_pin_bindings(self.definition)
-            if isinstance(binding, ProcedurePinSlotRef)
-        }
-        if not referenced_slots.issubset(declared_slots):
-            raise ValueError("Procedure definition references undeclared slots")
-        return self
-
-    @property
-    def directly_runnable(self) -> bool:
-        return not any(
-            isinstance(binding, ProcedurePinSlotRef)
-            for binding in iter_pin_bindings(self.definition)
-        )
 
 
 class ProcedureOwnedContract(_StrictProcedureArtifactModel):
@@ -191,7 +126,7 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
 
     artifact_format: Literal["playbill-procedure-v2"] = "playbill-procedure-v2"
     identity: ArtifactIdentity
-    definition: ProcedureDefinitionAny
+    definition: ProcedureDefinition
     definition_digest: str
     pins: tuple[ArtifactPin, ...]
     owned_contracts: tuple[ProcedureOwnedContract, ...]
@@ -288,19 +223,73 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
             raise ValueError("Procedure envelope contains an unreferenced Contract pin")
         return self
 
-    @property
-    def directly_runnable(self) -> bool:
-        return not any(
-            isinstance(binding, ProcedurePinSlotRef)
-            for binding in iter_pin_bindings(self.definition)
-        )
+
+#: How an accepted Procedure can run: on its own (``procedure run``), only as a
+#: Line (its terminals act outward under a Line's authority), or not at all
+#: (an exhaust tap: no v1 path admits one).
+ProcedureRunnable = Literal["direct", "line", "unsupported"]
+
+#: Node kinds the direct run lane executes.
+DIRECT_NODE_KINDS = frozenset(
+    {
+        "state_tap",
+        "state_claim",
+        "transform",
+        "project",
+        "guard",
+        "repeat",
+        "halt",
+        "source",
+        "call",
+        "select",
+        "constant",
+        "return",
+        "invoke",
+    }
+)
+#: Node kinds only a Line runs: they egress under the Line's authority.
+LINE_NODE_KINDS = frozenset(
+    {"emit_capture", "post_inbox", "propose_change_set", "settle_change_set"}
+)
 
 
-ProcedureArtifactAny: TypeAlias = Annotated[
-    ProcedureArtifactV1 | ProcedureArtifact,
-    Field(discriminator="artifact_format"),
-]
-_PROCEDURE_ADAPTER: TypeAdapter[ProcedureArtifactAny] = TypeAdapter(ProcedureArtifactAny)
+class ProcedureNodeSupport(_StrictProcedureArtifactModel):
+    """One node the direct run lane does not execute, and where it can run."""
+
+    node_id: str
+    kind: str
+    runs_on: Literal["line", "nowhere"]
+
+
+def procedure_runnability(
+    definition: ProcedureDefinition,
+) -> tuple[ProcedureRunnable, tuple[ProcedureNodeSupport, ...]]:
+    """The one runnability answer every surface reports, with the nodes behind it."""
+
+    rows: list[ProcedureNodeSupport] = []
+    for node in definition.nodes:
+        if node.kind in LINE_NODE_KINDS:
+            rows.append(ProcedureNodeSupport(node_id=node.node_id, kind=node.kind, runs_on="line"))
+        elif node.kind not in DIRECT_NODE_KINDS:
+            rows.append(
+                ProcedureNodeSupport(node_id=node.node_id, kind=node.kind, runs_on="nowhere")
+            )
+        if isinstance(node, RepeatNode):
+            rows.extend(
+                ProcedureNodeSupport(
+                    node_id=f"{node.node_id}.{body.node_id}", kind=body.operation, runs_on="line"
+                )
+                for body in node.body
+                if body.operation != "transform"
+            )
+    if definition.open_slots or definition.pin_slots:
+        rows.append(ProcedureNodeSupport(node_id="procedure", kind="open_slot", runs_on="nowhere"))
+    if any(row.runs_on == "nowhere" for row in rows):
+        return "unsupported", tuple(rows)
+    return ("line" if rows else "direct"), tuple(rows)
+
+
+_PROCEDURE_ADAPTER: TypeAdapter[ProcedureArtifact] = TypeAdapter(ProcedureArtifact)
 
 
 def procedure_path(name: str) -> str:
@@ -309,7 +298,7 @@ def procedure_path(name: str) -> str:
     return f"procedures/{name}.json"
 
 
-def render_procedure(procedure: ProcedureArtifactAny) -> bytes:
+def render_procedure(procedure: ProcedureArtifact) -> bytes:
     return pretty_canonical_bytes(procedure.model_dump(mode="json", by_alias=True))
 
 
@@ -318,7 +307,7 @@ def parse_procedure(
     *,
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> ProcedureArtifactAny:
+) -> ProcedureArtifact:
     try:
         procedure = _PROCEDURE_ADAPTER.validate_python(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
@@ -330,7 +319,7 @@ def parse_procedure(
     return procedure
 
 
-def procedure_artifact_digest(procedure: ProcedureArtifactAny) -> ArtifactDigest:
+def procedure_artifact_digest(procedure: ProcedureArtifact) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
@@ -340,7 +329,7 @@ def procedure_artifact_digest(procedure: ProcedureArtifactAny) -> ArtifactDigest
 
 class AcceptedProcedure(_StrictProcedureArtifactModel):
     path: str
-    procedure: ProcedureArtifactAny
+    procedure: ProcedureArtifact
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -375,7 +364,7 @@ def _refusal(code: str, message: str, *, path: str) -> ProcedureLawResult:
 
 
 def evaluate_procedure_law(
-    procedure: ProcedureArtifactAny,
+    procedure: ProcedureArtifact,
     *,
     path: str,
     predecessor: AcceptedProcedure | None,
@@ -408,14 +397,6 @@ def evaluate_procedure_law(
                 "A Procedure successor must retain stable identity.",
                 path=path,
             )
-        if isinstance(predecessor.procedure, ProcedureArtifact) and isinstance(
-            procedure, ProcedureArtifactV1
-        ):
-            return _refusal(
-                "cruxible.procedure.wire_downgrade",
-                "A v2 Procedure lineage cannot be succeeded by the legacy v1 wire.",
-                path=path,
-            )
         if procedure.lifecycle.predecessor_digest != predecessor.artifact_digest:
             return _refusal(
                 "cruxible.procedure.predecessor_mismatch",
@@ -425,13 +406,8 @@ def evaluate_procedure_law(
         if (
             procedure.definition_digest == predecessor.procedure.definition_digest
             and procedure.activation_policy == predecessor.procedure.activation_policy
-            and procedure.artifact_format == predecessor.procedure.artifact_format
             and procedure.pins == predecessor.procedure.pins
-            and (
-                not isinstance(procedure, ProcedureArtifact)
-                or not isinstance(predecessor.procedure, ProcedureArtifact)
-                or procedure.owned_contracts == predecessor.procedure.owned_contracts
-            )
+            and procedure.owned_contracts == predecessor.procedure.owned_contracts
             and procedure.lifecycle.state == predecessor.procedure.lifecycle.state
         ):
             return _refusal(
@@ -439,16 +415,25 @@ def evaluate_procedure_law(
                 "The proposal changes no registered semantic member.",
                 path=path,
             )
-    if isinstance(procedure.definition, ProcedureDefinitionV4):
-        provider_refusal = _evaluate_graph_v4_provider_pins(
-            procedure.definition,
-            procedure=procedure,
-            providers={} if providers is None else providers,
-            provider_interfaces=({} if provider_interfaces is None else provider_interfaces),
+    slots = sorted(
+        {*procedure.definition.open_slots, *(s.slot_name for s in procedure.definition.pin_slots)}
+    )
+    if slots:
+        return _refusal(
+            "cruxible.procedure.open_slots",
+            "A Procedure pins every Provider exactly; open slots belong only to a "
+            f"Blueprint. Open: {', '.join(slots)}.",
+            path=path,
         )
-        if provider_refusal is not None:
-            code, message = provider_refusal
-            return _refusal(code, message, path=path)
+    provider_refusal = _evaluate_provider_pins(
+        procedure.definition,
+        procedure=procedure,
+        providers={} if providers is None else providers,
+        provider_interfaces=({} if provider_interfaces is None else provider_interfaces),
+    )
+    if provider_refusal is not None:
+        code, message = provider_refusal
+        return _refusal(code, message, path=path)
     return ProcedureLawResult(
         verdict="accepted",
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -457,24 +442,30 @@ def evaluate_procedure_law(
     )
 
 
-def _evaluate_graph_v4_provider_pins(
-    definition: ProcedureDefinitionV4,
-    *,
-    procedure: ProcedureArtifactAny,
-    providers: Mapping[str, AcceptedProvider],
-    provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
-) -> tuple[str, str] | None:
+def provider_occurrences(definition: ProcedureDefinition) -> tuple[tuple[str, object], ...]:
+    """Every Source/Call occurrence, repeat bodies included, keyed by occurrence id."""
+
     occurrences: list[tuple[str, object]] = []
     for node in definition.nodes:
-        if isinstance(node, SourceNode | ProviderNode):
+        if isinstance(node, SourceNode | CallNode):
             occurrences.append((node.node_id, node))
-        elif isinstance(node, RepeatNodeV4):
+        elif isinstance(node, RepeatNode):
             occurrences.extend(
                 (f"{node.node_id}.{body.node_id}", body)
                 for body in node.body
-                if body.operation in {"provider", "call"}
+                if body.operation == "call"
             )
-    for occurrence_id, occurrence in occurrences:
+    return tuple(sorted(occurrences, key=lambda item: item[0].encode("utf-8")))
+
+
+def _evaluate_provider_pins(
+    definition: ProcedureDefinition,
+    *,
+    procedure: ProcedureArtifact,
+    providers: Mapping[str, AcceptedProvider],
+    provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
+) -> tuple[str, str] | None:
+    for occurrence_id, occurrence in provider_occurrences(definition):
         interface_pin = getattr(occurrence, "interface")
         interface_digest = getattr(occurrence, "interface_digest")
         accepted_interface = provider_interfaces.get(interface_pin.artifact_digest)
@@ -486,11 +477,10 @@ def _evaluate_graph_v4_provider_pins(
                 "cruxible.procedure.provider_interface_pin_mismatch",
                 f"Provider occurrence {occurrence_id!r} does not bind its exact interface.",
             )
-        if int(definition.graph_format) >= 5:
-            try:
-                check_provider_node_contract(occurrence, accepted_interface, procedure)
-            except (ValueError, KeyError) as exc:
-                return ("cruxible.procedure.provider_interface_pin_mismatch", str(exc))
+        try:
+            check_provider_node_contract(occurrence, accepted_interface, procedure)
+        except (ValueError, KeyError) as exc:
+            return ("cruxible.procedure.provider_interface_pin_mismatch", str(exc))
         provider_binding = getattr(occurrence, "provider")
         if isinstance(provider_binding, ProcedurePinSlotRef):
             continue
@@ -527,17 +517,26 @@ def _evaluate_graph_v4_provider_pins(
 def check_provider_node_contract(
     node: object,
     interface: AcceptedProviderInterfaceRegistration,
-    procedure: ProcedureArtifactAny,
-    *,
-    slot_pins: Mapping[str, ArtifactPin] | None = None,
-) -> ProviderOperationContract:
-    """Check specialization and exact operation schemas before materialization."""
+    procedure: ProcedureArtifact,
+) -> ProviderOperationContract | None:
+    """Check specialization and exact operation schemas before materialization.
+
+    The first ``workspace.file`` interface revision declares no operation
+    contract: the daemon owns that read and its receipt, so a Source over it is
+    checked by the host protocol, not here, and has no operation contract.
+    """
     from cruxible_client.contracts.provider_contracts import (
         ACQUISITION_RESULT,
         operation_schema_shape,
         read_provider_operation_contract,
     )
+    from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_DIGEST
 
+    if (
+        isinstance(node, SourceNode)
+        and interface.registration.interface_digest == WORKSPACE_FILE_INTERFACE_DIGEST
+    ):
+        return None
     contract = read_provider_operation_contract(interface.registration.interface_bytes_hex)
     declared_effect = json.loads(bytes.fromhex(interface.registration.interface_bytes_hex)).get(
         "effect_class"
@@ -567,17 +566,13 @@ def check_provider_node_contract(
         if interface.registration.effect_class == "external_mutation":
             raise ValueError("Source cannot invoke an external mutation")
         return contract
-    if not isinstance(procedure, ProcedureArtifact):
-        raise ValueError("Call requires owner-carried input and output Contracts")
     owned = {
         procedure_owned_contract_digest(item).tagged: item for item in procedure.owned_contracts
     }
     for field, expected in (("contract_in", contract.input), ("contract_out", contract.output)):
         binding = getattr(node, field)
         if isinstance(binding, ProcedurePinSlotRef):
-            if slot_pins is None:
-                continue  # Closed and checked again at run admission.
-            binding = slot_pins[binding.slot_name]
+            continue  # A Blueprint slot: checked when the Blueprint is instantiated.
         carried = owned.get(binding.artifact_digest)
         if (
             carried is None
@@ -592,9 +587,12 @@ def check_provider_node_contract(
 
 
 __all__ = [
+    "DIRECT_NODE_KINDS",
+    "LINE_NODE_KINDS",
     "AcceptedProcedure",
-    "ProcedureArtifactAny",
-    "ProcedureArtifactV1",
+    "ProcedureNodeSupport",
+    "ProcedureRunnable",
+    "procedure_runnability",
     "ProcedureArtifact",
     "ProcedureFormatError",
     "ProcedureLawResult",
@@ -604,5 +602,6 @@ __all__ = [
     "procedure_artifact_digest",
     "procedure_owned_contract_digest",
     "procedure_path",
+    "provider_occurrences",
     "render_procedure",
 ]

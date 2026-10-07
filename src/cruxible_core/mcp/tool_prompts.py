@@ -214,14 +214,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "(traversals, disjunctions, projections) without accepting a QueryDefinition. "
         "Same rows, flags and paging as cruxible_query."
     ),
-    "cruxible_procedure_readiness": (
-        "Use when you need to know whether an accepted Procedure can run or which slots must "
-        "be bound first."
-    ),
-    "cruxible_procedure_bind": (
-        "Use when an accepted Procedure's open slots should be bound to exact accepted "
-        "artifacts through governance."
-    ),
     "cruxible_procedure_run": (
         "Use when you need to execute an accepted Procedure with durable outcomes."
     ),

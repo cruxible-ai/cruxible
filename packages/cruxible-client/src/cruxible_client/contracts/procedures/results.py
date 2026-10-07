@@ -34,7 +34,6 @@ from cruxible_client.contracts.workspace_file import (
 )
 
 ProcedureAdmissionRefusalCode: TypeAlias = Literal[
-    "binding_required",
     "unsupported_node",
     "not_current",
     "artifact_binding_mismatch",
@@ -43,7 +42,6 @@ ProcedureAdmissionRefusalCode: TypeAlias = Literal[
     "state_tap_refused",
     "replay_material_mismatch",
     "procedure_runtime_policy_absent",
-    "provider_explicit_implementation_required",
     "provider_replay_receipt_required",
     "exhaust_binding_carrier_required",
     "source_acquisition_policy_required",
@@ -462,14 +460,6 @@ class ProcedureRunReceiptWithheld(_StrictResultModel):
         "playbill-procedure-run-receipt-withheld-v1"
     )
     withheld: Literal["names_the_arming_credential"] = "names_the_arming_credential"
-
-
-class ProcedurePendingSuccessor(_StrictResultModel):
-    tag: Literal["playbill-procedure-pending-successor-v1"] = (
-        "playbill-procedure-pending-successor-v1"
-    )
-    proposal_id: str
-    pending_successor_digest: str
 
 
 class ProcedureChildInvocation(_StrictResultModel):
@@ -1370,7 +1360,6 @@ __all__ = [
     "ProcedureNodeRefusal",
     "ProcedureOperationalFailureCode",
     "ProcedureOperationalFailure",
-    "ProcedurePendingSuccessor",
     "ProviderBucketClassificationPlan",
     "ProcedureProviderBindingV1",
     "ProcedureProviderBinding",

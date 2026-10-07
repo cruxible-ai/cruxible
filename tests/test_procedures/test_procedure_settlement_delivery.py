@@ -28,13 +28,13 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
     line_identity_digest,
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.procedures.models import SettleChangeSetNodeV3
+from cruxible_client.contracts.procedures.models import SettleChangeSetNode
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
     QueryEvaluationPolicy,
@@ -133,14 +133,18 @@ def settle_world(  # type: ignore[no-untyped-def]
             "nodes": (
                 source,
                 shape.model_copy(update={"next": "settle"}),
-                SettleChangeSetNodeV3(node_id="settle", candidate_templates=(item_template(),)),
+                SettleChangeSetNode(
+                    node_id="settle",
+                    candidate_templates=(item_template(),),
+                    result="$steps.result",
+                ),
             ),
         }
     )
     with_terminal = procedure.model_copy(
         update={
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
         }
     )
     line = fixtures._served_line(with_terminal, policy).model_copy(
@@ -227,9 +231,7 @@ def run_settle(instance, root, line, *, caller_rung: int = 3):  # type: ignore[n
     return service_run_playbill_line(
         instance,
         path_identity_digest=identity_digest,
-        request=LineRunRequest(
-            line_identity_digest=identity_digest, occurrence_id=None, evaluation_time=None
-        ),
+        request=LineRunRequest(line=identity_digest, occurrence_id=None, evaluation_time=None),
         actor_context=fixtures._actor(instance).model_copy(update={"timestamp": fixtures.NOW}),
         caller_rung=caller_rung,
         provider_runtime_operator=fixtures._Operator(fixtures._WorkspaceInvoker()),  # type: ignore[arg-type]

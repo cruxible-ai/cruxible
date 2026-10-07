@@ -72,6 +72,7 @@ from cruxible_client.contracts.get_reads import (
     GetHistory,
     GetPrincipalCard,
     GetProcedureCard,
+    GetProcedureNode,
     GetProcedureRuntimePolicyCard,
     GetProcedureTrackRecord,
     GetProposalCard,
@@ -775,6 +776,33 @@ def _render_get(
     return f"cruxible_get({', '.join(arguments)})"
 
 
+def _render_procedure_run(surface: ReadSurface, name: str, runnable: str) -> tuple[str, ...]:
+    """How this Procedure runs, spelled for the caller's surface: itself, or as a Line."""
+
+    if runnable == "direct":
+        return (
+            {
+                "cli": f"cruxible procedure run {shlex.quote(name)} -",
+                "mcp": f"cruxible_procedure_run(name={json.dumps(name)}, input={{...}})",
+                "sdk": f"cx.accepted_procedure({json.dumps(name)}).run(input=...)",
+            }[surface],
+        )
+    if runnable == "line":
+        target = json.dumps("Procedure:" + name)
+        return (
+            {
+                "cli": f"cruxible query Line --where procedure=Procedure:{shlex.quote(name)}",
+                "mcp": (
+                    'cruxible_query(kind="Line", where=[{"field": "procedure", "eq": '
+                    + target
+                    + "}])"
+                ),
+                "sdk": f'cx.query("Line", where=[{{"field": "procedure", "eq": {target}}}])',
+            }[surface],
+        )
+    return ()
+
+
 def _render_read_capture(surface: ReadSurface, digest: str) -> str:
     """The body-permission read of one Capture's material, spelled for the surface."""
 
@@ -1331,16 +1359,12 @@ def _procedure_card(
     readiness = service_playbill_procedure_readiness(
         instance,
         name=_name(resolved.identity),
-        request=ProcedureReadinessRequestV1(
-            at=AcceptedCoordinate.from_internal(coordinate), evaluation_time=evaluation_time
-        ),
+        request=ProcedureReadinessRequestV1(at=AcceptedCoordinate.from_internal(coordinate)),
     )
     definition = readiness.artifact.definition
     inputs: dict[str, Any] = {"input": _pin_name(definition.contract_in)}
     if definition.parameter_contract is not None:
         inputs["parameters"] = _pin_name(definition.parameter_contract)
-    if definition.pin_slots:
-        inputs["slots"] = [slot.slot_name for slot in definition.pin_slots]
     with instance.bind_accepted_projection(coordinate) as projection:
         promoted = projection.typed.facts(
             "cruxible.procedure.track_record", identity=resolved.identity
@@ -1349,14 +1373,19 @@ def _procedure_card(
         procedure=_name(resolved.identity),
         description=definition.description,
         inputs=inputs,
-        readiness=readiness.state,
-        required_slots=readiness.required_slots,
-        unsupported_nodes=len(readiness.unsupported_nodes),
+        runnable=readiness.runnable,
+        unsupported_nodes=tuple(
+            GetProcedureNode(node_id=item.node_id, kind=item.kind, runs_on=item.runs_on)
+            for item in readiness.unsupported_nodes
+        ),
         track_record=tuple(
             _track_record_entry(fact)
             for fact in sorted(promoted, key=lambda item: item.fact_key.encode("utf-8"))
         ),
-        next=(_render_get(surface, resolved.display, "proof"),),
+        next=(
+            *_render_procedure_run(surface, _name(resolved.identity), readiness.runnable),
+            _render_get(surface, resolved.display, "proof"),
+        ),
     )
 
 
@@ -1997,9 +2026,7 @@ def _proof(
         )
 
         return service_playbill_procedure_readiness(
-            instance,
-            name=name,
-            request=ProcedureReadinessRequestV1(at=at, evaluation_time=evaluation_time),
+            instance, name=name, request=ProcedureReadinessRequestV1(at=at)
         ).model_dump(mode="json")
     if resolved.kind == "provider_interface":
         item = _live_interface(

@@ -190,9 +190,9 @@ from cruxible_client.contracts.procedures.artifacts import (
     evaluate_procedure_law,
     parse_procedure,
     procedure_artifact_digest,
+    procedure_runnability,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    EMBEDDED_TRIGGER_LINE_FORMATS,
     AcceptedLineSpec,
     LineSpec,
     LineSpecFormatError,
@@ -1718,102 +1718,80 @@ def _accepted(
 
 def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     procedure = parse_procedure(context.content, path=context.path)
-    from cruxible_client.contracts.laws import PROVIDER_CONTRACT_PROCEDURE_LAW
-
     installed = _installed(context, procedure.artifact_format)
-    if int(procedure.definition.graph_format) == 6:
-        from cruxible_client.contracts.laws import (
-            SDK_SOURCE_PROCEDURE_LAW,
-            SOURCE_CHECKED_PROCEDURE_LAW,
-        )
-        from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
-        from cruxible_client.contracts.procedures.models import ProcedureDefinition
-        from cruxible_client.contracts.query.definitions import (
-            parse_query_definition,
-            query_definition_path,
-        )
-        from cruxible_core.authoring.procedure_source import verify_source_bindings
+    from cruxible_client.contracts.laws import (
+        SDK_SOURCE_PROCEDURE_LAW,
+        SOURCE_CHECKED_PROCEDURE_LAW,
+    )
+    from cruxible_client.contracts.query.definitions import (
+        parse_query_definition,
+        query_definition_path,
+    )
+    from cruxible_core.authoring.procedure_source import verify_source_bindings
 
-        if not isinstance(procedure, ProcedureArtifact):
-            raise ValueError("graph-v6 requires the owner-carried Contract envelope")
-        assert isinstance(procedure.definition, ProcedureDefinition)
-        source_law = (
-            SOURCE_CHECKED_PROCEDURE_LAW
-            if procedure.definition.source is not None
-            and procedure.definition.source.rules == "cruxible.procedure-source.v2"
-            else SDK_SOURCE_PROCEDURE_LAW
-        )
-        if context.historical_law_coordinate is not None and installed != source_law:
-            raise ProposalIntegrityError("graph-v6 requires its exact source-compilation law")
-        installed = source_law
+    source_law = (
+        SOURCE_CHECKED_PROCEDURE_LAW
+        if procedure.definition.source is not None
+        and procedure.definition.source.rules == "cruxible.procedure-source.v2"
+        else SDK_SOURCE_PROCEDURE_LAW
+    )
+    if context.historical_law_coordinate is not None and installed != source_law:
+        raise ProposalIntegrityError("graph-v6 requires its exact source-compilation law")
+    installed = source_law
 
-        def source_lookup(identity: str) -> object | None:
-            kind = identity.split(":", 1)[0]
-            if kind == "QueryDefinition":
-                path = query_definition_path(identity.split(":", 1)[1])
-                content = context.candidate_tree.get(path)
-                return None if content is None else parse_query_definition(content, path=path)
-            owners = {
-                "Provider": (context.resolved.providers, "provider"),
-                "ProviderInterface": (context.resolved.provider_interfaces, "registration"),
-                "Procedure": (context.resolved.procedures, "procedure"),
-                "ClaimType": (context.resolved.claim_types, "claim_type"),
-                "CaptureContract": (context.resolved.capture_contracts, "contract"),
-            }
-            if kind not in owners:
-                return None
-            mapping, attribute = owners[kind]
-            selected = mapping.get(identity)
-            return None if selected is None else getattr(selected, attribute)
+    def source_lookup(identity: str) -> object | None:
+        kind = identity.split(":", 1)[0]
+        if kind == "QueryDefinition":
+            path = query_definition_path(identity.split(":", 1)[1])
+            content = context.candidate_tree.get(path)
+            return None if content is None else parse_query_definition(content, path=path)
+        owners = {
+            "Provider": (context.resolved.providers, "provider"),
+            "ProviderInterface": (context.resolved.provider_interfaces, "registration"),
+            "Procedure": (context.resolved.procedures, "procedure"),
+            "ClaimType": (context.resolved.claim_types, "claim_type"),
+            "CaptureContract": (context.resolved.capture_contracts, "contract"),
+        }
+        if kind not in owners:
+            return None
+        mapping, attribute = owners[kind]
+        selected = mapping.get(identity)
+        return None if selected is None else getattr(selected, attribute)
 
-        assert isinstance(procedure.definition, ProcedureDefinition)
-        source = procedure.definition.source
-        type_ids = tuple(
-            "ClaimType:" + name for name in (() if source is None else source.claim_types)
-        )
-        subject_kinds: tuple[str, ...] = ()
-        if source is not None and source.rules == "cruxible.procedure-source.v2":
-            from cruxible_core.authoring.procedure_source import source_ontology_names
-            from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectedRows
+    source = procedure.definition.source
+    type_ids = tuple("ClaimType:" + name for name in (() if source is None else source.claim_types))
+    subject_kinds: tuple[str, ...] = ()
+    if source is not None and source.rules == "cruxible.procedure-source.v2":
+        from cruxible_core.authoring.procedure_source import source_ontology_names
+        from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectedRows
 
-            names = source_ontology_names(source.text)
-            states = context.candidate_states
-            if isinstance(states, SelectedRows) and states.owner is not None:
-                owner = states.owner
-                type_ids, subject_kinds = (
-                    owner.claim_type_names(names)
-                    if isinstance(owner, EvaluationRows)
-                    else owner.call(lambda rows: rows.claim_type_names(names))
-                )
-            else:
-                # Cold replay already materialized definitions; use the same name relation.
-                from cruxible_core.indexes.typed_state import claim_type_names
+        names = source_ontology_names(source.text)
+        states = context.candidate_states
+        if isinstance(states, SelectedRows) and states.owner is not None:
+            owner = states.owner
+            type_ids, subject_kinds = (
+                owner.claim_type_names(names)
+                if isinstance(owner, EvaluationRows)
+                else owner.call(lambda rows: rows.claim_type_names(names))
+            )
+        else:
+            # Cold replay already materialized definitions; use the same name relation.
+            from cruxible_core.indexes.typed_state import claim_type_names
 
-                matched = [
-                    row
-                    for accepted in context.resolved.claim_types.values()
-                    for row in claim_type_names(accepted.claim_type)
-                    if row[2] in names or row[3] in names
-                ]
-                type_ids = tuple(sorted({row[0] for row in matched if row[1] == "predicate"}))
-                subject_kinds = tuple(
-                    sorted({row[2] for row in matched if row[1] == "subject_kind"})
-                )
-        verify_source_bindings(
-            procedure,
-            lookup=source_lookup,
-            claim_types=(source_lookup(identity) for identity in type_ids),
-            subject_kinds=subject_kinds,
-        )
-    if int(procedure.definition.graph_format) == 5:
-        if procedure.artifact_format != "playbill-procedure-v2":
-            raise ValueError("graph-v5 requires the owner-carried Contract envelope")
-        if (
-            context.historical_law_coordinate is not None
-            and installed != PROVIDER_CONTRACT_PROCEDURE_LAW
-        ):
-            raise ProposalIntegrityError("graph-v5 requires its exact operation-contract law")
-        installed = PROVIDER_CONTRACT_PROCEDURE_LAW
+            matched = [
+                row
+                for accepted in context.resolved.claim_types.values()
+                for row in claim_type_names(accepted.claim_type)
+                if row[2] in names or row[3] in names
+            ]
+            type_ids = tuple(sorted({row[0] for row in matched if row[1] == "predicate"}))
+            subject_kinds = tuple(sorted({row[2] for row in matched if row[1] == "subject_kind"}))
+    verify_source_bindings(
+        procedure,
+        lookup=source_lookup,
+        claim_types=(source_lookup(identity) for identity in type_ids),
+        subject_kinds=subject_kinds,
+    )
     predecessor: AcceptedProcedure | None = None
     if context.parent_content is not None:
         previous = parse_procedure(context.parent_content, path=context.path)
@@ -1838,7 +1816,6 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted Procedure law result is incomplete")
-    annotations = procedure.definition.annotations
     return _accepted(
         context,
         installed,
@@ -1849,13 +1826,8 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         activation_policy=procedure.activation_policy,
         result={
             "artifact_digest": law.artifact_digest,
-            "authoring_expansion": (
-                annotations
-                if isinstance(annotations, dict) and "builder_kind" in annotations
-                else None
-            ),
             "definition_digest": procedure.definition_digest,
-            "directly_runnable": procedure.directly_runnable,
+            "runnable": procedure_runnability(procedure.definition)[0],
             "verdict": "accepted",
         },
         retired=procedure.lifecycle.state == "retired",
@@ -1990,19 +1962,7 @@ def _line_trigger_dependents(context: _MemberContext, line: LineSpec) -> tuple[s
 
 def _line_member(context: _MemberContext) -> _MemberVerdict:
     line = parse_line_spec(context.content, path=context.path)
-    if _admits_triggers(context.current.compiler):
-        if line.artifact_format in EMBEDDED_TRIGGER_LINE_FORMATS:
-            return _MemberVerdict(
-                diagnostics=(
-                    _diagnostic(
-                        "cruxible.line.embedded_trigger_retired",
-                        "This compiler accepts no new version of a Line that embeds its "
-                        "trigger: author a Line v6 and aim Trigger artifacts at it.",
-                        context.path,
-                    ),
-                )
-            )
-    elif isinstance(line, LineSpec):
+    if not _admits_triggers(context.current.compiler):
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
@@ -2031,25 +1991,10 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             line=previous,
             artifact_digest=line_spec_digest(previous).tagged,
         )
-    interface_digests = _artifact_digest_identities(context.candidate_states)
-    for provider in context.resolved.providers.values():
-        interface_pin = next(
-            (pin for pin in provider.provider.pins if pin.role == "provider-interface"),
-            None,
-        )
-        if interface_pin is None:
-            continue
-        registration = context.resolved.provider_interfaces.get(interface_pin.target.qualified)
-        if (
-            registration is not None
-            and registration.artifact_digest == interface_pin.artifact_digest
-        ):
-            interface_digests[provider.artifact_digest] = registration.registration.interface_digest
     law = evaluate_line_spec_law(
         line,
         path=context.path,
         procedure=accepted_procedure,
-        interface_digests=interface_digests,
         predecessor=predecessor,
         providers={
             accepted.artifact_digest: accepted for accepted in context.resolved.providers.values()
@@ -2063,19 +2008,18 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted LineSpec law result is incomplete")
-    if isinstance(line, LineSpec):
-        stranded = _line_trigger_dependents(context, line)
-        if stranded:
-            return _MemberVerdict(
-                diagnostics=(
-                    _diagnostic(
-                        "cruxible.line.triggers_not_settled",
-                        "This Line change would strand live Triggers aimed at it; retire "
-                        "or retarget them in the same ChangeSet: " + ", ".join(stranded),
-                        context.path,
-                    ),
-                )
+    stranded = _line_trigger_dependents(context, line)
+    if stranded:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.line.triggers_not_settled",
+                    "This Line change would strand live Triggers aimed at it; retire "
+                    "or retarget them in the same ChangeSet: " + ", ".join(stranded),
+                    context.path,
+                ),
             )
+        )
     return _accepted(
         context,
         _installed(context, line.artifact_format),
@@ -3341,19 +3285,6 @@ def _compiler_upgrade_member(context: _MemberContext) -> _MemberVerdict:
             raise ValueError("compiler upgrade must be the entire proposal")
         value = parse_compiler_upgrade(context.content)
         validate_upgrade(value, context.current)
-        if _admits_triggers(value.target) and not _admits_triggers(context.current.compiler):
-            live_embedded = sorted(
-                accepted.line.identity.qualified
-                for accepted in context.resolved.lines.values()
-                if accepted.line.artifact_format in EMBEDDED_TRIGGER_LINE_FORMATS
-                and accepted.line.lifecycle.state == "live"
-            )
-            if live_embedded:
-                raise ValueError(
-                    "compiler revision 32 serves no Line that embeds its trigger; retire "
-                    "these Lines before upgrading, then author v6 Lines and Triggers: "
-                    + ", ".join(live_embedded)
-                )
         if context.actor_id is None:
             raise ValueError("compiler upgrade requires an authenticated principal")
         if context.principals.require_active(context.actor_id).kind != "ordinary":

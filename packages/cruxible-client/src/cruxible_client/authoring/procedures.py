@@ -24,14 +24,13 @@ from cruxible_client.contracts.authoring.inputs import (
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
-    ProcedureArtifactAny,
     procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 from cruxible_client.contracts.procedures.contracts import validate_contract_schema
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
-    analyze_procedure_v4,
+    analyze_procedure,
 )
 from cruxible_client.contracts.procedures.models import (
     RUNG_AUTHORITY,
@@ -39,7 +38,7 @@ from cruxible_client.contracts.procedures.models import (
     AuthorityVerb,
     GuardPredicate,
     ProcedureBudget,
-    ProcedureDefinitionV5,
+    ProcedureDefinition,
     ProcedureHardCaps,
     ProcedureNode,
     ProcedurePinSlotRef,
@@ -64,14 +63,14 @@ Contract: TypeAlias = CarriedContractInput
 
 
 def procedure_record_constructor(
-    artifact: ProcedureArtifactAny, direction: Literal["input", "output"]
+    artifact: ProcedureArtifact, direction: Literal["input", "output"]
 ) -> RecordConstructor:
     pin = (
         artifact.definition.contract_in
         if direction == "input"
         else artifact.definition.contract_out
     )
-    if not isinstance(artifact, ProcedureArtifact) or not isinstance(pin, ArtifactPin):
+    if not isinstance(pin, ArtifactPin):
         raise ValueError("Typed execution requires a resolved owner-carried Contract")
     for contract in artifact.owned_contracts:
         if (
@@ -209,13 +208,19 @@ class Guard(Step):
 
 @dataclass(frozen=True)
 class EmitCapture(Step):
+    """Emit evidence as a Capture; ``result`` is the Procedure's typed return value."""
+
     capture_contract: str = ""
     input: object = Previous()
+    result: object = Previous()
 
 
 @dataclass(frozen=True, kw_only=True)
 class ProposeChangeSet(Step):
+    """Propose the candidate Claims; ``result`` is the Procedure's typed return value."""
+
     candidate_templates: tuple[object, ...]
+    result: object = Previous()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -223,6 +228,7 @@ class SettleChangeSet(Step):
     """Settle the candidate Claims under the one covering settle mandate, or fall back."""
 
     candidate_templates: tuple[object, ...]
+    result: object = Previous()
 
 
 @dataclass(frozen=True)
@@ -557,7 +563,7 @@ class Sequence:
                 "The returned output schema differs from the Procedure output contract.",
             )
         definition: dict[str, Any] = dict(
-            graph_format=5,
+            graph_format=6,
             name=self.name,
             description=self.description,
             contract_in=root_in,
@@ -570,8 +576,8 @@ class Sequence:
         )
         edges: dict[str, dict[str, str]] = {}
         try:
-            checked = ProcedureDefinitionV5.model_validate(_symbolic_pins(definition))
-            edges = analyze_procedure_v4(checked).edges
+            checked = ProcedureDefinition.model_validate(_symbolic_pins(definition))
+            edges = analyze_procedure(checked).edges
         except (ValueError, ProcedureGraphFormatError) as exc:
             error(None, "graph_invalid", str(exc))
         input_ = ProcedureInput(

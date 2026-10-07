@@ -141,7 +141,6 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
     ),
     "cruxible_core/service/procedures/procedure_runs.py": frozenset(
         {
-            "service_bind_playbill_procedure",
             "service_run_playbill_procedure",
             "service_run_playbill_line",
         }

@@ -248,7 +248,6 @@ from cruxible_core.service.procedures.predictions import (
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunNotAccepted,
     LineRunRequest,
-    ProcedureBindRequest,
     ProcedureNotFound,
     ProcedureReadinessRequestV1,
     ProcedureRetired,
@@ -256,7 +255,6 @@ from cruxible_core.service.procedures.procedure_runs import (
     line_run_target_rung,
     procedure_run_target_rung,
     run_permission_rung,
-    service_bind_playbill_procedure,
     service_playbill_procedure_readiness,
     service_run_playbill_line,
     service_run_playbill_procedure,
@@ -1769,7 +1767,7 @@ def playbill_procedure_source_preview(
 ) -> ProcedureSourcePreview:
     from cruxible_core.service.procedures.source_preview import service_preview_procedure_source
 
-    check_permission("cruxible_procedure_readiness", instance_id=instance_id)
+    check_permission("cruxible_get", instance_id=instance_id)
     return service_preview_procedure_source(
         get_playbill_manager().get(instance_id), request=request
     )
@@ -1781,30 +1779,13 @@ def playbill_procedure_readiness(
     *,
     request: ProcedureReadinessRequestV1,
 ) -> contracts.ProcedureReadiness:
-    check_permission("cruxible_procedure_readiness", instance_id=instance_id)
+    check_permission("cruxible_get", instance_id=instance_id)
     result = service_playbill_procedure_readiness(
         get_playbill_manager().get(instance_id),
         name=name,
         request=request,
     )
     return contracts.ProcedureReadiness.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_procedure_bind(
-    instance_id: str,
-    name: str,
-    *,
-    request: ProcedureBindRequest,
-) -> contracts.ProcedureBindResult:
-    check_permission("cruxible_procedure_bind", instance_id=instance_id)
-    result = service_bind_playbill_procedure(
-        get_playbill_manager().get(instance_id),
-        name=name,
-        request=request,
-        actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
-        timestamp=canonical_candidate_timestamp(utc_now()),
-    )
-    return contracts.ProcedureBindResult.model_validate(result.model_dump(mode="json"))
 
 
 def _check_run_target_permission(

@@ -36,7 +36,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     _journal,
     _stream,
 )
-from tests.support.lines import graph_v4, line_trigger, trigger_members
+from tests.support.lines import line_trigger, trigger_members
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_independent_resolution_contracts import contract_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor, _slotless_procedure
@@ -56,13 +56,13 @@ TRIGGER = "trigger-test-trigger"
 
 
 def line_world(tmp_path, schedule, *, with_owner=False, triggers=None):
-    """An accepted Line v6 and the Trigger aimed at it on `schedule`.
+    """An accepted Line and the Trigger aimed at it on `schedule`.
 
     `triggers` replaces the one default Trigger with several (or none).
     """
 
     instance, owner, contract = contract_world(tmp_path)
-    accepted = graph_v4(_slotless_procedure("trigger-method"))
+    accepted = _slotless_procedure("trigger-method")
     procedure = accepted.procedure
     policy = _acquisition_policy("trigger-policy")
     line = _served_line("trigger-test", accepted=accepted, policy=policy)

@@ -61,7 +61,6 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
-    LineSpecAny,
     line_identity_digest,
     line_requested_rung,
 )
@@ -85,7 +84,6 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.operational_viewer import (
     OperationalViewer,
-    arm_principal_kind,
     may_see_arming,
 )
 from cruxible_core.service.discovery.runs import run_counts, run_rows
@@ -200,19 +198,17 @@ def uncited_capture_present(instance: PlaybillInstance, digest: str) -> bool:
 # -- Lines -----------------------------------------------------------------------------
 
 
-def trigger_kind(line: LineSpecAny, schedule_kinds: Sequence[str]) -> str:
+def trigger_kind(schedule_kinds: Sequence[str]) -> str:
     """The kinds of schedule that set a Line off.
 
-    A v6 Line embeds no trigger: the schedule kinds of the live Triggers aimed
-    at it say when it fires, and with none it is ``manual`` (it runs only when
-    run explicitly). An older Line answers from the trigger it embeds.
+    A Line embeds no trigger: the schedule kinds of the live Triggers aimed at
+    it say when it fires, and with none it is ``manual`` (it runs only when run
+    explicitly).
     """
 
-    if isinstance(line, LineSpec):
-        if not schedule_kinds:
-            return "manual"
-        return "+".join(sorted(set(schedule_kinds)))
-    return line.trigger_policy.kind
+    if not schedule_kinds:
+        return "manual"
+    return "+".join(sorted(set(schedule_kinds)))
 
 
 @dataclass(frozen=True)
@@ -310,7 +306,7 @@ def window_summary(window: object) -> str:
     return "its window"
 
 
-def line_authority(line: LineSpecAny) -> Literal["observe", "propose", "settle"]:
+def line_authority(line: LineSpec) -> Literal["observe", "propose", "settle"]:
     return RUNG_AUTHORITY[line_requested_rung(line)]
 
 
@@ -375,7 +371,7 @@ def _arm(
     return GetLineArm(
         arm=view.arm_id,
         state=state,
-        principal_kind=arm_principal_kind(data["armed_by"], view.armed_by),
+        principal_kind=view.armed_by.kind,
         armed_by=view.armed_by.label if visible else None,
         credential=view.armed_by.credential_id if visible else None,
         armed_by_withheld=not visible,
@@ -481,7 +477,7 @@ def line_card(
     viewer: OperationalViewer | None = None,
 ) -> GetLineCard:
     with instance.bind_accepted_projection(coordinate) as projection:
-        line = cast(LineSpecAny, projection.typed.source(identity))
+        line = cast(LineSpec, projection.typed.source(identity))
         aimed = aimed_trigger_page(
             projection, (line.identity.qualified,), limit=OPERATIONAL_CARD_LIST_LIMIT
         )[line.identity.qualified]
@@ -494,7 +490,7 @@ def line_card(
             for name in aimed.identities
         )
     digest = line_identity_digest(line.identity)
-    trigger = trigger_kind(line, aimed.schedule_kinds)
+    trigger = trigger_kind(aimed.schedule_kinds)
     procedure = line.procedure.target.qualified
     next_steps = [render(procedure, None)]
     next_steps.extend(render(item.trigger, None) for item in triggers)
@@ -542,7 +538,7 @@ def line_rows(
 
     with instance.bind_accepted_projection(coordinate) as projection:
         lines = [
-            cast(LineSpecAny, projection.typed.source(str(identity)))
+            cast(LineSpec, projection.typed.source(str(identity)))
             for (identity,) in projection.typed.connection.execute(
                 "SELECT identity FROM lines ORDER BY identity"
             )
@@ -573,7 +569,7 @@ def line_rows(
                 lifecycle="retired" if line.lifecycle.state == "retired" else "live",
                 procedure=line.procedure.target.qualified,
                 authority=line_authority(line),
-                trigger=trigger_kind(line, triggers[line.identity.qualified].schedule_kinds),
+                trigger=trigger_kind(triggers[line.identity.qualified].schedule_kinds),
                 arm=operations.arm_state,
                 due=operations.due,
                 waiting=operations.waiting,

@@ -42,11 +42,10 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     LineSpec,
-    LineSpecV2,
     evaluate_line_spec_law,
     line_identity_digest,
     line_spec_digest,
@@ -54,14 +53,17 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     ProcedureBudget,
-    ProcedureDefinitionV4,
+    ProcedureDefinition,
     ProcedureHardCaps,
-    ProviderNode,
 )
 from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
 from cruxible_client.contracts.provider_execution import ProviderSecretResolutionPlan
 from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistration,
+    provider_interface_definition_digest,
+    provider_interface_digest,
     provider_interface_path,
     render_provider_interface,
 )
@@ -70,6 +72,7 @@ from cruxible_client.contracts.providers import (
     ProviderV2,
     provider_digest,
     provider_expected_implementation_records,
+    provider_manifest_digest,
     provider_path,
     render_provider,
 )
@@ -112,6 +115,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._p2b1_support import (
     accepted_interface,
     install_demo_classifier,
+    interface_registration,
     provider_v2,
 )
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
@@ -163,7 +167,7 @@ def _procedure_bound_to_provider(accepted_provider: AcceptedProvider):  # type: 
     accepted = _accepted_one_provider()
     definition = accepted.procedure.definition
     node = definition.nodes[0]
-    assert isinstance(node, ProviderNode)
+    assert isinstance(node, CallNode)
     provider_pin = node.provider
     assert not isinstance(provider_pin, str)
     provider_pin = provider_pin.model_copy(
@@ -194,7 +198,7 @@ def _procedure_bound_to_provider(accepted_provider: AcceptedProvider):  # type: 
     procedure = accepted.procedure.model_copy(
         update={
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
             "pins": pins,
         }
     )
@@ -215,17 +219,15 @@ def _complete_line_for_admission(
 ) -> AcceptedLineSpec:
     historical = _accepted_line_for_admission(admission, accepted_procedure).line
     definition = accepted_procedure.procedure.definition
-    line = LineSpecV2.model_validate(
+    line = LineSpec.model_validate(
         {
             **historical.model_dump(mode="json"),
-            "artifact_format": "playbill-line-v2",
             "budgets": {
                 "max_capture_bytes": definition.budget.max_capture_bytes,
                 "max_items": definition.budget.max_items,
                 "max_provider_calls": definition.budget.max_provider_calls,
                 "max_wall_clock_microseconds": definition.budget.wall_clock.microseconds,
             },
-            "provider_implementation_closures": [],
         }
     )
     path = line_spec_path(line.identity.name)
@@ -233,9 +235,6 @@ def _complete_line_for_admission(
         line,
         path=path,
         procedure=accepted_procedure,
-        interface_digests={
-            accepted_provider.artifact_digest: interface.registration.interface_digest
-        },
         predecessor=None,
         providers={accepted_provider.artifact_digest: accepted_provider},
         provider_interfaces={interface.artifact_digest: interface},
@@ -753,29 +752,62 @@ def test_lazy_rearm_is_serialized_and_never_runs_during_an_invocation(
     assert operator.lane_status() == ("available", None, None)
 
 
+_SERVED_RUN_INPUT = ProcedureOwnedContract(
+    identity=ArtifactIdentity(kind="Contract", name="served-provider-run-input"),
+    schema=ContractSchema(fields={"status": PropertySchema(type="string")}),
+)
+_SERVED_PROVIDER_INPUT = ProcedureOwnedContract(
+    identity=ArtifactIdentity(kind="Contract", name="served-provider-input"),
+    schema=ContractSchema(
+        fields={
+            "size": PropertySchema(type="int"),
+            "value": PropertySchema(type="string"),
+        }
+    ),
+)
+_SERVED_PROVIDER_OUTPUT = ProcedureOwnedContract(
+    identity=ArtifactIdentity(kind="Contract", name="served-provider-output"),
+    schema=ContractSchema(fields={"echo": PropertySchema(type="string")}),
+)
+
+
+def _served_operation_interface() -> AcceptedProviderInterfaceRegistration:
+    """The demo interface declaring the operation contracts a call node is checked against."""
+
+    base = interface_registration()
+    preimage = canonical_bytes(
+        {
+            "name": base.interface_id,
+            "version": 1,
+            "effect_class": base.effect_class,
+            "contracts": {
+                "input": _SERVED_PROVIDER_INPUT.contract_schema.model_dump(mode="json"),
+                "output": _SERVED_PROVIDER_OUTPUT.contract_schema.model_dump(mode="json"),
+            },
+        }
+    ).hex()
+    registration = base.model_copy(
+        update={
+            "interface_bytes_hex": preimage,
+            "interface_digest": provider_interface_definition_digest(preimage),
+        }
+    )
+    return AcceptedProviderInterfaceRegistration(
+        path=provider_interface_path(registration.interface_id),
+        registration=registration,
+        artifact_digest=provider_interface_digest(registration).tagged,
+    )
+
+
 def _provider_line_procedure(
     accepted_provider: AcceptedProvider,
     interface,  # type: ignore[no-untyped-def]
 ) -> AcceptedProcedure:
     """One accepted Procedure whose single node invokes the demo Provider."""
 
-    run_input = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="served-provider-run-input"),
-        schema=ContractSchema(fields={"status": PropertySchema(type="string")}),
-    )
-    provider_input = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="served-provider-input"),
-        schema=ContractSchema(
-            fields={
-                "size": PropertySchema(type="int"),
-                "value": PropertySchema(type="string"),
-            }
-        ),
-    )
-    provider_output = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="served-provider-output"),
-        schema=ContractSchema(fields={"echo": PropertySchema(type="string")}),
-    )
+    run_input = _SERVED_RUN_INPUT
+    provider_input = _SERVED_PROVIDER_INPUT
+    provider_output = _SERVED_PROVIDER_OUTPUT
     run_input_pin = ArtifactPin(
         role="contract-in",
         target=run_input.identity,
@@ -802,12 +834,12 @@ def _provider_line_procedure(
         artifact_digest=interface.artifact_digest,
     )
     implementation = accepted_provider.provider.implementations[0]
-    definition = ProcedureDefinitionV4(
+    definition = ProcedureDefinition(
         name="served-provider-triage",
         contract_in=run_input_pin,
         contract_out=provider_output_pin,
         nodes=(
-            ProviderNode(
+            CallNode(
                 node_id="ask",
                 provider=provider_pin,
                 interface=interface_pin,
@@ -820,7 +852,6 @@ def _provider_line_procedure(
             ),
         ),
         returns="result",
-        pin_slots=(),
         budget=ProcedureBudget(
             wall_clock=CanonicalDuration(microseconds=4_000_000),
             max_provider_calls=2,
@@ -839,7 +870,7 @@ def _provider_line_procedure(
     procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
-        definition_digest=compute_procedure_definition_digest_v4(definition).tagged,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
         pins=tuple(
             sorted(
                 (
@@ -903,10 +934,25 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         lock_digest=_sha256_file(lock),
         materialization_digest=materialization_digest,
     )
+    # A call node is checked against its interface's declared operation
+    # contracts, so the demo Provider implements an interface that declares them.
+    interface = _served_operation_interface()
     base = provider_v2()
     assert base.runtime_artifact.local_env is not None
+    manifest = base.runtime_artifact.manifest
+    interface_digest = interface.registration.interface_digest
+    manifest = manifest.model_copy(
+        update={
+            "implementations": tuple(
+                item.model_copy(update={"interface_digest": interface_digest})
+                for item in manifest.implementations
+            )
+        }
+    )
     payload = base.runtime_artifact.model_copy(
         update={
+            "manifest": manifest,
+            "manifest_digest": provider_manifest_digest(manifest),
             "distribution": base.runtime_artifact.distribution.model_copy(
                 update={"sha256": _sha256_file(distribution)}
             ),
@@ -921,6 +967,13 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
     provider = ProviderV2.model_validate(
         base.model_copy(
             update={
+                "pins": (
+                    ArtifactPin(
+                        role="provider-interface",
+                        target=interface.registration.identity,
+                        artifact_digest=interface.artifact_digest,
+                    ),
+                ),
                 "runtime_artifact": payload,
                 "implementations": provider_expected_implementation_records(payload),
             }
@@ -931,7 +984,6 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         provider=provider,
         artifact_digest=provider_digest(provider).tagged,
     )
-    interface = accepted_interface()
     deployment_digest = _digest("served-line-deployment")
     config_path = state_root / PROVIDER_RUNTIME_CONFIG_PATH
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -979,7 +1031,6 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={"status": "open"},
-        slot_bindings=(),
         acquisition_policy=policy_pin,
         max_authority="observe",
         budgets={
@@ -989,7 +1040,6 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
             "max_wall_clock_microseconds": definition.budget.wall_clock.microseconds,
         },
         epsilon={"$decimal": "0"},
-        provider_implementation_closures=(),
         pins=tuple(
             sorted(
                 (procedure_pin, policy_pin),
@@ -1039,7 +1089,7 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         f"/api/v1/{instance_id}/lines/{identity_digest}/runs",
         json={
             "tag": "playbill-line-run-request-v1",
-            "line_identity_digest": identity_digest,
+            "line": identity_digest,
             "occurrence_id": None,
             "evaluation_time": None,
         },

@@ -19,36 +19,28 @@ from collections import OrderedDict
 from collections.abc import Mapping
 
 from cruxible_client.contracts.procedures.graph import (
-    ProcedureNodeDigestsV3,
-    compute_procedure_node_digests_v3,
-    compute_procedure_node_digests_v4,
+    ProcedureNodeDigests,
+    compute_procedure_node_digests,
 )
-from cruxible_client.contracts.procedures.models import (
-    ProcedureDefinitionV3,
-    ProcedureDefinitionV4,
-)
+from cruxible_client.contracts.procedures.models import ProcedureDefinition
 from cruxible_core.derived.memo import memo_clear, memo_get, memo_put
 
 NODE_DIGEST_MEMO_CAPACITY = 256
 
-_memo: OrderedDict[str, Mapping[str, ProcedureNodeDigestsV3]] = OrderedDict()
+_memo: OrderedDict[str, Mapping[str, ProcedureNodeDigests]] = OrderedDict()
 
 
-def compute_node_digests(
-    definition: ProcedureDefinitionV3 | ProcedureDefinitionV4,
-) -> Mapping[str, ProcedureNodeDigestsV3]:
+def compute_node_digests(definition: ProcedureDefinition) -> Mapping[str, ProcedureNodeDigests]:
     """Compute the vector directly, exactly as the graph law does."""
 
-    if definition.graph_format == 3:
-        return compute_procedure_node_digests_v3(definition)
-    return compute_procedure_node_digests_v4(definition)
+    return compute_procedure_node_digests(definition)
 
 
 def cached_node_digests(
-    definition: ProcedureDefinitionV3 | ProcedureDefinitionV4,
+    definition: ProcedureDefinition,
     *,
     definition_digest: str,
-) -> Mapping[str, ProcedureNodeDigestsV3]:
+) -> Mapping[str, ProcedureNodeDigests]:
     """Return the node digest vector for one exact accepted definition digest."""
 
     cached = memo_get(_memo, definition_digest)

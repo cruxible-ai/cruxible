@@ -134,8 +134,6 @@ def test_p2_b0_compact_bytes_are_pinned_for_every_non_changeset_governed_kind() 
     from cruxible_client.contracts.procedure_runtime_policy import (
         parse_procedure_runtime_policy,
     )
-    from cruxible_client.contracts.procedures.artifacts import parse_procedure
-    from cruxible_client.contracts.procedures.line_specs import parse_line_spec
     from cruxible_client.contracts.providers import parse_provider
     from cruxible_client.contracts.query.definitions import parse_query_definition
     from cruxible_client.contracts.types import PrincipalRecord
@@ -150,8 +148,6 @@ def test_p2_b0_compact_bytes_are_pinned_for_every_non_changeset_governed_kind() 
         "claim-type": parse_claim_type,
         "document": parse_document,
         "exhaust-promotion": parse_exhaust_promotion,
-        "line": parse_line_spec,
-        "procedure": parse_procedure,
         "procedure-runtime-policy": parse_procedure_runtime_policy,
         "provider": parse_provider,
         "query-definition": parse_query_definition,
@@ -173,7 +169,13 @@ def test_p2_b0_compact_bytes_are_pinned_for_every_non_changeset_governed_kind() 
             raise AssertionError(f"unverified P2-B0 artifact kind: {kind}")
         seen.add(kind)
 
-    assert seen == {entry.kind for entry in P2_B0_ARTIFACT_KINDS.entries()} - {"changeset"}
+    # No instance ever accepted a Procedure or Line, and their pre-v6 formats are
+    # deleted: a Procedure is graph v6 (compiler revision 27+), a Line v6 (32).
+    assert seen == {entry.kind for entry in P2_B0_ARTIFACT_KINDS.entries()} - {
+        "changeset",
+        "line",
+        "procedure",
+    }
 
 
 def test_historical_claim_type_path_error_names_the_historical_spelling() -> None:

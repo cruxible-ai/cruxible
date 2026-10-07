@@ -33,15 +33,14 @@ from cruxible_core.storage.cas import ContentAddressedBodyStore
 from tests.test_indexes.test_resolution_contracts import (
     NOW,
     _accepted,
-    _accepted_v4,
     _actor,
     _coordinate,
     _digest,
 )
 
 
-def test_graph_v4_reading_uses_v4_grain_digests() -> None:
-    accepted = _accepted_v4()
+def test_node_reading_uses_the_graph_grain_digests() -> None:
+    accepted = _accepted()
     reading = build_procedure_reading(
         accepted,
         accepted_coordinate=_coordinate(),

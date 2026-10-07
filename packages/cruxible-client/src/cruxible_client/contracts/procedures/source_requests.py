@@ -94,6 +94,6 @@ class ProcedureSourcePreview(_Closed):
     def edges(self) -> dict[str, dict[str, str]]:
         if self.definition is None:
             return {}
-        from cruxible_client.contracts.procedures.graph import analyze_procedure_v4
+        from cruxible_client.contracts.procedures.graph import analyze_procedure
 
-        return analyze_procedure_v4(self.definition).edges
+        return analyze_procedure(self.definition).edges

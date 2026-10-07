@@ -236,14 +236,14 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
         procedure_path,
         render_procedure,
     )
-    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 
     definition = procedure.definition.model_copy(update={"name": "second-method"})
     other_method = procedure.model_copy(
         update={
             "identity": ArtifactIdentity(kind="Procedure", name="second-method"),
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
         }
     )
     one, two = make("one"), make("two")
@@ -304,7 +304,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
     successor = procedure.model_copy(
         update={
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
             "lifecycle": ArtifactLifecycle(
                 predecessor_digest=procedure_artifact_digest(procedure).tagged
             ),
@@ -487,20 +487,12 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
         procedure_mandate_path,
         render_procedure_mandate,
     )
-    from cruxible_client.contracts.procedures.artifacts import (
-        AcceptedProcedure,
-        ProcedureArtifact,
-        procedure_artifact_digest,
-        procedure_path,
-        render_procedure,
-    )
-    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
+    from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.line_specs import (
         line_identity_digest,
         line_spec_path,
         render_line_spec,
     )
-    from cruxible_client.contracts.procedures.models import ProcedureDefinitionV4
     from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
     from cruxible_client.contracts.triggers import WindowCloseSchedule
     from cruxible_core.service.procedures import procedure_runs
@@ -518,22 +510,8 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
     )
 
     instance, owner, contract = contract_world(tmp_path)
-    base = _slotless_procedure("window-method").procedure
-    definition = ProcedureDefinitionV4.model_validate(
-        {**base.definition.model_dump(mode="python"), "graph_format": 4}
-    )
-    procedure = ProcedureArtifact.model_validate(
-        {
-            **base.model_dump(mode="python"),
-            "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
-        }
-    )
-    accepted = AcceptedProcedure(
-        path=procedure_path(procedure.identity.name),
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
+    accepted = _slotless_procedure("window-method")
+    procedure = accepted.procedure
     policy = _acquisition_policy("window-policy")
     line = _served_line("window-test", accepted=accepted, policy=policy)
     window_trigger = line_trigger(
@@ -568,7 +546,7 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
             instance,
             path_identity_digest=line_id,
             request=LineRunRequest(
-                line_identity_digest=line_id,
+                line=line_id,
                 trigger=window_trigger.identity.name,
                 resolution_contract=reference,
             ),
@@ -650,7 +628,7 @@ print(result.model_dump_json())
                     "root": str(instance.root),
                     "trust_root": instance.trust_root.model_dump(mode="json"),
                     "request": LineRunRequest(
-                        line_identity_digest=line_id,
+                        line=line_id,
                         trigger=window_trigger.identity.name,
                         resolution_contract=ref,
                     ).model_dump(mode="json"),

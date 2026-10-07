@@ -1,4 +1,4 @@
-"""Source-v4 convergence self-attacks on B2's landed execution carrier."""
+"""Source convergence self-attacks on B2's landed execution carrier."""
 
 from __future__ import annotations
 
@@ -42,20 +42,16 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_artifact_digest,
 )
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
-    CaptureEgressNodeV3,
-    ProcedureDefinitionV3,
-    ProviderNode,
+    CallNode,
+    CaptureEgressNode,
     SourceNode,
-    SourceNodeV3,
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlan,
-    ProcedureAdmissionMaterialManifest,
     ProcedureRunReceipt,
     procedure_acquisition_plan_digest,
-    procedure_admission_material_digest,
     procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.provider_execution import (
@@ -68,25 +64,17 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretReference,
     provider_invocation_receipt_digest,
 )
-from cruxible_client.contracts.providers import provider_digest
-from cruxible_core.evidence.source_readers import (
-    ExternalSourceReadRequestV1,
-    FakeVersionedExternalSourceReader,
-    ProducerBindingV1,
-)
 from cruxible_core.exhaust import journal_payload_bytes, parse_journal_payload
 from cruxible_core.exhaust.producer_receipts import (
     ProducerReceiptJournalNote,
     journal_producer_receipt_resolver,
 )
-from cruxible_core.procedures.acquisition import ProcedureSourceAcquisitionResultV1
 from cruxible_core.procedures.egress import (
     CaptureTerminalEgressSink,
     TerminalEgressReceiptV2,
     compute_effective_rung,
 )
 from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV3,
     PreparedProcedureRunV5,
     ProcedureExecutor,
     ProcedureRunAdmissionV5,
@@ -112,25 +100,8 @@ from cruxible_core.storage.material_reservations import (
     ReservedCaptureStore,
 )
 from tests.core_support._p2b1_support import install_demo_classifier
-from tests.core_support._pc_c_support import (
-    NOW,
-    capture_contract,
-    digest,
-    provider,
-    provider_run,
-)
-from tests.test_procedures.test_procedure_execution import (
-    _accepted,
-    _Authority,
-    _budget,
-    _Contracts,
-    _fixture,
-    _hard_caps,
-    _line_admission,
-    _pin,
-    _prepare,
-    _StateReader,
-)
+from tests.core_support._pc_c_support import capture_contract, digest
+from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
     _prepared_v5,
@@ -205,7 +176,7 @@ def _source_fixture(
     provider_accepted = _accepted_one_provider()
     provider_prepared, fixture = _prepared_v5(provider_accepted, tmp_path)
     provider_node = provider_accepted.procedure.definition.nodes[0]
-    assert isinstance(provider_node, ProviderNode)
+    assert isinstance(provider_node, CallNode)
     contract = capture_contract()
     contract_pin = ArtifactPin(
         role="capture-contract",
@@ -226,17 +197,18 @@ def _source_fixture(
     nodes = (
         (
             source_node,
-            CaptureEgressNodeV3(
+            CaptureEgressNode(
                 node_id="capture-output",
                 capture_contract=contract_pin,
                 input="$steps.source_result",
+                result="$steps.source_result",
             ),
         )
         if include_terminal
         else (source_node,)
     )
     definition = provider_accepted.procedure.definition.model_copy(
-        update={"nodes": nodes, "returns": source_node.as_, "pin_slots": ()}
+        update={"nodes": nodes, "returns": source_node.as_}
     )
     pins = tuple(
         sorted(
@@ -251,7 +223,7 @@ def _source_fixture(
     procedure = provider_accepted.procedure.model_copy(
         update={
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
             "pins": pins,
         }
     )
@@ -427,160 +399,13 @@ def _next_attempt(prepared: PreparedProcedureRunV5) -> PreparedProcedureRunV5:
     )
 
 
-def test_graph_v3_produced_capture_payload_keeps_its_frozen_field_set() -> None:
+def test_produced_capture_association_needs_both_path_and_receipt() -> None:
     assert _source_capture_association_fields(None, None) == {}
     assert _source_capture_association_fields("source/direct", None) == {}
     assert _source_capture_association_fields(None, digest("receipt", "unit1")) == {}
     assert _source_capture_association_fields("source/direct", digest("receipt", "unit1")) == {
         "occurrence_path": "source/direct",
         "invocation_receipt_digest": digest("receipt", "unit1"),
-    }
-
-
-def test_live_graph_v3_source_keeps_the_frozen_produced_capture_payload(
-    tmp_path: Path,
-) -> None:
-    fixture = _fixture(tmp_path)
-    contract = capture_contract()
-    provider_artifact = provider(contract)
-    capture_pin = ArtifactPin(
-        role="capture-contract",
-        target=contract.identity,
-        artifact_digest=capture_contract_digest(contract).tagged,
-    )
-    provider_pin = ArtifactPin(
-        role="provider",
-        target=provider_artifact.identity,
-        artifact_digest=provider_digest(provider_artifact).tagged,
-    )
-    contract_in = _pin("contract-in", "Contract", "input")
-    contract_out = _pin("contract-out", "Contract", "output")
-    source = SourceNodeV3(
-        node_id="source",
-        capture_contract=capture_pin,
-        provider=provider_pin,
-        request={"relation": "orders"},
-        as_="result",
-    )
-    accepted = _accepted(
-        ProcedureDefinitionV3(
-            name="retained-v3-source",
-            contract_in=contract_in,
-            contract_out=contract_out,
-            nodes=(source,),
-            returns=source.as_,
-            budget=_budget().model_copy(update={"max_capture_bytes": 4096}),
-            hard_caps=_hard_caps().model_copy(update={"max_capture_bytes": 4096}),
-            terminal_capability=1,
-        ),
-        pins=(contract_in, contract_out, capture_pin, provider_pin),
-    )
-    admission = _line_admission(accepted, fixture)
-    direct = _prepare(accepted, fixture, _StateReader())
-    manifest = ProcedureAdmissionMaterialManifest(members=())
-    prepared = PreparedProcedureRunV3(
-        admission=admission,
-        accepted_state_materials=direct.accepted_state_materials,
-        admission_material_manifest=manifest,
-        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
-    )
-    fixture.journal.activate_writer(
-        admission.journal_stream,
-        admission.journal_partition_id,
-        fencing_token="writer",
-        expected_head=fixture.journal.read_head(
-            admission.journal_stream,
-            admission.journal_partition_id,
-        ),
-    )
-    binding = ProducerBindingV1(
-        provider=provider_artifact.identity,
-        logical_source_identity="commerce.production.orders",
-        adapter_digest=digest("adapter", "retained-v3-source"),
-    )
-    reader = FakeVersionedExternalSourceReader()
-    reader.seed(
-        source_identity=binding.logical_source_identity,
-        coordinate_type="postgres-lsn-v1",
-        coordinate={"lsn": "0/16B6C50"},
-        selector_type="relation-primary-key-v1",
-        selector={"id": 7, "relation": "orders"},
-        value={"order_id": 7, "status": "settled"},
-    )
-    acquisition = reader.acquire(
-        ExternalSourceReadRequestV1(
-            contract=contract,
-            provider=provider_artifact,
-            binding=binding,
-            coordinate_type="postgres-lsn-v1",
-            coordinate={"lsn": "0/16B6C50"},
-            selector_type="relation-primary-key-v1",
-            selector={"id": 7, "relation": "orders"},
-            materialization="cas",
-            run_coordinate=provider_run(provider_artifact),
-            observed_at=NOW,
-            resource_budget=contract.selection_budget,
-        ),
-        store=fixture.bodies,
-    )
-
-    class _Acquirer:
-        def acquire(self, **kwargs):  # type: ignore[no-untyped-def]
-            return ProcedureSourceAcquisitionResultV1(
-                node_id=kwargs["node_id"],
-                input_name=kwargs["input_name"],
-                outcome="acquired",
-                acquisition=acquisition,
-            )
-
-        def dereference(self, _capture_digest):  # type: ignore[no-untyped-def]
-            raise AssertionError("the live acquisition path must not replay a landed Capture")
-
-    policy = SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="retained-v3-source"),
-        inputs=(
-            InputAcquisitionRule(
-                input_name=source.as_,
-                requirement="required",
-                permitted_replayability=("attested_only", "exact"),
-                on_unavailable="refuse",
-                on_stale="refuse",
-                on_oversized="refuse",
-                on_conflict="preserve",
-            ),
-        ),
-        coherence=IndependentCoherence(),
-    )
-    result = ProcedureExecutor(
-        journal=fixture.journal,
-        bodies=fixture.bodies,
-        run_index=fixture.run_index,
-        fencing_token="writer",
-        activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=_Contracts(),
-        source_acquirer=_Acquirer(),
-        acquisition_policy=policy,
-    ).execute(prepared, accepted)
-
-    assert result.status == "succeeded"
-    _records, payloads = _payloads(prepared, fixture)
-    produced = next(
-        payload
-        for payload in payloads
-        if isinstance(payload, dict)
-        and payload.get("tag") == "playbill-procedure-produced-capture-v1"
-    )
-    assert set(produced) == {
-        "tag",
-        "node_id",
-        "input_name",
-        "capture_digest",
-        "capture_contract_digest",
-        "acquisition_receipt_digest",
-        "observed_at",
-        "epistemic_grade",
-        "provenance_grade",
-        "audit",
     }
 
 

@@ -15,7 +15,6 @@ from cruxible_client.contracts.line_dispatch import (
     LineArmPrincipal,
     LineDispatchRequest,
     LineDispatchResult,
-    is_current_arm_principal_record,
 )
 from cruxible_client.contracts.primitives import new_id
 from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused
@@ -35,7 +34,6 @@ from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.service.identity import credential_unbound_refusal, principal_refusal
 from cruxible_core.service.procedures.line_dispatch import (
-    ARM_REQUIRES_REARM,
     LineArmAuthorityLost,
     LineArmSegmentEnded,
     require_active_segment,
@@ -187,25 +185,6 @@ def dispatch_armed_line(
 
     now = now or datetime.now(UTC)
     instance = manager.get(instance_id)
-    daemon_early = GovernedActorContext(
-        actor_type="system",
-        actor_id="line-listener",
-        org_id=instance.descriptor.instance_id,
-        operation_id=new_id("op", length=16, separator="_"),
-        timestamp=now,
-    )
-    if not is_current_arm_principal_record(arm.get("armed_by")):
-        # An arm persisted before arms named their provenance: never resolve it
-        # as the implicit operator; stop it and ask for a rearm.
-        service_stop_line_arm(
-            instance,
-            arm["session_id"],
-            reason="arm_requires_rearm",
-            detail=ARM_REQUIRES_REARM,
-            actor=daemon_early,
-            now=now,
-        )
-        return None
     principal = LineArmPrincipal.model_validate(arm["armed_by"])
     daemon = GovernedActorContext(
         actor_type="system",

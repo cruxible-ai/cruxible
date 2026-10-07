@@ -41,7 +41,6 @@ from cruxible_core.procedures.execution import parse_admission_payload, procedur
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.operational_viewer import (
     OperationalViewer,
-    arm_principal_kind,
     may_see_arming,
 )
 from cruxible_core.storage.cas import BodyAccessContext
@@ -166,13 +165,11 @@ def _graph(
 ) -> tuple[dict[str, str], dict[str, dict[str, str]] | None, str | None]:
     """The run's Procedure at its bound coordinate: node kinds, edges, and its first node.
 
-    Edges are ``None`` for a graph format the static analyzers do not read.
+    Edges are ``None`` when the run's Procedure is not readable at its coordinate.
     """
 
-    from cruxible_client.contracts.procedures.graph import (
-        analyze_procedure_v3,
-        analyze_procedure_v4,
-    )
+    from cruxible_client.contracts.procedures.graph import analyze_procedure
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition
 
     bound = instance.resolve_accepted_coordinate(
         **coordinate.model_dump(mode="python", exclude={"tag"})  # type: ignore[attr-defined]
@@ -184,12 +181,9 @@ def _graph(
     kinds = {str(node.node_id): str(node.kind) for node in nodes}
     first = str(nodes[0].node_id) if nodes else None
     edges: dict[str, dict[str, str]] | None = None
-    graph_format = getattr(definition, "graph_format", None)
     try:
-        if graph_format == 3:
-            edges = analyze_procedure_v3(definition).edges  # type: ignore[arg-type]
-        elif graph_format == 4:
-            edges = analyze_procedure_v4(definition).edges  # type: ignore[arg-type]
+        if isinstance(definition, ProcedureDefinition):
+            edges = analyze_procedure(definition).edges
     except Exception:  # noqa: BLE001 -- a graph the analyzer refuses has no known edges
         edges = None
     return kinds, edges, first
@@ -288,7 +282,7 @@ def _run_trigger(
             by = data.get("armed_by")
             if isinstance(by, Mapping):
                 principal = LineArmPrincipal.model_validate(by)
-                fields["principal_kind"] = arm_principal_kind(by, principal)
+                fields["principal_kind"] = principal.kind
                 if may_see_arming(viewer, principal):
                     fields["armed_by"] = principal.label
                 else:

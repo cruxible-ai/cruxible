@@ -35,7 +35,6 @@ from cruxible_client.contracts.authoring.models import (
     MandateConditionAuthoring,
     MandateScopeAuthoring,
     ProcedureAuthoringPayload,
-    ProcedureAuthoringPayloadV1,
     ProcedureMandateAuthoringPayload,
     ProcedureRuntimePolicyAuthoringPayload,
     QueryDefinitionAuthoringPayload,
@@ -662,7 +661,7 @@ def _procedure_references(
 
 def _procedure_payload(
     value: ProcedureInput,
-) -> ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload:
+) -> ProcedureAuthoringPayload:
     contracts = tuple(
         sorted(
             (
@@ -691,17 +690,11 @@ def _procedure_payload(
         dict[str, object],
         _procedure_references(value.definition, contracts=by_name),
     )
-    if contracts or value.acquisition_policy is not None:
-        return ProcedureAuthoringPayload(
-            definition=definition,
-            activation_policy=value.activation_policy,
-            owned_contracts=contracts,
-            acquisition_policy=value.acquisition_policy,
-            retire=value.retire,
-        )
-    return ProcedureAuthoringPayloadV1(
+    return ProcedureAuthoringPayload(
         definition=definition,
         activation_policy=value.activation_policy,
+        owned_contracts=contracts,
+        acquisition_policy=value.acquisition_policy,
         retire=value.retire,
     )
 

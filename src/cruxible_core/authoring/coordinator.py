@@ -38,7 +38,6 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSource,
     PreflightResult,
     ProcedureAuthoringPayload,
-    ProcedureAuthoringPayloadV1,
     authoring_change_set_membership,
     authoring_create_fingerprint,
     authoring_member_identity,
@@ -1102,13 +1101,13 @@ class AuthoringIntentCoordinator:
                     "Procedure"
                     if isinstance(
                         current.payload,
-                        ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload,
+                        ProcedureAuthoringPayload,
                     )
                     else type(current.payload).__name__
                 )
                 payload_family = (
                     "Procedure"
-                    if isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload)
+                    if isinstance(payload, ProcedureAuthoringPayload)
                     else type(payload).__name__
                 )
                 if current_family != payload_family:
