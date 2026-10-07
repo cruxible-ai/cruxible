@@ -350,3 +350,49 @@ def test_an_init_custody_directory_is_refused_inside_the_workspace(
     assert result.exit_code == 2, result.output
     assert f"lies inside {project.resolve()}" in result.output
     assert not list(project.rglob("*.ed25519"))
+
+
+def test_a_bare_init_owner_attests_a_claim_with_no_extra_variables(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The advertised workflow: init, then act as the remembered owner, signing locally.
+
+    The settings file names the owner's key as CRUXIBLE_PRINCIPAL_KEY, the one
+    variable the Claim attestation signer reads, so nothing else is set.
+    """
+
+    from cruxible_core.governance.keys import GeneratedKeyMaterial
+    from tests.core_support import _knowledge_loop_support as seeding
+
+    made = _run("init", "--principal-id", "owner", "--reviewer-key-dir", str(daemon / "rev"))
+    assert made.exit_code == 0, made.output
+    instance_id = load_cli_context().instance_id
+    assert instance_id is not None
+    instance = get_playbill_manager().get(instance_id)
+
+    def material(principal_id: str, directory: Path) -> GeneratedKeyMaterial:
+        return GeneratedKeyMaterial(
+            principal=instance._recovered.head.principals.require_active(principal_id),  # noqa: SLF001
+            private_key_path=directory / f"{principal_id}.ed25519",
+            public_key_path=directory / f"{principal_id}.ed25519.pub",
+        )
+
+    # Seed a Claim the fixture way, approving with the reviewer init created.
+    from tests.test_authoring import test_authoring_preflight as preflight
+
+    reviewer = material("reviewer", daemon / "rev")
+    for module in (seeding, preflight):
+        monkeypatch.setattr(module, "client_material", lambda *_args, **_kwargs: reviewer)
+    owner_dir = daemon / "config" / "cruxible" / "keys" / instance_id / "owner"
+    seeding.seed_claims_into(instance, material("owner", owner_dir))
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        (claim,) = projection.typed.connection.execute(
+            "SELECT identity FROM claims ORDER BY identity LIMIT 1"
+        ).fetchone()
+
+    result = _run("claim", "attest", str(claim).removeprefix("Claim:"), "--support", "--json")
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout[result.stdout.index("{") :])
+    assert payload["tag"] == "playbill-claim-attestation-append-result-v1"
+    assert len(instance.claim_attestation_evidence_store().events()) == 1

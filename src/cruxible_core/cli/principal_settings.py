@@ -19,10 +19,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
 from cruxible_core.cli.context import normalized_transport
 
 PRINCIPAL_SETTINGS_FILE = "cruxible.env"
-PRINCIPAL_KEY_ENV = "CRUXIBLE_PRINCIPAL_KEY"
 _TOKEN_ENV = "CRUXIBLE_SERVER_BEARER_TOKEN"
 
 

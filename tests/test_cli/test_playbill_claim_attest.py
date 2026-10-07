@@ -26,7 +26,7 @@ def test_cli_claim_attest_uses_the_real_local_key_path(
 
     client = InstanceScopedClient(instance, actor_id="owner", state_dir=tmp_path / "server-state")
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
-    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY_PATH", str(owner.private_key_path))
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY", str(owner.private_key_path))
 
     result = CliRunner().invoke(
         cli,

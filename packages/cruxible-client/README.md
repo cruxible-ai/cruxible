@@ -3907,7 +3907,7 @@ local directory/file permissions. An invalid or changed key refuses.
 
 `prepare_claim_attestation` signs after resolving the exact prepared statement;
 `append_prepared_claim_attestation` also submits it. The explicit environment
-helper uses CRUXIBLE_PRINCIPAL_KEY_PATH and resolves the authenticated actor;
+helper uses CRUXIBLE_PRINCIPAL_KEY (the key the settings file names) and resolves the authenticated actor;
 this is not a search through arbitrary private-key locations.
 
 <a id="api-approvalsigner"></a>
@@ -6307,7 +6307,7 @@ include constructor/validator definitions for request and response contracts.
 
 Key generation, custody, or public/private correspondence failed.
 
-#### `PRINCIPAL_KEY_PATH_ENV`
+#### `PRINCIPAL_KEY_ENV`
 
 Exported constant or type alias; exact value and admissible members are defined in the linked module.
 

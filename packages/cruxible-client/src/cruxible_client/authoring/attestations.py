@@ -33,11 +33,10 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
 )
 from cruxible_client.contracts.errors import SigningKeyError
+from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.errors import InstanceScopeError
-
-PRINCIPAL_KEY_PATH_ENV = "CRUXIBLE_PRINCIPAL_KEY_PATH"
 
 
 class LocalClaimAttestationKeyUnavailable(SigningKeyError):
@@ -164,17 +163,17 @@ def local_attestation_signer_from_environment(
 ) -> LocalEd25519ClaimAttestationSigner:
     """Resolve the authenticated actor and its local key without wire disclosure."""
 
-    raw = os.environ.get(PRINCIPAL_KEY_PATH_ENV)
+    raw = os.environ.get(PRINCIPAL_KEY_ENV)
     if raw is None:
         raise LocalClaimAttestationKeyUnavailable(
             f"{LocalClaimAttestationKeyUnavailable.error_code}: "
-            f"set {PRINCIPAL_KEY_PATH_ENV} to the caller's local Ed25519 key"
+            f"set {PRINCIPAL_KEY_ENV} to the caller's local Ed25519 key"
         )
     path = Path(raw)
     if not path.is_absolute():
         raise LocalClaimAttestationKeyUnavailable(
             f"{LocalClaimAttestationKeyUnavailable.error_code}: "
-            f"{PRINCIPAL_KEY_PATH_ENV} must be an absolute path"
+            f"{PRINCIPAL_KEY_ENV} must be an absolute path"
         )
     try:
         whoami = client.whoami(instance_id)
@@ -419,7 +418,7 @@ __all__ = [
     "ClaimAttestationSigner",
     "LocalClaimAttestationKeyUnavailable",
     "LocalEd25519ClaimAttestationSigner",
-    "PRINCIPAL_KEY_PATH_ENV",
+    "PRINCIPAL_KEY_ENV",
     "prepare_claim_attestation",
     "append_prepared_claim_attestation",
     "local_attestation_signer_from_environment",
