@@ -32,6 +32,8 @@ def _write_tree(
     pin: str | None = None,
     listing_version: str | None = None,
     listing_identifier: str = "cruxible",
+    core_module_version: str | None = None,
+    client_module_version: str | None = None,
 ) -> dict[str, Path]:
     pin = f"cruxible-client=={client_version}" if pin is None else pin
 
@@ -65,7 +67,22 @@ def _write_tree(
         ),
         encoding="utf-8",
     )
-    return {"core": core, "client": client, "server": server}
+    core_init = tmp_path / "core__init__.py"
+    core_init.write_text(
+        f'"""Core."""\n\n__version__ = "{core_module_version or core_version}"\n',
+        encoding="utf-8",
+    )
+    client_init = tmp_path / "client__init__.py"
+    client_init.write_text(
+        f'__version__ = "{client_module_version or client_version}"\n', encoding="utf-8"
+    )
+    return {
+        "core": core,
+        "client": client,
+        "server": server,
+        "core_init": core_init,
+        "client_init": client_init,
+    }
 
 
 def _argv(paths: dict[str, Path], *extra: str) -> list[str]:
@@ -76,6 +93,10 @@ def _argv(paths: dict[str, Path], *extra: str) -> list[str]:
         str(paths["client"]),
         "--server-json",
         str(paths["server"]),
+        "--core-init",
+        str(paths["core_init"]),
+        "--client-init",
+        str(paths["client_init"]),
         *extra,
     ]
 
@@ -171,3 +192,16 @@ def test_registry_listing_must_launch_cruxible(
 
     assert script.main(_argv(paths)) == 1
     assert "must list exactly one PyPI package, cruxible" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("package", ["core", "client"])
+def test_a_module_version_behind_its_package_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], package: str
+) -> None:
+    """Both ``__version__`` strings are release stamps too (the MCP server name shows core's)."""
+    script = _load_script()
+    paths = _write_tree(tmp_path, **{f"{package}_module_version": "1.2.2"})
+
+    assert script.main(_argv(paths)) == 1
+    module = "cruxible_core" if package == "core" else "cruxible_client"
+    assert f"{module}.__version__ 1.2.2 != package version 1.2.3" in capsys.readouterr().err

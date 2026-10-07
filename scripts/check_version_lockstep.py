@@ -5,8 +5,9 @@ Usage:
     python scripts/check_version_lockstep.py --tag v0.3.1    # release workflow
 
 The publish workflow refuses to build unless the core package version, the
-``cruxible-client`` package version, the core dependency pin on that client, and
-the MCP registry listing (``server.json``) all name the same version. Those
+``cruxible-client`` package version, the core dependency pin on that client,
+both packages' ``__version__`` and the MCP registry listing (``server.json``)
+all name the same version. Those
 checks used to live only in the workflow, so the first thing that could see a
 mismatch was a pushed tag: 0.3.1 tagged with the client still at 0.3.0 and the
 publish failed at the gate. This script is the single implementation, invoked by
@@ -21,6 +22,7 @@ bare checkout with no dependency install.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import sys
 import tomllib
@@ -31,6 +33,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CORE_PYPROJECT = _REPO_ROOT / "pyproject.toml"
 _CLIENT_PYPROJECT = _REPO_ROOT / "packages" / "cruxible-client" / "pyproject.toml"
 _SERVER_JSON = _REPO_ROOT / "server.json"
+_CORE_INIT = _REPO_ROOT / "src" / "cruxible_core" / "__init__.py"
+_CLIENT_INIT = (
+    _REPO_ROOT / "packages" / "cruxible-client" / "src" / "cruxible_client" / "__init__.py"
+)
 
 
 def _project_table(path: Path) -> dict[str, Any]:
@@ -49,6 +55,23 @@ def _version(project: dict[str, Any], path: Path) -> str:
     if not isinstance(version, str) or not version:
         raise ValueError(f"{path} has no non-empty project.version")
     return version
+
+
+def _module_version(path: Path) -> str | None:
+    """The literal ``__version__`` a package's ``__init__`` assigns, read without importing it."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError) as exc:
+        raise ValueError(f"could not read {path}: {exc}") from exc
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "__version__" for t in node.targets)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            return node.value.value
+    return None
 
 
 def _server_listing_failures(path: Path, core_version: str) -> list[str]:
@@ -81,6 +104,8 @@ def check_version_lockstep(
     core_pyproject: Path = _CORE_PYPROJECT,
     client_pyproject: Path = _CLIENT_PYPROJECT,
     server_json: Path = _SERVER_JSON,
+    core_init: Path = _CORE_INIT,
+    client_init: Path = _CLIENT_INIT,
     tag: str | None = None,
 ) -> list[str]:
     """Return every lockstep violation, empty when the tree is releasable.
@@ -114,6 +139,14 @@ def check_version_lockstep(
             found = ", ".join(actual) if actual else "no cruxible-client dependency at all"
             failures.append(f"Missing exact dependency pin: {expected_pin} (found: {found})")
 
+    for name, init, version in (
+        ("cruxible_core", core_init, core_version),
+        ("cruxible_client", client_init, client_version),
+    ):
+        declared = _module_version(init)
+        if declared != version:
+            failures.append(f"{name}.__version__ {declared} != package version {version}")
+
     failures.extend(_server_listing_failures(server_json, core_version))
 
     # Only the release workflow knows the tag; locally there is none to check.
@@ -128,6 +161,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--core-pyproject", type=Path, default=_CORE_PYPROJECT)
     parser.add_argument("--client-pyproject", type=Path, default=_CLIENT_PYPROJECT)
     parser.add_argument("--server-json", type=Path, default=_SERVER_JSON)
+    parser.add_argument("--core-init", type=Path, default=_CORE_INIT)
+    parser.add_argument("--client-init", type=Path, default=_CLIENT_INIT)
     parser.add_argument(
         "--tag",
         default=None,
@@ -140,6 +175,8 @@ def main(argv: list[str] | None = None) -> int:
             core_pyproject=args.core_pyproject,
             client_pyproject=args.client_pyproject,
             server_json=args.server_json,
+            core_init=args.core_init,
+            client_init=args.client_init,
             tag=args.tag,
         )
     except ValueError as exc:
@@ -152,7 +189,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     core_version = _version(_project_table(args.core_pyproject), args.core_pyproject)
-    print(f"version lockstep ok: core, client, dependency pin, and server.json all {core_version}")
+    print(
+        "version lockstep ok: core, client, dependency pin, __version__ and server.json "
+        f"all {core_version}"
+    )
     return 0
 
 
