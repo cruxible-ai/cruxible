@@ -45,7 +45,6 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("document", "propose"): "active",
     ("claim-type", "propose"): "active",
     ("claim-type", "migrate"): "active",
-    ("claim-type", "upgrade-evidence-rules"): "active",
     ("claim-type", "upgrade"): "active",
     ("block", "depublish"): "active",
     ("set",): "active",

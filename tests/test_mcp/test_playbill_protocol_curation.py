@@ -40,7 +40,7 @@ def test_protocol_list_hides_tools_outside_playbill_profile(
     assert "cruxible_set" in names
     assert "cruxible_authoring_compile" not in names
     assert "cruxible_activate" in names
-    assert "cruxible_propose_document" not in names
+    assert "cruxible_document_propose" not in names
     assert "cruxible_block_repin" not in names
     assert "cruxible_curation_list" not in names
 
@@ -120,14 +120,14 @@ def test_protocol_permission_tier_hides_and_refuses_write(
             await session.initialize()
             listed = await session.list_tools()
             result = await session.call_tool(
-                "cruxible_store_body",
+                "cruxible_body_store",
                 {"instance_id": "inst_missing", "content_base64": ""},
             )
             text = " ".join(block.text for block in result.content if hasattr(block, "text"))
             return {tool.name for tool in listed.tools}, bool(result.isError), text
 
     names, is_error, message = _run(exercise())
-    assert "cruxible_store_body" not in names
+    assert "cruxible_body_store" not in names
     assert is_error
     assert "GOVERNED_WRITE" in message
     assert "READ_ONLY" in message

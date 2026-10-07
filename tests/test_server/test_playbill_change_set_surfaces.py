@@ -56,6 +56,7 @@ def _shell() -> SubjectShell:
 
 def _claim_type() -> ClaimType:
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
         predicate=PREDICATE,
         allowed_subject_kinds=("project.work_item",),

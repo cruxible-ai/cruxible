@@ -79,6 +79,7 @@ def _subject() -> SubjectShell:
 def _claim_type() -> ClaimType:
     contract_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
         predicate="project.work_item.status",
         allowed_subject_kinds=("project.work_item",),

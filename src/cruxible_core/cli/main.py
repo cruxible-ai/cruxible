@@ -52,7 +52,6 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("document", "propose"): "active",
     ("claim-type", "propose"): "active",
     ("claim-type", "migrate"): "active",
-    ("claim-type", "upgrade-evidence-rules"): "active",
     ("claim-type", "upgrade"): "active",
     ("block", "depublish"): "active",
     ("set",): "active",
@@ -557,11 +556,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill",
                 "migrate_claim_type",
                 "Atomically succeed a ClaimType and dispose dependents.",
-            ),
-            "upgrade-evidence-rules": _command(
-                "playbill",
-                "upgrade_evidence_rules",
-                "Propose moving ClaimTypes to identity evidence rules.",
             ),
             "upgrade": _command(
                 "playbill",

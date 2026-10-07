@@ -39,6 +39,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV2,
     WorkingSelectionObservation,
 )
+from cruxible_client.contracts.captures import foreign_source_capture_contract
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicy,
     ClaimAttestationConsequenceRule,
@@ -935,7 +936,7 @@ def test_an_unknown_claim_type_object_kind_falls_back_to_the_literal_shape(
     assert draft.payload.statement.object == LiteralClaimObject(value="docs/readme")
 
 
-def test_claim_type_builder_preserves_attestation_consequences_in_v5(tmp_path: Path) -> None:
+def test_claim_type_builder_writes_v7_with_identity_rules(tmp_path: Path) -> None:
     _workspace(tmp_path)
     pb = Cruxible._from_client(  # type: ignore[arg-type]
         _Client(),
@@ -974,8 +975,14 @@ def test_claim_type_builder_preserves_attestation_consequences_in_v5(tmp_path: P
         attestation_consequence_policy=policy,
     )
 
-    assert draft.definition.artifact_format == "playbill-claim-type-v5"
+    assert draft.definition.artifact_format == "playbill-claim-type-v7"
     assert draft.definition.attestation_consequence_policy == policy
+    assert draft.definition.evidence_requirement == "self"
+    assert draft.definition.revision_evidence == "replace"
+    (rule,) = draft.definition.evidence_admission_policy.rules
+    assert [item.target.qualified for item in rule.capture_contracts] == [
+        foreign_source_capture_contract("corpus.runbook").identity.qualified
+    ]
 
 
 def test_claim_requires_exactly_one_explicit_source_role(tmp_path: Path) -> None:
@@ -1388,6 +1395,7 @@ def _staged_claim_type(predicate: str, *, object_kind: str) -> ClaimType:
     """One whole ClaimType a change set can define, minimal but real."""
 
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=("sec.vuln",),

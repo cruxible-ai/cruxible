@@ -16,8 +16,8 @@ from cruxible_core.runtime.permissions import TOOL_PERMISSIONS, PermissionMode
 
 PLAYBILL_DOCUMENT_TOOLS = {
     "cruxible_init",
-    "cruxible_store_body",
-    "cruxible_propose_document",
+    "cruxible_body_store",
+    "cruxible_document_propose",
     "cruxible_inspect_proposal",
     "cruxible_review",
     "cruxible_prepare_approval",
@@ -54,8 +54,8 @@ def test_playbill_tools_register_without_private_key_or_local_path_inputs(
 
 
 def test_playbill_permission_tiers_separate_inert_proposal_approval_and_activation() -> None:
-    assert TOOL_PERMISSIONS["cruxible_store_body"] == PermissionMode.GOVERNED_WRITE
-    assert TOOL_PERMISSIONS["cruxible_propose_document"] == PermissionMode.GOVERNED_WRITE
+    assert TOOL_PERMISSIONS["cruxible_body_store"] == PermissionMode.GOVERNED_WRITE
+    assert TOOL_PERMISSIONS["cruxible_document_propose"] == PermissionMode.GOVERNED_WRITE
     assert TOOL_PERMISSIONS["cruxible_prepare_approval"] == PermissionMode.READ_ONLY
     assert TOOL_PERMISSIONS["cruxible_submit_approval"] == PermissionMode.GRAPH_WRITE
     assert TOOL_PERMISSIONS["cruxible_activate"] == PermissionMode.GRAPH_WRITE

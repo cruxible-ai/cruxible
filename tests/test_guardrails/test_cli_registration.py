@@ -129,8 +129,8 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     """A command defined but never registered is dead or invisible, never fine."""
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
     # Includes retained evidence reads through `capture read`, `cruxible mcp` and the kit verbs.
-    assert len(leaf_claims) == 107, (
-        f"expected 107 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    assert len(leaf_claims) == 106, (
+        f"expected 106 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

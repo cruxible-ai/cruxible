@@ -411,7 +411,9 @@ def test_authored_descriptions_are_normalized_and_members_sorted() -> None:
     assert lowered.default_role == "observation"
 
 
-def test_lowering_never_falls_back_to_v5_over_a_v7_predecessor() -> None:
+def test_lowering_never_falls_back_to_v5() -> None:
+    """Every input lowers to v7 with identity rules; an unaccepted exact digest refuses."""
+
     from cruxible_core.claims.claim_type_inputs import ClaimTypeInputReferenceError
 
     unaccepted = {
@@ -426,11 +428,16 @@ def test_lowering_never_falls_back_to_v5_over_a_v7_predecessor() -> None:
             }
         ]
     }
-    # With nothing to follow the exact version stays a v5 rule, as before.
-    fallback = _lower(_input(evidence_admission_policy=unaccepted, anticipated_source_ids=[]), {})
-    assert fallback.artifact_format == "playbill-claim-type-v5"
+    # An exact version no accepted contract carries has no identity to follow:
+    # it is refused, never authored as a v5 exact-digest rule.
+    with pytest.raises(
+        ClaimTypeInputReferenceError, match="name the contract in capture_contracts"
+    ):
+        _lower(_input(evidence_admission_policy=unaccepted, anticipated_source_ids=[]), {})
     tree = {PATH: render_claim_type(_lower(_input(), {}))}
-    with pytest.raises(ClaimTypeInputReferenceError, match="accumulating evidence"):
+    with pytest.raises(
+        ClaimTypeInputReferenceError, match="name the contract in capture_contracts"
+    ):
         _lower(_input(evidence_admission_policy=unaccepted, anticipated_source_ids=[]), tree)
     with pytest.raises(ClaimTypeInputReferenceError, match="need ClaimType v7"):
         _lower(_input(description="Status."), {}, identity_rules=False)

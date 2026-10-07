@@ -62,6 +62,7 @@ def _workspace(root: Path) -> Path:
 
 def _severity_type() -> ClaimType:
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=SEVERITY),
         predicate=SEVERITY,
         allowed_subject_kinds=(VULNERABILITY_KIND,),
@@ -81,6 +82,7 @@ def _severity_type() -> ClaimType:
 
 def _affects_type() -> ClaimType:
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=AFFECTS),
         predicate=AFFECTS,
         allowed_subject_kinds=(VULNERABILITY_KIND,),

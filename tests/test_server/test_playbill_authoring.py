@@ -477,7 +477,7 @@ def test_http_claim_type_lowering_returns_typed_nested_validation_refusal(
             {
                 "rule_id": "obsolete-producer-allowlist",
                 "claim_roles": ["observation"],
-                "capture_contract_digests": ["sha256:" + "a" * 64],
+                "capture_contracts": ["repo.replace-me"],
                 "evidence_kinds": ["self_asserted"],
                 "admission": "derivational",
                 "subject_binding": "exact_claim_subject",

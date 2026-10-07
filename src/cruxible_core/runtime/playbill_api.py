@@ -54,10 +54,6 @@ from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     BootstrapError,
 )
-from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequest,
-    EvidenceRuleUpgradeResult,
-)
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.get_reads import (
     GetBatchRequest,
@@ -195,7 +191,6 @@ from cruxible_core.service.claims.claim_types import (
     service_propose_playbill_claim_type,
     service_propose_playbill_claim_type_input,
 )
-from cruxible_core.service.claims.evidence_rule_upgrade import service_upgrade_evidence_rules
 from cruxible_core.service.discovery.audit import (
     PlaybillAuditRequestV1,
     service_playbill_audit,
@@ -803,22 +798,6 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
         )
 
 
-def playbill_evidence_rules_upgrade(
-    instance_id: str, request: EvidenceRuleUpgradeRequest
-) -> EvidenceRuleUpgradeResult:
-    check_permission("cruxible_evidence_rules_upgrade", instance_id=instance_id)
-    with change_entry(request.dry_run, "derived"):
-        return _proposal_validation_boundary(
-            "evidence rule upgrade",
-            lambda: service_upgrade_evidence_rules(
-                get_playbill_manager().get(instance_id),
-                request=request,
-                actor_id=_actor_id(instance_id),
-                timestamp=canonical_candidate_timestamp(utc_now()),
-            ),
-        )
-
-
 def playbill_claim_type_upgrade(
     instance_id: str, request: ClaimTypeUpgradeRequest
 ) -> ClaimTypeUpgradeResult:
@@ -850,7 +829,7 @@ def playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChang
 
 
 def playbill_store_body(instance_id: str, *, content_base64: str) -> contracts.CasObjectResult:
-    check_permission("cruxible_store_body", instance_id=instance_id)
+    check_permission("cruxible_body_store", instance_id=instance_id)
     _require_writer(instance_id)
     try:
         content = base64.b64decode(content_base64, validate=True)

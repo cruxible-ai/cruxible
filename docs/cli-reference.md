@@ -82,8 +82,8 @@ a page's block markers), a state digest of exactly the records it changes,
 which exists before `init` too.
 
 - A change the server derives across several artifacts previews unless asked
-  to commit: `kit add`, `kit remove`, `claim-type upgrade` and
-  `claim-type upgrade-evidence-rules`. Commit with `--commit`.
+  to commit: `kit add`, `kit remove` and `claim-type upgrade`. Commit with
+  `--commit`.
 - A change that cannot be undone previews unless asked to commit, and commits
   only with the preview's coordinate: `instance decommission`,
   `credential revoke`, `credential rotate` and `ledger set-mirror`. Commit with
@@ -959,7 +959,6 @@ section nothing answers "what touches this package" from the object side.
 cruxible claim-type propose --template
 cruxible claim-type propose --input FILE --name NAME [--dry-run|--commit] [--at OID]
 cruxible claim-type migrate REQUEST_FILE
-cruxible claim-type upgrade-evidence-rules [--dry-run|--commit] [--at OID]
 cruxible claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate]
   [--dry-run|--commit] [--at OID]
 ~~~
@@ -1001,15 +1000,21 @@ vocabulary and adds one disposition the operator form has no use for --
 roads build their candidate with the same function, so neither can drift from
 the other's law.
 
-`upgrade-evidence-rules` proposes one change set moving every live ClaimType
-whose rules still name contracts by exact digest to identity rules, carrying
-their Claims. A rule converts only when it keeps its meaning: every version of a
-named contract must be compatible with its predecessor, and two rules that did
-not overlap may not start matching the same evidence. It lists, per ClaimType,
-the accepted contract versions a converted rule newly admits, and leaves the
-rest unchanged with the reason. The change set carries every dependent Claim, so
-both upgrades preview by default (see [Previews](#previews)); commit the preview
-with `--commit --at OID`, then approve and activate the proposal as usual.
+Every ClaimType authoring path writes ClaimType v7 with identity evidence rules:
+`propose --input`, the SDK draft, the authoring examples and change-set members.
+A rule that names an exact contract digest no accepted contract version carries
+is refused, never authored as an exact-digest rule.
+
+`upgrade` is the one move for an older ClaimType. A v1-v5 ClaimType whose rules
+still name contracts by exact digest first takes the identity-rule conversion,
+then the v7 move, in the same change set, carrying its Claims. A rule converts
+only when it keeps its meaning: every version of a named contract must be
+compatible with its predecessor, and two rules that did not overlap may not start
+matching the same evidence. It lists, per ClaimType, the accepted contract
+versions a converted rule newly admits, and leaves the rest unchanged with the
+reason. The change set carries every dependent Claim, so it previews by default
+(see [Previews](#previews)); commit the preview with `--commit --at OID`, then
+approve and activate the proposal as usual.
 
 ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
 `default_role` a write takes when it names none, an `evidence_requirement`
@@ -2242,7 +2247,7 @@ reason, for any caller of the instance, without daemon scope; it also notes
 when armed Lines have no consumer loop running here and when the provider lane
 is unavailable. When any live ClaimType still names
 CaptureContracts by digest, attention says so and suggests
-`cruxible claim-type upgrade-evidence-rules`.
+`cruxible claim-type upgrade`.
 
 `--kind` reads one kind in full: every predicate with its roles, freshness
 horizon and live Claim count, the predicates of other kinds that point at it

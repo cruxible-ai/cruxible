@@ -81,6 +81,7 @@ def _claim_type(
     predicate = f"{KIND}.{field}"
     contract = REPORTS if captured_only else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=(KIND,),

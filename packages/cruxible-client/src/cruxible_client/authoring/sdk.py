@@ -98,6 +98,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
+    ArtifactRef,
 )
 from cruxible_client.contracts.authoring.inputs import (
     ProcedureInput,
@@ -148,7 +149,6 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import (
     CaptureContract,
-    capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
 )
@@ -168,6 +168,10 @@ from cruxible_client.contracts.claim_types import (
     ClaimEvidenceFreshness,
     ClaimFreshnessDuration,
     ClaimType,
+    EvidenceRequirement,
+    RevisionEvidence,
+    effective_evidence_requirement,
+    effective_revision_evidence,
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
@@ -208,9 +212,10 @@ from cruxible_client.contracts.line_dispatch import (
     LineTriggerCheckResult,
 )
 from cruxible_client.contracts.policies import (
+    CAPTURE_CONTRACT_REF_ROLE,
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionRuleV2,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.predictions import (
@@ -2748,11 +2753,14 @@ class Cruxible:
             ("direct", tuple(sorted({r for r in role_values if r != "derivation"}))),
         )
         rules = tuple(
-            ClaimEvidenceAdmissionRuleV2(
+            ClaimEvidenceAdmissionRule(
                 rule_id=f"source-{source_id}-{admission}",
                 claim_roles=rule_roles,
-                capture_contract_digests=(
-                    capture_contract_digest(foreign_source_capture_contract(source_id)).tagged,
+                capture_contracts=(
+                    ArtifactRef(
+                        role=CAPTURE_CONTRACT_REF_ROLE,
+                        target=foreign_source_capture_contract(source_id).identity,
+                    ),
                 ),
                 evidence_kinds=("self_asserted",),
                 admission=admission,
@@ -2763,14 +2771,23 @@ class Cruxible:
             if rule_roles
         )
         lifecycle = ArtifactLifecycle()
+        # A new ClaimType replaces evidence on revision; a successor keeps what
+        # its predecessor means, exactly as the daemon's lowering does.
+        evidence_requirement: EvidenceRequirement = "self"
+        revision_evidence: RevisionEvidence = "replace"
         if isinstance(predicate, ClaimTypeRef):
             predecessor = self._get(f"ClaimType:{name}", "proof", None, predicate.coordinate)
             assert predecessor.proof is not None
             lifecycle = ArtifactLifecycle(
                 predecessor_digest=str(predecessor.proof["artifact_digest"])
             )
+            envelope = predecessor.proof.get("envelope")
+            if isinstance(envelope, Mapping):
+                accepted = ClaimType.model_validate(envelope)
+                evidence_requirement = effective_evidence_requirement(accepted)
+                revision_evidence = effective_revision_evidence(accepted)
         definition = ClaimType(
-            artifact_format="playbill-claim-type-v5",
+            artifact_format="playbill-claim-type-v7",
             identity=ArtifactIdentity(kind="ClaimType", name=name),
             predicate=name,
             allowed_subject_kinds=tuple(subject_kinds),
@@ -2780,7 +2797,7 @@ class Cruxible:
             cardinality=arity.value,
             permitted_roles=tuple(role.value for role in roles),
             referent_sensitivity=sensitivity.value,
-            evidence_admission_policy=ClaimEvidenceAdmissionPolicyV2(rules=rules),
+            evidence_admission_policy=ClaimEvidenceAdmissionPolicy(rules=rules),
             admission_policy=admission_policy,
             resolution_policy=resolution_policy,
             pins=tuple(pins),
@@ -2793,6 +2810,8 @@ class Cruxible:
                 )
             ),
             attestation_consequence_policy=attestation_consequence_policy,
+            evidence_requirement=evidence_requirement,
+            revision_evidence=revision_evidence,
         )
         return ClaimTypeDraft(self, definition)
 

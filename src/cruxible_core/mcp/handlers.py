@@ -67,10 +67,6 @@ from cruxible_client.contracts.declared_blocks import (
     BlockRepinResult,
 )
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequest,
-    EvidenceRuleUpgradeResult,
-)
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.get_reads import (
     ByteRange,
@@ -351,7 +347,6 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_provider_install": TypeAdapter(ProviderInstallRequest),
     "cruxible_kit_add": TypeAdapter(KitAddRequest),
     "cruxible_kit_remove": TypeAdapter(KitRemoveRequest),
-    "cruxible_evidence_rules_upgrade": TypeAdapter(EvidenceRuleUpgradeRequest),
     "cruxible_claim_type_upgrade": TypeAdapter(ClaimTypeUpgradeRequest),
     "cruxible_activate": None,  # path only
     "cruxible_authoring_bind": TypeAdapter(AuthoringInputCompileRequest),
@@ -374,14 +369,14 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_procedure_bind": TypeAdapter(ProcedureBindRequest),
     "cruxible_proposal_readmit": TypeAdapter(ProposalReadmitRequest),
     "cruxible_proposal_withdraw": TypeAdapter(ProposalWithdrawRequest),
-    "cruxible_propose_claim_type": TypeAdapter(ProposeClaimTypeInputRequest),
-    "cruxible_propose_document": TypeAdapter(ProposeDocumentRequest),
+    "cruxible_claim_type_propose": TypeAdapter(ProposeClaimTypeInputRequest),
+    "cruxible_document_propose": TypeAdapter(ProposeDocumentRequest),
     "cruxible_compiler_upgrade": TypeAdapter(CompilerUpgradeRequest),
     "cruxible_propose_principal_change": TypeAdapter(ProposePrincipalRequest),
     "cruxible_propose_source_bundle": TypeAdapter(SourceProposeRequest),
     "cruxible_procedure_measure": TypeAdapter(contracts.ProcedureMeasureRequest),
     "cruxible_settle": TypeAdapter(contracts.SettleRequest),
-    "cruxible_store_body": TypeAdapter(StoreBodyRequest),
+    "cruxible_body_store": TypeAdapter(StoreBodyRequest),
     "cruxible_submit_approval": TypeAdapter(ApprovalRequest),
 }
 
@@ -523,7 +518,7 @@ def handle_playbill_store_body(instance_id: str, content_base64: str) -> contrac
     return _dispatch_remote_or_local(
         lambda client: client.store_body(instance_id, content),
         lambda: playbill_api.playbill_store_body(instance_id, content_base64=content_base64),
-        operation_name="cruxible_store_body",
+        operation_name="cruxible_body_store",
         local_payload={"content_base64": content_base64},
     )
 
@@ -584,17 +579,6 @@ def handle_playbill_claim_type_upgrade(
     )
 
 
-def handle_playbill_evidence_rules_upgrade(
-    instance_id: str, request: EvidenceRuleUpgradeRequest
-) -> EvidenceRuleUpgradeResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.upgrade_evidence_rules(instance_id, request),
-        lambda: playbill_api.playbill_evidence_rules_upgrade(instance_id, request),
-        operation_name="cruxible_evidence_rules_upgrade",
-        local_payload=request.model_dump(mode="json"),
-    )
-
-
 def handle_playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
     return _dispatch_remote_or_local(
         lambda client: client.remove_kit(instance_id, request),
@@ -631,7 +615,7 @@ def handle_playbill_propose_document(
             dry_run=dry_run,
             at=at,
         ),
-        operation_name="cruxible_propose_document",
+        operation_name="cruxible_document_propose",
         local_payload={
             "shell": document.model_dump(mode="json"),
             "proposal_name": proposal_name,
@@ -1124,7 +1108,7 @@ def handle_playbill_propose_claim_type(
             dry_run=dry_run,
             at=at,
         ),
-        operation_name="cruxible_propose_claim_type",
+        operation_name="cruxible_claim_type_propose",
         local_payload={
             "input": request.model_dump(mode="json"),
             "proposal_name": proposal_name,

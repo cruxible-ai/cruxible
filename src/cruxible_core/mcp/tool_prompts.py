@@ -25,11 +25,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you want to install or upgrade a kit. It only proposes one change set; "
         "approval and activation remain the ordinary steps."
     ),
-    "cruxible_evidence_rules_upgrade": (
-        "Use once after upgrading, to move ClaimTypes whose evidence rules name contracts "
-        "by exact digest to identity rules. It only proposes; rules whose meaning would "
-        "change are left as they are and reported."
-    ),
     "cruxible_claim_type_upgrade": (
         "Use to move ClaimTypes before v7 to v7, which states revision_evidence "
         "(default replace: a statement-changing revision keeps only the evidence it cites) "
@@ -43,10 +38,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need adapter and daemon versions with state, auth, and host metadata."
     ),
     "cruxible_init": ("Use when you need to bootstrap Cruxible from client-generated public keys."),
-    "cruxible_store_body": (
+    "cruxible_body_store": (
         "Use when you need to store exact Document bytes inertly before proposing them."
     ),
-    "cruxible_propose_document": (
+    "cruxible_document_propose": (
         "Use when you need to propose a governed Document create or supersession."
     ),
     "cruxible_inspect_proposal": (
@@ -117,7 +112,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_propose_principal_change": (
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
     ),
-    "cruxible_propose_claim_type": (
+    "cruxible_claim_type_propose": (
         "Use when you need a governed ClaimType before any Claim can state that predicate; "
         "pass a complete ClaimTypeInputRecord whose evidence rules match its capture contracts. "
         "Generate a lawful starting payload with "

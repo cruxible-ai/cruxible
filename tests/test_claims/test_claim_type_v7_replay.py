@@ -3,7 +3,7 @@
 A child process builds a ledger with the acceptance laws a pre-v7 daemon
 installs: Claim law v2 revision 7 / v3 revision 9 current, no ClaimType v7 law.
 It holds ClaimType v5 and v6 creations and revisions, accumulating Claim
-revisions, a ClaimType succession carry, an upgrade-evidence-rules carry, an
+revisions, a ClaimType succession carry, a claim-type upgrade carry, an
 origin-only Claim, and one proposal left pending. This build then replays it
 from genesis, settles the pending proposal under its recorded law, accepts a v7
 upgrade and a replacing revision, and replays again.
@@ -85,8 +85,13 @@ BUILD = textwrap.dedent(
     )
     from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
     from cruxible_client.contracts.claim_types import render_claim_type
-    from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequest
-    from cruxible_core.service.claims.evidence_rule_upgrade import service_upgrade_evidence_rules
+    from cruxible_core.claims.claim_type_migrations import (
+        ClaimTypeDependentDisposition,
+        build_dependent_closure_candidate,
+        dependent_closure_inventory,
+    )
+    from cruxible_core.indexes.projection import AcceptedCoordinate
+    from cruxible_core.service.claims.evidence_rule_upgrade import _convert, _Lineages
     from tests.test_claims.test_claim_type_v7_revisions import _selection, _V7World
     from tests.test_claims.test_identity_evidence_rules import (
         ORIGINAL, _digest, _digest_rule, _v5_type, _v6_type,
@@ -140,14 +145,30 @@ BUILD = textwrap.dedent(
         "literal_schema": {"enum": ["blocked", "done", "ready", "shipped"], "type": "string"},
         "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(current).tagged),
     }))
-    upgraded = service_upgrade_evidence_rules(
-        world.instance,
-        request=EvidenceRuleUpgradeRequest(dry_run=False),
-        actor_id="owner",
-        timestamp=world.timestamp(),
+    # The identity-rule conversion a pre-v7 daemon accepted as its own carry:
+    # the v5 ClaimType becomes v6 and every dependent Claim is re-pinned.
+    v5 = world.claim_type()
+    lineages = _Lineages(
+        world.instance, AcceptedCoordinate.from_internal(world.instance.accepted_coordinate())
     )
-    assert upgraded.status == "proposed", upgraded
-    world.activate_proposal(upgraded.proposal_id)
+    v6_successor, _conversion = _convert(v5, lineages)
+    tree = world.tree()
+    changed = {claim_type_path(v5.predicate): render_claim_type(v6_successor)}
+    inventory = dependent_closure_inventory(
+        tree, roots=(v5.identity,), fixed_paths=frozenset(changed)
+    )
+    settled, _normalized = build_dependent_closure_candidate(
+        tree=tree,
+        changed=changed,
+        inventory=inventory,
+        dispositions=tuple(
+            ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
+            for item in inventory
+        ),
+    )
+    for path, content in {**settled, **changed}.items():
+        tree[path] = content
+    world.accept(tree, name="identity-rule-carry")
     # Judged under Claim law v2 revision 7 and left for the next daemon to settle.
     pending_tree, _path = world.author(_selection(b"status: ready again"), claim_ref=status)
     pending = world.propose(pending_tree, name="pending")

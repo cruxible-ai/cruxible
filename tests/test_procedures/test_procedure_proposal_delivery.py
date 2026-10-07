@@ -70,6 +70,7 @@ NOW = fixtures.NOW
 
 def _claim_type(contract_digest: str, *, roles: tuple[str, ...] = ("observation",)) -> ClaimType:
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
         predicate=PREDICATE,
         allowed_subject_kinds=(SUBJECT_KIND,),

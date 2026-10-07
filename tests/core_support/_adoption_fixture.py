@@ -239,6 +239,7 @@ def _claim_type(index: int) -> ClaimType:
     contract_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
     predicate = _predicate(index)
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=(SUBJECT_KIND,),

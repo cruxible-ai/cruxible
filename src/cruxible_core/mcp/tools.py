@@ -34,10 +34,6 @@ from cruxible_client.contracts.compact_query import (
 )
 from cruxible_client.contracts.declared_blocks import BlockRepinResult
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequest,
-    EvidenceRuleUpgradeResult,
-)
 from cruxible_client.contracts.get_reads import (
     GET_HISTORY_MAX_LIMIT,
     ByteRange,
@@ -276,19 +272,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_evidence_rules_upgrade(
-        instance_id: InstanceId = None,
-        *,
-        dry_run: DryRun = None,
-        at: PreviewAt = None,
-    ) -> EvidenceRuleUpgradeResult:
-        """Propose moving live ClaimTypes to evidence rules that name contracts by identity."""
-        return handlers.handle_playbill_evidence_rules_upgrade(
-            require_instance_id(instance_id),
-            EvidenceRuleUpgradeRequest(dry_run=dry_run, at=at),
-        )
-
-    @_tool
     def cruxible_kit_remove(
         instance_id: InstanceId = None,
         *,
@@ -319,14 +302,14 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_store_body(
+    def cruxible_body_store(
         instance_id: InstanceId = None, *, content_base64: str
     ) -> contracts.CasObjectResult:
         """Store inert exact body bytes."""
         return handlers.handle_playbill_store_body(require_instance_id(instance_id), content_base64)
 
     @_tool
-    def cruxible_propose_document(
+    def cruxible_document_propose(
         instance_id: InstanceId = None,
         *,
         shell: DocumentShell,
@@ -622,7 +605,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_propose_claim_type(
+    def cruxible_claim_type_propose(
         instance_id: InstanceId = None,
         *,
         input: ClaimTypeInputRecord,

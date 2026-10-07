@@ -132,15 +132,14 @@ approval stay the ordinary steps.
 | `cruxible_kit_status` | List installed kits and the kit paths edited since install | `READ_ONLY` |
 | `cruxible_kit_add` | Propose installing or upgrading a kit as one change set | `GOVERNED_WRITE` |
 | `cruxible_kit_remove` | Propose retiring every artifact a kit installed | `GOVERNED_WRITE` |
-| `cruxible_evidence_rules_upgrade` | Propose moving ClaimTypes to identity evidence rules | `GOVERNED_WRITE` |
-| `cruxible_claim_type_upgrade` | Propose moving ClaimTypes to v7, stating their revision evidence | `GOVERNED_WRITE` |
+| `cruxible_claim_type_upgrade` | Propose moving older ClaimTypes to v7 (identity evidence rules included), stating their revision evidence | `GOVERNED_WRITE` |
 
 ## Documents and proposals
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_store_body` | Store inert body bytes in CAS | `GOVERNED_WRITE` |
-| `cruxible_propose_document` | Propose a canonical Document envelope | `GOVERNED_WRITE` |
+| `cruxible_body_store` | Store inert body bytes in CAS | `GOVERNED_WRITE` |
+| `cruxible_document_propose` | Propose a canonical Document envelope | `GOVERNED_WRITE` |
 | `cruxible_inspect_proposal` | Inspect a frozen candidate | `READ_ONLY` |
 | `cruxible_inspect_refusal` | Inspect deterministic refusal evidence | `READ_ONLY` |
 | `cruxible_review` | Render review material | `READ_ONLY` |
@@ -197,7 +196,7 @@ The principal registry is `orient(section="principals")`; one record is
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_propose_claim_type` | Propose a governed predicate interface | `GOVERNED_WRITE` |
+| `cruxible_claim_type_propose` | Propose a governed predicate interface | `GOVERNED_WRITE` |
 | `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
 | `cruxible_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |

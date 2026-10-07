@@ -98,7 +98,7 @@ def test_permission_checks_fail_closed_for_unknown_and_higher_tier_operations(
 ) -> None:
     monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
     reset_permissions()
-    check_permission("cruxible_store_body")
+    check_permission("cruxible_body_store")
     with pytest.raises(PermissionDeniedError):
         check_permission("cruxible_submit_approval")
     with pytest.raises(PermissionDeniedError):

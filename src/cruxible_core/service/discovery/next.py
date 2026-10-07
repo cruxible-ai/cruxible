@@ -951,7 +951,7 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.block.depublish": "cruxible_block_depublish",
     "cruxible.block.repin": "cruxible_block_repin",
     "cruxible.block.sync": "cruxible_block_sync",
-    "cruxible.document.propose": "cruxible_propose_document",
+    "cruxible.document.propose": "cruxible_document_propose",
     "cruxible.proposal.readmit": "cruxible_proposal_readmit",
     "cruxible.proposal.approve": "cruxible_approve",
     "cruxible.compiler.upgrade": "cruxible_compiler_upgrade",

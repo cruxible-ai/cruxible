@@ -101,6 +101,7 @@ def claim_type(
     relation = bool(object_subject_kinds)
     cardinality = "many" if relation else "one"
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=byte_sorted(subject_kinds),

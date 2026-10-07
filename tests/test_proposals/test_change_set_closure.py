@@ -60,6 +60,7 @@ def claim_type(
     pins: tuple[ArtifactPin, ...] = (),
 ) -> ClaimType:
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=("project.work_item",),

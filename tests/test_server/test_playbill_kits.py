@@ -193,6 +193,7 @@ class _World:
 def _claim_type(predicate: str, schema: dict[str, object]) -> ClaimType:
     kind = predicate.rpartition(".")[0]
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=(kind,),

@@ -87,7 +87,6 @@ from cruxible_client.contracts.errors import (
     SigningKeyError,
     SinceRequestInvalid,
 )
-from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequest
 from cruxible_client.contracts.get_display import (
     GET_CLI_HISTORY_VALUE_WIDTH,
     GET_CLI_VALUE_WIDTH,
@@ -2880,42 +2879,6 @@ def upgrade_claim_types(
             click.echo(f"    now also admits {version}")
     for name in result.unchanged:
         click.echo(f"  already v7 {name}")
-    for refusal in result.refused:
-        click.echo(f"  left as is {refusal.claim_type}: {refusal.reason}")
-    if result.carried_claims:
-        click.echo(f"Claims carried: {result.carried_claims}")
-    if result.detail:
-        click.echo(result.detail)
-    if result.proposal_id:
-        click.echo(f"Next: cruxible proposal approve {result.proposal_id}")
-    echo_preview_next(result.status, result.coordinate)
-
-
-@claim_type_group.command("upgrade-evidence-rules")
-@change_control_options
-@json_option
-@handle_errors
-def upgrade_evidence_rules(dry_run: bool | None, at: str | None, output_json: bool) -> None:
-    """Propose moving every live ClaimType to identity evidence rules (v6).
-
-    Needs compiler revision 31. Each rule converts only when it keeps its meaning;
-    the rest are reported for an explicit decision. It previews by default;
-    commit the preview with ``--commit --at OID``, then approve as usual.
-    """
-
-    request = EvidenceRuleUpgradeRequest(dry_run=dry_run, at=at)
-    result = _server_call(
-        lambda client, instance_id: client.upgrade_evidence_rules(instance_id, request),
-        command_name="cruxible claim-type upgrade-evidence-rules",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    click.echo(f"Evidence rule upgrade: {result.status}")
-    for item in result.converted:
-        click.echo(f"  converted {item.claim_type}")
-        for version in item.widened_versions:
-            click.echo(f"    now also admits {version}")
     for refusal in result.refused:
         click.echo(f"  left as is {refusal.claim_type}: {refusal.reason}")
     if result.carried_claims:

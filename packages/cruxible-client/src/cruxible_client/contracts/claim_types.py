@@ -204,7 +204,7 @@ class ClaimType(_StrictClaimTypeModel):
         "playbill-claim-type-v5",
         "playbill-claim-type-v6",
         "playbill-claim-type-v7",
-    ] = "playbill-claim-type-v1"
+    ] = "playbill-claim-type-v7"
     identity: ArtifactIdentity
     predicate: str
     allowed_subject_kinds: tuple[str, ...]

@@ -494,14 +494,12 @@ def lower_claim_type_input(
     identities = _contract_identities(tree, value.anticipated_source_ids)
     identity_policy = None
     if identity_rules:
-        try:
-            identity_policy = _identity_evidence_policy(
-                value.evidence_admission_policy, identities=identities
-            )
-        except ClaimTypeInputReferenceError:
-            # A rule names an exact version that is not accepted yet, so it has no
-            # identity to follow; it keeps its exact meaning as a v5 rule.
-            payload["artifact_format"] = "playbill-claim-type-v5"
+        # Every rule names its contracts by identity. A rule naming an exact
+        # digest no accepted contract version carries has no identity to follow,
+        # so it is refused rather than authored as a v5 exact-digest rule.
+        identity_policy = _identity_evidence_policy(
+            value.evidence_admission_policy, identities=identities
+        )
     if payload["artifact_format"] == "playbill-claim-type-v7":
         payload.update(_v7_fields(value, predecessor))
     else:

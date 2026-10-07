@@ -26,10 +26,6 @@ from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeResult,
 )
 from cruxible_client.contracts.errors import FormatError
-from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequest,
-    EvidenceRuleUpgradeResult,
-)
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.get_reads import (
     GetBatchRequest,
@@ -242,18 +238,6 @@ def kit_status(instance_id: str) -> KitStatus:
 @router.post("/{instance_id}/kits", response_model=KitChangeResult)
 def kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResult:
     return playbill_api.playbill_kit_add(resolve_server_instance_id(instance_id), request)
-
-
-@router.post(
-    "/{instance_id}/claim-types/evidence-rules/upgrade",
-    response_model=EvidenceRuleUpgradeResult,
-)
-def evidence_rules_upgrade(
-    instance_id: str, request: EvidenceRuleUpgradeRequest
-) -> EvidenceRuleUpgradeResult:
-    return playbill_api.playbill_evidence_rules_upgrade(
-        resolve_server_instance_id(instance_id), request
-    )
 
 
 @router.post(
