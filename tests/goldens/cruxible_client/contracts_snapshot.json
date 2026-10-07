@@ -22865,6 +22865,27 @@
     },
     "LineDispatchRequest": {
       "fields": {
+        "cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Continue after the last occurrence a previous page attempted (its `cursor`), so occurrences that stayed blocked are not attempted again.",
+            "title": "Cursor"
+          }
+        },
         "limit": {
           "default": 100,
           "default_json_serializable": true,
@@ -22918,6 +22939,19 @@
       "json_schema": {
         "additionalProperties": false,
         "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Continue after the last occurrence a previous page attempted (its `cursor`), so occurrences that stayed blocked are not attempted again.",
+            "title": "Cursor"
+          },
           "limit": {
             "default": 100,
             "maximum": 100,
@@ -22951,6 +22985,26 @@
     },
     "LineDispatchResult": {
       "fields": {
+        "cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
         "items": {
           "default": [],
           "default_json_serializable": true,
@@ -23434,6 +23488,18 @@
         },
         "additionalProperties": false,
         "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          },
           "items": {
             "default": [],
             "items": {
@@ -38227,7 +38293,7 @@
               "source": {
                 "anyOf": [
                   {
-                    "$ref": "#/$defs/ProcedureSource"
+                    "$ref": "#/$defs/ProcedureSourceProgram"
                   },
                   {
                     "type": "null"
@@ -38715,10 +38781,14 @@
           },
           "ProcedureSlotBinding": {
             "additionalProperties": false,
-            "description": "One open slot bound to one exact accepted artifact.",
+            "description": "One open slot bound to one exact accepted artifact, through the slot's interface.\n\n``interface_digest`` is the interface the slot declares and the binding\nserves. One artifact may fill several slots of different interfaces, so the\ninterface belongs to the binding, not to the artifact.",
             "properties": {
               "artifact_pin": {
                 "$ref": "#/$defs/ArtifactPin"
+              },
+              "interface_digest": {
+                "title": "Interface Digest",
+                "type": "string"
               },
               "slot_name": {
                 "title": "Slot Name",
@@ -38733,12 +38803,13 @@
             },
             "required": [
               "slot_name",
-              "artifact_pin"
+              "artifact_pin",
+              "interface_digest"
             ],
             "title": "ProcedureSlotBinding",
             "type": "object"
           },
-          "ProcedureSource": {
+          "ProcedureSourceProgram": {
             "additionalProperties": false,
             "description": "Source plus explicit data dependencies; no closures or executable imports.",
             "properties": {
@@ -38833,7 +38904,7 @@
               "filename",
               "function"
             ],
-            "title": "ProcedureSource",
+            "title": "ProcedureSourceProgram",
             "type": "object"
           },
           "ProjectNode": {
@@ -67928,7 +67999,7 @@
               "source": {
                 "anyOf": [
                   {
-                    "$ref": "#/$defs/ProcedureSource"
+                    "$ref": "#/$defs/ProcedureSourceProgram"
                   },
                   {
                     "type": "null"
@@ -68387,10 +68458,14 @@
           },
           "ProcedureSlotBinding": {
             "additionalProperties": false,
-            "description": "One open slot bound to one exact accepted artifact.",
+            "description": "One open slot bound to one exact accepted artifact, through the slot's interface.\n\n``interface_digest`` is the interface the slot declares and the binding\nserves. One artifact may fill several slots of different interfaces, so the\ninterface belongs to the binding, not to the artifact.",
             "properties": {
               "artifact_pin": {
                 "$ref": "#/$defs/ArtifactPin"
+              },
+              "interface_digest": {
+                "title": "Interface Digest",
+                "type": "string"
               },
               "slot_name": {
                 "title": "Slot Name",
@@ -68405,12 +68480,13 @@
             },
             "required": [
               "slot_name",
-              "artifact_pin"
+              "artifact_pin",
+              "interface_digest"
             ],
             "title": "ProcedureSlotBinding",
             "type": "object"
           },
-          "ProcedureSource": {
+          "ProcedureSourceProgram": {
             "additionalProperties": false,
             "description": "Source plus explicit data dependencies; no closures or executable imports.",
             "properties": {
@@ -68505,7 +68581,7 @@
               "filename",
               "function"
             ],
-            "title": "ProcedureSource",
+            "title": "ProcedureSourceProgram",
             "type": "object"
           },
           "ProjectNode": {
@@ -77236,7 +77312,7 @@
               "source": {
                 "anyOf": [
                   {
-                    "$ref": "#/$defs/ProcedureSource"
+                    "$ref": "#/$defs/ProcedureSourceProgram"
                   },
                   {
                     "type": "null"
@@ -77695,10 +77771,14 @@
           },
           "ProcedureSlotBinding": {
             "additionalProperties": false,
-            "description": "One open slot bound to one exact accepted artifact.",
+            "description": "One open slot bound to one exact accepted artifact, through the slot's interface.\n\n``interface_digest`` is the interface the slot declares and the binding\nserves. One artifact may fill several slots of different interfaces, so the\ninterface belongs to the binding, not to the artifact.",
             "properties": {
               "artifact_pin": {
                 "$ref": "#/$defs/ArtifactPin"
+              },
+              "interface_digest": {
+                "title": "Interface Digest",
+                "type": "string"
               },
               "slot_name": {
                 "title": "Slot Name",
@@ -77713,12 +77793,13 @@
             },
             "required": [
               "slot_name",
-              "artifact_pin"
+              "artifact_pin",
+              "interface_digest"
             ],
             "title": "ProcedureSlotBinding",
             "type": "object"
           },
-          "ProcedureSource": {
+          "ProcedureSourceProgram": {
             "additionalProperties": false,
             "description": "Source plus explicit data dependencies; no closures or executable imports.",
             "properties": {
@@ -77813,7 +77894,7 @@
               "filename",
               "function"
             ],
-            "title": "ProcedureSource",
+            "title": "ProcedureSourceProgram",
             "type": "object"
           },
           "ProjectNode": {

@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-10-07:surface-walk-s3-s4a",
-    "surface_digest": "sha256:4650d1907e34e2a344e6163500f8ded0baecc5daec424b522aa602dfc84da131"
+    "register_entry": "2026-10-07:surface-walk-s3-review",
+    "surface_digest": "sha256:09fb9f6e0b60bc2f16a2f5fecc41c907aed2450527685af0ec3dfbd59c289c29"
   },
   "surface": {
     "cli_leaves": [
@@ -1322,9 +1322,9 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/lines/{line}/dispatch",
         "request_model": "cruxible_client.contracts.line_dispatch.LineDispatchRequest",
-        "request_schema_digest": "sha256:1da7a2e3aa4964216b87e7dde043ebc7bdc6f86466e6acbb0c4020d0ff6e10ed",
+        "request_schema_digest": "sha256:5cb4b396fc54833847eb540b4bc6e33cd9d39c41957abc26d50aaec1515e4315",
         "response_model": "cruxible_client.contracts.line_dispatch.LineDispatchResult",
-        "response_schema_digest": "sha256:ccb4a4951ed0109b5a8e422d127e6256e2ad12b6c4a53b2aff999f6c8f5fc626"
+        "response_schema_digest": "sha256:84b754f9173f21e0fee3ccd1a5bda906fb551795d33b911e6d8252540e90a2e6"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.enable_line",
@@ -1456,7 +1456,7 @@
         "request_model": "cruxible_client.contracts.procedures.source_requests.ProcedureSourcePreviewRequest",
         "request_schema_digest": "sha256:5ca8ea6dd5ee6be4bfa6872092b6c6392bed4e0c460468cf36f60aa7ac0aea9b",
         "response_model": "cruxible_client.contracts.procedures.source_requests.ProcedureSourcePreview",
-        "response_schema_digest": "sha256:a233773f14768b310bfdfdf50caa63a752ae23afc42859bba92220d0e79b6979"
+        "response_schema_digest": "sha256:a31d98bbc922179f5abca3aae1c070cce5f7410f55176faeff728c4d89c776a8"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.procedure_measure",
@@ -1480,7 +1480,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.ProcedureReadiness",
-        "response_schema_digest": "sha256:eeaf0f552e8d06ddec55c7b85ef82156327a439698b626a898c8df498d9b1648"
+        "response_schema_digest": "sha256:a2ba5c8868c11b0126dad21c1dfb5d49a09fe125348ec295a21ab12d0b195d1e"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.procedure_readings",
@@ -2140,9 +2140,9 @@
           "dispatch_line"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_dispatch",
-        "input_schema_digest": "sha256:38738692a13b42e007b87ce4ca8cae179569b8d819c763aaef1d052e0c523718",
+        "input_schema_digest": "sha256:0353670dc52021c4955e598bbfde5d45c8e00757587b082e9c6f4056a1999d88",
         "name": "cruxible_line_dispatch",
-        "output_schema_digest": "sha256:fcd11e796aafad2926dc16e9666c9a2881e5e66944ede84d9ed85fecf0d3f772",
+        "output_schema_digest": "sha256:c76087f7114a0a36d258f2a824e613400abf64f1bb99a615b27825345273d3f3",
         "permission": "READ_ONLY"
       },
       {
@@ -2375,7 +2375,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_query",
         "input_schema_digest": "sha256:5011800247b1aa7291403b145f62fce8f8ee84f12c9b857f60eccaf1f409bd02",
         "name": "cruxible_query",
-        "output_schema_digest": "sha256:ee8363af07721c932c58f7d7d93abf42d7b4c16af237c4f51b8d443c43e44e22",
+        "output_schema_digest": "sha256:d8ea8729d320b57bf42997071cecb1c3b2b34563816aab83096cd6156d1aa71c",
         "permission": "READ_ONLY"
       },
       {
@@ -2385,7 +2385,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_query_spec",
         "input_schema_digest": "sha256:250b7917ae772963f36b812acfdfeaa1ff037e541d0624e164057edf1523009b",
         "name": "cruxible_query_spec",
-        "output_schema_digest": "sha256:ee8363af07721c932c58f7d7d93abf42d7b4c16af237c4f51b8d443c43e44e22",
+        "output_schema_digest": "sha256:d8ea8729d320b57bf42997071cecb1c3b2b34563816aab83096cd6156d1aa71c",
         "permission": "READ_ONLY"
       },
       {
