@@ -1735,7 +1735,13 @@ proposal. Its `candidate_templates` are a fixed list of templates, or
 provider, Source or transform produced becomes one item of the one proposal,
 with its own dependency closure and evidence. An empty list proposes nothing
 and the run succeeds; an element that is not a Claim proposal item refuses
-`proposal_item_invalid` naming its `child_index`. Each resolved candidate
+`proposal_item_invalid` naming its `child_index`, and `items` that does not
+resolve or is not a list refuses `proposal_item_invalid` with reason
+`items_unresolved` or `items_not_a_list` (an object is never unwrapped). Each
+element cites the Capture its own lineage reached; a list built from several
+Captures by a step that keeps no per-element lineage refuses
+`proposal_item_evidence_ambiguous` rather than giving every element all of
+them. Each resolved candidate
 template must be one Claim proposal item --
 a statement, a rationale, and optionally the Claim lineage it revises. The
 daemon supplies the evidence: the produced Capture in that item's own

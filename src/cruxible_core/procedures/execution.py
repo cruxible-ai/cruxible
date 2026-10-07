@@ -82,6 +82,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     ProcedurePinSlotRef,
     ProjectNode,
+    ProposalItemsFanOut,
     ProposeChangeSetNode,
     RepeatBodyNode,
     RepeatNode,
@@ -4648,7 +4649,14 @@ class ProcedureExecutor:
 
         declared = _terminal_item_templates(node)
         base = _node_policy_tokens(node) | state.control
-        values, item_tokens = _terminal_items(declared, state=state)
+        if isinstance(node, ProposeChangeSetNode) and isinstance(
+            node.candidate_templates, ProposalItemsFanOut
+        ):
+            values, item_tokens = _fan_out_items(
+                node.candidate_templates, state=state, node_id=node.node_id
+            )
+        else:
+            values, item_tokens = _terminal_items(declared, state=state)
         if isinstance(node, ProposeChangeSetNode):
             from cruxible_core.procedures.source_candidates import bind_source_candidate
 
@@ -5700,9 +5708,68 @@ def _terminal_item_templates(
         templates = node.candidate_templates
         if isinstance(templates, tuple):
             return list(templates)
-        # Fan out over data, as the capture and inbox terminals do.
         return {"items": templates.items}
     return node.input
+
+
+_CAPTURE_SLOTS = frozenset({"produced_capture", "admitted_capture"})
+
+
+def _fan_out_items(
+    fan_out: ProposalItemsFanOut,
+    *,
+    state: _RunState,
+    node_id: str,
+) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
+    """One proposal item per element of a list the run produced, each with its own closure.
+
+    Data decides the shape here, so a reference that does not resolve or a
+    value that is not a list is a typed refusal, never an internal failure,
+    and an object is never unwrapped. Each element's evidence closure is its
+    own lineage where the producing step kept one: a Capture another element
+    came from is not offered to it. Without per-element lineage, a list built
+    from more than one Capture is refused rather than giving every element
+    the union.
+    """
+
+    try:
+        resolved = _resolve_template(
+            fan_out.items, input_payload=state.input_payload, outputs=state.outputs
+        )
+    except ExecutionError as exc:
+        raise _RunRefusal(
+            "proposal_item_invalid",
+            f"The fan-out's items did not resolve: {exc}",
+            node_id=node_id,
+            details={"field": "candidate_templates.items", "reason": "items_unresolved"},
+        ) from exc
+    if not isinstance(resolved, list):
+        raise _RunRefusal(
+            "proposal_item_invalid",
+            "The fan-out's items resolved to a "
+            f"{type(resolved).__name__}, not a list of proposal items.",
+            node_id=node_id,
+            details={"field": "candidate_templates.items", "reason": "items_not_a_list"},
+        )
+    values = [normalize_canonical(item) for item in resolved]
+    alias = _template_alias(fan_out.items)
+    provenance = None if alias is None else state.provenance.get(alias)
+    if provenance is None:
+        whole = state.alias_tokens(_referenced_aliases(fan_out.items))
+        return values, tuple(whole for _ in values)
+    lineage = provenance.items
+    if lineage is None or len(lineage) < len(values):
+        if len({token for token in provenance.whole if token.slot in _CAPTURE_SLOTS}) > 1:
+            raise _RunRefusal(
+                "proposal_item_evidence_ambiguous",
+                "The fan-out's list was built from more than one Capture and keeps no "
+                "per-element lineage, so no element's own evidence can be told apart.",
+                node_id=node_id,
+                details={"field": "candidate_templates.items", "reason": "lineage_unavailable"},
+            )
+        return values, tuple(provenance.whole for _ in values)
+    shared = frozenset(token for token in provenance.whole if token.slot not in _CAPTURE_SLOTS)
+    return values, tuple(shared | lineage[index] for index in range(len(values)))
 
 
 def _terminal_items(
