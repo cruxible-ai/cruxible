@@ -880,6 +880,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.write": "write",
     "cruxible.floor.export": "floor export",
     "cruxible.block.depublish": "block depublish",
+    "cruxible.block.detach": "block detach",
     "cruxible.block.repin": "block repin",
     "cruxible.block.sync": "block sync",
     "cruxible.document.propose": "document propose",
@@ -909,6 +910,15 @@ _ATTESTATION_REPAIR_EXAMPLES: Mapping[str, str] = {
     "cite_supporting_evidence": "claim-cite-supporting-evidence",
     "adjudicate_unreviewed_evidence": "claim-adjudicate-unreviewed-evidence",
 }
+
+
+def _repair_paths(values: Mapping[str, object]) -> list[str]:
+    """The workspace pages a page-scoped repair names, or none."""
+
+    paths = values.get("paths")
+    if not isinstance(paths, (list, tuple)):
+        return []
+    return [path for path in paths if isinstance(path, str) and path]
 
 
 def _repair_operands(operation: NextRepairOperation, values: Mapping[str, object]) -> list[str]:
@@ -949,6 +959,7 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.write": "cruxible_write",
     "cruxible.floor.export": "cruxible_floor_export",
     "cruxible.block.depublish": "cruxible_block_depublish",
+    "cruxible.block.detach": "cruxible_block_detach",
     "cruxible.block.repin": "cruxible_block_repin",
     "cruxible.block.sync": "cruxible_block_sync",
     "cruxible.document.propose": "cruxible_document_propose",
@@ -1143,6 +1154,8 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _mcp_call("cruxible_block_repin", source=text("source_id"), block=text("block_id"))
     if operation == "cruxible.block.sync" and values.get("all") is True:
         return _mcp_call("cruxible_block_sync", all_sources=True)
+    if operation == "cruxible.block.detach" and _repair_paths(values):
+        return _mcp_call("cruxible_block_detach", files=_repair_paths(values))
     if operation == "cruxible.floor.export":
         return _mcp_call("cruxible_floor_export", mode="write")
     if operation == "cruxible.claim.retire" and text("claim_id"):
@@ -1243,6 +1256,11 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _sdk_call("cx.block.repin", source, block)
     if operation == "cruxible.block.sync" and values.get("all") is True:
         return _sdk_call("cx.block.sync", all=True)
+    if operation == "cruxible.block.detach" and _repair_paths(values):
+        return _sdk_call("cx.block.detach", *_repair_paths(values))
+    if operation == "cruxible.block.depublish" and (source := text("source_id")):
+        block = text("block_id")
+        return None if block is None else _sdk_call("cx.block.depublish", source, block)
     return None
 
 
@@ -1289,6 +1307,11 @@ def _repair_command(
             parts.append("--all")
         else:
             return None
+    elif operation == "cruxible.block.detach":
+        paths = _repair_paths(values)
+        if not paths:
+            return None
+        parts.extend(shlex.quote(path) for path in paths)
     elif operation == "cruxible.authoring.example":
         # The runnable step is the template that starts the payload; with no
         # example named, a bare `authoring example` lists every name.

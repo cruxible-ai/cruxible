@@ -1789,11 +1789,21 @@ to clear the row.
 cruxible block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
   [--backing SHA256] [--params CANONICAL_JSON]... [--workspace-root DIR]
   [--evaluation-time TS] [--artifact ID]... [--currency-policy warn|require_current]
-  [--clear-claims] [--clear-queries] [--clear-artifacts] [--dry-run]
-cruxible block sync [PATH]... [--all] [--check]
-  [--detach PATH]... [--workspace-root DIR]
-cruxible block depublish SOURCE_ID BLOCK_ID [--json]
+  [--clear-claims] [--clear-queries] [--clear-artifacts] [--render] [--dry-run]
+cruxible block sync [PATH]... [--all] [--workspace-root DIR] [--json]
+cruxible block detach PATH... [--workspace-root DIR] [--dry-run|--commit] [--at DIGEST] [--json]
+cruxible block depublish SOURCE_ID BLOCK_ID [--dry-run|--commit] [--at OID] [--json]
 ~~~
+
+Blocks are authored and stamped; nothing regenerates them. The workflow: write
+the markers and the prose (or `repin --render` for a rendered table or list),
+`repin` to stamp, let `next` or `block sync` report a block stale or dirty,
+re-check it and repin; `block detach` and `block depublish` when its backings
+are gone. The client, not the daemon, computes every stamp: `repin` reads the
+backings, writes the marker and then declares the block to the instance.
+`--render` writes the body from the block's one `--query` backing: a Markdown
+table of the result Subjects and their projected fields, or a bulleted list of
+Subjects when the query projects none, and `_No rows._` when it returns none.
 
 ### The two roads a governed passage takes
 
@@ -1826,9 +1836,9 @@ concrete. Prose outside every window is the author's own and stays citable.
 `block repin --claim ID --claim ID ...` is how a projection block is created.
 Write the marker pair by hand around the prose you want governed (see
 [Projection block markers](#projection-block-markers)), then repin it naming
-every backing: the daemon re-reads and re-proves each Claim at the
-accepted coordinate, stamps the marker, and registers the block with the
-instance. Up to 512 backings fit in one block
+every backing: the client re-reads and re-proves each Claim at the
+accepted coordinate, computes the stamp, writes the marker, and registers the
+block with the instance. Up to 512 backings fit in one block
 (`MAX_PROJECTION_BACKINGS_PER_BLOCK`, inside a 128 KiB stamp), and a block that
 would need more refuses rather than truncating. **`repin` mints no Claim.** It
 declares that this passage reflects Claims that already exist, which is exactly
@@ -1870,9 +1880,10 @@ repair.
 On MCP the same adapter runs in the MCP server process:
 `cruxible_block_repin` takes the block and its page (`file`,
 workspace-relative, or `source`, its catalog id) and computes the stamp there,
-so an agent never builds one; `cruxible_block_sync` is `block sync`
-without `--detach`, a read that edits no page. Detaching is the write-tier
-`cruxible_block_detach` (`files`, `dry_run`, `at`): its preview
+so an agent never builds one (`render: true` is `--render`);
+`cruxible_block_sync` is `block sync`, a read that edits no page. Detaching is
+`block detach` and the write-tier `cruxible_block_detach` (`files`, `dry_run`,
+`at`): its preview
 reports what the edit would change and is pinned to the pages' bytes, and a
 commit with `at` refuses if a page changed since. `--dry-run` (MCP `dry_run`)
 on a repin computes and checks the stamp and writes nothing: no manifest, no
@@ -1918,15 +1929,17 @@ check with diagnostic details. A dirty body does not suppress dependency checks,
 and one failed dependency does not hide the others. Repin acknowledges a reviewed
 body and refreshes its dependencies; there is no separate accept-local bypass.
 
-`--check` suppresses explicit detach edits. Advisory findings remain visible
-without a nonzero exit; `require_current` findings and integrity errors fail the
-check. An unreadable or ambiguous lineage remains an incomplete check, with
+`block sync` writes nothing. Advisory findings remain visible without a nonzero
+exit; `require_current` findings and integrity errors fail the check. An unreadable or ambiguous lineage remains an incomplete check, with
 exact successor candidates where available. `repin --backing DIGEST` selects a
 live successor explicitly.
 
-`--detach PATH` removes markers from a retired block or a declaration belonging
-to a different instance, preserving its prose and all bytes outside the block.
-It uses a whole-file compare-and-swap. It does not rewrite or approve prose.
+`block detach PATH...` removes markers from a retired block or a declaration
+belonging to a different instance, preserving its prose and all bytes outside
+the block; live blocks are refused. It uses a whole-file compare-and-swap and
+does not rewrite or approve prose. `--dry-run` reports what would change and is
+pinned to the pages' bytes; `--commit --at DIGEST` refuses if a page changed
+since that preview.
 
 ### Depublishing
 
@@ -1943,7 +1956,7 @@ it records that this instance stands behind this marker. It is also the identity
 `workspace detach` refuses on, so a worktree cannot move out from under markers
 a host still owns.
 
-It edits no page and retires no Claim. Strip the markers (`block sync --detach`,
+It edits no page and retires no Claim. Strip the markers (`block detach`,
 or by hand), retire the backing Claim through the ordinary retirement road if
 the statement is also being withdrawn, and depublish when the block itself is
 not coming back. A registration whose backing Claim is already retired no longer
@@ -1956,7 +1969,7 @@ side effect of a ledger release -- so between the two steps `cruxible next`
 reports the marker as `unregistered_projection_block` with the repair
 `remove_or_register_projection_block`. That is a warning rather than a blocking
 row, and it is the opposite instruction to the row it replaces, which asked for
-the frame to be restored. Remove the marker pair with `block sync --detach PATH`
+the frame to be restored. Remove the marker pair with `block detach PATH`
 or by hand and it clears.
 
 ## next
@@ -2421,7 +2434,7 @@ advances; the cursor binds the lower bound, access profile, and page budgets.
 
 ~~~text
 cruxible floor export [--force] [--with-discovery] [--json]
-cruxible floor delivery on|off [--instance-id ID] [--json]
+cruxible floor delivery STATE [--instance-id ID] [--json]
 ~~~
 
 The floor has one writer. A local daemon with a registered workspace and

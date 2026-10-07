@@ -335,6 +335,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.write",
     "cruxible.floor.export",
     "cruxible.block.depublish",
+    "cruxible.block.detach",
     "cruxible.block.repin",
     "cruxible.block.sync",
     "cruxible.document.propose",

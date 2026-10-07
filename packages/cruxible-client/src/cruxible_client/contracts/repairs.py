@@ -227,7 +227,7 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
         operation="cruxible.block.sync", arguments={"all": True}
     ),
     # A retired member cannot be un-retired, so the block either stops holding
-    # it or the marker leaves the page. The producer names `sync --detach PATH`
+    # it or the marker leaves the page. The producer names `block detach PATH`
     # with the path it knows; this fallback names the sweep that finds them.
     "block_backing_retired": RepairOperation(
         operation="cruxible.block.sync", arguments={"all": True}

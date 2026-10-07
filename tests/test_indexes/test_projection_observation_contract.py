@@ -135,6 +135,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         # projection rows used to answer `hand_edit` with "depublish this
         # block", which is a served command.
         "cruxible.block.depublish",
+        # A block whose every backing retired leaves the page by `block detach`.
+        "cruxible.block.detach",
         "cruxible.block.repin",
         "cruxible.block.sync",
         "cruxible.document.propose",

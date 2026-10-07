@@ -3723,12 +3723,14 @@ the backing class and an empty sequence removes it. Query-only and artifact
 backings are valid. `currency_policy` distinguishes `warn` from `require_current`.
 Compact markers are the default; their local manifests are part of the view.
 
-Sync checks declared block backings and reports drift. It does not regenerate
-the author’s prose or silently repin. It never raises on drift: read
-`has_refusals` (a blocking finding under the configured currency policy) and
-`would_change`. `detach` is an explicit local mutation, and `check=True` reports
-what it would change without making it. `repin(..., dry_run=True)` returns the
-stamp it would write and writes nothing. The marker grammar is in the CLI
+Sync checks declared block backings and reports drift; it writes nothing. It
+does not regenerate the author’s prose or silently repin. It never raises on
+drift: read `has_refusals` (a blocking finding under the configured currency
+policy). `detach` is the explicit local page edit, and `dry_run=True` reports
+what it would change without making it; `depublish` releases a block's
+registration at the daemon. `repin(..., render=True)` writes the body from the
+block's one query backing, and `repin(..., dry_run=True)` returns the stamp it
+would write and writes nothing. The marker grammar is in the CLI
 reference under "Projection block markers"; MCP agents use the
 `cruxible_block_repin`, `cruxible_block_sync` (read-only) and
 `cruxible_block_detach` (the page edit, previewed) tools, which
@@ -3759,13 +3761,16 @@ repin(
     evaluation_time: datetime,
     body: str | bytes | None = None,
     compact: bool = True,
+    render: bool = False,
+    dry_run: bool = False,
 ) -> ProjectionBlockStamp
 ```
 
 Refresh backing pins and optionally replace this block's authored body.
 
 Compact markers are the default: digest references with local manifests. Subsequent
-repins preserve that format.
+repins preserve that format. `render` writes the body as a table or list from the
+block's one query backing instead of `body`.
 
 <a id="api-projectionblocks-sync"></a>
 
@@ -3774,15 +3779,34 @@ repins preserve that format.
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-sync(
-    *paths: str | Path,
-    all: bool = False,
-    check: bool = False,
-    detach: Sequence[str | Path] = (),
-) -> api.BlockSyncResult
+sync(*paths: str | Path, all: bool = False) -> api.BlockSyncResult
 ```
 
-Check every block; policy controls whether drift fails the check.
+Check each block against its backings; a pure check that writes nothing.
+
+<a id="api-projectionblocks-detach"></a>
+
+### `ProjectionBlocks.detach`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+detach(*paths: str | Path, dry_run: bool = False) -> api.BlockSyncResult
+```
+
+Strip retired blocks' markers from these pages, keeping each body as prose; live blocks are refused.
+
+<a id="api-projectionblocks-depublish"></a>
+
+### `ProjectionBlocks.depublish`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+depublish(source: str | SourceRef, block_id: str, *, dry_run: bool | None = None, at: str | None = None) -> api.BlockDepublishResult
+```
+
+Release the registration that demands one page block; edits no page and retires no backing.
 
 ## Signing capabilities
 

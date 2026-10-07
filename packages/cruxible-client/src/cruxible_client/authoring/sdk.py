@@ -4361,13 +4361,15 @@ class ProjectionBlocks:
         evaluation_time: datetime,
         body: str | bytes | None = None,
         compact: bool = True,
+        render: bool = False,
         dry_run: bool = False,
     ) -> ProjectionBlockStamp:
         """Refresh backing pins and optionally replace this block's authored body.
 
         Compact markers are the default: digest references with local manifests. Subsequent
-        repins preserve that format. ``dry_run`` returns the stamp it would write and
-        writes nothing.
+        repins preserve that format. ``render`` writes the body as a table or list from
+        the block's one query backing instead of ``body``. ``dry_run`` returns the stamp
+        it would write and writes nothing.
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
@@ -4403,17 +4405,15 @@ class ProjectionBlocks:
             coordinate=self._playbill.coordinate,
             body=body.encode("utf-8") if isinstance(body, str) else body,
             compact=compact,
+            render=render,
             dry_run=dry_run,
         )
 
-    def sync(
-        self,
-        *paths: str | Path,
-        all: bool = False,
-        check: bool = False,
-        detach: Sequence[str | Path] = (),
-    ) -> api.BlockSyncResult:
-        """Check every block; policy controls whether drift fails the check.
+    def sync(self, *paths: str | Path, all: bool = False) -> api.BlockSyncResult:
+        """Check each block against its backings; a pure check that writes nothing.
+
+        Each block reads unchanged, stale, dirty or skipped; a require_current
+        block's drift is a refusal.
 
         Next: ``cx.next(...)`` names each drifted block with its repair.
         """
@@ -4424,8 +4424,48 @@ class ProjectionBlocks:
             workspace=self._playbill._workspace_root,
             paths=paths,
             all_sources=all,
-            check=check,
-            detach_paths=detach,
+        )
+
+    def detach(self, *paths: str | Path, dry_run: bool = False) -> api.BlockSyncResult:
+        """Strip retired blocks' markers from these pages, keeping each body as prose.
+
+        Only blocks whose every backing is retired, or that belong to another
+        instance, are detached; live blocks are refused. Edits pages only.
+        ``dry_run`` reports what would change and edits nothing.
+
+        Next: ``cx.block.depublish(source, block)`` when the block is not coming back.
+        """
+
+        if not paths:
+            raise ValueError("name at least one page to detach retired blocks from")
+        return sync_projection_blocks(
+            self._playbill._client,
+            self._playbill._instance_id,
+            workspace=self._playbill._workspace_root,
+            check=dry_run,
+            detach_paths=paths,
+        )
+
+    def depublish(
+        self,
+        source: str | SourceRef,
+        block_id: str,
+        *,
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> api.BlockDepublishResult:
+        """Release the registration that demands one page block.
+
+        ``next`` reads that registration to call a removed marker a blocking
+        row; releasing it edits no page and retires no backing. ``dry_run``
+        previews; ``at`` pins a commit to the preview's coordinate.
+
+        Next: ``cx.block.detach(page)`` strips the markers if they remain.
+        """
+
+        source_id = _address(source, RefKind.SOURCE)
+        return self._playbill._client.depublish_block(
+            self._playbill._instance_id, source_id, block_id, dry_run=dry_run, at=at
         )
 
 

@@ -73,6 +73,7 @@ from cruxible_client.authoring.world_stub import render_world_stub_for
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
+from cruxible_client.contracts.authoring.models import BlockSyncResult
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
@@ -128,6 +129,7 @@ from cruxible_client.kits import (
 )
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, claim_type_input_template
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
+from cruxible_core.cli.block_detach import detach_projection_pages
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
@@ -4350,7 +4352,7 @@ def depublish_projection(
 
     The registration is what `next` reads to decide a removed marker is a
     blocking row. Releasing it does not edit the page and does not touch the
-    block's backings: strip the markers with `block sync --detach` or by hand,
+    block's backings: strip the markers with `block detach PAGE` or by hand,
     and use this when the block itself is not coming back.
     """
 
@@ -4397,6 +4399,11 @@ def depublish_projection(
 )
 @click.option("--workspace-root", default=".", show_default=True, type=click.Path(file_okay=False))
 @click.option("--evaluation-time", default=None, help="Explicit absolute ISO-8601 instant.")
+@click.option(
+    "--render",
+    is_flag=True,
+    help="Write the block body as a table or list from its one --query backing.",
+)
 @click.option("--dry-run", is_flag=True, help="Compute and check the stamp; write nothing.")
 @json_option
 @handle_errors
@@ -4414,10 +4421,18 @@ def repin_projection(
     parameters: tuple[str, ...],
     workspace_root: str,
     evaluation_time: str | None,
+    render: bool,
     dry_run: bool,
     output_json: bool,
 ) -> None:
-    """Refresh one declaration marker without writing its body or closing line."""
+    """Stamp one block's marker from its backings and declare it to the instance.
+
+    The client reads the backings and computes the stamp, rewrites the opening
+    marker and then declares the block, creating its registration the first
+    time. The authored body is kept as written, unless ``--render`` writes it
+    from the block's one query backing (a table, or a list when the query
+    projects no fields).
+    """
 
     if (clear_claims and claims) or (clear_queries and queries) or (clear_artifacts and artifacts):
         raise click.ClickException("a backing category cannot be cleared and replaced together")
@@ -4477,6 +4492,7 @@ def repin_projection(
             currency_policy=currency_policy,
             backing_digest=backing_digest,
             evaluation_time=instant,
+            render=render,
             dry_run=dry_run,
         ),
         command_name="cruxible block repin",
@@ -4495,31 +4511,28 @@ def repin_projection(
 
 @block_group.command("sync")
 @click.argument("paths", nargs=-1, type=click.Path(dir_okay=False))
-@click.option("--all", "all_sources", is_flag=True, help="Synchronize every catalog source.")
+@click.option("--all", "all_sources", is_flag=True, help="Check every catalog source.")
 @click.option(
-    "--check",
-    is_flag=True,
-    help="Check without applying requested detach edits.",
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="The attached workspace whose pages are checked.",
 )
-@click.option(
-    "--detach",
-    "detach_paths",
-    multiple=True,
-    type=click.Path(dir_okay=False),
-    help="Strip markers from retired blocks while preserving their current body.",
-)
-@click.option("--workspace-root", default=".", show_default=True, type=click.Path(file_okay=False))
 @json_option
 @handle_errors
 def sync_projection(
     paths: tuple[str, ...],
     all_sources: bool,
-    check: bool,
-    detach_paths: tuple[str, ...],
     workspace_root: str,
     output_json: bool,
 ) -> None:
-    """Check dependencies and report drift under each block's currency policy."""
+    """Check each block against its backings and report drift; writes nothing.
+
+    Each block reads unchanged, stale (its backing moved: repin it), dirty (its
+    prose moved from the stamp: re-check and repin) or skipped (unstamped).
+    Exits non-zero on a refusal, which a require_current block's drift is.
+    """
 
     result = _server_call(
         lambda client, instance_id: sync_projection_blocks(
@@ -4528,25 +4541,70 @@ def sync_projection(
             workspace=workspace_root,
             paths=paths,
             all_sources=all_sources,
-            check=check,
-            detach_paths=(*detach_paths,),
         ),
         command_name="cruxible block sync",
+    )
+    _echo_block_sync(result, output_json=output_json)
+    if result.has_refusals:
+        raise click.exceptions.Exit(1)
+
+
+@block_group.command("detach")
+@click.argument("paths", nargs=-1, required=True, type=click.Path(dir_okay=False))
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="The attached workspace the pages belong to.",
+)
+@change_control_options
+@json_option
+@handle_errors
+def detach_projection(
+    paths: tuple[str, ...],
+    workspace_root: str,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
+) -> None:
+    """Strip retired blocks' markers from these pages, keeping each body as prose.
+
+    Only blocks whose every backing is retired, or that belong to another
+    instance, are detached; live blocks are refused. Edits pages only, never
+    governed state. ``--dry-run`` reports what would change; ``--commit --at``
+    commits only if the pages still hold the bytes the preview read.
+    """
+
+    root = Path(workspace_root).expanduser().resolve()
+    pages = tuple(Path(item).expanduser().resolve() for item in paths)
+    result = _server_call(
+        lambda client, instance_id: detach_projection_pages(
+            client, instance_id, root=root, pages=pages, dry_run=dry_run, at=at
+        ),
+        command_name="cruxible block detach",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        for item in result.items:
-            target = item.path
-            if item.block_id is not None:
-                target += f"#{item.block_id}"
-            suffix = "" if item.reason is None else f":{item.reason}"
-            click.echo(f"{target}: {item.outcome}{suffix}")
-            if item.repair is not None:
-                click.echo(f"  repair: {render_served_repair(item.repair)}")
-    # Warn findings stay advisory; explicit strict blocks gate this check.
-    if (check and result.would_change) or result.has_refusals:
+        _echo_block_sync(result.sync, output_json=False)
+        echo_preview_next(result.status, result.coordinate)
+    if result.sync.has_refusals:
         raise click.exceptions.Exit(1)
+
+
+def _echo_block_sync(result: BlockSyncResult, *, output_json: bool) -> None:
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for item in result.items:
+        target = item.path
+        if item.block_id is not None:
+            target += f"#{item.block_id}"
+        suffix = "" if item.reason is None else f":{item.reason}"
+        click.echo(f"{target}: {item.outcome}{suffix}")
+        if item.repair is not None:
+            click.echo(f"  repair: {render_served_repair(item.repair)}")
 
 
 def _echo_list_continuation(next_cursor: str | None) -> None:

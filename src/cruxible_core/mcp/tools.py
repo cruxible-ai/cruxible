@@ -782,6 +782,10 @@ def register_tools(
             str | None,
             Field(description="The successor digest an ambiguity refusal named, alone."),
         ] = None,
+        render: Annotated[
+            bool,
+            Field(description="true: write the body as a table or list from its one query."),
+        ] = False,
         dry_run: Annotated[
             bool | None, Field(description="true: compute the stamp and write nothing.")
         ] = None,
@@ -799,6 +803,7 @@ def register_tools(
             artifacts=artifacts,
             currency_policy=currency_policy,
             backing_digest=backing_digest,
+            render=render,
             dry_run=dry_run,
         )
 

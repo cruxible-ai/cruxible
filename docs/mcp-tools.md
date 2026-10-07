@@ -218,7 +218,7 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_authoring_rebase` | Rebase a stale intent onto the current accepted coordinate | `GOVERNED_WRITE` |
 | `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
 | `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
-| `cruxible_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp and registers the block | `GOVERNED_WRITE` |
+| `cruxible_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp and registers the block; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
 | `cruxible_block_sync` | Check each projection block's backings; edits no page | `READ_ONLY` |
 | `cruxible_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes | `GOVERNED_WRITE` |
 | `cruxible_block_depublish` | Release the declaration that registers one page block | `GOVERNED_WRITE` |

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -48,7 +47,6 @@ from cruxible_client.contracts.authoring.models import BlockDetachResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.change_control import (
     ChangeControlRequest,
-    StateCoordinate,
 )
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequest,
@@ -106,6 +104,7 @@ from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputRecord,
 )
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
+from cruxible_core.cli.block_detach import detach_projection_pages
 from cruxible_core.coverage.adapter import WorkingSourceObservation
 from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageCardBudget
 from cruxible_core.coverage.indexes import CoverageScanBudget
@@ -147,7 +146,6 @@ from cruxible_core.server.playbill_request_models import (
     SourceProposeRequest,
     StoreBodyRequest,
 )
-from cruxible_core.service.change_preview import state_change_scope
 from cruxible_core.service.discovery.since import validate_playbill_since_request
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
@@ -1341,6 +1339,7 @@ def handle_playbill_block_repin(
     artifacts: Sequence[str] | None = None,
     currency_policy: Literal["warn", "require_current"] | None = None,
     backing_digest: str | None = None,
+    render: bool = False,
     dry_run: bool | None = None,
 ) -> BlockRepinResult:
     """Repin one projection block adapter-side: this process computes the stamp (Q17).
@@ -1377,6 +1376,7 @@ def handle_playbill_block_repin(
         currency_policy=currency_policy,
         backing_digest=backing_digest,
         evaluation_time=datetime.now(UTC),
+        render=render,
         dry_run=bool(dry_run),
     )
     return BlockRepinResult(
@@ -1411,25 +1411,6 @@ def handle_playbill_block_sync(
     )
 
 
-def _pages_state(root: Path, preimages: Mapping[Path, bytes]) -> StateCoordinate:
-    """The state coordinate of the pages a detach edits: each one's exact bytes."""
-
-    return StateCoordinate.of(
-        "workspace_pages",
-        {
-            _workspace_relative(root, path): hashlib.sha256(content).hexdigest()
-            for path, content in sorted(preimages.items())
-        },
-    )
-
-
-def _workspace_relative(root: Path, path: Path) -> str:
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
 def handle_playbill_block_detach(
     instance_id: str,
     *,
@@ -1450,30 +1431,8 @@ def handle_playbill_block_detach(
         raise DataValidationError("name at least one page to detach retired blocks from")
     root = mcp_workspace_root()
     pages = tuple(resolve_workspace_path(item, root=root, kind="file") for item in files)
-    with state_change_scope(
-        dry_run=dry_run,
-        at=at,
-        kind="direct",
-        operation="cruxible.block.detach",
-        describe="detaching retired projection blocks",
-    ) as change:
-        synced = sync_projection_blocks(
-            _block_client(),
-            instance_id,
-            workspace=root,
-            check=change.previewing,
-            detach_paths=pages,
-            observe_preimages=lambda preimages: change.observe(_pages_state(root, preimages)),
-        )
-        if change.coordinate is None:
-            # A refusal before any page was read (an unattached workspace)
-            # read no bytes, and pins (and is checked against) the empty set.
-            change.observe(_pages_state(root, {}))
-    assert change.coordinate is not None
-    return BlockDetachResult(
-        status="would_detach" if change.previewing else "detached",
-        sync=synced,
-        coordinate=change.coordinate,
+    return detach_projection_pages(
+        _block_client(), instance_id, root=root, pages=pages, dry_run=dry_run, at=at
     )
 
 

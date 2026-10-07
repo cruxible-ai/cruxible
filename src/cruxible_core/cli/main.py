@@ -506,6 +506,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "sync_projection",
                 "Report whether each declared block still reads as its stamp says.",
             ),
+            "detach": _command(
+                "playbill",
+                "detach_projection",
+                "Strip retired blocks' markers from pages, keeping their prose.",
+            ),
         },
         module="playbill",
         attr="block_group",
