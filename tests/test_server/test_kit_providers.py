@@ -495,6 +495,15 @@ def test_kit_build_refuses_providers_and_interfaces_it_cannot_reproduce(
         with pytest.raises(RequestRefusedError) as differs:
             _build(publisher, rebuilt)
         assert differs.value.error_code == "cruxible.kit.provider_build_differs"
+        # The same wheel under another lock is another build too (review F-002).
+        relocked = tmp_path / "relocked"
+        shutil.copytree(bundled, relocked)
+        with (relocked / "uv.lock").open("a") as stream:
+            stream.write("\n# another lock identity\n")
+        with pytest.raises(RequestRefusedError) as lock_differs:
+            _build(publisher, relocked)
+        assert lock_differs.value.error_code == "cruxible.kit.provider_build_differs"
+        assert "lock" in str(lock_differs.value)
     finally:
         for _ in opened:
             pass

@@ -68,6 +68,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderWheelObject,
 )
 from cruxible_client.contracts.providers import (
+    ProviderAny,
     ProviderLocalDistributionPin,
     ProviderV2,
     parse_provider,
@@ -319,16 +320,30 @@ def _bundled_provider_pins(
             if held is None or held.artifact_digest != pin.artifact_digest
             else parse_provider(tree[provider_path_here], path=provider_path_here)
         )
-        if not isinstance(provider, ProviderV2) or (
-            provider.runtime_artifact.distribution.sha256 != package.provider.wheel.sha256
-        ):
+        differs = _build_difference(provider, package)
+        if differs is not None:
             raise RequestRefusedError(
                 "cruxible.kit.provider_build_differs",
                 f"{path} pins Provider {pin.target.name} installed here from another build "
-                f"than the bundled {package.provider.wheel.filename}; bundle the wheel this "
-                "instance installed, or install the bundled one here first",
+                f"than the bundled package ({differs}); bundle the wheel and lock this "
+                "instance installed, or install the bundled ones here first",
                 repair=RepairOperation(operation="cruxible.provider.install"),
             )
+
+
+def _build_difference(
+    provider: ProviderAny | None, package: InspectedProviderPackage
+) -> str | None:
+    """How the Provider held here differs from the bundled build, or None."""
+
+    if not isinstance(provider, ProviderV2):
+        return "no package Provider is held at that digest"
+    runtime = provider.runtime_artifact
+    if runtime.distribution.sha256 != package.provider.wheel.sha256:
+        return f"wheel other than {package.provider.wheel.filename}"
+    if runtime.local_env is None or runtime.local_env.lock_sha256 != package.provider.lock.sha256:
+        return "lock other than the bundled one"
+    return None
 
 
 def _bundled_interface(
