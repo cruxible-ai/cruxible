@@ -800,8 +800,14 @@ def playbill_provider_install(
 
 def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
     check_permission("cruxible_kit_build", instance_id=instance_id)
+    actor = _actor_context()
     return _proposal_validation_boundary(
-        "kit build", lambda: service_build_kit(get_playbill_manager().get(instance_id), request)
+        "kit build",
+        lambda: service_build_kit(
+            get_playbill_manager().get(instance_id),
+            request,
+            principal_id=None if actor is None else actor.actor_id,
+        ),
     )
 
 

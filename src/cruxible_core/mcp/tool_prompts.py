@@ -18,15 +18,18 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_kit_build": (
         "Use when you want to export the definitions under owned identity prefixes as a "
-        "kit release another instance can install; pass the previous release to continue "
-        "its lineage."
+        "kit release another instance can install. A release is a lineage-free snapshot; "
+        "its manifest records where it was built."
     ),
     "cruxible_kit_status": (
-        "Use when you need the installed kits and the kit paths edited since install."
+        "Use when you need the installed kits, the kit paths edited since install, what was "
+        "kept on purpose, and (for registry kits) the latest available version."
     ),
     "cruxible_kit_add": (
-        "Use when you want to install or upgrade a kit. It only proposes one change set; "
-        "approval and activation remain the ordinary steps."
+        "Use when you want to install or upgrade a kit, by registry reference or bundle. It "
+        "always proposes: a definition held differently takes the release's version unless "
+        "kept (keep, keep_local_edits); the plan says what each change does and counts "
+        "dependents. It lands at once when the approval policy requires no approval."
     ),
     "cruxible_claim_type_upgrade": (
         "Use to move ClaimTypes before v7 to v7, which states revision_evidence "
@@ -34,8 +37,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "and evidence_requirement (kept at self). It only proposes; dry_run proposes nothing."
     ),
     "cruxible_kit_remove": (
-        "Use when you want to retire what a kit installed. It only proposes; live Claims "
-        "that depend on those definitions block it."
+        "Use when you want to retire what a kit installed. It lands at once when the approval "
+        "policy requires no approval; live Claims that depend on those definitions block it."
     ),
     "cruxible_server_info": (
         "Use when you need adapter and daemon versions with state, auth, and host metadata."

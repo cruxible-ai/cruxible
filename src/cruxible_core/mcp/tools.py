@@ -40,9 +40,9 @@ from cruxible_client.contracts.get_reads import (
     GetResult,
 )
 from cruxible_client.contracts.kits import (
-    KitAddRequest,
     KitBuildRequest,
     KitBuildResult,
+    KitBundle,
     KitChangeResult,
     KitRemoveRequest,
     KitStatus,
@@ -249,18 +249,62 @@ def register_tools(
         return handlers.handle_playbill_kit_build(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_kit_status(instance_id: InstanceId = None) -> KitStatus:
-        """List installed kits and the kit paths edited since install."""
-        return handlers.handle_playbill_kit_status(require_instance_id(instance_id))
+    def cruxible_kit_status(
+        instance_id: InstanceId = None,
+        *,
+        offline: Annotated[
+            bool, Field(description="true: skip looking up newer releases in the registry.")
+        ] = False,
+    ) -> KitStatus:
+        """List installed kits, paths edited since install, and newer releases."""
+        return handlers.handle_playbill_kit_status(
+            require_instance_id(instance_id), offline=offline
+        )
 
     @_tool
     def cruxible_kit_add(
         instance_id: InstanceId = None,
         *,
-        request: KitAddRequest,
+        reference: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "A registry reference (project-state:1.0.0 or "
+                    "ghcr.io/acme/kits/foo@sha256:...); this adapter pulls and verifies it. "
+                    "Or give bundle."
+                )
+            ),
+        ] = None,
+        bundle: Annotated[
+            KitBundle | None, Field(description="An inline kit bundle; or give reference.")
+        ] = None,
+        keep: Annotated[
+            list[str] | None,
+            Field(description="Definitions (KIND:NAME) to keep as this instance has them."),
+        ] = None,
+        keep_local_edits: Annotated[
+            bool, Field(description="Keep every definition edited here since install.")
+        ] = False,
+        retire_dependents: Annotated[
+            list[str] | None,
+            Field(description="Dropped definitions to retire with their live dependents."),
+        ] = None,
+        allow_downgrade: bool = False,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> KitChangeResult:
-        """Propose installing or upgrading a kit as one change set; activation is separate."""
-        return handlers.handle_playbill_kit_add(require_instance_id(instance_id), request)
+        """Install or upgrade a kit as one change set; it always proposes."""
+        return handlers.handle_playbill_kit_add(
+            require_instance_id(instance_id),
+            reference=reference,
+            bundle=bundle,
+            keep=keep or (),
+            keep_local_edits=keep_local_edits,
+            retire_dependents=retire_dependents or (),
+            allow_downgrade=allow_downgrade,
+            dry_run=dry_run,
+            at=at,
+        )
 
     @_tool
     def cruxible_claim_type_upgrade(

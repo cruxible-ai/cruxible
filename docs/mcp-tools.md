@@ -129,9 +129,9 @@ approval stay the ordinary steps.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_kit_build` | Export the definitions under owned identity prefixes as one kit release | `READ_ONLY` |
-| `cruxible_kit_status` | List installed kits and the kit paths edited since install | `READ_ONLY` |
-| `cruxible_kit_add` | Propose installing or upgrading a kit as one change set | `GOVERNED_WRITE` |
-| `cruxible_kit_remove` | Propose retiring every artifact a kit installed | `GOVERNED_WRITE` |
+| `cruxible_kit_status` | List installed kits, paths edited since install, kept divergences, provenance and (for registry kits) the latest available version (`offline` skips the check) | `READ_ONLY` |
+| `cruxible_kit_add` | Install or upgrade a kit by registry `reference` (the adapter pulls it) or `bundle`; always proposes, `keep`/`keep_local_edits`/`retire_dependents`/`allow_downgrade` decide divergences; lands at once when policy requires no approval | `GOVERNED_WRITE` |
+| `cruxible_kit_remove` | Retire every artifact a kit installed; lands at once when policy requires no approval | `GOVERNED_WRITE` |
 | `cruxible_claim_type_upgrade` | Propose moving older ClaimTypes to v7 (identity evidence rules included), stating their revision evidence | `GOVERNED_WRITE` |
 
 ## Documents and proposals

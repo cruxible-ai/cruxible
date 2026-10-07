@@ -477,13 +477,14 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "build": _command(
                 "playbill", "build_kit", "Export owned definitions as a kit release."
             ),
-            "add": _command("playbill", "add_kit", "Propose installing or upgrading a kit."),
-            "status": _command("playbill", "kit_status", "List installed kits."),
-            "push": _command("playbill", "push_kit_cmd", "Publish a kit to a registry."),
+            "add": _command("playbill", "add_kit", "Install or upgrade a kit as one change set."),
+            "status": _command(
+                "playbill", "kit_status", "List installed kits and newer releases available."
+            ),
             "pull": _command(
                 "playbill", "pull_kit", "Fetch and verify a kit without installing it."
             ),
-            "remove": _command("playbill", "remove_kit", "Propose retiring what a kit installed."),
+            "remove": _command("playbill", "remove_kit", "Retire what a kit installed."),
         },
         module="playbill",
         attr="kit_group",

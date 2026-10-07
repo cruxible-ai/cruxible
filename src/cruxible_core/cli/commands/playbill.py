@@ -24,8 +24,6 @@ from cruxible_client import (
 )
 from cruxible_client._error_base import CoreError, printable
 from cruxible_client.artifacts import (
-    RegistryClient,
-    pack_artifact,
     unpack_artifact,
     write_layout,
 )
@@ -98,6 +96,7 @@ from cruxible_client.contracts.kits import (
     KitBuildRequest,
     KitChangeResult,
     KitRemoveRequest,
+    kit_version_key,
 )
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.procedures.results import ProcedureHaltTerminal
@@ -122,9 +121,8 @@ from cruxible_client.contracts.write import (
 from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
+    check_kit_updates,
     fetch_kit_image,
-    kit_reference,
-    push_kit,
     resolve_kit,
     write_kit_directory,
 )
@@ -1568,24 +1566,62 @@ def kit_group() -> None:
     """Export and import definition kits."""
 
 
+_KIT_CONSEQUENCE_TEXT = {
+    "overwrites_your_edit": "overwrites your edit",
+    "re_adds_retired": "re-adds a definition you retired",
+    "takes_over_outside_definition": "takes over a definition you defined outside the kit",
+    "replaces_carried_definition": "replaces a definition the kit depends on",
+    "release_dropped": "the release dropped it",
+}
+
+
 def _echo_kit_change(result: KitChangeResult) -> None:
     version = "" if result.version is None else f" {result.version}"
-    click.echo(f"{result.kit_id}{version}: {result.status}")
+    transition = ""
+    if result.transition is not None:
+        transition = f" ({result.transition}"
+        if result.installed_version is not None:
+            transition += f" from {result.installed_version}"
+        transition += ")"
+    click.echo(f"{result.kit_id}{version}: {result.status}{transition}")
+    if result.provenance is not None:
+        provenance = result.provenance
+        click.echo(
+            f"Built by {provenance.principal_id or 'an unattributed principal'} on "
+            f"{provenance.instance_id} at {provenance.coordinate.git_oid[:12]} (claimed)"
+        )
+    groups: dict[str, list[str]] = {}
     for item in result.plan:
-        if item.action != "unchanged":
-            detail = "" if item.detail is None else f" ({printable(item.detail)})"
-            click.echo(f"  {item.action}: {item.path}{detail}")
+        if item.action == "unchanged":
+            continue
+        kind = (item.identity or item.path).partition(":")[0]
+        line = f"  {item.action}: {item.identity or item.path}"
+        notes = []
+        if item.consequence is not None:
+            notes.append(_KIT_CONSEQUENCE_TEXT[item.consequence])
+        if item.dependent_count:
+            notes.append(f"{item.dependent_count} dependent(s)")
+        if item.detail is not None:
+            notes.append(printable(item.detail))
+        if notes:
+            line += f" ({'; '.join(notes)})"
+        groups.setdefault(kind, []).append(line)
+    for kind in sorted(groups):
+        click.echo(f"{kind}:")
+        for line in groups[kind]:
+            click.echo(line)
     if result.detail:
         click.echo(printable(result.detail))
     if result.proposal_id:
         click.echo(f"Proposal: {result.proposal_id}")
-        if result.approval_required:
-            click.echo(
-                f"Next: cruxible proposal approve {result.proposal_id} "
-                "--signer-id ID --key FILE, then activate it."
-            )
-        else:
-            click.echo(f"Next: cruxible proposal activate {result.proposal_id}")
+        if result.status == "proposed":
+            if result.approval_required:
+                click.echo(
+                    f"Next: cruxible proposal approve {result.proposal_id} "
+                    "--signer-id ID --key FILE, then activate it."
+                )
+            else:
+                click.echo(f"Next: cruxible proposal activate {result.proposal_id}")
     echo_preview_next(result.status, result.coordinate)
 
 
@@ -1638,20 +1674,67 @@ def build_kit(
 @click.option(
     "--source", "source", default=None, help="Recorded origin; defaults to where KIT came from."
 )
+@click.option(
+    "--keep",
+    "keep",
+    multiple=True,
+    metavar="IDENTITY",
+    help=(
+        "Keep this instance's version of a definition (ClaimType:acme.account.seats) "
+        "instead of the release's, or keep one the release dropped (repeatable)."
+    ),
+)
+@click.option(
+    "--keep-local-edits",
+    is_flag=True,
+    help="Keep every definition edited here since the kit installed it.",
+)
+@click.option(
+    "--retire-dependents",
+    "retire_dependents",
+    multiple=True,
+    metavar="IDENTITY",
+    help="Retire a definition the release dropped together with its live dependents.",
+)
+@click.option(
+    "--allow-downgrade", is_flag=True, help="Install a release older than the installed one."
+)
 @change_control_options
 @json_option
 @handle_errors
 def add_kit(
-    kit: str, source: str | None, dry_run: bool | None, at: str | None, output_json: bool
+    kit: str,
+    source: str | None,
+    keep: tuple[str, ...],
+    keep_local_edits: bool,
+    retire_dependents: tuple[str, ...],
+    allow_downgrade: bool,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
 ) -> None:
-    """Propose installing or upgrading KIT as one change set.
+    """Install or upgrade KIT as one change set; it always proposes.
 
     KIT is a kit directory, an OCI image layout, or a registry reference such as
-    ``project-state:1.0.0`` or ``ghcr.io/acme/kits/foo@sha256:...``. It previews
-    by default; commit the preview with ``--commit --at OID``.
+    ``project-state:1.0.0`` or ``ghcr.io/acme/kits/foo@sha256:...``. A definition
+    this instance holds differently takes the release's version (the preview
+    says what that does: overwrites your edit, re-adds a retired definition,
+    takes over one defined outside the kit) unless --keep or --keep-local-edits
+    keeps yours; replaced definitions' dependents are carried along. The change
+    lands at once when the approval policy requires no approval, otherwise it
+    stops at proposed. It previews by default; commit with ``--commit --at OID``.
     """
     bundle, origin = resolve_kit(kit)
-    request = KitAddRequest(bundle=bundle, source=source or origin, dry_run=dry_run, at=at)
+    request = KitAddRequest(
+        bundle=bundle,
+        source=source or origin,
+        keep=tuple(sorted(set(keep))),
+        keep_local_edits=keep_local_edits,
+        retire_dependents=tuple(sorted(set(retire_dependents))),
+        allow_downgrade=allow_downgrade,
+        dry_run=dry_run,
+        at=at,
+    )
     result = _server_call(
         lambda client, instance_id: client.add_kit(instance_id, request),
         command_name="cruxible kit add",
@@ -1660,43 +1743,6 @@ def add_kit(
         _emit_json(result.model_dump(mode="json"))
     else:
         _echo_kit_change(result)
-
-
-@kit_group.command("push")
-@click.argument("kit")
-@click.argument("reference")
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Pack KIT and print the reference it would publish; contact no registry.",
-)
-@json_option
-@handle_errors
-def push_kit_cmd(kit: str, reference: str, dry_run: bool, output_json: bool) -> None:
-    """Publish KIT (a directory or OCI layout) to a registry REFERENCE.
-
-    Credentials come from CRUXIBLE_REGISTRY_USERNAME and CRUXIBLE_REGISTRY_PASSWORD,
-    for the one registry host named in CRUXIBLE_REGISTRY. A push leaves this
-    machine for good, so `--dry-run` packs the exact artifact and prints the
-    digest-pinned reference it would publish without contacting the registry.
-    """
-    bundle, _origin = resolve_kit(kit)
-    ref = kit_reference(reference)
-    if dry_run:
-        digest = pack_artifact(KIT_ARTIFACT, bundle).digest
-        pinned = str(ref.pinned(digest))
-        if output_json:
-            _emit_json({"status": "would_push", "reference": pinned, "digest": digest})
-        else:
-            click.echo(f"Would push {pinned}; nothing was sent.")
-        return
-    with RegistryClient() as registry:
-        digest = push_kit(bundle, ref, registry=registry)
-    pinned = str(ref.pinned(digest))
-    if output_json:
-        _emit_json({"reference": pinned, "digest": digest})
-    else:
-        click.echo(pinned)
 
 
 @kit_group.command("pull")
@@ -1725,13 +1771,24 @@ def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None
 
 
 @kit_group.command("status")
+@click.option(
+    "--offline", is_flag=True, help="Skip looking up newer releases in the kit's registry."
+)
 @json_option
 @handle_errors
-def kit_status(output_json: bool) -> None:
-    """List installed kits and any kit paths edited since install."""
-    result = _server_call(
-        lambda client, instance_id: client.kit_status(instance_id),
-        command_name="cruxible kit status",
+def kit_status(offline: bool, output_json: bool) -> None:
+    """List installed kits, paths edited since install, and newer releases available.
+
+    For a kit installed from a registry the client lists the repository's tags
+    (short timeout) to show the latest available version; installing it stays
+    explicit (kit add REFERENCE:VERSION).
+    """
+    result = check_kit_updates(
+        _server_call(
+            lambda client, instance_id: client.kit_status(instance_id),
+            command_name="cruxible kit status",
+        ),
+        offline=offline,
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -1739,9 +1796,25 @@ def kit_status(output_json: bool) -> None:
     if not result.kits:
         click.echo("No kits installed.")
     for kit in result.kits:
-        click.echo(f"{kit.kit_id} {kit.version} {kit.content_digest}")
+        available = ""
+        if kit.update_check == "checked" and kit.latest_available is not None:
+            newer = kit_version_key(kit.latest_available) > kit_version_key(kit.version)
+            available = f"; latest {kit.latest_available} available" if newer else "; up to date"
+        elif kit.update_check != "checked":
+            available = f"; update check {kit.update_check.replace('_', ' ')}"
+        click.echo(f"{kit.kit_id} {kit.version} {kit.content_digest}{available}")
+        if kit.source is not None:
+            click.echo(f"  source: {kit.source}")
+        if kit.provenance is not None:
+            click.echo(
+                f"  built by {kit.provenance.principal_id or 'an unattributed principal'} on "
+                f"{kit.provenance.instance_id} at {kit.provenance.coordinate.git_oid[:12]} "
+                "(claimed)"
+            )
         for path in kit.drifted:
             click.echo(f"  edited locally: {path}")
+        for kept in kit.kept:
+            click.echo(f"  kept: {kept.identity} ({_KIT_CONSEQUENCE_TEXT[kept.consequence]})")
 
 
 @kit_group.command("remove")
@@ -1750,7 +1823,11 @@ def kit_status(output_json: bool) -> None:
 @json_option
 @handle_errors
 def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
-    """Propose retiring every artifact KIT_ID installed (previews by default)."""
+    """Retire every artifact KIT_ID installed (previews by default).
+
+    Lands at once when the approval policy requires no approval, otherwise it
+    stops at proposed.
+    """
     request = KitRemoveRequest(kit_id=kit_id, dry_run=dry_run, at=at)
     result = _server_call(
         lambda client, instance_id: client.remove_kit(instance_id, request),

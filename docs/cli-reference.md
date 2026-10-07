@@ -909,10 +909,11 @@ and `POST /{instance}/providers/install`.
 ~~~text
 cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
   --out KIT_DIR [--json]
-cruxible kit add KIT [--source TEXT] [--dry-run|--commit] [--at OID] [--json]
-cruxible kit push KIT REFERENCE [--dry-run] [--json]
+cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
+  [--retire-dependents IDENTITY]... [--allow-downgrade]
+  [--dry-run|--commit] [--at OID] [--json]
 cruxible kit pull REFERENCE --out DIR [--layout] [--json]
-cruxible kit status [--json]
+cruxible kit status [--offline] [--json]
 cruxible kit remove ID [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
@@ -924,8 +925,9 @@ reference. A bare name such as `project-state:1.0.0` resolves under
 Distributed, a kit is an OCI artifact (`application/vnd.cruxible.kit.v1`): the
 manifest is its config blob and the artifacts are one deterministic,
 uncompressed tar layer, so rebuilding a release gives the same manifest digest.
-`push` publishes a kit and prints the reference pinned to that digest; `pull`
-fetches and verifies one into a kit directory (or, with `--layout`, an OCI image
+There is no public publishing in v1: official kits are published by internal
+release tooling, which never moves an existing version tag to different content.
+`pull` fetches and verifies a kit into a kit directory (or, with `--layout`, an OCI image
 layout for offline transfer) without installing it. Every blob is checked
 against its digest, a digest reference must match the manifest pulled, and blobs
 are cached by digest under `CRUXIBLE_ARTIFACT_CACHE` (default
@@ -951,33 +953,55 @@ identity starts with an `--owns` prefix, plus every definition those pin, as
 snapshots with no predecessor that pin only the release's own digests; a pin into
 anything a kit cannot carry refuses the build. The release content digest
 therefore names the same definitions wherever the kit is installed, and any
-release can be installed on its own.
+release can be installed on its own. The manifest records where it was built
+(the building instance, its accepted coordinate and the building principal),
+shown by the install preview and `kit status`: claimed, not proven, and not part
+of the release identity.
 
-`add` diffs the release against this instance and proposes that diff as one
-change set: a missing definition is added as released, a changed one is replaced
-by a successor naming this instance's current digest, and one the kit installed
-that the release dropped is retired. Pins are remapped to the digests this
-instance actually holds. Every live artifact in this instance that pins a
-replaced kit definition takes one successor in the same change set, carried to
-the kit's final definitions as a succession would carry it; the SDK/MCP request's
-`dependents` names any that should be retired instead, and a dependent of a
-retired definition must be named. A definition the kit only carries (it pins it but
-does not own it) is added when absent and must otherwise match. A path edited
-since install, one defined outside the kit, and another kit's overlapping `owns`
-prefix are conflicts that block the change. `add` only proposes: activation, and
-any approval the instance's policy requires, are the ordinary `cruxible proposal
-approve` and `activate` steps. It records a `kit_receipt` Document,
-`documents/kit-<id>.json`, with each path's release digest and installed digest.
-A kit carries definitions only, so it never needs a Provider installed first.
+`add` diffs the release against this instance and always proposes that diff as
+one change set: a missing definition is added as released, a changed one is
+replaced by a successor naming this instance's current digest, and pins are
+remapped to the digests this instance actually holds. A definition this instance
+holds differently takes the release's version as a successor of its own, and the
+preview says what that does here: `overwrites your edit` (edited since install,
+compared by content, so a reverted edit is no edit), `re-adds a definition you
+retired`, `takes over a definition you defined outside the kit`, or `replaces a
+definition the kit depends on`. `--keep IDENTITY` (such as
+`ClaimType:acme.account.seats`, repeatable) and `--keep-local-edits` keep this
+instance's version instead; the receipt records each kept divergence, so a later
+release that leaves that definition as it was does not ask again. Every live
+artifact pinning a replaced definition takes one successor in the same change set,
+carried to the kit's final definitions; the preview counts each definition's
+dependents rather than listing them.
 
-`status` lists installed kits and the kit paths edited locally. `remove`
-proposes retiring what a kit owns (never what it only carries); the dependency
-closure refuses it while live Claims depend on those definitions. Removing a kit
-that is not installed refuses with `cruxible.kit.not_installed`, naming the
-installed kits.
+A definition the kit installed that the release dropped retires when nothing
+live depends on it. One with live dependents is kept until a decision names it:
+`--keep IDENTITY` keeps it live, `--retire-dependents IDENTITY` retires it and its
+dependents. Changing a definition another installed kit owns, or owning a prefix
+that overlaps another kit's, blocks the change. `add` refuses a release older than
+the installed one unless `--allow-downgrade`, and the preview names the transition
+(install, upgrade, downgrade, reinstall).
 
-MCP: `cruxible_kit_build`, `cruxible_kit_status`,
-`cruxible_kit_add` and `cruxible_kit_remove`. HTTP:
+`add` and `remove` land at once when the instance's approval policy requires no
+approval, like provider install and value writes; otherwise they stop at
+proposed for the ordinary `cruxible proposal approve` and `activate` steps. `add`
+records a `kit_receipt` Document, `documents/kit-<id>.json`, with each path's
+release digest, installed digest and content digest. A kit carries definitions
+only, so it never needs a Provider installed first.
+
+`status` lists installed kits, the kit paths edited locally, the divergences kept
+on purpose, and where each release was built. For a kit installed from a registry
+the client lists the repository's tags (MAJOR.MINOR.PATCH, short timeout) and
+shows the latest available version; `--offline` skips the check, and a kit from a
+directory or layout shows its local source. Installing an update stays explicit:
+`kit add REFERENCE:VERSION`. `remove` retires what a kit owns (never what it only
+carries); a path edited since install, or the dependency closure while live Claims
+depend on those definitions, blocks it. Removing a kit that is not installed
+refuses with `cruxible.kit.not_installed`, naming the installed kits.
+
+MCP: `cruxible_kit_build`, `cruxible_kit_status` (with the same update check,
+`offline`), `cruxible_kit_add` (by registry `reference`, which the adapter pulls,
+or inline `bundle`) and `cruxible_kit_remove`. HTTP:
 `POST /{instance}/kits/build`, `GET /{instance}/kits`,
 `POST /{instance}/kits` and `POST /{instance}/kits/remove`.
 SDK: `read_kit_directory` and `write_kit_directory` in `cruxible_client.kits`,

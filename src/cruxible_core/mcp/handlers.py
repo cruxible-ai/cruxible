@@ -16,6 +16,7 @@ from cruxible_client import (
     contracts,
     observe_next_workspace,
 )
+from cruxible_client.artifacts import unpack_artifact
 from cruxible_client.authoring.attestations import (
     append_prepared_claim_attestation,
     local_attestation_signer_from_environment,
@@ -76,6 +77,7 @@ from cruxible_client.contracts.kits import (
     KitAddRequest,
     KitBuildRequest,
     KitBuildResult,
+    KitBundle,
     KitChangeResult,
     KitRemoveRequest,
     KitStatus,
@@ -99,6 +101,7 @@ from cruxible_client.contracts.write import (
 )
 from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
+from cruxible_client.kits import KIT_ARTIFACT, check_kit_updates, fetch_kit_image
 from cruxible_client.transport.http import configured_principal_id
 from cruxible_core import __version__
 from cruxible_core.claims.claim_type_inputs import (
@@ -517,20 +520,56 @@ def handle_playbill_kit_build(instance_id: str, request: KitBuildRequest) -> Kit
     )
 
 
-def handle_playbill_kit_status(instance_id: str) -> KitStatus:
-    return _dispatch_remote_or_local(
+def handle_playbill_kit_status(instance_id: str, *, offline: bool = False) -> KitStatus:
+    """Installed kits; this adapter looks up newer releases of registry-sourced ones."""
+
+    status = _dispatch_remote_or_local(
         lambda client: client.kit_status(instance_id),
         lambda: playbill_api.playbill_kit_status(instance_id),
         operation_name="cruxible_kit_status",
     )
+    return check_kit_updates(status, offline=offline)
 
 
-def handle_playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResult:
+def handle_playbill_kit_add(
+    instance_id: str,
+    request: KitAddRequest | None = None,
+    *,
+    reference: str | None = None,
+    bundle: KitBundle | None = None,
+    keep: Sequence[str] = (),
+    keep_local_edits: bool = False,
+    retire_dependents: Sequence[str] = (),
+    allow_downgrade: bool = False,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> KitChangeResult:
+    """Install a kit by registry reference (this adapter pulls and verifies it) or bundle."""
+
+    if request is None:
+        if (reference is None) == (bundle is None):
+            raise DataValidationError("kit add takes exactly one of reference or bundle")
+        source = None
+        if reference is not None:
+            image, source = fetch_kit_image(reference)
+            bundle = unpack_artifact(KIT_ARTIFACT, image)
+        assert bundle is not None
+        request = KitAddRequest(
+            bundle=bundle,
+            source=source,
+            keep=tuple(sorted(set(keep))),
+            keep_local_edits=keep_local_edits,
+            retire_dependents=tuple(sorted(set(retire_dependents))),
+            allow_downgrade=allow_downgrade,
+            dry_run=dry_run,
+            at=at,
+        )
+    added = request
     return _dispatch_remote_or_local(
-        lambda client: client.add_kit(instance_id, request),
-        lambda: playbill_api.playbill_kit_add(instance_id, request),
+        lambda client: client.add_kit(instance_id, added),
+        lambda: playbill_api.playbill_kit_add(instance_id, added),
         operation_name="cruxible_kit_add",
-        local_payload=request.model_dump(mode="json"),
+        local_payload=added.model_dump(mode="json"),
     )
 
 

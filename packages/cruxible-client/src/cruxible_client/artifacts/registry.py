@@ -329,6 +329,21 @@ class RegistryClient:
 
         return assemble_image(manifest, fetch)
 
+    def list_tags(self, ref: Reference) -> tuple[str, ...]:
+        """The tags the registry holds for ``ref``'s repository."""
+
+        response, body = self._request(
+            "GET", ref, self._url(ref, "tags/list?n=1000"), limit=MAX_MANIFEST_BYTES
+        )
+        response.raise_for_status()
+        payload = json.loads(body)
+        tags = payload.get("tags") if isinstance(payload, dict) else None
+        if tags is None:
+            return ()
+        if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+            raise ValueError(f"{ref.registry} answered a malformed tag list")
+        return tuple(tags)
+
     def push(self, image: ArtifactImage, ref: Reference) -> str:
         """Upload every blob the registry lacks, then the manifest; returns its digest."""
 

@@ -106,6 +106,9 @@ class _World:
         assert activated.json()["status"] == "accepted", activated.text
 
     def settle(self, result: KitChangeResult) -> None:
+        if result.status == "accepted":
+            # The policy required no approval, so the change landed at once.
+            return
         assert result.status == "proposed" and result.proposal_id is not None, result
         if result.approval_required:
             self.approve(result.proposal_id)
@@ -177,11 +180,11 @@ class _World:
             KitBuildRequest(kit_id=kit_id, version=version, owns=owns),
         ).bundle
 
-    def add(self, bundle: KitBundle) -> KitChangeResult:
+    def add(self, bundle: KitBundle, **options: object) -> KitChangeResult:
         before = self.tree()
         result = playbill_api.playbill_kit_add(
             self.instance_id,
-            KitAddRequest(bundle=bundle, source="test", dry_run=False),
+            KitAddRequest(bundle=bundle, source="test", dry_run=False, **options),  # type: ignore[arg-type]
         )
         if result.status == "proposed":
             # Proposing lands nothing; the ordinary activation does.
@@ -348,7 +351,11 @@ def test_a_release_installs_byte_identical_and_reinstalling_it_changes_nothing(
     assert [item.path for item in release.manifest.artifacts] == [_path(PLAN), _path(SEATS)]
     assert all(b'"predecessor_digest": null' in content for content in release.contents().values())
     added = consumer.add(release)
-    assert added.status == "proposed"
+    # No approval is required here, so the install lands at once.
+    assert added.status == "accepted"
+    assert added.transition == "install"
+    assert added.provenance is not None
+    assert added.provenance.instance_id == publisher.instance_id
     assert {item.action for item in added.plan} == {"add"}
     tree = consumer.tree()
     for path, content in release.contents().items():
@@ -447,7 +454,10 @@ def test_changing_a_claim_type_carries_its_live_claims_as_a_succession_would(
     publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
     upgraded = consumer.add(publisher.build("1.1.0"))
 
-    assert (claim_paths[0], "carry") in {(item.path, item.action) for item in upgraded.plan}
+    # Dependents are counted, not listed, and carried to the replacement.
+    (seats,) = (item for item in upgraded.plan if item.path == _path(SEATS))
+    assert (seats.action, seats.dependent_count) == ("replace", 1)
+    assert claim_paths[0] not in {item.path for item in upgraded.plan}
     carried = consumer.tree()[claim_paths[0]]
     assert claim_type_digest(consumer.claim_type(SEATS)).tagged.encode("ascii") in carried
 
@@ -509,7 +519,8 @@ def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
     publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
     upgraded = consumer.add(publisher.build("1.1.0"))
 
-    assert (claim_path, "carry") in {(item.path, item.action) for item in upgraded.plan}
+    (seats,) = (item for item in upgraded.plan if item.path == _path(SEATS))
+    assert seats.dependent_count == 1
     carried = parse_claim(consumer.tree()[claim_path], path=claim_path)
     assert (
         carried.statement.claim_type_digest == claim_type_digest(consumer.claim_type(SEATS)).tagged
@@ -552,26 +563,135 @@ def test_claim_type_upgrade_is_one_verb_on_the_sdk_http_and_mcp_doors(
     assert publisher.pb.upgrade_claim_types(SEATS).status == "unchanged"
 
 
-def test_a_local_edit_blocks_the_upgrade_of_that_path_and_is_reported(
+def test_a_local_edit_takes_the_release_by_default_and_says_it_overwrites_your_edit(
     worlds: tuple[_World, _World],
 ) -> None:
     publisher, consumer = worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
-    first = publisher.build("1.0.0")
-    consumer.add(first)
+    consumer.add(publisher.build("1.0.0"))
     consumer.succeed(PLAN, {"type": "string", "minLength": 1})
     assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == (_path(PLAN),)
 
     publisher.succeed(PLAN, {"type": "string", "maxLength": 64})
-    second = publisher.build("1.1.0")
-    blocked = consumer.add(second)
+    upgraded = consumer.add(publisher.build("1.1.0"))
 
-    assert blocked.status == "blocked"
-    assert blocked.proposal_id is None
-    assert [(item.path, item.action) for item in blocked.plan] == [
-        (_path(PLAN), "conflict"),
-        (_path(SEATS), "unchanged"),
+    assert upgraded.status == "accepted"
+    assert upgraded.transition == "upgrade" and upgraded.installed_version == "1.0.0"
+    assert [(item.path, item.action, item.consequence) for item in upgraded.plan] == [
+        (_path(PLAN), "replace", "overwrites_your_edit"),
+        (_path(SEATS), "unchanged", None),
     ]
+    assert consumer.claim_type(PLAN).literal_schema == {"type": "string", "maxLength": 64}
+    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == ()
+
+
+def test_keeping_a_local_edit_records_it_so_the_next_upgrade_does_not_ask_again(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    consumer.add(publisher.build("1.0.0"))
+    consumer.succeed(PLAN, {"type": "string", "minLength": 1})
+    publisher.succeed(PLAN, {"type": "string", "maxLength": 64})
+    release = publisher.build("1.1.0")
+
+    kept = consumer.add(release, keep_local_edits=True)
+
+    assert [(item.path, item.action, item.consequence) for item in kept.plan] == [
+        (_path(PLAN), "keep", "overwrites_your_edit"),
+        (_path(SEATS), "unchanged", None),
+    ]
+    assert consumer.claim_type(PLAN).literal_schema == {"type": "string", "minLength": 1}
+    (installed,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
+    assert installed.drifted == ()
+    assert [(item.identity, item.consequence) for item in installed.kept] == [
+        (f"ClaimType:{PLAN}", "overwrites_your_edit")
+    ]
+    # A later release that leaves that definition as it was does not ask again.
+    publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
+    later = consumer.add(publisher.build("1.2.0"))
+    assert {(item.path, item.action) for item in later.plan} == {
+        (_path(PLAN), "keep"),
+        (_path(SEATS), "replace"),
+    }
+    assert consumer.claim_type(PLAN).literal_schema == {"type": "string", "minLength": 1}
+
+
+def test_reverting_a_local_edit_is_no_longer_an_edit(worlds: tuple[_World, _World]) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    consumer.succeed(SEATS, {"type": "integer", "minimum": 5})
+    consumer.succeed(SEATS, {"type": "integer"})
+
+    # A revert is a new successor with a new digest; content says it is unedited.
+    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == ()
+    publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
+    upgraded = consumer.add(publisher.build("1.1.0"))
+    assert [(item.action, item.consequence) for item in upgraded.plan] == [("replace", None)]
+
+
+def test_a_downgrade_needs_allow_downgrade(worlds: tuple[_World, _World]) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    older = publisher.build("1.0.0")
+    publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
+    consumer.add(publisher.build("1.1.0"))
+
+    refused = consumer.add(older)
+    assert (refused.status, refused.transition) == ("blocked", "downgrade")
+    assert "older than installed 1.1.0" in (refused.detail or "")
+
+    downgraded = consumer.add(older, allow_downgrade=True)
+    assert (downgraded.status, downgraded.transition) == ("accepted", "downgrade")
+    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].version == "1.0.0"
+
+
+def test_a_dropped_definition_retires_unless_kept_or_depended_on(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    consumer.add(publisher.build("1.0.0"))
+    _author_query(consumer, _query("local.accounts", (SEATS,)))
+    publisher.author(_claim_type(OWNER, {"type": "string"}))
+    full = publisher.build("2.0.0")
+    # The 2.0.0 release drops SEATS and PLAN and keeps OWNER.
+    kept_paths = {_path(OWNER)}
+    dropped = KitBundle(
+        manifest=full.manifest.model_copy(
+            update={
+                "artifacts": tuple(
+                    item for item in full.manifest.artifacts if item.path in kept_paths
+                )
+            }
+        ),
+        artifacts=tuple(item for item in full.artifacts if item.path in kept_paths),
+    )
+
+    preview = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=dropped, source="test")
+    )
+    by_path = {item.path: item for item in preview.plan}
+    # Nothing depends on PLAN: it retires. A local query depends on SEATS: kept.
+    assert (by_path[_path(PLAN)].action, by_path[_path(PLAN)].consequence) == (
+        "retire",
+        "release_dropped",
+    )
+    assert (by_path[_path(SEATS)].action, by_path[_path(SEATS)].dependent_count) == ("keep", 1)
+
+    retired = consumer.add(dropped, retire_dependents=(f"ClaimType:{SEATS}",))
+    assert {(item.path, item.action) for item in retired.plan} >= {
+        (_path(SEATS), "retire"),
+        (_path(PLAN), "retire"),
+        (_path(OWNER), "add"),
+    }
+    assert consumer.claim_type(SEATS).lifecycle.state == "retired"
+    query = parse_query_definition(
+        consumer.tree()["query-definitions/local.accounts.json"],
+        path="query-definitions/local.accounts.json",
+    )
+    assert query.lifecycle.state == "retired"
 
 
 def test_overlapping_ownership_is_refused(worlds: tuple[_World, _World]) -> None:
@@ -800,7 +920,7 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
     )
     refused = consumer.add(forged)
     assert refused.status == "blocked"
-    assert (CONTRACT_PATH, "conflict") in {(item.path, item.action) for item in refused.plan}
+    assert "owned by kit acme" in (refused.detail or "")
 
     removed = playbill_api.playbill_kit_remove(
         consumer.instance_id, KitRemoveRequest(kit_id="beta")
@@ -941,7 +1061,8 @@ def test_a_local_definition_pinning_two_changed_types_takes_one_successor(
     publisher.succeed(PLAN, {"type": "string", "minLength": 1})
     upgraded = consumer.add(publisher.build("1.1.0"))
 
-    assert (query_path, "carry") in {(item.path, item.action) for item in upgraded.plan}
+    assert query_path not in {item.path for item in upgraded.plan}
+    assert sum(item.dependent_count for item in upgraded.plan) == 1
     query = parse_query_definition(consumer.tree()[query_path], path=query_path)
     accepted = parse_query_definition(accepted_query, path=query_path)
     assert query.lifecycle.predecessor_digest == query_definition_digest(accepted).tagged
@@ -1092,32 +1213,20 @@ def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_clai
             "acme.orders-v1", max_rows=5, predecessor=capture_contract_digest(contract).tagged
         ),
     )
-    result = playbill_api.playbill_kit_add(
-        consumer.instance_id,
-        KitAddRequest(
-            bundle=publisher.build("1.1.0"),
-            source="test",
-            dependents=(
-                ClaimTypeSuccessionDependent(
-                    identity=claim_id,
-                    disposition="retire",
-                    claim_retirement_reason="was-rescinded",
-                ),
-            ),
-            dry_run=False,
-        ),
-    )
-    consumer.settle(result)
+    result = consumer.add(publisher.build("1.1.0"))
+    assert result.status == "accepted", result
 
     successor = consumer.claim_type("local.order.source")
     new_contract = parse_capture_contract(consumer.tree()[CONTRACT_PATH], path=CONTRACT_PATH)
     assert successor.pins[0].artifact_digest == capture_contract_digest(new_contract).tagged
     # The constant is a value that happened to equal the old digest; it stays.
     assert successor.literal_schema == {"type": "string", "const": held_digest}
-    retired = parse_claim(consumer.tree()[claim_path], path=claim_path)
-    assert retired.lifecycle.state == "retired"
-    assert retired.statement.claim_type_digest == claim_type_digest(successor).tagged
-    assert retired.statement.object.value == held_digest
+    # The Claim is carried to the successor type, its value untouched.
+    carried = parse_claim(consumer.tree()[claim_path], path=claim_path)
+    assert carried.identity == claim_id
+    assert carried.lifecycle.state == "live"
+    assert carried.statement.claim_type_digest == claim_type_digest(successor).tagged
+    assert carried.statement.object.value == held_digest
 
 
 def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
