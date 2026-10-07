@@ -270,7 +270,7 @@ def test_refusal_keeps_evidence_but_creates_no_candidate(tmp_path: Path) -> None
         ProposalIntegrityError,
         match=(
             r"refused proposal has no approvable candidate; run "
-            rf"`cruxible proposal refusal {result.admission.proposal_id}` for refusal code "
+            rf"`cruxible get {result.admission.proposal_id}` for refusal code "
             r"cruxible\.document\.body_missing"
         ),
     ):
