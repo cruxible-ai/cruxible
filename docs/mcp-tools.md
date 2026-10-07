@@ -115,7 +115,7 @@ operator acts with no MCP tool.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_provider_catalog` | List provider packages from the configured daemon repository | `READ_ONLY` |
+| `cruxible_provider_catalog` | List provider packages from the configured daemon repository, each with its version and the provider interface IDs it implements | `READ_ONLY` |
 | `cruxible_provider_install` | Install exact package bytes and propose its definitions, without execution grants | `ADMIN` |
 
 ## Kits

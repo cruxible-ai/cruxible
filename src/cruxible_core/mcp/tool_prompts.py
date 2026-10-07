@@ -6,7 +6,8 @@ from cruxible_core.errors import ConfigError
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_provider_catalog": (
-        "Use when you need to discover available provider packages and their node types."
+        "Use when you need to discover available provider packages: each package's name, "
+        "version and the provider interface IDs it implements."
     ),
     "cruxible_provider_install": (
         "Use when you want to install a provider package by name (from the configured "
