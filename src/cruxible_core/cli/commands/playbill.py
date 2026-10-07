@@ -796,30 +796,6 @@ def attach_workspace(
     click.echo(f"Config: {config_path}")
 
 
-@workspace_group.command("floor-delivery")
-@click.argument("state", type=click.Choice(["on", "off"]))
-@click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
-@json_option
-@handle_errors
-def workspace_floor_delivery(state: str, instance_id: str | None, output_json: bool) -> None:
-    """Choose whether the local daemon is the workspace floor's writer."""
-
-    if not _root_ctx_obj().get("server_socket"):
-        raise click.UsageError("workspace floor-delivery requires a local --server-socket")
-    selected = instance_id or _require_instance_id()
-    result = _dispatch_cli(
-        lambda client: client.set_floor_delivery(selected, enabled=state == "on"),
-        lambda: None,
-        allow_local=False,
-        command_name="cruxible workspace floor-delivery",
-    )
-    assert result is not None
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        click.echo(f"Floor delivery {state} for {selected}")
-
-
 @workspace_group.command("detach")
 @click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
 @change_control_options
@@ -6270,7 +6246,7 @@ def world_stub(out_path: str | None) -> None:
 
 @playbill_group.group("floor")
 def floor_group() -> None:
-    """Materialize the deterministic greppable floor of accepted state."""
+    """The greppable floor of accepted state: export it, and choose who delivers it."""
 
 
 @floor_group.command("export")
@@ -6348,6 +6324,36 @@ def export_floor(
         click.echo(f"Wrote {touched} floor file(s) to {written.destination}")
     click.echo(f"Floor digest: {manifest['floor_digest']}")
     click.echo(f"Coordinate: {written.coordinate.git_oid}")
+
+
+@floor_group.command("delivery")
+@click.argument("state", type=click.Choice(["on", "off"]))
+@click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
+@json_option
+@handle_errors
+def floor_delivery(state: str, instance_id: str | None, output_json: bool) -> None:
+    """Choose whether the local daemon writes this workspace's floor.
+
+    On (the default for an attached workspace), the daemon refreshes the floor
+    after every accepted generation and is its only writer, so ``floor export``
+    over TCP refuses. Off, nothing delivers it and ``floor export`` pulls it.
+    Needs the local --server-socket the workspace was attached through.
+    """
+
+    if not _root_ctx_obj().get("server_socket"):
+        raise click.UsageError("floor delivery requires a local --server-socket")
+    selected = instance_id or _require_instance_id()
+    result = _dispatch_cli(
+        lambda client: client.set_floor_delivery(selected, enabled=state == "on"),
+        lambda: None,
+        allow_local=False,
+        command_name="cruxible floor delivery",
+    )
+    assert result is not None
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        click.echo(f"Floor delivery {state} for {selected}")
 
 
 @playbill_group.group("coverage")

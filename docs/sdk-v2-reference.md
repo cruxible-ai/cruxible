@@ -1757,7 +1757,10 @@ workspace defaults to daemon delivery as its sole floor writer. Over a Unix-sock
 to opt out and use client delivery; `enabled=True` enables daemon delivery again.
 Detaching clears the flag; a later attachment defaults on again. `host_workspace_registration` reports `floor_delivery` and
 the local path, which the workspace adapter checks before delegating to
-`deliver_floor_now`. The latter returns a `FloorDeliveryResult`
+`deliver_floor_now`. Passing `workspace_root=` also answers `delivers_here` on
+any transport (the daemon compares paths and never echoes its own), so a TCP
+client refuses to write a floor the daemon delivers. `cx.refresh_workspace()`
+pulls the floor at head (or `at=`) for workspaces the daemon does not deliver. The latter returns a `FloorDeliveryResult`
 with the delta and the ordinary `WorkspaceFloorWriteResult` receipt.
 Host inspection and server status also show `floor_delivery`. Both client apply
 and daemon delivery create the local `.cruxible/floor/.gitignore` containing `*`;

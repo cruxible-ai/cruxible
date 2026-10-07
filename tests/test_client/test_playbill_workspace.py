@@ -50,13 +50,13 @@ def _export(*, content: bytes = b'{"fresh":true}\n') -> contracts.FloorExport:
         }
     ]
     manifest = {
-        "tag": "playbill-floor-manifest-v2",
-        "format": "playbill-floor-export-v2",
+        "tag": "playbill-floor-manifest-v6",
+        "format": "playbill-floor-export-v6",
         "coordinate": _coordinate().model_dump(mode="json"),
         "files": inventory,
         "floor_digest": typed_digest(
             Sha256Value,
-            "playbill-floor-export-v2",
+            "playbill-floor-export-v6",
             {"files": inventory},
         ).tagged,
     }

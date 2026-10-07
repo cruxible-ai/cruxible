@@ -144,7 +144,7 @@ exempt. By that principle these are exempt:
   already shown by `get PROPOSAL_ID`;
 - `proposal activate`: its preview is the proposal's evaluation, already
   shown; the commit-time `at` check covers the head moving under it;
-- `workspace floor-delivery on|off`: its effect is its input;
+- `floor delivery on|off`: its effect is its input;
 - floor deliver-now: its result is fully determined by the accepted head (the
   floor is a pure function of the accepted coordinate), it is idempotent, and
   it writes only the derived, regenerable `.cruxible/floor`.
@@ -489,13 +489,17 @@ usual Trigger authoring flow; existing instances are unchanged.
 
 `floor.refresh` warms the floor index on every daemon. Workspace delivery is
 on by default for an attached workspace. Use `workspace attach --no-floor-delivery`
-or `cruxible workspace floor-delivery off` through the local Unix socket
+or `cruxible floor delivery off` through the local Unix socket
 to opt out; `on` enables delivery again. Detaching clears it, and a later attachment
 defaults on again. Host inspection and daemon status label it "on (default)" or
 "off (opted out)". With delivery
-on, the daemon writes only `.cruxible/floor`, and local client floor writes ask
-it to deliver immediately. Remote clients and workspaces with delivery off keep
-applying deltas locally. Both writers create `.cruxible/floor/.gitignore` containing
+on, the daemon is the floor's only writer: it writes only `.cruxible/floor`,
+and a `floor export` over the local socket asks it to deliver immediately, while
+one over TCP refuses rather than write a second copy (the registration route
+answers `delivers_here` for the caller's workspace root without echoing the
+daemon's path). Workspaces the daemon does not deliver to (a remote daemon,
+delivery off, MCP library mode) pull the floor with `floor export`, MCP
+`cruxible_floor_export mode=write`, or SDK `cx.refresh_workspace()`. Both writers create `.cruxible/floor/.gitignore` containing
 `*`, which ignores the entire floor, including itself, in Git. It is local metadata
 outside the accepted floor manifest and survives delta applies and full repairs.
 A failed apply stalls the floor consumer with `cruxible floor export` as its
@@ -563,7 +567,6 @@ cruxible host create [--instance-id ID] [--workspace DIR] [--replace] [--dry-run
 cruxible host show INSTANCE [--json]
 cruxible workspace attach [--instance-id ID] [--replace] [--no-floor-delivery]
   [--dry-run|--commit] [--at DIGEST]
-cruxible workspace floor-delivery STATE [--instance-id ID] [--json]
 cruxible workspace detach [--instance-id ID] [--dry-run|--commit] [--at DIGEST] [--json]
 ~~~
 
@@ -582,7 +585,7 @@ the writer adds `.cruxible/coverage.json` to this repository's machine-local
 
 Daemon floor delivery is on by default when a local workspace is registered.
 `workspace attach` enables it unless `--no-floor-delivery` is supplied;
-`workspace floor-delivery STATE` takes `on` or `off`: `off` opts out after
+`floor delivery STATE` takes `on` or `off`: `off` opts out after
 attachment, and `on` restores it.
 
 A TCP client never sends its local path to the daemon. Implicit attachment from
@@ -2417,8 +2420,16 @@ advances; the cursor binds the lower bound, access profile, and page budgets.
 ## floor
 
 ~~~text
-cruxible floor export [--force] [--with-discovery]
+cruxible floor export [--force] [--with-discovery] [--json]
+cruxible floor delivery on|off [--instance-id ID] [--json]
 ~~~
+
+The floor has one writer. A local daemon with a registered workspace and
+delivery on writes it after every accepted generation (the `floor-refresh`
+Trigger), and `floor export` over its socket only asks it to deliver now; over
+TCP the export refuses, naming `floor delivery off` as the way to write from the
+client. Everywhere else `floor export` is the pull. `floor delivery` (local
+socket only) chooses between the two.
 
 Writes the deterministic greppable floor of accepted state to the fixed derived
 cache `.cruxible/floor/` under the current workspace. The floor is the

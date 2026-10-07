@@ -15,7 +15,6 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from cruxible_client import (
     CruxibleClient,
     contracts,
-    inspect_workspace_floor,
     observe_next_workspace,
 )
 from cruxible_client.authoring.attestations import (
@@ -36,6 +35,7 @@ from cruxible_client.authoring.sources import (
 from cruxible_client.authoring.workspace import (
     daemon_floor_delivery,
     floor_export_parts,
+    inspect_workspace_floor,
     observe_next_workspace_with_coverage,
     workspace_floor_freshness,
     write_workspace_floor,
@@ -2506,7 +2506,7 @@ def handle_playbill_floor_export(
                 instance_id, base_generation=generation, base_renderer=renderer
             ),
             delivery=(lambda: daemon_floor_delivery(client, instance_id, workspace))
-            if transport.get("server_socket")
+            if transport
             else None,
             instance_id=instance_id,
             workspace=workspace,
@@ -2524,7 +2524,7 @@ def handle_playbill_floor_export(
         lambda client: write(
             lambda: client.export_floor(instance_id, **parts),
             (lambda: daemon_floor_delivery(client, instance_id, workspace, include=tuple(include)))
-            if transport.get("server_socket")
+            if transport
             else None,
         ),
         lambda: write(lambda: playbill_api.playbill_export_floor(instance_id, **parts)),

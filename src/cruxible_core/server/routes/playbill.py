@@ -1285,9 +1285,7 @@ async def export_floor(
         return playbill_api.playbill_export_floor(
             resolved,
             at=req.at,
-            format_version=req.format_version,
             include=req.include,
-            review_notes_oid=req.review_notes_oid,
         )
 
     async with FLOOR_ADMISSION.admit(resolved) as admitted:

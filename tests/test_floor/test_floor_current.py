@@ -189,7 +189,6 @@ def test_the_floor_holds_no_provenance_mirror_or_source_bodies(world: dict[str, 
 
 def test_identical_accepted_state_gives_identical_bytes(world: dict[str, Any]) -> None:
     instance: PlaybillInstance = world["instance"]
-    instance.floor_export_memo.clear()
     instance.floor_structure_memo.clear()
     assert service_export_playbill_floor(instance) == world["files"]
 
@@ -609,7 +608,6 @@ def _spoil(instance: PlaybillInstance, digest: str, how: str) -> None:
 def _cold(instance: PlaybillInstance, **options: Any) -> dict[str, bytes]:
     """An export with no kept floor output and no remembered verdict derivation."""
 
-    instance.floor_export_memo.clear()
     instance.floor_structure_memo.clear()
     instance.floor_current_memo.clear()
     return service_export_playbill_floor(instance, **options)

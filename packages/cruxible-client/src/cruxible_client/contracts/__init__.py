@@ -403,6 +403,10 @@ class HostWorkspaceRegistration(BaseModel):
     status: HostWorkspaceRegistrationStatus
     workspace_path: str | None = None
     floor_delivery: bool = False
+    #: Answered only when the caller names a workspace root: whether the daemon
+    #: delivers that workspace's floor (delivery on and registered to that root).
+    #: The daemon compares paths and never echoes its own, so this works over TCP.
+    delivers_here: bool | None = None
 
 
 HostCompatibility: TypeAlias = Literal[
@@ -1887,12 +1891,7 @@ class FloorExport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal[
-        "playbill-floor-export-v1",
-        "playbill-floor-export-v2",
-        "playbill-floor-export-v5",
-        "playbill-floor-export-v6",
-    ] = "playbill-floor-export-v2"
+    tag: Literal["playbill-floor-export-v6"] = "playbill-floor-export-v6"
     coordinate: AcceptedCoordinate
     manifest: dict[str, Any]
     files: list[FloorFile]

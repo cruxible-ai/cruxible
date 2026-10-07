@@ -2489,18 +2489,26 @@ class Cruxible:
     def refresh_workspace(
         self,
         *,
-        at: AcceptedCoordinate | api.AcceptedCoordinate,
+        at: AcceptedCoordinate | api.AcceptedCoordinate | None = None,
     ) -> api.FloorRefreshResult:
-        """Materialize the configured floor at an explicit accepted coordinate.
+        """Pull the configured floor, at the accepted head unless ``at`` pins one.
 
-        Reports the coordinate written, or a failed/not_configured status.
-        Does not advance this connection's read coordinate or check agent-owned
-        projection blocks; use block.sync() separately for that inspection.
+        The pull for setups the daemon does not deliver to (a remote daemon,
+        delivery off, MCP library mode). A daemon that delivers this workspace's
+        floor is its only writer: over the local socket it writes now (head only);
+        over TCP the refresh reports failed rather than writing a second copy.
+        Reports the coordinate written, or a failed/not_configured status. Does
+        not advance this connection's read coordinate or check projection blocks;
+        use block.sync() for that.
 
         Next: grep ``.cruxible/floor/current/`` for what it wrote.
         """
 
-        coordinate = api.AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+        coordinate = (
+            None
+            if at is None
+            else api.AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+        )
         return refresh_workspace_floor(
             self._client, self._instance_id, workspace=self._workspace_root, at=coordinate
         )
@@ -2509,7 +2517,7 @@ class Cruxible:
         """Activate one proposal: the daemon settles it, nothing local is written.
 
         The daemon's floor-refresh trigger delivers the floor to a local
-        workspace it serves; elsewhere ``cx.refresh_workspace(at=...)`` pulls it.
+        workspace it serves; elsewhere ``cx.refresh_workspace()`` pulls it.
         The receipt's coordinate becomes this live connection's last observation.
         Subsequent live reads select current head; use at(receipt.accepted_coordinate)
         for exact readback. Explicitly pinned contexts and World snapshots stay fixed.

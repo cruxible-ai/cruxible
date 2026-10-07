@@ -369,8 +369,16 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.HostWorkspaceAttachResult)
 
-    def host_workspace_registration(self, instance_id: str) -> contracts.HostWorkspaceRegistration:
-        response = self._client.get(f"/api/v1/{instance_id}/workspace-registration")
+    def host_workspace_registration(
+        self, instance_id: str, *, workspace_root: str | None = None
+    ) -> contracts.HostWorkspaceRegistration:
+        """The daemon's workspace registration; naming ``workspace_root`` also
+        answers whether the daemon delivers that workspace's floor."""
+
+        response = self._client.get(
+            f"/api/v1/{instance_id}/workspace-registration",
+            params={} if workspace_root is None else {"workspace_root": workspace_root},
+        )
         return self._parse_model(response, contracts.HostWorkspaceRegistration)
 
     def set_floor_delivery(
@@ -1831,17 +1839,13 @@ class CruxibleClient:
         instance_id: str,
         *,
         at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
-        format_version: Literal[2, 5] = 5,
         include: Sequence[contracts.FloorExportPart] = (),
-        review_notes_oid: str | None = None,
     ) -> contracts.FloorExport:
         response = self._client.post(
             f"/api/v1/{instance_id}/floor/export",
             json={
                 "at": self._coordinate_body(at),
-                "format_version": format_version,
                 **({"include": sorted(set(include))} if include else {}),
-                "review_notes_oid": review_notes_oid,
             },
         )
         return self._parse_model(response, contracts.FloorExport)

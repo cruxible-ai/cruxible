@@ -51,7 +51,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("host", "create"): "create",
     ("workspace", "attach"): "manual",
     ("workspace", "detach"): "manual",
-    ("workspace", "floor-delivery"): "manual",
+    ("floor", "delivery"): "manual",
     ("init",): "active",
     ("instance", "decommission"): "active",
     ("body", "store"): "active",
@@ -402,11 +402,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "attach_workspace",
                 "Attach this Git worktree to an existing host.",
             ),
-            "floor-delivery": _command(
-                "playbill",
-                "workspace_floor_delivery",
-                "Choose the local daemon workspace floor writer.",
-            ),
             "detach": _command(
                 "playbill",
                 "detach_workspace",
@@ -735,11 +730,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     ),
     "stub": _command("playbill", "world_stub", "Write a .pyi typing the accepted world."),
     "floor": _group(
-        "Materialize the deterministic greppable floor.",
+        "Export the greppable floor, and choose who delivers it.",
         {
             "export": _command(
                 "playbill", "export_floor", "Write the accepted floor to a directory."
-            )
+            ),
+            "delivery": _command(
+                "playbill",
+                "floor_delivery",
+                "Turn the local daemon's floor delivery on or off.",
+            ),
         },
         module="playbill",
         attr="floor_group",

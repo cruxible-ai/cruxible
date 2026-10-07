@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -2363,9 +2363,7 @@ def playbill_export_floor(
     instance_id: str,
     *,
     at: AcceptedCoordinate | None = None,
-    format_version: Literal[2, 5] = 5,
     include: tuple[contracts.FloorExportPart, ...] = (),
-    review_notes_oid: str | None = None,
 ) -> contracts.FloorExport:
     """Return the deterministic floor as base64 bytes keyed by floor path.
 
@@ -2380,9 +2378,7 @@ def playbill_export_floor(
     files = service_export_playbill_floor(
         get_playbill_manager().get(instance_id),
         at=at,
-        format_version=format_version,
         include=include,
-        review_notes_oid=review_notes_oid,
         access=_access(instance_id, include_body=may_read_bodies),
     )
     manifest = json.loads(files[MANIFEST_PATH])

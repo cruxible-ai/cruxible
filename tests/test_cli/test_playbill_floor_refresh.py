@@ -115,6 +115,17 @@ def test_floor_export_records_missing_config_and_clears_floor_missing(
     save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
 
     class StubClient:
+        socket_path = None
+
+        def host_workspace_registration(
+            self, instance_id: str, *, workspace_root: str | None = None
+        ) -> contracts.HostWorkspaceRegistration:
+            # A TCP export asks whether the daemon delivers this floor first.
+            assert workspace_root is not None
+            return contracts.HostWorkspaceRegistration(
+                instance_id=instance_id, status="not_registered", delivers_here=False
+            )
+
         def floor_delta(
             self,
             instance_id: str,

@@ -404,7 +404,5 @@ class FloorDeltaRequest(_StrictPlaybillRequest):
 
 class FloorExportRequest(_StrictPlaybillRequest):
     at: AcceptedCoordinate | None = None
-    format_version: Literal[2, 5] = 5
-    # Opt-in parts of a v5 floor; "discovery" adds the discovery cards.
+    # Opt-in parts of the floor; "discovery" adds the discovery cards.
     include: tuple[FloorExportPart, ...] = ()
-    review_notes_oid: str | None = None

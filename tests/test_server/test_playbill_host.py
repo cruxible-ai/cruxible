@@ -353,6 +353,38 @@ def test_host_registration_status_separates_remote_visibility_from_registration(
     assert remote.status_code == 200, remote.text
     assert remote.json()["status"] == "registered"
     assert remote.json()["workspace_path"] is None
+    assert remote.json()["delivers_here"] is None
+
+
+def test_registration_answers_delivers_here_over_tcp_without_echoing_paths(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    """Single floor writer: a TCP client learns the daemon delivers its floor (precheck 1)."""
+
+    workspace = tmp_path / "delivered-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(
+        instance_id="inst_delivers_here",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+    url = "/api/v1/inst_delivers_here/workspace-registration"
+
+    here = host_client.get(url, params={"workspace_root": str(workspace)})
+    assert here.status_code == 200, here.text
+    assert here.json()["floor_delivery"] is True
+    assert here.json()["delivers_here"] is True
+    assert here.json()["workspace_path"] is None
+    elsewhere = host_client.get(url, params={"workspace_root": str(tmp_path / "other")})
+    assert elsewhere.json()["delivers_here"] is False
+    get_registry().set_floor_delivery("inst_delivers_here", False)
+    off = host_client.get(url, params={"workspace_root": str(workspace)})
+    assert off.json()["delivers_here"] is False
 
 
 def test_transport_credentials_do_not_initialize_playbill_or_a_legacy_graph(

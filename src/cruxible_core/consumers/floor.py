@@ -223,10 +223,10 @@ def _refresh_floor_admitted(
             "Daemon floor delivery owns this workspace's floor and writes only the "
             "current accepted head; at names a different coordinate. To read an older "
             "coordinate, use get or query with at. To write a pinned floor, turn daemon "
-            "delivery off: cruxible workspace floor-delivery off "
+            "delivery off: cruxible floor delivery off "
             f"--instance-id {instance_id}.",
             repair=RepairOperation(
-                operation="cruxible.workspace.floor-delivery",
+                operation="cruxible.floor.delivery",
                 arguments={"state": "off", "instance_id": instance_id},
             ),
         )

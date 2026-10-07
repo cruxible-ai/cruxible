@@ -35,7 +35,9 @@ EXEMPT: dict[str, str] = {
     # Daemon-wide operator levers the runtime bootstrap secret drives before,
     # or independently of, any principal; none changes governed state.
     "create_playbill_host": "allocates an empty host before any principal exists",
-    "set_playbill_floor_delivery": "chooses a workspace writer under local attachment authority",
+    "set_playbill_floor_delivery_admitted": (
+        "chooses a workspace writer under local attachment authority"
+    ),
     "playbill_host_workspace_detach": "releases a worktree registration; the operator lever",
     "playbill_host_workspace_attach": "registers a worktree to a host; the operator lever",
     "server_restart": "daemon lifecycle",
@@ -45,10 +47,10 @@ EXEMPT: dict[str, str] = {
 
 # HTTP calls these permission-checked bodies after async admission. Thread
 # callers use their public hold wrappers; both reach the same authority check.
+# Floor delivery has no thread caller: its routes call the admitted bodies,
+# which are public facade functions themselves.
 _ADMITTED_FACADES = {
-    "_set_playbill_floor_delivery_admitted": "set_playbill_floor_delivery",
     "_playbill_host_workspace_detach_admitted": "playbill_host_workspace_detach",
-    "_deliver_playbill_floor_now_admitted": "deliver_playbill_floor_now",
 }
 
 

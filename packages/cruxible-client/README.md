@@ -565,7 +565,7 @@ activate(proposal_id: str) -> api.ActivationReceipt
 
 Activates one proposal and returns its ActivationReceipt. Updates a live connection’s last observed coordinate.
 
-**Conditions and effects:** A daemon act: signs no approval and writes nothing locally. The daemon's floor-refresh trigger delivers the floor to a workspace it serves; elsewhere `cx.refresh_workspace(at=...)` pulls it. Use cx.at(receipt.accepted_coordinate) for exact readback.
+**Conditions and effects:** A daemon act: signs no approval and writes nothing locally. The daemon's floor-refresh trigger delivers the floor to a workspace it serves; elsewhere `cx.refresh_workspace()` pulls it. Use cx.at(receipt.accepted_coordinate) for exact readback.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -592,17 +592,17 @@ One page of proposals; follow `next_cursor` while `truncated`. Read one with `cx
 ```text
 refresh_workspace(
     *,
-    at: AcceptedCoordinate | api.AcceptedCoordinate,
+    at: AcceptedCoordinate | api.AcceptedCoordinate | None = None,
 ) -> api.FloorRefreshResult
 ```
 
-Exports/materializes the configured floor at the explicit accepted coordinate and reports written/failed/not_configured.
+Pulls the configured floor, at the accepted head unless `at` pins a coordinate, and reports refreshed/failed/not_configured. It is the SDK's pull for setups the daemon does not deliver to (a remote daemon, delivery off, MCP library mode).
 
-**Conditions and effects:** Writes client workspace files; does not advance the reading context or check/repin projection blocks.
+**Conditions and effects:** Writes client workspace files; does not advance the reading context or check/repin projection blocks. A daemon delivering this workspace's floor is its only writer: over the local socket it writes now (head only); over TCP the refresh reports `failed` instead of writing a second copy.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `at` | Required | Explicit accepted coordinate. Omission follows the live/pinned object semantics stated above. |
+| `at` | `None` (head) | An accepted coordinate to pin the pull to. |
 
 <a id="api-cruxible-file"></a>
 
@@ -6090,9 +6090,7 @@ include constructor/validator definitions for request and response contracts.
 | `PredictionSettlement` | `cruxible_client.authoring.sdk` · [Source](src/cruxible_client/authoring/sdk.py) |
 | `InsertionApplyError` | `cruxible_client.authoring.insertions` · [Source](src/cruxible_client/authoring/insertions.py) |
 | `WorkspaceError` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
-| `inspect_workspace_floor` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
 | `observe_next_workspace` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
-| `materialize_floor` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
 | `ProcedureRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ProcedureBudget` | `cruxible_client.contracts.procedures.models` · [Source](src/cruxible_client/contracts/procedures/models.py) |
 | `ProcedureDefinitionV3` | `cruxible_client.contracts.procedures.models` · [Source](src/cruxible_client/contracts/procedures/models.py) |
@@ -6797,14 +6795,6 @@ configured_floor_path(workspace: 'str | Path') -> 'str | None'
 
 Return the declared v2 floor path, or `None` when absent/unconfigured.
 
-#### `inspect_workspace_floor`
-
-```text
-inspect_workspace_floor(workspace: 'str | Path', *, current_coordinate: 'contracts.AcceptedCoordinate | None') -> 'contracts.WorkspaceFloorStatus'
-```
-
-Compare the installed configured floor with a daemon coordinate.
-
 #### `observe_next_workspace`
 
 ```text
@@ -6844,14 +6834,6 @@ coverage is complete only when every Document source can be read and its
 complete marker set parses. Missing or malformed evidence removes that
 kind from `complete_kinds` instead of manufacturing absence.
 
-#### `materialize_floor`
-
-```text
-materialize_floor(workspace: 'str | Path', *, export: 'contracts.FloorExport', force: 'bool' = True) -> 'contracts.WorkspaceFloorWriteResult'
-```
-
-Verify and exactly replace one workspace-relative floor directory.
-
 #### `record_floor_output`
 
 ```text
@@ -6869,8 +6851,7 @@ refresh_workspace_floor(client: '_FloorClient', instance_id: 'str', *, workspace
 Refresh only the local floor and report the coordinate actually written.
 
 A pinned request refuses a mismatched export before touching local files.
-inspect_workspace_floor reports the installed coordinate independently,
-including after a failed refresh. No projection prose or declaration changes.
+No projection prose or declaration changes.
 
 #### `validate_workspace_config_write`
 
