@@ -279,7 +279,8 @@ def instantiate_blueprint(
                 slot=slot_name,
             )
         implementations[slot_name] = implementation
-        interface_digests[provider.artifact_digest] = slot.interface_digest
+        # Verified per slot: the one implementation serving this slot's interface.
+        interface_digests[slot_name] = slot.interface_digest
         bindings.append(
             ProcedureSlotBinding(
                 slot_name=slot_name,
@@ -288,6 +289,7 @@ def instantiate_blueprint(
                     target=provider.provider.identity,
                     artifact_digest=provider.artifact_digest,
                 ),
+                interface_digest=slot.interface_digest,
             )
         )
     try:

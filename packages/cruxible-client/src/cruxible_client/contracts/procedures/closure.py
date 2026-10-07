@@ -27,11 +27,23 @@ class _StrictClosureModel(BaseModel):
 
 
 class ProcedureSlotBinding(_StrictClosureModel):
-    """One open slot bound to one exact accepted artifact."""
+    """One open slot bound to one exact accepted artifact, through the slot's interface.
+
+    ``interface_digest`` is the interface the slot declares and the binding
+    serves. One artifact may fill several slots of different interfaces, so the
+    interface belongs to the binding, not to the artifact.
+    """
 
     tag: Literal["cruxible-procedure-slot-binding-v1"] = "cruxible-procedure-slot-binding-v1"
     slot_name: str
     artifact_pin: ArtifactPin
+    interface_digest: str
+
+    @field_validator("interface_digest")
+    @classmethod
+    def _interface(cls, value: str) -> str:
+        ArtifactDigest.from_tagged(value)
+        return value
 
 
 class ProcedureSlotInterface(_StrictClosureModel):
@@ -80,9 +92,11 @@ def close_procedure_pin_slots(
 ) -> ClosedProcedurePins:
     """Close every declared slot with one exact, role/kind/interface-matched pin.
 
-    ``interface_digests`` is keyed by the bound artifact digest.  It is produced
-    by the artifact family's frozen interface projection, never by a caller's
-    assertion or by a mutable provider name.
+    ``interface_digests`` is keyed by slot name: the interface the bound
+    artifact was verified to implement for that slot (one artifact can serve
+    several slots of different interfaces). It is produced by the artifact
+    family's frozen interface projection, never by a caller's assertion or by a
+    mutable provider name.
     """
 
     binding_names = tuple(binding.slot_name for binding in bindings)
@@ -114,12 +128,15 @@ def close_procedure_pin_slots(
             raise ProcedurePinClosureError(
                 f"slot {binding.slot_name!r} requires kind {declaration.artifact_kind!r}"
             )
-        actual_interface = interface_digests.get(pin.artifact_digest)
+        actual_interface = interface_digests.get(binding.slot_name)
         if actual_interface is None:
             raise ProcedurePinClosureError(
                 f"slot {binding.slot_name!r} bound artifact has no verified interface"
             )
-        if actual_interface != declaration.interface_digest:
+        if (
+            actual_interface != declaration.interface_digest
+            or binding.interface_digest != declaration.interface_digest
+        ):
             raise ProcedurePinClosureError(
                 f"slot {binding.slot_name!r} interface digest does not match"
             )

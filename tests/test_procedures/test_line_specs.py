@@ -110,7 +110,7 @@ def _accepted_procedure() -> tuple[AcceptedProcedure, ArtifactPin, Mapping[str, 
 
     query_pin = _pin("query", "QueryDefinition", "claims-by-status")
     accepted = accepted_procedure(_definition(query_pin), activation_policy="drain")
-    return accepted, query_pin, {query_pin.artifact_digest: _digest("query-interface")}
+    return accepted, query_pin, {"query": _digest("query-interface")}
 
 
 def _line(
@@ -167,7 +167,9 @@ def test_line_spec_round_trip_and_digest_golden() -> None:
 def test_slot_closure_refuses_missing_extra_kind_role_and_interface() -> None:
     blueprint, _owned = carried_definition(_definition(ProcedurePinSlotRef(slot_name="query")))
     _accepted, query_pin, interfaces = _accepted_procedure()
-    binding = ProcedureSlotBinding(slot_name="query", artifact_pin=query_pin)
+    binding = ProcedureSlotBinding(
+        slot_name="query", artifact_pin=query_pin, interface_digest=_digest("query-interface")
+    )
 
     closed = close_procedure_pin_slots(
         blueprint, (), bindings=(binding,), interface_digests=interfaces
@@ -182,24 +184,24 @@ def test_slot_closure_refuses_missing_extra_kind_role_and_interface() -> None:
         close_procedure_pin_slots(
             blueprint,
             (),
-            bindings=(binding, ProcedureSlotBinding(slot_name="zz", artifact_pin=query_pin)),
+            bindings=(binding, binding.model_copy(update={"slot_name": "zz"})),
             interface_digests=interfaces,
         )
 
-    wrong_role = ProcedureSlotBinding(
-        slot_name="query",
-        artifact_pin=query_pin.model_copy(update={"role": "provider"}),
+    wrong_role = binding.model_copy(
+        update={"artifact_pin": query_pin.model_copy(update={"role": "provider"})}
     )
     with pytest.raises(ProcedurePinClosureError, match="requires role"):
         close_procedure_pin_slots(
             blueprint, (), bindings=(wrong_role,), interface_digests=interfaces
         )
 
-    wrong_kind = ProcedureSlotBinding(
-        slot_name="query",
-        artifact_pin=query_pin.model_copy(
-            update={"target": ArtifactIdentity(kind="Provider", name="claims-by-status")}
-        ),
+    wrong_kind = binding.model_copy(
+        update={
+            "artifact_pin": query_pin.model_copy(
+                update={"target": ArtifactIdentity(kind="Provider", name="claims-by-status")}
+            )
+        }
     )
     with pytest.raises(ProcedurePinClosureError, match="requires kind"):
         close_procedure_pin_slots(
@@ -211,7 +213,7 @@ def test_slot_closure_refuses_missing_extra_kind_role_and_interface() -> None:
             blueprint,
             (),
             bindings=(binding,),
-            interface_digests={query_pin.artifact_digest: _digest("wrong")},
+            interface_digests={"query": _digest("wrong")},
         )
 
 

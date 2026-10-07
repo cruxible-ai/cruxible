@@ -639,3 +639,90 @@ def test_admission_refuses_a_new_instance_of_a_retired_blueprint(tmp_path, monke
     assert "cruxible.procedure.blueprint_origin_mismatch" in {
         item.code for item in result.evaluation.diagnostics
     }
+
+
+@pytest.mark.usefixtures("contracted_demo")
+def test_one_provider_fills_two_slots_of_different_interfaces() -> None:
+    """S3 review a F-002: slot interfaces are verified per slot, not per Provider."""
+
+    from cruxible_client.contracts.procedures.blueprints import (
+        blueprint_digest,
+        instantiate_blueprint,
+    )
+    from tests.core_support._p2b1_support import accepted_provider
+
+    other_interface, other_implementation = "sha256:" + "7" * 64, "sha256:" + "8" * 64
+    concrete = _concrete()
+    raw = concrete.definition.model_dump(mode="json", by_alias=True)
+    raw["name"] = "two-slot"
+    first = raw["nodes"][0]
+    first["provider"] = {"tag": "playbill-procedure-pin-slot-ref-v1", "slot_name": "a"}
+    first["implementation_digest"] = None
+    second = {
+        **first,
+        "node_id": "second",
+        "as": "result2",
+        "provider": {"tag": "playbill-procedure-pin-slot-ref-v1", "slot_name": "b"},
+        "interface_digest": other_interface,
+    }
+    second.pop("next", None)
+    first["next"] = "second"
+    raw["nodes"] = [first, second]
+    raw["returns"] = "result2"
+    raw["pin_slots"] = [
+        {
+            "slot_name": "a",
+            "pin_role": "provider",
+            "artifact_kind": "Provider",
+            "interface_digest": first["interface_digest"],
+        },
+        {
+            "slot_name": "b",
+            "pin_role": "provider",
+            "artifact_kind": "Provider",
+            "interface_digest": other_interface,
+        },
+    ]
+    definition = ProcedureDefinition.model_validate(raw)
+    blueprint = BlueprintArtifact(
+        identity={"kind": "Blueprint", "name": "two-slot"},  # type: ignore[arg-type]
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        pins=tuple(pin for pin in concrete.pins if pin.role != "provider"),
+        owned_contracts=concrete.owned_contracts,
+        activation_policy="drain",
+    )
+    provider = accepted_provider()
+    implementation = provider.provider.implementations[0]
+    serves_both = AcceptedProvider.model_construct(
+        path=provider.path,
+        provider=provider.provider.model_copy(
+            update={
+                "implementations": (
+                    implementation,
+                    implementation.model_copy(
+                        update={
+                            "interface_digest": other_interface,
+                            "implementation_digest": other_implementation,
+                            "interface_id": implementation.interface_id + ".b",
+                        }
+                    ),
+                )
+            }
+        ),
+        artifact_digest=provider.artifact_digest,
+    )
+
+    instance_of = instantiate_blueprint(
+        blueprint,
+        blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
+        name="two-slot-instance",
+        providers={"a": serves_both, "b": serves_both},
+    )
+
+    assert instance_of.blueprint is not None
+    assert {
+        (binding.slot_name, binding.interface_digest) for binding in instance_of.blueprint.bindings
+    } == {("a", first["interface_digest"]), ("b", other_interface)}
+    nodes = {node.node_id: node for node in instance_of.definition.nodes}
+    assert nodes["second"].implementation_digest == other_implementation  # type: ignore[union-attr]
