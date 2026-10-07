@@ -265,12 +265,15 @@ def evaluate_vocabulary_reuse(
             ],
         },
     ).tagged
+    # Historical codes keep the spelling the retired law recorded (``playbill.``):
+    # this output is pinned byte for byte. A diagnostic built from it today
+    # reads the code through ``normalize_code``.
     refusal: str | None = None
     if any(
         any(item.basis == "exact_identity" for item in candidate.match_basis)
         for candidate in candidates
     ):
-        refusal = "cruxible.reuse.exact_collision"
+        refusal = "playbill.reuse.exact_collision"
     else:
         blocking = {
             canonical_bytes(item.address.model_dump(mode="json"))
@@ -284,7 +287,7 @@ def evaluate_vocabulary_reuse(
             if canonical_bytes(item.subject.model_dump(mode="json")) == proposal_address
         }
         if not blocking.issubset(persisted):
-            refusal = "cruxible.reuse.distinction_claim_missing"
+            refusal = "playbill.reuse.distinction_claim_missing"
     return VocabularyReuseLawEvidenceV1(
         coordinate=coordinate,
         implementation_digest=implementation_digest,
