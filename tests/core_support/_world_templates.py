@@ -88,12 +88,15 @@ _CALLABLE_TYPES = (
 )
 
 # Attribute patches every test carries from `tests/conftest.py`'s autouse
-# isolation fixtures. They redirect workspace-binding discovery, which no world
-# build reaches (every build passes its paths explicitly).
+# isolation fixtures. Two redirect workspace-binding discovery, which no world
+# build reaches (every build passes its paths explicitly). The third makes MCP
+# daemon auto-start refuse: a build that reached it would raise, so the patch
+# can fail a build but never shape one that succeeds.
 _ISOLATION_SEAMS = frozenset(
     {
         ("cruxible_client.authoring.context", "_workspace_binding"),
         ("cruxible_client.authoring.blocks", "_workspace_binding"),
+        ("cruxible_core.mcp.daemon", "ensure_local_daemon"),
     }
 )
 

@@ -261,10 +261,16 @@ def test_server_log_path_uses_explicit_override(tmp_path: Path) -> None:
     assert get_server_log_path({"CRUXIBLE_SERVER_LOG_PATH": str(log_path)}) == log_path.resolve()
 
 
+# A fixed durable path: the developer's home is not one when it lives under a
+# temp directory (a scratch HOME under the system temp root is volatile, and is flagged).
+_DURABLE_ROOT = Path("/var/lib/cruxible")
+
+
 def test_volatile_state_path_detection() -> None:
     assert is_volatile_state_path("/" + "tmp/cruxible-state")
     assert is_volatile_state_path("/var/" + "tmp/cruxible-state")
-    assert not is_volatile_state_path(Path.home() / ".cruxible" / "server")
+    assert is_volatile_state_path("/private/" + "tmp/scratch-home/.cruxible/server")
+    assert not is_volatile_state_path(_DURABLE_ROOT / "server")
 
 
 def test_volatile_state_path_warnings_include_state_root_and_instances() -> None:
@@ -272,7 +278,7 @@ def test_volatile_state_path_warnings_include_state_root_and_instances() -> None
         environ={"CRUXIBLE_STATE_ROOT": "/" + "tmp/cruxible-server"},
         instance_locations=[
             ("inst_tmp", "/" + "tmp/cruxible-server/instances/inst_tmp"),
-            ("inst_durable", str(Path.home() / ".cruxible" / "instances" / "inst_durable")),
+            ("inst_durable", str(_DURABLE_ROOT / "instances" / "inst_durable")),
         ],
     )
 
