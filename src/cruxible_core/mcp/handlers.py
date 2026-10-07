@@ -95,7 +95,12 @@ from cruxible_client.contracts.write import (
 )
 from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
-from cruxible_client.kits import KIT_ARTIFACT, check_kit_updates, fetch_kit_image
+from cruxible_client.kits import (
+    KIT_ARTIFACT,
+    check_kit_updates,
+    fetch_kit_image,
+    stage_kit_providers,
+)
 from cruxible_client.transport.http import configured_principal_id
 from cruxible_core import __version__
 from cruxible_core.adapters.block_detach import detach_projection_pages
@@ -300,30 +305,47 @@ def handle_playbill_kit_add(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> KitChangeResult:
-    """Install a kit by registry reference (this adapter pulls and verifies it) or bundle."""
+    """Install a kit by registry reference (this adapter pulls and verifies it) or bundle.
 
-    if request is None:
-        if (reference is None) == (bundle is None):
-            raise DataValidationError("kit add takes exactly one of reference or bundle")
-        source = None
-        if reference is not None:
-            image, source = fetch_kit_image(reference)
-            bundle = unpack_artifact(KIT_ARTIFACT, image)
-        assert bundle is not None
-        request = KitAddRequest(
-            bundle=bundle,
-            source=source,
-            keep=tuple(sorted(set(keep))),
-            keep_local_edits=keep_local_edits,
-            retire_dependents=tuple(sorted(set(retire_dependents))),
-            allow_downgrade=allow_downgrade,
-            dry_run=dry_run,
-            at=at,
+    A commit stages the kit's bundled provider files in the daemon's body store
+    first, so the daemon can install them; a preview sends none.
+    """
+
+    if request is not None:
+        added = request
+        return _daemon_call(
+            lambda client: client.add_kit(instance_id, added), operation_name="cruxible_kit_add"
         )
-    added = request
-    return _daemon_call(
-        lambda client: client.add_kit(instance_id, added), operation_name="cruxible_kit_add"
-    )
+    if (reference is None) == (bundle is None):
+        raise DataValidationError("kit add takes exactly one of reference or bundle")
+    source = None
+    if reference is not None:
+        image, source = fetch_kit_image(reference)
+        bundle = unpack_artifact(KIT_ARTIFACT, image)
+    assert bundle is not None
+    resolved = bundle
+
+    def add(client: CruxibleClient) -> KitChangeResult:
+        staged = (
+            stage_kit_providers(client, instance_id, resolved)
+            if dry_run is False
+            else resolved.model_copy(update={"provider_files": ()})
+        )
+        return client.add_kit(
+            instance_id,
+            KitAddRequest(
+                bundle=staged,
+                source=source,
+                keep=tuple(sorted(set(keep))),
+                keep_local_edits=keep_local_edits,
+                retire_dependents=tuple(sorted(set(retire_dependents))),
+                allow_downgrade=allow_downgrade,
+                dry_run=dry_run,
+                at=at,
+            ),
+        )
+
+    return _daemon_call(add, operation_name="cruxible_kit_add")
 
 
 def handle_playbill_claim_type_upgrade(

@@ -153,17 +153,20 @@ operator acts with no MCP tool.
 
 ## Kits
 
-A kit is a release of definitions (ClaimTypes, CaptureContracts, QueryDefinitions)
-that installs
-as a diff against the consumer: one proposed change set that adds, replaces and
-retires definitions. Adding or removing a kit only proposes; activation and any
-approval stay the ordinary steps.
+A kit is a release of definitions (ClaimTypes, CaptureContracts, QueryDefinitions,
+SourceAcquisitionPolicies, Procedures, Blueprints and the ProviderInterfaces they
+need) that installs as a diff against the consumer: one proposed change set that
+adds, replaces and retires definitions. A kit also bundles the provider packages
+its Procedures run on (wheel, uv lock and path-dependency wheels; never source):
+`kit_add` installs the missing ones first, under the install permission, and
+proposes the definitions once they land (`awaiting_providers` while an install
+awaits approval). Activation and any approval stay the ordinary steps.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_kit_build` | Export the definitions under owned identity prefixes as one kit release | `READ_ONLY` |
-| `cruxible_kit_status` | List installed kits, paths edited since install, kept divergences, provenance and (for registry kits) the latest available version (`offline` skips the check) | `READ_ONLY` |
-| `cruxible_kit_add` | Install or upgrade a kit by registry `reference` (the adapter pulls it) or `bundle`; always proposes, `keep`/`keep_local_edits`/`retire_dependents`/`allow_downgrade` decide divergences; lands at once when policy requires no approval | `GOVERNED_WRITE` |
+| `cruxible_kit_build` | Export the definitions under owned identity prefixes as one kit release; `providers` bundles provider packages staged with `cruxible_body_store` (every Provider a carried Procedure pins must be bundled, and every carried ProviderInterface must be what a bundled wheel registers) | `READ_ONLY` |
+| `cruxible_kit_status` | List installed kits, paths edited since install, kept divergences, provenance, bundled providers with their install state, and (for registry kits) the latest available version (`offline` skips the check) | `READ_ONLY` |
+| `cruxible_kit_add` | Install or upgrade a kit by registry `reference` (the adapter pulls it) or `bundle`; always proposes, `keep`/`keep_local_edits`/`retire_dependents`/`allow_downgrade` decide divergences; lands at once when policy requires no approval; a commit stages and installs bundled providers first (`ADMIN` for the install) | `GOVERNED_WRITE` |
 | `cruxible_kit_remove` | Retire every artifact a kit installed; lands at once when policy requires no approval | `GOVERNED_WRITE` |
 | `cruxible_claim_type_upgrade` | Propose moving older ClaimTypes to v7 (identity evidence rules included), stating their revision evidence | `GOVERNED_WRITE` |
 

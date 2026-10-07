@@ -2872,6 +2872,8 @@ def _member_primary_path(
         return claim_type_path(member.predicate)
     if isinstance(member, ClaimRetirementMember):
         return claim_path(member.claim_id)
+    if isinstance(member, BlueprintAuthoringPayload):
+        return blueprint_path(str(member.definition["name"]))
     if isinstance(member, ProcedureAuthoringPayload):
         return procedure_path(str(member.definition["name"]))
     if isinstance(member, ProcedureMandateAuthoringPayload):

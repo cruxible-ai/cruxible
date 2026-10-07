@@ -395,7 +395,16 @@ def service_install_provider(
     request: ProviderInstallRequest,
     actor_id: str,
     timestamp: str,
+    registry_index_default: bool = False,
 ) -> ProviderInstallResult:
+    """Install one package and propose its registration (lands if the policy allows).
+
+    A transferred wheel resolves its registry dependencies only from custody and
+    the operator's configured indexes; ``registry_index_default`` (a kit's bundled
+    provider) also falls back to the default index, PyPI, as an install by name
+    does. The lock's hashes pin every dependency either way.
+    """
+
     instance.require_writable()
     enforce_customer_code_execution_supported()
     if instance.accepted_coordinate().compiler != GOVERNED_TRIGGERS_COMPILER:
@@ -457,6 +466,7 @@ def service_install_provider(
                 source,
                 release,
                 confirm_head=mode.confirm_head,
+                registry_index_default=registry_index_default,
             )
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
@@ -567,6 +577,7 @@ def _install_locked(
     release: IndexRelease | None,
     *,
     confirm_head: Callable[[str], None],
+    registry_index_default: bool = False,
 ) -> ProviderInstallResult:
     prepared_path = directory / "prepared.json"
     rewrite_prepared = False
@@ -625,7 +636,7 @@ def _install_locked(
                 extras=request.extras,
                 control_domain=request.control_domain,
                 index_urls=_index_urls(operator)
-                if release is not None
+                if release is not None or registry_index_default
                 else operator.config.provider_index_urls,
             )
         document, provider, deployment = prepared.document, prepared.provider, prepared.deployment

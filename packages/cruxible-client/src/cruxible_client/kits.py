@@ -6,17 +6,22 @@
       cruxible-kit.json
       artifacts/claim-types/acme.account/seats.json
       ...
+      providers/acme_parser-1.0.0-py3-none-any.whl     (bundled provider packages:
+      providers/acme-parser-1.0.0.uv.lock               built wheels and their locks)
 
 The directory is what a kit repository reviews. Distributed, a kit is an OCI
 artifact (``application/vnd.cruxible.kit.v1``): the manifest as its config blob
-and one deterministic tar of the artifacts as its layer, so rebuilding a release
-gives the same digest. A kit can come from a directory, an OCI image layout or a
-registry reference; either way the daemon only ever receives the bundle.
+and one deterministic tar of the artifacts (and, under ``providers/``, the
+bundled provider files) as its layer, so rebuilding a release gives the same
+digest. A kit can come from a directory, an OCI image layout or a registry
+reference; either way the daemon receives the bundle, and the bundled provider
+files reach it through its body store (``stage_kit_providers``).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 from pydantic import ValidationError
@@ -37,14 +42,19 @@ from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_DIRECTORY,
     KIT_MANIFEST_FILE,
+    KIT_PROVIDER_DIRECTORY,
     KitArtifactBytes,
     KitBundle,
     KitManifest,
+    KitProviderFileBytes,
     KitStatus,
     kit_version_key,
 )
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.errors import ConfigError
+
+if TYPE_CHECKING:
+    from cruxible_client.transport.http import CruxibleClient
 
 _KIT_FORMS = (
     "a kit directory (holding cruxible-kit.json), an OCI image layout, or a registry "
@@ -94,7 +104,27 @@ def read_kit_directory(root: Path) -> KitBundle:
         if path.is_symlink():
             raise ValueError(f"kit artifact {name} is a symbolic link")
         artifacts.append(KitArtifactBytes.of(name, path.read_bytes()))
-    return KitBundle(manifest=manifest, artifacts=tuple(artifacts))
+    provider_root = root / KIT_PROVIDER_DIRECTORY
+    bundled = sorted(manifest.provider_files())
+    held = sorted(
+        path.relative_to(provider_root).as_posix()
+        for path in (provider_root.rglob("*") if provider_root.is_dir() else ())
+        if path.is_file() or path.is_symlink()
+    )
+    if held != bundled:
+        extra = sorted(set(held) - set(bundled))
+        missing = sorted(set(bundled) - set(held))
+        raise ValueError(
+            f"kit directory {root} does not hold exactly its manifest's provider files "
+            f"(unlisted: {extra or 'none'}; missing: {missing or 'none'})"
+        )
+    files = []
+    for name in bundled:
+        path = provider_root / name
+        if path.is_symlink():
+            raise ValueError(f"kit provider file {name} is a symbolic link")
+        files.append(KitProviderFileBytes.of(name, path.read_bytes()))
+    return KitBundle(manifest=manifest, artifacts=tuple(artifacts), provider_files=tuple(files))
 
 
 def write_kit_directory(bundle: KitBundle, root: Path) -> None:
@@ -113,11 +143,28 @@ def write_kit_directory(bundle: KitBundle, root: Path) -> None:
             raise ValueError(f"kit artifact {item.path} escapes the kit directory")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(item.content)
+    if bundle.manifest.providers and not bundle.provider_files:
+        raise ValueError("this bundle names provider packages but carries none of their bytes")
+    for provider_file in bundle.provider_files:
+        target = root / KIT_PROVIDER_DIRECTORY / provider_file.filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(provider_file.content)
+
+
+_PROVIDER_PREFIX = KIT_PROVIDER_DIRECTORY + "/"
 
 
 def _pack_kit(bundle: KitBundle) -> tuple[bytes, tuple[bytes, ...]]:
+    if bundle.manifest.providers and not bundle.provider_files:
+        raise ValueError("this bundle names provider packages but carries none of their bytes")
     config = pretty_canonical_bytes(bundle.manifest.model_dump(mode="json"))
-    return config, (pack_files(bundle.contents()),)
+    files = {
+        **bundle.contents(),
+        **{
+            _PROVIDER_PREFIX + name: content for name, content in bundle.provider_contents().items()
+        },
+    }
+    return config, (pack_files(files),)
 
 
 def _unpack_kit(config: bytes, layers: tuple[bytes, ...]) -> KitBundle:
@@ -127,8 +174,34 @@ def _unpack_kit(config: bytes, layers: tuple[bytes, ...]) -> KitBundle:
     files = unpack_files(layers[0])
     return KitBundle(
         manifest=manifest,
-        artifacts=tuple(KitArtifactBytes.of(path, files[path]) for path in sorted(files)),
+        artifacts=tuple(
+            KitArtifactBytes.of(path, files[path])
+            for path in sorted(files)
+            if not path.startswith(_PROVIDER_PREFIX)
+        ),
+        provider_files=tuple(
+            KitProviderFileBytes.of(path.removeprefix(_PROVIDER_PREFIX), files[path])
+            for path in sorted(files)
+            if path.startswith(_PROVIDER_PREFIX)
+        ),
     )
+
+
+def stage_kit_providers(client: CruxibleClient, instance_id: str, bundle: KitBundle) -> KitBundle:
+    """Store each bundled provider file in the daemon's body store; the bundle without them.
+
+    ``kit add`` reads the files there under their sha256, so the request carries
+    only the manifest's references (the same transfer ``provider install WHEEL``
+    makes).
+    """
+
+    if bundle.manifest.providers and not bundle.provider_files:
+        raise KitSourceError("the kit names provider packages but carries none of their bytes")
+    for item in bundle.provider_files:
+        stored = client.store_body(instance_id, item.content)
+        if stored.digest != bundle.manifest.provider_files()[item.filename]:
+            raise ConfigError(f"the daemon stored {item.filename} under another digest")
+    return bundle.model_copy(update={"provider_files": ()})
 
 
 KIT_ARTIFACT: ArtifactKind[KitBundle] = ArtifactKind(
