@@ -978,13 +978,18 @@ dist` for each). The CLI stages the files through the body store and the
 manifest records each package (provider id, package, version, interfaces) with
 the sha256 of every file. `build` refuses `cruxible.kit.provider_not_bundled` when
 a carried Procedure pins a Provider the kit does not bundle,
-`cruxible.kit.provider_build_differs` when the bundled wheel is not the build this
-instance installed, and `cruxible.kit.interface_not_bundled` or
+`cruxible.kit.provider_build_differs` when the bundled wheel, lock or path
+dependency wheels are not the build this instance installed (the dependency
+closure is compared through the materialization digest, resolved for this host
+from the bundled files), and `cruxible.kit.interface_not_bundled` or
 `cruxible.kit.interface_differs` when a carried ProviderInterface is not exactly
 what a bundled wheel registers (installing that wheel would otherwise propose a
 successor over the kit's interface). Blueprints stay for slots the consumer
 fills: their slot interfaces come from a bundled package, and the consumer
-instantiates them with any installed Provider of that interface.
+instantiates them with any installed Provider of that interface. The
+compiler-seeded built-ins (`Provider:cruxible-builtin`, `ProviderInterface:
+workspace.file`) are never bundled or carried: a kit pins them as they are, and
+`add` requires this instance to hold the same seeded ones.
 
 Authoring a kit that ships its provider:
 
@@ -1024,8 +1029,9 @@ definition the kit depends on`. `--keep IDENTITY` (such as
 instance's version instead; the receipt records each kept divergence, so a later
 release that leaves that definition as it was does not ask again. Every live
 artifact pinning a replaced definition takes one successor in the same change set,
-carried to the kit's final definitions; the preview counts each definition's
-dependents rather than listing them.
+carried to the kit's final definitions (a Procedure or Blueprint moves its pins
+through its graph; a Procedure's Blueprint origin stays as recorded); the preview
+counts each definition's dependents rather than listing them.
 
 A definition the kit installed that the release dropped retires when nothing
 live depends on it. Dependents include the live ClaimTypes whose evidence rules
@@ -1053,8 +1059,14 @@ which needs the install permission (`ADMIN`) and lands when the approval policy
 requires no approval. The definitions are proposed once every bundled provider
 is installed; while an install awaits approval the result is
 `awaiting_providers` with that install's proposal, and `kit add` again after it
-is activated proposes the definitions. A package already installed from the same
-wheel and lock is unchanged. Another installed build of a bundled provider is
+is activated proposes the definitions. A commit first reads the staged files
+(metadata only), refuses `cruxible.kit.provider_manifest_mismatch` unless they
+reproduce the manifest, and refuses what the current state already decides
+(ownership overlap, a disallowed downgrade, a carried interface held
+differently) before installing anything; after installing it refuses
+`cruxible.kit.provider_not_installed` unless every bundled Provider is live. A
+package already installed from the same wheel, lock and dependency closure is
+unchanged (a preview, which has no files, compares wheel and lock). Another installed build of a bundled provider is
 refused (`blocked`) rather than replaced: replacing a Provider owes a successor
 of every live Procedure pinning it, which an install does not carry, and the
 build may serve Procedures outside the kit; replace it deliberately with
