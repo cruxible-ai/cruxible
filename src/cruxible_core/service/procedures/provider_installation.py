@@ -47,6 +47,9 @@ from cruxible_client.contracts.providers import (
 from cruxible_core.compiler.compiler import GOVERNED_TRIGGERS_COMPILER
 from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.seed_artifacts.workspace_file import (
+    is_builtin_workspace_file_registration,
+)
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.providers.package_classifier import PackageBucketClassifier, run_package_probe
 from cruxible_core.providers.package_index import (
@@ -241,6 +244,32 @@ def _source_files(
         lock,
         tuple(path for name, path in sorted(wheels.items()) if name != request.package),
     )
+
+
+def _refuse_built_in_interfaces(
+    instance: PlaybillInstance, document: PackageRegistrationDocumentV1, accepted_oid: str
+) -> None:
+    """Refuse a package exporting an interface this instance already has built in.
+
+    A built-in interface (workspace.file, seeded at genesis) is implemented by
+    core's own Provider; a package registration would have to succeed it and
+    strand that Provider, which the proposal law refuses as an incomplete
+    closure. Say why instead.
+    """
+
+    tree = instance.immutable_tree_at(accepted_oid)
+    for exported in document.interfaces:
+        path = provider_interface_path(exported.interface_id)
+        current = tree.get(path)
+        if current is None:
+            continue
+        registration = parse_provider_interface(current, path=path)
+        if registration.lifecycle.state == "live" and is_builtin_workspace_file_registration(
+            registration
+        ):
+            raise ConfigError(
+                f"{exported.interface_id} is built in on this instance; no install is needed"
+            )
 
 
 def _definition_changes(
@@ -477,6 +506,7 @@ def _preview_installation(
     saved = json.loads(prepared_path.read_bytes())
     document = PackageRegistrationDocumentV1.model_validate(saved["document"])
     provider = Provider.model_validate(saved["provider"])
+    _refuse_built_in_interfaces(instance, document, mode.head.git_oid)
     candidate_tree, changed = _definition_changes(instance, document, provider, mode.head.git_oid)
     if not changed:
         return ProviderInstallResult(
@@ -648,6 +678,9 @@ def _install_locked(
                 }
             ),
         )
+    # Before the deployment is registered: an interface built into this
+    # instance is never re-registered from a package.
+    _refuse_built_in_interfaces(instance, document, instance.accepted_coordinate().git_oid)
     operator.register_deployment(configured)
     if rewrite_prepared:
         _write(

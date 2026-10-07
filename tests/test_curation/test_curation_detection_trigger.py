@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
 from cruxible_core.consumers.next import curation as part
 from cruxible_core.coverage.contracts import CoverageAccessProfile
-from cruxible_core.ledger.bootstrap import SEEDED_TRIGGER_NAMES, seeded_triggers
+from cruxible_core.ledger.bootstrap import seeded_triggers
 from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
     service_list_playbill_curation,
@@ -21,7 +21,6 @@ REQUEST = PlaybillCurationListRequestV1(access_profile=CoverageAccessProfile(pro
 
 
 def test_new_instances_seed_a_live_generation_accepted_detection_trigger() -> None:
-    assert "curation-detect" in SEEDED_TRIGGER_NAMES
     (trigger,) = (item for item in seeded_triggers() if item.identity.name == "curation-detect")
     assert trigger.schedule.kind == "generation_accepted"
     assert trigger.target.action == "curation.detect"

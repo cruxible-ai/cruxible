@@ -1,0 +1,19 @@
+{
+  "artifact_format": "playbill-trigger-v1",
+  "identity": {
+    "kind": "Trigger",
+    "name": "floor-refresh"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "pins": [],
+  "schedule": {
+    "kind": "generation_accepted"
+  },
+  "target": {
+    "action": "floor.refresh",
+    "kind": "action"
+  }
+}

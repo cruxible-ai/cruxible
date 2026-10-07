@@ -436,7 +436,12 @@ Unknown entries, non-positive timing values, malformed JSON, unsafe deployment
 paths, and an unreadable file degrade only the Provider lane with a typed cause.
 Provider installation requires the first-party `cruxible-provider-runtime` toolchain
 and `uv` in the daemon environment. The 0.2.0 runtime may be installed from a locally
-built wheel before publication. No provider-specific Python is imported into Cruxible.
+built wheel before publication. Installed providers run in supervised child
+processes; the one exception is `workspace.file`, which is built into core (see
+[init](#init)) and runs inside the daemon with no provider install. It needs no
+deployment and keeps running while this lane is degraded. Its receipts carry
+`fence_scope: in_process` and egress observer `core.in-process`; a daemon crash
+during one is closed at the next startup as `provider_in_process_interrupted`.
 An exhausted aggregate recovery scan reports untouched records as
 `not_attempted`; a later lazy re-arm resumes from the retained records after the
 configured backoff. A lazy re-arm also retries exactly the construction stages
@@ -706,9 +711,12 @@ equivalent request field is `git_object_format` on the HTTP init body.
 proposals. An instance can publish nowhere initially; `cruxible ledger set-mirror`
 adds a destination later. See [ledger](#ledger) for URL syntax.
 
-Initialization creates governed state only. Install provider packages separately
-with `cruxible provider install`; initialization needs no provider checkout or
-executable environment.
+Initialization creates governed state only, and needs no provider checkout or
+executable environment. A new instance starts with `workspace.file` built in: its
+ProviderInterface and the `cruxible-builtin` Provider are part of the first
+generation, so a Procedure can pin and run a workspace Source with no install.
+(`cruxible-provider-workspace` is not published; instances that installed it
+before keep it.) Install other provider packages with `cruxible provider install`.
 
 ## capture
 

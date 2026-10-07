@@ -124,9 +124,9 @@ from cruxible_core.indexes.typed_sqlite import parse_static_owners
 from cruxible_core.ledger.activation import ActivationPublisher, ActivationResult
 from cruxible_core.ledger.bootstrap import (
     VerifiedGenesis,
+    current_genesis_seed_set,
     prepare_genesis,
     seeded_procedure_runtime_policy,
-    seeded_triggers,
     verify_genesis,
 )
 from cruxible_core.ledger.checkpoints import (
@@ -464,17 +464,13 @@ class PlaybillInstance:
                     )
                 ),
                 procedure_runtime_policy=seeded_procedure_runtime_policy(),
-                # A compiler that admits Triggers starts the instance with the
-                # default internal-action Triggers; they are governed from here on.
-                triggers=(
-                    seeded_triggers()
-                    if any(
-                        entry.kind == "trigger"
-                        for entry in artifact_kinds_for_compiler(
-                            current_compiler_coordinate()
-                        ).entries()
-                    )
-                    else ()
+                # The instance starts with the newest historical seed set its
+                # compiler admits; the seeded artifacts are governed from here on.
+                seed_set=current_genesis_seed_set(
+                    entry.kind
+                    for entry in artifact_kinds_for_compiler(
+                        current_compiler_coordinate()
+                    ).entries()
                 ),
                 timestamp=commit_timestamp,
             )

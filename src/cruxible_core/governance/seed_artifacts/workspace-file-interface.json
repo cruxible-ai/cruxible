@@ -1,0 +1,169 @@
+{
+  "interface_id": "workspace.file",
+  "version": 2,
+  "effect_class": "pure",
+  "contracts": {
+    "input": {
+      "fields": {
+        "logical_source": {
+          "type": "string"
+        },
+        "commitment_digest": {
+          "type": "json",
+          "json_schema": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "content_encoding": {
+          "type": "string",
+          "enum": [
+            "base64"
+          ]
+        },
+        "bytes": {
+          "type": "string"
+        },
+        "byte_length": {
+          "type": "json",
+          "json_schema": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "bytes_digest": {
+          "type": "json",
+          "json_schema": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "allow_extra": false
+    },
+    "output": {
+      "fields": {
+        "input_bucket": {
+          "type": "string"
+        },
+        "source": {
+          "type": "json",
+          "json_schema": {
+            "type": "object",
+            "properties": {
+              "logical_source": {
+                "type": "string"
+              },
+              "commitment_digest": {
+                "type": "string"
+              },
+              "bytes_digest": {
+                "type": "string"
+              },
+              "byte_length": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "logical_source",
+              "commitment_digest",
+              "bytes_digest",
+              "byte_length"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "content": {
+          "type": "json",
+          "json_schema": {
+            "type": "object",
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "text"
+                  },
+                  "encoding": {
+                    "const": "utf-8"
+                  },
+                  "bom": {
+                    "type": "boolean"
+                  },
+                  "newline": {
+                    "type": "string",
+                    "enum": [
+                      "lf",
+                      "crlf",
+                      "cr",
+                      "mixed",
+                      "none"
+                    ]
+                  },
+                  "trailing_newline": {
+                    "type": "boolean"
+                  },
+                  "line_count": {
+                    "type": "integer"
+                  },
+                  "character_count": {
+                    "type": "integer"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "lines": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "kind",
+                  "encoding",
+                  "bom",
+                  "newline",
+                  "trailing_newline",
+                  "line_count",
+                  "character_count",
+                  "text",
+                  "lines"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "bytes"
+                  },
+                  "encoding": {
+                    "const": "base64"
+                  },
+                  "byte_length": {
+                    "type": "integer"
+                  },
+                  "bytes": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "encoding",
+                  "byte_length",
+                  "bytes"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "allow_extra": false
+    }
+  },
+  "refusals": [
+    "invalid_parameter",
+    "mismatched_lengths",
+    "provider_declined"
+  ]
+}

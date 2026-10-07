@@ -128,6 +128,9 @@ def create_app() -> FastAPI:
             f"Provider runtime startup recovery failed: {exc}",
             retryable=True,
         )
+    # Core built-ins run in-process with no lease to recover: their unmatched
+    # starts are closed here, before any request can start another.
+    manager.recover_in_process_provider_invocations()
     # Proposal terminals prepared before a crash are resolved after the Provider
     # fences, so a recovered run reads as one complete attempt: the receipt of
     # the proposal it produced, then its finalization. Recovery logs and

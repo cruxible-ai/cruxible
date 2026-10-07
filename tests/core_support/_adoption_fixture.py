@@ -166,6 +166,8 @@ class AdoptionFixtureProfile:
             # The default curation.detect, evidence.sweep, floor.refresh and
             # prediction.anchor_retry Triggers.
             + 4
+            # The built-in workspace.file ProviderInterface and its Provider.
+            + 2
         )
 
 
