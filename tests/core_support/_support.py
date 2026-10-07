@@ -70,7 +70,7 @@ def build_inputs() -> tuple[str, ...]:
         FIXED_TIMESTAMP,
         repr(instance_module.current_compiler_coordinate()),
         repr(instance_module.seeded_procedure_runtime_policy()),
-        repr(instance_module.seeded_triggers()),
+        repr(bootstrap_module.GENESIS_SEED_SETS),
         repr(bootstrap_module.seeded_procedure_runtime_policy()),
         repr(instance_module.initial_authority_matrix()),
     )
