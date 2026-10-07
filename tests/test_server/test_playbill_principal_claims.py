@@ -107,14 +107,14 @@ def test_an_unregistered_claim_reads_but_is_refused_every_write(
         json={"reason": "not mine"},
         headers=mallory,
     )
-    created = _create(client, mallory)
+    compiled = _compile(client, mallory)
 
     # Reads stay open: an agent reads while its registration awaits activation.
     assert listed.status_code == 200, listed.text
     assert who.status_code == 200, who.text
     assert who.json()["actor_id"] == "mallory"
     assert who.json()["principal_registration_status"] == "absent"
-    for refused in (withdrawn, created):
+    for refused in (withdrawn, compiled):
         assert refused.status_code == 403  # type: ignore[attr-defined]
         body = refused.json()  # type: ignore[attr-defined]
         assert body["error_code"] == "cruxible.identity.principal_absent"
@@ -168,29 +168,29 @@ def test_the_client_sends_its_configured_principal_and_refuses_a_malformed_one(
         CruxibleClient(socket_path=socket_path, principal_id="Not An ID")
 
 
-def _create(client: TestClient, headers: dict[str, str]) -> object:
+def _compile(client: TestClient, headers: dict[str, str]) -> object:
     from tests.test_authoring.test_authoring_preflight import _self_source_payload
 
     return client.post(
-        f"/api/v1/{INSTANCE}/authoring/intents",
+        f"/api/v1/{INSTANCE}/authoring/compile",
         json={
-            "tag": "playbill-authoring-intent-create-request-v1",
+            "tag": "playbill-authoring-intent-compile-request-v1",
             "payload": _self_source_payload().model_dump(mode="json"),
         },
         headers=headers,
     )
 
 
-def test_whoami_says_whether_the_actor_can_author_and_create_refuses_with_the_same_repair(
+def test_whoami_says_whether_the_actor_can_author_and_compile_refuses_with_the_same_repair(
     daemon: tuple[TestClient, Path], tmp_path: Path
 ) -> None:
     client, managed = daemon
     assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
 
     anonymous = client.get(f"/api/v1/{INSTANCE}/whoami").json()
-    refused = _create(client, {})
+    refused = _compile(client, {})
     alice = client.get(f"/api/v1/{INSTANCE}/whoami", headers={PRINCIPAL_ID_HEADER: "alice"}).json()
-    created = _create(client, {PRINCIPAL_ID_HEADER: "alice"})
+    compiled = _compile(client, {PRINCIPAL_ID_HEADER: "alice"})
 
     assert anonymous["can_author"] is False
     refusal = anonymous["authoring_refusal"]
@@ -203,7 +203,7 @@ def test_whoami_says_whether_the_actor_can_author_and_create_refuses_with_the_sa
     assert body["repair"] == refusal["repair"]
     assert alice["can_author"] is True
     assert alice["authoring_refusal"] is None
-    assert created.status_code == 200, created.text  # type: ignore[attr-defined]
+    assert compiled.status_code == 200, compiled.text  # type: ignore[attr-defined]
 
 
 def test_a_read_only_credential_is_told_it_cannot_author_and_how_to_get_the_tier(
