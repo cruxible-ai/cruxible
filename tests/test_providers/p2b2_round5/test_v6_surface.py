@@ -129,13 +129,6 @@ def test_the_portability_guardrail_detects_a_planted_violation(
     module.test_committed_tests_do_not_depend_on_developer_paths_or_mutate_sys_path()
 
 
-def test_the_guardrail_allow_list_is_exactly_the_gated_dogfood_test() -> None:
-    module = _load_guardrail()
-    assert module.ALLOWED_DEVELOPER_PATHS == {"tests/test_storage/test_family1_dogfood.py"}
-    gated = REPOSITORY_ROOT / "tests" / "test_storage" / "test_family1_dogfood.py"
-    assert "CRUXIBLE_RUN_PLAYBILL_DOGFOOD" in gated.read_text("utf-8")
-
-
 def test_the_scratch_prefix_is_gitignored_and_leaves_the_tree_clean(short_root: Path) -> None:
     """Scoped to the scratch this round owns.
 

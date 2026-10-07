@@ -48,8 +48,8 @@ def test_committed_regressions_do_not_hardcode_a_developer_worktree() -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
         if "/" + "Users/" not in text and "/" + "home/" not in text:
             continue
-        if "skipif" in text or "CRUXIBLE_RUN_PLAYBILL_DOGFOOD" in text:
-            continue  # opt-in dogfood precedent
+        if "skipif" in text:
+            continue
         offenders.append(str(path.relative_to(REPOSITORY_ROOT)))
     assert offenders == [], offenders
 
