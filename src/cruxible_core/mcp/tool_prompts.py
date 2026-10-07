@@ -264,15 +264,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Trigger one due accepted Line occurrence. Reuse a returned occurrence id only as an "
         "idempotency assertion; the daemon derives occurrence identity."
     ),
-    "cruxible_resolution_contracts": (
+    "cruxible_prediction_list": (
         "Find accepted resolution contracts testing a Claim, by Claim ID. Returns their "
         "definitions and version references, including retired contracts."
     ),
-    "cruxible_predict": (
+    "cruxible_prediction_propose": (
         "Propose a governed test of an accepted Claim: its hypothesis is a Claim ID, plus an "
         "observation selector, mechanical rule, and fixed or retained-event observation window."
     ),
-    "cruxible_settle": (
+    "cruxible_prediction_settle": (
         "Use when a predicted Claim and its matching later observation are accepted: pass the "
         "prediction id and the observation's Claim ID."
     ),

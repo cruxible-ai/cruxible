@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from functools import wraps
-from typing import Annotated, Any, Callable, Literal, cast
+from typing import Annotated, Any, Callable, Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
@@ -1343,26 +1343,25 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_resolution_contracts(
+    def cruxible_prediction_list(
         instance_id: InstanceId = None,
         *,
-        claim_id: str | None = None,
-        request: contracts.ResolutionContractsRequest | None = None,
+        claim: str,
     ) -> contracts.ResolutionContractsResult:
-        """Find accepted resolution contracts testing a Claim, by Claim ID.
+        """List the accepted predictions that test one Claim, by Claim ID.
 
-        The daemon resolves the Claim's accepted version. ``request`` is the
-        advanced form carrying an exact hypothesis reference; pass one or the other.
+        The daemon resolves the Claim's current accepted version and returns the
+        accepted resolution contracts whose hypothesis is that exact version.
+        Pending predictions and settlement outcomes are read with ``cruxible_get``
+        (``ResolutionContract:<name>``) and ``cruxible_next``.
         """
-        if (claim_id is None) == (request is None):
-            raise ValueError("pass exactly one of claim_id or request")
-        return handlers.handle_playbill_resolution_contracts(
+        return handlers.handle_playbill_prediction_list(
             require_instance_id(instance_id),
-            request or contracts.ResolutionContractsRequest(hypothesis=cast(str, claim_id)),
+            contracts.ResolutionContractsRequest(hypothesis=claim),
         )
 
     @_tool
-    def cruxible_predict(
+    def cruxible_prediction_propose(
         instance_id: InstanceId = None,
         *,
         request: contracts.PredictRequest,
@@ -1371,7 +1370,7 @@ def register_tools(
         return handlers.handle_playbill_predict(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_settle(
+    def cruxible_prediction_settle(
         instance_id: InstanceId = None,
         *,
         prediction_id: str,

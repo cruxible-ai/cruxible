@@ -1356,12 +1356,12 @@ def _authoring_coordinator(
     return AuthoringIntentCoordinator.for_instance(instance), actor
 
 
-def playbill_resolution_contracts(
+def playbill_prediction_list(
     instance_id: str, *, request: contracts.ResolutionContractsRequest
 ) -> contracts.ResolutionContractsResult:
     from cruxible_core.service.procedures.resolution_contracts import service_resolution_contracts
 
-    check_permission("cruxible_resolution_contracts", instance_id=instance_id)
+    check_permission("cruxible_prediction_list", instance_id=instance_id)
     return service_resolution_contracts(get_playbill_manager().get(instance_id), request)
 
 
@@ -1372,7 +1372,7 @@ def playbill_predict(
 ) -> PredictResult:
     """Submit a governed test of an already accepted hypothesis."""
 
-    check_permission("cruxible_predict", instance_id=instance_id)
+    check_permission("cruxible_prediction_propose", instance_id=instance_id)
     actor_context = _write_actor_context(instance_id)
     if actor_context is None:
         raise AuthenticationError("Prediction authoring requires an authenticated actor identity")
@@ -1392,7 +1392,7 @@ def playbill_settle_prediction(
 ) -> SettleResult:
     """Settle one prediction through admission or retained terminal authority."""
 
-    check_permission("cruxible_settle", instance_id=instance_id)
+    check_permission("cruxible_prediction_settle", instance_id=instance_id)
     actor_context = _write_actor_context(instance_id)
     if actor_context is None:
         raise AuthenticationError("Prediction settlement requires an authenticated actor identity")

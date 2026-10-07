@@ -285,9 +285,9 @@ themselves a governed track record; promotion remains a separate governed act.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_resolution_contracts` | Find governed tests of a Claim, by `claim_id` | `READ_ONLY` |
-| `cruxible_predict` | Propose a governed resolution contract whose hypothesis is a Claim ID | `GOVERNED_WRITE` |
-| `cruxible_settle` | Settle one prediction (`prediction_id`) from the Claim ID of an accepted observation (`observation`) | `GOVERNED_WRITE` |
+| `cruxible_prediction_list` | Find governed tests of a Claim, by `claim_id` | `READ_ONLY` |
+| `cruxible_prediction_propose` | Propose a governed resolution contract whose hypothesis is a Claim ID | `GOVERNED_WRITE` |
+| `cruxible_prediction_settle` | Settle one prediction (`prediction_id`) from the Claim ID of an accepted observation (`observation`) | `GOVERNED_WRITE` |
 
 Every Claim version these tools need can be a plain Claim ID (`CLM-...` or
 `Claim:CLM-...`); the daemon resolves its digests and accepting coordinate. The
@@ -347,7 +347,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
 
 `cruxible_next` renders each repair's `command` as the MCP tool call
-that performs it (for example `cruxible_settle(prediction_id="RSC-...")`,
+that performs it (for example `cruxible_prediction_settle(prediction_id="RSC-...")`,
 adding the observation's Claim ID), or none when its operands are local files.
 A row or nested finding whose repair the session cannot perform -- its profile
 does not advertise the tool that performs it, or its tier is too low -- stays in
@@ -356,7 +356,7 @@ profile?}` naming what running it needs, so `orient` attention and the queue
 count it for every caller. A status facet keeps its
 state either way, but drops a repair the session cannot perform and says
 `repair_hidden: true` with the same `repair_requires`. The `default` profile
-advertises neither `cruxible_settle` nor the Line tools, for example:
+advertises neither `cruxible_prediction_settle` nor the Line tools, for example:
 a stopped Line arm still shows as `consumer_stalled`, its repair withheld with
 `because: ["profile"]`. A session that cannot author on the instance at all (an
 unbound credential, or a principal that is not configured, registered or

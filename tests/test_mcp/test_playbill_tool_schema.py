@@ -71,8 +71,8 @@ def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation()
 
 def test_prediction_tools_expose_the_same_typed_requests_as_http_and_sdk() -> None:
     schemas = _schemas()
-    predict = schemas["cruxible_predict"].inputSchema
-    settle = schemas["cruxible_settle"].inputSchema
+    predict = schemas["cruxible_prediction_propose"].inputSchema
+    settle = schemas["cruxible_prediction_settle"].inputSchema
 
     assert set(predict["properties"]) == {"instance_id", "request"}
     assert set(predict["required"]) == {"request"}

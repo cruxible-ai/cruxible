@@ -80,7 +80,7 @@ def _cli_cases(tmp_path: Path) -> list[list[str]]:
         ["kit", "pull", "::bad::", "--out", str(tmp_path / "pulled")],
         # request files that are not requests
         ["claim-type", "migrate", str(bad_json)],
-        ["predict", str(bad_json)],
+        ["prediction", "propose", str(bad_json)],
         # a file that is not there
         [
             "sources",

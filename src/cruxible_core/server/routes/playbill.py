@@ -658,13 +658,13 @@ def recover_claim_attestations(instance_id: str) -> Response:
 
 
 @router.post(
-    "/{instance_id}/resolution-contracts/query",
+    "/{instance_id}/predictions/query",
     response_model=contracts.ResolutionContractsResult,
 )
-def resolution_contracts(
+def list_predictions(
     instance_id: str, req: contracts.ResolutionContractsRequest
 ) -> contracts.ResolutionContractsResult:
-    return playbill_api.playbill_resolution_contracts(
+    return playbill_api.playbill_prediction_list(
         resolve_server_instance_id(instance_id), request=req
     )
 

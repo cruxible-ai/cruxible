@@ -103,7 +103,7 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.parametrize("remote", [False, True])
-@pytest.mark.parametrize("tools", [(), ("cruxible_orient", "cruxible_settle")])
+@pytest.mark.parametrize("tools", [(), ("cruxible_orient", "cruxible_prediction_settle")])
 def test_mcp_orient_forwards_the_advertised_tools(
     monkeypatch: pytest.MonkeyPatch, remote: bool, tools: tuple[str, ...]
 ) -> None:

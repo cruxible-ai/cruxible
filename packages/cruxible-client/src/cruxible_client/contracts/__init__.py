@@ -352,7 +352,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.compiler.upgrade",
     "cruxible.line.arm",
     "cruxible.line.dispatch",
-    "cruxible.settle",
+    "cruxible.prediction.settle",
     "hand_edit",
 ]
 # The next queue's own refusals that carry a declared repair. A page cursor

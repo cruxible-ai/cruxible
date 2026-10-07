@@ -143,6 +143,6 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "cruxible.compiler.upgrade",
         "cruxible.line.arm",
         "cruxible.line.dispatch",
-        "cruxible.settle",
+        "cruxible.prediction.settle",
         "hand_edit",
     }

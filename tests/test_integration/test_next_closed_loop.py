@@ -174,7 +174,7 @@ EXPECTED_OPERATIONS = {
     "consumer_stalled": "cruxible.line.arm",
     # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
     "evidence_unavailable": "hand_edit",
-    "prediction_settleable": "cruxible.settle",
+    "prediction_settleable": "cruxible.prediction.settle",
     # Restoring an anchor's material is off the served verbs, like a Capture's.
     "prediction_window_unbindable": "hand_edit",
 }
@@ -1602,7 +1602,7 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     # resolves its exact contract and window, and the settler adds only the
     # observation's Claim ID.
     bound = row.detail["bound_contract_id"]
-    assert row.repair.command == f"cruxible settle {bound}"
+    assert row.repair.command == f"cruxible prediction settle {bound}"
     observation = worker.observe(instance, owner, capture, at="2026-09-02T12:02:00.000000Z")
     filled = SettleRequest(observation=observation.identity.name)
     # A window id the worker does not hold names no prediction.
@@ -1759,23 +1759,23 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
     governed = service_playbill_next(instance, request=request, caller_rung=1)
     (row,) = settle_rows(governed)
     bound = row.detail["bound_contract_id"]
-    assert row.repair.command == f"cruxible settle {bound}"
+    assert row.repair.command == f"cruxible prediction settle {bound}"
     assert "hidden" not in governed.status.model_dump(mode="json")
 
     read_only = service_playbill_next(instance, request=request, caller_rung=0)
     (withheld,) = settle_rows(read_only)
     assert withheld.repair is None
-    assert withheld.repair_requires.tool == "cruxible_settle"
+    assert withheld.repair_requires.tool == "cruxible_prediction_settle"
     assert withheld.repair_requires.because == ("tier",)
 
     mcp = request.model_copy(
         update={
             "caller_surface": "mcp",
-            "caller_tools": ("cruxible_next", "cruxible_settle"),
+            "caller_tools": ("cruxible_next", "cruxible_prediction_settle"),
         }
     )
     (mcp_row,) = settle_rows(service_playbill_next(instance, request=mcp, caller_rung=1))
-    assert mcp_row.repair.command == f'cruxible_settle(prediction_id="{bound}")'
+    assert mcp_row.repair.command == f'cruxible_prediction_settle(prediction_id="{bound}")'
 
     default_profile = mcp.model_copy(update={"caller_tools": ("cruxible_next",)})
     profiled = service_playbill_next(instance, request=default_profile, caller_rung=1)

@@ -850,23 +850,17 @@ Reads accepted history changes with row/byte bounds and snapshot-bearing continu
 
 ## Evidence, predictions, and operational work
 
-<a id="api-cruxible-resolution-contracts"></a>
+<a id="api-cruxible-predictions"></a>
 
-### `Cruxible.resolution_contracts`
+### `Cruxible.predictions`
 
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-resolution_contracts(hypothesis: str | ClaimVersionReference) -> api.ResolutionContractsResult
+predictions(claim: str | ClaimVersionReference) -> api.ResolutionContractsResult
 ```
 
-Reads accepted tests of a Claim, including retired contracts, at cx.coordinate. `hypothesis` is a Claim ID; the daemon resolves its accepted version.
-
-**Conditions and effects:** A history/snapshot read does not establish current execution authority.
-
-| Parameter | Default | Meaning |
-|---|---|---|
-| `hypothesis` | Required | Claim ID (`CLM-...`) whose resolution contracts are requested; an exact `ClaimVersionReference` is the advanced form. |
+Lists the accepted predictions (stored as resolution contracts) that test one Claim version, retired ones included. `claim` is a Claim ID resolved at this connection's coordinate, or an exact `ClaimVersionReference`.
 
 <a id="api-cruxible-predict"></a>
 
@@ -5511,21 +5505,21 @@ recover_claim_attestations(instance_id: str) -> None
 
 HTTP: `POST f'/api/v1/{instance_id}/claim-attestations/recover'`.
 
-<a id="api-cruxibleclient-resolution-contracts"></a>
+<a id="api-cruxibleclient-list-predictions"></a>
 
-### `CruxibleClient.resolution_contracts`
+### `CruxibleClient.list_predictions`
 
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-resolution_contracts(
+list_predictions(
     instance_id: str,
     *,
     request: contracts.ResolutionContractsRequest,
 ) -> contracts.ResolutionContractsResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/resolution-contracts/query'`.
+HTTP: `POST f'/api/v1/{instance_id}/predictions/query'`.
 
 <a id="api-cruxibleclient-predict"></a>
 

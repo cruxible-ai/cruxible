@@ -888,7 +888,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.compiler.upgrade": "compiler upgrade",
     "cruxible.line.arm": "line arm",
     "cruxible.line.dispatch": "line dispatch",
-    "cruxible.settle": "settle",
+    "cruxible.prediction.settle": "prediction settle",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -957,7 +957,7 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.compiler.upgrade": "cruxible_compiler_upgrade",
     "cruxible.line.arm": "cruxible_line_arm",
     "cruxible.line.dispatch": "cruxible_line_dispatch",
-    "cruxible.settle": "cruxible_settle",
+    "cruxible.prediction.settle": "cruxible_prediction_settle",
     "hand_edit": None,
 }
 _GOVERNED_WRITE_RUNG = 1
@@ -1119,10 +1119,10 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         limit = values.get("limit")
         request = {"limit": limit} if isinstance(limit, int) and limit > 1 else {}
         return _mcp_call("cruxible_line_dispatch", line=text("line"), request=request)
-    if operation == "cruxible.settle" and text("prediction_id"):
+    if operation == "cruxible.prediction.settle" and text("prediction_id"):
         # The observation is the settler's to choose: its Claim ID is the one
         # argument left to add.
-        return _mcp_call("cruxible_settle", prediction_id=text("prediction_id"))
+        return _mcp_call("cruxible_prediction_settle", prediction_id=text("prediction_id"))
     if operation == "cruxible.authoring.example" and text("example"):
         return _mcp_call("cruxible_authoring_example", name=text("example"))
     if operation == "cruxible.proposal.readmit" and text("proposal_id"):
@@ -1211,7 +1211,7 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         if isinstance(limit, int) and limit > 1:
             return _sdk_call("cx.dispatch_line", line, limit=limit)
         return _sdk_call("cx.dispatch_line", line)
-    if operation == "cruxible.settle" and (prediction := text("prediction_id")):
+    if operation == "cruxible.prediction.settle" and (prediction := text("prediction_id")):
         return _sdk_call("cx.settle", prediction)
     if operation == "cruxible.authoring.example":
         example = text("example")
@@ -1309,7 +1309,7 @@ def _repair_command(
         parts.append(shlex.quote(line))
         if operation == "cruxible.line.dispatch" and isinstance(limit, int) and limit > 1:
             parts.extend(["--limit", str(limit)])
-    elif operation == "cruxible.settle":
+    elif operation == "cruxible.prediction.settle":
         # The daemon resolves the exact contract and window from the bound
         # window id; the observation is the settler's to choose, so its Claim
         # ID is the one operand left to add (`--observation CLM-...`).
@@ -3862,7 +3862,7 @@ def _prediction_items(
                     "anchor_event": event,
                 },
                 repair=PlaybillNextRepairV1(
-                    operation="cruxible.settle",
+                    operation="cruxible.prediction.settle",
                     target=subject,
                     required_change=(
                         "settle_with_the_claim_id_of_an_accepted_observation_in_its_window"

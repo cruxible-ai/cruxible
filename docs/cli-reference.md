@@ -124,7 +124,7 @@ exempt. By that principle these are exempt:
 
 Exempt in v1 as well, by the maintainer's earlier scope ruling:
 
-- the exhaust paths -- `settle`, `predict`, `procedure run` and
+- the exhaust paths -- `prediction settle`, `prediction propose`, `procedure run` and
   `procedure measure`, and `line evaluate`, `line dispatch` and `line run` --
   append observations to the instance's exhaust and need a separate
   dry-run-execution feature;
@@ -1663,29 +1663,33 @@ same proposal and refuses the same way. Withdraw it with `cruxible proposal
 withdraw`; the Line's next due occurrence settles against the current head
 under a new operation key.
 
-## predict, settle and resolution-contracts
+## prediction
 
 ~~~text
-cruxible resolution-contracts CLAIM_ID [--json]
-cruxible resolution-contracts --request REQUEST_FILE [--json]
-cruxible predict REQUEST_FILE [--json]
-cruxible settle PREDICTION_ID --observation CLAIM_ID [--json]
-cruxible settle PREDICTION_ID --request REQUEST_FILE [--json]
+cruxible prediction propose REQUEST_FILE [--json]
+cruxible prediction settle PREDICTION_ID --observation CLAIM_ID [--json]
+cruxible prediction settle PREDICTION_ID --request REQUEST_FILE [--json]
+cruxible prediction list CLAIM [--json]
 ~~~
+
+A prediction is stored as a resolution contract: `get ResolutionContract:NAME`
+reads one, with its bound windows and their state.
 
 Every Claim version these commands need is named by Claim ID (`CLM-...` or
 `Claim:CLM-...`); the daemon resolves its artifact and statement digests and the
 coordinate that accepted it. The exact `ClaimVersionReference` object is still
 accepted, as the advanced form, anywhere a Claim ID is.
 
-`predict` submits a governed ResolutionContract whose `hypothesis` is an already
-accepted Claim (by ID) and returns the proposal ID and authoring intent. The
-contract pins the exact version the ID resolved to, and must be accepted before
-it can bind an investigation or settlement. `resolution-contracts CLAIM_ID`
-finds accepted contracts testing that Claim's current version and says so when
-there are none; `--request` takes an exact hypothesis reference.
+`prediction propose` submits a governed ResolutionContract whose `hypothesis` is
+an already accepted Claim (by ID) and returns the proposal ID and authoring
+intent. The contract pins the exact version the ID resolved to, and must be
+accepted before it can bind an investigation or settlement. `prediction list
+CLAIM` returns the accepted contracts testing that exact Claim version (retired
+ones included) and says so when there are none; contracts testing an earlier
+version of the Claim are not listed, and pending predictions and settlement
+outcomes are read with `get` and `next`.
 
-`settle` names the prediction by its contract name, or one of its bound windows
+`prediction settle` names the prediction by its contract name, or one of its bound windows
 by its bound contract ID (`RSC-...`), and the settling observation by Claim ID.
 The daemon resolves the exact live contract reference and, for a bound window,
 its anchor event; a window the worker does not hold, or whose contract version
@@ -1700,11 +1704,11 @@ the activation and resolution in operational exhaust; it does not create or
 mutate Claims. A failed attempt or an unevaluable
 observation does not settle the hypothesis as false. Effectful terminal nodes
 remain disabled in the public Procedure runner. The `prediction_settleable` row
-in `cruxible next` renders `cruxible settle RSC-...`; add
+in `cruxible next` renders `cruxible prediction settle RSC-...`; add
 `--observation CLAIM_ID`.
 
 A window that closed with no accepted observation inside it cannot settle:
-`settle` refuses with `prediction_deadline_passed`, and the
+`prediction settle` refuses with `prediction_deadline_passed`, and the
 `prediction_settleable` row stays until the contract is retired. Cruxible does
 not assign a meaning to a window that closed unobserved (a lapse, or a
 resolution where the contract declares absence decisive); retire the contract
@@ -1945,9 +1949,9 @@ last check:
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
   `bound_contract_id`. An event window has one row per
-  anchor. The repair is `cruxible settle RSC-...`; add
+  anchor. The repair is `cruxible prediction settle RSC-...`; add
   `--observation CLAIM_ID` naming an accepted observation inside the window. The worker does not check that such an observation exists; if
-  none does, see the note under `cruxible settle`.
+  none does, see the note under `cruxible prediction settle`.
   The worker clears the row when the settlement lands, and restores it if that
   answer is overturned.
 - `prediction_window_unbindable` names a ResolutionContract with a matching

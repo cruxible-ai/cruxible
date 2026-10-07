@@ -2843,38 +2843,39 @@ def claim_group() -> None:
     """Propose, read, and explain first-class governed Claims."""
 
 
-@playbill_group.command("resolution-contracts")
-@click.argument("claim_id", required=False)
-@click.option(
-    "--request",
-    "request_file",
-    type=click.Path(exists=True, dir_okay=False),
-    help="Advanced: a ResolutionContractsRequest file with an exact hypothesis reference.",
-)
+@playbill_group.group("prediction")
+def prediction_group() -> None:
+    """Propose, settle and list predictions: testable claims about a later observation.
+
+    A prediction is stored as a ResolutionContract (`get ResolutionContract:NAME`
+    reads one); `next` names each bound window that is ready to settle.
+    """
+
+
+@prediction_group.command("list")
+@click.argument("claim")
 @json_option
 @handle_errors
-def resolution_contracts(claim_id: str | None, request_file: str | None, output_json: bool) -> None:
-    """Find accepted tests of a Claim, by Claim ID (CLM-... or Claim:CLM-...).
+def list_predictions(claim: str, output_json: bool) -> None:
+    """List the accepted predictions that test one Claim (CLM-... or Claim:CLM-...).
 
-    The daemon resolves the Claim's accepted version; `--request FILE` takes an
-    exact ClaimVersionReference hypothesis instead.
+    The daemon resolves the Claim's current accepted version and returns the
+    accepted resolution contracts whose hypothesis is that exact version, retired
+    ones included; contracts testing an earlier version of the Claim are not
+    listed. Pending (unaccepted) predictions and settlement outcomes are read with
+    `cruxible get ResolutionContract:NAME` and `cruxible next`.
     """
-    if (claim_id is None) == (request_file is None):
-        raise click.UsageError("provide exactly one of CLAIM_ID or --request FILE")
-    request = (
-        _read_model(request_file, contracts.ResolutionContractsRequest)
-        if request_file is not None
-        else contracts.ResolutionContractsRequest(hypothesis=cast(str, claim_id))
-    )
+
+    request = contracts.ResolutionContractsRequest(hypothesis=claim)
     result = _server_call(
-        lambda client, instance_id: client.resolution_contracts(instance_id, request=request),
-        command_name="cruxible resolution-contracts",
+        lambda client, instance_id: client.list_predictions(instance_id, request=request),
+        command_name="cruxible prediction list",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
     if not result.contracts:
-        click.echo("No resolution contracts test this Claim version.")
+        click.echo("No accepted prediction tests this Claim version.")
         return
     for view in result.contracts:
         click.echo(
@@ -2883,12 +2884,17 @@ def resolution_contracts(claim_id: str | None, request_file: str | None, output_
         )
 
 
-@playbill_group.command("predict")
+@prediction_group.command("propose")
 @click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
 @json_option
 @handle_errors
-def predict(request_file: str, output_json: bool) -> None:
-    """Submit a governed resolution contract for an accepted Claim."""
+def propose_prediction(request_file: str, output_json: bool) -> None:
+    """Propose a prediction about an accepted Claim from a PredictRequest file.
+
+    The prediction becomes a governed resolution contract proposal; review,
+    approve and activate it like any other, then settle it with `prediction
+    settle` once a later observation is accepted.
+    """
 
     try:
         request = contracts.PredictRequest.model_validate(_read_mapping(request_file))
@@ -2898,7 +2904,7 @@ def predict(request_file: str, output_json: bool) -> None:
         ) from exc
     result = _server_call(
         lambda client, instance_id: client.predict(instance_id, request=request),
-        command_name="cruxible predict",
+        command_name="cruxible prediction propose",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -2907,7 +2913,7 @@ def predict(request_file: str, output_json: bool) -> None:
     click.echo(f"Proposal: {result.proposal_id}")
 
 
-@playbill_group.command("settle")
+@prediction_group.command("settle")
 @click.argument("prediction_id")
 @click.option(
     "--observation",
@@ -2925,7 +2931,7 @@ def predict(request_file: str, output_json: bool) -> None:
 )
 @json_option
 @handle_errors
-def settle(
+def settle_prediction(
     prediction_id: str,
     observation: str | None,
     request_file: str | None,
@@ -2959,7 +2965,7 @@ def settle(
             prediction_id,
             request=request,
         ),
-        command_name="cruxible settle",
+        command_name="cruxible prediction settle",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))

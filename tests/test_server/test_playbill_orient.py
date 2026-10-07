@@ -96,7 +96,7 @@ def test_orient_attention_matches_next_for_the_effective_caller(
 
 @pytest.mark.parametrize(
     ("tools", "expected"),
-    [((), 0), (("cruxible_settle",), 1), (("cruxible_proposal_approve",), 1)],
+    [((), 0), (("cruxible_prediction_settle",), 1), (("cruxible_proposal_approve",), 1)],
 )
 def test_orient_attention_matches_next_for_an_mcp_profile_missing_a_tool(
     playbill_http: tuple[TestClient, str, Path],
@@ -128,7 +128,7 @@ def _assert_attention_parity(
         subject_identity="PredictionContract:window",
         detail={},
         repair=next_module.PlaybillNextRepairV1(
-            operation="cruxible.settle",
+            operation="cruxible.prediction.settle",
             target="PredictionContract:window",
             required_change="settle_the_window",
             arguments={"prediction_id": "window"},

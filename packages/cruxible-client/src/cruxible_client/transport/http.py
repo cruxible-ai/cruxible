@@ -1029,11 +1029,12 @@ class CruxibleClient:
         )
         self._check_error(response)
 
-    def resolution_contracts(
+    def list_predictions(
         self, instance_id: str, *, request: contracts.ResolutionContractsRequest
     ) -> contracts.ResolutionContractsResult:
+        """The accepted predictions (resolution contracts) that test one Claim version."""
         response = self._client.post(
-            f"/api/v1/{instance_id}/resolution-contracts/query",
+            f"/api/v1/{instance_id}/predictions/query",
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, contracts.ResolutionContractsResult)

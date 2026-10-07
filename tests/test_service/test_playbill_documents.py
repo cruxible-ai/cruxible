@@ -19,6 +19,7 @@ from cruxible_client.contracts.errors import (
     FormatError,
     SettlementIntegrityError,
 )
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     AcceptedCoordinate,
@@ -26,7 +27,6 @@ from cruxible_core.service.authoring.documents import (
     service_dereference_playbill_document,
     service_get_playbill_document,
     service_inspect_playbill_proposal,
-    service_inspect_playbill_refusal,
     service_list_playbill_documents,
     service_playbill_document_history,
     service_propose_playbill_document,
@@ -34,6 +34,7 @@ from cruxible_core.service.authoring.documents import (
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
+from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.proposals.review import service_prepare_playbill_approval
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import FIXED_TIMESTAMP, generate_client
@@ -186,12 +187,16 @@ def test_service_refusal_and_coordinate_mixing_are_typed(tmp_path: Path) -> None
         timestamp=TIMESTAMP,
     )
 
-    inspection = service_inspect_playbill_refusal(
+    # get is the one proposal read: the refused card carries the diagnostics.
+    card = service_playbill_get(
         instance,
-        proposal_id=refused.proposal.admission.proposal_id,
-    )
-    assert inspection.verdict == "refused"
-    assert [item.code for item in inspection.diagnostics] == ["cruxible.document.body_missing"]
+        request=GetRequest(ref=refused.proposal.admission.proposal_id),
+        access=BodyAccessContext(principal_id="reader"),
+    ).card
+    assert card is not None and card.verdict == "refused"  # type: ignore[union-attr]
+    assert [item.code for item in card.refusal] == [  # type: ignore[union-attr]
+        "cruxible.document.body_missing"
+    ]
 
     current = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     mixed = current.model_copy(update={"semantic_root": "sha256:" + "88" * 32})

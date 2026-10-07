@@ -364,7 +364,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_curation_suppress": TypeAdapter(CurationSuppressRequest),
     "cruxible_read_capture": TypeAdapter(CaptureReadRequest),
     "cruxible_init": TypeAdapter(InitRequest),
-    "cruxible_predict": TypeAdapter(contracts.PredictRequest),
+    "cruxible_prediction_propose": TypeAdapter(contracts.PredictRequest),
     "cruxible_procedure_bind": TypeAdapter(ProcedureBindRequest),
     "cruxible_proposal_readmit": TypeAdapter(ProposalReadmitRequest),
     "cruxible_proposal_withdraw": TypeAdapter(ProposalWithdrawRequest),
@@ -374,7 +374,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_propose_principal_change": TypeAdapter(ProposePrincipalRequest),
     "cruxible_propose_source_bundle": TypeAdapter(SourceProposeRequest),
     "cruxible_procedure_measure": TypeAdapter(contracts.ProcedureMeasureRequest),
-    "cruxible_settle": TypeAdapter(contracts.SettleRequest),
+    "cruxible_prediction_settle": TypeAdapter(contracts.SettleRequest),
     "cruxible_body_store": TypeAdapter(StoreBodyRequest),
     "cruxible_proposal_approve_submit": TypeAdapter(ApprovalRequest),
 }
@@ -1940,13 +1940,13 @@ def handle_playbill_line_run(
     )
 
 
-def handle_playbill_resolution_contracts(
+def handle_playbill_prediction_list(
     instance_id: str, request: contracts.ResolutionContractsRequest
 ) -> contracts.ResolutionContractsResult:
     return _dispatch_remote_or_local(
-        lambda client: client.resolution_contracts(instance_id, request=request),
-        lambda: playbill_api.playbill_resolution_contracts(instance_id, request=request),
-        operation_name="cruxible_resolution_contracts",
+        lambda client: client.list_predictions(instance_id, request=request),
+        lambda: playbill_api.playbill_prediction_list(instance_id, request=request),
+        operation_name="cruxible_prediction_list",
     )
 
 
@@ -1957,7 +1957,7 @@ def handle_playbill_predict(
     return _dispatch_remote_or_local(
         lambda client: client.predict(instance_id, request=request),
         lambda: playbill_api.playbill_predict(instance_id, request=request),
-        operation_name="cruxible_predict",
+        operation_name="cruxible_prediction_propose",
         local_payload=request.model_dump(mode="json"),
     )
 
@@ -1978,7 +1978,7 @@ def handle_playbill_settle_prediction(
             prediction_id,
             request=request,
         ),
-        operation_name="cruxible_settle",
+        operation_name="cruxible_prediction_settle",
         local_payload=request.model_dump(mode="json"),
     )
 

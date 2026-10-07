@@ -375,7 +375,7 @@ def test_supporting_evidence_folded_into_a_conflict_is_rendered_for_the_caller(
 _SDK_REPAIRS: tuple[tuple[str, dict[str, object]], ...] = (
     ("cruxible.line.arm", {"line": "hourly"}),
     ("cruxible.line.dispatch", {"line": "hourly", "limit": 3}),
-    ("cruxible.settle", {"prediction_id": "RSC-0001"}),
+    ("cruxible.prediction.settle", {"prediction_id": "RSC-0001"}),
     ("cruxible.authoring.example", {"example": "procedure-mandate"}),
     ("cruxible.proposal.approve", {"proposal_id": "PRP-0001", "signer_id": "reviewer"}),
     ("cruxible.claim.retire", {"claim_id": "CLM-0001"}),

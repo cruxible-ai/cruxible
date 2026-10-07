@@ -59,8 +59,8 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("retire",): "active",
     ("write",): "active",
     ("claim", "attest"): "active",
-    ("predict",): "active",
-    ("settle",): "active",
+    ("prediction", "propose"): "active",
+    ("prediction", "settle"): "active",
     ("claim-attestation", "recover"): "active",
     ("authoring", "bind"): "active",
     ("authoring", "compile"): "active",
@@ -584,18 +584,23 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         module="playbill",
         attr="claim_attestation_group",
     ),
-    "resolution-contracts": _command(
-        "playbill", "resolution_contracts", "Find accepted tests of an exact Claim version."
-    ),
-    "predict": _command(
-        "playbill",
-        "predict",
-        "Propose a governed resolution contract.",
-    ),
-    "settle": _command(
-        "playbill",
-        "settle",
-        "Settle a prediction from accepted evidence.",
+    "prediction": _group(
+        "Propose, settle and list predictions.",
+        {
+            "propose": _command(
+                "playbill", "propose_prediction", "Propose a prediction about a Claim."
+            ),
+            "settle": _command(
+                "playbill", "settle_prediction", "Settle a prediction from a later observation."
+            ),
+            "list": _command(
+                "playbill",
+                "list_predictions",
+                "List the accepted predictions that test one Claim.",
+            ),
+        },
+        module="playbill",
+        attr="prediction_group",
     ),
     "authoring": _group(
         "Author, preflight, submit, and resume governed writes.",

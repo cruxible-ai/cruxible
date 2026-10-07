@@ -2409,19 +2409,18 @@ class Cruxible:
             for view in result.claims
         )
 
-    def resolution_contracts(
-        self, hypothesis: str | ClaimVersionReference
-    ) -> api.ResolutionContractsResult:
-        """Find accepted tests of a Claim, including retired tests.
+    def predictions(self, claim: str | ClaimVersionReference) -> api.ResolutionContractsResult:
+        """List the accepted predictions that test one Claim version, retired ones included.
 
-        ``hypothesis`` is a Claim ID (``CLM-...``); the daemon resolves its
-        accepted version. An exact ``ClaimVersionReference`` is the advanced form.
+        ``claim`` is a Claim ID (``CLM-...``); the daemon resolves its version at
+        this connection's coordinate. An exact ``ClaimVersionReference`` names one
+        version directly. A prediction is stored as a resolution contract.
 
         Next: ``cx.settle(contract, observation=...)`` once an observation is accepted.
         """
-        return self._client.resolution_contracts(
+        return self._client.list_predictions(
             self._instance_id,
-            request=api.ResolutionContractsRequest(hypothesis=hypothesis, at=self.coordinate),
+            request=api.ResolutionContractsRequest(hypothesis=claim, at=self.coordinate),
         )
 
     def predict(self, contract: ResolutionContract | ResolutionContractInput) -> Prediction:
