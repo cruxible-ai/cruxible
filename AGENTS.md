@@ -14,7 +14,7 @@ The core contains no LLM.
 
 ```bash
 # Install dependencies
-uv sync --all-extras
+uv sync --all-packages --all-extras
 
 # Run the full suite in parallel (pytest-xdist; CI and scripts/ci_parity.sh run it this way).
 # --dist loadfile keeps each file on one worker, so module-scoped fixtures build once.
@@ -23,6 +23,11 @@ uv run pytest -n auto --dist loadfile
 # Run tests serially (small selections, debugging)
 uv run pytest
 
+# Provider-runtime tests need a cruxible-providers checkout, as in CI; without
+# CRUXIBLE_PROVIDERS_CHECKOUT they skip (see CONTRIBUTING.md)
+export CRUXIBLE_PROVIDERS_CHECKOUT=../cruxible-providers
+uv pip install "$CRUXIBLE_PROVIDERS_CHECKOUT/packages/cruxible-provider-runtime"
+
 # Run Docker image tests (requires Docker)
 CRUXIBLE_RUN_DOCKER_TESTS=1 uv run pytest tests/test_image -m docker
 
@@ -30,13 +35,16 @@ CRUXIBLE_RUN_DOCKER_TESTS=1 uv run pytest tests/test_image -m docker
 uv run pytest tests/test_claims/test_claims.py -v
 
 # Lint
-uv run ruff check src tests
+uv run ruff check src packages/cruxible-client/src tests
 
 # Format
-uv run ruff format src tests
+uv run ruff format src packages/cruxible-client/src tests
 
 # Type check
-uv run mypy src
+uv run mypy src packages/cruxible-client/src
+
+# Everything CI runs, locally, before a push
+scripts/ci_parity.sh
 ```
 
 ## Git Conventions
@@ -117,9 +125,12 @@ Version lives in these places — keep them in sync:
 - `pyproject.toml` (`version = "X.Y.Z"`)
 - `src/cruxible_core/__init__.py` (`__version__ = "X.Y.Z"`)
 - `packages/cruxible-client/pyproject.toml` and the core pin on it
+- `packages/cruxible-client/src/cruxible_client/__init__.py` (`__version__`)
 - `server.json` (the MCP registry listing: top-level and package `version`)
 
-The MCP server name includes the version (`cruxible v0.4.0`) so agents and users can confirm which build is running.
+`scripts/check_version_lockstep.py` checks all of them. The MCP server name
+includes the version (`cruxible vX.Y.Z`) so agents and users can confirm which
+build is running.
 
 **When to bump:**
 - **Patch (0.2.x):** Bug fixes, doc/prompt wording changes, test additions
@@ -134,11 +145,11 @@ stored digests are never recomputed under a different rule, and receipts stay ve
 forever, including by the frozen verifiers of retired formats.
 
 **Release process:**
-1. Bump version in both files
-2. Run `uv lock --check` and `uv run python scripts/check_version_lockstep.py`
+1. Bump the version in every place listed above
+2. Run `uv lock` (the lock records both workspace versions), then `uv lock --check` and `uv run python scripts/check_version_lockstep.py`
 3. Commit: `Bump to vX.Y.Z`
 4. Tag: `git tag vX.Y.Z`
-5. Push: `git push && git push --tags`; the tag workflow publishes both PyPI packages and creates or updates the GitHub release
+5. Push: `git push && git push --tags`; on the tag, `publish.yml` verifies the lockstep and publishes both PyPI packages, and `publish-runtime-image.yml` builds and pushes the runtime image. Neither creates a GitHub release; write one by hand if the release needs notes
 
 ## Architecture
 
@@ -189,8 +200,8 @@ file floors, and operational stores are derived or explicitly non-governed.
 
 ### Procedure system (`procedures/`)
 
-Procedures compile to the frozen graph-v3 representation and execute
-deterministically. Admission binds inputs and coordinates before execution;
+Procedure definitions are versioned node graphs (graph formats 3 to 6) and
+execute deterministically. Admission binds inputs and coordinates before execution;
 the exhaust journal records node outcomes, dependency manifests, effects, and
 typed terminal egress receipts. Line specs add recurring triggers and retained
 line-grained track records through accepted exhaust promotions.
@@ -213,7 +224,7 @@ MCP tools are gated by `CRUXIBLE_MODE` env var. Four cumulative tiers
 |------|-----------|-------|
 | `READ_ONLY` | `read_only` | Cruxible reads, receipted query runs, coverage, curation/audit reads |
 | `GOVERNED_WRITE` | `governed_write` | READ_ONLY + authoring/proposal and attributed operational actions |
-| `GRAPH_WRITE` | `graph_write` | Retained tier boundary; no legacy graph-write product surface |
+| `GRAPH_WRITE` | `graph_write` | GOVERNED_WRITE + approving and activating proposals |
 | `ADMIN` | `admin` (default) | Instance/principal lifecycle and published-state trust boundaries |
 
 - Audit logging uses structlog to stderr.

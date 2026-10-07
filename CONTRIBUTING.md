@@ -13,7 +13,8 @@ uv sync --all-packages --all-extras
 ## Running Tests
 
 ```bash
-uv run pytest
+uv run pytest -n auto --dist loadfile   # the whole suite, as CI runs it
+uv run pytest tests/test_claims -v      # a selection
 ```
 
 The provider-runtime tests (provider installation, package index) run against
@@ -27,10 +28,10 @@ export CRUXIBLE_PROVIDERS_CHECKOUT=../cruxible-providers
 uv pip install "$CRUXIBLE_PROVIDERS_CHECKOUT/packages/cruxible-provider-runtime"
 ```
 
-Some tests pin golden outputs (workflow shapes, query semantics, receipts).
-If a change intentionally shifts a pinned shape, regenerate with
-`CRUXIBLE_UPDATE_GOLDENS=1 uv run pytest` and review the resulting diff as
-part of the change.
+Some tests pin golden outputs (public contract and HTTP snapshots, wire
+catalogs, served surfaces). If a change intentionally shifts a pinned shape,
+regenerate it with the matching `scripts/update_*.py` updater and review the
+resulting diff as part of the change.
 
 ## Code Quality
 
@@ -44,7 +45,7 @@ uv run mypy src packages/cruxible-client/src                # type check
 
 1. Fork the repo and create a branch from `main`
 2. Make your changes with tests
-3. Ensure `uv run pytest`, `uv run ruff check`, and `uv run mypy src` all pass
+3. Ensure `scripts/ci_parity.sh` passes (lint, format, type check, tests and the version lockstep, as CI runs them)
 4. Open a pull request with a clear description of what and why
 
 ## Reporting Issues
