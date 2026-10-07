@@ -313,12 +313,9 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
     assert all(item.environment_path.exists() for item in old.values())
 
 
-def test_installed_web_source_fetches_local_http_and_retains_capture(
+def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     installer_http, tmp_path, provider_checkout
 ):
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
     from cruxible_client import Cruxible
     from cruxible_client.authoring.examples import procedure_example
     from cruxible_client.authoring.inputs import CarriedContractInput
@@ -339,10 +336,8 @@ def test_installed_web_source_fetches_local_http_and_retains_capture(
         wheel=next(wheels.glob("cruxible_provider_web-*.whl")),
         lock=repository / "packages/cruxible-provider-web/uv.lock",
         dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
-        extras=("browser",),
     )
     assert installed.registered
-    # Browser availability is reported independently of Python installation.
     assert all(row.installed for row in installed.operations)
     assert all(
         "python extra" not in item
@@ -376,96 +371,80 @@ def test_installed_web_source_fetches_local_http_and_retains_capture(
     interface = interface_entry(client, instance_id, "web.fetch")
     provider = interface["providers"][0]
 
-    class Origin(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"severity":"high"}')
+    # web.fetch refuses private and loopback origins, so the run reads the recording the web
+    # package ships for the reserved fixture.invalid host; it opens no socket.
+    example = procedure_example()
 
-        def log_message(self, *args):
-            pass
+    def accepted(role, target):
+        return {"kind": "accepted", "role": role, "target": target}
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Origin)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        example = procedure_example()
-
-        def accepted(role, target):
-            return {"kind": "accepted", "role": role, "target": target}
-
-        carried = {"kind": "carried_contract", "role": "contract-out", "name": "fetch-result"}
-        raw = {
-            **example.definition,
-            "name": "installed-web-fetch",
-            "graph_format": 6,
-            "returns": "result",
-            "contract_out": carried,
-            "nodes": [
-                {
-                    "kind": "source",
-                    "node_id": "fetch",
-                    "as": "observation",
-                    "next": "shape",
-                    "capture_contract": accepted("capture-contract", contract.identity.qualified),
-                    "provider": accepted("provider", provider["provider_identity"]),
-                    "interface": accepted("provider-interface", interface["identity"]),
-                    "interface_digest": interface["interface_digest"],
-                    "implementation_digest": provider["implementation_digest"],
-                    "request": {
-                        "url": f"http://127.0.0.1:{server.server_port}/state.json",
-                        "expected_format": "json",
-                    },
+    carried = {"kind": "carried_contract", "role": "contract-out", "name": "fetch-result"}
+    raw = {
+        **example.definition,
+        "name": "installed-web-fetch",
+        "graph_format": 6,
+        "returns": "result",
+        "contract_out": carried,
+        "nodes": [
+            {
+                "kind": "source",
+                "node_id": "fetch",
+                "as": "observation",
+                "next": "shape",
+                "capture_contract": accepted("capture-contract", contract.identity.qualified),
+                "provider": accepted("provider", provider["provider_identity"]),
+                "interface": accepted("provider-interface", interface["identity"]),
+                "interface_digest": interface["interface_digest"],
+                "implementation_digest": provider["implementation_digest"],
+                "request": {
+                    "url": "https://fixture.invalid/api/v1/measurements.json",
+                    "expected_format": "json",
                 },
-                {
-                    "kind": "project",
-                    "node_id": "shape",
-                    "as": "result",
-                    "fields": {"text": "$steps.observation.derived.text"},
-                    "contract_out": carried,
-                },
-            ],
-            "budget": {
-                **example.definition["budget"],
-                "wall_clock": _RUN_WALL_CLOCK,
-                "max_items": None,
-                "max_provider_calls": 1,
-                "max_capture_bytes": 1048576,
             },
-            "hard_caps": {
-                **example.definition["hard_caps"],
-                "max_wall_clock": _MAX_WALL_CLOCK,
-                "max_provider_calls": 2,
-                "max_capture_bytes": 2097152,
+            {
+                "kind": "project",
+                "node_id": "shape",
+                "as": "result",
+                "fields": {"text": "$steps.observation.derived.text"},
+                "contract_out": carried,
             },
-        }
-        authored = example.model_copy(
-            update={
-                "definition": raw,
-                "acquisition_policy": policy.identity.name,
-                "contracts": (
-                    next(row for row in example.contracts if row.name == "empty-input"),
-                    CarriedContractInput(
-                        name="fetch-result", fields={"text": PropertySchema(type="string")}
-                    ),
+        ],
+        "budget": {
+            **example.definition["budget"],
+            "wall_clock": _RUN_WALL_CLOCK,
+            "max_items": None,
+            "max_provider_calls": 1,
+            "max_capture_bytes": 1048576,
+        },
+        "hard_caps": {
+            **example.definition["hard_caps"],
+            "max_wall_clock": _MAX_WALL_CLOCK,
+            "max_provider_calls": 2,
+            "max_capture_bytes": 2097152,
+        },
+    }
+    authored = example.model_copy(
+        update={
+            "definition": raw,
+            "acquisition_policy": policy.identity.name,
+            "contracts": (
+                next(row for row in example.contracts if row.name == "empty-input"),
+                CarriedContractInput(
+                    name="fetch-result", fields={"text": PropertySchema(type="string")}
                 ),
-            }
-        )
-        prepared = pb.procedure(definition=authored).prepare()
-        assert not prepared.refused, prepared.diagnostics
-        prepared.submit()
-        _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
-        run = pb.accepted_procedure("installed-web-fetch").run()
-        state = client.get_procedure_run(instance_id, run.run_id)
-        assert run.status == "succeeded", state.model_dump_json(indent=2)
-        assert run.result.text == '{"severity":"high"}'
-        assert state.source_observations[0].capture_digest
-        assert state.receipt_digest
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
+            ),
+        }
+    )
+    prepared = pb.procedure(definition=authored).prepare()
+    assert not prepared.refused, prepared.diagnostics
+    prepared.submit()
+    _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
+    run = pb.accepted_procedure("installed-web-fetch").run()
+    state = client.get_procedure_run(instance_id, run.run_id)
+    assert run.status == "succeeded", state.model_dump_json(indent=2)
+    assert '"station": "newlyn"' in run.result.text
+    assert state.source_observations[0].capture_digest
+    assert state.receipt_digest
 
 
 @pytest.mark.parametrize("installer_http", [True], indirect=True)
