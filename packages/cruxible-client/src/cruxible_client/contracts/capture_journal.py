@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Annotated, Literal, Protocol, TypeAlias, runtime_checkable
+from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -239,20 +239,6 @@ def _envelope_receipt_digest(envelope: CaptureEnvelopeAny) -> str:
     )
 
 
-@runtime_checkable
-class CaptureLandingJournalProtocol(Protocol):
-    def append(
-        self,
-        *,
-        instance_id: str,
-        envelope: CaptureEnvelopeAny,
-        landed_at: datetime,
-        idempotency_key: str,
-    ) -> CaptureLandingEventAny: ...
-
-    def events_after(self, cursor: str | None = None) -> tuple[CaptureLandingEventAny, ...]: ...
-
-
 class InMemoryCaptureLandingJournal:
     """Reference semantics for an append-only per-partition journal."""
 
@@ -388,7 +374,6 @@ __all__ = [
     "CaptureLandingEventV1",
     "CaptureLandingEvent",
     "CaptureLandingEventAny",
-    "CaptureLandingJournalProtocol",
     "InMemoryCaptureLandingJournal",
     "capture_landing_event_id",
     "capture_landing_idempotency_key",

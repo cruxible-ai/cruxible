@@ -5,7 +5,7 @@ That digest identifies the audited top-level read/response surface; before the
 lineage's first public release it can be re-pinned only atomically with the SDK
 handshake, program stamp, snapshot, and guardrail. After first public release,
 every change requires a coordinated version succession. This independent
-catalog freezes the deeper request, payload, intent, and insertion closure.
+catalog freezes the deeper request, payload and intent closure.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from cruxible_client.contracts.primitives import canonical_json
 
 AUTHORING_WIRE_CATALOG_VERSION = 1
 AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST = (
-    "sha256:9f5d57571bd401bd7ab6908e69fe19eb9aaba6d603b16e0fb955b00f4c4a24ba"
+    "sha256:d59ad84a276332791d6906e391a864fe580da2e4c694ffa7cc16c126ae525691"
 )
 
 AUTHORING_WIRE_MODEL_NAMES = (
@@ -37,7 +37,6 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "AuthoringIntent",
     "AuthoringIntentCompileRequest",
     "AuthoringIntentCompileRequestV1",
-    "AuthoringIntentCompileRequestV2",
     "AuthoringIntentList",
     "AuthoringIntentPreflightRequest",
     "AuthoringIntentSubmitRequest",
@@ -73,10 +72,6 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "DiagnosticFrontier",
     "DiagnosticFrontierLimits",
     "ExistingCaptureCitationSource",
-    "InsertionAnchorWindow",
-    "InsertionExpectation",
-    "InsertionTarget",
-    "InsertionTerminalTombstone",
     "LineAuthoringPayload",
     "MandateConditionAuthoring",
     "MandateScopeAuthoring",
@@ -89,8 +84,6 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "ProjectionCheckRequest",
     "ProjectionCheckResult",
     "ProjectionDependencyIssue",
-    "PublicationPreparation",
-    "PublicationSourceObservation",
     "QueryDefinitionAuthoringPayload",
     "RepairAlternative",
     "ResolutionContractAuthoringPayload",

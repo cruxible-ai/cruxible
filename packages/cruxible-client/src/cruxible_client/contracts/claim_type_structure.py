@@ -180,7 +180,6 @@ def check_claim_type_structure(value: object) -> ClaimTypeStructuralCheck:
 
 
 __all__ = [
-    "CLAIM_TYPE_STRUCTURAL_SIGNATURE_DOMAIN",
     "ClaimCardinality",
     "ClaimObjectKind",
     "ClaimRole",

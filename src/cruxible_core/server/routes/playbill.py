@@ -89,7 +89,6 @@ from cruxible_core.server.playbill_request_models import (
     NextRequest,
     NextRequestV1,
     PlaybillAuthoringCompileRequest,
-    PlaybillAuthoringCompileRequestV2,
     PlaybillAuthoringCompileRequestV3,
     ProposalReadmitRequest,
     ProposalWithdrawRequest,
@@ -727,7 +726,6 @@ def compile_authoring(
     instance_id: str,
     req: (
         PlaybillAuthoringCompileRequest
-        | PlaybillAuthoringCompileRequestV2
         | PlaybillAuthoringCompileRequestV3
         | AuthoringInputCompileRequest
     ),
@@ -745,13 +743,6 @@ def compile_authoring(
             intent_id=req.intent_id,
             reference_expectations=req.reference_expectations,
             program_stamp=req.program_stamp,
-        )
-    if isinstance(req, PlaybillAuthoringCompileRequestV2):
-        return playbill_api.playbill_authoring_compile(
-            resolve_server_instance_id(instance_id),
-            payload=req.payload,
-            intent_id=req.intent_id,
-            reference_expectations=req.reference_expectations,
         )
     return playbill_api.playbill_authoring_compile(
         resolve_server_instance_id(instance_id),

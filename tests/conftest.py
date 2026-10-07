@@ -248,3 +248,34 @@ def clean_playbill_manager_singleton() -> None:
     for name, value in tuple(vars(manager).items()):
         if callable(value) and callable(getattr(type(manager), name, None)):
             delattr(manager, name)
+
+
+@pytest.fixture(autouse=True)
+def no_mcp_daemon_autostart(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test starts a daemon by accident: an MCP call with no daemon refuses.
+
+    The stdio adapter starts a local daemon when no transport is configured.
+    Tests bind the in-process daemon (`tests/support/mcp_daemon.py`) or a stub
+    client instead; the auto-start tests call the real function by its own
+    reference, under a short scratch state root.
+    """
+
+    from cruxible_core.mcp import daemon
+
+    def refuse(state_root: Path, **_: object) -> daemon.DaemonTarget:
+        raise daemon.DaemonUnavailableError(
+            f"test isolation: no daemon is auto-started for {state_root}; bind one with "
+            "tests.support.mcp_daemon.bind_mcp_daemon"
+        )
+
+    monkeypatch.setattr(daemon, "ensure_local_daemon", refuse)
+    daemon.forget_local_daemon()
+
+
+@pytest.fixture
+def mcp_daemon(monkeypatch: pytest.MonkeyPatch) -> object:
+    """Bind every MCP handler to the real app served in process (see support)."""
+
+    from tests.support.mcp_daemon import bind_mcp_daemon
+
+    return bind_mcp_daemon(monkeypatch)

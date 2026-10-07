@@ -135,7 +135,6 @@ __all__ = [
     "Cruxible",
     "Prediction",
     "PredictionSettlement",
-    "InsertionApplyError",
     "WorkspaceError",
     "observe_next_workspace",
     "ProcedureRef",
@@ -284,12 +283,6 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.contracts.procedures import models
 
         return getattr(models, name)
-    if name in {
-        "InsertionApplyError",
-    }:
-        from cruxible_client.authoring import insertions
-
-        return getattr(insertions, name)
     if name in {
         "WorkspaceError",
         "observe_next_workspace",

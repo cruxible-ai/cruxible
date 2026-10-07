@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -67,15 +68,12 @@ def test_get_handler_builds_the_request_for_the_mcp_surface(
 ) -> None:
     captured: list[GetRequest] = []
 
-    def local(instance_id: str, *, request: GetRequest) -> Any:
+    def get(instance_id: str, *, request: GetRequest) -> Any:
         assert instance_id == "inst_get"
         captured.append(request)
         return "result"
 
-    monkeypatch.setattr(handlers.playbill_api, "playbill_get", local)
-    monkeypatch.setattr(
-        handlers, "_dispatch_remote_or_local", lambda _remote, local, **_kw: local()
-    )
+    monkeypatch.setattr(handlers, "_get_client", lambda: SimpleNamespace(get=get))
 
     handlers.handle_playbill_get("inst_get", ref="CLM-0123abcd")
     handlers.handle_playbill_get(

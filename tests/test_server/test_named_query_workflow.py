@@ -48,9 +48,7 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
         else definition
     )
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
-    monkeypatch.setattr(
-        handlers, "_dispatch_remote_or_local", lambda remote, local, **kw: remote(client)
-    )
+    monkeypatch.setattr(handlers, "_get_client", lambda: client)
 
     def invoke(*args):
         result = CliRunner().invoke(

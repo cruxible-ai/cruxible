@@ -11,6 +11,7 @@ from cruxible_client.contracts.kits import KitAddRequest, KitChangeResult, KitSt
 from cruxible_client.kits import KIT_ARTIFACT
 from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
+from tests.support.mcp_daemon import bind_mcp_daemon
 from tests.test_client.test_artifacts import _bundle
 
 
@@ -32,7 +33,7 @@ def test_kit_add_by_reference_pulls_in_the_adapter_and_records_the_pinned_source
             return KitChangeResult(kit_id="acme", version="1.0.0", status="would_propose")
 
     monkeypatch.setattr(handlers, "fetch_kit_image", fetch)
-    monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
+    bind_mcp_daemon(monkeypatch, StubClient())
 
     result = handlers.handle_playbill_kit_add(
         "inst", reference="acme:1.0.0", keep=("ClaimType:acme.b", "ClaimType:acme.a")
@@ -59,7 +60,7 @@ def test_kit_status_runs_the_update_check_in_the_adapter(monkeypatch: pytest.Mon
         checked.append(offline)
         return status
 
-    monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
+    bind_mcp_daemon(monkeypatch, StubClient())
     monkeypatch.setattr(handlers, "check_kit_updates", check)
 
     handlers.handle_playbill_kit_status("inst", offline=True)

@@ -30,7 +30,6 @@ from cruxible_client.contracts.authoring.models import (
     ClaimDependencyDrafts,
     ClaimRetirementMember,
     ClaimTypeAuthoringPayload,
-    PublicationSourceObservation,
     SelfSourceBody,
     SubjectAuthoringPayload,
     authoring_change_set_membership,
@@ -122,7 +121,6 @@ def _claim(
     rationale: str = "The writer observed the current work status.",
     body: str = "status: ready\n",
     revises: str | None = None,
-    insertion_target: object | None = None,
     dispositions: tuple[object, ...] = (),
 ) -> ClaimAuthoringPayloadV1:
     return ClaimAuthoringPayloadV1(
@@ -137,7 +135,6 @@ def _claim(
         source=SelfSourceBody(content_base64=base64.b64encode(body.encode("utf-8")).decode()),
         revises=revises,
         existing_claim_dispositions=dispositions,  # type: ignore[arg-type]
-        insertion_target=insertion_target,  # type: ignore[arg-type]
     )
 
 
@@ -484,15 +481,6 @@ def test_the_changed_member_ceiling_is_an_operator_knob_that_ignores_cards(
 
 def _digest(content: bytes) -> str:
     return "sha256:" + hashlib.sha256(content).hexdigest()
-
-
-def _observation(content: bytes) -> PublicationSourceObservation:
-    return PublicationSourceObservation(
-        source_id="repo.work-items",
-        content_base64=base64.b64encode(content).decode("ascii"),
-        content_digest=_digest(content),
-        byte_length=len(content),
-    )
 
 
 def test_eighty_members_of_every_kind_become_exactly_one_generation(tmp_path: Path) -> None:

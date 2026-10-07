@@ -14,6 +14,7 @@ from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.workspace import resolve_workspace_path
 from tests.support.floor_exports import delta_from_export, floor_v5_export
+from tests.support.mcp_daemon import bind_mcp_daemon
 
 
 def _coordinate(seed: str = "1") -> contracts.AcceptedCoordinate:
@@ -64,6 +65,14 @@ class _StubClient:
             generation=3,
         )
 
+    def host_workspace_registration(
+        self, instance_id: str, *, workspace_root: str | None = None
+    ) -> contracts.HostWorkspaceRegistration:
+        # Delivery off: the floor export is this client's to write.
+        return contracts.HostWorkspaceRegistration(
+            instance_id=instance_id, status="not_registered", delivers_here=False
+        )
+
 
 def _workspace(tmp_path: Path) -> Path:
     root = tmp_path / "workspace"
@@ -96,7 +105,7 @@ def test_activate_is_a_daemon_act_that_writes_nothing_locally(
 
     workspace = _workspace(tmp_path)
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
-    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+    bind_mcp_daemon(monkeypatch, _StubClient())
     before = sorted(path.relative_to(workspace) for path in workspace.rglob("*"))
 
     result = handlers.handle_playbill_activate("inst_test", "proposal-1")
@@ -112,7 +121,7 @@ def test_workspace_status_compares_the_installed_floor(
 ) -> None:
     workspace = _workspace(tmp_path)
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
-    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+    bind_mcp_daemon(monkeypatch, _StubClient())
     handlers.handle_playbill_floor_export("inst_test", mode="write")
 
     status = handlers.handle_playbill_floor_export("inst_test", mode="status")
@@ -127,7 +136,7 @@ def test_floor_write_still_refuses_a_directory_holding_something_else(
 ) -> None:
     workspace = _workspace(tmp_path)
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
-    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+    bind_mcp_daemon(monkeypatch, _StubClient())
     floor = workspace / ".cruxible/floor"
     floor.mkdir(parents=True)
     (floor / "occupied.txt").write_text("not the floor\n", encoding="utf-8")
@@ -146,7 +155,7 @@ def test_floor_export_from_nested_cwd_uses_the_containing_git_worktree(
     nested.mkdir(parents=True)
     monkeypatch.chdir(nested)
     monkeypatch.delenv("CRUXIBLE_MCP_WORKSPACE_ROOT", raising=False)
-    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+    bind_mcp_daemon(monkeypatch, _StubClient())
 
     written = handlers.handle_playbill_floor_export("inst_test", mode="write")
 
@@ -163,7 +172,7 @@ def test_explicit_nested_mcp_root_refuses_to_write_outside_its_boundary(
     scoped_root = workspace / "scoped/subdir"
     scoped_root.mkdir(parents=True)
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(scoped_root))
-    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+    bind_mcp_daemon(monkeypatch, _StubClient())
 
     with pytest.raises(ConfigError, match="must name the Git worktree root"):
         handlers.handle_playbill_floor_export("inst_test", mode="write")
@@ -240,7 +249,7 @@ def test_an_mcp_write_with_discovery_records_the_floor_output_part(
     workspace = _workspace(tmp_path)
     client = _PartsClient()
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
-    monkeypatch.setattr(handlers, "_get_client", lambda: client)
+    bind_mcp_daemon(monkeypatch, client)
     profile = workspace / ".cruxible/floor/subjects/k/a.profile.json"
 
     written = handlers.handle_playbill_floor_export(

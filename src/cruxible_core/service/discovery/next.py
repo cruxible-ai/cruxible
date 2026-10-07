@@ -4435,8 +4435,8 @@ def _proposal_items(
 
     Only the author may readmit, so a row shows only to its author: the
     daemon's authenticated caller, never a request field. A queue read
-    without one -- library mode, or an unattributed request -- has no rows
-    here, as with approvals.
+    without one -- an unattributed request -- has no rows here, as with
+    approvals.
     """
 
     if caller_principal_id is None or not access_profile.permits("instance"):
@@ -4499,9 +4499,9 @@ def _approval_items(
     The principal is the daemon's authenticated caller, never a request field,
     and must be active and ordinary in the coordinate's registry: only such a
     signer's approval counts toward a candidate's requirement. A queue read
-    without one -- library mode, or an unattributed request -- has no rows
-    here. Approving closes the row; so does another signer meeting the
-    requirement first, since the candidate then waits on activation instead.
+    without one -- an unattributed request -- has no rows here. Approving
+    closes the row; so does another signer meeting the requirement first,
+    since the candidate then waits on activation instead.
     """
 
     if caller_principal_id is None or not access_profile.permits("instance"):

@@ -155,6 +155,12 @@ self-approval allowed. Add `--reviewer-key-dir DIR
 creator-excluded approval from genesis. See the [Quickstart](docs/quickstart.md)
 for a complete Document proposal and activation.
 
+An MCP client launches `cruxible mcp` (`uvx cruxible mcp` from the registry
+listing). Every tool runs on a daemon: give the server `CRUXIBLE_SERVER_SOCKET`
+in its `env` block to use the one above, or leave it unset and the server reuses
+the local daemon on `~/.cruxible/run/daemon.sock`, starting one there when none
+answers. See [MCP tools](docs/mcp-tools.md#the-daemon).
+
 ## Security boundaries
 
 Runtime bearer credentials and Cruxible principals solve different problems:

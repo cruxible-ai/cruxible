@@ -258,7 +258,6 @@ class _Client:
                 "intent_id": "AIT-" + "1" * 32,
                 "intent_revision": 1,
                 "payload": self.compiled["payload"],
-                "insertion_expectation": None,
             }
         )
 

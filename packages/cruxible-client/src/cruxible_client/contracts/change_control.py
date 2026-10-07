@@ -86,12 +86,6 @@ PreviewAt = Annotated[
 #: ``irreversible``: previews by default and commits only with ``at``.
 ChangeKind = Literal["direct", "derived", "irreversible"]
 
-ChangeRefusalCode = Literal[
-    "cruxible.preview.state_moved",
-    "cruxible.preview.confirmation_required",
-    "cruxible.preview.recovery_pending",
-]
-
 
 class StateCoordinate(BaseModel):
     """The operational state one change was evaluated against.
@@ -136,7 +130,6 @@ __all__ = [
     "DRY_RUN_DESCRIPTION",
     "ChangeControlRequest",
     "ChangeKind",
-    "ChangeRefusalCode",
     "DryRun",
     "StateCoordinate",
     "PreviewAt",

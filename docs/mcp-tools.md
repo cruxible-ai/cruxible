@@ -35,12 +35,43 @@ discoverability only; permission tiers still gate every call. There is no
 separate version tool: `cruxible_whoami` and `cruxible_server_info`
 both report the MCP adapter's package version and the daemon's (`GET /version`).
 
+## The daemon
+
+Every tool runs on a Cruxible daemon; the MCP server is a client of it and never
+serves state in its own process. It picks the daemon in this order:
+
+1. `CRUXIBLE_SERVER_SOCKET` or `CRUXIBLE_SERVER_URL` in its own environment;
+2. the transport the MCP workspace's `.cruxible/coverage.json` binds together
+   with an instance;
+3. the default socket, `~/.cruxible/run/daemon.sock` (under `CRUXIBLE_STATE_ROOT`
+   when that is set), when a daemon answers there;
+4. otherwise it starts one under that state root, holding
+   `<state root>/run/autostart.lock` so two MCP servers never start two: a live
+   daemon already serving the state root is reused, an installed user service
+   (`cruxible server install-service`) is started, and with neither it runs
+   `cruxible server start --socket <default socket>` detached, writing its
+   output to `<state root>/run/daemon.out`. The daemon outlives the MCP server.
+
+A transport from 1 or 2 that does not answer is refused by name; the server never
+starts a daemon in its place, whichever socket a workspace binding names (the
+default one included). When no daemon can be started, the call fails with
+`cruxible.mcp.daemon_unavailable` naming the failed step and the repair: start
+one with `cruxible server start`, install the service, or set a transport. A
+started daemon inherits an allowlist of the MCP server's environment: process
+basics (`PATH`, `HOME`, user, shell, temporary directories, locale, `TZ`, the XDG
+directories, `VIRTUAL_ENV`, `PYTHONPATH`), proxy and certificate settings, uv's
+cache and index URLs, `GIT_SSH_COMMAND`, and daemon configuration. Nothing else
+reaches it: not the server's transport, tier, instance or principal, and no
+credential (Cruxible tokens and keys, API keys, cloud or forge tokens).
+
+## Instances and the adapter environment
+
 Every tool that acts on one instance takes an optional `instance_id`. Omitted,
 it defaults to `CRUXIBLE_INSTANCE_ID` in the MCP server's own environment (set it
 in the `env` block of the MCP client config), and then to the instance the MCP
-workspace's `.cruxible/coverage.json` binds, provided the binding names the same
-daemon the server is configured for; a binding on another daemon is refused. The
-server never reads remembered CLI context. With none of these, the call fails and
+workspace's `.cruxible/coverage.json` binds, provided the binding names the
+server's daemon; a binding on another daemon than the environment's is refused.
+The server never reads remembered CLI context. With none of these, the call fails and
 names `CRUXIBLE_INSTANCE_ID`. `cruxible_whoami` returns the instance it resolved together
 with the caller's identity there.
 
@@ -78,27 +109,29 @@ changed since review. Unset, the tool refuses and says how to configure it.
 Only the public attestation leaves the process; key bytes never appear in a
 result or a log line.
 
-## Which verb each tool publishes
+## Which daemon operations each tool publishes
 
 `tests/goldens/playbill/served-surface-dp0b-v1.json` is the machine-readable
-inventory of the whole served surface, and its `surface.mcp_tools` rows carry
-`facade_operations`: the facade verbs each tool reaches, per tool. A deployment
-that decides per-verb what may be reached over MCP reads the join there rather
-than inferring it from the `cruxible_<verb>` / `handle_<verb>` spelling, which
-nothing guarantees. `surface.mcp_facade_operations` still bounds the whole lane.
+inventory of the whole served surface. Its `surface.mcp_tools` rows carry
+`client_operations`: the daemon client operations each tool reaches, per tool.
+MCP reaches state only through the daemon, so each operation is an HTTP route,
+and that route's row in `surface.http_routes` names the facade verbs it reaches.
+A deployment that decides what may be reached over MCP reads this join, or
+enforces at the daemon's routes, rather than inferring it from the
+`cruxible_<verb>` / `handle_<verb>` spelling, which nothing guarantees.
 
 The list is a reachability closure, not a read of the handler's own body: it
-covers the verbs the handler names itself, the verbs reached through a local
-adapter object it constructs, and the verbs reached through a sibling handler
-it delegates to. An empty list therefore means the tool reaches no facade verb
-at all -- one tool is in that position today,
-`cruxible_authoring_example`, and it is `READ_ONLY`. A mutating tool may not publish an empty list without a declared
-exception naming its reason
+covers the operations the handler calls itself, those of a sibling handler it
+delegates to, and those of the shared client-side code it hands the client to
+(block repin, the next-workspace observation, source compilation). An empty list
+means the tool reaches no daemon operation at all -- one tool is in that position
+today, `cruxible_authoring_example`, and it is `READ_ONLY`. A mutating tool may
+not publish an empty list without a declared exception naming its reason
 (`tests/test_guardrails/test_playbill_v1_served_surface.py`), because an
 overlay reading `[]` as "reaches nothing" would fail open.
 
 Every row is covered by the snapshot's `succession.surface_digest`, so a tool
-that starts reaching one more verb moves the pin.
+that starts reaching one more operation moves the pin.
 
 ## Runtime
 

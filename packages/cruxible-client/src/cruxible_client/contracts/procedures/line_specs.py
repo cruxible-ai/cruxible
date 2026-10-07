@@ -996,7 +996,6 @@ __all__ = [
     "TriggerPolicy",
     "CaptureLandingTriggerPolicy",
     "WindowCloseTriggerPolicy",
-    "LINE_IDENTITY_DIGEST_DOMAIN",
     "ManualTriggerPolicy",
     "TriggerPolicyV1",
     "WindowCloseTriggerPolicyV1",

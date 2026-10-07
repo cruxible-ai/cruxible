@@ -801,13 +801,13 @@ def test_whole_file_cas_preserves_a_concurrent_edit(
     concurrent = source.read_bytes() + b"CONCURRENT\n"
     from cruxible_client.authoring import blocks as block_module
 
-    original = block_module.replace_publication_file
+    original = block_module.replace_page_file
 
     def race(path: Path, *, expected: bytes, replacement: bytes) -> None:
         path.write_bytes(concurrent)
         original(path, expected=expected, replacement=replacement)
 
-    monkeypatch.setattr(block_module, "replace_publication_file", race)
+    monkeypatch.setattr(block_module, "replace_page_file", race)
     result = sync_projection_blocks(
         _SyncClient(refusal="block_backing_retired"),  # type: ignore[arg-type]
         INSTANCE_ID,

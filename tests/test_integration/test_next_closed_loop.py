@@ -1381,7 +1381,7 @@ def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     assert row.detail["actor_id"] == "owner"
     assert row.detail["minimum_distinct_signers"] == 1
     # The creator cannot approve its own candidate, an unregistered caller has
-    # no approval to give, and library mode names no caller at all.
+    # no approval to give, and an unattributed request names no caller at all.
     assert rows("owner", _request(instance)) == []
     assert rows("stranger", _request(instance)) == []
     assert rows(None, _request(instance)) == []

@@ -577,15 +577,9 @@ EMPTY_DEPENDENCY_EDGE_ROOT: Final = build_merkle_tree({}, domains=DEPENDENCY_EDG
 
 __all__ = [
     "DEPENDENCY_EDGE_DOMAINS",
-    "DEPGRAPH_LEAF_DOMAIN",
-    "DEPGRAPH_NODE_DOMAIN",
-    "DEPGRAPH_ROOT_DOMAIN",
     "EMPTY_DEPENDENCY_EDGE_ROOT",
     "EMPTY_MERKLE_ROOT",
     "MANIFEST_MERKLE_DOMAINS",
-    "MERKLE_LEAF_DOMAIN",
-    "MERKLE_NODE_DOMAIN",
-    "MERKLE_ROOT_DOMAIN",
     "MerkleDomainFamily",
     "MerkleManifest",
     "MerkleNode",

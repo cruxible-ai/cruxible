@@ -118,12 +118,13 @@ EFFECTIVE_RUNG_TERMS: tuple[EffectiveRungTermV1, ...] = (
 )
 
 #: What a served result calls each term: the Line's ceiling is authored as a verb.
+#: The calibration term has no served name: it always reads the top rung and is
+#: ordered last, so it never limits a run (`compute_effective_rung`).
 SERVED_AUTHORITY_TERMS: dict[EffectiveRungTermV1, ServedAuthorityTerm] = {
     "procedure_terminal_capability": "procedure_terminal_capability",
     "line_requested_rung": "line_max_authority",
     "propagated_sensitivity": "propagated_sensitivity",
     "mandate_grant": "mandate_grant",
-    "calibration": "calibration",
 }
 
 #: Below rung 0 there is no governed egress at all.  A term reaches this value
