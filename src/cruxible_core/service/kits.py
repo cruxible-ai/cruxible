@@ -13,6 +13,7 @@ definition only moved in lineage compares equal and stays untouched.
 
 from __future__ import annotations
 
+import functools
 import json
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any, Literal
@@ -67,6 +68,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderInstallResult,
     ProviderWheelObject,
 )
+from cruxible_client.contracts.provider_interfaces import provider_interface_path
 from cruxible_client.contracts.providers import (
     ProviderAny,
     ProviderLocalDistributionPin,
@@ -90,6 +92,7 @@ from cruxible_core.claims.claim_type_migrations import (
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
 from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS, genesis_seed_files
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.providers.package_inspection import (
     InspectedProviderPackage,
@@ -113,6 +116,56 @@ _RECEIPT_ACCESS = BodyAccessContext(principal_id="kit-receipt", can_read_body=Tr
 _PROVIDER_FILE_ACCESS = BodyAccessContext(principal_id="kit-provider", can_read_body=True)
 _RECEIPT_SCOPE = ("kit",)
 _SNAPSHOT_LIFECYCLE = {"predecessor_digest": None, "state": "live"}
+
+
+@functools.cache
+def _builtin_definitions() -> dict[tuple[str, str], frozenset[str]]:
+    """(kind, name) -> the artifact digests of every compiler-seeded Provider and
+    ProviderInterface any genesis seed set wrote (``workspace.file`` and
+    ``cruxible-builtin``). They are on every instance seeded with them, so a kit
+    pins them as they are: it never carries, installs or remaps one."""
+
+    found: dict[tuple[str, str], set[str]] = {}
+    for seed_set in GENESIS_SEED_SETS:
+        for path, content in genesis_seed_files(seed_set).items():
+            if path.startswith(("providers/", "provider-interfaces/")):
+                state = _artifact_state(path, content)
+                found.setdefault((state.identity.kind, state.identity.name), set()).add(
+                    state.artifact_digest
+                )
+    return {key: frozenset(digests) for key, digests in found.items()}
+
+
+def _builtin(kind: str, name: str, digest: str) -> bool:
+    return digest in _builtin_definitions().get((kind, name), frozenset())
+
+
+def _builtin_refusals(tree: Mapping[str, bytes], contents: Mapping[str, bytes]) -> list[str]:
+    """A release pinning a built-in needs this instance to hold that exact one."""
+
+    refused = []
+    for path, content in sorted(contents.items()):
+        for pin in _artifact_state(path, content).pins:
+            if not _builtin(pin.target.kind, pin.target.name, pin.artifact_digest):
+                continue
+            held_path = (
+                f"providers/{pin.target.name}.json"
+                if pin.target.kind == "Provider"
+                else provider_interface_path(pin.target.name)
+            )
+            held = tree.get(held_path)
+            state = None if held is None else _artifact_state(held_path, held)
+            if (
+                state is None
+                or state.artifact_digest != pin.artifact_digest
+                or state.lifecycle.state != "live"
+            ):
+                refused.append(
+                    f"{path} pins the built-in {pin.target.qualified} at "
+                    f"{pin.artifact_digest[:19]}, which this instance does not hold live; "
+                    "its genesis seeded another revision"
+                )
+    return sorted(set(refused))
 
 
 def _without_lifecycle(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -303,7 +356,9 @@ def _bundled_provider_pins(
     """
 
     for pin in state.pins:
-        if pin.target.kind != "Provider":
+        if pin.target.kind != "Provider" or _builtin(
+            "Provider", pin.target.name, pin.artifact_digest
+        ):
             continue
         package = bundled.get(pin.target.name)
         if package is None:
@@ -409,6 +464,9 @@ def build_kit(
             if path.startswith("providers/"):
                 # Never carried: a bundled package registers it on install.
                 tree_providers[path] = state
+                continue
+            if _builtin(state.identity.kind, state.identity.name, state.artifact_digest):
+                # A compiler-seeded interface: pinned as it is, never carried.
                 continue
             states[path] = state
             payloads[path] = json.loads(tree[path])
@@ -1176,6 +1234,7 @@ def _early_refusals(
     """Refusals the current state decides, checked before any provider installs."""
 
     refused = _ownership_conflicts(instance, tree, manifest)
+    refused.extend(_builtin_refusals(tree, contents))
     if downgrade:
         refused.append(
             f"release {manifest.version} is older than installed {installed_version}; "
@@ -1437,6 +1496,7 @@ def _add_kit(
                 repair=RepairOperation(operation="cruxible.kit.status"),
             )
     blocked = _ownership_conflicts(instance, tree, manifest)
+    blocked.extend(_builtin_refusals(tree, contents))
     blocked.extend(
         f"{step.provider_id}: {step.detail}" for step in steps if step.action == "blocked"
     )

@@ -770,3 +770,87 @@ def test_refusals_the_current_state_decides_come_before_any_provider_install(
     finally:
         for _ in opened:
             pass
+
+
+def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-003: a Source Procedure over Provider:cruxible-builtin, and a Blueprint
+    whose slot takes workspace.file, travel without carrying, installing or remapping
+    the built-ins; the consumer must hold the same frozen ones."""
+
+    from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
+    from cruxible_client.contracts.procedures.blueprints import blueprint_path, render_blueprint
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition
+    from cruxible_core.service.kits import _builtin, service_add_kit, service_build_kit
+    from tests.core_support._candidate_support import submit_member_candidate
+    from tests.core_support._knowledge_loop_support import accept_proposal
+    from tests.core_support._support import initialize_local
+    from tests.test_procedures import test_procedure_source_runs as sources
+
+    monkeypatch.setattr(sources, "PROCEDURE_NAME", "acme.files")
+    (tmp_path / "publisher").mkdir()
+    instance, owner, procedure, _root, _policy = sources._world(tmp_path / "publisher")
+    raw = procedure.definition.model_dump(mode="json", by_alias=True)
+    raw["name"] = "acme.files-skeleton"
+    raw["nodes"][0]["provider"] = {
+        "tag": "playbill-procedure-pin-slot-ref-v1",
+        "slot_name": "files",
+    }
+    raw["nodes"][0]["implementation_digest"] = None
+    raw["pin_slots"] = [
+        {
+            "slot_name": "files",
+            "pin_role": "provider",
+            "artifact_kind": "Provider",
+            "interface_digest": raw["nodes"][0]["interface_digest"],
+        }
+    ]
+    definition = ProcedureDefinition.model_validate(raw)
+    blueprint = BlueprintArtifact(
+        identity={"kind": "Blueprint", "name": "acme.files-skeleton"},  # type: ignore[arg-type]
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        pins=tuple(pin for pin in procedure.pins if pin.role != "provider"),
+        owned_contracts=procedure.owned_contracts,
+        activation_policy="drain",
+    )
+    inspection = submit_member_candidate(
+        instance,
+        members={blueprint_path(blueprint.identity.name): render_blueprint(blueprint)},
+        actor_id="owner",
+        proposal_name="files-skeleton",
+        proposal_family="procedure",
+        timestamp=sources.ACCEPT_STAMP,
+    )
+    accept_proposal(instance, owner, inspection)
+
+    release = service_build_kit(
+        instance, KitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",))
+    ).bundle
+
+    paths = [item.path for item in release.manifest.artifacts]
+    assert "procedures/acme.files.json" in paths
+    assert "blueprints/acme.files-skeleton.json" in paths
+    assert not any(path.startswith(("providers/", "provider-interfaces/")) for path in paths)
+    assert release.manifest.providers == ()
+    released = parse_procedure(
+        release.contents()["procedures/acme.files.json"], path="procedures/acme.files.json"
+    )
+    builtins = [
+        pin for pin in released.pins if pin.target.kind in {"Provider", "ProviderInterface"}
+    ]
+    assert len(builtins) == 2
+    assert all(_builtin(pin.target.kind, pin.target.name, pin.artifact_digest) for pin in builtins)
+
+    (tmp_path / "consumer").mkdir()
+    consumer, _consumer_owner = initialize_local(tmp_path / "consumer")
+    added = service_add_kit(
+        consumer,
+        KitAddRequest(bundle=release, source="test", dry_run=False),
+        actor_id="owner",
+        timestamp=sources.ACCEPT_STAMP,
+    )
+    assert added.status in {"accepted", "proposed"}, added
+    assert added.providers == ()
