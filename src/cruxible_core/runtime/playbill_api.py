@@ -1651,18 +1651,6 @@ def playbill_authoring_status(
     return contracts.CandidateStatusRecord.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_authoring_abandon_insertion(
-    instance_id: str,
-    intent_id: str,
-    *,
-    expectation_id: str | None = None,
-) -> contracts.InsertionAbandonResultRecord:
-    check_permission("cruxible_authoring_abandon_insertion", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.abandon_insertion(intent_id, actor=actor, expectation_id=expectation_id)
-    return contracts.InsertionAbandonResultRecord.model_validate(result.model_dump(mode="json"))
-
-
 def playbill_block_declare(
     instance_id: str,
     stamp: ProjectionBlockStampAny,
@@ -1688,16 +1676,13 @@ def playbill_block_depublish(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.BlockDepublishResult:
-    """Release one bound publication registration, addressed as the page names it."""
+    """Release one declared block registration, addressed as the page names it."""
 
     check_permission("cruxible_block_depublish", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         instance = get_playbill_manager().get(instance_id)
-        coordinator, actor = _authoring_coordinator(instance_id)
         return service_depublish_playbill_block(
             instance,
-            coordinator=coordinator,
-            actor=actor,
             source_id=source_id,
             block_id=block_id,
             dry_run=dry_run,

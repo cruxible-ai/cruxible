@@ -1229,22 +1229,6 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/authoring/intents/{intent_id}/status")
         return self._parse_model(response, contracts.CandidateStatusRecord)
 
-    def abandon_authoring_insertion(
-        self,
-        instance_id: str,
-        intent_id: str,
-        *,
-        expectation_id: str | None = None,
-    ) -> contracts.InsertionAbandonResultRecord:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/authoring/intents/{intent_id}/insertion/abandon",
-            json={
-                "tag": "playbill-insertion-abandon-request-v1",
-                "expectation_id": expectation_id,
-            },
-        )
-        return self._parse_model(response, contracts.InsertionAbandonResultRecord)
-
     def read_claim_batch(
         self,
         instance_id: str,

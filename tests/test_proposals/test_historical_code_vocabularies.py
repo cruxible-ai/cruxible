@@ -142,7 +142,6 @@ def test_the_write_warning_schema_keeps_its_code_discriminator() -> None:
 @pytest.mark.parametrize("prefix", PREFIXES)
 def test_closed_code_fields_read_either_spelling(prefix: str) -> None:
     from cruxible_client.contracts import NextRepair
-    from cruxible_client.contracts.authoring.models import PublicationPrepareWarning
     from cruxible_client.contracts.principals import AuthoringRefusal
     from cruxible_client.contracts.repairs import RepairOperation
     from cruxible_core.claims.claim_type_inputs import ClaimTypeLintWarningV1
@@ -152,14 +151,6 @@ def test_closed_code_fields_read_either_spelling(prefix: str) -> None:
     assert (
         NextRepair(operation=f"{prefix}.block.sync", target="t", required_change="c").operation
         == "cruxible.block.sync"
-    )
-    assert (
-        PublicationPrepareWarning(
-            code=f"{prefix}.authoring.publication_citation_anchor_collision",
-            source_id="docs.runbook",
-            citation_ids=("sha256:" + "a" * 64,),
-        ).code
-        == "cruxible.authoring.publication_citation_anchor_collision"
     )
     assert (
         AuthoringRefusal(

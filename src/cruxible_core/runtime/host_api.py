@@ -609,11 +609,9 @@ def _playbill_host_workspace_detach_admitted(
 def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
     """Refuse while this host still registers blocks in the worktree.
 
-    Both declaration roads count, and the check keys on the pair the page names
-    rather than on a block id's spelling: a block an agent declared with
-    `block repin` is exactly as stranded by a detachment as one the retired
-    publication road minted, and it was invisible here because it carried no
-    `pub-` prefix.
+    The check keys on the pair the page names rather than on a block id's
+    spelling: a block an agent declared with `block repin` is stranded by a
+    detachment whatever its id.
 
     The one failure this reads as "registered nothing" is Cruxible never having
     been initialized under the host: there is no ledger, so there is no
@@ -653,13 +651,13 @@ def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
         f"Cruxible host {instance_id!r} still registers {len(registrations)} governed "
         f"block(s) in this workspace ({named}); detaching would leave markers no host "
         "owns. Repair: run `cruxible block depublish <source> <block>` for each, "
-        "or retire their backing Claims, then detach"
+        "then detach"
     )
 
 
 def _detach_cannot_read_host(instance_id: str, exc: Exception) -> ConfigError:
     return ConfigError(
-        f"Cruxible host {instance_id!r} could not be opened, so the blocks it published "
+        f"Cruxible host {instance_id!r} could not be opened, so the blocks it registers "
         f"cannot be read and a detachment cannot be shown to strand nothing ({exc}). "
         "Repair: make the host readable, then detach"
     )

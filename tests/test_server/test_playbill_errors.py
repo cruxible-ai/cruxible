@@ -13,7 +13,6 @@ from cruxible_client.contracts.errors import (
     ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
 )
-from cruxible_core.authoring.insertions import PublicationTerminalStateRefused
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationIncomplete
 from cruxible_core.errors import (
     AuthenticationError,
@@ -106,27 +105,6 @@ def test_request_validation_envelope_retains_field_errors() -> None:
 
     assert type(restored) is client_errors.DataValidationError
     assert restored.errors == ["body.coordinate: Input should be a valid object"]
-
-
-def test_insertion_protocol_refusal_is_a_typed_bad_request() -> None:
-    """An insertion-protocol refusal is a 400 carrying its own code.
-
-    It used to be spelled with the refusal that guarded preparing before the
-    Claim was accepted. Nothing prepares any more; the transitions an instance
-    that already published still makes -- expiry, currency loss, the abandon
-    that `block depublish` performs -- refuse through the same base class, and
-    this pins that the mapping is by class rather than by member.
-    """
-
-    error = PublicationTerminalStateRefused(
-        "cruxible.authoring.publication_terminal_state: publication is already terminal"
-    )
-
-    status, body = error_to_response(error)
-
-    assert status == 400
-    assert body.error_type == "PublicationTerminalStateRefused"
-    assert body.error_code == "cruxible.authoring.publication_terminal_state"
 
 
 def test_daemon_proposal_integrity_failure_is_never_reported_as_a_conflict() -> None:

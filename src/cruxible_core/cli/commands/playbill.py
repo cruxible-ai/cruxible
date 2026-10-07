@@ -3151,13 +3151,6 @@ def authoring_group() -> None:
     """Author, preflight, submit, and resume ergonomic governed writes."""
 
 
-_EXPECTATION_ID_HELP = (
-    "Which publication expectation this call is about. An intent that publishes "
-    "several Claims owns one per publishing member; a singular Claim intent owns "
-    "exactly one and may omit it."
-)
-
-
 @authoring_group.command("example")
 @click.argument(
     "name", required=False, metavar="[NAME]", type=click.Choice(AUTHORING_EXAMPLE_NAMES)
@@ -3518,27 +3511,6 @@ def authoring_intent_status(intent_id: str, output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.authoring_intent_status(instance_id, intent_id),
         command_name="cruxible authoring status",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
-@authoring_group.command("abandon-insertion")
-@click.argument("intent_id")
-@click.option("--expectation-id", default=None, help=_EXPECTATION_ID_HELP)
-@json_option
-@handle_errors
-def abandon_authoring_insertion(
-    intent_id: str,
-    expectation_id: str | None,
-    output_json: bool,
-) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.abandon_authoring_insertion(
-            instance_id,
-            intent_id,
-            expectation_id=expectation_id,
-        ),
-        command_name="cruxible authoring abandon-insertion",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -4273,13 +4245,12 @@ def block_group() -> None:
 def depublish_projection(
     source_id: str, block_id: str, dry_run: bool | None, at: str | None, output_json: bool
 ) -> None:
-    """Release the publication registration that demands one page block.
+    """Release the declared registration that demands one page block.
 
     The registration is what `next` reads to decide a removed marker is a
     blocking row. Releasing it does not edit the page and does not touch the
-    Claim the block was backed by: strip the markers with `block sync --detach`
-    or by hand, retire the Claim through the ordinary retirement road, and use
-    this when the block itself is not coming back.
+    block's backings: strip the markers with `block sync --detach` or by hand,
+    and use this when the block itself is not coming back.
     """
 
     result = _server_call(
@@ -4296,7 +4267,6 @@ def depublish_projection(
         _emit_json(result.model_dump(mode="json"))
         return
     click.echo(f"{result.source_id}#{result.block_id}: {result.outcome}")
-    click.echo(f"Backing Claim: {result.claim_identity}")
     echo_preview_next(result.outcome, result.coordinate)
 
 

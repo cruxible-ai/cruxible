@@ -179,10 +179,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use to take retired blocks' markers off pages, keeping the prose: preview with "
         "dry_run, then commit with at set to the preview's coordinate digest."
     ),
-    "cruxible_authoring_abandon_insertion": (
-        "Use to release a publication expectation an instance already holds; nothing mints "
-        "a new one."
-    ),
     "cruxible_block_depublish": (
         "Use when a published page block is being taken down for good, so the registration "
         "that demands its frame is released instead of asking for the block back."

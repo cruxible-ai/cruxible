@@ -743,42 +743,6 @@ def test_http_proposal_selector_resolves_against_a_live_instance(
     }
 
 
-def test_http_insertion_abandon_is_typed(
-    playbill_http: tuple[TestClient, str, Path],
-    monkeypatch,
-) -> None:  # type: ignore[no-untyped-def]
-    """The one insertion route left is typed end to end.
-
-    Prepare and confirm are gone with the road that minted the expectation they
-    acted on. Abandoning one an instance already holds is the exit `block
-    depublish` performs, and it still speaks a typed request and a typed result.
-    """
-
-    client, instance_id, _private_key = playbill_http
-    seen: list[str] = []
-
-    def abandon_stub(selected: str, intent_id: str, *, expectation_id: str | None = None):
-        assert (selected, intent_id) == (instance_id, INTENT_ID)
-        seen.append("abandon")
-        return contracts.InsertionAbandonResultRecord(
-            intent={"intent_id": intent_id},
-            expectation={"state": "abandoned"},
-        )
-
-    monkeypatch.setattr(
-        "cruxible_core.runtime.playbill_api.playbill_authoring_abandon_insertion",
-        abandon_stub,
-    )
-    abandoned = client.post(
-        f"/api/v1/{instance_id}/authoring/intents/{INTENT_ID}/insertion/abandon",
-        json={"tag": "playbill-insertion-abandon-request-v1"},
-    )
-
-    assert abandoned.status_code == 200, abandoned.text
-    assert abandoned.json()["expectation"]["state"] == "abandoned"
-    assert seen == ["abandon"]
-
-
 def test_http_list_routes_bound_their_page_size(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:

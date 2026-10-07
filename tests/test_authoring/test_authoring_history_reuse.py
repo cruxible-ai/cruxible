@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -19,8 +18,6 @@ from cruxible_client.contracts.authoring.models import (
     authoring_change_set_membership,
     authoring_create_fingerprint,
     authoring_payload_digest,
-    build_insertion_expectation_v2,
-    insertion_expectation_id,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claims import LiteralClaimObject
@@ -32,7 +29,6 @@ from cruxible_core.authoring.store import (
     build_authoring_intent_event,
 )
 from tests.test_authoring.test_authoring_change_set_intents import _shell
-from tests.test_authoring.test_authoring_insertions_v2 import _target
 from tests.test_authoring.test_authoring_intents import TIMESTAMP, _payload
 from tests.test_authoring.test_authoring_source_presence import _commit_raw_event, _wire_event
 from tests.test_procedures.test_procedure_execution import _coordinate
@@ -423,50 +419,6 @@ def test_stream_larger_than_byte_limit_is_not_retained(
     for expected in (3, 6):
         assert _get(store, events[-1]) == events[-1].intent
         assert len(parsed) == expected
-
-
-def test_publication_states_return_detached_nested_expectations(
-    tmp_path: Path, parsed: list[bytes]
-) -> None:
-    exhaust = tmp_path / "exhaust"
-    exhaust.mkdir()
-    store = AuthoringIntentStore(exhaust)
-    intent = _intent()
-    payload = intent.payload.model_copy(update={"insertion_target": _target()})
-    expectation = build_insertion_expectation_v2(
-        expectation_id=insertion_expectation_id(
-            instance_id=intent.instance_id,
-            intent_id=intent.intent_id,
-            intent_revision=intent.intent_revision,
-        ),
-        state="awaiting_claim_acceptance",
-        claim_identity=intent.semantic_identity,
-        original_claim_artifact_digest=_operation(20),
-        claim_statement_digest=_operation(21),
-        target=payload.insertion_target,
-        expires_at=datetime(2026, 8, 25, tzinfo=UTC),
-    )
-    intent = intent.model_copy(
-        update={
-            "payload": payload,
-            "payload_digest": authoring_payload_digest(payload),
-            "create_fingerprint": authoring_create_fingerprint(
-                instance_id=intent.instance_id, actor_id=intent.actor_id, payload=payload
-            ),
-            "insertion_expectation": expectation,
-            "insertion_expectations": (expectation,),
-        }
-    )
-    store.create(intent, operation_key=_operation(0))
-    first = store.publication_states()[0]
-    assert first.intent_id == intent.intent_id
-    assert first.insertion_expectations == (expectation,)
-    # Even deliberately bypassing frozen assignment must not expose private models.
-    first.insertion_expectations[0].target.__dict__["source_id"] = "caller.changed"
-    readonly = AuthoringIntentStore(exhaust, read_only=True)
-    assert readonly.publication_states()[0].insertion_expectations == (expectation,)
-    assert store.get(intent.intent_id, actor_id="owner") == intent
-    assert len(parsed) == 1
 
 
 def test_private_history_shares_only_validated_equal_payloads_across_revisions(

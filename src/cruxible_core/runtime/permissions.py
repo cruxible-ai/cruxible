@@ -142,7 +142,6 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_predict": PermissionMode.GOVERNED_WRITE,
     "cruxible_settle": PermissionMode.GOVERNED_WRITE,
     "cruxible_procedure_measure": PermissionMode.GOVERNED_WRITE,
-    "cruxible_authoring_abandon_insertion": PermissionMode.GOVERNED_WRITE,
     "cruxible_block_repin": PermissionMode.GOVERNED_WRITE,
     "cruxible_block_sync": PermissionMode.READ_ONLY,
     "cruxible_block_detach": PermissionMode.GOVERNED_WRITE,

@@ -104,20 +104,9 @@ def accepted_world(tmp_path_factory: pytest.TempPathFactory) -> PlaybillInstance
 
 
 def _registration(source_id: str, block_id: str) -> SimpleNamespace:
-    """One folded registration, shaped as the fold hands it over.
+    """One folded registration, shaped as the fold hands it over: keyed on the pair."""
 
-    The fold is keyed on the pair the page names and carries the road that
-    declared it. A test that only needs "this pair is registered" says so with
-    a declaration, because a declaration is what `block repin` writes and a
-    publication carries a Claim these tests do not have.
-    """
-
-    return SimpleNamespace(
-        source_id=source_id,
-        block_id=block_id,
-        origin="declaration",
-        publication=None,
-    )
+    return SimpleNamespace(source_id=source_id, block_id=block_id, declaration=None)
 
 
 def _claim_backing(instance: PlaybillInstance, *, stale: bool = False) -> ProjectionClaimBacking:
@@ -742,7 +731,7 @@ def test_missing_registered_projection_marker_surfaces_runnable_block_row(
         }
     )
     monkeypatch.setattr(
-        "cruxible_core.service.discovery.next._registered_publication_blocks",
+        "cruxible_core.service.discovery.next._registered_blocks",
         lambda _instance: {
             ("corpus.runbook", "pub-status"): _registration("corpus.runbook", "pub-status")
         },
@@ -775,7 +764,7 @@ def test_invalid_projection_marker_recovers_registered_block_identity(
         marker_notes=("projection_marker_invalid",),
     )
     monkeypatch.setattr(
-        "cruxible_core.service.discovery.next._registered_publication_blocks",
+        "cruxible_core.service.discovery.next._registered_blocks",
         lambda _instance: {
             ("corpus.runbook", "pub-status"): _registration("corpus.runbook", "pub-status")
         },

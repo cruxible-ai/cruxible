@@ -15,7 +15,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias, TypeVar, cast
+from typing import Literal, TypeAlias, cast
 
 from pydantic import (
     BaseModel,
@@ -33,7 +33,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringPayload,
     AuthoringProgramStamp,
     CandidateStatus,
-    InsertionExpectation,
     _AuthoringIntentDecodeContext,
     authoring_program_stamp_operation_key,
 )
@@ -72,15 +71,7 @@ def authoring_intent_retention() -> Literal["off", "durable"]:
     return cast(Literal["off", "durable"], value)
 
 
-_LIVE_INSERTION_STATES = frozenset(
-    {"awaiting_claim_acceptance", "pending", "prepared", "confirming"}
-)
-
-
 def _intent_is_pending(intent: AuthoringIntentV1) -> bool:
-    expectation = intent.insertion_expectation
-    if expectation is not None and expectation.state in _LIVE_INSERTION_STATES:
-        return True
     return intent.candidate_status.state not in _TERMINAL_STATES
 
 
@@ -222,17 +213,6 @@ def _verify_authoring_event_digest(event: AuthoringIntentEventAny, context: obje
     # Publish only after digest reproduction; a caller still has to compare the
     # supplied raw bytes before treating this representation as canonical.
     context.rendered = canonical_json(normalized).encode("utf-8") + b"\n"
-
-
-_StateT = TypeVar("_StateT")
-
-
-@dataclass(frozen=True)
-class AuthoringIntentPublicationState:
-    """Current publication protocol fields, without authored bodies or preflight."""
-
-    intent_id: str
-    insertion_expectations: tuple[InsertionExpectation, ...]
 
 
 @dataclass(frozen=True)
@@ -704,33 +684,6 @@ class AuthoringIntentStore:
                 for event in self._validated_events(directory)
             )
 
-    def publication_states(self) -> tuple[AuthoringIntentPublicationState, ...]:
-        """Validated current publication fields, detached from private history."""
-
-        return self._latest_states(
-            lambda intent: AuthoringIntentPublicationState(
-                intent_id=intent.intent_id,
-                insertion_expectations=tuple(
-                    item.model_copy(deep=True) for item in intent.insertion_expectations
-                ),
-            )
-        )
-
-    def _latest_states(
-        self, project: Callable[[AuthoringIntentV1], _StateT]
-    ) -> tuple[_StateT, ...]:
-        def snapshots() -> tuple[_StateT, ...]:
-            return tuple(
-                project(self._validated_events(directory)[-1].intent)
-                for directory in self._intent_directories()
-            )
-
-        if self._read_only:
-            return snapshots()
-        with self._locked():
-            self._recover_creating_directories()
-            return snapshots()
-
     def latest_transition(
         self,
         intent_id: str,
@@ -908,16 +861,10 @@ class AuthoringIntentStore:
                 intent = json.loads(last.read_bytes()).get("intent", {})
             except (OSError, ValueError, AttributeError):
                 continue
-            expectation = intent.get("insertion_expectation") or {}
             status = intent.get("candidate_status") or {}
-            live_insertion = expectation.get("state") in _LIVE_INSERTION_STATES
-            if not live_insertion and status.get("state") in _TERMINAL_STATES:
+            if status.get("state") in _TERMINAL_STATES:
                 finished.append((modified, directory))
-            elif (
-                not live_insertion
-                and status.get("proposal_id") is None
-                and now - modified > _STALE_DRAFT_SECONDS
-            ):
+            elif status.get("proposal_id") is None and now - modified > _STALE_DRAFT_SECONDS:
                 self._delete_intent_directory(directory)
         finished.sort(reverse=True)
         for position, (_modified, directory) in enumerate(finished):

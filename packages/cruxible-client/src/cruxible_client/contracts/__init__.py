@@ -1204,14 +1204,6 @@ class AuthoringSubmitResultRecord(BaseModel):
     )
 
 
-class InsertionAbandonResultRecord(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-insertion-abandon-result-v1"] = "playbill-insertion-abandon-result-v1"
-    intent: dict[str, Any]
-    expectation: dict[str, Any]
-
-
 class BlockDeclareResult(BaseModel):
     """One projection block registered with the instance that governs its page.
 
@@ -1234,13 +1226,11 @@ class BlockDeclareResult(BaseModel):
 
 
 class BlockDepublishResult(BaseModel):
-    """One published block released from the registration that demanded it.
+    """One declared block released from the registration that demanded it.
 
-    A publication registration was terminal at `bound`: publish once, and that
-    page carried that block, with that id, forever. `next` demanded the frame
-    back for a block a later ruling had deleted, and the repair it named was to
-    restore it. This is the transition out, addressed the way the page names it
-    -- a source and a block -- rather than by the intent id nobody keeps.
+    A registration nothing released kept `next` demanding the frame back for a
+    block a later ruling had deleted, with the repair "restore it". This is the
+    transition out, addressed the way the page names it: a source and a block.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1248,26 +1238,9 @@ class BlockDepublishResult(BaseModel):
     tag: Literal["playbill-block-depublish-result-v1"] = "playbill-block-depublish-result-v1"
     source_id: str
     block_id: str
-    # A block declared with `block repin` has no intent, no expectation and no
-    # publishing Claim -- it is prose held to a list. Those three fields name a
-    # publication and are absent for a declaration, which `origin` says.
-    origin: Literal["publication", "declaration"] = "publication"
-    intent_id: str | None = None
-    expectation_id: str | None = None
     #: ``would_depublish`` answers a preview, which released nothing.
     outcome: Literal["depublished", "already_depublished", "would_depublish"]
-    claim_identity: str | None = None
     coordinate: AcceptedCoordinate
-
-    @model_validator(mode="after")
-    def _origin_shape(self) -> "BlockDepublishResult":
-        publication = (self.intent_id, self.expectation_id, self.claim_identity)
-        if self.origin == "publication":
-            if any(value is None for value in publication):
-                raise ValueError("a released publication names its intent, expectation and Claim")
-        elif any(value is not None for value in publication):
-            raise ValueError("a released declaration names no intent, expectation or Claim")
-        return self
 
 
 class QueryDefinitionView(BaseModel):

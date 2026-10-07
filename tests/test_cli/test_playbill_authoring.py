@@ -558,57 +558,6 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
     assert calls == ["whoami:inst_authoring", "proposals:inst_authoring:open"]
 
 
-def test_cli_insertion_abandon_uses_the_opaque_intent(
-    monkeypatch,
-) -> None:  # type: ignore[no-untyped-def]
-    """The one insertion verb left, and it still carries a named expectation.
-
-    It used to cover prepare and confirm too. Nothing mints a publication
-    expectation any more, so nothing can be prepared or confirmed; abandoning
-    one an instance already holds is how a page gets its block back, and a
-    change set that published several members still needs the caller's chosen
-    expectation carried through untouched.
-    """
-
-    calls: list[tuple[str, object, str | None]] = []
-
-    class StubClient:
-        def abandon_authoring_insertion(
-            self,
-            instance_id: str,
-            intent_id: str,
-            *,
-            expectation_id: str | None = None,
-        ) -> contracts.InsertionAbandonResultRecord:
-            calls.append((intent_id, "abandon", expectation_id))
-            return contracts.InsertionAbandonResultRecord(
-                intent={"intent_id": intent_id},
-                expectation={"state": "abandoned"},
-            )
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    common = [
-        "--server-url",
-        "https://authoring.example.test",
-        "--instance-id",
-        "inst_authoring",
-        "authoring",
-    ]
-    runner = CliRunner()
-    abandoned = runner.invoke(cli, [*common, "abandon-insertion", INTENT_ID, "--json"])
-    named = runner.invoke(
-        cli,
-        [*common, "abandon-insertion", INTENT_ID, "--expectation-id", EXPECTATION_ID, "--json"],
-    )
-
-    assert abandoned.exit_code == 0
-    assert named.exit_code == 0
-    assert calls == [
-        (INTENT_ID, "abandon", None),
-        (INTENT_ID, "abandon", EXPECTATION_ID),
-    ]
-
-
 def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
     runner = CliRunner()
     help_result = runner.invoke(cli, ["authoring", "example", "--help"])

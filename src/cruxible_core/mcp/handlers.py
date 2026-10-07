@@ -144,7 +144,6 @@ from cruxible_core.server.playbill_request_models import (
     CurationOverruleRequest,
     CurationSuppressRequest,
     InitRequest,
-    InsertionAbandonRequest,
     ProposalReadmitRequest,
     ProposalWithdrawRequest,
     ProposeClaimTypeInputRequest,
@@ -354,7 +353,6 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_evidence_rules_upgrade": TypeAdapter(EvidenceRuleUpgradeRequest),
     "cruxible_claim_type_upgrade": TypeAdapter(ClaimTypeUpgradeRequest),
     "cruxible_activate": None,  # path only
-    "cruxible_authoring_abandon_insertion": TypeAdapter(InsertionAbandonRequest),
     "cruxible_authoring_bind": TypeAdapter(AuthoringInputCompileRequest),
     "cruxible_authoring_compile": TypeAdapter(AuthoringInputCompileRequest),
     "cruxible_authoring_preflight": TypeAdapter(AuthoringPreflightRequest),
@@ -1363,27 +1361,6 @@ def handle_playbill_authoring_status(
         lambda client: client.authoring_intent_status(instance_id, intent_id),
         lambda: playbill_api.playbill_authoring_status(instance_id, intent_id),
         operation_name="cruxible_authoring_status",
-    )
-
-
-def handle_playbill_authoring_abandon_insertion(
-    instance_id: str,
-    intent_id: str,
-    expectation_id: str | None = None,
-) -> contracts.InsertionAbandonResultRecord:
-    return _dispatch_remote_or_local(
-        lambda client: client.abandon_authoring_insertion(
-            instance_id,
-            intent_id,
-            expectation_id=expectation_id,
-        ),
-        lambda: playbill_api.playbill_authoring_abandon_insertion(
-            instance_id,
-            intent_id,
-            expectation_id=expectation_id,
-        ),
-        operation_name="cruxible_authoring_abandon_insertion",
-        local_payload={"expectation_id": expectation_id},
     )
 
 

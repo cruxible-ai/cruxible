@@ -83,7 +83,6 @@ from cruxible_core.server.playbill_request_models import (
     FloorDeltaRequest,
     FloorExportRequest,
     InitRequest,
-    InsertionAbandonRequest,
     InstanceDecommissionRequest,
     LedgerMirrorRequest,
     LedgerPublishRequest,
@@ -885,22 +884,6 @@ def authoring_intent_status(
 ) -> contracts.CandidateStatusRecord:
     return playbill_api.playbill_authoring_status(
         resolve_server_instance_id(instance_id), intent_id
-    )
-
-
-@router.post(
-    "/{instance_id}/authoring/intents/{intent_id}/insertion/abandon",
-    response_model=contracts.InsertionAbandonResultRecord,
-)
-def abandon_authoring_insertion(
-    instance_id: str,
-    intent_id: str,
-    req: InsertionAbandonRequest,
-) -> contracts.InsertionAbandonResultRecord:
-    return playbill_api.playbill_authoring_abandon_insertion(
-        resolve_server_instance_id(instance_id),
-        intent_id,
-        expectation_id=req.expectation_id,
     )
 
 

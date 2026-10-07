@@ -1,11 +1,12 @@
-"""The registration fold over durable publication intents.
+"""The registration fold over declared projection blocks.
 
-The AuthoringIntent stream is protocol state, not a second governed truth plane.
-``next``, coverage, the detach refusal and claim lowering all read this one fold
-so they cannot disagree about which blocks an instance registers. It lives under
-``playbill/authoring`` rather than the service layer because lowering -- which
-may not import a service module -- has to ask it which sources carry projection
-blocks before it admits a citation into one.
+A block is registered by `block repin`, which declares it in daemon protocol
+state (exhaust), not in a second governed truth plane. ``next``, the detach
+refusal and claim lowering all read this one fold so they cannot disagree about
+which blocks an instance registers. It lives under ``cruxible_core/authoring``
+rather than the service layer because lowering -- which may not import a service
+module -- has to ask it which sources carry projection blocks before it admits a
+citation into one.
 """
 
 from __future__ import annotations
@@ -13,122 +14,15 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
-from cruxible_client.contracts.authoring.models import PublicationPreparation
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import CruxibleError, FormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_core.authoring.store import AuthoringIntentStore
-from cruxible_core.derived.memo import memo_clear, memo_get, memo_put
 from cruxible_core.runtime.instance import PlaybillInstance
 
-
-@dataclass(frozen=True)
-class BoundPublicationRegistration:
-    """The exact association established by one confirmed publication."""
-
-    intent_id: str
-    claim_identity: str
-    claim_statement_digest: str
-    preparation: PublicationPreparation
-
-
-# The fold consumes validated current publication states. One `block sync --check` can
-# ask the same question once per block, so its result is memoized separately
-# from the store's event validation. The identity names the exact stream folded:
-# every event file's directory, name, inode, size and both timestamps. Any
-# append or rewrite moves it, so a changed stream is folded again.
 _SAFE_SEGMENT = re.compile(r"[a-z][a-z0-9_.-]{0,127}")
-_REGISTRATION_MEMO_CAPACITY = 4
-_REGISTRATION_MEMO: "OrderedDict[tuple[object, ...], tuple[BoundPublicationRegistration, ...]]" = (
-    OrderedDict()
-)
-
-
-def _intent_stream_identity(root: Path) -> tuple[object, ...] | None:
-    """Name the durable event stream without reading a single event."""
-
-    entries: list[tuple[object, ...]] = []
-    try:
-        for directory in sorted(root.glob("AIT-*"), key=lambda item: item.name):
-            events = directory / "events"
-            if not events.is_dir():
-                continue
-            for path in sorted(events.glob("*.json"), key=lambda item: item.name):
-                metadata = os.lstat(path)
-                entries.append(
-                    (
-                        directory.name,
-                        path.name,
-                        metadata.st_mode,
-                        metadata.st_dev,
-                        metadata.st_ino,
-                        metadata.st_size,
-                        metadata.st_mtime_ns,
-                        metadata.st_ctime_ns,
-                    )
-                )
-    except OSError:
-        return None
-    return (str(root), tuple(entries))
-
-
-def reset_bound_publication_registration_memo() -> None:
-    """Forget every in-process publication fold."""
-
-    memo_clear(_REGISTRATION_MEMO)
-
-
-def bound_publication_registrations(
-    instance: PlaybillInstance,
-) -> tuple[BoundPublicationRegistration, ...] | None:
-    """Fold latest intent events, or return ``None`` when the fold is unavailable."""
-
-    exhaust_root = instance.root / instance.descriptor.storage.exhaust
-    intent_root = exhaust_root / "authoring-intents"
-    if not intent_root.is_dir():
-        return ()
-    identity = _intent_stream_identity(intent_root)
-    if identity is not None:
-        memoized = memo_get(_REGISTRATION_MEMO, identity)
-        if memoized is not None:
-            return memoized
-    try:
-        latest = AuthoringIntentStore(exhaust_root, read_only=True).publication_states()
-    except (OSError, CruxibleError):
-        return None
-    # Every expectation the intent owns, not just the singular mirror: one intent
-    # is one changeset, so a set that published three Claims registers three
-    # blocks, and the two it did not fold read back as orphan markers.
-    registrations = [
-        BoundPublicationRegistration(
-            intent_id=intent.intent_id,
-            claim_identity=expectation.claim_identity,
-            claim_statement_digest=expectation.claim_statement_digest,
-            preparation=expectation.preparation,
-        )
-        for intent in latest
-        for expectation in intent.insertion_expectations
-        if expectation.state == "bound" and expectation.preparation is not None
-    ]
-    folded = tuple(
-        sorted(
-            registrations,
-            key=lambda item: (
-                item.preparation.source_id.encode("utf-8"),
-                item.preparation.block_id.encode("ascii"),
-                item.claim_identity.encode("ascii"),
-                item.intent_id.encode("ascii"),
-            ),
-        )
-    )
-    if identity is not None:
-        memo_put(_REGISTRATION_MEMO, identity, folded, capacity=_REGISTRATION_MEMO_CAPACITY)
-    return folded
 
 
 @dataclass(frozen=True)
@@ -146,20 +40,17 @@ class DeclaredBlockRegistration:
 
 @dataclass(frozen=True)
 class ProjectionBlockRegistration:
-    """One registered block, whichever road declared it.
+    """One registered block.
 
     The identity is the fold's own -- the pair the page names, a source and a
-    block -- and not a string prefix. A block minted by the retired publication
-    road carried `pub-` in its id and could be recognized by spelling; a block
-    an agent declares chooses its own id, so the only honest answer to "is this
-    marker sanctioned?" is the one the instance keeps.
+    block -- and not a string prefix: a block an agent declares chooses its own
+    id, so the only honest answer to "is this marker sanctioned?" is the one the
+    instance keeps.
     """
 
     source_id: str
     block_id: str
-    origin: Literal["publication", "declaration"]
-    publication: BoundPublicationRegistration | None = None
-    declaration: DeclaredBlockRegistration | None = None
+    declaration: DeclaredBlockRegistration
 
     @property
     def identity(self) -> tuple[str, str]:
@@ -315,50 +206,33 @@ def released_projection_block_declaration(
 def registered_projection_blocks(
     instance: PlaybillInstance,
 ) -> dict[tuple[str, str], ProjectionBlockRegistration] | None:
-    """Every block this instance registers, folded from both declaration roads.
+    """Every block this instance registers.
 
-    ``None`` when either road cannot be read: an unreadable registry is not an
-    empty one, and every consumer of this fold refuses rather than concluding a
-    marker is unsanctioned because its record could not be opened.
+    ``None`` when the declaration store cannot be read: an unreadable registry is
+    not an empty one, and every consumer of this fold refuses rather than
+    concluding a marker is unsanctioned because its record could not be opened.
     """
 
-    publications = bound_publication_registrations(instance)
     declarations = projection_block_declarations(instance)
-    if publications is None or declarations is None:
+    if declarations is None:
         return None
-    folded: dict[tuple[str, str], ProjectionBlockRegistration] = {}
-    for declaration in declarations:
-        key = (declaration.source_id, declaration.block_id)
-        folded[key] = ProjectionBlockRegistration(
+    return {
+        (declaration.source_id, declaration.block_id): ProjectionBlockRegistration(
             source_id=declaration.source_id,
             block_id=declaration.block_id,
-            origin="declaration",
             declaration=declaration,
         )
-    # A publication registration is the older road and the stronger claim: it is
-    # a confirmed insertion whose Claim the instance still holds, so it wins the
-    # pair if both roads somehow name it.
-    for publication in publications:
-        key = (publication.preparation.source_id, publication.preparation.block_id)
-        folded[key] = ProjectionBlockRegistration(
-            source_id=key[0],
-            block_id=key[1],
-            origin="publication",
-            publication=publication,
-        )
-    return folded
+        for declaration in declarations
+    }
 
 
 __all__ = [
     "PROJECTION_BLOCK_DECLARATION_DIRECTORY",
-    "BoundPublicationRegistration",
     "DeclaredBlockRegistration",
     "ProjectionBlockRegistration",
-    "bound_publication_registrations",
     "projection_block_declarations",
     "registered_projection_blocks",
     "release_projection_block_declaration",
     "released_projection_block_declaration",
-    "reset_bound_publication_registration_memo",
     "write_projection_block_declaration",
 ]

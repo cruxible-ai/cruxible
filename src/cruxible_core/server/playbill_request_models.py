@@ -21,9 +21,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequestV1,
     AuthoringIntentCompileRequestV2,
 )
-from cruxible_client.contracts.authoring.models import (
-    InsertionAbandonRequest as InsertionAbandonRequest,
-)
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.declared_blocks import (

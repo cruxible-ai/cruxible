@@ -1816,43 +1816,6 @@ class Intent:
             return None
         return self._playbill.proposal(status.proposal_id)
 
-    @property
-    def publication(self) -> Publication | None:
-        """The one publication a singular Claim intent owns, if it has one.
-
-        Next: ``publication.status()``, or ``publication.abandon()``.
-        """
-
-        expectation = self._raw.get("insertion_expectation")
-        if not isinstance(expectation, Mapping):
-            self._refresh_raw()
-            expectation = self._raw.get("insertion_expectation")
-        if not isinstance(expectation, Mapping):
-            return None
-        return Publication(self, dict(expectation))
-
-    @property
-    def publications(self) -> tuple[Publication, ...]:
-        """Every publication this intent owns, one per publishing Claim member.
-
-        Next: ``publication.status()`` on each.
-        """
-
-        expectations = self._raw.get("insertion_expectations")
-        if not isinstance(expectations, list) or not expectations:
-            self._refresh_raw()
-            expectations = self._raw.get("insertion_expectations")
-        if not isinstance(expectations, list):
-            return ()
-        return tuple(
-            Publication(self, dict(item)) for item in expectations if isinstance(item, Mapping)
-        )
-
-    def _refresh_raw(self) -> None:
-        self._raw = self._playbill._client.get_authoring_intent(
-            self._playbill._instance_id, self.intent_id
-        ).intent
-
     def prepare(self) -> Intent:
         """Preflight this intent again at current head, without changing its draft.
 
@@ -2039,63 +2002,6 @@ class Proposal:
             if time.monotonic_ns() >= deadline:
                 return status
             time.sleep(poll_interval.value / 1_000_000)
-
-
-class Publication:
-    """One publication expectation an EXISTING intent owns.
-
-    Nothing mints a new one: the `publish_to` road is gone, and a projection
-    block is declared with `block repin` over accepted Claims instead. What
-    remains is the exit an instance that already published needs -- read the
-    state, and abandon (depublish) the expectation.
-
-    Next: ``publication.status()``, then ``publication.abandon()``.
-    """
-
-    def __init__(self, intent: Intent, expectation: dict[str, object]) -> None:
-        self._intent = intent
-        self._expectation = expectation
-
-    @property
-    def state(self) -> str:
-        """The expectation's state as last read. Next: ``publication.status()`` to read it
-        fresh.
-        """
-
-        return str(self._expectation.get("state", "terminal"))
-
-    @property
-    def expectation_id(self) -> str:
-        """The expectation's ID. Next: ``publication.abandon()``."""
-
-        value = self._expectation.get("expectation_id")
-        if not isinstance(value, str):
-            raise ValueError("insertion expectation omitted its ID")
-        return value
-
-    def status(self) -> str:
-        """Read the expectation's state fresh. Next: ``publication.abandon()`` to depublish it."""
-
-        self._intent._refresh_raw()
-        expectations = self._intent._raw.get("insertion_expectations")
-        if isinstance(expectations, list):
-            for item in expectations:
-                if isinstance(item, Mapping) and item.get("expectation_id") == self.expectation_id:
-                    self._expectation = dict(item)
-                    break
-        return self.state
-
-    def abandon(self) -> Publication:
-        """Abandon (depublish) this expectation. Next: ``publication.status()``."""
-
-        result = self._intent._playbill._client.abandon_authoring_insertion(
-            self._intent._playbill._instance_id,
-            self._intent.intent_id,
-            expectation_id=self.expectation_id,
-        )
-        self._intent._raw = result.intent
-        self._expectation = result.expectation
-        return self
 
 
 def _wait_for_status(call: Any, *, timeout: Duration, poll_interval: Duration) -> Any:
@@ -5098,7 +5004,6 @@ __all__ = [
     "ProcedureRun",
     "Proposal",
     "QueryDraft",
-    "Publication",
     "SDK_CONTRACT_SNAPSHOT_DIGEST",
     "SubjectDraft",
     "carry",

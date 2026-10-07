@@ -35,7 +35,6 @@ from cruxible_client.contracts.repairs import (
     hand_edit_repair,
 )
 from cruxible_client.errors import ErrorResponse, response_to_error
-from cruxible_core.authoring.insertions import InsertionProtocolError
 from cruxible_core.curation.review_operational import (
     ReviewOperationalConcurrentChangeError,
     ReviewOperationalStoreError,
@@ -213,7 +212,6 @@ def _status_for_error(exc: CoreError) -> int:
             SinceError,
             ReviewOperationalStoreError,
             ProposalAdmissionError,
-            InsertionProtocolError,
         ),
     ):
         return 400
@@ -256,8 +254,6 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["retryable"] = True
     errors: list[str] = []
     error_code = getattr(exc, "error_code", None)
-    if error_code is None and isinstance(exc, InsertionProtocolError):
-        error_code = exc.code
 
     if isinstance(exc, ConfigError | DataValidationError):
         errors = list(exc.errors)

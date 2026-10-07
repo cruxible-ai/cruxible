@@ -1,11 +1,9 @@
 """The verbs and derived reads over the blocks an instance registers.
 
-The folds themselves live in ``cruxible_core.authoring.registrations``
-so claim lowering can read them; they are re-exported here for every
-service-layer reader that already imports them from this module. Two roads
-declare a block -- the retired publication road, folded from durable intents,
-and `block repin`, which records a declaration -- and both answer one verb and
-one fold, keyed on the pair the page itself names.
+The fold itself lives in ``cruxible_core.authoring.registrations`` so claim
+lowering can read it; it is re-exported here for every service-layer reader
+that already imports it from this module. `block repin` declares a block and
+`block depublish` releases it, keyed on the pair the page itself names.
 
 The re-exported names are deliberately unused here: this module is the
 service-layer door to that fold, and a reader that already imports through it
@@ -15,7 +13,6 @@ must keep working.
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING
 
 from cruxible_client.contracts import (
     AcceptedCoordinate,
@@ -24,26 +21,18 @@ from cruxible_client.contracts import (
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStampAny
-from cruxible_client.contracts.errors import CruxibleError, FormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_core.authoring.registrations import (
-    BoundPublicationRegistration,
     DeclaredBlockRegistration,
     ProjectionBlockRegistration,
-    bound_publication_registrations,
     projection_block_declarations,
     registered_projection_blocks,
     release_projection_block_declaration,
     released_projection_block_declaration,
-    reset_bound_publication_registration_memo,
     write_projection_block_declaration,
 )
-from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.change_preview import ChangeMode, change_scope
-
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-    from cruxible_core.proposals.proposals import AuthenticatedActor
 
 
 def service_declare_playbill_block(
@@ -56,10 +45,7 @@ def service_declare_playbill_block(
     """Register one projection block the workspace just stamped.
 
     `next` asks of every marker it observes whether this instance stands behind
-    it. For a block minted by the retired publication road the answer came from
-    a fold over durable intents; for a block an agent declared, there was no
-    record at all, so the question was answered by whether the block id happened
-    to start with `pub-`. It is answered by the instance now, for both roads.
+    it, and this declaration is the instance's answer.
 
     The declaration is protocol state and commits nothing about what the block
     SAYS -- the stamp in the page is that -- so it is idempotent by pair and a
@@ -109,29 +95,19 @@ def projection_block_stamp_digest(stamp: ProjectionBlockStampAny) -> str:
 def service_depublish_playbill_block(
     instance: PlaybillInstance,
     *,
-    coordinator: "AuthoringIntentCoordinator",
-    actor: "AuthenticatedActor",
     source_id: str,
     block_id: str,
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> BlockDepublishResult:
-    """Release the bound publication registration that demands one page block.
+    """Release the declaration that registers one page block.
 
-    A registration is folded from a `bound` insertion expectation and nothing
-    ever released it, so `next` demanded the frame for a block a later ruling
-    had removed, and the repair it named was to restore it. Abandoning the
-    expectation is the transition out; the expectation keeps its preparation, so
-    the record still says which block was published and which was taken down.
+    A registration nothing released kept `next` demanding the frame for a block
+    a later ruling had removed, with the repair "restore it". Releasing it is the
+    transition out. Idempotent by construction: a released declaration leaves a
+    tombstone that says so, so a caller who asks twice is answered, not refused.
 
-    Idempotent by construction, on both roads: a released publication no longer
-    folds and the expectation it released says so, and a released declaration
-    leaves a tombstone that says the same. Neither mints an identity, and
-    neither refuses a caller who asks twice.
-
-    ``dry_run`` runs every check -- which road registered the block, the
-    publication's own abandon checks -- and releases nothing
-    (``would_depublish``, R12).
+    ``dry_run`` runs every check and releases nothing (``would_depublish``, R12).
     """
 
     instance.require_writable()
@@ -143,43 +119,25 @@ def service_depublish_playbill_block(
         operation="cruxible.block.depublish",
         describe=f"depublishing block {source_id}#{block_id}",
     ) as mode:
-        return _depublish(
-            instance,
-            mode,
-            coordinator=coordinator,
-            actor=actor,
-            source_id=source_id,
-            block_id=block_id,
-        )
+        return _depublish(instance, mode, source_id=source_id, block_id=block_id)
 
 
 def _depublish(
     instance: PlaybillInstance,
     mode: ChangeMode,
     *,
-    coordinator: "AuthoringIntentCoordinator",
-    actor: "AuthenticatedActor",
     source_id: str,
     block_id: str,
 ) -> BlockDepublishResult:
     coordinate = AcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
     )
-    registrations = bound_publication_registrations(instance)
-    if registrations is None:
-        raise FormatError(
-            "cruxible.block.publication_registry_unavailable: the durable publication "
-            "stream cannot be read; repair: restore the instance exhaust and retry"
-        )
     declarations = projection_block_declarations(instance)
     if declarations is None:
         raise FormatError(
             "cruxible.block.declaration_registry_unavailable: the block declaration store "
             "cannot be read; repair: restore the instance exhaust and retry"
         )
-    # A declared block has no intent to abandon: releasing it is forgetting the
-    # declaration. Both roads answer the same verb, because the page names a
-    # source and a block and knows nothing about which road registered it.
     declared = any(
         item.source_id == source_id and item.block_id == block_id for item in declarations
     )
@@ -194,119 +152,34 @@ def _depublish(
         return BlockDepublishResult(
             source_id=source_id,
             block_id=block_id,
-            origin="declaration",
             outcome="would_depublish" if mode.previewing else "depublished",
             coordinate=coordinate,
         )
     if released_projection_block_declaration(instance, source_id=source_id, block_id=block_id):
         # Releasing a registration is idempotent by contract, and a declaration
         # this instance once held and has already released must say so rather
-        # than refuse by naming a publication that never existed.
+        # than refuse.
         return BlockDepublishResult(
             source_id=source_id,
             block_id=block_id,
-            origin="declaration",
             outcome="already_depublished",
             coordinate=coordinate,
         )
-    matched = tuple(
-        item
-        for item in registrations
-        if item.preparation.source_id == source_id and item.preparation.block_id == block_id
+    raise FormatError(
+        f"cruxible.block.not_registered: this instance registers no block "
+        f"{source_id}#{block_id}; repair: read the registered blocks with `cruxible next` "
+        "before releasing one"
     )
-    if not matched:
-        released = _released_publication_expectation(instance, source_id, block_id)
-        if released is None:
-            raise FormatError(
-                f"cruxible.block.not_registered: this instance registers no block "
-                f"{source_id}#{block_id}, by declaration or by publication; repair: read "
-                "the registered blocks with `cruxible next` before releasing one"
-            )
-        intent_id, expectation_id, claim_identity = released
-        return BlockDepublishResult(
-            source_id=source_id,
-            block_id=block_id,
-            intent_id=intent_id,
-            expectation_id=expectation_id,
-            outcome="already_depublished",
-            claim_identity=claim_identity,
-            coordinate=coordinate,
-        )
-    if len(matched) > 1:
-        raise FormatError(
-            f"cruxible.block.publication_registration_ambiguous: {len(matched)} bound "
-            f"publications register {source_id}#{block_id}; repair: abandon each intent "
-            "through `cruxible authoring abandon-insertion`"
-        )
-    registration = matched[0]
-    if mode.previewing:
-        expectation = coordinator.check_abandon_insertion(
-            registration.intent_id,
-            actor=actor,
-            expectation_id=registration.preparation.expectation_id,
-        )
-        return BlockDepublishResult(
-            source_id=source_id,
-            block_id=block_id,
-            intent_id=registration.intent_id,
-            expectation_id=expectation.expectation_id,
-            outcome="would_depublish",
-            claim_identity=registration.claim_identity,
-            coordinate=coordinate,
-        )
-    with mode.committing():
-        result = coordinator.abandon_insertion(
-            registration.intent_id,
-            actor=actor,
-            expectation_id=registration.preparation.expectation_id,
-        )
-    return BlockDepublishResult(
-        source_id=source_id,
-        block_id=block_id,
-        intent_id=registration.intent_id,
-        expectation_id=result.expectation.expectation_id,
-        outcome="depublished",
-        claim_identity=registration.claim_identity,
-        coordinate=coordinate,
-    )
-
-
-def _released_publication_expectation(
-    instance: PlaybillInstance,
-    source_id: str,
-    block_id: str,
-) -> tuple[str, str, str] | None:
-    """Find an expectation that once published this block and no longer registers it."""
-
-    exhaust_root = instance.root / instance.descriptor.storage.exhaust
-    try:
-        latest = AuthoringIntentStore(exhaust_root, read_only=True).publication_states()
-    except (OSError, CruxibleError):
-        return None
-    for intent in latest:
-        for expectation in intent.insertion_expectations:
-            preparation = expectation.preparation
-            if preparation is None:
-                continue
-            if preparation.source_id != source_id or preparation.block_id != block_id:
-                continue
-            if expectation.state == "bound":
-                continue
-            return (intent.intent_id, expectation.expectation_id, expectation.claim_identity)
-    return None
 
 
 __all__ = [
-    "BoundPublicationRegistration",
     "DeclaredBlockRegistration",
     "ProjectionBlockRegistration",
-    "bound_publication_registrations",
     "projection_block_declarations",
     "projection_block_stamp_digest",
     "registered_projection_blocks",
     "release_projection_block_declaration",
     "released_projection_block_declaration",
-    "reset_bound_publication_registration_memo",
     "service_declare_playbill_block",
     "service_depublish_playbill_block",
     "write_projection_block_declaration",

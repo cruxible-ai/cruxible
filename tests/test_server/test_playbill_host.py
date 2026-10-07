@@ -1424,38 +1424,25 @@ def test_detaching_a_workspace_needs_the_local_socket_that_attaching_needs(
     assert get_registry().get("inst_socket_guarded").workspace_root is not None  # type: ignore[union-attr]
 
 
-def test_a_detach_refuses_while_the_host_still_registers_a_published_block(
+def test_a_detach_refuses_while_the_host_still_registers_a_declared_block(
     host_client: TestClient,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Card 88's one guarantee, which nothing exercised.
+    """Card 88's one guarantee: a detach never strands a registered block.
 
-    Nothing stops a detach from stranding published markers except this
-    refusal: the instance is never told the workspace left, so if the detach
-    goes through under live registrations the page keeps markers no host owns,
-    and that is the state with no repair from inside the workspace. It had no
-    test at all.
-
-    The host's Cruxible state is supplied through the manager's declared
-    testing seam so that the registration under test is a REAL bound
-    publication -- the record an instance that published before the
-    two-block-kinds ruling still holds -- rather than a stub standing in for
-    one. Nothing authors such a record any more, which is exactly why the
-    refusal has to keep reading it.
+    Nothing stops a detach from stranding declared markers except this refusal:
+    the instance is never told the workspace left, so if the detach goes through
+    under live registrations the page keeps markers no host owns, and that is the
+    state with no repair from inside the workspace. The host's Cruxible state is
+    supplied through the manager's declared testing seam, so the registration
+    under test is a real declaration written by `block repin`'s service.
     """
-    # Publication registrations live in retained intent streams; this legacy
-    # road registers them on accepted intents, so it needs durable retention.
-    monkeypatch.setenv("CRUXIBLE_AUTHORING_INTENTS", "durable")
 
     from cruxible_core.service.proposals.publications import service_depublish_playbill_block
-    from tests.test_authoring.test_authoring_insertions_v2 import (
-        _registered_publication,
-        _submitted_publication,
-    )
+    from tests.test_authoring.test_block_sync_service import _declared_claim_block
 
     del host_client
-    workspace = tmp_path / "published-workspace"
+    workspace = tmp_path / "declared-workspace"
     subprocess.run(
         ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
         check=True,
@@ -1467,14 +1454,11 @@ def test_a_detach_refuses_while_the_host_still_registers_a_published_block(
         workspace_attachment_authorized=True,
     )
 
-    published_state = tmp_path / "published-state"
-    published_state.mkdir()
-    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
-        published_state
+    declared_state = tmp_path / "declared-state"
+    declared_state.mkdir()
+    instance, _owner, _coordinator, _actor, _intent_id, stamp, _landed = _declared_claim_block(
+        declared_state
     )
-    bound, _landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
-    assert bound.preparation is not None
-    preparation = bound.preparation
     get_playbill_manager().register("inst_publishing_host", instance)
 
     with pytest.raises(ConfigError) as refusal:
@@ -1484,17 +1468,15 @@ def test_a_detach_refuses_while_the_host_still_registers_a_published_block(
         )
 
     message = str(refusal.value)
-    assert f"{preparation.source_id}#{preparation.block_id}" in message
+    assert f"{stamp.source_id}#{stamp.block_id}" in message
     assert "cruxible block depublish" in message
     # Refused means refused: the worktree is still this host's.
     assert get_registry().get("inst_publishing_host").workspace_root is not None  # type: ignore[union-attr]
 
     service_depublish_playbill_block(
         instance,
-        coordinator=coordinator,
-        actor=actor,
-        source_id=preparation.source_id,
-        block_id=preparation.block_id,
+        source_id=stamp.source_id,
+        block_id=stamp.block_id,
     )
 
     detached = host_api.playbill_host_workspace_detach(

@@ -800,20 +800,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_authoring_abandon_insertion(
-        instance_id: InstanceId = None,
-        *,
-        intent_id: str,
-        expectation_id: str | None = None,
-    ) -> contracts.InsertionAbandonResultRecord:
-        """Abandon a pending insertion while keeping the accepted self-source Claim."""
-        return handlers.handle_playbill_authoring_abandon_insertion(
-            require_instance_id(instance_id),
-            intent_id,
-            expectation_id,
-        )
-
-    @_tool
     def cruxible_block_repin(
         instance_id: InstanceId = None,
         *,

@@ -52,7 +52,6 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.subjects import render_subject, subject_path
-from cruxible_core.authoring.store import AUTHORING_INTENTS_ENV
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeMigrationRequestV1,
@@ -109,7 +108,6 @@ from tests.core_support._published_world import (
     retire_claim as _retire_published_claim,
 )
 from tests.core_support._support import client_material, initialize_local
-from tests.test_authoring import test_authoring_insertions_v2 as publication_v2
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type
 from tests.test_evidence.test_evidence_freshness import _activate as _activate_migration
@@ -996,19 +994,15 @@ def _projection_marker_missing(root: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
     instance, _owner = _instance_with_query(root)
     monkeypatch.setattr(
-        "cruxible_core.service.discovery.next._registered_publication_blocks",
+        "cruxible_core.service.discovery.next._registered_blocks",
         lambda _instance: {
             ("corpus.runbook", "status"): SimpleNamespace(
                 source_id="corpus.runbook",
                 block_id="status",
-                origin="declaration",
-                publication=None,
             ),
             ("corpus.runbook", "gone"): SimpleNamespace(
                 source_id="corpus.runbook",
                 block_id="gone",
-                origin="declaration",
-                publication=None,
             ),
         },
     )
@@ -1261,12 +1255,27 @@ def _workspace_binding_missing(root: Path, _monkeypatch: pytest.MonkeyPatch) -> 
     _assert_gone(instance, "workspace_binding_missing", _request(instance, workspace=observed()))
 
 
-def _unregistered_projection_block(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The borrowed body runs outside its module's autouse fixture, and its
-    # legacy publication road registers on accepted intents, which only a
-    # durable intent store retains.
-    monkeypatch.setenv(AUTHORING_INTENTS_ENV, "durable")
-    publication_v2.test_prepared_publication_can_be_abandoned_without_observing_the_source(root)
+def _unregistered_projection_block(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    """A marker no registration knows is reported; declaring it is the repair."""
+
+    from cruxible_core.service.proposals.publications import service_declare_playbill_block
+
+    instance, _owner = _instance_with_query(root)
+    request = _projection_request(instance, backing=(_claim_backing(instance),))
+    row = _row(instance, "unregistered_projection_block", request)
+    assert row.repair.operation == _expected_operation(("unregistered_projection_block", None))
+    assert row.repair.required_change == "remove_or_register_projection_block"
+
+    observation = request.workspace_observation
+    assert observation is not None and observation.source_observations is not None
+    stamp = observation.source_observations[0].marker_summaries[0].stamp
+    service_declare_playbill_block(
+        instance,
+        actor_id="owner",
+        stamp=stamp,
+        declared_at="2026-09-04T12:00:00+00:00",
+    )
+    _assert_gone(instance, "unregistered_projection_block", request)
 
 
 def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:

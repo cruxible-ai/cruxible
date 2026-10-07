@@ -4571,52 +4571,12 @@ def _mandate_items(
     return tuple(items)
 
 
-def _registered_publication_blocks(
+def _registered_blocks(
     instance: PlaybillInstance,
 ) -> dict[tuple[str, str], ProjectionBlockRegistration] | None:
-    """Fold every block this instance registers, whichever road declared it.
-
-    Both roads, one identity: the pair the page itself names. Before this the
-    question "is this marker sanctioned?" was asked only of block ids beginning
-    `pub-`, which is a spelling the retired publication road minted, so a block
-    an agent declared with `block repin` was never checked against anything.
-    """
+    """Fold every block this instance registers, keyed on the pair the page names."""
 
     return registered_projection_blocks(instance)
-
-
-def _registrations_released_by_retirement(
-    registrations: Mapping[tuple[str, str], ProjectionBlockRegistration],
-    *,
-    tree: Mapping[str, bytes],
-) -> frozenset[tuple[str, str]]:
-    """The registered blocks whose backing Claim has been retired.
-
-    The fold reads protocol state and never opens the Claim tree, so a ruling
-    that retired a block's backing Claim left its registration standing and
-    `next` went on demanding the frame -- for a block that same ruling had told
-    the author to delete, with the repair "restore it". A registration whose
-    Claim is retired registers nothing: the world has moved past that page.
-
-    Only a publication registration has a backing Claim to retire. A block an
-    agent declared holds a LIST, and a retirement inside that list is reported
-    as a stale backing on the block, not as the block ceasing to exist.
-
-    It takes the already-folded registrations rather than folding again: the
-    fold walks every durable intent event, and one `next` used to reach it from
-    three places plus once per block.
-    """
-
-    released: set[tuple[str, str]] = set()
-    for key, registration in registrations.items():
-        publication = registration.publication
-        if publication is None:
-            continue
-        path = claim_path(publication.claim_identity)
-        raw = tree.get(path)
-        if raw is not None and parse_claim(raw, path=path).lifecycle.state == "retired":
-            released.add(key)
-    return frozenset(released)
 
 
 def _projection_marker_invalid_item(
@@ -4696,14 +4656,10 @@ def _projection_items(
     if not observed_sources:
         return ()
 
-    tree = ClaimVerdictReadContext(instance, coordinate).tree
-    # One fold per `next`. The registration fold parses every durable intent
-    # event, and the queue used to reach it from three places and once more per
-    # syncable block; the retirement release now reads the same folded result.
-    folded = _registered_publication_blocks(instance)
-    registrations: frozenset[tuple[str, str]] | None = None
-    if folded is not None:
-        registrations = frozenset(folded) - _registrations_released_by_retirement(folded, tree=tree)
+    # One fold per `next`: the queue used to reach it from three places and once
+    # more per syncable block.
+    folded = _registered_blocks(instance)
+    registrations: frozenset[tuple[str, str]] | None = None if folded is None else frozenset(folded)
     items: list[PlaybillNextItemV1] = []
     for source in observed_sources:
         observed_block_ids = {marker.stamp.block_id for marker in source.marker_summaries}
