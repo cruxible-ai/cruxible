@@ -210,6 +210,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     accepted_state_token,
     admitted_capture_token,
     build_terminal_item_manifest,
+    citable_captures,
     derive_terminal_item_facts,
     exhaust_token,
     manifest_dependency_tokens,
@@ -4321,6 +4322,11 @@ class ProcedureExecutor:
             state=state,
             records=records,
         )
+        if not values:
+            # A fan-out over an empty list has nothing to emit: no egress is
+            # prepared or delivered (a proposal with no member is no proposal),
+            # and the run ends at this terminal with its typed result.
+            return
         required = TERMINAL_REQUIRED_RUNGS[node.kind]
         payload: dict[str, object] = {
             "node_id": node.node_id,
@@ -5691,7 +5697,11 @@ def _terminal_item_templates(
     node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
 ) -> object:
     if isinstance(node, ProposeChangeSetNode):
-        return list(node.candidate_templates)
+        templates = node.candidate_templates
+        if isinstance(templates, tuple):
+            return list(templates)
+        # Fan out over data, as the capture and inbox terminals do.
+        return {"items": templates.items}
     return node.input
 
 

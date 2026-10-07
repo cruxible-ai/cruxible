@@ -111,7 +111,11 @@ def _reference_templates(
     elif isinstance(node, CaptureEgressNode | InboxEgressNode):
         yield "input", node.input
     elif isinstance(node, ProposeChangeSetNode):
-        yield "candidate_templates", node.candidate_templates
+        templates = node.candidate_templates
+        yield (
+            "candidate_templates",
+            templates if isinstance(templates, tuple) else templates.model_dump(mode="json"),
+        )
 
 
 def _step_alias_references(value: object, *, location: str) -> Iterator[str]:

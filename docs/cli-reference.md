@@ -1685,7 +1685,13 @@ widened cap with both values; `authoring example procedure-mandate` uses the
 `authoring example procedure` caps.
 
 A Line whose Procedure ends in a `propose_change_set` terminal produces a
-proposal. Each resolved candidate template must be one Claim proposal item --
+proposal. Its `candidate_templates` are a fixed list of templates, or
+`{"items": "$steps.<alias>.<list>"}` to fan out over data: each element a
+provider, Source or transform produced becomes one item of the one proposal,
+with its own dependency closure and evidence. An empty list proposes nothing
+and the run succeeds; an element that is not a Claim proposal item refuses
+`proposal_item_invalid` naming its `child_index`. Each resolved candidate
+template must be one Claim proposal item --
 a statement, a rationale, and optionally the Claim lineage it revises. The
 daemon supplies the evidence: the produced Capture in that item's own
 dependency closure is cited, so a computed interpretation is a Claim under its

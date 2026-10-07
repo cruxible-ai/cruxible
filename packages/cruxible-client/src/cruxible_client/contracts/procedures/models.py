@@ -591,12 +591,30 @@ class InboxEgressNode(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
+class ProposalItemsFanOut(_StrictProcedureModel):
+    """Candidates from data: each element of ``items`` is one Claim proposal item.
+
+    ``items`` resolves at run time (typically ``$steps.<alias>.items``, a list a
+    provider, Source or transform produced); every element becomes one item of
+    the one proposal, with its own dependency closure and evidence, exactly as
+    the capture and inbox terminals fan out ``{"items": ...}``.
+    """
+
+    items: object
+
+    _items = field_validator("items", mode="before")(normalize_canonical)
+
+
 class ProposeChangeSetNode(_StrictProcedureModel):
-    """Terminal output into proposal receive; it has no activation field."""
+    """Terminal output into proposal receive; it has no activation field.
+
+    ``candidate_templates`` is a fixed, non-empty list of item templates, or
+    ``{"items": ...}`` to fan out over data (:class:`ProposalItemsFanOut`).
+    """
 
     kind: Literal["propose_change_set"] = "propose_change_set"
     node_id: str
-    candidate_templates: tuple[object, ...]
+    candidate_templates: tuple[object, ...] | ProposalItemsFanOut
     claim_types: tuple[ArtifactPin, ...] = ()
     result: object
 
@@ -605,6 +623,12 @@ class ProposeChangeSetNode(_StrictProcedureModel):
     @field_validator("candidate_templates", mode="before")
     @classmethod
     def _templates(cls, value: object) -> object:
+        if isinstance(value, ProposalItemsFanOut):
+            return value
+        if isinstance(value, dict):
+            if set(value) != {"items"}:
+                raise ValueError("a propose_change_set fan-out is exactly {'items': <reference>}")
+            return ProposalItemsFanOut(items=value["items"])
         if not isinstance(value, (list, tuple)) or not value:
             raise ValueError("propose_change_set requires at least one candidate template")
         return tuple(normalize_canonical(item) for item in value)
@@ -978,6 +1002,7 @@ __all__ = [
     "ProcedurePinSlotRef",
     "ProcedureTransformSpec",
     "ProjectNode",
+    "ProposalItemsFanOut",
     "ProposeChangeSetNode",
     "RUNG_AUTHORITY",
     "RepeatBodyNode",

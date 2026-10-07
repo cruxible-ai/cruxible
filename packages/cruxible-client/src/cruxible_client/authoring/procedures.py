@@ -217,9 +217,13 @@ class EmitCapture(Step):
 
 @dataclass(frozen=True, kw_only=True)
 class ProposeChangeSet(Step):
-    """Propose the candidate Claims; ``result`` is the Procedure's typed return value."""
+    """Propose the candidate Claims; ``result`` is the Procedure's typed return value.
 
-    candidate_templates: tuple[object, ...]
+    ``candidate_templates`` is a fixed tuple of item templates, or
+    ``{"items": "$steps.<alias>.items"}`` to propose one Claim per element.
+    """
+
+    candidate_templates: tuple[object, ...] | dict[str, object]
     result: object = Previous()
 
 
@@ -227,7 +231,7 @@ class ProposeChangeSet(Step):
 class SettleChangeSet(Step):
     """Settle the candidate Claims under the one covering settle mandate, or fall back."""
 
-    candidate_templates: tuple[object, ...]
+    candidate_templates: tuple[object, ...] | dict[str, object]
     result: object = Previous()
 
 
