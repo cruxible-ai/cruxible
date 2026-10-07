@@ -235,6 +235,17 @@ def test_two_worlds_in_one_test_never_share_keys_or_genesis(tmp_path: Path) -> N
     assert first.inspect().head_oid != second.inspect().head_oid
 
 
+def test_the_suites_autouse_isolation_patches_leave_templates_on(tmp_path: Path) -> None:
+    """Every test carries conftest's isolation patches (binding discovery, daemon
+    auto-start refusal); none of them may count as a runtime patch, or the whole
+    suite silently builds every world fresh."""
+
+    templates = WorldTemplates()
+    templates.configure(tmp_path / "templates")
+
+    assert templates._patched() is None
+
+
 def test_a_runtime_patched_before_the_build_gets_a_fresh_world(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
