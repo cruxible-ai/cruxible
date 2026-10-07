@@ -785,3 +785,22 @@ def test_the_blueprint_law_refuses_a_position_bound_to_another_interface() -> No
     assert [item.code for item in refused.diagnostics] == [
         "cruxible.blueprint.provider_interface_pin_mismatch"
     ]
+
+
+def test_a_blueprint_change_set_member_authors_its_blueprint_path() -> None:
+    """A Blueprint beside other members of one change set lowers to blueprints/."""
+
+    from cruxible_client.contracts.authoring.models import (
+        BlueprintAuthoringPayload,
+        ProcedureAuthoringPayload,
+    )
+
+    blueprint = BlueprintAuthoringPayload.model_construct(definition={"name": "acme.skeleton"})
+    procedure = ProcedureAuthoringPayload.model_construct(definition={"name": "acme.increment"})
+
+    assert lowering._member_primary_path(blueprint, claim_identities={}) == blueprint_path(
+        "acme.skeleton"
+    )
+    assert lowering._member_primary_path(procedure, claim_identities={}) == procedure_path(
+        "acme.increment"
+    )
