@@ -304,7 +304,9 @@ authority plane beside accepted state.
 `cruxible_query` takes exactly one mode: compact or a query `name`
 (a full spec runs through `cruxible_query_spec`, in the `full`
 profile, so the default tool stays small). Compact mode names a Subject
-`kind` (or `ClaimType` / `Procedure` for definitions) and/or free text
+`kind` (or `ClaimType` / `Procedure` for definitions, or `Trigger` / `Line`
+to list Triggers by name, schedule, target and lifecycle and Lines by
+enabled) and/or free text
 `contains`. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
 `ne`, `lt`, `lte`, `gt`, `gte`, `in` (a list), `exists` (a boolean) or
 `contains` (case-insensitive text); filters combine as all-of. A field is a

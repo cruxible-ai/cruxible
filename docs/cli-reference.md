@@ -1259,8 +1259,15 @@ cruxible query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'
 
 `query` has no subcommands: it answers any question over accepted state in one
 call, the same read as MCP `cruxible_query` and SDK `cx.query`. KIND is
-a Subject kind, or `ClaimType` / `Procedure` for definitions; `--contains` alone
-searches every live Claim value across kinds. `--where` filters combine as
+a Subject kind, `ClaimType` / `Procedure` for definitions, or `Trigger` / `Line`;
+`--contains` alone searches every live Claim value across kinds. `query Trigger`
+lists Triggers by `name`, `schedule` (`cadence`, `cron`, `capture_landing`,
+`window_close`, `generation_accepted`), `target_kind` (`line` or `action`),
+`target` and `lifecycle`; `--select` adds `cron`, `cadence`, `capture_contract`
+and `version`. `query Line` lists Lines with their `procedure`, `authority`,
+`lifecycle`, `enabled` (whether the Line's automation is admitting work) and
+live `triggers`. Both filter on those fields, list only live rows unless a
+`lifecycle` filter is given, and page like any compact query. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
 `subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
 `--follow field:alias` hops forward along one of KIND's Subject-valued predicates;

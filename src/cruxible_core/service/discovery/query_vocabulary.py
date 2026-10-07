@@ -199,7 +199,7 @@ class QueryVocabulary:
         raise query_refusal(
             "cruxible.query.unknown_kind",
             f"no accepted Subject kind is named {kind!r}",
-            nearest=nearest(kind, (*self.kinds, "ClaimType", "Procedure")),
+            nearest=nearest(kind, (*self.kinds, "ClaimType", "Procedure", "Trigger", "Line")),
             repair="use one of the listed kinds; orient names every kind",
             field_path=field_path,
         )

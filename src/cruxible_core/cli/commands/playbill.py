@@ -4782,9 +4782,12 @@ def query_group(
     """Query accepted state: cruxible query [KIND] [--where 'f=v']...
 
     This answers one query and prints its values as a table with flags, then
-    the next command when the page is truncated. KIND is a Subject kind, or
-    ClaimType / Procedure for definitions; --name runs an accepted named query
-    (orient --section queries lists them), --spec a full definition.
+    the next command when the page is truncated. KIND is a Subject kind,
+    ClaimType / Procedure for definitions, or Trigger / Line (Triggers by name,
+    schedule, target_kind, target and lifecycle; Lines by enabled; --select
+    adds a Trigger's cron, cadence, capture_contract or version); --name runs
+    an accepted named query (orient --section queries lists them), --spec a
+    full definition.
     """
 
     if ctx.args:
