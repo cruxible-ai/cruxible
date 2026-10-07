@@ -201,10 +201,28 @@ def _autostart_lock(state_root: Path, socket_path: Path) -> Iterator[None]:
                 f"could not take the auto-start lock {path}: {exc}; repair: "
                 f"{_repair(state_root, socket_path)}"
             ) from exc
-        yield
+        try:
+            yield
+        finally:
+            _unlock(descriptor, path)
     finally:
+        # Closed whatever happened above; closing also drops a lock unlock left.
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+
+def _unlock(descriptor: int, path: Path) -> None:
+    """Release a lock this process acquired; a failure stays the typed refusal."""
+
+    try:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
+    except OSError as exc:
+        raise DaemonUnavailableError(
+            f"could not release the auto-start lock {path}: {exc}; repair: retry, and "
+            "check the state root's filesystem supports file locks"
+        ) from exc
 
 
 def _repair(state_root: Path, socket_path: Path) -> str:
@@ -330,6 +348,52 @@ def _spawn_daemon(
         log.close()
 
 
+#: Process basics a daemon needs to run as this user and find its own install.
+PROCESS_BASICS_ENV = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "SYSTEMROOT",
+        "LANG",
+        "TZ",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_RUNTIME_DIR",
+        "VIRTUAL_ENV",
+        # The daemon runs the same code as the adapter that started it.
+        "PYTHONPATH",
+    }
+)
+
+#: Network, certificate and package-tool settings provider installs read (uv
+#: inherits the daemon's environment); configuration only, never credentials.
+NETWORK_AND_TOOL_ENV = frozenset(
+    {
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "UV_CACHE_DIR",
+        "UV_INDEX_URL",
+        "UV_EXTRA_INDEX_URL",
+        # The ledger mirror's SSH transport (`ledger/ledger_mirror.py`); the
+        # agent socket that would lend it a credential stays behind.
+        "GIT_SSH_COMMAND",
+    }
+)
+
 #: Daemon configuration an auto-started daemon inherits from the adapter. Every
 #: other ``CRUXIBLE_*`` variable stays behind: the adapter's transport, tier,
 #: instance, principal and workspace are its own, and its credentials (bearer
@@ -352,13 +416,15 @@ DAEMON_CONFIGURATION_ENV = frozenset(
 
 
 def daemon_child_environment(env: Mapping[str, str]) -> dict[str, str]:
-    """The environment of a spawned daemon: the process basics plus daemon configuration."""
+    """The environment of a spawned daemon, built from an allowlist.
 
-    return {
-        key: value
-        for key, value in env.items()
-        if not key.startswith("CRUXIBLE_") or key in DAEMON_CONFIGURATION_ENV
-    }
+    Process basics, locale (``LC_*``), network and tool settings, and daemon
+    configuration pass; everything else -- API keys, cloud and forge tokens,
+    the adapter's own Cruxible credentials -- stays with the adapter.
+    """
+
+    allowed = PROCESS_BASICS_ENV | NETWORK_AND_TOOL_ENV | DAEMON_CONFIGURATION_ENV
+    return {key: value for key, value in env.items() if key in allowed or key.startswith("LC_")}
 
 
 def _wait_until_answering(

@@ -57,8 +57,12 @@ starts a daemon in its place, whichever socket a workspace binding names (the
 default one included). When no daemon can be started, the call fails with
 `cruxible.mcp.daemon_unavailable` naming the failed step and the repair: start
 one with `cruxible server start`, install the service, or set a transport. A
-started daemon inherits no `CRUXIBLE_*` variable of the MCP server's beyond daemon
-configuration: never its transport, tier, instance, principal or credentials.
+started daemon inherits an allowlist of the MCP server's environment: process
+basics (`PATH`, `HOME`, user, shell, temporary directories, locale, `TZ`, the XDG
+directories, `VIRTUAL_ENV`, `PYTHONPATH`), proxy and certificate settings, uv's
+cache and index URLs, `GIT_SSH_COMMAND`, and daemon configuration. Nothing else
+reaches it: not the server's transport, tier, instance or principal, and no
+credential (Cruxible tokens and keys, API keys, cloud or forge tokens).
 
 ## Instances and the adapter environment
 

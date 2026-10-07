@@ -245,6 +245,9 @@ def test_with_nothing_to_reuse_it_spawns_the_daemon_on_the_default_socket(
     monkeypatch.setattr(daemon, "_answers", answers)
     monkeypatch.setattr(daemon.subprocess, "Popen", popen)
     secrets = {
+        "OPENAI_API_KEY": "openai-secret-value",
+        "GITHUB_TOKEN": "github-secret-value",
+        "AWS_SECRET_ACCESS_KEY": "aws-secret-value",
         "CRUXIBLE_SERVER_BEARER_TOKEN": "bearer-secret-value",
         "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET": "bootstrap-secret-value",
         "CRUXIBLE_PRINCIPAL_KEY": "principal-key-value",
@@ -259,6 +262,8 @@ def test_with_nothing_to_reuse_it_spawns_the_daemon_on_the_default_socket(
         CRUXIBLE_PRINCIPAL_ID="agent",
         CRUXIBLE_SERVER_AUTH="true",
         CRUXIBLE_SERVER_LOG_PATH=str(state_root / "daemon.log"),
+        HTTPS_PROXY="http://proxy.example:3128",
+        LC_ALL="C.UTF-8",
         **secrets,
     )
 
@@ -283,6 +288,11 @@ def test_with_nothing_to_reuse_it_spawns_the_daemon_on_the_default_socket(
     child = call["env"]
     assert {key for key in child if key.startswith("CRUXIBLE_")} == {"CRUXIBLE_SERVER_LOG_PATH"}
     assert child["PATH"] == env["PATH"] and child["HOME"] == env["HOME"]
+    assert child["HTTPS_PROXY"] == "http://proxy.example:3128"
+    assert child["LC_ALL"] == "C.UTF-8"
+    # An allowlist, not a blocklist: nothing outside it reaches the daemon.
+    for name in ("OPENAI_API_KEY", "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY"):
+        assert name not in child
     for value in secrets.values():
         assert value not in argv
         assert value not in child.values()
@@ -351,6 +361,43 @@ def test_an_unreadable_log_or_service_record_is_a_typed_refusal(
     monkeypatch.setattr(daemon, "_spawn_daemon", lambda *_a: pytest.fail("never bypassed"))
     with pytest.raises(DaemonUnavailableError, match="service .* cannot be read"):
         real_ensure_local_daemon(state_root, environ=_env(state_root, workspace))
+
+
+def test_a_filesystem_without_flock_is_refused_and_the_lock_closed(
+    roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-004: LOCK_EX failing persistently stays typed, never unlocks, always closes."""
+
+    import errno
+
+    state_root, workspace = roots
+    calls: list[int] = []
+    closed: list[int] = []
+    real_close = os.close
+
+    def flock(descriptor: int, operation: int) -> None:
+        calls.append(operation)
+        raise OSError(errno.ENOTSUP, "Operation not supported")
+
+    def close(descriptor: int) -> None:
+        closed.append(descriptor)
+        real_close(descriptor)
+
+    monkeypatch.setattr(daemon, "_answers", _Answers())
+    monkeypatch.setattr(daemon.fcntl, "flock", flock)
+    monkeypatch.setattr(daemon.os, "close", close)
+    monkeypatch.setattr(daemon, "_spawn_daemon", lambda *_a: pytest.fail("never spawned"))
+    monkeypatch.setattr(
+        daemon, "installed_service_config", lambda *_a: pytest.fail("never reached")
+    )
+
+    with pytest.raises(DaemonUnavailableError) as refused:
+        real_ensure_local_daemon(state_root, environ=_env(state_root, workspace))
+
+    assert refused.value.error_code == "cruxible.mcp.daemon_unavailable"
+    assert "could not take the auto-start lock" in str(refused.value)
+    assert calls == [daemon.fcntl.LOCK_EX]
+    assert len(closed) == 1
 
 
 def test_the_mcp_caller_reads_the_daemon_unavailable_code(
