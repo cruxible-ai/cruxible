@@ -96,7 +96,9 @@ def test_and_activate_stops_and_names_the_step_when_the_candidate_is_not_ready(
     client = _SubmitClient(state)
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
 
-    result = CliRunner().invoke(cli, [*COMMON, "submit", INTENT_ID, "--and-activate", "--json"])
+    result = CliRunner().invoke(
+        cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--and-activate", "--json"]
+    )
 
     assert result.exit_code == 0, result.output
     assert client.activations == []
@@ -113,7 +115,9 @@ def test_and_activate_names_the_approve_command_in_brief_when_it_stops(
     client = _SubmitClient("awaiting_external_approval")
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
 
-    result = CliRunner().invoke(cli, [*COMMON, "submit", INTENT_ID, "--and-activate", "--brief"])
+    result = CliRunner().invoke(
+        cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--and-activate", "--brief"]
+    )
 
     assert result.exit_code == 0, result.output
     assert client.activations == []
@@ -126,7 +130,7 @@ def test_refused_brief_prints_the_typed_reason_on_one_line(
     client = _SubmitClient("preflight_refused")
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
 
-    result = CliRunner().invoke(cli, [*COMMON, "submit", INTENT_ID, "--brief"])
+    result = CliRunner().invoke(cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--brief"])
 
     assert result.exit_code == 0, result.output
     assert (
@@ -144,25 +148,28 @@ def test_and_activate_brief_prints_the_accepted_coordinate_and_receipt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _SubmitClient("ready_to_activate")
-    activation = contracts.WorkspaceActivationResult(
+    activation = contracts.ActivationReceipt(
         proposal_id=PROPOSAL_ID,
         activated_by="owner",
         status="accepted",
         accepted_coordinate=COORDINATE,
         workspace_advertisement={"status": "not_attached", "workspace_path": None},
-        floor_refresh=contracts.FloorRefreshResult(status="not_configured"),
-    )
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
-    monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.activate_with_workspace_refresh",
-        lambda *_args, **_kwargs: activation,
     )
 
+    def activate(instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
+        client.activations.append(proposal_id)
+        return activation
+
+    client.activate_proposal = activate  # type: ignore[method-assign]
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     result = CliRunner().invoke(
         cli,
-        [*COMMON, "submit", INTENT_ID, "--and-activate", "--brief"],
+        [*COMMON, "submit", "--intent-id", INTENT_ID, "--and-activate", "--brief"],
     )
 
     assert result.exit_code == 0, result.output
+    # Activation is the daemon act alone: one call, no floor or block step.
+    assert client.activations == [PROPOSAL_ID]
+    assert "outcome: accepted" in result.output
     assert f"coordinate: {COORDINATE.git_oid}" in result.output
     assert "receipt: playbill-activation-receipt-v1" in result.output

@@ -212,13 +212,13 @@ def _render_proposal_call(
         if verb == "approve":
             who = signer or "approver"
             return f"{handle}.approve(signer=<{who} signer>, reviewed={handle}.review())"
-        return f"{handle}.accept()"
+        return f"{handle}.activate()"
     if verb == "approve":
         arguments = f"proposal_id={json.dumps(proposal_id)}"
         if signer is not None:
             arguments += f", signer_id={json.dumps(signer)}"
-        return f"cruxible_approve({arguments})"
-    return f"cruxible_activate(proposal_id={json.dumps(proposal_id)})"
+        return f"cruxible_proposal_approve({arguments})"
+    return f"cruxible_proposal_activate(proposal_id={json.dumps(proposal_id)})"
 
 
 def _render_get(surface: ReadSurface, ref: str) -> str:

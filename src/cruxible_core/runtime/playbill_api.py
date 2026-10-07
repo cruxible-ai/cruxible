@@ -170,8 +170,6 @@ from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.registry import get_registry
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
-    service_inspect_playbill_proposal,
-    service_inspect_playbill_refusal,
     service_propose_playbill_document,
     service_propose_playbill_principal_change,
     service_store_playbill_body,
@@ -271,7 +269,6 @@ from cruxible_core.service.proposals.proposals import (
     ProposalInventoryStatus,
     WhoAmIActorIdSource,
     service_list_playbill_proposals,
-    service_playbill_proposal_status,
     service_playbill_whoami,
     service_readmit_playbill_proposal,
     service_resolve_playbill_proposal_selector,
@@ -924,23 +921,6 @@ def playbill_propose_principal_change(
         return contracts.ProposalInspection.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_inspect_proposal(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.ProposalInspection:
-    check_permission("cruxible_inspect", instance_id=instance_id)
-    instance = get_playbill_manager().get(instance_id)
-    result = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
-    return contracts.ProposalInspection.model_validate(
-        {
-            **result.model_dump(mode="json"),
-            "workspace_advertisement": instance.settled_workspace_advertisement().model_dump(
-                mode="json"
-            ),
-        }
-    )
-
-
 def playbill_list_proposals(
     instance_id: str,
     *,
@@ -956,17 +936,6 @@ def playbill_list_proposals(
         cursor=cursor,
     )
     return contracts.ProposalList.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_proposal_status(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.ProposalListEntry:
-    check_permission("cruxible_read", instance_id=instance_id)
-    result = service_playbill_proposal_status(
-        get_playbill_manager().get(instance_id), proposal_id=proposal_id
-    )
-    return contracts.ProposalListEntry.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_resolve_proposal_selector(
@@ -1121,17 +1090,6 @@ def playbill_orient(
     )
 
 
-def playbill_inspect_refusal(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.RefusalInspection:
-    check_permission("cruxible_inspect", instance_id=instance_id)
-    result = service_inspect_playbill_refusal(
-        get_playbill_manager().get(instance_id), proposal_id=proposal_id
-    )
-    return contracts.RefusalInspection.model_validate(result.model_dump(mode="json"))
-
-
 def playbill_review_proposal(
     instance_id: str,
     proposal_id: str,
@@ -1139,7 +1097,7 @@ def playbill_review_proposal(
     include_body: bool = False,
     workspace_observation: Mapping[str, object] | None = None,
 ) -> contracts.ProposalReview:
-    check_permission("cruxible_review", instance_id=instance_id)
+    check_permission("cruxible_proposal_review", instance_id=instance_id)
     result = service_review_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
@@ -1156,7 +1114,7 @@ def playbill_prepare_approval(
     signer_id: str,
     include_body: bool = False,
 ) -> contracts.ApprovalChallenge:
-    check_permission("cruxible_review", instance_id=instance_id)
+    check_permission("cruxible_proposal_review", instance_id=instance_id)
     result = service_prepare_playbill_approval(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
@@ -1172,7 +1130,7 @@ def playbill_submit_approval(
     *,
     attestation: ApprovalAttestation,
 ) -> contracts.ApprovalReceipt:
-    check_permission("cruxible_submit_approval", instance_id=instance_id)
+    check_permission("cruxible_proposal_approve_submit", instance_id=instance_id)
     result = service_submit_playbill_approval(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
@@ -1186,7 +1144,7 @@ def playbill_activate(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.ActivationReceipt:
-    check_permission("cruxible_activate", instance_id=instance_id)
+    check_permission("cruxible_proposal_activate", instance_id=instance_id)
     activated_by = _actor_id(instance_id)
     result = service_activate_playbill_proposal(
         get_playbill_manager().get(instance_id),
@@ -1341,7 +1299,7 @@ def _write_outcome(instance_id: str, request: WriteRequest) -> WriteOutcome:
     with change_entry(request.dry_run, "direct"):
         caller = WriteCaller(
             actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
-            may_activate=_permits("cruxible_activate", instance_id=instance_id),
+            may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
         )
         return service_playbill_write(
             get_playbill_manager().get(instance_id), request=request, caller=caller

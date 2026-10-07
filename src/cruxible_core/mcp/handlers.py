@@ -14,7 +14,6 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from cruxible_client import (
     CruxibleClient,
-    activate_with_workspace_refresh,
     contracts,
     inspect_workspace_floor,
     observe_next_workspace,
@@ -348,7 +347,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_kit_add": TypeAdapter(KitAddRequest),
     "cruxible_kit_remove": TypeAdapter(KitRemoveRequest),
     "cruxible_claim_type_upgrade": TypeAdapter(ClaimTypeUpgradeRequest),
-    "cruxible_activate": None,  # path only
+    "cruxible_proposal_activate": None,  # path only
     "cruxible_authoring_bind": TypeAdapter(AuthoringInputCompileRequest),
     "cruxible_authoring_compile": TypeAdapter(AuthoringInputCompileRequest),
     "cruxible_authoring_preflight": TypeAdapter(AuthoringPreflightRequest),
@@ -377,7 +376,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_procedure_measure": TypeAdapter(contracts.ProcedureMeasureRequest),
     "cruxible_settle": TypeAdapter(contracts.SettleRequest),
     "cruxible_body_store": TypeAdapter(StoreBodyRequest),
-    "cruxible_submit_approval": TypeAdapter(ApprovalRequest),
+    "cruxible_proposal_approve_submit": TypeAdapter(ApprovalRequest),
 }
 
 
@@ -626,26 +625,6 @@ def handle_playbill_propose_document(
     )
 
 
-def handle_playbill_inspect_proposal(
-    instance_id: str, proposal_id: str
-) -> contracts.ProposalInspection:
-    return _dispatch_remote_or_local(
-        lambda client: client.inspect_proposal(instance_id, proposal_id),
-        lambda: playbill_api.playbill_inspect_proposal(instance_id, proposal_id),
-        operation_name="cruxible_inspect_proposal",
-    )
-
-
-def handle_playbill_inspect_refusal(
-    instance_id: str, proposal_id: str
-) -> contracts.RefusalInspection:
-    return _dispatch_remote_or_local(
-        lambda client: client.inspect_refusal(instance_id, proposal_id),
-        lambda: playbill_api.playbill_inspect_refusal(instance_id, proposal_id),
-        operation_name="cruxible_inspect_refusal",
-    )
-
-
 def handle_playbill_review(
     instance_id: str,
     proposal_id: str,
@@ -657,7 +636,7 @@ def handle_playbill_review(
         lambda: playbill_api.playbill_review_proposal(
             instance_id, proposal_id, include_body=include_body
         ),
-        operation_name="cruxible_review",
+        operation_name="cruxible_proposal_review",
     )
 
 
@@ -681,7 +660,7 @@ def handle_playbill_prepare_approval(
             signer_id=signer_id,
             include_body=include_body,
         ),
-        operation_name="cruxible_prepare_approval",
+        operation_name="cruxible_proposal_approve_prepare",
     )
 
 
@@ -702,7 +681,7 @@ def handle_playbill_submit_approval(
             proposal_id,
             attestation=public_attestation,
         ),
-        operation_name="cruxible_submit_approval",
+        operation_name="cruxible_proposal_approve_submit",
         local_payload={"attestation": public_attestation.model_dump(mode="json")},
     )
 
@@ -725,14 +704,14 @@ def handle_playbill_approve(
     try:
         governance_identifier(signer, label="signer_id")
     except ValueError as exc:
-        raise DataValidationError(f"cruxible_approve: {exc}") from exc
+        raise DataValidationError(f"cruxible_proposal_approve: {exc}") from exc
     challenge = handle_playbill_prepare_approval(
         instance_id, proposal_id, signer_id=signer, include_body=False
     )
     statement = ApprovalStatement.model_validate(challenge.statement)
     if candidate_digest is not None and statement.payload_digest != candidate_digest:
         raise DataValidationError(
-            f"cruxible_approve: proposal {proposal_id} now signs candidate "
+            f"cruxible_proposal_approve: proposal {proposal_id} now signs candidate "
             f"{statement.payload_digest}, not the reviewed {candidate_digest}; review it again"
         )
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
@@ -753,42 +732,19 @@ def _sole_approval_signer(key_dir: Path) -> str:
     if len(signers) != 1:
         found = ", ".join(signers) if signers else "none"
         raise DataValidationError(
-            "cruxible_approve: pass signer_id; the configured key directory holds "
+            "cruxible_proposal_approve: pass signer_id; the configured key directory holds "
             f"{len(signers)} approval keys (signers: {found})"
         )
     return signers[0]
 
 
-def handle_playbill_activate(
-    instance_id: str, proposal_id: str
-) -> contracts.WorkspaceActivationResult:
-    workspace = optional_mcp_git_workspace_root()
-    if workspace is None:
-        # Activation is a daemon act; the floor refresh and block sync are local
-        # conveniences that need a worktree, so their absence must not refuse it.
-        activation = _dispatch_remote_or_local(
-            lambda client: client.activate_proposal(instance_id, proposal_id),
-            lambda: playbill_api.playbill_activate(instance_id, proposal_id),
-            operation_name="cruxible_activate",
-        )
-        return contracts.WorkspaceActivationResult(
-            **activation.model_dump(mode="json"),
-            floor_refresh=contracts.FloorRefreshResult(
-                status="not_configured",
-                message=(
-                    "floor refresh skipped: the MCP workspace root is not inside a Git "
-                    "worktree (set CRUXIBLE_MCP_WORKSPACE_ROOT to one to refresh the floor)"
-                ),
-            ),
-        )
+def handle_playbill_activate(instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
+    """Activation is a daemon act; the daemon's trigger delivers the floor."""
+
     return _dispatch_remote_or_local(
-        lambda client: activate_with_workspace_refresh(
-            client, instance_id, proposal_id, workspace=workspace
-        ),
-        lambda: activate_with_workspace_refresh(
-            _LocalFloorClient(), instance_id, proposal_id, workspace=workspace
-        ),
-        operation_name="cruxible_activate",
+        lambda client: client.activate_proposal(instance_id, proposal_id),
+        lambda: playbill_api.playbill_activate(instance_id, proposal_id),
+        operation_name="cruxible_proposal_activate",
     )
 
 

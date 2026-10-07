@@ -63,7 +63,7 @@ def _client_at_ceiling(monkeypatch: pytest.MonkeyPatch, ceiling: str) -> TestCli
             "/api/v1/inst_ceiling/bodies",
             {"content_base64": ""},
             "/api/v1/inst_ceiling/proposals/missing/activate",
-            "cruxible_activate",
+            "cruxible_proposal_activate",
         ),
         (
             "graph_write",

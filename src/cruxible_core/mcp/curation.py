@@ -31,9 +31,9 @@ _DEFAULT_TOOLS = frozenset(
         "cruxible_write",
         # proposals through activation
         "cruxible_proposal_list",
-        "cruxible_review",
-        "cruxible_approve",
-        "cruxible_activate",
+        "cruxible_proposal_review",
+        "cruxible_proposal_approve",
+        "cruxible_proposal_activate",
         # identity and versions
         "cruxible_whoami",
         "cruxible_server_info",

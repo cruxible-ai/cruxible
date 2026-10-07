@@ -20,7 +20,6 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from cruxible_client import (
     CruxibleClient,
-    activate_with_workspace_refresh,
     contracts,
     observe_next_workspace,
 )
@@ -1880,36 +1879,6 @@ def withdraw_proposal(
     echo_preview_next(result.status, result.coordinate)
 
 
-@proposal_group.command("inspect")
-@click.argument("proposal_id")
-@json_option
-@handle_errors
-def inspect_proposal(proposal_id: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.inspect_proposal(
-            instance_id,
-            client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
-        ),
-        command_name="cruxible proposal inspect",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
-@proposal_group.command("refusal")
-@click.argument("proposal_id")
-@json_option
-@handle_errors
-def inspect_refusal(proposal_id: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.inspect_refusal(
-            instance_id,
-            client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
-        ),
-        command_name="cruxible proposal refusal",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
 @proposal_group.command("review")
 @click.argument("proposal_id")
 @click.option("--include-body/--redacted", default=True)
@@ -2045,47 +2014,26 @@ def approve_proposal(
 
 @proposal_group.command("activate")
 @click.argument("proposal_id")
-@click.option(
-    "--workspace-root",
-    default=".",
-    show_default=True,
-    type=click.Path(file_okay=False),
-    help="Workspace holding .cruxible/coverage.json and its optional floor output.",
-)
-@click.option("--no-sync", is_flag=True, help="Skip the activating workspace's block sync.")
 @brief_option
 @json_option
 @handle_errors
-def activate_proposal(
-    proposal_id: str,
-    workspace_root: str,
-    no_sync: bool,
-    output_brief: bool,
-    output_json: bool,
-) -> None:
+def activate_proposal(proposal_id: str, output_brief: bool, output_json: bool) -> None:
+    """Settle an approved candidate; the daemon delivers the floor to its workspace.
+
+    Activation is a daemon act and writes nothing locally. A workspace the local
+    daemon serves gets its floor from the daemon's floor-refresh trigger; other
+    setups pull it with `cruxible floor export`. Read exactly what was accepted
+    with `cruxible get` at the receipt's coordinate; `cruxible next` reports any
+    projection block the change left stale.
+    """
+
     result = _server_call(
-        lambda client, instance_id: activate_with_workspace_refresh(
-            client,
+        lambda client, instance_id: client.activate_proposal(
             instance_id,
             client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
-            workspace=Path(workspace_root),
-            sync=not no_sync,
         ),
         command_name="cruxible proposal activate",
     )
-    payload = result.model_dump(mode="json")
-    if result.floor_refresh.status == "failed":
-        message = result.floor_refresh.message or "unknown client workspace error"
-        _emit_json(payload)
-        raise click.ClickException(
-            f"proposal activation status={result.status}; floor refresh failed: {message}"
-        )
-    if result.block_sync is not None and result.block_sync.has_refusals:
-        _emit_json(payload)
-        raise click.ClickException(
-            f"proposal activation status={result.status}; block sync reported refusals; "
-            "repair: cruxible block sync --all"
-        )
     if output_brief:
         _emit_brief(
             outcome=result.status,
@@ -2100,7 +2048,7 @@ def activate_proposal(
             next_command="cruxible next --brief",
         )
         return
-    _emit_json(payload)
+    _emit_json(result.model_dump(mode="json"))
 
 
 @playbill_group.command("whoami")

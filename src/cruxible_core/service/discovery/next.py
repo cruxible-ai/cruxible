@@ -953,7 +953,7 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.block.sync": "cruxible_block_sync",
     "cruxible.document.propose": "cruxible_document_propose",
     "cruxible.proposal.readmit": "cruxible_proposal_readmit",
-    "cruxible.proposal.approve": "cruxible_approve",
+    "cruxible.proposal.approve": "cruxible_proposal_approve",
     "cruxible.compiler.upgrade": "cruxible_compiler_upgrade",
     "cruxible.line.arm": "cruxible_line_arm",
     "cruxible.line.dispatch": "cruxible_line_dispatch",
@@ -1129,7 +1129,7 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _mcp_call("cruxible_proposal_readmit", proposal_id=text("proposal_id"))
     if operation == "cruxible.proposal.approve" and text("proposal_id") and text("signer_id"):
         return _mcp_call(
-            "cruxible_approve",
+            "cruxible_proposal_approve",
             proposal_id=text("proposal_id"),
             signer_id=text("signer_id"),
         )

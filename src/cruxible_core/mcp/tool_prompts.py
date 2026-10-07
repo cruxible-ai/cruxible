@@ -44,27 +44,21 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_document_propose": (
         "Use when you need to propose a governed Document create or supersession."
     ),
-    "cruxible_inspect_proposal": (
-        "Use when you need immutable proposal evaluation and candidate evidence."
-    ),
-    "cruxible_inspect_refusal": (
-        "Use when you need typed admission or acceptance-law diagnostics for a proposal."
-    ),
-    "cruxible_review": (
+    "cruxible_proposal_review": (
         "Use when you need a structured candidate review and permission-filtered diff."
     ),
-    "cruxible_prepare_approval": (
+    "cruxible_proposal_approve_prepare": (
         "Use when a client-held signer needs the exact immutable approval statement."
     ),
-    "cruxible_submit_approval": (
+    "cruxible_proposal_approve_submit": (
         "Use when you have a public approval attestation produced outside the daemon."
     ),
-    "cruxible_approve": (
+    "cruxible_proposal_approve": (
         "Use after review to approve a proposal with a local key from the server's "
         "CRUXIBLE_MCP_KEY_DIR; it challenges, signs and submits in one call and never "
         "activates. Pass the reviewed candidate_digest to bind it to what you read."
     ),
-    "cruxible_activate": (
+    "cruxible_proposal_activate": (
         "Use when an admitted Cruxible candidate has satisfied any committed requirements and "
         "is ready to settle."
     ),

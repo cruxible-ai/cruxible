@@ -1593,14 +1593,14 @@ def test_independent_approval_leaves_the_write_awaiting_the_named_approvers(
     [
         (
             "mcp",
-            'cruxible_approve(proposal_id="{pid}", signer_id="reviewer")',
-            'cruxible_activate(proposal_id="{pid}")',
+            'cruxible_proposal_approve(proposal_id="{pid}", signer_id="reviewer")',
+            'cruxible_proposal_activate(proposal_id="{pid}")',
         ),
         (
             "sdk",
             'cx.proposal("{pid}").approve(signer=<reviewer signer>, '
             'reviewed=cx.proposal("{pid}").review())',
-            'cx.proposal("{pid}").accept()',
+            'cx.proposal("{pid}").activate()',
         ),
     ],
 )

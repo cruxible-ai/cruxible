@@ -1,4 +1,4 @@
-"""Client-owned floor refresh at the tail of proposal activation."""
+"""Activation writes no floor; floor export is the client-side pull."""
 
 from __future__ import annotations
 
@@ -143,149 +143,29 @@ def test_floor_export_records_missing_config_and_clears_floor_missing(
     assert observation["installed_coordinate"] == _coordinate().model_dump(mode="json")
 
 
-def test_accepted_activation_exactly_replaces_the_declared_floor(
+def test_activation_is_a_daemon_act_that_writes_no_floor(
     monkeypatch,  # type: ignore[no-untyped-def]
     tmp_path: Path,
 ) -> None:
+    """The daemon's floor-refresh trigger delivers the floor; activate writes nothing."""
+
     workspace = _workspace(tmp_path)
-    old = workspace / ".cruxible/floor"
-    old.mkdir()
-    (old / "retired-card.json").write_text("stale", encoding="utf-8")
+    before = sorted(path.relative_to(workspace) for path in workspace.rglob("*"))
     _install_client(monkeypatch, tmp_path)
+    monkeypatch.chdir(workspace)
 
-    result = CliRunner().invoke(
-        cli,
-        [
-            "proposal",
-            "activate",
-            "proposal-1",
-            "--workspace-root",
-            str(workspace),
-            "--json",
-        ],
-    )
+    result = CliRunner().invoke(cli, ["proposal", "activate", "proposal-1", "--json"])
 
     assert result.exit_code == 0, result.output
-    assert not (old / "retired-card.json").exists()
-    assert (old / "cards/fresh.json").read_bytes() == b'{"fresh":true}\n'
-    payload = json.loads(result.stdout)
-    assert payload["status"] == "accepted"
-    assert payload["floor_refresh"]["status"] == "refreshed"
-    assert payload["floor_refresh"]["coordinate"] == payload["accepted_coordinate"]
-    assert payload["block_sync"]["has_refusals"] is False
-    assert payload["block_sync"]["items"][0]["outcome"] == "skipped"
-    assert payload["block_sync"]["items"][0]["reason"] == "workspace_not_attached"
-
-
-def test_attached_sync_refusal_reports_accepted_truth_and_runnable_repair(
-    monkeypatch,  # type: ignore[no-untyped-def]
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
-    save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
-
-    class StubClient:
-        def resolve_proposal_selector(
-            self, instance_id: str, selector: str
-        ) -> contracts.ProposalSelectorResult:
-            return contracts.ProposalSelectorResult(
-                selector=selector,
-                proposal_id=selector,
-            )
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    activation = contracts.WorkspaceActivationResult(
-        proposal_id="proposal-1",
-        activated_by="owner",
-        status="accepted",
-        accepted_coordinate=_coordinate(),
-        workspace_advertisement={"status": "updated", "workspace_path": str(tmp_path)},
-        floor_refresh=contracts.FloorRefreshResult(status="not_configured"),
-        block_sync=contracts.BlockSyncResult(
-            items=(
-                contracts.BlockSyncItem(
-                    path="runbook.md",
-                    outcome="refused",
-                    reason="block_locally_modified",
-                ),
-            ),
-            changed_file_count=0,
-            would_change=False,
-            has_refusals=True,
-        ),
+    receipt = json.loads(result.stdout)
+    assert receipt["tag"] == "playbill-activation-receipt-v1"
+    assert receipt["status"] == "accepted"
+    assert "floor_refresh" not in receipt
+    assert sorted(path.relative_to(workspace) for path in workspace.rglob("*")) == before
+    removed = CliRunner().invoke(
+        cli, ["proposal", "activate", "proposal-1", "--workspace-root", str(workspace)]
     )
-    monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.activate_with_workspace_refresh",
-        lambda *_args, **_kwargs: activation,
-    )
-
-    result = CliRunner().invoke(
-        cli,
-        ["proposal", "activate", "proposal-1", "--json"],
-    )
-
-    assert result.exit_code == 1
-    assert json.loads(result.stdout)["status"] == "accepted"
-    assert "repair: cruxible block sync --all" in result.stderr
-
-
-def test_invalid_refresh_preserves_the_old_floor_and_reports_both_truths(
-    monkeypatch,  # type: ignore[no-untyped-def]
-    tmp_path: Path,
-) -> None:
-    workspace = _workspace(tmp_path)
-    old = workspace / ".cruxible/floor"
-    old.mkdir()
-    (old / "keep.json").write_text("old", encoding="utf-8")
-    _install_client(monkeypatch, tmp_path, corrupt=True)
-
-    result = CliRunner().invoke(
-        cli,
-        [
-            "proposal",
-            "activate",
-            "proposal-1",
-            "--workspace-root",
-            str(workspace),
-            "--no-sync",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code != 0
-    assert (old / "keep.json").read_text(encoding="utf-8") == "old"
-    assert not (old / "cards/fresh.json").exists()
-    payload = json.loads(result.stdout)
-    assert payload["status"] == "accepted"
-    assert payload["floor_refresh"]["status"] == "failed"
-    assert "floor refresh failed" in result.stderr
-
-
-def test_lost_cas_retry_safely_refreshes_the_current_floor(
-    monkeypatch,  # type: ignore[no-untyped-def]
-    tmp_path: Path,
-) -> None:
-    workspace = _workspace(tmp_path)
-    _install_client(monkeypatch, tmp_path, status="lost_cas")
-
-    result = CliRunner().invoke(
-        cli,
-        [
-            "proposal",
-            "activate",
-            "proposal-1",
-            "--workspace-root",
-            str(workspace),
-            "--no-sync",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.stdout)
-    assert payload["status"] == "lost_cas"
-    assert payload["floor_refresh"]["status"] == "refreshed"
-    assert (workspace / ".cruxible/floor/cards/fresh.json").exists()
+    assert removed.exit_code == 2 and "No such option: --workspace-root" in removed.output
 
 
 def test_activation_renders_malformed_proposal_id_as_typed_refusal(
@@ -322,31 +202,3 @@ def test_activation_renders_malformed_proposal_id_as_typed_refusal(
     assert result.exit_code == 1
     assert "ProposalActivationRequestInvalid" in result.output
     assert "cruxible.proposal.activation_request_invalid" in result.output
-
-
-def test_floor_symlink_may_not_escape_the_workspace(
-    monkeypatch,  # type: ignore[no-untyped-def]
-    tmp_path: Path,
-) -> None:
-    workspace = _workspace(tmp_path)
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "keep.json").write_text("outside", encoding="utf-8")
-    (workspace / ".cruxible/floor").symlink_to(outside, target_is_directory=True)
-    _install_client(monkeypatch, tmp_path)
-
-    result = CliRunner().invoke(
-        cli,
-        [
-            "proposal",
-            "activate",
-            "proposal-1",
-            "--workspace-root",
-            str(workspace),
-            "--json",
-        ],
-    )
-
-    assert result.exit_code != 0
-    assert (outside / "keep.json").read_text(encoding="utf-8") == "outside"
-    assert not (outside / "cards/fresh.json").exists()

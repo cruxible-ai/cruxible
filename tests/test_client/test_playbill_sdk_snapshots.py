@@ -72,7 +72,7 @@ def test_live_batch_follows_another_writer_without_head_lookup(connection):
 def test_receipt_snapshot_reads_exact_acceptance_after_head_moves_again(connection):
     pb, client = connection
     old = pb.at(pb.coordinate)
-    receipt = pb.accept("proposal-1")
+    receipt = pb.activate("proposal-1")
     accepted = pb.at(receipt.accepted_coordinate)
     client.coordinate = _MOVED_COORDINATE.model_copy(update={"git_oid": "c" * 40})
     accepted.claim_views(["CLM-new"])

@@ -39,7 +39,7 @@ def test_protocol_list_hides_tools_outside_playbill_profile(
     assert "cruxible_query_spec" not in names
     assert "cruxible_set" in names
     assert "cruxible_authoring_compile" not in names
-    assert "cruxible_activate" in names
+    assert "cruxible_proposal_activate" in names
     assert "cruxible_document_propose" not in names
     assert "cruxible_block_repin" not in names
     assert "cruxible_curation_list" not in names

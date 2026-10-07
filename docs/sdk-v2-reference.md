@@ -86,7 +86,7 @@ ordinary Python objects whose methods execute during authoring.
 | `Cruxible.query_binding`, typed `Procedure.input/run` | Resolve query schemas and construct host invocation values. | Typed adapters over existing definition reads and execution services. |
 
 Unlisted Python functions are not implicitly allowed inside source. In
-particular, ordinary SDK calls such as `cx.accept(...)` or `cx.capture(...)`
+particular, ordinary SDK calls such as `cx.activate(...)` or `cx.capture(...)`
 are host operations, not executable Procedure intrinsics.
 
 ## Types and notation

@@ -553,24 +553,6 @@ Creates a local handle for an existing proposal ID.
 |---|---|---|
 | `proposal_id` | Required | Exact proposal identity, not a branch name or candidate revision inferred from head. |
 
-<a id="api-cruxible-accept"></a>
-
-### `Cruxible.accept`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-accept(proposal_id: str) -> api.ActivationReceipt
-```
-
-Requests governed acceptance and returns ActivationReceipt. Updates a live connection’s last observed coordinate.
-
-**Conditions and effects:** Does not sign approval or refresh the client workspace. Use cx.at(receipt.accepted_coordinate) for exact readback.
-
-| Parameter | Default | Meaning |
-|---|---|---|
-| `proposal_id` | Required | Exact proposal identity, not a branch name or candidate revision inferred from head. |
-
 <a id="api-cruxible-activate"></a>
 
 ### `Cruxible.activate`
@@ -578,17 +560,28 @@ Requests governed acceptance and returns ActivationReceipt. Updates a live conne
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-activate(proposal_id: str, *, no_sync: bool=False) -> api.WorkspaceActivationResult
+activate(proposal_id: str) -> api.ActivationReceipt
 ```
 
-Requests acceptance, refreshes the configured floor at the accepted coordinate, and normally checks workspace blocks.
+Activates one proposal and returns its ActivationReceipt. Updates a live connection’s last observed coordinate.
 
-**Conditions and effects:** no_sync skips the block check, not floor refresh. Acceptance can succeed even when later workspace maintenance reports a problem.
+**Conditions and effects:** A daemon act: signs no approval and writes nothing locally. The daemon's floor-refresh trigger delivers the floor to a workspace it serves; elsewhere `cx.refresh_workspace(at=...)` pulls it. Use cx.at(receipt.accepted_coordinate) for exact readback.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `proposal_id` | Required | Exact proposal identity, not a branch name or candidate revision inferred from head. |
-| `no_sync` | `False` | Skip block checking after workspace activation; does not turn acceptance into a dry run. |
+
+<a id="api-cruxible-proposals"></a>
+
+### `Cruxible.proposals`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+proposals(*, status: Literal['open', 'settled', 'incomplete'] | None=None, limit: int | None=None, cursor: str | None=None) -> api.ProposalList
+```
+
+One page of proposals; follow `next_cursor` while `truncated`. Read one with `cx.get(proposal_id)`.
 
 <a id="api-cruxible-refresh-workspace"></a>
 
@@ -1670,7 +1663,7 @@ not retained executable Python source. `ClaimTypeDraft.propose(...)` is a direct
 proposal helper and submits immediately; it is not a synonym for local staging.
 
 `Intent` and `Proposal` are obtained from SDK factories. `from_preflight` and
-`from_inspection` are advanced response adapters. Cached properties are not
+are advanced response adapters. Cached properties are not
 automatic status polling. `Intent.path_to_acceptance` calls status.
 `Intent.rebase()` clears observed preflight/status; prepare again before relying
 on a new candidate. `reprepare()` requires the same owning connection.
@@ -1957,16 +1950,6 @@ wait_for_acceptance(*, timeout: Duration, poll_interval: Duration) -> api.Candid
 
 Import: `cruxible_client.authoring.sdk.Proposal`. [Source](src/cruxible_client/authoring/sdk.py)
 
-<a id="api-proposal-from-inspection"></a>
-
-### `Proposal.from_inspection`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-from_inspection(cx: Cruxible, inspection: api.ProposalInspection) -> Proposal
-```
-
 <a id="api-proposal-review"></a>
 
 ### `Proposal.review`
@@ -1979,17 +1962,29 @@ review() -> ReviewedProposal
 
 Fetch an immutable full review; inspect its details before approving.
 
-<a id="api-proposal-accept"></a>
+<a id="api-proposal-activate"></a>
 
-### `Proposal.accept`
+### `Proposal.activate`
 
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-accept() -> api.ActivationReceipt
+activate() -> api.ActivationReceipt
 ```
 
-Accepts this proposal once its approvals are in: `Cruxible.accept` by handle.
+Activates this proposal once its approvals are in: `Cruxible.activate` by handle.
+
+<a id="api-proposal-readmit"></a>
+
+### `Proposal.readmit`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+readmit(*, dry_run: bool | None=None, at: str | None=None) -> api.ProposalReadmitResult
+```
+
+Re-admits this stale proposal at the current head under a new proposal ID; review it again.
 
 <a id="api-proposal-approve"></a>
 
@@ -2002,36 +1997,6 @@ approve(*, signer: ApprovalSigner, reviewed: ReviewedProposal) -> api.ApprovalRe
 ```
 
 Sign this exact review with caller-configured custody; never activate.
-
-<a id="api-proposal-warnings"></a>
-
-### `Proposal.warnings`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-warnings: tuple[dict[str, Any], ...]
-```
-
-<a id="api-proposal-status"></a>
-
-### `Proposal.status`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-status() -> api.ProposalListEntry
-```
-
-<a id="api-proposal-wait-for-acceptance"></a>
-
-### `Proposal.wait_for_acceptance`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-wait_for_acceptance(*, timeout: Duration, poll_interval: Duration) -> api.ProposalListEntry
-```
 
 <a id="api-prediction"></a>
 
@@ -5290,45 +5255,6 @@ withdraw_proposal(
 
 HTTP: `POST f'/api/v1/{instance_id}/proposals/{proposal_id}/withdraw'`.
 
-<a id="api-cruxibleclient-inspect-proposal"></a>
-
-### `CruxibleClient.inspect_proposal`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-inspect_proposal(instance_id: str, proposal_id: str) -> contracts.ProposalInspection
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/proposals/{proposal_id}'`.
-
-<a id="api-cruxibleclient-proposal-status"></a>
-
-### `CruxibleClient.proposal_status`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-proposal_status(instance_id: str, proposal_id: str) -> contracts.ProposalListEntry
-```
-
-One proposal's list entry at the current accepted coordinate, read by ID.
-`Proposal.status()` uses it.
-
-HTTP: `GET f'/api/v1/{instance_id}/proposals/{proposal_id}/status'`.
-
-<a id="api-cruxibleclient-inspect-refusal"></a>
-
-### `CruxibleClient.inspect_refusal`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-inspect_refusal(instance_id: str, proposal_id: str) -> contracts.RefusalInspection
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/proposals/{proposal_id}/refusal'`.
-
 <a id="api-cruxibleclient-review-proposal"></a>
 
 ### `CruxibleClient.review_proposal`
@@ -6227,7 +6153,6 @@ include constructor/validator definitions for request and response contracts.
 | `PredictionSettlement` | `cruxible_client.authoring.sdk` · [Source](src/cruxible_client/authoring/sdk.py) |
 | `InsertionApplyError` | `cruxible_client.authoring.insertions` · [Source](src/cruxible_client/authoring/insertions.py) |
 | `WorkspaceError` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
-| `activate_with_workspace_refresh` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
 | `inspect_workspace_floor` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
 | `observe_next_workspace` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
 | `materialize_floor` | `cruxible_client.authoring.workspace` · [Source](src/cruxible_client/authoring/workspace.py) |
@@ -6927,14 +6852,6 @@ Daemon registration and the requested client workspace disagree.
 
 A client workspace or exported floor failed deterministic validation.
 
-#### `activate_with_workspace_refresh`
-
-```text
-activate_with_workspace_refresh(client: '_FloorClient', instance_id: 'str', proposal_id: 'str', *, workspace: 'str | Path', sync: 'bool' = True) -> 'contracts.WorkspaceActivationResult'
-```
-
-Activate once, refresh the floor, then independently sync local blocks.
-
 #### `configured_floor_path`
 
 ```text
@@ -7144,7 +7061,7 @@ the checked revision. Open the linked model for its declared fields, validation
 rules, enum values, and historical format. The high-level SDK’s own return/value
 fields are documented above; these links keep wire schema definitions singular.
 
-**`contracts.__init__`** — [GitWorkspaceNote](src/cruxible_client/contracts/__init__.py), [HostResult](src/cruxible_client/contracts/__init__.py), [HostWorkspaceRegistration](src/cruxible_client/contracts/__init__.py), [HostCompatibilityReason](src/cruxible_client/contracts/__init__.py), [HostInspection](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialBootstrapResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialMetadata](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialListResult](src/cruxible_client/contracts/__init__.py), [ProviderLaneStatus](src/cruxible_client/contracts/__init__.py), [ServerInfoResult](src/cruxible_client/contracts/__init__.py), [ServerRestartResult](src/cruxible_client/contracts/__init__.py), [ServerStopResult](src/cruxible_client/contracts/__init__.py), [IsolatedExecutorRegistration](src/cruxible_client/contracts/__init__.py), [AcceptedCoordinate](src/cruxible_client/contracts/__init__.py), [InitResult](src/cruxible_client/contracts/__init__.py), [CasObjectResult](src/cruxible_client/contracts/__init__.py), [ProposalInspection](src/cruxible_client/contracts/__init__.py), [ProposalListEntry](src/cruxible_client/contracts/__init__.py), [ProposalList](src/cruxible_client/contracts/__init__.py), [ProposalSelectorResult](src/cruxible_client/contracts/__init__.py), [ProposalReadmitResult](src/cruxible_client/contracts/__init__.py), [ProposalWithdrawResult](src/cruxible_client/contracts/__init__.py), [WhoAmI](src/cruxible_client/contracts/__init__.py), [RefusalInspection](src/cruxible_client/contracts/__init__.py), [SemanticFieldValue](src/cruxible_client/contracts/__init__.py), [SemanticFieldDelta](src/cruxible_client/contracts/__init__.py), [ReviewedMember](src/cruxible_client/contracts/__init__.py), [ProjectionAdvisory](src/cruxible_client/contracts/__init__.py), [ProjectionEvidence](src/cruxible_client/contracts/__init__.py), [ProposalReview](src/cruxible_client/contracts/__init__.py), [ApprovalChallenge](src/cruxible_client/contracts/__init__.py), [ApprovalReceipt](src/cruxible_client/contracts/__init__.py), [ActivationReceipt](src/cruxible_client/contracts/__init__.py), [FloorRefreshResult](src/cruxible_client/contracts/__init__.py), [WorkspaceActivationResult](src/cruxible_client/contracts/__init__.py), [SourceContext](src/cruxible_client/contracts/__init__.py), [SourceCheckResult](src/cruxible_client/contracts/__init__.py), [InstanceDecommissionResult](src/cruxible_client/contracts/__init__.py), [LedgerMirror](src/cruxible_client/contracts/__init__.py), [ClaimTypeProposalLint](src/cruxible_client/contracts/__init__.py), [ClaimTypeInputProposalResult](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResultV1](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationPreflight](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResultV2](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResult](src/cruxible_client/contracts/__init__.py), [CaptureEvidenceKindAdmission](src/cruxible_client/contracts/__init__.py), [CaptureAdmissionAccount](src/cruxible_client/contracts/__init__.py), [ClaimViewRecord](src/cruxible_client/contracts/__init__.py), [CandidateStatusRecord](src/cruxible_client/contracts/__init__.py), [AuthoringIntentViewRecord](src/cruxible_client/contracts/__init__.py), [AuthoringExampleResult](src/cruxible_client/contracts/__init__.py), [AuthoringIntentListRecord](src/cruxible_client/contracts/__init__.py), [AuthoringPreflightResult](src/cruxible_client/contracts/__init__.py), [AuthoringSubmitResultRecord](src/cruxible_client/contracts/__init__.py), [BlockDeclareResult](src/cruxible_client/contracts/__init__.py), [BlockDepublishResult](src/cruxible_client/contracts/__init__.py), [QueryDefinitionView](src/cruxible_client/contracts/__init__.py), [QueryRun](src/cruxible_client/contracts/__init__.py), [ProcedureReadiness](src/cruxible_client/contracts/__init__.py), [PolicyInForce](src/cruxible_client/contracts/__init__.py), [PolicyInForceList](src/cruxible_client/contracts/__init__.py), [ProcedureBindResult](src/cruxible_client/contracts/__init__.py), [ProcedureRunState](src/cruxible_client/contracts/__init__.py), [NextResult](src/cruxible_client/contracts/__init__.py), [CurationListResult](src/cruxible_client/contracts/__init__.py), [CurationActionResult](src/cruxible_client/contracts/__init__.py), [AuditFactors](src/cruxible_client/contracts/__init__.py), [AuditEvidenceRef](src/cruxible_client/contracts/__init__.py), [AuditRow](src/cruxible_client/contracts/__init__.py), [AuditScope](src/cruxible_client/contracts/__init__.py), [AuditCoveredClaim](src/cruxible_client/contracts/__init__.py), [AuditCoverage](src/cruxible_client/contracts/__init__.py), [AuditCursor](src/cruxible_client/contracts/__init__.py), [AuditResult](src/cruxible_client/contracts/__init__.py), [SinceCursor](src/cruxible_client/contracts/__init__.py), [SinceRequest](src/cruxible_client/contracts/__init__.py), [SinceRow](src/cruxible_client/contracts/__init__.py), [SinceResult](src/cruxible_client/contracts/__init__.py), [ProviderInterfaceImplementation](src/cruxible_client/contracts/__init__.py), [ProviderInterfaceEntry](src/cruxible_client/contracts/__init__.py), [CoverageResult](src/cruxible_client/contracts/__init__.py), [FloorFile](src/cruxible_client/contracts/__init__.py), [FloorExport](src/cruxible_client/contracts/__init__.py), [WorkspaceFloorWriteResult](src/cruxible_client/contracts/__init__.py), [WorkspaceAttachResult](src/cruxible_client/contracts/__init__.py), [WorkspaceDetachResult](src/cruxible_client/contracts/__init__.py), [WorkspaceFloorStatus](src/cruxible_client/contracts/__init__.py).
+**`contracts.__init__`** — [GitWorkspaceNote](src/cruxible_client/contracts/__init__.py), [HostResult](src/cruxible_client/contracts/__init__.py), [HostWorkspaceRegistration](src/cruxible_client/contracts/__init__.py), [HostCompatibilityReason](src/cruxible_client/contracts/__init__.py), [HostInspection](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialBootstrapResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialMetadata](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialListResult](src/cruxible_client/contracts/__init__.py), [ProviderLaneStatus](src/cruxible_client/contracts/__init__.py), [ServerInfoResult](src/cruxible_client/contracts/__init__.py), [ServerRestartResult](src/cruxible_client/contracts/__init__.py), [ServerStopResult](src/cruxible_client/contracts/__init__.py), [IsolatedExecutorRegistration](src/cruxible_client/contracts/__init__.py), [AcceptedCoordinate](src/cruxible_client/contracts/__init__.py), [InitResult](src/cruxible_client/contracts/__init__.py), [CasObjectResult](src/cruxible_client/contracts/__init__.py), [ProposalInspection](src/cruxible_client/contracts/__init__.py), [ProposalListEntry](src/cruxible_client/contracts/__init__.py), [ProposalList](src/cruxible_client/contracts/__init__.py), [ProposalSelectorResult](src/cruxible_client/contracts/__init__.py), [ProposalReadmitResult](src/cruxible_client/contracts/__init__.py), [ProposalWithdrawResult](src/cruxible_client/contracts/__init__.py), [WhoAmI](src/cruxible_client/contracts/__init__.py), [SemanticFieldValue](src/cruxible_client/contracts/__init__.py), [SemanticFieldDelta](src/cruxible_client/contracts/__init__.py), [ReviewedMember](src/cruxible_client/contracts/__init__.py), [ProjectionAdvisory](src/cruxible_client/contracts/__init__.py), [ProjectionEvidence](src/cruxible_client/contracts/__init__.py), [ProposalReview](src/cruxible_client/contracts/__init__.py), [ApprovalChallenge](src/cruxible_client/contracts/__init__.py), [ApprovalReceipt](src/cruxible_client/contracts/__init__.py), [ActivationReceipt](src/cruxible_client/contracts/__init__.py), [FloorRefreshResult](src/cruxible_client/contracts/__init__.py), [SourceContext](src/cruxible_client/contracts/__init__.py), [SourceCheckResult](src/cruxible_client/contracts/__init__.py), [InstanceDecommissionResult](src/cruxible_client/contracts/__init__.py), [LedgerMirror](src/cruxible_client/contracts/__init__.py), [ClaimTypeProposalLint](src/cruxible_client/contracts/__init__.py), [ClaimTypeInputProposalResult](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResultV1](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationPreflight](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResultV2](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResult](src/cruxible_client/contracts/__init__.py), [CaptureEvidenceKindAdmission](src/cruxible_client/contracts/__init__.py), [CaptureAdmissionAccount](src/cruxible_client/contracts/__init__.py), [ClaimViewRecord](src/cruxible_client/contracts/__init__.py), [CandidateStatusRecord](src/cruxible_client/contracts/__init__.py), [AuthoringIntentViewRecord](src/cruxible_client/contracts/__init__.py), [AuthoringExampleResult](src/cruxible_client/contracts/__init__.py), [AuthoringIntentListRecord](src/cruxible_client/contracts/__init__.py), [AuthoringPreflightResult](src/cruxible_client/contracts/__init__.py), [AuthoringSubmitResultRecord](src/cruxible_client/contracts/__init__.py), [BlockDeclareResult](src/cruxible_client/contracts/__init__.py), [BlockDepublishResult](src/cruxible_client/contracts/__init__.py), [QueryDefinitionView](src/cruxible_client/contracts/__init__.py), [QueryRun](src/cruxible_client/contracts/__init__.py), [ProcedureReadiness](src/cruxible_client/contracts/__init__.py), [PolicyInForce](src/cruxible_client/contracts/__init__.py), [PolicyInForceList](src/cruxible_client/contracts/__init__.py), [ProcedureBindResult](src/cruxible_client/contracts/__init__.py), [ProcedureRunState](src/cruxible_client/contracts/__init__.py), [NextResult](src/cruxible_client/contracts/__init__.py), [CurationListResult](src/cruxible_client/contracts/__init__.py), [CurationActionResult](src/cruxible_client/contracts/__init__.py), [AuditFactors](src/cruxible_client/contracts/__init__.py), [AuditEvidenceRef](src/cruxible_client/contracts/__init__.py), [AuditRow](src/cruxible_client/contracts/__init__.py), [AuditScope](src/cruxible_client/contracts/__init__.py), [AuditCoveredClaim](src/cruxible_client/contracts/__init__.py), [AuditCoverage](src/cruxible_client/contracts/__init__.py), [AuditCursor](src/cruxible_client/contracts/__init__.py), [AuditResult](src/cruxible_client/contracts/__init__.py), [SinceCursor](src/cruxible_client/contracts/__init__.py), [SinceRequest](src/cruxible_client/contracts/__init__.py), [SinceRow](src/cruxible_client/contracts/__init__.py), [SinceResult](src/cruxible_client/contracts/__init__.py), [ProviderInterfaceImplementation](src/cruxible_client/contracts/__init__.py), [ProviderInterfaceEntry](src/cruxible_client/contracts/__init__.py), [CoverageResult](src/cruxible_client/contracts/__init__.py), [FloorFile](src/cruxible_client/contracts/__init__.py), [FloorExport](src/cruxible_client/contracts/__init__.py), [WorkspaceFloorWriteResult](src/cruxible_client/contracts/__init__.py), [WorkspaceAttachResult](src/cruxible_client/contracts/__init__.py), [WorkspaceDetachResult](src/cruxible_client/contracts/__init__.py), [WorkspaceFloorStatus](src/cruxible_client/contracts/__init__.py).
 
 **`contracts.accepted_attestations`** — [AcceptedAttestationVerdictStatement](src/cruxible_client/contracts/accepted_attestations.py), [AcceptedClaimAttestationEvidence](src/cruxible_client/contracts/accepted_attestations.py).
 
@@ -7332,12 +7249,12 @@ client advances. `refresh()` on a pinned context refreshes that same snapshot.
 Borrowed contexts share the original connection's lifetime; closing one does not
 close the original transport.
 
-`cx.accept(proposal_id)` requests acceptance and returns its exact coordinate;
-it does not export a workspace floor or approve the proposal. For exact readback,
+`cx.activate(proposal_id)` requests acceptance and returns its exact coordinate;
+it writes nothing locally and approves nothing. For exact readback,
 even if another writer has advanced the head again:
 
 ```python
-receipt = cx.accept(proposal_id)
+receipt = cx.activate(proposal_id)
 if receipt.accepted_coordinate is not None:
     accepted = cx.at(receipt.accepted_coordinate)
     claims = accepted.claim_views(claim_ids)
@@ -7397,7 +7314,7 @@ review = reviewed.details  # Inspect all members, evidence, governance and prove
 # After deciding to approve this exact candidate:
 approval = proposal.approve(signer=configured_signer, reviewed=reviewed)
 # After a separate decision to accept:
-receipt = cx.accept(proposal.proposal_id)
+receipt = cx.activate(proposal.proposal_id)
 world = cx.world()
 ```
 

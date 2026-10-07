@@ -114,7 +114,7 @@ exempt. By that principle these are exempt:
   refused attestation writes nothing;
 - `body store`: an inert content-addressed put whose effect is its input;
 - `proposal approve`: records the caller's signed approval of an evaluation
-  already shown by `proposal inspect`;
+  already shown by `get PROPOSAL_ID`;
 - `proposal activate`: its preview is the proposal's evaluation, already
   shown; the commit-time `at` check covers the head moving under it;
 - `workspace floor-delivery on|off`: its effect is its input;
@@ -1605,7 +1605,7 @@ against the paths lowering actually changed, and the proposal door is called
 once. The run reports, per terminal, the proposal id, the exact candidate
 digest, the operation key, the mandate bound, and the Claim path each item
 lowered into; `--json` carries them in `terminal_egress`. Producing the
-proposal activates nothing: retrieve it with `cruxible proposal show`, review
+proposal activates nothing: retrieve it with `cruxible get PROPOSAL_ID`, review
 it in the ledger, and activate it with the existing proposal verbs.
 
 The proposal ref is keyed on the admitted operation. A retry of the same
@@ -2549,19 +2549,22 @@ covers all four tool kinds, including same-turn edit drift.
 ## proposal
 
 ~~~text
-cruxible proposal inspect PROPOSAL_ID
 cruxible proposal list [--status open|settled|incomplete] [--limit N]
   [--cursor CURSOR]
 cruxible proposal readmit PROPOSAL_ID
 cruxible proposal withdraw PROPOSAL_ID --reason TEXT
-cruxible proposal refusal PROPOSAL_ID
 cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
   [--workspace-root DIR]
 cruxible proposal approve PROPOSAL_ID
   --signer-id ID --key FILE [--yes]
-cruxible proposal activate PROPOSAL_ID [--workspace-root DIR]
-  [--no-sync]
+cruxible proposal activate PROPOSAL_ID
+cruxible get PROPOSAL_ID [--detail proof]
 ~~~
+
+`get` is the one proposal read. Its card names the status, verdict, actor,
+rationale and changes; a refused proposal's card carries every refusal
+diagnostic with its code, message and repair, and `--detail proof` adds the
+admission, evaluation and candidate records.
 
 `cruxible whoami` names the actor and where its ID came from (the
 credential's principal, the configured principal ID, or the local operator),
@@ -2606,16 +2609,11 @@ rather than rewriting its reason, and a settled proposal refuses, because its
 outcome is not an intention to overwrite.
 
 approve signs locally. The private-key path is not sent to the daemon.
-When `.cruxible/coverage.json` at `--workspace-root` declares `floor_output`,
-activate refreshes floor-v2 as a verified exact directory replacement. An
-accepted activation followed by a failed local refresh reports both truths and
-exits nonzero; the daemon never receives the workspace path.
-
-After an accepted activation, the client runs block sync last unless
-`--no-sync` is explicit. An unattached workspace retains a typed `skipped`
-`workspace_not_attached` row and exits zero; a sync refusal in an attached
-workspace reports the already-accepted truth, names `cruxible block sync
---all`, and exits nonzero.
+Activation is a daemon act and writes nothing locally; it returns the
+activation receipt. A workspace the local daemon serves gets its floor from the
+daemon's floor-refresh trigger; other setups pull it with `cruxible floor
+export`. Read exactly what was accepted with `get` or `query` at the receipt's
+coordinate; `next` reports any projection block the change left stale.
 
 ### Reviewing a proposal
 

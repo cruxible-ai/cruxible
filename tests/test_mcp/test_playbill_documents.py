@@ -18,11 +18,10 @@ PLAYBILL_DOCUMENT_TOOLS = {
     "cruxible_init",
     "cruxible_body_store",
     "cruxible_document_propose",
-    "cruxible_inspect_proposal",
-    "cruxible_review",
-    "cruxible_prepare_approval",
-    "cruxible_submit_approval",
-    "cruxible_activate",
+    "cruxible_proposal_review",
+    "cruxible_proposal_approve_prepare",
+    "cruxible_proposal_approve_submit",
+    "cruxible_proposal_activate",
     "cruxible_source_context",
     "cruxible_source_check",
     "cruxible_propose_source_bundle",
@@ -36,7 +35,7 @@ def test_playbill_tools_register_without_private_key_or_local_path_inputs(
     monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
     tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
     assert PLAYBILL_DOCUMENT_TOOLS <= set(tools)
-    approval = tools["cruxible_submit_approval"].inputSchema
+    approval = tools["cruxible_proposal_approve_submit"].inputSchema
     assert set(approval["properties"]) == {"instance_id", "proposal_id", "attestation"}
     source = tools["cruxible_propose_source_bundle"].inputSchema
     assert set(source["properties"]) == {
@@ -56,9 +55,9 @@ def test_playbill_tools_register_without_private_key_or_local_path_inputs(
 def test_playbill_permission_tiers_separate_inert_proposal_approval_and_activation() -> None:
     assert TOOL_PERMISSIONS["cruxible_body_store"] == PermissionMode.GOVERNED_WRITE
     assert TOOL_PERMISSIONS["cruxible_document_propose"] == PermissionMode.GOVERNED_WRITE
-    assert TOOL_PERMISSIONS["cruxible_prepare_approval"] == PermissionMode.READ_ONLY
-    assert TOOL_PERMISSIONS["cruxible_submit_approval"] == PermissionMode.GRAPH_WRITE
-    assert TOOL_PERMISSIONS["cruxible_activate"] == PermissionMode.GRAPH_WRITE
+    assert TOOL_PERMISSIONS["cruxible_proposal_approve_prepare"] == PermissionMode.READ_ONLY
+    assert TOOL_PERMISSIONS["cruxible_proposal_approve_submit"] == PermissionMode.GRAPH_WRITE
+    assert TOOL_PERMISSIONS["cruxible_proposal_activate"] == PermissionMode.GRAPH_WRITE
     assert TOOL_PERMISSIONS["cruxible_get"] == PermissionMode.READ_ONLY
     assert TOOL_PERMISSIONS["cruxible_init"] == PermissionMode.ADMIN
 

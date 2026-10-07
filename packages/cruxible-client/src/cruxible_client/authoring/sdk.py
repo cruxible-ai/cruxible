@@ -84,7 +84,6 @@ from cruxible_client.authoring.source_map import (
     entries_for_keywords,
 )
 from cruxible_client.authoring.workspace import (
-    activate_with_workspace_refresh,
     observe_next_workspace,
     observe_next_workspace_with_coverage,
     refresh_workspace_floor,
@@ -603,7 +602,7 @@ class ClaimTypeDraft:
         """Propose this ClaimType as its own proposal.
 
         Next: ``proposal.review()``, then ``proposal.approve(...)`` and
-        ``proposal.accept()``.
+        ``proposal.activate()``.
         """
 
         result = self._playbill._client.propose_claim_type(
@@ -612,7 +611,11 @@ class ClaimTypeDraft:
             proposal_name=proposal_name,
             base=_api_coordinate(self._playbill.coordinate),
         )
-        return Proposal.from_inspection(self._playbill, result)
+        admission = result.proposal.get("admission")
+        proposal_id = admission.get("proposal_id") if isinstance(admission, Mapping) else None
+        if not isinstance(proposal_id, str):
+            raise ValueError("claim-type proposal omitted its proposal_id")
+        return Proposal(self._playbill, proposal_id)
 
 
 @dataclass(frozen=True)
@@ -715,7 +718,7 @@ class Prediction:
     def proposal(self) -> Proposal:
         """The proposal that carries this prediction's ResolutionContract.
 
-        Next: ``prediction.proposal.review()``, then approve and ``accept()``.
+        Next: ``prediction.proposal.review()``, then approve and ``activate()``.
         """
 
         return Proposal(self._playbill, self.proposal_id)
@@ -1855,7 +1858,7 @@ class Intent:
     def submit(self) -> Intent:
         """Submit this intent: the daemon admits it as a proposal.
 
-        Next: ``intent.proposal.review()``, then approve and ``accept()``;
+        Next: ``intent.proposal.review()``, then approve and ``activate()``;
         ``intent.status()`` for its state.
         """
 
@@ -1914,31 +1917,14 @@ class Intent:
 class Proposal:
     """A handle on one admitted proposal, by ID; nothing is read until asked.
 
-    Next: ``proposal.review()``, then ``proposal.approve(signer=..., reviewed=...)`` and
-    ``proposal.accept()``.
+    Read it with ``cx.get(proposal_id)``: status, verdict, changes, and for a refused
+    proposal every refusal with its repair. Next: ``proposal.review()``, then
+    ``proposal.approve(signer=..., reviewed=...)`` and ``proposal.activate()``.
     """
 
-    def __init__(
-        self,
-        cx: Cruxible,
-        proposal_id: str,
-        *,
-        lint: api.ClaimTypeProposalLint | None = None,
-    ) -> None:
+    def __init__(self, cx: Cruxible, proposal_id: str) -> None:
         self._playbill = cx
         self.proposal_id = proposal_id
-        self.lint = lint
-
-    @classmethod
-    def from_inspection(cls, cx: Cruxible, inspection: api.ProposalInspection) -> Proposal:
-        """The handle for a proposal an inspection names. Next: ``proposal.review()``."""
-
-        proposal_id = inspection.proposal.get("admission", {}).get("proposal_id")
-        if not isinstance(proposal_id, str):
-            proposal_id = inspection.proposal.get("proposal_id")
-        if not isinstance(proposal_id, str):
-            raise ValueError("proposal inspection omitted proposal_id")
-        return cls(cx, proposal_id, lint=inspection.lint)
 
     def review(self) -> ReviewedProposal:
         """Fetch an immutable full review; inspect its details before approving.
@@ -1947,56 +1933,35 @@ class Proposal:
         """
         return review_proposal(self._playbill, self.proposal_id)
 
-    def accept(self) -> api.ActivationReceipt:
-        """Accept this proposal once its approvals are in: ``Cruxible.accept`` by handle.
-
-        Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
-        """
-        return self._playbill.accept(self.proposal_id)
-
-    def __repr__(self) -> str:
-        warnings = "" if not self.warnings else f", warnings={len(self.warnings)}"
-        return f"Proposal({self.proposal_id!r}{warnings})"
-
     def approve(self, *, signer: ApprovalSigner, reviewed: ReviewedProposal) -> api.ApprovalReceipt:
         """Sign this exact review with caller-configured custody; never activate.
 
-        Next: ``proposal.accept()`` once enough approvals are in.
+        Next: ``proposal.activate()`` once enough approvals are in.
         """
         return approve_reviewed(self._playbill, self.proposal_id, signer=signer, reviewed=reviewed)
 
-    @property
-    def warnings(self) -> tuple[dict[str, Any], ...]:
-        """Lint warnings the proposal was admitted with. Next: ``proposal.review()``."""
+    def activate(self) -> api.ActivationReceipt:
+        """Activate this proposal once its approvals are in: ``Cruxible.activate`` by handle.
 
-        return () if self.lint is None else tuple(self.lint.warnings)
-
-    def status(self) -> api.ProposalListEntry:
-        """This proposal's current status, read by ID.
-
-        Next: ``proposal.accept()`` while open, or ``cx.next(...)`` if it went stale.
+        Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
         """
-        return self._playbill._client.proposal_status(self._playbill._instance_id, self.proposal_id)
+        return self._playbill.activate(self.proposal_id)
 
-    def wait_for_acceptance(
-        self,
-        *,
-        timeout: Duration,
-        poll_interval: Duration,
-    ) -> api.ProposalListEntry:
-        """Poll ``status()`` until the proposal settles, or until ``timeout``.
+    def readmit(
+        self, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.ProposalReadmitResult:
+        """Re-admit this stale proposal at the current head, under a new proposal ID.
 
-        Next: ``cx.get(ref)`` to read what was accepted.
+        Approvals are signed over the exact evaluation, so a stale proposal is
+        readmitted explicitly and reviewed again. Next: ``cx.proposal(result's new
+        proposal ID).review()``.
         """
+        return self._playbill._client.readmit_proposal(
+            self._playbill._instance_id, self.proposal_id, dry_run=dry_run, at=at
+        )
 
-        deadline = time.monotonic_ns() + timeout.value * 1_000
-        while True:
-            status = self.status()
-            if status.terminal_reason is not None:
-                return status
-            if time.monotonic_ns() >= deadline:
-                return status
-            time.sleep(poll_interval.value / 1_000_000)
+    def __repr__(self) -> str:
+        return f"Proposal({self.proposal_id!r})"
 
 
 def _wait_for_status(call: Any, *, timeout: Duration, poll_interval: Duration) -> Any:
@@ -2465,7 +2430,7 @@ class Cruxible:
         The contract's ``hypothesis`` may be a Claim ID (``ResolutionContractInput``);
         the daemon pins the exact accepted version it resolves to.
 
-        Next: ``prediction.proposal.review()``, then approve and ``accept()`` it.
+        Next: ``prediction.proposal.review()``, then approve and ``activate()`` it.
         """
         result = self._client.predict(self._instance_id, request=PredictRequest(contract=contract))
         view = AuthoringIntentView.model_validate(result.intent)
@@ -2551,27 +2516,9 @@ class Cruxible:
         """Return a handle for an existing proposal without creating or approving it.
 
         Next: ``proposal.review()``, then ``proposal.approve(...)`` and
-        ``proposal.accept()``.
+        ``proposal.activate()``.
         """
         return Proposal(self, proposal_id)
-
-    def accept(self, proposal_id: str) -> api.ActivationReceipt:
-        """Request durable acceptance without refreshing local reading surfaces.
-
-        The daemon's publication, recovery and workspace-advertisement protocol
-        is unchanged. This call performs no client floor export or block check.
-        The receipt's coordinate becomes this live connection's last observation.
-        Subsequent live reads select current head; use at(receipt.accepted_coordinate)
-        for exact readback. Explicitly pinned contexts and World snapshots stay fixed.
-
-        Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted, or
-        ``cx.refresh_workspace(at=...)`` to export the floor there.
-        """
-
-        receipt = self._client.activate_proposal(self._instance_id, proposal_id)
-        if receipt.status == "accepted" and receipt.accepted_coordinate is not None:
-            self._observe_read(_coordinate(receipt.accepted_coordinate), expected=None)
-        return receipt
 
     def refresh_workspace(
         self,
@@ -2592,34 +2539,38 @@ class Cruxible:
             self._client, self._instance_id, workspace=self._workspace_root, at=coordinate
         )
 
-    def activate(
-        self,
-        proposal_id: str,
-        *,
-        no_sync: bool = False,
-    ) -> api.WorkspaceActivationResult:
-        """Activate one proposal and refresh this workspace's configured floor.
+    def activate(self, proposal_id: str) -> api.ActivationReceipt:
+        """Activate one proposal: the daemon settles it, nothing local is written.
 
-        Convenience path: accepts, exports the floor at the accepted coordinate,
-        then checks blocks against the server's current head unless no_sync is
-        set. Use accept() and refresh_workspace() to schedule maintenance
-        separately. A live connection remembers the acceptance coordinate; pinned
-        contexts and existing World snapshots stay fixed.
+        The daemon's floor-refresh trigger delivers the floor to a local
+        workspace it serves; elsewhere ``cx.refresh_workspace(at=...)`` pulls it.
+        The receipt's coordinate becomes this live connection's last observation.
+        Subsequent live reads select current head; use at(receipt.accepted_coordinate)
+        for exact readback. Explicitly pinned contexts and World snapshots stay fixed.
 
-        Next: grep ``.cruxible/floor/current/``, or ``cx.get(ref)`` to read the accepted
-        change.
+        Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
         """
 
-        result = activate_with_workspace_refresh(
-            self._client,
-            self._instance_id,
-            proposal_id,
-            workspace=self._workspace_root,
-            sync=not no_sync,
+        receipt = self._client.activate_proposal(self._instance_id, proposal_id)
+        if receipt.status == "accepted" and receipt.accepted_coordinate is not None:
+            self._observe_read(_coordinate(receipt.accepted_coordinate), expected=None)
+        return receipt
+
+    def proposals(
+        self,
+        *,
+        status: Literal["open", "settled", "incomplete"] | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> api.ProposalList:
+        """One page of proposals, newest first; follow ``next_cursor`` while truncated.
+
+        Next: ``cx.get(entry.proposal_id)`` to read one, or ``cx.proposal(id).review()``.
+        """
+
+        return self._client.list_proposals(
+            self._instance_id, status=status, limit=limit, cursor=cursor
         )
-        if result.status == "accepted" and result.accepted_coordinate is not None:
-            self._observe_read(_coordinate(result.accepted_coordinate), expected=None)
-        return result
 
     def upgrade_claim_types(
         self,

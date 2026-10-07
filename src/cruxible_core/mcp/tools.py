@@ -329,25 +329,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_inspect_proposal(
-        instance_id: InstanceId = None, *, proposal_id: str
-    ) -> contracts.ProposalInspection:
-        """Inspect immutable proposal evidence."""
-        return handlers.handle_playbill_inspect_proposal(
-            require_instance_id(instance_id), proposal_id
-        )
-
-    @_tool
-    def cruxible_inspect_refusal(
-        instance_id: InstanceId = None, *, proposal_id: str
-    ) -> contracts.RefusalInspection:
-        """Inspect typed admission and law diagnostics."""
-        return handlers.handle_playbill_inspect_refusal(
-            require_instance_id(instance_id), proposal_id
-        )
-
-    @_tool
-    def cruxible_review(
+    def cruxible_proposal_review(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -359,7 +341,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_prepare_approval(
+    def cruxible_proposal_approve_prepare(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -375,7 +357,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_submit_approval(
+    def cruxible_proposal_approve_submit(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -387,7 +369,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_approve(
+    def cruxible_proposal_approve(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -419,10 +401,14 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_activate(
+    def cruxible_proposal_activate(
         instance_id: InstanceId = None, *, proposal_id: str
-    ) -> contracts.WorkspaceActivationResult:
-        """Settle by compare-and-set and refresh the configured client-owned floor."""
+    ) -> contracts.ActivationReceipt:
+        """Settle an approved candidate by compare-and-set; returns the activation receipt.
+
+        The daemon delivers the floor to a workspace it serves; exact reads after
+        activation use get or query at the receipt's coordinate.
+        """
         return handlers.handle_playbill_activate(require_instance_id(instance_id), proposal_id)
 
     @_tool

@@ -316,19 +316,6 @@ def service_inspect_playbill_proposal(
     )
 
 
-def service_inspect_playbill_refusal(
-    instance: PlaybillInstance,
-    *,
-    proposal_id: str,
-) -> RefusalInspection:
-    evaluation = instance.proposal_evidence().read_evaluation(proposal_id)
-    return RefusalInspection(
-        proposal_id=proposal_id,
-        verdict=evaluation.verdict,
-        diagnostics=evaluation.diagnostics,
-    )
-
-
 def _candidate_for_proposal(
     instance: PlaybillInstance,
     proposal_id: str,
@@ -348,7 +335,7 @@ def _candidate_for_proposal(
             )
         raise ProposalIntegrityError(
             "refused proposal has no approvable candidate; run "
-            f"`cruxible proposal refusal {proposal_id}` for refusal code "
+            f"`cruxible get {proposal_id}` for refusal code "
             f"{diagnostics[0].code}"
         )
     return inspection.proposal, candidate
@@ -839,7 +826,6 @@ __all__ = [
     "service_dereference_playbill_document",
     "service_get_playbill_document",
     "service_inspect_playbill_proposal",
-    "service_inspect_playbill_refusal",
     "service_list_playbill_documents",
     "service_playbill_document_history",
     "service_propose_compiler_upgrade",

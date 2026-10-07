@@ -749,15 +749,6 @@ class WhoAmI(BaseModel):
     authoring_refusal: AuthoringRefusal | None
 
 
-class RefusalInspection(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-refusal-v1"] = "playbill-refusal-v1"
-    proposal_id: str
-    verdict: Literal["candidate", "refused"]
-    diagnostics: list[dict[str, Any]]
-
-
 class SemanticFieldValue(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -918,13 +909,6 @@ class FloorRefreshResult(BaseModel):
     floor_digest: str | None = None
     coordinate: AcceptedCoordinate | None = None
     message: str | None = None
-
-
-class WorkspaceActivationResult(ActivationReceipt):
-    """Activation receipt plus the independent client-workspace refresh outcome."""
-
-    floor_refresh: FloorRefreshResult
-    block_sync: BlockSyncResult | None = None
 
 
 class SourceContext(BaseModel):

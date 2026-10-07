@@ -273,12 +273,12 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
         evidence_freshness=None,
     ).propose(proposal_name="empty-policy-sdk")
 
-    assert sdk_proposal.status().verdict == "candidate"
+    # get is the one proposal read; the CLI propose result carries the lint.
+    assert pb.get(sdk_proposal.proposal_id).value.verdict == "candidate"
     assert cli_proposal["lint"]["warnings"]
     assert {warning["code"] for warning in cli_proposal["lint"]["warnings"]} == {
         "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
     }
-    assert list(sdk_proposal.warnings) == cli_proposal["lint"]["warnings"]
 
 
 def test_cli_claim_type_input_is_accepted_in_a_fresh_world(

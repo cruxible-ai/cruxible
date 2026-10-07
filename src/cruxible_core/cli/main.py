@@ -531,12 +531,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "withdraw_proposal",
                 "Retire an open proposal that will never activate.",
             ),
-            "inspect": _command(
-                "playbill", "inspect_proposal", "Inspect immutable proposal evidence."
-            ),
-            "refusal": _command(
-                "playbill", "inspect_refusal", "Inspect typed refusal diagnostics."
-            ),
             "review": _command(
                 "playbill", "review_proposal", "Render structured candidate review."
             ),

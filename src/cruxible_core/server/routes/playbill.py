@@ -441,19 +441,6 @@ def resolve_proposal_selector(
     )
 
 
-@router.get(
-    "/{instance_id}/proposals/{proposal_id}",
-    response_model=contracts.ProposalInspection,
-)
-def inspect_proposal(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.ProposalInspection:
-    return playbill_api.playbill_inspect_proposal(
-        resolve_server_instance_id(instance_id), proposal_id
-    )
-
-
 @router.post(
     "/{instance_id}/proposals/{proposal_id}/readmit",
     response_model=contracts.ProposalReadmitResult,
@@ -486,32 +473,6 @@ def withdraw_proposal(
         req.reason,
         dry_run=req.dry_run,
         at=req.at,
-    )
-
-
-@router.get(
-    "/{instance_id}/proposals/{proposal_id}/status",
-    response_model=contracts.ProposalListEntry,
-)
-def proposal_status(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.ProposalListEntry:
-    return playbill_api.playbill_proposal_status(
-        resolve_server_instance_id(instance_id), proposal_id
-    )
-
-
-@router.get(
-    "/{instance_id}/proposals/{proposal_id}/refusal",
-    response_model=contracts.RefusalInspection,
-)
-def inspect_refusal(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.RefusalInspection:
-    return playbill_api.playbill_inspect_refusal(
-        resolve_server_instance_id(instance_id), proposal_id
     )
 
 

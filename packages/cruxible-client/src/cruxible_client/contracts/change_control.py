@@ -31,7 +31,7 @@ is determined by its input and that writes nothing when refused is exempt:
 
 - claim attest: the signed statement is the whole effect;
 - body store: an inert content-addressed put;
-- proposal approve: signs an evaluation ``proposal inspect`` already shows;
+- proposal approve: signs an evaluation ``get`` already shows;
 - proposal activate: its preview is the proposal's evaluation, already shown,
   and the commit-time ``at`` check covers head movement;
 - workspace floor-delivery (on/off): its effect is its input;

@@ -823,19 +823,6 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ProposalWithdrawResult)
 
-    def inspect_proposal(self, instance_id: str, proposal_id: str) -> contracts.ProposalInspection:
-        response = self._client.get(f"/api/v1/{instance_id}/proposals/{proposal_id}")
-        return self._parse_model(response, contracts.ProposalInspection)
-
-    def proposal_status(self, instance_id: str, proposal_id: str) -> contracts.ProposalListEntry:
-        """One proposal's list entry at the current accepted coordinate, read by ID."""
-        response = self._client.get(f"/api/v1/{instance_id}/proposals/{proposal_id}/status")
-        return self._parse_model(response, contracts.ProposalListEntry)
-
-    def inspect_refusal(self, instance_id: str, proposal_id: str) -> contracts.RefusalInspection:
-        response = self._client.get(f"/api/v1/{instance_id}/proposals/{proposal_id}/refusal")
-        return self._parse_model(response, contracts.RefusalInspection)
-
     def review_proposal(
         self,
         instance_id: str,

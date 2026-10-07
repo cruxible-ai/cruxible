@@ -332,7 +332,60 @@ def test_a_proposal_reads_by_id_prefix_with_its_next_step(world: dict[str, Any])
     assert {"path": "documents/pending.json", "change": "create"} in [
         dict(item) for item in fields["changes"]
     ]
-    assert fields["next"] == (f'cruxible_review(proposal_id="{proposal}")',)
+    assert fields["next"] == (f'cruxible_proposal_review(proposal_id="{proposal}")',)
+
+
+def test_a_refused_proposal_card_carries_its_refusal_and_no_dead_next_step(
+    tmp_path: Path,
+) -> None:
+    """get is the one proposal read: a refusal's code, message and repair are on the card."""
+
+    import json
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.claim_types import claim_type_path
+    from cruxible_client.contracts.repairs import HandEditRepair, RepairOperation
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from tests.core_support._support import initialize_local
+    from tests.test_claims.test_claim_types import literal_claim_type
+
+    instance, _owner = initialize_local(tmp_path)
+    payload = literal_claim_type().model_dump(mode="json")
+    payload["artifact_format"] = "playbill-claim-type-v3"
+    payload["evidence_freshness"] = {
+        "tag": "playbill-claim-evidence-freshness-v1",
+        "stale_after": {"tag": "playbill-duration-v1", "microseconds": 0},
+    }
+    base = instance.accepted_coordinate()
+    tree = instance.tree_at(base.git_oid)
+    tree[claim_type_path(literal_claim_type().predicate)] = canonical_bytes(payload) + b"\n"
+    refused = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/invalid-freshness",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-08-24T21:00:00.000000Z",
+    )
+    proposal_id = refused.admission.proposal_id
+
+    for surface in ("cli", "mcp", "sdk"):
+        card = service_playbill_get(
+            instance,
+            request=GetRequest(ref=proposal_id, evaluation_time=_WHEN, surface=surface),
+            access=_ACCESS,
+        ).card
+        assert card is not None
+        fields = card.model_dump()
+        assert fields["reason"] == "refused"
+        (diagnostic,) = card.refusal  # type: ignore[union-attr]
+        assert diagnostic.code == "cruxible.claim_type.freshness_horizon_invalid"
+        assert diagnostic.message
+        assert isinstance(diagnostic.repair, RepairOperation | HandEditRepair)
+        # The refusal is on the card: no step names the cut refusal read.
+        assert fields["next"] == ()
+        assert "refusal" not in json.dumps(fields["next"])
 
 
 def test_at_reads_an_earlier_generation_by_git_oid(world: dict[str, Any]) -> None:

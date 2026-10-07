@@ -16,8 +16,8 @@ everyday agent loop:
   the live value), `cruxible_retire` (end one live Claim), and
   `cruxible_write` (set, add and retire changes as one change set);
 - proposals through activation: `cruxible_proposal_list`,
-  `cruxible_review`, `cruxible_approve`, and
-  `cruxible_activate`;
+  `cruxible_proposal_review`, `cruxible_proposal_approve`, and
+  `cruxible_proposal_activate`;
 - identity and versions: `cruxible_whoami` and `cruxible_server_info`.
 
 To find something by name, grep the floor (`.cruxible/floor/`, which
@@ -29,7 +29,7 @@ and `get` the ref a hit names; an agent without a shell searches values with
 intent tools, `cruxible_query_spec`, `cruxible_since`,
 curation, coverage, the floor, sources, blocks, kits, Procedures, Lines, and the
 split approval pair
-`cruxible_prepare_approval` and `cruxible_submit_approval` for
+`cruxible_proposal_approve_prepare` and `cruxible_proposal_approve_submit` for
 a signer outside the MCP process. Curation changes
 discoverability only; permission tiers still gate every call. There is no
 separate version tool: `cruxible_whoami` and `cruxible_server_info`
@@ -61,14 +61,14 @@ daemon receives bytes and typed observations, never a client filesystem path.
 Floor operations always target the containing Git worktree's canonical
 `.cruxible/floor`. With no explicit workspace root, the adapter discovers that
 worktree from its working directory. An explicit `CRUXIBLE_MCP_WORKSPACE_ROOT`
-must equal the worktree root for floor export, status, and activation refresh;
-a nested explicit root is refused rather than allowing a write above its
-configured filesystem boundary. When the root is in no Git worktree at all,
-`cruxible_activate` still activates and reports
-`floor_refresh.status: not_configured` with the reason.
+must equal the worktree root for floor export and status; a nested explicit
+root is refused rather than allowing a write above its configured filesystem
+boundary. `cruxible_proposal_activate` is a daemon act and writes nothing
+locally: the daemon's floor-refresh trigger delivers the floor to a workspace it
+serves, and `cruxible_floor_export mode=write` pulls it elsewhere.
 
 `CRUXIBLE_MCP_KEY_DIR` names the directory of local approval keys that
-`cruxible_approve` signs with: an absolute path outside the workspace
+`cruxible_proposal_approve` signs with: an absolute path outside the workspace
 holding `<signer_id>.ed25519`, the layout `cruxible principal add
 --key-dir` and `cruxible init --key-dir` write. Set it in the MCP
 server's environment; no tool argument can name a key path. The tool signs as
@@ -140,13 +140,11 @@ approval stay the ordinary steps.
 |---|---|---|
 | `cruxible_body_store` | Store inert body bytes in CAS | `GOVERNED_WRITE` |
 | `cruxible_document_propose` | Propose a canonical Document envelope | `GOVERNED_WRITE` |
-| `cruxible_inspect_proposal` | Inspect a frozen candidate | `READ_ONLY` |
-| `cruxible_inspect_refusal` | Inspect deterministic refusal evidence | `READ_ONLY` |
-| `cruxible_review` | Render review material | `READ_ONLY` |
-| `cruxible_prepare_approval` | Return the exact approval challenge | `READ_ONLY` |
-| `cruxible_submit_approval` | Submit a public signed attestation | `GRAPH_WRITE` |
-| `cruxible_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call | `GRAPH_WRITE` |
-| `cruxible_activate` | Activate by compare-and-set and refresh any configured workspace floor | `GRAPH_WRITE` |
+| `cruxible_proposal_review` | Render review material | `READ_ONLY` |
+| `cruxible_proposal_approve_prepare` | Return the exact approval challenge | `READ_ONLY` |
+| `cruxible_proposal_approve_submit` | Submit a public signed attestation | `GRAPH_WRITE` |
+| `cruxible_proposal_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call | `GRAPH_WRITE` |
+| `cruxible_proposal_activate` | Activate by compare-and-set; returns the activation receipt (the daemon delivers the floor) | `GRAPH_WRITE` |
 | `cruxible_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
 | `cruxible_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
@@ -345,7 +343,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_curation_overrule` | Close an inapplicable detector-version item with attribution | `GOVERNED_WRITE` |
 | `cruxible_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
 | `cruxible_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
-| `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so an activation refresh exports the same parts; `mode=status` reports whether that floor is current, stale, or absent. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref and coordinate), `current/<kind>/INDEX`, readable `documents/` and `provenance/`; digests stay in `provenance/` and the manifest. `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
+| `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so the daemon's delivery exports the same parts; `mode=status` reports whether that floor is current, stale, or absent. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref and coordinate), `current/<kind>/INDEX`, readable `documents/` and `provenance/`; digests stay in `provenance/` and the manifest. `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
 | `cruxible_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
 
 `cruxible_next` renders each repair's `command` as the MCP tool call

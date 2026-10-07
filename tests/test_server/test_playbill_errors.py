@@ -50,7 +50,7 @@ from cruxible_core.server.errors import response_to_error as compat_response_to_
         ),
         (
             PermissionDeniedError(
-                "cruxible_activate",
+                "cruxible_proposal_activate",
                 "GOVERNED_WRITE",
                 "GRAPH_WRITE",
                 ceiling_mode="GOVERNED_WRITE",
@@ -58,7 +58,7 @@ from cruxible_core.server.errors import response_to_error as compat_response_to_
             403,
             client_errors.PermissionDeniedError,
             {
-                "tool_name": "cruxible_activate",
+                "tool_name": "cruxible_proposal_activate",
                 "current_mode": "GOVERNED_WRITE",
                 "required_mode": "GRAPH_WRITE",
                 "ceiling_mode": "GOVERNED_WRITE",
