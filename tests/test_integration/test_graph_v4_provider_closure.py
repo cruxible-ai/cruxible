@@ -1,54 +1,43 @@
-"""Graph-v4 explicit Provider pins and accepted Line-v2 closure laws."""
+"""Exact Provider pins on a graph-v6 Call node, and the real proposal path over them.
+
+Graph-v4 Provider slots and Line Provider closure are gone: a Procedure pins
+every Provider exactly. The helpers here (``_accepted_procedure``, ``_line``)
+are shared fixtures for "one accepted Procedure that calls the demo Provider".
+"""
 
 from __future__ import annotations
 
+import json
+
 import pytest
-from pydantic import ValidationError
 
 import cruxible_core.proposals.proposals as proposal_module
+import tests.core_support._p2b1_support as p2b1_support
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
-    ProcedureArtifactV1,
     evaluate_procedure_law,
-    parse_procedure,
-    procedure_artifact_digest,
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.closure import (
-    LineSlotBinding,
-    ProviderExtrasEnvironmentPinMap,
-    ProviderImplementationClosure,
-)
-from cruxible_client.contracts.procedures.graph import (
-    compute_procedure_definition_digest_v4,
-    compute_procedure_node_digests_v4,
-)
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpecV1,
-    LineSpecV2,
-    ManualTriggerPolicy,
-    evaluate_line_spec_law,
-    line_spec_digest,
+    LineSpec,
     line_spec_path,
-    parse_line_spec,
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    GuardPredicate,
-    PredicateOperand,
+    CallNode,
     ProcedureBudget,
-    ProcedureDefinitionV4,
+    ProcedureDefinition,
     ProcedureHardCaps,
-    ProcedurePinSlot,
-    ProcedurePinSlotRef,
-    ProviderNode,
-    RepeatBodyNodeV4,
-    RepeatNodeV4,
 )
-from cruxible_client.contracts.provider_interfaces import render_provider_interface
+from cruxible_client.contracts.provider_interfaces import (
+    ProviderInterfaceRegistrationV1,
+    provider_interface_definition_digest,
+    render_provider_interface,
+)
 from cruxible_client.contracts.providers import render_provider
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from tests.core_support._p2b1_support import (
@@ -59,10 +48,12 @@ from tests.core_support._p2b1_support import (
     pin,
 )
 from tests.core_support._support import initialize_local
-from tests.support.lines import as_v6
+from tests.support.procedures import PERMISSIVE_CONTRACT, accepted_procedure
+
+_DEMO_INTERFACE_REGISTRATION = p2b1_support.interface_registration
 
 
-def _definition() -> tuple[ProcedureDefinitionV4, ArtifactPin, ArtifactPin]:
+def _definition() -> tuple[ProcedureDefinition, ArtifactPin, ArtifactPin]:
     provider = accepted_provider()
     interface = accepted_interface()
     provider_pin = pin(
@@ -80,12 +71,12 @@ def _definition() -> tuple[ProcedureDefinitionV4, ArtifactPin, ArtifactPin]:
     contract_in = pin("contract-in", "Contract", "provider-input")
     contract_out = pin("contract-out", "Contract", "provider-output")
     implementation_digest = provider.provider.implementations[0].implementation_digest
-    definition = ProcedureDefinitionV4(
+    definition = ProcedureDefinition(
         name="provider-v4",
         contract_in=contract_in,
         contract_out=contract_out,
         nodes=(
-            ProviderNode(
+            CallNode(
                 node_id="direct",
                 provider=provider_pin,
                 interface=interface_pin,
@@ -94,28 +85,10 @@ def _definition() -> tuple[ProcedureDefinitionV4, ArtifactPin, ArtifactPin]:
                 contract_in=contract_in,
                 contract_out=contract_out,
                 input={"value": 1},
-                as_="direct_result",
-            ),
-            ProviderNode(
-                node_id="slot",
-                provider=ProcedurePinSlotRef(slot_name="provider"),
-                interface=interface_pin,
-                interface_digest=interface.registration.interface_digest,
-                contract_in=contract_in,
-                contract_out=contract_out,
-                input={"value": "$steps.direct_result"},
                 as_="result",
             ),
         ),
         returns="result",
-        pin_slots=(
-            ProcedurePinSlot(
-                slot_name="provider",
-                pin_role="provider",
-                artifact_kind="Provider",
-                interface_digest=interface.registration.interface_digest,
-            ),
-        ),
         budget=ProcedureBudget(
             wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=2,
@@ -135,40 +108,19 @@ def _definition() -> tuple[ProcedureDefinitionV4, ArtifactPin, ArtifactPin]:
 
 
 def _accepted_procedure() -> AcceptedProcedure:
+    """One accepted Procedure whose single Call pins the demo Provider exactly."""
+
     definition, provider_pin, interface_pin = _definition()
-    pins = {
-        definition.contract_in,
-        definition.contract_out,
-        provider_pin,
-        interface_pin,
-    }
-    procedure = ProcedureArtifactV1(
-        identity=ArtifactIdentity(kind="Procedure", name=definition.name),
-        definition=definition,
-        definition_digest=compute_procedure_definition_digest_v4(definition).tagged,
-        pins=tuple(
-            sorted(
-                pins,
-                key=lambda item: (
-                    item.role,
-                    item.target.qualified,
-                    item.artifact_digest,
-                ),
-            )
-        ),
+    return accepted_procedure(
+        definition,
+        extra_pins=(provider_pin, interface_pin),
         activation_policy="drain",
     )
-    return AcceptedProcedure(
-        path=procedure_path(procedure.identity.name),
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
 
 
-def _line() -> LineSpecV2:
+def _line() -> LineSpec:
     procedure = _accepted_procedure()
     provider = accepted_provider()
-    interface = accepted_interface()
     provider_pin = pin(
         "provider",
         "Provider",
@@ -181,30 +133,12 @@ def _line() -> LineSpecV2:
         procedure.procedure.identity.name,
         value=procedure.artifact_digest,
     )
-    implementation = provider.provider.implementations[0]
-    environment_map = ProviderExtrasEnvironmentPinMap(
-        required_extras=("engine",),
-        eligible_environment_pin_keys=("linux-cp311+engine",),
-    )
-    closures = (
-        ProviderImplementationClosure(
-            node_id="slot",
-            slot_name="provider",
-            provider_artifact_digest=provider.artifact_digest,
-            interface_artifact_digest=interface.artifact_digest,
-            interface_digest=interface.registration.interface_digest,
-            implementation_digest=implementation.implementation_digest,
-            environment_pin_map=environment_map,
-        ),
-    )
-    return LineSpecV2(
+    return LineSpec(
         identity=ArtifactIdentity(kind="Line", name="provider-v4-line"),
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
-        slot_bindings=(LineSlotBinding(slot_name="provider", artifact_pin=provider_pin),),
-        trigger_policy=ManualTriggerPolicy(),
-        requested_terminal_rung=1,
+        max_authority="observe",
         budgets={
             "max_capture_bytes": 1024,
             "max_items": 10,
@@ -216,56 +150,43 @@ def _line() -> LineSpecV2:
             sorted(
                 (procedure_pin, provider_pin),
                 key=lambda item: (
-                    item.role,
-                    item.target.qualified,
-                    item.artifact_digest,
+                    item.role.encode("utf-8"),
+                    item.target.qualified.encode("utf-8"),
+                    item.artifact_digest.encode("ascii"),
                 ),
             )
         ),
-        provider_implementation_closures=closures,
     )
 
 
-def test_graph_v4_digest_and_outer_procedure_round_trip() -> None:
-    accepted = _accepted_procedure()
-    definition = accepted.procedure.definition
-    assert isinstance(definition, ProcedureDefinitionV4)
-    assert definition.graph_format == 4
-    assert definition.nodes[0].model_dump(mode="json").get("environment") is None
-    assert definition.nodes[0].implementation_digest is not None
-    assert accepted.procedure.definition_digest == (
-        "sha256:9c3610739f920df547c48c272b9992a81f41026f486fe3ec14996569bac99571"
+def _contracted_registration() -> ProviderInterfaceRegistrationV1:
+    """The demo interface, declaring the operation contracts a Call is checked against."""
+
+    base = _DEMO_INTERFACE_REGISTRATION()
+    definition = json.loads(bytes.fromhex(base.interface_bytes_hex))
+    schema = PERMISSIVE_CONTRACT.model_dump(mode="json")
+    definition["contracts"] = {"input": schema, "output": schema}
+    definition["effect_class"] = base.effect_class
+    interface_hex = canonical_bytes(definition).hex()
+    return ProviderInterfaceRegistrationV1.model_validate(
+        {
+            **base.model_dump(mode="json"),
+            "interface_bytes_hex": interface_hex,
+            "interface_digest": provider_interface_definition_digest(interface_hex),
+        }
     )
-    assert compute_procedure_node_digests_v4(definition)["direct"].subtree_digest == (
-        "sha256:47eb4684da298a9972a3ed1bc3001cae6a5c457becdd9ff221290cc2ceb31887"
-    )
-    content = render_procedure(accepted.procedure)
-    assert parse_procedure(content, path=accepted.path) == accepted.procedure
 
 
-def test_graph_v4_direct_and_slot_implementation_conditions_are_closed() -> None:
-    definition, _provider_pin, _interface_pin = _definition()
-    payload = definition.model_dump(mode="json", by_alias=True)
-    payload["nodes"][0].pop("implementation_digest")
-    with pytest.raises(ValidationError, match="direct Provider bindings require"):
-        ProcedureDefinitionV4.model_validate(payload)
+@pytest.fixture
+def contracted_demo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every demo fixture (interface, Provider, Procedure) speaks the contracted interface."""
 
-    payload = definition.model_dump(mode="json", by_alias=True)
-    payload["nodes"][1]["implementation_digest"] = digest("forbidden")
-    with pytest.raises(ValidationError, match="slot Provider bindings prohibit"):
-        ProcedureDefinitionV4.model_validate(payload)
-
-    payload = definition.model_dump(mode="json", by_alias=True)
-    payload["nodes"][0]["environment"] = pin(
-        "environment",
-        "EnvironmentManifest",
-        "forbidden",
-    ).model_dump(mode="json")
-    with pytest.raises(ValidationError, match="extra_forbidden"):
-        ProcedureDefinitionV4.model_validate(payload)
+    monkeypatch.setattr(p2b1_support, "interface_registration", _contracted_registration)
 
 
-def test_procedure_law_resolves_direct_pins_by_digest_and_never_by_order() -> None:
+def test_procedure_law_resolves_direct_pins_by_digest_and_never_by_order(
+    contracted_demo: None,
+) -> None:
     procedure = _accepted_procedure().procedure
     provider = accepted_provider()
     interface = accepted_interface()
@@ -277,7 +198,7 @@ def test_procedure_law_resolves_direct_pins_by_digest_and_never_by_order() -> No
         providers={provider.artifact_digest: provider},
         provider_interfaces={interface.artifact_digest: interface},
     )
-    assert accepted.verdict == "accepted"
+    assert accepted.verdict == "accepted", accepted.diagnostics
 
     refused = evaluate_procedure_law(
         procedure,
@@ -288,144 +209,38 @@ def test_procedure_law_resolves_direct_pins_by_digest_and_never_by_order() -> No
     )
     assert refused.diagnostics[0].code == ("cruxible.procedure.provider_runtime_manifest_required")
 
-
-def test_repeat_body_provider_has_the_same_explicit_pin_block() -> None:
-    _definition_v4, provider_pin, interface_pin = _definition()
-    interface = accepted_interface()
-    provider = accepted_provider()
-    contract_in = pin("contract-in", "Contract", "repeat-input")
-    contract_out = pin("contract-out", "Contract", "repeat-output")
-    repeat = RepeatNodeV4(
-        node_id="retry",
-        max_attempts=2,
-        body=(
-            RepeatBodyNodeV4(
-                node_id="invoke",
-                operation="provider",
-                provider=provider_pin,
-                interface=interface_pin,
-                interface_digest=interface.registration.interface_digest,
-                implementation_digest=provider.provider.implementations[0].implementation_digest,
-                contract_in=contract_in,
-                contract_out=contract_out,
-                spec={"value": 1},
-                as_="body_result",
-            ),
+    definition, provider_pin, interface_pin = _definition()
+    (call,) = definition.nodes
+    assert isinstance(call, CallNode)
+    uninstalled = accepted_procedure(
+        definition.model_copy(
+            update={"nodes": (call.model_copy(update={"implementation_digest": digest("absent")}),)}
         ),
-        until=GuardPredicate(
-            left=PredicateOperand(kind="step", alias="body_result"),
-            operator="eq",
-            right=PredicateOperand(kind="literal", value=True),
-        ),
-        as_="result",
-    )
-    assert "effect_policy" not in repeat.body[0].model_dump(mode="json", by_alias=True)
-    definition = ProcedureDefinitionV4(
-        name="repeat-provider-v4",
-        contract_in=contract_in,
-        contract_out=contract_out,
-        nodes=(repeat,),
-        returns="result",
-        budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=2_000_000),
-            max_provider_calls=2,
-            max_capture_bytes=1024,
-            max_items=10,
-        ),
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=4_000_000),
-            max_provider_calls=4,
-            max_capture_bytes=2048,
-            max_items=20,
-            max_repeat_attempts=2,
-        ),
-        terminal_capability=1,
-    )
-    assert definition.nodes[0].body[0].implementation_digest is not None
-    assert "environment" not in definition.nodes[0].body[0].model_dump(mode="json")
-
-
-def test_line_v2_closure_round_trip_no_tie_break_and_v1_refusal() -> None:
-    line = _line()
-    procedure = _accepted_procedure()
-    provider = accepted_provider()
-    interface = accepted_interface()
-    content = render_line_spec(line)
-    assert parse_line_spec(content, path=line_spec_path(line.identity.name)) == line
-    assert line_spec_digest(line).tagged.startswith("sha256:")
-
-    result = evaluate_line_spec_law(
-        line,
-        path=line_spec_path(line.identity.name),
-        procedure=procedure,
-        interface_digests={
-            provider.artifact_digest: interface.registration.interface_digest,
-        },
+        extra_pins=(provider_pin, interface_pin),
+        activation_policy="drain",
+    ).procedure
+    unavailable = evaluate_procedure_law(
+        uninstalled,
+        path=procedure_path(uninstalled.identity.name),
         predecessor=None,
         providers={provider.artifact_digest: provider},
         provider_interfaces={interface.artifact_digest: interface},
     )
-    assert result.verdict == "accepted"
-    assert tuple(item.node_id for item in line.provider_implementation_closures) == ("slot",)
-
-    historical_payload = line.model_dump(mode="json")
-    historical_payload.pop("provider_implementation_closures")
-    historical_payload["artifact_format"] = "playbill-line-v1"
-    historical = LineSpecV1.model_validate(historical_payload)
-    refused = evaluate_line_spec_law(
-        historical,
-        path=line_spec_path(historical.identity.name),
-        procedure=procedure,
-        interface_digests={
-            provider.artifact_digest: interface.registration.interface_digest,
-        },
-        predecessor=None,
+    assert unavailable.diagnostics[0].code == (
+        "cruxible.procedure.provider_implementation_unavailable"
     )
-    assert refused.diagnostics[0].code == ("cruxible.line.provider_closure_successor_required")
-
-    payload = line.model_dump(mode="json")
-    extra = line.provider_implementation_closures[0].model_copy(
-        update={"node_id": "z-slot", "slot_name": "z-provider"}
-    )
-    payload["provider_implementation_closures"] = [
-        extra.model_dump(mode="json"),
-        payload["provider_implementation_closures"][0],
-    ]
-    with pytest.raises(ValidationError, match="canonically node/slot sorted"):
-        LineSpecV2.model_validate(payload)
-
-
-def test_line_v2_wrong_implementation_refuses_without_order_selection() -> None:
-    line = _line()
-    procedure = _accepted_procedure()
-    provider = accepted_provider()
-    interface = accepted_interface()
-    closures = list(line.provider_implementation_closures)
-    closures[0] = closures[0].model_copy(update={"implementation_digest": digest("not-installed")})
-    changed = line.model_copy(update={"provider_implementation_closures": tuple(closures)})
-    result = evaluate_line_spec_law(
-        changed,
-        path=line_spec_path(changed.identity.name),
-        procedure=procedure,
-        interface_digests={
-            provider.artifact_digest: interface.registration.interface_digest,
-        },
-        predecessor=None,
-        providers={provider.artifact_digest: provider},
-        provider_interfaces={interface.artifact_digest: interface},
-    )
-    assert result.diagnostics[0].code == ("cruxible.line.provider_implementation_unavailable")
 
 
 def test_real_proposal_path_closes_interface_provider_procedure_and_line(
     tmp_path,
     monkeypatch,
+    contracted_demo: None,
 ) -> None:
     instance, _owner = initialize_local(tmp_path)
     interface = accepted_interface()
     provider = accepted_provider()
     procedure = _accepted_procedure()
-    line = as_v6(_line())
+    line = _line()
     fixture = interface_fixture()
     monkeypatch.setattr(
         proposal_module,

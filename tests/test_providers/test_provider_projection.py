@@ -1,14 +1,19 @@
-"""P2-B1 Provider/interface, graph-v4, and Line-v2 projection facts."""
+"""Provider/interface, graph-v6 Procedure, and Line projection facts."""
 
 from __future__ import annotations
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.procedures.artifacts import render_procedure
-from cruxible_client.contracts.procedures.line_specs import render_line_spec
+from cruxible_client.contracts.procedures.line_specs import (
+    LineSpec,
+    line_spec_path,
+    render_line_spec,
+)
 from cruxible_client.contracts.provider_interfaces import render_provider_interface
 from cruxible_client.contracts.providers import render_provider
 from cruxible_core.compiler.compiler import (
-    P2_B1_COMPILER,
     artifact_kinds_for_compiler,
+    current_compiler_coordinate,
     projection_registry_for_compiler,
 )
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
@@ -16,28 +21,39 @@ from tests.core_support._p2b1_support import (
     accepted_interface,
     accepted_provider,
 )
-from tests.test_integration.test_graph_v4_provider_closure import (
-    _accepted_procedure,
-    _line,
-)
+from tests.test_providers.test_provider_invocation_journal import _accepted_one_provider
 
 
-def test_p2_b1_projects_only_governed_provider_runtime_and_interface_authority() -> None:
+def test_projects_only_governed_provider_runtime_and_interface_authority() -> None:
     interface = accepted_interface()
     provider = accepted_provider()
-    procedure = _accepted_procedure()
-    line = _line()
-    line_spec_path = "lines/provider-v4-line.json"
+    procedure = _accepted_one_provider()
+    procedure_pin = ArtifactPin(
+        role="procedure",
+        target=procedure.procedure.identity,
+        artifact_digest=procedure.artifact_digest,
+    )
+    line = LineSpec(
+        identity=ArtifactIdentity(kind="Line", name="provider-call-line"),
+        occurrence_epoch=1,
+        procedure=procedure_pin,
+        parameters={},
+        max_authority="observe",
+        budgets={},
+        epsilon={"$decimal": "0"},
+        pins=(procedure_pin,),
+    )
+    compiler = current_compiler_coordinate()
 
     projection = parse_projection_tree(
         {
             interface.path: render_provider_interface(interface.registration),
             provider.path: render_provider(provider.provider),
             procedure.path: render_procedure(procedure.procedure),
-            line_spec_path: render_line_spec(line),
+            line_spec_path(line.identity.name): render_line_spec(line),
         },
-        registry=projection_registry_for_compiler(P2_B1_COMPILER),
-        artifact_kinds=artifact_kinds_for_compiler(P2_B1_COMPILER),
+        registry=projection_registry_for_compiler(compiler),
+        artifact_kinds=artifact_kinds_for_compiler(compiler),
     )
 
     schemas = {fact.schema_id for fact in projection.semantic_facts}
@@ -51,10 +67,9 @@ def test_p2_b1_projects_only_governed_provider_runtime_and_interface_authority()
     graph = next(
         fact for fact in projection.semantic_facts if fact.schema_id == "cruxible.procedure.graph"
     )
-    assert graph.fact_key == "graph_v4"
+    assert graph.fact_key == "graph_v6"
     projected_line = next(
         fact for fact in projection.semantic_facts if fact.schema_id == "cruxible.line.spec"
     )
-    assert [
-        item["node_id"] for item in projected_line.value["line"]["provider_implementation_closures"]
-    ] == ["slot"]
+    assert projected_line.value["line"]["procedure"] == procedure_pin.model_dump(mode="json")
+    assert "provider_implementation_closures" not in projected_line.value["line"]

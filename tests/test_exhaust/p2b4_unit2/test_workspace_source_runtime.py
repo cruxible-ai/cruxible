@@ -15,7 +15,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_artifact_digest,
 )
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import SourceNode
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlan,
@@ -154,7 +154,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
     procedure = accepted.procedure.model_copy(
         update={
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
         }
     )
     accepted = AcceptedProcedure(

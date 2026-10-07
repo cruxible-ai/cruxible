@@ -1,4 +1,4 @@
-"""Exact Procedure-pin and LineSpec-slot closure."""
+"""Exact Procedure-pin and slot closure: how a Blueprint's open slots are bound."""
 
 from __future__ import annotations
 
@@ -11,66 +11,37 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest
 from cruxible_client.contracts.errors import FormatError
-from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactAny
 from cruxible_client.contracts.procedures.models import (
+    ProcedureDefinition,
     ProcedurePinSlotRef,
     iter_pin_bindings,
 )
 
 
 class ProcedurePinClosureError(FormatError):
-    """A LineSpec binding cannot close an accepted Procedure exactly."""
+    """A slot binding cannot close a Blueprint's slots exactly."""
 
 
 class _StrictClosureModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class LineSlotBinding(_StrictClosureModel):
-    tag: Literal["playbill-line-slot-binding-v1"] = "playbill-line-slot-binding-v1"
+class ProcedureSlotBinding(_StrictClosureModel):
+    """One open slot bound to one exact accepted artifact, through the slot's interface.
+
+    ``interface_digest`` is the interface the slot declares and the binding
+    serves. One artifact may fill several slots of different interfaces, so the
+    interface belongs to the binding, not to the artifact.
+    """
+
+    tag: Literal["cruxible-procedure-slot-binding-v1"] = "cruxible-procedure-slot-binding-v1"
     slot_name: str
     artifact_pin: ArtifactPin
-
-
-class ProviderExtrasEnvironmentPinMap(_StrictClosureModel):
-    """Reviewable extras-set to eligible local environment-key closure."""
-
-    tag: Literal["playbill-provider-extras-environment-pin-map-v1"] = (
-        "playbill-provider-extras-environment-pin-map-v1"
-    )
-    required_extras: tuple[str, ...]
-    eligible_environment_pin_keys: tuple[str, ...]
-
-    @field_validator("required_extras", "eligible_environment_pin_keys")
-    @classmethod
-    def _sets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Provider environment closure sets must be sorted and unique")
-        return value
-
-
-class ProviderImplementationClosure(_StrictClosureModel):
-    """One slot-filled Line occurrence's exact Provider implementation closure."""
-
-    tag: Literal["playbill-provider-implementation-closure-v1"] = (
-        "playbill-provider-implementation-closure-v1"
-    )
-    node_id: str
-    slot_name: str
-    provider_artifact_digest: str
-    interface_artifact_digest: str
     interface_digest: str
-    implementation_digest: str
-    environment_pin_map: ProviderExtrasEnvironmentPinMap
 
-    @field_validator(
-        "provider_artifact_digest",
-        "interface_artifact_digest",
-        "interface_digest",
-        "implementation_digest",
-    )
+    @field_validator("interface_digest")
     @classmethod
-    def _digests(cls, value: str) -> str:
+    def _interface(cls, value: str) -> str:
         ArtifactDigest.from_tagged(value)
         return value
 
@@ -113,25 +84,28 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
 
 
 def close_procedure_pin_slots(
-    procedure: ProcedureArtifactAny,
+    definition: ProcedureDefinition,
+    pins: tuple[ArtifactPin, ...],
     *,
-    bindings: tuple[LineSlotBinding, ...],
+    bindings: tuple[ProcedureSlotBinding, ...],
     interface_digests: Mapping[str, str],
 ) -> ClosedProcedurePins:
     """Close every declared slot with one exact, role/kind/interface-matched pin.
 
-    ``interface_digests`` is keyed by the bound artifact digest.  It is produced
-    by the artifact family's frozen interface projection, never by a caller's
-    assertion or by a mutable provider name.
+    ``interface_digests`` is keyed by slot name: the interface the bound
+    artifact was verified to implement for that slot (one artifact can serve
+    several slots of different interfaces). It is produced by the artifact
+    family's frozen interface projection, never by a caller's assertion or by a
+    mutable provider name.
     """
 
     binding_names = tuple(binding.slot_name for binding in bindings)
     if binding_names != tuple(sorted(set(binding_names), key=lambda item: item.encode("utf-8"))):
-        raise ProcedurePinClosureError("Line slot bindings must be sorted and unique")
-    declarations = {slot.slot_name: slot for slot in procedure.definition.pin_slots}
+        raise ProcedurePinClosureError("slot bindings must be sorted and unique")
+    declarations = {slot.slot_name: slot for slot in definition.pin_slots}
     referenced = {
         binding.slot_name
-        for binding in iter_pin_bindings(procedure.definition)
+        for binding in iter_pin_bindings(definition)
         if isinstance(binding, ProcedurePinSlotRef)
     }
     supplied = set(binding_names)
@@ -140,9 +114,9 @@ def close_procedure_pin_slots(
     if missing:
         raise ProcedurePinClosureError(f"cruxible.procedure.unfilled_pin_slot: {sorted(missing)}")
     if extra:
-        raise ProcedurePinClosureError(f"LineSpec supplies extra pin slots: {sorted(extra)}")
+        raise ProcedurePinClosureError(f"bindings supply extra pin slots: {sorted(extra)}")
 
-    closed = list(procedure.pins)
+    closed = list(pins)
     for binding in bindings:
         declaration = declarations[binding.slot_name]
         pin = binding.artifact_pin
@@ -154,12 +128,15 @@ def close_procedure_pin_slots(
             raise ProcedurePinClosureError(
                 f"slot {binding.slot_name!r} requires kind {declaration.artifact_kind!r}"
             )
-        actual_interface = interface_digests.get(pin.artifact_digest)
+        actual_interface = interface_digests.get(binding.slot_name)
         if actual_interface is None:
             raise ProcedurePinClosureError(
                 f"slot {binding.slot_name!r} bound artifact has no verified interface"
             )
-        if actual_interface != declaration.interface_digest:
+        if (
+            actual_interface != declaration.interface_digest
+            or binding.interface_digest != declaration.interface_digest
+        ):
             raise ProcedurePinClosureError(
                 f"slot {binding.slot_name!r} interface digest does not match"
             )
@@ -170,10 +147,8 @@ def close_procedure_pin_slots(
 
 __all__ = [
     "ClosedProcedurePins",
-    "LineSlotBinding",
-    "ProviderExtrasEnvironmentPinMap",
-    "ProviderImplementationClosure",
     "ProcedurePinClosureError",
+    "ProcedureSlotBinding",
     "ProcedureSlotInterface",
     "close_procedure_pin_slots",
 ]

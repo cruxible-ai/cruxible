@@ -195,7 +195,6 @@ def _write_doors() -> tuple[tuple[str, object], ...]:
         service_settle_playbill_prediction,
     )
     from cruxible_core.service.procedures.procedure_runs import (
-        service_bind_playbill_procedure,
         service_run_playbill_line,
         service_run_playbill_procedure,
     )
@@ -345,16 +344,6 @@ def _write_doors() -> tuple[tuple[str, object], ...]:
                 request=none,  # type: ignore[arg-type]
                 actor_context=none,  # type: ignore[arg-type]
                 recorded_at=EVALUATION_TIME,
-            ),
-        ),
-        (
-            "procedure_bind",
-            lambda instance: service_bind_playbill_procedure(
-                instance,
-                name="demo.procedure",
-                request=none,  # type: ignore[arg-type]
-                actor=none,  # type: ignore[arg-type]
-                timestamp=TIMESTAMP,
             ),
         ),
         (

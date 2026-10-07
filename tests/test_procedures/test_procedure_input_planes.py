@@ -1,4 +1,4 @@
-"""Procedure v3 input planes remain distinct at admission."""
+"""Procedure input planes remain distinct at admission."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.procedures.models import (
     ExhaustTapNode,
     ProcedurePinSlotRef,
-    SourceNodeV3,
-    StateTapNodeV3,
+    SourceNode,
+    StateTapNode,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.input_planes import (
@@ -78,16 +78,18 @@ def test_capture_and_exhaust_cannot_be_relabelled_as_canonical_state() -> None:
     )
     validate_run_input_vector((exhaust, capture), expected_accepted=local)
 
-    state_node = StateTapNodeV3(
+    state_node = StateTapNode(
         node_id="state",
         query=_pin("query", "QueryDefinition", "claims"),
         parameters={},
         as_="claims",
     )
-    source_node = SourceNodeV3(
+    source_node = SourceNode(
         node_id="source",
         capture_contract=_pin("capture-contract", "CaptureContract", "world"),
         provider=ProcedurePinSlotRef(slot_name="provider"),
+        interface=_pin("provider-interface", "ProviderInterface", "world.interface"),
+        interface_digest=_digest("world-interface"),
         request={},
         as_="capture",
     )

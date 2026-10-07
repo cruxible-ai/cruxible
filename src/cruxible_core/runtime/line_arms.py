@@ -12,10 +12,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipal,
     LineDispatchRequest,
     LineDispatchResult,
-    is_current_arm_principal_record,
+    LineEnablementPrincipal,
 )
 from cruxible_client.contracts.primitives import new_id
 from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused
@@ -35,7 +34,6 @@ from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.service.identity import credential_unbound_refusal, principal_refusal
 from cruxible_core.service.procedures.line_dispatch import (
-    ARM_REQUIRES_REARM,
     LineArmAuthorityLost,
     LineArmSegmentEnded,
     require_active_segment,
@@ -45,14 +43,14 @@ from cruxible_core.service.procedures.line_dispatch import (
 
 #: Arming lets the daemon dispatch on the caller's behalf for as long as the arm
 #: holds, so the arming credential must keep the tier arming itself needs.
-ARM_PERMISSION = TOOL_PERMISSIONS["cruxible_line_arm"]
+ARM_PERMISSION = TOOL_PERMISSIONS["cruxible_line_enable"]
 
 #: Occurrences one automatic pass admits before yielding to other Lines.
 AUTOMATIC_DISPATCH_LIMIT = 10
 
 
-def current_arm_principal() -> LineArmPrincipal:
-    """The credential this request would arm under; only its identifier is kept."""
+def current_arm_principal() -> LineEnablementPrincipal:
+    """The credential this request would enable under; only its identifier is kept."""
 
     auth = get_current_auth_context()
     if auth is not None and auth.credential_type == "runtime_credential":
@@ -61,7 +59,7 @@ def current_arm_principal() -> LineArmPrincipal:
             raise credential_unbound_refusal(
                 credential_id=auth.credential_id, credential_label=auth.credential_label
             )
-        return LineArmPrincipal(
+        return LineEnablementPrincipal(
             kind="runtime_credential",
             credential_id=auth.credential_id,
             label=auth.credential_label,
@@ -71,11 +69,11 @@ def current_arm_principal() -> LineArmPrincipal:
         # principal arms as that claim, rechecked before every admission; one
         # that claims none arms as the implicit local operator.
         if auth is None:
-            return LineArmPrincipal(kind="local_operator", label=LOCAL_OPERATOR_ACTOR_ID)
+            return LineEnablementPrincipal(kind="local_operator", label=LOCAL_OPERATOR_ACTOR_ID)
         assert auth.principal_id is not None
-        return LineArmPrincipal(kind="principal_claim", label=auth.principal_id)
+        return LineEnablementPrincipal(kind="principal_claim", label=auth.principal_id)
     raise AuthenticationError(
-        "Arming a Line requires a runtime credential the daemon can recheck before each run"
+        "Enabling a Line requires a runtime credential the daemon can recheck before each run"
     )
 
 
@@ -91,13 +89,13 @@ def _require_active_principal(instance: Any, principal_id: str) -> None:
     if refusal is not None:
         raise LineArmAuthorityLost(
             "principal_inactive",
-            f"The arming principal {principal_id!r} is no longer an active principal "
-            f"({refusal.error_code}); rearm as an active principal to resume.",
+            f"The enabling principal {principal_id!r} is no longer an active principal "
+            f"({refusal.error_code}); enable it again as an active principal to resume.",
         )
 
 
 def arm_authority(
-    instance: Any, principal: LineArmPrincipal, *, now: datetime
+    instance: Any, principal: LineEnablementPrincipal, *, now: datetime
 ) -> tuple[GovernedActorContext, int]:
     """The actor and caller rung the arm dispatches under, or why it no longer may.
 
@@ -112,7 +110,7 @@ def arm_authority(
         if is_server_auth_enabled():
             raise LineArmAuthorityLost(
                 "authentication_changed",
-                "The daemon now requires authentication; rearm with a runtime credential.",
+                "The daemon now requires authentication; enable again with a runtime credential.",
             )
         mode = get_capability_ceiling()
         if mode < ARM_PERMISSION:
@@ -136,23 +134,24 @@ def arm_authority(
     record = get_runtime_credential_store().get(principal.credential_id)
     if record is None or record.revoked_at is not None:
         raise LineArmAuthorityLost(
-            "credential_revoked", "The arming credential was revoked; rearm to resume."
+            "credential_revoked", "The enabling credential was revoked; enable again to resume."
         )
     if record.instance_id != instance_id:
         raise LineArmAuthorityLost(
             "credential_scope_changed",
-            "The arming credential no longer belongs to this instance; rearm to resume.",
+            "The enabling credential no longer belongs to this instance; enable again to resume.",
         )
     mode = clamp_to_capability_ceiling(record.permission_mode)
     if mode < ARM_PERMISSION:
         raise LineArmAuthorityLost(
             "permission_insufficient",
-            f"The arming credential's permission {mode.name} no longer permits dispatch.",
+            f"The enabling credential's permission {mode.name} no longer permits dispatch.",
         )
     if record.principal_id is None:
         raise LineArmAuthorityLost(
             "credential_unbound",
-            "The arming credential acts as no principal; rearm with a principal-bound one.",
+            "The enabling credential acts as no principal; "
+            "enable again with a principal-bound one.",
         )
     try:
         _require_active_principal(instance, record.principal_id)
@@ -187,26 +186,7 @@ def dispatch_armed_line(
 
     now = now or datetime.now(UTC)
     instance = manager.get(instance_id)
-    daemon_early = GovernedActorContext(
-        actor_type="system",
-        actor_id="line-listener",
-        org_id=instance.descriptor.instance_id,
-        operation_id=new_id("op", length=16, separator="_"),
-        timestamp=now,
-    )
-    if not is_current_arm_principal_record(arm.get("armed_by")):
-        # An arm persisted before arms named their provenance: never resolve it
-        # as the implicit operator; stop it and ask for a rearm.
-        service_stop_line_arm(
-            instance,
-            arm["session_id"],
-            reason="arm_requires_rearm",
-            detail=ARM_REQUIRES_REARM,
-            actor=daemon_early,
-            now=now,
-        )
-        return None
-    principal = LineArmPrincipal.model_validate(arm["armed_by"])
+    principal = LineEnablementPrincipal.model_validate(arm["armed_by"])
     daemon = GovernedActorContext(
         actor_type="system",
         actor_id="line-listener",

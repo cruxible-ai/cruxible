@@ -58,6 +58,8 @@ from cruxible_client.contracts.get_reads import (
     GetAcquisitionInput,
     GetApprovalPolicyCard,
     GetAttestationEvidence,
+    GetBlueprintCard,
+    GetBlueprintSlot,
     GetBody,
     GetCaptureContractCard,
     GetCaptureEvidence,
@@ -72,6 +74,7 @@ from cruxible_client.contracts.get_reads import (
     GetHistory,
     GetPrincipalCard,
     GetProcedureCard,
+    GetProcedureNode,
     GetProcedureRuntimePolicyCard,
     GetProcedureTrackRecord,
     GetProposalCard,
@@ -171,6 +174,7 @@ _TYPED_PREFIXES: Mapping[str, GetRefKind] = {
     "Document": "document",
     "document": "document",
     "Procedure": "procedure",
+    "Blueprint": "blueprint",
     "QueryDefinition": "query",
     "query": "query",
     "CaptureContract": "capture_contract",
@@ -195,6 +199,7 @@ _PROJECTION_KIND: Mapping[GetRefKind, str] = {
     "claim_type": "claim-type",
     "document": "document",
     "procedure": "procedure",
+    "blueprint": "blueprint",
     "query": "query-definition",
     "capture_contract": "capture-contract",
     "trigger": "trigger",
@@ -213,6 +218,7 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
     "claim_type": "ClaimType",
     "document": "document",
     "procedure": "Procedure",
+    "blueprint": "Blueprint",
     "query": "QueryDefinition",
     "capture_contract": "CaptureContract",
     "trigger": "Trigger",
@@ -227,6 +233,7 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
 _NAMED_KINDS: tuple[GetRefKind, ...] = (
     "document",
     "procedure",
+    "blueprint",
     "query",
     "capture_contract",
     "trigger",
@@ -238,6 +245,7 @@ _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "claim_type": "ClaimType",
     "document": "Document",
     "procedure": "Procedure",
+    "blueprint": "Blueprint",
     "query": "query",
     "capture_contract": "CaptureContract",
     "trigger": "Trigger",
@@ -615,6 +623,7 @@ def _resolve_typed(
         "subject": "Subject",
         "document": "Document",
         "procedure": "Procedure",
+        "blueprint": "Blueprint",
         "query": "QueryDefinition",
         "capture_contract": "CaptureContract",
         "trigger": "Trigger",
@@ -773,6 +782,33 @@ def _render_get(
         arguments.append(f"at={json.dumps(at.git_oid)}")
     arguments[0] = f"ref={arguments[0]}"
     return f"cruxible_get({', '.join(arguments)})"
+
+
+def _render_procedure_run(surface: ReadSurface, name: str, runnable: str) -> tuple[str, ...]:
+    """How this Procedure runs, spelled for the caller's surface: itself, or as a Line."""
+
+    if runnable == "direct":
+        return (
+            {
+                "cli": f"cruxible procedure run {shlex.quote(name)} -",
+                "mcp": f"cruxible_procedure_run(name={json.dumps(name)}, input={{...}})",
+                "sdk": f"cx.accepted_procedure({json.dumps(name)}).run(input=...)",
+            }[surface],
+        )
+    if runnable == "line":
+        target = json.dumps("Procedure:" + name)
+        return (
+            {
+                "cli": f"cruxible query Line --where procedure=Procedure:{shlex.quote(name)}",
+                "mcp": (
+                    'cruxible_query(kind="Line", where=[{"field": "procedure", "eq": '
+                    + target
+                    + "}])"
+                ),
+                "sdk": f'cx.query("Line", where=[{{"field": "procedure", "eq": {target}}}])',
+            }[surface],
+        )
+    return ()
 
 
 def _render_read_capture(surface: ReadSurface, digest: str) -> str:
@@ -1331,16 +1367,12 @@ def _procedure_card(
     readiness = service_playbill_procedure_readiness(
         instance,
         name=_name(resolved.identity),
-        request=ProcedureReadinessRequestV1(
-            at=AcceptedCoordinate.from_internal(coordinate), evaluation_time=evaluation_time
-        ),
+        request=ProcedureReadinessRequestV1(at=AcceptedCoordinate.from_internal(coordinate)),
     )
     definition = readiness.artifact.definition
     inputs: dict[str, Any] = {"input": _pin_name(definition.contract_in)}
     if definition.parameter_contract is not None:
         inputs["parameters"] = _pin_name(definition.parameter_contract)
-    if definition.pin_slots:
-        inputs["slots"] = [slot.slot_name for slot in definition.pin_slots]
     with instance.bind_accepted_projection(coordinate) as projection:
         promoted = projection.typed.facts(
             "cruxible.procedure.track_record", identity=resolved.identity
@@ -1348,15 +1380,25 @@ def _procedure_card(
     return GetProcedureCard(
         procedure=_name(resolved.identity),
         description=definition.description,
+        lifecycle=readiness.artifact.lifecycle.state,
         inputs=inputs,
-        readiness=readiness.state,
-        required_slots=readiness.required_slots,
-        unsupported_nodes=len(readiness.unsupported_nodes),
+        runnable=readiness.runnable,
+        unsupported_nodes=tuple(
+            GetProcedureNode(node_id=item.node_id, kind=item.kind, runs_on=item.runs_on)
+            for item in readiness.unsupported_nodes
+        ),
         track_record=tuple(
             _track_record_entry(fact)
             for fact in sorted(promoted, key=lambda item: item.fact_key.encode("utf-8"))
         ),
-        next=(_render_get(surface, resolved.display, "proof"),),
+        next=(
+            *(
+                ()
+                if readiness.artifact.lifecycle.state == "retired"
+                else _render_procedure_run(surface, _name(resolved.identity), readiness.runnable)
+            ),
+            _render_get(surface, resolved.display, "proof"),
+        ),
     )
 
 
@@ -1396,6 +1438,67 @@ def _query_card(
             for item in query.parameters
         ),
         next=(_render_get(surface, resolved.display, "proof"),),
+    )
+
+
+def _blueprint_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetBlueprintCard:
+    from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
+    from cruxible_client.contracts.procedures.blueprints import (
+        blueprint_slot_interface,
+        fitting_implementation,
+    )
+    from cruxible_client.contracts.providers import AcceptedProvider
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        blueprint = cast(BlueprintArtifact, projection.typed.source(resolved.identity))
+        providers = []
+        for row in projection.typed.envelopes(kind="provider"):
+            provider = projection.typed.source(row.identity)
+            if provider is not None and provider.lifecycle.state == "live":
+                providers.append(
+                    AcceptedProvider(
+                        path=row.path, provider=provider, artifact_digest=row.artifact_digest
+                    )
+                )
+    definition = blueprint.definition
+    inputs: dict[str, Any] = {"input": _pin_name(definition.contract_in)}
+    if definition.parameter_contract is not None:
+        inputs["parameters"] = _pin_name(definition.parameter_contract)
+    slots = []
+    for slot in definition.pin_slots:
+        interface = blueprint_slot_interface(blueprint, slot)
+        slots.append(
+            GetBlueprintSlot(
+                slot=slot.slot_name,
+                interface="" if interface is None else interface.target.qualified,
+                fits=tuple(
+                    sorted(
+                        item.provider.identity.name
+                        for item in providers
+                        if fitting_implementation(item, slot) is not None
+                    )
+                ),
+            )
+        )
+    name = _name(resolved.identity)
+    example = {
+        "cli": "cruxible authoring example blueprint-instance",
+        "mcp": 'cruxible_authoring_example(name="blueprint-instance")',
+        "sdk": "cx.procedure(definition=source.bind(...))",
+    }[surface]
+    return GetBlueprintCard(
+        blueprint=name,
+        description=definition.description,
+        lifecycle=blueprint.lifecycle.state,
+        inputs=inputs,
+        slots=tuple(slots),
+        next=(example, _render_get(surface, resolved.display, "proof")),
     )
 
 
@@ -1997,9 +2100,7 @@ def _proof(
         )
 
         return service_playbill_procedure_readiness(
-            instance,
-            name=name,
-            request=ProcedureReadinessRequestV1(at=at, evaluation_time=evaluation_time),
+            instance, name=name, request=ProcedureReadinessRequestV1(at=at)
         ).model_dump(mode="json")
     if resolved.kind == "provider_interface":
         item = _live_interface(
@@ -2020,6 +2121,7 @@ def _proof(
             "record": record.model_dump(mode="json"),
         }
     if resolved.kind in {
+        "blueprint",
         "capture_contract",
         "trigger",
         "line",
@@ -2167,6 +2269,8 @@ def service_playbill_get(
             card = _capture_contract_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "trigger":
             card = _trigger_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "blueprint":
+            card = _blueprint_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "line":
             card = line_card(
                 instance,

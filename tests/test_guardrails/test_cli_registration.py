@@ -129,8 +129,11 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     """A command defined but never registered is dead or invisible, never fine."""
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
     # Includes retained evidence reads through `capture read`, `cruxible mcp` and the kit verbs.
-    assert len(leaf_claims) == 103, (
-        f"expected 103 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    # S3: `procedure readiness|status` folded into `get`, `procedure bind` was cut,
+    # `line status` folded into `get Line:<name>`, `line check` became
+    # `line evaluate --dry-run`.
+    assert len(leaf_claims) == 98, (
+        f"expected 98 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)
@@ -168,3 +171,26 @@ def test_every_lazy_map_entry_points_at_the_kind_of_object_it_claims() -> None:
         if key not in defined
     )
     assert unknown == [], f"CLI_COMMANDS entries resolving outside the commands package: {unknown}"
+
+
+def test_line_help_lists_exactly_the_line_verbs_each_with_help() -> None:
+    """`line status` folded into `get Line:<name>`; `line check` is `line evaluate --dry-run`."""
+
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.main import cli
+
+    runner = CliRunner()
+    shown = runner.invoke(cli, ["line", "--help"])
+    assert shown.exit_code == 0, shown.output
+    listed = shown.output.split("Commands:", 1)[1]
+    # A verb row is indented two spaces; a wrapped summary continues deeper.
+    rows = [row for row in listed.splitlines() if row.startswith("  ") and row[2] != " "]
+    verbs = {row.split()[0]: row.split(None, 1)[1:] for row in rows}
+    assert set(verbs) == {"enable", "disable", "run", "evaluate", "dispatch"}, shown.output
+    assert all(summary and summary[0].strip() for summary in verbs.values()), shown.output
+    for verb in verbs:
+        page = runner.invoke(cli, ["line", verb, "--help"])
+        assert page.exit_code == 0, page.output
+        body = page.output.split("\n\n", 2)[1].strip()
+        assert body and not body.startswith("Options:"), (verb, page.output)

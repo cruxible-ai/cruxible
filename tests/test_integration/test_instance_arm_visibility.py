@@ -52,7 +52,7 @@ def test_next_counts_line_arms_in_the_consumers_facet(stopped) -> None:  # type:
         caller_rung=1,
     )
 
-    assert result.status.consumers.detail["line_arms"] == {
+    assert result.status.consumers.detail["line_enablements"] == {
         "running": 0,
         "stalled": 0,
         "stopped": 1,
@@ -64,8 +64,8 @@ def test_orient_attention_names_a_stopped_arm_for_an_instance_caller(stopped) ->
 
     answer = service_playbill_orient(instance, evaluation_time=when, caller_rung=1)
 
-    assert answer.attention is not None and answer.attention.arms is not None
-    arms = answer.attention.arms
+    assert answer.attention is not None and answer.attention.enablements is not None
+    arms = answer.attention.enablements
     assert (arms.running, arms.stalled, arms.stopped) == (0, 0, 1)
     assert arms.needs_attention == (f"{line.identity.qualified} stopped (credential_revoked)",)
     # Nothing is armed and running, so no consumer-loop note is owed.
@@ -91,7 +91,7 @@ def test_orient_says_when_armed_lines_have_no_consumer_loop_or_lane(tmp_path: Pa
     )
 
     assert idle.attention is not None and served.attention is not None
-    assert idle.attention.arms is not None and idle.attention.arms.running == 1
+    assert idle.attention.enablements is not None and idle.attention.enablements.running == 1
     assert any("consumer loop is not running" in note for note in idle.attention.notes)
     assert any("provider lane is unavailable" in note for note in idle.attention.notes)
     assert not any("consumer loop" in note for note in served.attention.notes)
@@ -104,8 +104,8 @@ def test_an_instance_without_lines_reports_no_arms(tmp_path: Path) -> None:
 
     answer = service_playbill_orient(instance)
 
-    assert answer.attention is not None and answer.attention.arms is None
-    assert "arms" not in answer.attention.model_dump(mode="json")
+    assert answer.attention is not None and answer.attention.enablements is None
+    assert "enablements" not in answer.attention.model_dump(mode="json")
 
 
 class _Stub:
@@ -144,12 +144,12 @@ def test_the_cli_shows_stopped_arms_in_orient_and_next(stopped, monkeypatch, tmp
 
     orient = CliRunner().invoke(cli, [*prefix, "orient", "--evaluation-time", stamp])
     assert orient.exit_code == 0, orient.output
-    assert "Line arms: running=0 stalled=0 stopped=1" in orient.output
+    assert "Line enablements: running=0 stalled=0 stopped=1" in orient.output
     assert f"{line.identity.qualified} stopped (credential_revoked)" in orient.output
 
     queue = CliRunner().invoke(cli, [*prefix, "next", "--evaluation-time", stamp])
     assert queue.exit_code == 0, queue.output
-    assert "Status: line arms stalled=0 stopped=1" in queue.output
+    assert "Status: line enablements stalled=0 stopped=1" in queue.output
     assert "consumer_stalled" in queue.output
 
 
@@ -204,7 +204,7 @@ def test_the_mcp_orient_tool_carries_the_arms(stopped, monkeypatch) -> None:  # 
             assert not result.isError
             return " ".join(block.text for block in result.content if hasattr(block, "text"))
 
-    arms = json.loads(_run(exercise()))["attention"]["arms"]
+    arms = json.loads(_run(exercise()))["attention"]["enablements"]
 
     assert arms["stopped"] == 1
     assert arms["needs_attention"] == [f"{line.identity.qualified} stopped (credential_revoked)"]
@@ -225,5 +225,5 @@ def test_the_sdk_reads_the_arms_off_orient(stopped) -> None:  # type: ignore[no-
 
     answer = playbill.orient()
 
-    assert answer.attention is not None and answer.attention.arms is not None
-    assert answer.attention.arms.stopped == 1
+    assert answer.attention is not None and answer.attention.enablements is not None
+    assert answer.attention.enablements.stopped == 1

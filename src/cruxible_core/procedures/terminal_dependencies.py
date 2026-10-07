@@ -400,7 +400,21 @@ def derive_terminal_item_facts(
     )
 
 
+def citable_captures(manifest: TerminalItemDependencyManifestV1 | None) -> tuple[str, ...]:
+    """The Captures an item may cite: those its closure produced, else those it was admitted.
+
+    A run's own Source observation is the evidence when there is one. A run fed
+    a retained Capture instead (a Line's trigger input) produced none, and the
+    Capture it consumed is the observation its items interpret.
+    """
+
+    if manifest is None:
+        return ()
+    return manifest.produced_capture_digests or manifest.admitted_capture_digests
+
+
 __all__ = [
+    "citable_captures",
     "TAINT_ACCEPTED_STATE",
     "TAINT_CONSERVATIVE_DEFAULT",
     "TAINT_OMITTED_OPTIONAL",

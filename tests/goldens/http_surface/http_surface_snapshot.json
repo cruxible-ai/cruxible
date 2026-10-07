@@ -144,21 +144,17 @@
   "/api/v1/{instance_id}/ledger/publish": {
     "POST": "LedgerMirror"
   },
-  "/api/v1/{instance_id}/lines/{line}/arm": {
-    "GET": "LineArm",
-    "POST": "LineArm"
-  },
-  "/api/v1/{instance_id}/lines/{line}/check": {
-    "POST": "LineTriggerCheckResult"
-  },
-  "/api/v1/{instance_id}/lines/{line}/disarm": {
-    "POST": "LineArm"
+  "/api/v1/{instance_id}/lines/{line}/disable": {
+    "POST": "LineEnablement"
   },
   "/api/v1/{instance_id}/lines/{line}/dispatch": {
     "POST": "LineDispatchResult"
   },
+  "/api/v1/{instance_id}/lines/{line}/enable": {
+    "POST": "LineEnablement"
+  },
   "/api/v1/{instance_id}/lines/{line}/evaluate": {
-    "POST": "LineTriggerCheckResult"
+    "POST": "LineEvaluateResult"
   },
   "/api/v1/{instance_id}/lines/{line}/runs": {
     "POST": "ProcedureRunState"
@@ -186,9 +182,6 @@
   },
   "/api/v1/{instance_id}/procedures/source/preview": {
     "POST": "ProcedureSourcePreview"
-  },
-  "/api/v1/{instance_id}/procedures/{name}/bind": {
-    "POST": "ProcedureBindResult"
   },
   "/api/v1/{instance_id}/procedures/{name}/measurements": {
     "POST": "ProcedureMeasureResult"

@@ -912,7 +912,7 @@ next(*, expiring_within: Duration) -> NextPage
 
 Scans the attached workspace and reads actionable work with explicit access profile, evaluation time, and expiry horizon.
 
-**Conditions and effects:** Inspect observed_domains/unobserved_domains; an empty page does not imply every possible domain was observed. Each row's `repair.command` is the SDK call that performs it (for example `cx.arm_line("hourly")`), leaving out an operand only the caller holds, such as the signer or the observation; it is `None` when the SDK has no method for that repair.
+**Conditions and effects:** Inspect observed_domains/unobserved_domains; an empty page does not imply every possible domain was observed. Each row's `repair.command` is the SDK call that performs it (for example `cx.line('hourly').enable()`), leaving out an operand only the caller holds, such as the signer or the observation; it is `None` when the SDK has no method for that repair.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -1105,7 +1105,7 @@ Lifts a suppression on an item, so what it hid is listed again; name it when the
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-provider_binding(interface: str, *, provider: str | None=None) -> ProviderBinding
+provider_interface(interface: str, *, provider: str | None=None) -> ProviderBinding
 ```
 
 Discovers one accepted interface and selects one registered implementation.
@@ -1153,35 +1153,28 @@ Returns an accepted Procedure handle; a typed ProcedureRef retains its coordinat
 |---|---|---|
 | `procedure` | Required | Procedure name or typed reference; Line authoring also accepts a name defined earlier in the same changeset. |
 
-<a id="api-cruxible-run-line"></a>
+<a id="api-cruxible-line"></a>
 
-### `Cruxible.run_line`
+### `Cruxible.line`
 
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-run_line(
-    line: str,
-    *,
-    trigger: str | None = None,
-    occurrence_id: str | None = None,
-    resolution_contract: ResolutionContractReference | None = None,
-    trigger_event: TriggerEventReference | None = None,
-) -> ProcedureRun
+line(name: str) -> Line
 ```
 
-Requests one daemon-derived occurrence of a named accepted Line and returns a ProcedureRun.
-The backend resolves the Line identity; callers do not pass its digest.
+Returns a handle on one accepted Line by name. Each handle call reaches the daemon.
 
-**Conditions and effects:** May invoke providers, register captures, or submit proposals under admitted authority; it is not a preview or permission grant.
+**Conditions and effects:** Does not read or write by itself. A Trigger aimed at a Line does nothing until the Line is enabled; `cx.get(f"Line:{name}")` reads its enablements (pinned Line and Trigger versions, `evaluated_until`), Triggers, pending work and runs.
 
-| Parameter | Default | Meaning |
-|---|---|---|
-| `line` | Required | Accepted Line name. The daemon resolves and binds its exact identity and version. |
-| `trigger` | `None` | The Trigger this occurrence fires on. Required when live Triggers aim at the Line; omit it only for a Line with none, which runs when run explicitly. |
-| `occurrence_id` | `None` | Optional retained occurrence identity; the daemon validates/derives its binding. |
-| `resolution_contract` | `None` | Exact independent resolution-contract reference bound to this run. |
-| `trigger_event` | `None` | Retained trigger-event reference, when the contract/run requires event binding. |
+| Method | Effect |
+|---|---|
+| `.enable(*, dry_run=None, at=None) -> LineEnablement` | Enable forward-only under this connection's credential, pinned to the current Line and Trigger versions; never catches up. Needs governed write even for an observe-only Line; a proposing or settling Line needs a covering ProcedureMandate. Repeating it unchanged returns `outcome="already_enabled"`. |
+| `.disable(*, dry_run=None, at=None) -> LineEnablement` | Stop admitting work automatically; admitted runs keep going. A stopped enablement returns `outcome="already_disabled"`. A retired Line can be disabled. |
+| `.run(*, event=None, repeat=False, occurrence_id=None, resolution_contract=None) -> ProcedureRun` | Run the Line once now as one manual occurrence under its own inputs, budgets, authority ceiling and mandate; never selects or consumes a Trigger. `event` is the retained Capture event a Line whose Procedure takes an event input runs on; an event its Triggers already admitted refuses unless `repeat=True`. May invoke providers, register captures, or submit proposals under admitted authority. |
+| `.evaluate(*, since=None, until=None, dry_run=False, limit=100, cursor=None) -> LineEvaluateResult` | Turn a missed range into pending occurrences; never runs anything. `dry_run=True` only reports what the range makes eligible (no range needed); otherwise `since` and `until` are required. |
+| `.dispatch(*, occurrence_id=None, limit=100, retry=False) -> LineDispatchResult` | Run pending occurrences under this connection's current authority. `retry=True` with an `occurrence_id` retries one closed occurrence. |
+| `.ref` | `"Line:<name>"`, for `cx.get(line.ref)`. |
 
 <a id="api-changesetdraft"></a>
 
@@ -3263,7 +3256,7 @@ when diagnostics remain. Unbound providers are errors, not hidden defaults.
 Bounded Repeat is available in shared ProcedureInput but has no Sequence step
 class. Current Sequence has no general value-merge, nested invoke, recursion, or
 parallel execution. Python source compiles through `@procedure` /
-`ProcedureBlueprint` in `cruxible_client.authoring.source`, not through Sequence. StateTap binds at admission;
+`ProcedureSource` in `cruxible_client.authoring.source`, not through Sequence. StateTap binds at admission;
 Source requests can depend on prior runtime outputs. Graph legality does not
 promise availability in every run lane.
 
@@ -5873,12 +5866,12 @@ run_line(
     occurrence_id: str | None,
     evaluation_time: str | None = None,
     resolution_contract: contracts.ResolutionContractReference | None = None,
-    trigger_event: contracts.TriggerEventReference | None = None,
-    trigger: str | None = None,
+    event: contracts.TriggerEventReference | None = None,
+    repeat: bool = False,
 ) -> contracts.ProcedureRunState
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/lines/{line_identity_digest}/runs'`.
+HTTP: `POST f'/api/v1/{instance_id}/lines/{line}/runs'`. One manual occurrence; see `Cruxible.line`.
 
 <a id="api-cruxibleclient-next"></a>
 

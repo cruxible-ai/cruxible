@@ -40,12 +40,12 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.procedures.artifacts import procedure_owned_contract_digest
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.models import (
-    CaptureEgressNodeV3,
+    CaptureEgressNode,
     ProcedureBudget,
-    ProcedureDefinitionV5,
+    ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    ProposeChangeSetNodeV3,
+    ProposeChangeSetNode,
     SourceNode,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -211,7 +211,7 @@ def _procedure_definition(
     contract_pin: ArtifactPin,
     workspace: Path,
     terminal_kind: str = "propose_change_set",
-) -> ProcedureDefinitionV5:
+) -> ProcedureDefinition:
     input_contract, output_contract = _contracts()
     contract_in = ArtifactPin(
         role="contract-in",
@@ -233,7 +233,7 @@ def _procedure_definition(
         selector={"id": 7, "relation": "orders"},
         replayability="exact",
     )
-    return ProcedureDefinitionV5(
+    return ProcedureDefinition(
         name=PROCEDURE_NAME,
         description="Read the advisory document and propose its severity as a Claim.",
         contract_in=contract_in,
@@ -273,11 +273,16 @@ def _procedure_definition(
                 next="propose",
             ),
             (
-                CaptureEgressNodeV3(
-                    node_id="propose", capture_contract=contract_pin, input="$steps.result"
+                CaptureEgressNode(
+                    node_id="propose",
+                    capture_contract=contract_pin,
+                    input="$steps.result",
+                    result="$steps.result",
                 )
                 if terminal_kind == "emit_capture"
-                else ProposeChangeSetNodeV3(node_id="propose", candidate_templates=(_item(),))
+                else ProposeChangeSetNode(
+                    node_id="propose", candidate_templates=(_item(),), result="$steps.result"
+                )
             ),
         ),
         returns="result",
@@ -298,7 +303,7 @@ def _procedure_definition(
     )
 
 
-def _authored(definition: ProcedureDefinitionV5, *, same_set_kinds: set[str]) -> dict[str, object]:
+def _authored(definition: ProcedureDefinition, *, same_set_kinds: set[str]) -> dict[str, object]:
     """Render the graph the way an author names it: references, never caller digests.
 
     Owned Contracts are carried by name; artifacts accepted at the base are

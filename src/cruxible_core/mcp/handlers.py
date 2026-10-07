@@ -135,7 +135,6 @@ from cruxible_core.server.playbill_request_models import (
 from cruxible_core.service.discovery.since import validate_playbill_since_request
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
-    ProcedureBindRequest,
     ProcedureRunRequest,
 )
 
@@ -1250,42 +1249,6 @@ def handle_playbill_query_spec(
     )
 
 
-def handle_playbill_procedure_readiness(
-    instance_id: str,
-    name: str,
-    *,
-    evaluation_time: str,
-) -> contracts.ProcedureReadiness:
-    evaluated_at = parse_datetime(evaluation_time)
-    if evaluated_at is None:  # pragma: no cover - required public argument
-        raise DataValidationError("Procedure readiness requires evaluation_time")
-    return _daemon_call(
-        lambda client: client.procedure_readiness(
-            instance_id,
-            name,
-            evaluation_time=evaluated_at.isoformat(),
-        ),
-        operation_name="cruxible_procedure_readiness",
-    )
-
-
-def handle_playbill_procedure_bind(
-    instance_id: str,
-    name: str,
-    *,
-    bindings: list[dict[str, Any]],
-) -> contracts.ProcedureBindResult:
-    request = ProcedureBindRequest.model_validate({"bindings": bindings})
-    return _daemon_call(
-        lambda client: client.bind_procedure(
-            instance_id,
-            name,
-            bindings=[item.model_dump(mode="json") for item in request.bindings],
-        ),
-        operation_name="cruxible_procedure_bind",
-    )
-
-
 def handle_playbill_procedure_run(
     instance_id: str,
     name: str,
@@ -1322,16 +1285,6 @@ def handle_playbill_procedure_run(
     )
 
 
-def handle_playbill_procedure_run_status(
-    instance_id: str,
-    run_id: str,
-) -> contracts.ProcedureRunState:
-    return _daemon_call(
-        lambda client: client.get_procedure_run(instance_id, run_id),
-        operation_name="cruxible_procedure_run_status",
-    )
-
-
 def handle_playbill_procedure_measure(
     instance_id: str,
     name: str,
@@ -1354,42 +1307,27 @@ def handle_playbill_procedure_readings(
     )
 
 
-def handle_playbill_line_check(
-    instance_id: str, line: str, request: contracts.LineTriggerCheckRequest
-) -> contracts.LineTriggerCheckResult:
-    return _daemon_call(
-        lambda client: client.check_line(instance_id, line, request=request),
-        operation_name="cruxible_line_check",
-    )
-
-
-def handle_playbill_line_arm(
+def handle_playbill_line_enable(
     instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-) -> contracts.LineArm:
+) -> contracts.LineEnablement:
     return _daemon_call(
-        lambda client: client.arm_line(instance_id, line, dry_run=dry_run, at=at),
-        operation_name="cruxible_line_arm",
+        lambda client: client.enable_line(instance_id, line, dry_run=dry_run, at=at),
+        operation_name="cruxible_line_enable",
     )
 
 
-def handle_playbill_line_disarm(
+def handle_playbill_line_disable(
     instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-) -> contracts.LineArm:
+) -> contracts.LineEnablement:
     return _daemon_call(
-        lambda client: client.disarm_line(instance_id, line, dry_run=dry_run, at=at),
-        operation_name="cruxible_line_disarm",
-    )
-
-
-def handle_playbill_line_status(instance_id: str, line: str) -> contracts.LineArm:
-    return _daemon_call(
-        lambda client: client.line_status(instance_id, line), operation_name="cruxible_line_status"
+        lambda client: client.disable_line(instance_id, line, dry_run=dry_run, at=at),
+        operation_name="cruxible_line_disable",
     )
 
 
 def handle_playbill_line_evaluate(
     instance_id: str, line: str, request: contracts.LineEvaluateRequest
-) -> contracts.LineTriggerCheckResult:
+) -> contracts.LineEvaluateResult:
     return _daemon_call(
         lambda client: client.evaluate_line(instance_id, line, request=request),
         operation_name="cruxible_line_evaluate",
@@ -1412,15 +1350,15 @@ def handle_playbill_line_run(
     occurrence_id: str | None,
     evaluation_time: str | None = None,
     resolution_contract: contracts.ResolutionContractReference | None = None,
-    trigger_event: contracts.TriggerEventReference | None = None,
-    trigger: str | None = None,
+    event: contracts.TriggerEventReference | None = None,
+    repeat: bool = False,
 ) -> contracts.ProcedureRunState:
     request = LineRunRequest.model_validate(
         {
             "line": line,
-            "trigger": trigger,
             "resolution_contract": resolution_contract,
-            "trigger_event": trigger_event,
+            "event": event,
+            "repeat": repeat,
             "occurrence_id": occurrence_id,
             "evaluation_time": (
                 None if evaluation_time is None else parse_datetime(evaluation_time)
@@ -1431,8 +1369,8 @@ def handle_playbill_line_run(
         lambda client: client.run_line(
             instance_id,
             resolution_contract=resolution_contract,
-            trigger_event=trigger_event,
-            trigger=trigger,
+            event=event,
+            repeat=repeat,
             line=line,
             occurrence_id=request.occurrence_id,
             evaluation_time=(

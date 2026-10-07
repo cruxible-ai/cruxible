@@ -10,7 +10,11 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.artifacts import render_procedure
+from cruxible_client.contracts.procedures.artifacts import (
+    DIRECT_NODE_KINDS,
+    LINE_NODE_KINDS,
+    render_procedure,
+)
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.egress import (
@@ -37,7 +41,6 @@ from cruxible_core.procedures.execution import (
 from cruxible_core.procedures.terminal_services import (
     ProposalTerminalAdapter,
 )
-from cruxible_core.service.procedures.procedure_runs import SERVED_NODE_KINDS
 from tests.core_support._support import initialize_local
 from tests.test_procedures.test_procedure_execution import (
     _actor,
@@ -55,9 +58,9 @@ NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
 
 def test_direct_lane_requires_line_authority_for_effectful_terminals() -> None:
-    assert SERVED_NODE_KINDS.isdisjoint(
-        {"emit_capture", "post_inbox", "propose_change_set", "settle_change_set"}
-    )
+    effectful = {"emit_capture", "post_inbox", "propose_change_set", "settle_change_set"}
+    assert DIRECT_NODE_KINDS.isdisjoint(effectful)
+    assert LINE_NODE_KINDS == effectful
 
 
 def _item(path: str, *, value: object = "value") -> TerminalEgressItemV1:

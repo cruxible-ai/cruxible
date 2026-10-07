@@ -61,7 +61,6 @@ from cruxible_client.contracts.get_reads import summary_value
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
-    ProcedureArtifactV1,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import (
@@ -1538,7 +1537,7 @@ _ARTIFACT_COLUMNS: dict[str, tuple[QueryColumn, ...]] = {
         QueryColumn(
             name="runnable",
             type="enum",
-            members=("binding_required", "directly_runnable"),
+            members=("direct", "line", "unsupported"),
         ),
     ),
 }
@@ -1578,12 +1577,11 @@ def _artifact_answer(
     _refuse_engine(result)
     capped, cap_notes = _capped(result)
     contracts = CaptureContractNames(instance, coordinate)
-    runnable: dict[str, bool] = {}
+    runnable: dict[str, str] = {}
     if kind == "Procedure":
         with instance.bind_accepted_projection(coordinate) as projection:
             runnable = {
-                row.identity: row.directly_runnable
-                for row in projection.typed.procedure_inventory()
+                row.identity: row.runnable for row in projection.typed.procedure_inventory()
             }
     rows: list[dict[str, Any]] = []
     identities: list[str] = []
@@ -1606,15 +1604,11 @@ def _artifact_answer(
                 )
             rows.append(claim_type_row(info, contracts))
         else:
-            assert isinstance(source, (ProcedureArtifactV1, ProcedureArtifact))
+            assert isinstance(source, ProcedureArtifact)
             rows.append(
                 {
                     "name": source.identity.name,
-                    "runnable": (
-                        "directly_runnable"
-                        if runnable.get(source.identity.qualified)
-                        else "binding_required"
-                    ),
+                    "runnable": runnable.get(source.identity.qualified, "unsupported"),
                 }
             )
         identities.append(item.artifact.identity)

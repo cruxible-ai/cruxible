@@ -10,7 +10,7 @@ admitted-input tuple and never relabels its capture time.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -18,9 +18,7 @@ from cruxible_client.contracts.acquisition_policies import (
     AcquisitionInputDecision,
     InputAcquisitionRule,
 )
-from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import (
-    CanonicalValue,
     Sha256Value,
     normalize_canonical,
 )
@@ -117,26 +115,6 @@ class ProcedureCaptureMaterialV1(_StrictAcquisitionModel):
         if self.envelope.capture_contract_digest != self.capture_contract_digest:
             raise ValueError("Capture material names a different CaptureContract")
         return self
-
-
-@runtime_checkable
-class ProcedureSourceAcquirerProtocol(Protocol):
-    """The complete execution-time acquisition surface: attempt and dereference."""
-
-    def acquire(
-        self,
-        *,
-        node_id: str,
-        input_name: str,
-        capture_contract: ArtifactPin,
-        provider: ArtifactPin,
-        request: CanonicalValue,
-        run_id: str,
-        bound_generation: str,
-        observed_at: datetime,
-    ) -> ProcedureSourceAcquisitionResultV1: ...
-
-    def dereference(self, capture_digest_value: str) -> ProcedureCaptureMaterialV1: ...
 
 
 def capture_provenance_grade(contract: CaptureContract) -> EvidenceProvenanceGrade:
@@ -249,7 +227,6 @@ __all__ = [
     "ACQUISITION_UNAVAILABLE",
     "ProcedureAcquisitionOutcomeV1",
     "ProcedureCaptureMaterialV1",
-    "ProcedureSourceAcquirerProtocol",
     "ProcedureSourceAcquisitionResultV1",
     "apply_acquisition_result",
     "capture_provenance_grade",

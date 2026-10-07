@@ -141,6 +141,7 @@ from cruxible_core.service.evidence.evidence import (
 )
 from cruxible_core.service.procedures.procedure_runs import (
     ProcedureNotFound,
+    ProcedureRetired,
     ProcedureRunGrainRecordV1,
     ProcedureSurfaceError,
     load_playbill_procedure_run_grain,
@@ -288,6 +289,14 @@ class MeasurementActivationBasisV1:
     activations: tuple[ResolutionContractActivationV1, ...]
 
 
+def _measurement_status(
+    resolved: bool, window: Literal["before_check", "open", "closed"]
+) -> ProcedureMeasurementStatus:
+    if resolved:
+        return "resolved"
+    return {"before_check": "pending", "open": "open", "closed": "expired"}[window]  # type: ignore[return-value]
+
+
 def _accepted_procedure(
     instance: PlaybillInstance,
     *,
@@ -299,6 +308,9 @@ def _accepted_procedure(
     if content is None:
         raise ProcedureNotFound(f"{ProcedureNotFound.code}: {name}")
     procedure = parse_procedure(content, path=path)
+    if procedure.lifecycle.state == "retired":
+        # A retired Procedure is read through `get`; nothing measures or reads its standing.
+        raise ProcedureRetired(f"{ProcedureRetired.code}: {name}")
     return AcceptedProcedure(
         path=path,
         procedure=procedure,
@@ -1401,24 +1413,17 @@ def service_measure_playbill_procedure(
                 else:
                     written_now = True
                     state = _contract_state(instance, journal, stream, activation)
-            status: ProcedureMeasurementStatus = (
-                "resolved"
-                if state.latest is not None
-                else "pending"
-                if eligibility.window == "before_check"
-                else "expired"
-            )
+            status = _measurement_status(state.latest is not None, eligibility.window)
             detail: str | None = None
             reading_status: ProcedureReadingStatus = "not_requested"
             reading_summary: ProcedureReadingSummary | None = None
             if grain is not None:
                 if state.latest is None:
                     reading_status = "no_resolution"
-                    detail = (
-                        "the measurement window has not opened"
-                        if status == "pending"
-                        else "the measurement window closed with no standing resolution"
-                    )
+                    detail = {
+                        "pending": "the measurement window has not opened",
+                        "open": "the measurement window is open and nothing resolves it yet",
+                    }.get(status, "the measurement window closed with no standing resolution")
                 elif not grain.finalized:
                     reading_status = "run_not_final"
                     detail = "the run has not finalized; retry once it has"
@@ -1736,13 +1741,7 @@ def service_list_playbill_procedure_readings(
                 activation_id=activation.activation_id,
                 subject_grain=activation.subject_grain,
                 subject=activation.subject.address,
-                status=(
-                    "resolved"
-                    if state.latest is not None
-                    else "pending"
-                    if eligibility.window == "before_check"
-                    else "expired"
-                ),
+                status=_measurement_status(state.latest is not None, eligibility.window),
                 eligibility=eligibility,
                 resolution=_resolution_summary(state, written_now=False),
                 reading_count=counts.get(activation.contract_id, 0),

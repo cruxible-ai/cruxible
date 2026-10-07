@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV1
 from cruxible_client.contracts.floor import FloorManifest
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -31,13 +30,14 @@ from cruxible_core.service.floor.floor import (
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (
     PREDICATE,
+    QUERY_NAME,
     TIMESTAMP,
     accept_proposal,
     seed_claims,
     work_item_query,
 )
 from tests.core_support._support import client_material
-from tests.test_authoring.test_authoring_procedures import _slot_definition
+from tests.test_authoring.test_authoring_procedures import _payload, _triage_definition
 from tests.test_ledger.test_activation import _sign
 
 
@@ -74,9 +74,15 @@ def _instance_with_procedure(tmp_path: Path):
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     intent = coordinator.create(
         actor=actor,
-        payload=ProcedureAuthoringPayloadV1(
-            definition=_slot_definition().model_dump(mode="json", by_alias=True),
-            activation_policy="drain",
+        payload=_payload(
+            _triage_definition(
+                query={
+                    "tag": "playbill-authoring-artifact-reference-v1",
+                    "role": "query",
+                    "target": {"kind": "QueryDefinition", "name": QUERY_NAME},
+                    "resolution": "accepted_at_intent_base",
+                }
+            )
         ),
         canonical_timestamp="2026-08-21T12:00:00.000000Z",
     ).intent
@@ -252,7 +258,7 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
         "accepted_coordinate",
         "input_contract",
         "output_contract",
-        "binding_state",
+        "runnable",
         "capabilities",
         "budget",
         "hard_caps",
@@ -260,7 +266,7 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
         "track_record",
     )
     assert card.identity.qualified == "Procedure:triage"
-    assert card.binding_state == "binding_required"
+    assert card.runnable == "direct"
     assert card.capabilities.node_kinds == ("project", "state_tap")
     assert card.capabilities.authority == "observe"
     assert card.governance.lifecycle.state == "live"

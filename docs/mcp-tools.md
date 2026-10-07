@@ -290,19 +290,14 @@ exactly one may omit it.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_procedure_readiness` | Report exact binding requirements or run readiness | `READ_ONLY` |
-| `cruxible_procedure_bind` | Attach accepted input-plane bindings through a same-identity successor | `GOVERNED_WRITE` |
-| `cruxible_procedure_run` | Execute a ready Procedure -- accepted-state reads, deterministic computation, and graph-v4 `source` reads through an accepted Provider -- at an explicit coordinate and time | `READ_ONLY` |
-| `cruxible_procedure_run_status` | Read one finalized Procedure run and its receipt; for an armed run, the run actor and the receipt are withheld (`playbill-procedure-run-attribution-withheld-v1`, `playbill-procedure-run-receipt-withheld-v1`) unless the caller is an admin, the arming credential, or a credential bound to the same principal | `READ_ONLY` |
+| `cruxible_procedure_run` | Execute a directly runnable Procedure (`cruxible_get` shows `runnable: direct`) -- accepted-state reads, deterministic computation, and `source`/`call` occurrences through exactly pinned Providers -- at an explicit coordinate and time | `READ_ONLY` |
 | `cruxible_procedure_measure` | Evaluate due Procedure measurements from real evidence, persist the resolution, and credit one run's exact grain | `GOVERNED_WRITE` |
 | `cruxible_procedure_readings` | Inspect measurement standing and retained exact-grain readings (read-only, paginated) | `READ_ONLY` |
-| `cruxible_line_check` | Read trigger eligibility, exact matches, and admitted occurrences without queuing or running. | `READ_ONLY` |
-| `cruxible_line_arm` | Arm a Line forward-only: the daemon admits what it matches under the caller's credential, rechecked before each run. Repeating it unchanged returns `outcome: already_armed`. | `GOVERNED_WRITE` |
-| `cruxible_line_disarm` | Stop a Line admitting work on its own; admitted runs keep going. A stopped arm returns `outcome: already_disarmed`. | `GOVERNED_WRITE` |
-| `cruxible_line_status` | Read a Line's arm, its pending work, and why an arm stopped. | `READ_ONLY` |
-| `cruxible_line_evaluate` | Evaluate an explicit historical range into pending work; never executes. | `GOVERNED_WRITE` |
-| `cruxible_line_dispatch` | Admit retained pending occurrences under the current caller’s authority. | `READ_ONLY` |
-| `cruxible_line_run` | Trigger one due accepted Line occurrence; a Line that can propose or settle needs a mandate, an observe-only one none | `READ_ONLY` |
+| `cruxible_line_enable` | Enable a Line forward-only: its Triggers do nothing until then. The daemon admits what they match under the caller's credential, rechecked before each run, pinned to the current Line and Trigger versions. Needs governed write even for an observe-only Line; a proposing or settling Line needs a covering mandate. Repeating it unchanged returns `outcome: already_enabled`. Read it with `cruxible_get(ref="Line:NAME")`. | `GOVERNED_WRITE` |
+| `cruxible_line_disable` | Stop a Line admitting work on its own; admitted runs keep going. A stopped enablement returns `outcome: already_disabled`. | `GOVERNED_WRITE` |
+| `cruxible_line_run` | Run a Line once now as a manual occurrence under its own inputs, budgets, authority and mandate; it never consumes a Trigger. `event` is the event input for a Line whose Procedure takes one; an event its Triggers already admitted needs `repeat`. A Line that can propose or settle needs a mandate, an observe-only one none | `READ_ONLY` |
+| `cruxible_line_evaluate` | Evaluate a historical range (`since`, `until`) into pending work; never executes. `dry_run` only reports what the range makes eligible (a read, no range needed); enqueueing needs governed write. | `READ_ONLY` |
+| `cruxible_line_dispatch` | Admit retained pending occurrences under the current caller's authority, up to `limit` (default 100). | `READ_ONLY` |
 
 `procedure_run`, `line_run` and `line_dispatch` are read-tier only for targets
 that observe. A Procedure whose terminals can propose or settle, or a Line whose
@@ -371,7 +366,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 |---|---|---|
 | `cruxible_query` | Answer any question over accepted state in one call: compact (`kind` and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`, `status`, `claims`) or a query `name` with `params` (`budgets`, `receipt`); rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
 | `cruxible_query_spec` | Run one full `QueryDefinitionSpec` inline (`spec`, `limit`, `cursor`, `at`, `evaluation_time`) with the same evaluation, rows, flags and paging as `cruxible_query`; `full` profile only | `READ_ONLY` |
-| `cruxible_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue (with `arms`: the instance's Line arms by state and the stalled or stopped Lines by name, no daemon scope needed), and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types`, `queries`, `interfaces` (each with its interface digest, operation contract and implementing Providers' implementation digests), `principals`, `policies` (every live standalone or embedded governed policy), or an operational family -- `runs` (Procedure runs, newest admission first, paged by an immutable key) or `running` (only the runs still running; read one with `cruxible_get(ref="ProcedureRun:RUN-...")` for its live progress), `lines`, `captures`, `capture_contracts`, `predictions`, `mandates` -- which the map only counts under `artifacts` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
+| `cruxible_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue (with `enablements`: the instance's Line enablements by state and the stalled or stopped Lines by name, no daemon scope needed), and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types`, `queries`, `interfaces` (each with its interface digest, operation contract and implementing Providers' implementation digests), `principals`, `policies` (every live standalone or embedded governed policy), or an operational family -- `runs` (Procedure runs, newest admission first, paged by an immutable key) or `running` (only the runs still running; read one with `cruxible_get(ref="ProcedureRun:RUN-...")` for its live progress), `lines`, `captures`, `capture_contracts`, `predictions`, `mandates` -- which the map only counts under `artifacts` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
 | `cruxible_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
 | `cruxible_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible next` does | `READ_ONLY` |
 | `cruxible_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
@@ -395,7 +390,7 @@ count it for every caller. A status facet keeps its
 state either way, but drops a repair the session cannot perform and says
 `repair_hidden: true` with the same `repair_requires`. The `default` profile
 advertises neither `cruxible_prediction_settle` nor the Line tools, for example:
-a stopped Line arm still shows as `consumer_stalled`, its repair withheld with
+a stopped Line enablement still shows as `consumer_stalled`, its repair withheld with
 `because: ["profile"]`. A session that cannot author on the instance at all (an
 unbound credential, or a principal that is not configured, registered or
 active) has every writing repair withheld with `because` including

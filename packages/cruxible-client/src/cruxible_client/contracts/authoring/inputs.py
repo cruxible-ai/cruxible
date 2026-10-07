@@ -22,6 +22,8 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObject,
     AuthoringExistingClaimDisposition,
     AuthoringPayload,
+    BlueprintAuthoringPayload,
+    BlueprintInstantiation,
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,
     ClaimAuthoringPayloadV1,
@@ -35,7 +37,6 @@ from cruxible_client.contracts.authoring.models import (
     MandateConditionAuthoring,
     MandateScopeAuthoring,
     ProcedureAuthoringPayload,
-    ProcedureAuthoringPayloadV1,
     ProcedureMandateAuthoringPayload,
     ProcedureRuntimePolicyAuthoringPayload,
     QueryDefinitionAuthoringPayload,
@@ -220,6 +221,46 @@ class ProcedureInput(_StrictInputModel):
         return cast(dict[str, object], value)
 
 
+class BlueprintInput(_StrictInputModel):
+    """A Procedure skeleton: a definition whose Provider slots stay open.
+
+    Slots are referenced as ``{"kind": "slot", "slot_name": ...}`` in Provider
+    positions and declared in ``definition.pin_slots`` with the interface digest
+    they need. A Blueprint never runs; instantiate it with ``blueprint_instance``.
+    """
+
+    kind: Literal["blueprint"]
+    definition: dict[str, object]
+    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
+    retire: bool = False
+    contracts: tuple[CarriedContractInput, ...] = ()
+
+    @field_validator("definition", mode="before")
+    @classmethod
+    def _definition(cls, value: object) -> dict[str, object]:
+        if not isinstance(value, dict):
+            raise ValueError("Blueprint input definition must be an object")
+        return cast(dict[str, object], value)
+
+
+class BlueprintInstanceInput(_StrictInputModel):
+    """An ordinary Procedure made from a Blueprint: one accepted Provider per slot.
+
+    ``bindings`` maps each Blueprint slot to the name of an accepted Provider
+    implementing that slot's interface (``cruxible get Blueprint:<name>`` lists
+    the Providers that fit). The Procedure records the Blueprint and bindings.
+    """
+
+    kind: Literal["blueprint_instance"]
+    name: str
+    blueprint: str
+    bindings: dict[str, str] = Field(min_length=1)
+    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
+    #: Semantic name of the SourceAcquisitionPolicy the Procedure pins, if it reads Sources.
+    acquisition_policy: str | None = None
+    retire: bool = False
+
+
 class SubjectInput(_StrictInputModel):
     kind: Literal["subject"]
     subject: SubjectShell
@@ -303,9 +344,12 @@ class LineInput(_StrictInputModel):
     """One Line: a stable instantiation of an accepted or same-set Procedure.
 
     Lowering resolves the named Procedure and acquisition policy into exact
-    pins. A Line runs when run explicitly, or when a Trigger aimed at it fires.
-    A Line that proposes or settles also needs a live ProcedureMandate covering
-    its Procedure before it can run; an observe-only Line needs none.
+    pins. A Line runs when run explicitly (`line run`, one manual occurrence),
+    or, once it is enabled (`line enable`), when a Trigger aimed at it fires; a
+    Trigger aimed at a Line that is not enabled does nothing. Enabling needs
+    governed write even for an observe-only Line. A Line that proposes or
+    settles also needs a live ProcedureMandate covering its Procedure before it
+    can run or be enabled; an observe-only Line needs none.
     """
 
     kind: Literal["line"]
@@ -347,7 +391,10 @@ class TriggerInput(_StrictInputModel):
     name: str
     schedule: TriggerSchedule
     line_name: str | None = Field(
-        default=None, description="The Line this Trigger runs; omit when naming an action."
+        default=None,
+        description=(
+            "The Line this Trigger runs once that Line is enabled; omit when naming an action."
+        ),
     )
     action: InternalActionName | None = Field(
         default=None, description="The internal action this Trigger fires; omit for a Line."
@@ -368,6 +415,8 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     | AcquisitionPolicyInput
     | LineInput
     | TriggerInput
+    | BlueprintInput
+    | BlueprintInstanceInput
     | ProcedureInput,
     Field(discriminator="kind"),
 ]
@@ -391,6 +440,8 @@ class ChangeSetInput(_StrictInputModel):
 AuthoringInput: TypeAlias = Annotated[
     ClaimInput
     | ProcedureInput
+    | BlueprintInput
+    | BlueprintInstanceInput
     | SubjectInput
     | QueryDefinitionInput
     | ApprovalPolicyInput
@@ -660,9 +711,39 @@ def _procedure_references(
     return value
 
 
+def _blueprint_instance_payload(value: BlueprintInstanceInput) -> ProcedureAuthoringPayload:
+    return ProcedureAuthoringPayload(
+        definition=BlueprintInstantiation(
+            name=value.name, blueprint=value.blueprint, bindings=value.bindings
+        ).model_dump(mode="json"),
+        activation_policy=value.activation_policy,
+        owned_contracts=(),
+        acquisition_policy=value.acquisition_policy,
+        retire=value.retire,
+    )
+
+
+def _blueprint_payload(value: BlueprintInput) -> BlueprintAuthoringPayload:
+    procedure = _procedure_payload(
+        ProcedureInput(
+            kind="procedure",
+            definition=value.definition,
+            activation_policy=value.activation_policy,
+            retire=value.retire,
+            contracts=value.contracts,
+        )
+    )
+    return BlueprintAuthoringPayload(
+        definition=procedure.definition,
+        activation_policy=procedure.activation_policy,
+        owned_contracts=procedure.owned_contracts,
+        retire=procedure.retire,
+    )
+
+
 def _procedure_payload(
     value: ProcedureInput,
-) -> ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload:
+) -> ProcedureAuthoringPayload:
     contracts = tuple(
         sorted(
             (
@@ -691,17 +772,11 @@ def _procedure_payload(
         dict[str, object],
         _procedure_references(value.definition, contracts=by_name),
     )
-    if contracts or value.acquisition_policy is not None:
-        return ProcedureAuthoringPayload(
-            definition=definition,
-            activation_policy=value.activation_policy,
-            owned_contracts=contracts,
-            acquisition_policy=value.acquisition_policy,
-            retire=value.retire,
-        )
-    return ProcedureAuthoringPayloadV1(
+    return ProcedureAuthoringPayload(
         definition=definition,
         activation_policy=value.activation_policy,
+        owned_contracts=contracts,
+        acquisition_policy=value.acquisition_policy,
         retire=value.retire,
     )
 
@@ -750,6 +825,10 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
         )
     if isinstance(member, ProcedureInput):
         return _procedure_payload(member)
+    if isinstance(member, BlueprintInput):
+        return _blueprint_payload(member)
+    if isinstance(member, BlueprintInstanceInput):
+        return _blueprint_instance_payload(member)
     if isinstance(member, SubjectInput):
         return SubjectAuthoringPayload(subject=member.subject)
     if isinstance(member, QueryDefinitionInput):
@@ -775,6 +854,10 @@ def lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
         return _claim_payload(value)
     if isinstance(value, ProcedureInput):
         return _procedure_payload(value)
+    if isinstance(value, BlueprintInput):
+        return _blueprint_payload(value)
+    if isinstance(value, BlueprintInstanceInput):
+        return _blueprint_instance_payload(value)
     if isinstance(value, SubjectInput):
         return SubjectAuthoringPayload(subject=value.subject)
     if isinstance(value, QueryDefinitionInput):
@@ -836,6 +919,8 @@ __all__ = [
     "LineInput",
     "TriggerInput",
     "LiteralObjectInput",
+    "BlueprintInput",
+    "BlueprintInstanceInput",
     "ProcedureInput",
     "ProcedureMandateInput",
     "QueryDefinitionInput",

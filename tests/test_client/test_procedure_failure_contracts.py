@@ -32,9 +32,9 @@ def _coordinate() -> ProcedureJournalCoordinate:
 def test_terminal_union_round_trips_all_four_classes() -> None:
     terminals = (
         ProcedureAdmissionRefusal(
-            code="binding_required",
-            message="Bindings are incomplete.",
-            details={"required_slots": ["query"]},
+            code="unsupported_node",
+            message="This Procedure runs only as a Line.",
+            details={"runnable": "line", "unsupported_nodes": [{"node_id": "settle"}]},
         ),
         ProcedureNodeRefusal(
             code="guard_refused",
@@ -77,7 +77,7 @@ def test_terminal_contracts_are_closed_and_details_are_canonical() -> None:
 
     try:
         ProcedureAdmissionRefusal(
-            code="binding_required",
+            code="unsupported_node",
             message="bad",
             details={"value": 1.5},
         )

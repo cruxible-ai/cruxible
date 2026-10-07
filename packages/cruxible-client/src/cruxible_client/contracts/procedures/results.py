@@ -34,7 +34,6 @@ from cruxible_client.contracts.workspace_file import (
 )
 
 ProcedureAdmissionRefusalCode: TypeAlias = Literal[
-    "binding_required",
     "unsupported_node",
     "not_current",
     "artifact_binding_mismatch",
@@ -43,7 +42,6 @@ ProcedureAdmissionRefusalCode: TypeAlias = Literal[
     "state_tap_refused",
     "replay_material_mismatch",
     "procedure_runtime_policy_absent",
-    "provider_explicit_implementation_required",
     "provider_replay_receipt_required",
     "exhaust_binding_carrier_required",
     "source_acquisition_policy_required",
@@ -64,6 +62,7 @@ ProcedureAdmissionRefusalCode: TypeAlias = Literal[
     "trigger_capture_not_yet_observed",
     "trigger_event_precedes_acceptance",
     "line_binding_superseded",
+    "line_trigger_mismatch",
 ]
 #: Codes retained runs were refused with before authority was served as verbs.
 #: A run's journal keeps the bytes it wrote; reading it serves today's code.
@@ -432,7 +431,7 @@ class ProcedureRunAttributionWithheld(_StrictResultModel):
     operation_id: str
     request_id: str | None = None
     recorded_time: datetime
-    withheld: Literal["names_the_arming_credential"] = "names_the_arming_credential"
+    withheld: Literal["names_the_enabling_credential"] = "names_the_enabling_credential"
 
     @field_validator("recorded_time")
     @classmethod
@@ -459,15 +458,7 @@ class ProcedureRunReceiptWithheld(_StrictResultModel):
     tag: Literal["playbill-procedure-run-receipt-withheld-v1"] = (
         "playbill-procedure-run-receipt-withheld-v1"
     )
-    withheld: Literal["names_the_arming_credential"] = "names_the_arming_credential"
-
-
-class ProcedurePendingSuccessor(_StrictResultModel):
-    tag: Literal["playbill-procedure-pending-successor-v1"] = (
-        "playbill-procedure-pending-successor-v1"
-    )
-    proposal_id: str
-    pending_successor_digest: str
+    withheld: Literal["names_the_enabling_credential"] = "names_the_enabling_credential"
 
 
 class ProcedureChildInvocation(_StrictResultModel):
@@ -1362,7 +1353,6 @@ __all__ = [
     "ProcedureNodeRefusal",
     "ProcedureOperationalFailureCode",
     "ProcedureOperationalFailure",
-    "ProcedurePendingSuccessor",
     "ProviderBucketClassificationPlan",
     "ProcedureProviderBindingV1",
     "ProcedureProviderBinding",

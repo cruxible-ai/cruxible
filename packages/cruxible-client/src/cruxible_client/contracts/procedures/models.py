@@ -1,8 +1,8 @@
-"""Frozen graph-format-v3 Procedure grammar.
+"""The Procedure graph grammar (graph format 6).
 
 This packaged contract module owns the live Cruxible Procedure graph profile.
-Its dependencies are exact Cruxible pins or interface-typed LineSpec slots;
-nothing here performs a mutable config or registry lookup.
+Its dependencies are exact Cruxible pins or, on a Blueprint only, interface-typed
+slots; nothing here performs a mutable config or registry lookup.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.measurements import (
     ProcedureMeasurementDeclaration,
 )
-from cruxible_client.contracts.procedures.source_program import ProcedureSource
+from cruxible_client.contracts.procedures.source_program import ProcedureSourceProgram
 from cruxible_client.contracts.query.grammar import QueryBudgets
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -127,7 +127,7 @@ PredicateScalar = None | bool | int | str
 
 
 class PredicateOperand(_StrictProcedureModel):
-    """One operand in the closed v3 predicate grammar."""
+    """One operand in the closed predicate grammar."""
 
     tag: Literal["playbill-predicate-operand-v1"] = "playbill-predicate-operand-v1"
     kind: Literal["literal", "input", "step", "parameter", "count", "exists", "truncated"]
@@ -240,32 +240,21 @@ class GuardPredicate(_StrictProcedureModel):
         )
 
 
-class StateTapNodeV3(_StrictProcedureModel):
+class StateTapNode(_StrictProcedureModel):
+    """Request-bound query with a typed view over the retained query result."""
+
     kind: Literal["state_tap"] = "state_tap"
     node_id: str
     query: ProcedurePinBinding
     parameters: object = Field(default_factory=dict)
     as_: str = Field(alias="as")
     next: str | None = None
+    view: Literal["typed_query"] = "typed_query"
+    budgets: QueryBudgets | None = None
 
     @field_validator("parameters", mode="before")
     @classmethod
     def _parameters(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-
-class SourceNodeV3(_StrictProcedureModel):
-    kind: Literal["source"] = "source"
-    node_id: str
-    capture_contract: ProcedurePinBinding
-    provider: ProcedurePinBinding
-    request: object
-    as_: str = Field(alias="as")
-    next: str | None = None
-
-    @field_validator("request", mode="before")
-    @classmethod
-    def _request(cls, value: object) -> object:
         return normalize_canonical(value)
 
 
@@ -321,26 +310,10 @@ class ExhaustTapNode(_StrictProcedureModel):
         return _canonical_identifier(value, _NAME_RE, label="exhaust journal identity")
 
 
-class ProviderNodeV3(_StrictProcedureModel):
-    kind: Literal["provider"] = "provider"
-    node_id: str
-    provider: ProcedurePinBinding
-    contract_in: ProcedurePinBinding
-    contract_out: ProcedurePinBinding
-    environment: ProcedurePinBinding
-    effect_policy: ProcedurePinBinding | None = None
-    input: object
-    as_: str = Field(alias="as")
-    next: str | None = None
+class CallNode(_StrictProcedureModel):
+    """A contracted call; Provider names its implementation, not a node category."""
 
-    @field_validator("input", mode="before")
-    @classmethod
-    def _input(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-
-class ProviderNode(_StrictProcedureModel):
-    kind: Literal["provider"] = "provider"
+    kind: Literal["call"] = "call"
     node_id: str
     provider: ProcedurePinBinding
     interface: ArtifactPin
@@ -363,15 +336,9 @@ class ProviderNode(_StrictProcedureModel):
         return normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _provider_binding(self) -> "ProviderNode":
+    def _provider_binding(self) -> "CallNode":
         _validate_explicit_provider_binding(self.provider, self.implementation_digest)
         return self
-
-
-class CallNode(ProviderNode):
-    """A contracted call; Provider names its implementation, not a node category."""
-
-    kind: Literal["call"] = "call"  # type: ignore[assignment]
 
 
 TransformKind = Literal[
@@ -526,63 +493,11 @@ class ProjectNode(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
-class RepeatBodyNodeV3(_StrictProcedureModel):
-    """One deterministic nested operation in a bounded repeat container."""
+class RepeatBodyNode(_StrictProcedureModel):
+    """One bounded repeat operation with occurrence-local explicit Provider pins."""
 
     node_id: str
-    operation: Literal["provider", "transform"]
-    transform_kind: TransformKind | None = None
-    provider: ProcedurePinBinding | None = None
-    contract_in: ProcedurePinBinding
-    contract_out: ProcedurePinBinding
-    environment: ProcedurePinBinding | None = None
-    spec: ProcedureTransformSpec | object
-    as_: str = Field(alias="as")
-
-    @field_validator("spec", mode="before")
-    @classmethod
-    def _spec(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-    @model_validator(mode="after")
-    def _operation_shape(self) -> "RepeatBodyNodeV3":
-        provider_fields = self.provider is not None and self.environment is not None
-        if (self.operation == "provider") != provider_fields:
-            raise ValueError("repeat provider operations require provider and environment pins")
-        if self.operation == "transform":
-            if self.transform_kind is None or not isinstance(self.spec, BaseModel):
-                raise ValueError("repeat transform operations require a typed transform spec")
-            if getattr(self.spec, "tag", None) != _TRANSFORM_SPEC_TAGS[self.transform_kind]:
-                raise ValueError("repeat transform spec tag does not match transform_kind")
-        elif self.transform_kind is not None:
-            raise ValueError("repeat provider operations cannot declare transform_kind")
-        return self
-
-
-class RepeatNodeV3(_StrictProcedureModel):
-    kind: Literal["repeat"] = "repeat"
-    node_id: str
-    max_attempts: int = Field(ge=1, le=2**31 - 1)
-    body: tuple[RepeatBodyNodeV3, ...]
-    until: GuardPredicate
-    as_: str = Field(alias="as")
-    next: str | None = None
-
-    @field_validator("body")
-    @classmethod
-    def _body(cls, value: tuple[RepeatBodyNodeV3, ...]) -> tuple[RepeatBodyNodeV3, ...]:
-        ids = tuple(item.node_id for item in value)
-        aliases = tuple(item.as_ for item in value)
-        if not value or len(set(ids)) != len(ids) or len(set(aliases)) != len(aliases):
-            raise ValueError("repeat body requires nonempty, unique node ids and aliases")
-        return value
-
-
-class RepeatBodyNodeV4(_StrictProcedureModel):
-    """Graph-v4 repeat operation with occurrence-local explicit Provider pins."""
-
-    node_id: str
-    operation: Literal["provider", "transform"]
+    operation: Literal["call", "transform"]
     transform_kind: TransformKind | None = None
     provider: ProcedurePinBinding | None = None
     interface: ArtifactPin | None = None
@@ -607,8 +522,8 @@ class RepeatBodyNodeV4(_StrictProcedureModel):
         return normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _operation_shape(self) -> "RepeatBodyNodeV4":
-        if self.operation in {"provider", "call"}:
+    def _operation_shape(self) -> "RepeatBodyNode":
+        if self.operation == "call":
             if self.provider is None or self.interface is None or self.interface_digest is None:
                 raise ValueError(
                     "repeat provider operations require provider and interface pin/digest"
@@ -635,18 +550,18 @@ class RepeatBodyNodeV4(_StrictProcedureModel):
         return self
 
 
-class RepeatNodeV4(_StrictProcedureModel):
+class RepeatNode(_StrictProcedureModel):
     kind: Literal["repeat"] = "repeat"
     node_id: str
     max_attempts: int = Field(ge=1, le=2**31 - 1)
-    body: tuple[RepeatBodyNodeV4, ...]
+    body: tuple[RepeatBodyNode, ...]
     until: GuardPredicate
     as_: str = Field(alias="as")
     next: str | None = None
 
     @field_validator("body")
     @classmethod
-    def _body(cls, value: tuple[RepeatBodyNodeV4, ...]) -> tuple[RepeatBodyNodeV4, ...]:
+    def _body(cls, value: tuple[RepeatBodyNode, ...]) -> tuple[RepeatBodyNode, ...]:
         ids = tuple(item.node_id for item in value)
         aliases = tuple(item.as_ for item in value)
         if not value or len(set(ids)) != len(ids) or len(set(aliases)) != len(aliases):
@@ -654,24 +569,15 @@ class RepeatNodeV4(_StrictProcedureModel):
         return value
 
 
-class RepeatBodyNode(RepeatBodyNodeV4):
-    operation: Literal["call", "transform"]  # type: ignore[assignment]
-
-
-class RepeatNode(RepeatNodeV4):
-    body: tuple[RepeatBodyNode, ...]
-
-
-class CaptureEgressNodeV3(_StrictProcedureModel):
+class CaptureEgressNode(_StrictProcedureModel):
     kind: Literal["emit_capture"] = "emit_capture"
     node_id: str
     capture_contract: ProcedurePinBinding
     input: object
+    result: object
 
-    @field_validator("input", mode="before")
-    @classmethod
-    def _input(cls, value: object) -> object:
-        return normalize_canonical(value)
+    _input = field_validator("input", mode="before")(normalize_canonical)
+    _result = field_validator("result", mode="before")(normalize_canonical)
 
 
 class InboxEgressNode(_StrictProcedureModel):
@@ -685,23 +591,56 @@ class InboxEgressNode(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
-class ProposeChangeSetNodeV3(_StrictProcedureModel):
-    """Terminal rung-2 output into proposal receive; it has no activation field."""
+class ProposalItemsFanOut(_StrictProcedureModel):
+    """Candidates from data: each element of ``items`` is one Claim proposal item.
+
+    ``items`` resolves at run time (typically ``$steps.<alias>.items``, a list a
+    provider, Source or transform produced); every element becomes one item of
+    the one proposal, with its own dependency closure and evidence, exactly as
+    the capture and inbox terminals fan out ``{"items": ...}``.
+    """
+
+    items: object
+
+    _items = field_validator("items", mode="before")(normalize_canonical)
+
+
+class ProposeChangeSetNode(_StrictProcedureModel):
+    """Terminal output into proposal receive; it has no activation field.
+
+    ``candidate_templates`` is a fixed, non-empty list of item templates, or
+    ``{"items": ...}`` to fan out over data (:class:`ProposalItemsFanOut`).
+    """
 
     kind: Literal["propose_change_set"] = "propose_change_set"
     node_id: str
-    candidate_templates: tuple[object, ...]
+    candidate_templates: tuple[object, ...] | ProposalItemsFanOut
+    claim_types: tuple[ArtifactPin, ...] = ()
+    result: object
+
+    _result = field_validator("result", mode="before")(normalize_canonical)
 
     @field_validator("candidate_templates", mode="before")
     @classmethod
     def _templates(cls, value: object) -> object:
+        if isinstance(value, ProposalItemsFanOut):
+            return value
+        if isinstance(value, dict):
+            if set(value) != {"items"}:
+                raise ValueError("a propose_change_set fan-out is exactly {'items': <reference>}")
+            return ProposalItemsFanOut(items=value["items"])
         if not isinstance(value, (list, tuple)) or not value:
             raise ValueError("propose_change_set requires at least one candidate template")
         return tuple(normalize_canonical(item) for item in value)
 
 
-class SettleChangeSetNodeV3(ProposeChangeSetNodeV3):
-    """Terminal settle for graph-v4/v5 Procedures; see SettleChangeSetNode."""
+class SettleChangeSetNode(ProposeChangeSetNode):
+    """Terminal settle: the proposal terminal's Claims, settled under delegated authority.
+
+    It carries no mandate: Core selects the one accepted settle ProcedureMandate
+    that covers the change, evaluates its condition, and falls back as that
+    mandate declares. Compiler revision 31.
+    """
 
     kind: Literal["settle_change_set"] = "settle_change_set"  # type: ignore[assignment]
 
@@ -713,56 +652,6 @@ class HaltNode(_StrictProcedureModel):
     node_id: str
     reason: str | None = None
 
-
-ProcedureNodeV3 = Annotated[
-    StateTapNodeV3
-    | SourceNodeV3
-    | ExhaustTapNode
-    | ProviderNodeV3
-    | TransformNode
-    | GuardNode
-    | ProjectNode
-    | RepeatNodeV3
-    | CaptureEgressNodeV3
-    | InboxEgressNode
-    | ProposeChangeSetNodeV3
-    | HaltNode,
-    Field(discriminator="kind"),
-]
-
-ProcedureNodeV4 = Annotated[
-    StateTapNodeV3
-    | SourceNode
-    | ExhaustTapNode
-    | ProviderNode
-    | TransformNode
-    | GuardNode
-    | ProjectNode
-    | RepeatNodeV4
-    | CaptureEgressNodeV3
-    | InboxEgressNode
-    | ProposeChangeSetNodeV3
-    | SettleChangeSetNodeV3
-    | HaltNode,
-    Field(discriminator="kind"),
-]
-
-ProcedureNodeV5 = Annotated[
-    StateTapNodeV3
-    | SourceNode
-    | ExhaustTapNode
-    | CallNode
-    | TransformNode
-    | GuardNode
-    | ProjectNode
-    | RepeatNode
-    | CaptureEgressNodeV3
-    | InboxEgressNode
-    | ProposeChangeSetNodeV3
-    | SettleChangeSetNodeV3
-    | HaltNode,
-    Field(discriminator="kind"),
-]
 
 TERMINAL_REQUIRED_RUNGS = {
     "emit_capture": 0,
@@ -812,270 +701,6 @@ def derived_terminal_capability(
     if level > 3:
         raise ValueError("a Procedure terminal requires an unknown authority level")
     return cast(Literal[1, 2, 3], level)
-
-
-class ProcedureDefinitionV3(_StrictProcedureModel):
-    """One complete graph-format-v3 definition; no mutable-core references."""
-
-    graph_format: Literal[3] = 3
-    name: str
-    description: str | None = None
-    contract_in: ProcedurePinBinding
-    contract_out: ProcedurePinBinding
-    parameter_contract: ProcedurePinBinding | None = None
-    nodes: tuple[ProcedureNodeV3, ...]
-    returns: str
-    pin_slots: tuple[ProcedurePinSlot, ...] = ()
-    measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
-    budget: ProcedureBudget
-    hard_caps: ProcedureHardCaps
-    terminal_capability: Literal[1, 2, 3]
-    annotations: object = Field(default_factory=dict)
-
-    @field_validator("name")
-    @classmethod
-    def _name(cls, value: str) -> str:
-        return _canonical_identifier(value, _NAME_RE, label="Procedure name")
-
-    @field_validator("returns")
-    @classmethod
-    def _returns(cls, value: str) -> str:
-        return _canonical_identifier(value, _ALIAS_RE, label="Procedure returns")
-
-    @field_validator("pin_slots")
-    @classmethod
-    def _slots(cls, value: tuple[ProcedurePinSlot, ...]) -> tuple[ProcedurePinSlot, ...]:
-        names = tuple(item.slot_name for item in value)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Procedure pin slots must be sorted and unique by slot_name")
-        return value
-
-    @field_validator("measurements")
-    @classmethod
-    def _measurements(
-        cls,
-        value: tuple[ProcedureMeasurementDeclaration, ...],
-    ) -> tuple[ProcedureMeasurementDeclaration, ...]:
-        names = tuple(item.name for item in value)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("M3: Procedure measurements must be sorted and unique by name")
-        return value
-
-    @field_validator("annotations", mode="before")
-    @classmethod
-    def _annotations(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-    def _validate_return_alias(self, aliases: tuple[str, ...]) -> None:
-        if self.returns not in aliases:
-            raise ValueError("Procedure returns must name one declared output alias")
-
-    @model_validator(mode="after")
-    def _basic_shape(self) -> "ProcedureDefinitionV3":
-        if not self.nodes:
-            raise ValueError("Procedure definition requires at least one node")
-        node_ids = tuple(node.node_id for node in self.nodes)
-        aliases = tuple(
-            node.as_ for node in self.nodes if hasattr(node, "as_") and node.as_ is not None
-        )
-        for node_id in node_ids:
-            _canonical_identifier(node_id, _NODE_ID_RE, label="Procedure node_id")
-        for alias in aliases:
-            _canonical_identifier(alias, _ALIAS_RE, label="Procedure output alias")
-        if len(set(node_ids)) != len(node_ids):
-            raise ValueError("Procedure node ids must be unique")
-        if len(set(aliases)) != len(aliases):
-            raise ValueError("Procedure output aliases must be unique")
-        self._validate_return_alias(aliases)
-        if self.budget.wall_clock.microseconds > self.hard_caps.max_wall_clock.microseconds:
-            raise ValueError("Procedure budget exceeds its wall-clock hard cap")
-        if self.budget.max_provider_calls > self.hard_caps.max_provider_calls:
-            raise ValueError("Procedure budget exceeds its provider-call hard cap")
-        if (
-            self.budget.max_result_bytes is not None
-            and self.hard_caps.max_result_bytes is not None
-            and self.budget.max_result_bytes > self.hard_caps.max_result_bytes
-        ):
-            raise ValueError("Procedure result budget exceeds hard caps")
-        if self.budget.max_capture_bytes > self.hard_caps.max_capture_bytes:
-            raise ValueError("Procedure budget exceeds its capture-byte hard cap")
-        if self.budget.max_items is not None and self.budget.max_items > self.hard_caps.max_items:
-            raise ValueError("Procedure budget exceeds its item hard cap")
-        if any(
-            isinstance(node, RepeatNodeV3)
-            and node.max_attempts > self.hard_caps.max_repeat_attempts
-            for node in self.nodes
-        ):
-            raise ValueError("Procedure repeat exceeds its repeat-attempt hard cap")
-        # Import lazily so the model grammar does not depend on static-analysis
-        # modules while its own classes are still being defined.
-        from cruxible_client.contracts.procedures.graph import analyze_procedure_v3
-        from cruxible_client.contracts.procedures.pin_expectations import (
-            validate_procedure_pin_expectations,
-        )
-
-        validate_procedure_pin_expectations(self)
-        graph = analyze_procedure_v3(self)
-        for measurement in self.measurements:
-            if measurement.subject_grain == "procedure_unit":
-                continue
-            measurement_node_id = measurement.node_id
-            if measurement_node_id is None:  # pragma: no cover - declaration model invariant
-                raise ValueError("M1: non-unit measurement requires node_id")
-            if measurement_node_id not in graph.kinds:
-                raise ValueError(
-                    f"M1: measurement node_id {measurement_node_id!r} does not name "
-                    "a node in this graph-v3 definition"
-                )
-            if measurement.subject_grain != "arm":
-                continue
-            from_node_id = measurement.from_node_id
-            arm_label = measurement.arm_label
-            if from_node_id is None or arm_label is None:  # pragma: no cover - model invariant
-                raise ValueError("M2: arm measurement requires complete arm coordinates")
-            successor = graph.edges.get(from_node_id, {}).get(arm_label)
-            if successor != measurement_node_id:
-                raise ValueError(
-                    f"M2: measurement arm {from_node_id!r} "
-                    f"{arm_label!r} does not target {measurement_node_id!r}"
-                )
-        return self
-
-
-class ProcedureDefinitionV4(_StrictProcedureModel):
-    """Graph-format-v4 definition with explicit Provider implementation closure."""
-
-    graph_format: Literal[4] = 4
-    name: str
-    description: str | None = None
-    contract_in: ProcedurePinBinding
-    contract_out: ProcedurePinBinding
-    parameter_contract: ProcedurePinBinding | None = None
-    nodes: tuple[ProcedureNodeV4, ...]
-    returns: str
-    pin_slots: tuple[ProcedurePinSlot, ...] = ()
-    measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
-    budget: ProcedureBudget
-    hard_caps: ProcedureHardCaps
-    terminal_capability: Literal[1, 2, 3]
-    annotations: object = Field(default_factory=dict)
-
-    @field_validator("name")
-    @classmethod
-    def _name(cls, value: str) -> str:
-        return _canonical_identifier(value, _NAME_RE, label="Procedure name")
-
-    @field_validator("returns")
-    @classmethod
-    def _returns(cls, value: str) -> str:
-        return _canonical_identifier(value, _ALIAS_RE, label="Procedure returns")
-
-    @field_validator("pin_slots")
-    @classmethod
-    def _slots(cls, value: tuple[ProcedurePinSlot, ...]) -> tuple[ProcedurePinSlot, ...]:
-        names = tuple(item.slot_name for item in value)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Procedure pin slots must be sorted and unique by slot_name")
-        return value
-
-    @field_validator("measurements")
-    @classmethod
-    def _measurements(
-        cls,
-        value: tuple[ProcedureMeasurementDeclaration, ...],
-    ) -> tuple[ProcedureMeasurementDeclaration, ...]:
-        names = tuple(item.name for item in value)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("M3: Procedure measurements must be sorted and unique by name")
-        return value
-
-    @field_validator("annotations", mode="before")
-    @classmethod
-    def _annotations(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-    def _validate_return_alias(self, aliases: tuple[str, ...]) -> None:
-        if self.returns not in aliases:
-            raise ValueError("Procedure returns must name one declared output alias")
-
-    @model_validator(mode="after")
-    def _basic_shape(self) -> "ProcedureDefinitionV4":
-        if not self.nodes:
-            raise ValueError("Procedure definition requires at least one node")
-        node_ids = tuple(node.node_id for node in self.nodes)
-        aliases = tuple(
-            node.as_ for node in self.nodes if hasattr(node, "as_") and node.as_ is not None
-        )
-        for node_id in node_ids:
-            _canonical_identifier(node_id, _NODE_ID_RE, label="Procedure node_id")
-        for alias in aliases:
-            _canonical_identifier(alias, _ALIAS_RE, label="Procedure output alias")
-        if len(set(node_ids)) != len(node_ids):
-            raise ValueError("Procedure node ids must be unique")
-        if len(set(aliases)) != len(aliases):
-            raise ValueError("Procedure output aliases must be unique")
-        self._validate_return_alias(aliases)
-        if self.budget.wall_clock.microseconds > self.hard_caps.max_wall_clock.microseconds:
-            raise ValueError("Procedure budget exceeds its wall-clock hard cap")
-        if self.budget.max_provider_calls > self.hard_caps.max_provider_calls:
-            raise ValueError("Procedure budget exceeds its provider-call hard cap")
-        if (
-            self.budget.max_result_bytes is not None
-            and self.hard_caps.max_result_bytes is not None
-            and self.budget.max_result_bytes > self.hard_caps.max_result_bytes
-        ):
-            raise ValueError("Procedure result budget exceeds hard caps")
-        if self.budget.max_capture_bytes > self.hard_caps.max_capture_bytes:
-            raise ValueError("Procedure budget exceeds its capture-byte hard cap")
-        if self.budget.max_items is not None and self.budget.max_items > self.hard_caps.max_items:
-            raise ValueError("Procedure budget exceeds its item hard cap")
-        if any(
-            isinstance(node, RepeatNodeV4)
-            and node.max_attempts > self.hard_caps.max_repeat_attempts
-            for node in self.nodes
-        ):
-            raise ValueError("Procedure repeat exceeds its repeat-attempt hard cap")
-        from cruxible_client.contracts.procedures.graph import analyze_procedure_v4
-        from cruxible_client.contracts.procedures.pin_expectations import (
-            validate_procedure_pin_expectations,
-        )
-
-        validate_procedure_pin_expectations(self)
-        graph = analyze_procedure_v4(self)
-        for measurement in self.measurements:
-            if measurement.subject_grain == "procedure_unit":
-                continue
-            measurement_node_id = measurement.node_id
-            if measurement_node_id is None:  # pragma: no cover - declaration invariant
-                raise ValueError("M1: non-unit measurement requires node_id")
-            if measurement_node_id not in graph.kinds:
-                raise ValueError(
-                    f"M1: measurement node_id {measurement_node_id!r} does not name "
-                    "a node in this graph-v4 definition"
-                )
-            if measurement.subject_grain != "arm":
-                continue
-            from_node_id = measurement.from_node_id
-            arm_label = measurement.arm_label
-            if from_node_id is None or arm_label is None:  # pragma: no cover
-                raise ValueError("M2: arm measurement requires complete arm coordinates")
-            successor = graph.edges.get(from_node_id, {}).get(arm_label)
-            if successor != measurement_node_id:
-                raise ValueError(
-                    f"M2: measurement arm {from_node_id!r} "
-                    f"{arm_label!r} does not target {measurement_node_id!r}"
-                )
-        return self
-
-
-class ProcedureDefinitionV5(ProcedureDefinitionV4):
-    """Current graph grammar with call nodes and checked interface contracts.
-
-    V3/V4 remain frozen parsers for retained artifacts and receipts.
-    """
-
-    graph_format: Literal[5] = 5  # type: ignore[assignment]
-    nodes: tuple[ProcedureNodeV5, ...]
 
 
 class SelectNode(_StrictProcedureModel):
@@ -1132,37 +757,6 @@ class ClaimTapNode(_StrictProcedureModel):
         return self
 
 
-class StateTapNode(StateTapNodeV3):
-    """Request-bound query with a typed view over the retained query result."""
-
-    view: Literal["typed_query"] = "typed_query"
-    budgets: QueryBudgets | None = None
-
-
-class CaptureEgressNode(CaptureEgressNodeV3):
-    result: object
-
-    _result = field_validator("result", mode="before")(normalize_canonical)
-
-
-class ProposeChangeSetNode(ProposeChangeSetNodeV3):
-    claim_types: tuple[ArtifactPin, ...] = ()
-    result: object
-
-    _result = field_validator("result", mode="before")(normalize_canonical)
-
-
-class SettleChangeSetNode(ProposeChangeSetNode):
-    """Terminal settle: the proposal terminal's Claims, settled under delegated authority.
-
-    It carries no mandate: Core selects the one accepted settle ProcedureMandate
-    that covers the change, evaluates its condition, and falls back as that
-    mandate declares. Compiler revision 31.
-    """
-
-    kind: Literal["settle_change_set"] = "settle_change_set"  # type: ignore[assignment]
-
-
 class InvokeNode(_StrictProcedureModel):
     """A call to an exact accepted Procedure under the enclosing run's limits."""
 
@@ -1198,43 +792,167 @@ ProcedureNode = Annotated[
     Field(discriminator="kind"),
 ]
 
+#: Terminals a graph may end in; egress nodes are the ones that act outward.
+EgressNode: TypeAlias = CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode
 
-class ProcedureDefinition(ProcedureDefinitionV5):
-    """Source-language graph with explicit value joins and typed return paths."""
 
-    graph_format: Literal[6] = 6  # type: ignore[assignment]
-    nodes: tuple[ProcedureNode, ...]  # type: ignore[assignment]
-    source: ProcedureSource | None = None
-    returns: str | None = None  # type: ignore[assignment]
+class ProcedureDefinition(_StrictProcedureModel):
+    """The one Procedure graph format (6): explicit value joins and typed return paths.
+
+    Slots (``pin_slots`` plus slot references in node pins) are interface-typed
+    binding points. Only a Blueprint may leave them open; an accepted Procedure
+    pins every Provider exactly.
+    """
+
+    graph_format: Literal[6] = 6
+    name: str
+    description: str | None = None
+    contract_in: ProcedurePinBinding
+    contract_out: ProcedurePinBinding
+    parameter_contract: ProcedurePinBinding | None = None
+    nodes: tuple[ProcedureNode, ...]
+    returns: str | None = None
+    pin_slots: tuple[ProcedurePinSlot, ...] = ()
+    measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
+    terminal_capability: Literal[1, 2, 3]
+    annotations: object = Field(default_factory=dict)
+    source: ProcedureSourceProgram | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        return _canonical_identifier(value, _NAME_RE, label="Procedure name")
 
     @field_validator("returns")
     @classmethod
-    def _returns(cls, value: str | None) -> str | None:  # type: ignore[override]
+    def _returns(cls, value: str | None) -> str | None:
         return (
             None
             if value is None
             else _canonical_identifier(value, _ALIAS_RE, label="Procedure returns")
         )
 
-    def _validate_return_alias(self, aliases: tuple[str, ...]) -> None:
-        # Frozen source-v1 retains its historical display-only alias. Source-v2
-        # returns through explicit terminal nodes, never one global alias.
-        if self.source is not None and self.source.rules == "cruxible.procedure-source.v2":
-            if self.returns is not None:
-                raise ValueError("Source-v2 uses explicit return paths, not a return alias")
+    @field_validator("pin_slots")
+    @classmethod
+    def _slots(cls, value: tuple[ProcedurePinSlot, ...]) -> tuple[ProcedurePinSlot, ...]:
+        names = tuple(item.slot_name for item in value)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("Procedure pin slots must be sorted and unique by slot_name")
+        return value
 
+    @field_validator("measurements")
+    @classmethod
+    def _measurements(
+        cls,
+        value: tuple[ProcedureMeasurementDeclaration, ...],
+    ) -> tuple[ProcedureMeasurementDeclaration, ...]:
+        names = tuple(item.name for item in value)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("M3: Procedure measurements must be sorted and unique by name")
+        return value
 
-ProcedureNodeAny: TypeAlias = ProcedureNodeV3 | ProcedureNodeV4 | ProcedureNodeV5 | ProcedureNode
+    @field_validator("annotations", mode="before")
+    @classmethod
+    def _annotations(cls, value: object) -> object:
+        return normalize_canonical(value)
 
+    @model_validator(mode="after")
+    def _basic_shape(self) -> "ProcedureDefinition":
+        if not self.nodes:
+            raise ValueError("Procedure definition requires at least one node")
+        node_ids = tuple(node.node_id for node in self.nodes)
+        aliases = tuple(
+            node.as_ for node in self.nodes if hasattr(node, "as_") and node.as_ is not None
+        )
+        for node_id in node_ids:
+            _canonical_identifier(node_id, _NODE_ID_RE, label="Procedure node_id")
+        for alias in aliases:
+            _canonical_identifier(alias, _ALIAS_RE, label="Procedure output alias")
+        if len(set(node_ids)) != len(node_ids):
+            raise ValueError("Procedure node ids must be unique")
+        if len(set(aliases)) != len(aliases):
+            raise ValueError("Procedure output aliases must be unique")
+        # Source-v2 returns through explicit terminal nodes, never one global
+        # alias; source-v1 retains its display-only alias.
+        if (
+            self.source is not None
+            and self.source.rules == "cruxible.procedure-source.v2"
+            and self.returns is not None
+        ):
+            raise ValueError("Source-v2 uses explicit return paths, not a return alias")
+        if self.budget.wall_clock.microseconds > self.hard_caps.max_wall_clock.microseconds:
+            raise ValueError("Procedure budget exceeds its wall-clock hard cap")
+        if self.budget.max_provider_calls > self.hard_caps.max_provider_calls:
+            raise ValueError("Procedure budget exceeds its provider-call hard cap")
+        if (
+            self.budget.max_result_bytes is not None
+            and self.hard_caps.max_result_bytes is not None
+            and self.budget.max_result_bytes > self.hard_caps.max_result_bytes
+        ):
+            raise ValueError("Procedure result budget exceeds hard caps")
+        if self.budget.max_capture_bytes > self.hard_caps.max_capture_bytes:
+            raise ValueError("Procedure budget exceeds its capture-byte hard cap")
+        if self.budget.max_items is not None and self.budget.max_items > self.hard_caps.max_items:
+            raise ValueError("Procedure budget exceeds its item hard cap")
+        if any(
+            isinstance(node, RepeatNode) and node.max_attempts > self.hard_caps.max_repeat_attempts
+            for node in self.nodes
+        ):
+            raise ValueError("Procedure repeat exceeds its repeat-attempt hard cap")
+        # Import lazily so the model grammar does not depend on static-analysis
+        # modules while its own classes are still being defined.
+        from cruxible_client.contracts.procedures.graph import analyze_procedure
+        from cruxible_client.contracts.procedures.pin_expectations import (
+            validate_procedure_pin_expectations,
+        )
 
-ProcedureDefinitionAny: TypeAlias = Annotated[
-    ProcedureDefinitionV3 | ProcedureDefinitionV4 | ProcedureDefinitionV5 | ProcedureDefinition,
-    Field(discriminator="graph_format"),
-]
+        validate_procedure_pin_expectations(self)
+        graph = analyze_procedure(self)
+        for measurement in self.measurements:
+            if measurement.subject_grain == "procedure_unit":
+                continue
+            measurement_node_id = measurement.node_id
+            if measurement_node_id is None:  # pragma: no cover - declaration invariant
+                raise ValueError("M1: non-unit measurement requires node_id")
+            if measurement_node_id not in graph.kinds:
+                raise ValueError(
+                    f"M1: measurement node_id {measurement_node_id!r} does not name "
+                    "a node in this definition"
+                )
+            if measurement.subject_grain != "arm":
+                continue
+            from_node_id = measurement.from_node_id
+            arm_label = measurement.arm_label
+            if from_node_id is None or arm_label is None:  # pragma: no cover
+                raise ValueError("M2: arm measurement requires complete arm coordinates")
+            successor = graph.edges.get(from_node_id, {}).get(arm_label)
+            if successor != measurement_node_id:
+                raise ValueError(
+                    f"M2: measurement arm {from_node_id!r} "
+                    f"{arm_label!r} does not target {measurement_node_id!r}"
+                )
+        return self
+
+    @property
+    def open_slots(self) -> tuple[str, ...]:
+        """Slot names some node pin still references; empty for a runnable Procedure."""
+
+        return tuple(
+            sorted(
+                {
+                    binding.slot_name
+                    for binding in iter_pin_bindings(self)
+                    if isinstance(binding, ProcedurePinSlotRef)
+                },
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
 
 
 def iter_pin_bindings(value: object) -> tuple[ProcedurePinBinding, ...]:
-    """Return every exact pin or slot reference nested in a v3 model."""
+    """Return every exact pin or slot reference nested in a Procedure model."""
 
     found: list[ProcedurePinBinding] = []
 
@@ -1259,50 +977,53 @@ def iter_pin_bindings(value: object) -> tuple[ProcedurePinBinding, ...]:
 
 
 __all__ = [
+    "AUTHORITY_RUNG",
+    "AuthorityVerb",
     "CallNode",
-    "ProcedureDefinitionV5",
-    "ProcedureNodeV5",
-    "RepeatBodyNode",
-    "RepeatNode",
-    "CaptureEgressNodeV3",
+    "CaptureEgressNode",
+    "ClaimTapNode",
+    "ConstantNode",
+    "EffectiveAuthority",
+    "EgressNode",
     "ExhaustTapNode",
     "GuardNode",
     "GuardPredicate",
     "HaltNode",
     "InboxEgressNode",
+    "InvokeNode",
     "PredicateOperand",
     "ProcedureBudget",
-    "ProcedureDefinitionV3",
-    "ProcedureDefinitionV4",
-    "ProcedureDefinitionAny",
+    "ProcedureDefinition",
     "ProcedureHardCaps",
     "ProcedureMeasurementDeclaration",
-    "ProcedureNodeV3",
-    "ProcedureNodeV4",
+    "ProcedureNode",
     "ProcedurePinBinding",
-    "ProcedurePinSlotRef",
     "ProcedurePinSlot",
+    "ProcedurePinSlotRef",
+    "ProcedureTransformSpec",
     "ProjectNode",
-    "ProposeChangeSetNodeV3",
-    "ProviderNodeV3",
-    "ProviderNode",
-    "RepeatBodyNodeV3",
-    "RepeatBodyNodeV4",
-    "RepeatNodeV3",
-    "RepeatNodeV4",
-    "SourceNodeV3",
+    "ProposalItemsFanOut",
+    "ProposeChangeSetNode",
+    "RUNG_AUTHORITY",
+    "RepeatBodyNode",
+    "RepeatNode",
+    "ReturnNode",
+    "SelectNode",
+    "SettleChangeSetNode",
     "SourceNode",
-    "StateTapNodeV3",
+    "StateTapNode",
     "TERMINAL_NODE_KINDS",
     "TERMINAL_REQUIRED_RUNGS",
-    "TransformNode",
-    "ProcedureTransformSpec",
     "TransformAdapterSpec",
     "TransformAggregateItemsSpec",
     "TransformDedupeItemsSpec",
     "TransformFilterItemsSpec",
     "TransformJoinItemsSpec",
     "TransformKind",
+    "TransformNode",
     "TransformShapeItemsSpec",
+    "authority_for_rung",
+    "derived_terminal_capability",
     "iter_pin_bindings",
+    "required_authority",
 ]

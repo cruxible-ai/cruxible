@@ -30,12 +30,10 @@ from cruxible_client.contracts.documents import (
     render_document,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifactV1,
     procedure_artifact_digest,
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.query.definitions import (
     query_definition_path,
     render_query_definition,
@@ -44,9 +42,10 @@ from cruxible_core.service.claims.policies import service_playbill_policies_in_f
 from tests.core_support._adoption_fixture import _claim_type, _claim_type_path, _query_definition
 from tests.core_support._support import initialize_local
 from tests.support.lines import action_trigger, trigger_members
+from tests.support.procedures import procedure_artifact
+from tests.test_indexes.test_projection_next import _accepted_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_integration.test_acquisition_policies import _policy, _rule
-from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 from tests.test_service.test_typed_source_catalogs import _published_sources
 
 
@@ -245,15 +244,9 @@ def complete_policy_inventory(
     )
     tree[document_path(document.document_id)] = render_document(document)
 
-    live_procedure = _artifact(_definition())
-    retired_definition = live_procedure.definition.model_copy(
-        update={"name": "retired-policy-procedure"}
-    )
-    retired_procedure = ProcedureArtifactV1(
-        identity=ArtifactIdentity(kind="Procedure", name=retired_definition.name),
-        definition=retired_definition,
-        definition_digest=compute_procedure_definition_digest_v3(retired_definition).tagged,
-        pins=live_procedure.pins,
+    live_procedure = _accepted_procedure().procedure
+    retired_procedure = procedure_artifact(
+        live_procedure.definition.model_copy(update={"name": "retired-policy-procedure"}),
         activation_policy=live_procedure.activation_policy,
         lifecycle=ArtifactLifecycle(state="retired"),
     )

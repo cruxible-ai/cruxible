@@ -9,13 +9,11 @@ from typing import TYPE_CHECKING
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.artifacts import DIRECT_NODE_KINDS, AcceptedProcedure
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
     InvokeNode,
     ProcedureBudget,
-    ProcedureDefinition,
-    ProcedureDefinitionV5,
     ProcedureHardCaps,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
@@ -152,15 +150,9 @@ class ServedNestedProcedureRunner:
                 "pin_binding_mismatch",
                 "An exact child Procedure is not accepted at the parent coordinate.",
             )
-        if not accepted.procedure.directly_runnable or not isinstance(
-            accepted.procedure.definition, ProcedureDefinitionV5
-        ):
+        if accepted.procedure.definition.open_slots or accepted.procedure.definition.pin_slots:
             raise ProcedureBoundaryRefused(
                 "pin_binding_mismatch", "A child must be a closed runnable Procedure."
-            )
-        if accepted.procedure.definition.pin_slots:
-            raise ProcedureBoundaryRefused(
-                "pin_binding_mismatch", "A child cannot contain unresolved Line slots."
             )
         return accepted
 
@@ -168,7 +160,6 @@ class ServedNestedProcedureRunner:
         from cruxible_core.service.procedures.procedure_runs import (
             ProcedureRunStateV2,
             _plan_direct_external_run,
-            served_node_kinds,
         )
 
         ancestors = (
@@ -184,8 +175,6 @@ class ServedNestedProcedureRunner:
             lineage: tuple[ArtifactIdentity, ...],
         ) -> None:
             graph = parent.procedure.definition
-            if not isinstance(graph, ProcedureDefinition):
-                return
             for node in graph.nodes:
                 if not isinstance(node, InvokeNode):
                     continue
@@ -195,7 +184,7 @@ class ServedNestedProcedureRunner:
                     )
                 child = self._accepted(node.procedure)
                 definition = child.procedure.definition
-                supported = served_node_kinds(definition.graph_format)
+                supported = set(DIRECT_NODE_KINDS)
                 if admission.invocation_origin == "line":
                     supported |= {"emit_capture", "propose_change_set"}
                 if any(step.kind not in supported for step in definition.nodes):

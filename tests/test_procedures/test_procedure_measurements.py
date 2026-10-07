@@ -1,4 +1,4 @@
-"""Typed graph-v3 measurement declarations and digest-coverage laws."""
+"""Typed measurement declarations and digest-coverage laws."""
 
 from __future__ import annotations
 
@@ -11,10 +11,14 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDuration
-from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactV1, render_procedure
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureArtifact,
+    procedure_runnability,
+    render_procedure,
+)
 from cruxible_client.contracts.procedures.graph import (
-    compute_procedure_definition_digest_v3,
-    compute_procedure_node_digests_v3,
+    compute_procedure_definition_digest,
+    compute_procedure_node_digests,
 )
 from cruxible_client.contracts.procedures.measurements import (
     AcceptedQueryProcedureMeasurement,
@@ -30,15 +34,21 @@ from cruxible_client.contracts.procedures.models import (
     GuardPredicate,
     PredicateOperand,
     ProcedureBudget,
-    ProcedureDefinitionV3,
+    ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    StateTapNodeV3,
-    iter_pin_bindings,
+    StateTapNode,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_core.compiler.compiler import PC_D_COMPILER, projection_registry_for_compiler
-from cruxible_core.compiler.projection_artifacts import P2_C_ARTIFACT_KINDS, parse_projection_tree
+from cruxible_core.compiler.compiler import (
+    GOVERNED_TRIGGERS_COMPILER,
+    projection_registry_for_compiler,
+)
+from cruxible_core.compiler.projection_artifacts import (
+    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
+    parse_projection_tree,
+)
+from tests.support.procedures import owned_contract, owned_pin, procedure_artifact
 
 
 def _digest(label: str) -> str:
@@ -50,6 +60,9 @@ def _digest(label: str) -> str:
 
 
 def _pin(role: str, kind: str, name: str) -> ArtifactPin:
+    if kind == "Contract":
+        # Contracts ride in the envelope: pin the exact owned Contract digest.
+        return owned_pin(role, owned_contract(name))
     return ArtifactPin(
         role=role,
         target=ArtifactIdentity(kind=kind, name=name),
@@ -115,15 +128,15 @@ def _predicate(alias: str) -> GuardPredicate:
 
 def _definition(
     measurements: tuple[ProcedureMeasurementDeclaration, ...] = (),
-) -> ProcedureDefinitionV3:
+) -> ProcedureDefinition:
     contract_in = _pin("contract-in", "Contract", "empty-input")
     contract_out = _pin("contract-out", "Contract", "result")
-    return ProcedureDefinitionV3(
+    return ProcedureDefinition(
         name="measured-procedure",
         contract_in=contract_in,
         contract_out=contract_out,
         nodes=(
-            StateTapNodeV3(
+            StateTapNode(
                 node_id="read",
                 query=_pin("query", "QueryDefinition", "accepted-state"),
                 as_="rows",
@@ -176,45 +189,30 @@ def _definition(
     )
 
 
-def _artifact(definition: ProcedureDefinitionV3, *, include_all_pins: bool) -> ProcedureArtifactV1:
-    exact_pins = {
-        binding for binding in iter_pin_bindings(definition) if isinstance(binding, ArtifactPin)
-    }
-    pins = (
-        exact_pins
-        if include_all_pins
-        else {pin for pin in exact_pins if pin.target.name != "outcome-query"}
-    )
-    return ProcedureArtifactV1(
-        identity=ArtifactIdentity(kind="Procedure", name=definition.name),
-        definition=definition,
-        definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-        pins=tuple(
-            sorted(
-                pins,
-                key=lambda pin: (
-                    pin.role.encode(),
-                    pin.target.qualified.encode(),
-                    pin.artifact_digest.encode(),
-                ),
-            )
-        ),
-        activation_policy="snapshot",
+def _artifact(definition: ProcedureDefinition, *, include_all_pins: bool) -> ProcedureArtifact:
+    procedure = procedure_artifact(definition, activation_policy="snapshot")
+    if include_all_pins:
+        return procedure
+    return ProcedureArtifact(
+        **{
+            **procedure.model_dump(mode="python", exclude={"artifact_format"}),
+            "pins": tuple(pin for pin in procedure.pins if pin.target.name != "outcome-query"),
+        }
     )
 
 
-def test_measurement_declaration_moves_only_the_v3_definition_envelope_digest() -> None:
+def test_measurement_declaration_moves_only_the_definition_envelope_digest() -> None:
     baseline = _definition()
     measured = _definition((_declaration(),))
 
-    baseline_nodes = compute_procedure_node_digests_v3(baseline)
-    measured_nodes = compute_procedure_node_digests_v3(measured)
+    baseline_nodes = compute_procedure_node_digests(baseline)
+    measured_nodes = compute_procedure_node_digests(measured)
     assert baseline_nodes == measured_nodes
-    assert compute_procedure_definition_digest_v3(baseline) != (
-        compute_procedure_definition_digest_v3(measured)
+    assert compute_procedure_definition_digest(baseline) != (
+        compute_procedure_definition_digest(measured)
     )
-    assert compute_procedure_definition_digest_v3(measured).tagged == (
-        "sha256:06d1fb0552b1d1b1ed2c4044035e987cf1ed89af164d8ed44321629bf24cc841"
+    assert compute_procedure_definition_digest(measured).tagged == (
+        "sha256:2769d12c4b50a4c966328173c8ebf90b54ac1613c938ff3d3ec10f192ea5c138"
     )
     payload = measured.model_dump(mode="json", by_alias=True)
     assert payload["annotations"] == {}
@@ -226,7 +224,10 @@ def test_measurement_query_is_an_exact_envelope_dependency_not_a_line_slot() -> 
 
     with pytest.raises(ValidationError, match="exact pins absent"):
         _artifact(definition, include_all_pins=False)
-    assert _artifact(definition, include_all_pins=True).directly_runnable is True
+    assert procedure_runnability(_artifact(definition, include_all_pins=True).definition) == (
+        "direct",
+        (),
+    )
 
     with pytest.raises(ValidationError, match="exact role='query'.*QueryDefinition"):
         AcceptedQueryProcedureMeasurement(
@@ -248,8 +249,8 @@ def test_measurements_are_projected_from_the_typed_field_not_annotations() -> No
     path = "procedures/measured-procedure.json"
     projection = parse_projection_tree(
         {path: render_procedure(procedure)},
-        registry=projection_registry_for_compiler(PC_D_COMPILER),
-        artifact_kinds=P2_C_ARTIFACT_KINDS,
+        registry=projection_registry_for_compiler(GOVERNED_TRIGGERS_COMPILER),
+        artifact_kinds=GOVERNED_TRIGGERS_ARTIFACT_KINDS,
     )
     fact = next(
         item
@@ -272,7 +273,7 @@ def test_measurement_names_are_canonical_sorted_and_unique() -> None:
         _declaration(name="Not Canonical")
 
 
-def test_node_and_arm_measurements_bind_real_graph_v3_coordinates() -> None:
+def test_node_and_arm_measurements_bind_real_graph_coordinates() -> None:
     node = _declaration(name="node-outcome", subject_grain="node", node_id="hot")
     arm = _declaration(
         name="arm-outcome",
@@ -286,12 +287,12 @@ def test_node_and_arm_measurements_bind_real_graph_v3_coordinates() -> None:
     unknown_payload = _definition((node,)).model_dump(mode="json", by_alias=True)
     unknown_payload["measurements"][0]["node_id"] = "missing"
     with pytest.raises(ValidationError, match="M1"):
-        ProcedureDefinitionV3.model_validate(unknown_payload)
+        ProcedureDefinition.model_validate(unknown_payload)
 
     wrong_arm_payload = _definition((arm,)).model_dump(mode="json", by_alias=True)
     wrong_arm_payload["measurements"][0]["node_id"] = "cold"
     with pytest.raises(ValidationError, match="M2"):
-        ProcedureDefinitionV3.model_validate(wrong_arm_payload)
+        ProcedureDefinition.model_validate(wrong_arm_payload)
 
 
 def test_self_measurement_and_non_arm_contrast_are_refused_before_activation() -> None:

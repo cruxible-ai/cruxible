@@ -96,7 +96,7 @@ def refs(world, credential_world, prediction_world, run_world):  # type: ignore[
 
 
 # Read over its own world below: accepting an interface needs a patched fixture.
-_OWN_WORLD = frozenset({"provider_interface"})
+_OWN_WORLD = frozenset({"provider_interface", "blueprint"})
 
 
 def test_every_get_kind_has_a_reference_in_the_matrix(refs) -> None:  # type: ignore[no-untyped-def]
@@ -122,6 +122,30 @@ def test_every_provider_interface_detail_answers_or_refuses_coded(  # type: igno
         except (CoreError, ClientCoreError):
             continue
         assert (result.kind, result.detail) == ("provider_interface", detail)
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_every_blueprint_detail_answers_or_refuses_coded(  # type: ignore[no-untyped-def]
+    tmp_path, monkeypatch, historical
+) -> None:
+    import tests.core_support._p2b1_support as p2b1_support
+    from tests.test_integration.test_graph_v4_provider_closure import _contracted_registration
+    from tests.test_procedures.test_blueprints import accept_blueprint_world
+
+    monkeypatch.setattr(p2b1_support, "interface_registration", _contracted_registration)
+    instance, _owner = accept_blueprint_world(tmp_path, monkeypatch)
+    history = instance.accepted_history()
+    at = history[-2].oid if historical else None
+    for detail in GET_DETAILS_BY_KIND["blueprint"]:
+        try:
+            result = service_playbill_get(
+                instance,
+                request=GetRequest(ref="Blueprint:provider-blueprint", detail=detail, at=at),
+                access=_ACCESS,
+            )
+        except (CoreError, ClientCoreError):
+            continue
+        assert (result.kind, result.detail) == ("blueprint", detail)
 
 
 @pytest.mark.parametrize(

@@ -130,7 +130,7 @@ def test_the_mcp_tool_answers_a_line_card_by_its_identity_digest(world, monkeypa
     assert not is_error, output
     body = json.loads(output)
     assert body["kind"] == "line" and body["card"]["line"] == line.identity.qualified
-    assert body["card"]["arms"][0]["state"] == "stopped"
+    assert body["card"]["enablements"][0]["state"] == "stopped"
     assert all(step.startswith("cruxible_get(") for step in body["card"]["next"])
     assert client.requests[-1].surface == "mcp"
 

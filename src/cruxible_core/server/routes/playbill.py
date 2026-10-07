@@ -105,7 +105,6 @@ from cruxible_core.server.playbill_request_models import (
 from cruxible_core.server.routes import resolve_server_instance_id
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
-    ProcedureBindRequest,
     ProcedureReadinessRequestV1,
     ProcedureRunRequest,
 )
@@ -971,7 +970,6 @@ def procedure_source_preview(
 def procedure_readiness(
     instance_id: str,
     name: str,
-    evaluation_time: datetime,
     git_oid: str | None = None,
     semantic_root: str | None = None,
     generation_root: str | None = None,
@@ -982,24 +980,7 @@ def procedure_readiness(
         name,
         request=ProcedureReadinessRequestV1(
             at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-            evaluation_time=evaluation_time,
         ),
-    )
-
-
-@router.post(
-    "/{instance_id}/procedures/{name}/bind",
-    response_model=contracts.ProcedureBindResult,
-)
-def bind_procedure(
-    instance_id: str,
-    name: str,
-    req: ProcedureBindRequest,
-) -> contracts.ProcedureBindResult:
-    return playbill_api.playbill_procedure_bind(
-        resolve_server_instance_id(instance_id),
-        name,
-        request=req,
     )
 
 
@@ -1019,47 +1000,33 @@ def run_procedure(
     )
 
 
-@router.post("/{instance_id}/lines/{line}/check", response_model=contracts.LineTriggerCheckResult)
-def check_line_trigger(
-    instance_id: str, line: str, req: contracts.LineTriggerCheckRequest
-) -> contracts.LineTriggerCheckResult:
-    return playbill_api.playbill_line_check(
-        resolve_server_instance_id(instance_id), line, request=req
-    )
-
-
-@router.post("/{instance_id}/lines/{line}/arm", response_model=contracts.LineArm)
-def arm_line(
+@router.post("/{instance_id}/lines/{line}/enable", response_model=contracts.LineEnablement)
+def enable_line(
     instance_id: str, line: str, req: ChangeControlRequest | None = None
-) -> contracts.LineArm:
+) -> contracts.LineEnablement:
     control = req or ChangeControlRequest()
-    return playbill_api.playbill_line_arm(
+    return playbill_api.playbill_line_enable(
         resolve_server_instance_id(instance_id), line, dry_run=control.dry_run, at=control.at
     )
 
 
-@router.post("/{instance_id}/lines/{line}/disarm", response_model=contracts.LineArm)
-def disarm_line(
+@router.post("/{instance_id}/lines/{line}/disable", response_model=contracts.LineEnablement)
+def disable_line(
     instance_id: str, line: str, req: ChangeControlRequest | None = None
-) -> contracts.LineArm:
+) -> contracts.LineEnablement:
     control = req or ChangeControlRequest()
-    return playbill_api.playbill_line_disarm(
+    return playbill_api.playbill_line_disable(
         resolve_server_instance_id(instance_id), line, dry_run=control.dry_run, at=control.at
     )
-
-
-@router.get("/{instance_id}/lines/{line}/arm", response_model=contracts.LineArm)
-def line_status(instance_id: str, line: str) -> contracts.LineArm:
-    return playbill_api.playbill_line_status(resolve_server_instance_id(instance_id), line)
 
 
 @router.post(
     "/{instance_id}/lines/{line}/evaluate",
-    response_model=contracts.LineTriggerCheckResult,
+    response_model=contracts.LineEvaluateResult,
 )
 def evaluate_line(
     instance_id: str, line: str, req: contracts.LineEvaluateRequest
-) -> contracts.LineTriggerCheckResult:
+) -> contracts.LineEvaluateResult:
     return playbill_api.playbill_line_evaluate(
         resolve_server_instance_id(instance_id), line, request=req
     )

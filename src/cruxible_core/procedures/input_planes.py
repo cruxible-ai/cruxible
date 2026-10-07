@@ -12,8 +12,7 @@ from cruxible_client.contracts.procedures.models import (
     ClaimTapNode,
     ExhaustTapNode,
     SourceNode,
-    SourceNodeV3,
-    StateTapNodeV3,
+    StateTapNode,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.source_references import (
@@ -235,7 +234,7 @@ def validate_run_input_vector(
 
 
 def validate_node_input_plane(
-    node: ClaimTapNode | StateTapNodeV3 | SourceNodeV3 | SourceNode | ExhaustTapNode,
+    node: ClaimTapNode | StateTapNode | SourceNode | ExhaustTapNode,
     run_input: ProcedureRunInputV1,
 ) -> None:
     """Refuse any attempt to relabel evidence between the three input planes."""

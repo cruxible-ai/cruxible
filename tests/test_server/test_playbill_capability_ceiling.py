@@ -302,17 +302,16 @@ def test_line_run_is_an_instance_operation_a_foreign_token_cannot_reach(
         created_by="test",
     )
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
-    digest = "sha256:" + "b" * 64
     body = {
         "tag": "playbill-line-run-request-v1",
-        "line_identity_digest": digest,
+        "line": "Line:intake",
         "occurrence_id": None,
         "evaluation_time": "2026-08-21T12:00:00Z",
     }
 
     with TestClient(create_app(), raise_server_exceptions=False) as client:
         response = client.post(
-            f"/api/v1/{host_id}/lines/{digest}/runs",
+            f"/api/v1/{host_id}/lines/intake/runs",
             json=body,
             headers={"Authorization": f"Bearer {foreign.token}"},
         )

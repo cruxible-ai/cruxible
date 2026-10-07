@@ -463,7 +463,7 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
 
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-    from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3, ProjectNode
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition, ProjectNode
     from tests.test_procedures.test_procedure_execution import (
         _budget,
         _hard_caps,
@@ -476,7 +476,7 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
     co = _owned_contract("output", {"ok": PropertySchema(type="bool")})
     pi, po = _owned_pin("contract-in", ci), _owned_pin("contract-out", co)
     artifact = _owned_accepted(
-        ProcedureDefinitionV3(
+        ProcedureDefinition(
             name="daily-summary",
             contract_in=pi,
             contract_out=po,
@@ -554,7 +554,7 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
         _ = run.result
 
 
-def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Path) -> None:
+def test_sdk_line_run_carries_the_asserted_identity_occurrence_and_event(tmp_path: Path) -> None:
     _workspace(tmp_path)
 
     class LineClient(_Client):
@@ -592,11 +592,12 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
         clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
     )
 
-    assert pb.run_line("daily-line", occurrence_id="sha256:" + "c" * 64).status == "succeeded"
+    line = pb.line("daily-line")
+    assert line.run(occurrence_id="sha256:" + "c" * 64).status == "succeeded"
     assert client.line_request == {
         "resolution_contract": None,
-        "trigger_event": None,
-        "trigger": None,
+        "event": None,
+        "repeat": False,
         "line": "daily-line",
         "occurrence_id": "sha256:" + "c" * 64,
         "evaluation_time": "2026-08-24T12:00:00+00:00",
@@ -613,12 +614,10 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
         sequence=1,
         record_digest=_DIGEST,
     )
-    pb.run_line(
-        "daily-line", trigger="on-anchor", resolution_contract=contract, trigger_event=event
-    )
+    line.run(resolution_contract=contract, event=event, repeat=True)
     assert client.line_request["resolution_contract"] == contract
-    assert client.line_request["trigger_event"] == event
-    assert client.line_request["trigger"] == "on-anchor"
+    assert client.line_request["event"] == event
+    assert client.line_request["repeat"] is True
 
 
 def test_procedure_run_track_record_reads_the_procedure_card_from_get(tmp_path: Path) -> None:
@@ -659,7 +658,7 @@ def test_procedure_run_track_record_reads_the_procedure_card_from_get(tmp_path: 
                 card=GetProcedureCard(
                     procedure="daily-summary",
                     inputs={"input": "daily-summary-input"},
-                    readiness="ready",
+                    runnable="direct",
                     track_record=(entry,),
                 ),
                 coordinate=GetCoordinate(git_oid="a" * 12, generation=3),

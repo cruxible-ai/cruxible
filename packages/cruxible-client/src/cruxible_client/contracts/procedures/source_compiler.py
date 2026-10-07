@@ -27,7 +27,7 @@ from cruxible_client.contracts.procedures.models import (
     derived_terminal_capability,
 )
 from cruxible_client.contracts.procedures.source_program import (
-    ProcedureSource,
+    ProcedureSourceProgram,
     SourceClaimType,
     SourceContract,
     SourceDiagnostic,
@@ -35,6 +35,7 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceProcedureBinding,
     SourceProviderBinding,
     SourceQueryBinding,
+    SourceSlotBinding,
     SourceSpan,
 )
 from cruxible_client.contracts.procedures.source_views import (
@@ -122,6 +123,7 @@ Expression = (
     | Constructor
     | Namespace
     | SourceProviderBinding
+    | SourceSlotBinding
     | SourceQueryBinding
 )
 Edge = tuple[dict[str, Any], str]
@@ -285,7 +287,9 @@ def _assignable(actual: ValueType, expected: ValueType) -> bool:
 
 
 class _Compiler:
-    def __init__(self, program: ProcedureSource, input: SourceContract, output: SourceContract):
+    def __init__(
+        self, program: ProcedureSourceProgram, input: SourceContract, output: SourceContract
+    ):
         self.program = program
         self.input, self.output = input, output
         self.nodes: list[dict[str, Any]] = []
@@ -298,6 +302,7 @@ class _Compiler:
         self.assignment_alias: str | None = None
         self.used_contracts: set[str] = set()
         self.used_bindings: set[str] = set()
+        self.slots: dict[str, SourceSlotBinding] = {}
         self.used_types: set[str] = set()
         self.used_kinds: set[str] = set()
         self.required_child_rung = 0
@@ -584,7 +589,11 @@ class _Compiler:
                     self.used_bindings.add(node.attr)
                     binding = self.program.bindings.get(node.attr)
                     if not isinstance(
-                        binding, SourceProviderBinding | SourceQueryBinding | SourceProcedureBinding
+                        binding,
+                        SourceProviderBinding
+                        | SourceSlotBinding
+                        | SourceQueryBinding
+                        | SourceProcedureBinding,
                     ):
                         self.fail(
                             node,
@@ -597,7 +606,10 @@ class _Compiler:
                 self.fail(node, f"Unknown source member {node.attr!r}", "unknown_field")
             if isinstance(owner, SourceProcedureBinding) and node.attr == "input":
                 return Constructor(owner.input)
-            if isinstance(owner, SourceProviderBinding) and node.attr == "input":
+            if (
+                isinstance(owner, SourceProviderBinding | SourceSlotBinding)
+                and node.attr == "input"
+            ):
                 return Constructor(owner.operation.input)
             if isinstance(owner, SourceQueryBinding) and node.attr == "parameters":
                 from cruxible_client.contracts.query.parameters import QueryParameters
@@ -857,7 +869,7 @@ class _Compiler:
                 **{"as": True},
             )
             return Value("$steps." + emitted["as"], query_view_schema(), phase="state")
-        if not isinstance(binding, SourceProviderBinding):
+        if not isinstance(binding, SourceProviderBinding | SourceSlotBinding):
             self.fail(node.args[0], "Expected an accepted provider binding", "binding_kind")
         argument = "request" if name == "source" else "input"
         if argument not in kwargs:
@@ -877,8 +889,19 @@ class _Compiler:
                 artifact_digest=digest,
             ).model_dump(mode="json")
 
+        slot_name = next(
+            (name for name, value in self.program.bindings.items() if value is binding), None
+        )
+        provider: dict[str, Any] = (
+            {"tag": "playbill-procedure-pin-slot-ref-v1", "slot_name": slot_name}
+            if isinstance(binding, SourceSlotBinding)
+            else pin("provider", "Provider", binding.provider, binding.provider_version)
+        )
+        if isinstance(binding, SourceSlotBinding):
+            assert slot_name is not None
+            self.slots[slot_name] = binding
         fields = dict(
-            provider=pin("provider", "Provider", binding.provider, binding.provider_version),
+            provider=provider,
             interface=pin(
                 "provider-interface",
                 "ProviderInterface",
@@ -886,7 +909,9 @@ class _Compiler:
                 binding.interface_version,
             ),
             interface_digest=binding.interface_digest,
-            implementation_digest=binding.implementation_digest,
+            implementation_digest=(
+                None if isinstance(binding, SourceSlotBinding) else binding.implementation_digest
+            ),
         )
         if name == "source":
             if set(kwargs) != {"request", "capture_contract"}:
@@ -1645,7 +1670,7 @@ class _Compiler:
 
 
 def _compile_source(
-    program: ProcedureSource,
+    program: ProcedureSourceProgram,
     *,
     name: str,
     input: SourceContract,
@@ -1731,6 +1756,15 @@ def _compile_source(
             budget=budget,
             hard_caps=hard_caps,
             terminal_capability=capability,
+            pin_slots=[
+                {
+                    "slot_name": name,
+                    "pin_role": "provider",
+                    "artifact_kind": "Provider",
+                    "interface_digest": compiler.slots[name].interface_digest,
+                }
+                for name in sorted(compiler.slots, key=lambda item: item.encode("utf-8"))
+            ],
             source=program.model_copy(
                 update={
                     "contracts": {
@@ -1757,7 +1791,7 @@ def _compile_source(
 
 
 def compile_source(
-    program: ProcedureSource,
+    program: ProcedureSourceProgram,
     *,
     name: str,
     input: SourceContract,
@@ -1802,6 +1836,7 @@ def verify_source_graph(procedure: Any) -> None:
     """Prove retained source/graph association without running authored Python."""
     from cruxible_client.contracts.errors import ProjectionFormatError
     from cruxible_client.contracts.procedures.artifacts import (
+        BlueprintArtifact,
         ProcedureArtifact,
         procedure_owned_contract_digest,
     )
@@ -1809,7 +1844,7 @@ def verify_source_graph(procedure: Any) -> None:
     definition = procedure.definition
     if not isinstance(definition, ProcedureDefinition) or definition.source is None:
         return
-    if not isinstance(procedure, ProcedureArtifact):
+    if not isinstance(procedure, ProcedureArtifact | BlueprintArtifact):
         raise ProjectionFormatError("Source Procedures must carry their declared Contracts")
 
     def root(pin: Any) -> SourceContract:

@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.line_dispatch import LineArm, LineTriggerVersion
+from cruxible_client.contracts.line_dispatch import LineEnablement, LineTriggerVersion
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.backends import LocalJournalBackend
@@ -50,6 +50,9 @@ CREATE INDEX IF NOT EXISTS unresolved
 CREATE INDEX IF NOT EXISTS armed_work
  ON pending(session_id,eligible_at,occurrence_id) WHERE disposition='pending';
 CREATE INDEX IF NOT EXISTS pending_by_run ON pending(run_id) WHERE run_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS evaluated (
+ line_id TEXT NOT NULL, epoch INTEGER NOT NULL, since TEXT NOT NULL, until TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS evaluated_by_line ON evaluated(line_id,epoch);
 """
 
 
@@ -197,6 +200,12 @@ class LineDispatchStore:
                     data["occurrence"]["occurrence_id"],
                 ),
             )
+        elif kind == "evaluated":
+            # A range explicitly evaluated in full: it covers a restart gap.
+            conn.execute(
+                "INSERT INTO evaluated VALUES(?,?,?,?)",
+                (data["line_id"], data["epoch"], data["since"], data["until"]),
+            )
         elif kind != "dispatch_refused":
             raise ValueError("unknown Line dispatch transition")
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?)", (sequence,))
@@ -254,10 +263,10 @@ class LineDispatchStore:
     @staticmethod
     def arm_view(
         data: dict[str, Any], *, pending_automatic: int = 0, pending_explicit: int = 0
-    ) -> LineArm:
+    ) -> LineEnablement:
         stopped = data["stops_at"] is not None and data.get("stop_reason") is not None
-        return LineArm(
-            arm_id=data["arm_id"],
+        return LineEnablement(
+            enablement_id=data["arm_id"],
             line=data["line"],
             line_artifact_digest=data["line_artifact_digest"],
             occurrence_epoch=data["occurrence_epoch"],
@@ -267,9 +276,9 @@ class LineDispatchStore:
                     data.get("trigger_pins", {}).items(), key=lambda item: item[0].encode()
                 )
             ),
-            state="stopped" if stopped else "armed",
-            armed_at=data["armed_at"],
-            armed_by=data["armed_by"],
+            state="stopped" if stopped else "enabled",
+            enabled_at=data["armed_at"],
+            enabled_by=data["armed_by"],
             evaluated_until=data["evaluated_until"],
             stopped_at=data["stops_at"] if stopped else None,
             stop_reason=data.get("stop_reason") if stopped else None,

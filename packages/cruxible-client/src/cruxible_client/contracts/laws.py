@@ -25,10 +25,7 @@ PROVIDER_LAW_V2_IDENTIFIER = "playbill.provider.v2"
 PROVIDER_INTERFACE_LAW_IDENTIFIER = "playbill.provider-interface.v1"
 SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER = "playbill.source-acquisition-policy.v1"
 PROCEDURE_MANDATE_LAW_IDENTIFIER = "playbill.procedure-mandate.v1"
-PROCEDURE_LAW_IDENTIFIER = "playbill.procedure.v1"
 PROCEDURE_LAW_V2_IDENTIFIER = "playbill.procedure.v2"
-LINE_LAW_IDENTIFIER = "playbill.line.v1"
-LINE_LAW_V2_IDENTIFIER = "playbill.line.v2"
 QUERY_DEFINITION_LAW_IDENTIFIER = "playbill.query-definition.v1"
 EXHAUST_PROMOTION_LAW_IDENTIFIER = "playbill.exhaust-promotion.v1"
 PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
@@ -311,35 +308,10 @@ PROCEDURE_MANDATE_LAW = _artifact_law_coordinate(
     "playbill-procedure-mandate-v1",
     semantic_revision=1,
 )
-PROCEDURE_LAW_REVISION_5 = _artifact_law_coordinate(
-    PROCEDURE_LAW_IDENTIFIER,
-    "playbill-procedure-v1",
-    semantic_revision=5,
-)
-PROCEDURE_LAW_V2_REVISION_5 = _artifact_law_coordinate(
-    PROCEDURE_LAW_V2_IDENTIFIER,
-    "playbill-procedure-v2",
-    semantic_revision=5,
-)
-PROCEDURE_LAW = _artifact_law_coordinate(
-    PROCEDURE_LAW_IDENTIFIER,
-    "playbill-procedure-v1",
-    semantic_revision=6,
-)
 PROCEDURE_LAW_V2 = _artifact_law_coordinate(
     PROCEDURE_LAW_V2_IDENTIFIER,
     "playbill-procedure-v2",
     semantic_revision=6,
-)
-LINE_LAW = _artifact_law_coordinate(
-    LINE_LAW_IDENTIFIER,
-    "playbill-line-v1",
-    semantic_revision=3,
-)
-LINE_LAW_V2 = _artifact_law_coordinate(
-    LINE_LAW_V2_IDENTIFIER,
-    "playbill-line-v2",
-    semantic_revision=1,
 )
 # Revision 4 retains the relation-traversal refusal and removes dormant role authority.
 QUERY_DEFINITION_LAW_REVISION_4 = _artifact_law_coordinate(
@@ -581,37 +553,10 @@ PROCEDURE_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="procedure-mandate",
     artifact_tag="playbill-procedure-mandate-v1",
 )
-PROCEDURE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=PROCEDURE_LAW,
-    artifact_kind="procedure",
-    artifact_tag="playbill-procedure-v1",
-)
 PROCEDURE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=PROCEDURE_LAW_V2,
     artifact_kind="procedure",
     artifact_tag="playbill-procedure-v2",
-)
-PROCEDURE_REVISION_5_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=PROCEDURE_LAW_REVISION_5,
-    artifact_kind="procedure",
-    artifact_tag="playbill-procedure-v1",
-    current=False,
-)
-PROCEDURE_V2_REVISION_5_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=PROCEDURE_LAW_V2_REVISION_5,
-    artifact_kind="procedure",
-    artifact_tag="playbill-procedure-v2",
-    current=False,
-)
-LINE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=LINE_LAW,
-    artifact_kind="line",
-    artifact_tag="playbill-line-v1",
-)
-LINE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=LINE_LAW_V2,
-    artifact_kind="line",
-    artifact_tag="playbill-line-v2",
 )
 QUERY_DEFINITION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=QUERY_DEFINITION_LAW,
@@ -646,28 +591,7 @@ ATTESTATION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-claim-attestation-envelope-v2",
 )
 
-LINE_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.line.v3", "playbill-line-v3", semantic_revision=1
-    ),
-    artifact_kind="line",
-    artifact_tag="playbill-line-v3",
-)
 
-LINE_V4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.line.v4", "playbill-line-v4", semantic_revision=1
-    ),
-    artifact_kind="line",
-    artifact_tag="playbill-line-v4",
-)
-LINE_V5_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.line.v5", "playbill-line-v5", semantic_revision=1
-    ),
-    artifact_kind="line",
-    artifact_tag="playbill-line-v5",
-)
 # A Line with no embedded trigger. Retiring it, or changing the event it
 # accepts, cannot strand live Triggers aimed at it: they move in the same set.
 LINE_V6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
@@ -676,6 +600,15 @@ LINE_V6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     ),
     artifact_kind="line",
     artifact_tag="playbill-line-v6",
+)
+# A Blueprint keeps stable identity and types every open slot by an accepted
+# ProviderInterface; it never runs, so it needs no runtime closure.
+BLUEPRINT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.blueprint.v1", "cruxible-blueprint-v1", semantic_revision=1
+    ),
+    artifact_kind="blueprint",
+    artifact_tag="cruxible-blueprint-v1",
 )
 # A Trigger aims at a live Line that accepts its event, or at an internal
 # action on a cadence; a retired Trigger is never revived.
@@ -779,14 +712,6 @@ CLAIM_EVIDENCE_UPGRADE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-compiler-upgrade-v1",
     current=False,
 )
-PROVIDER_CONTRACT_PROCEDURE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        PROCEDURE_LAW_V2_IDENTIFIER, "playbill-procedure-v2", semantic_revision=7
-    ),
-    artifact_kind="procedure",
-    artifact_tag="playbill-procedure-v2",
-    current=False,  # Selected only for graph-v5; retained graphs keep their law.
-)
 PROVIDER_CONTRACT_UPGRADE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=2
@@ -842,7 +767,6 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         TRIGGER_CAPTURE_UPGRADE_LAW,
         AUTHORITY_VERBS_UPGRADE_LAW,
         GOVERNED_TRIGGERS_UPGRADE_LAW,
-        PROVIDER_CONTRACT_PROCEDURE_LAW,
         PROVIDER_CONTRACT_UPGRADE_LAW,
         COMPILER_UPGRADE_ACCEPTANCE_LAW,
         APPROVAL_POLICY_ACCEPTANCE_LAW,
@@ -872,16 +796,9 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         DOCUMENT_ACCEPTANCE_LAW,
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
-        PROCEDURE_ACCEPTANCE_LAW,
-        PROCEDURE_REVISION_5_ACCEPTANCE_LAW,
         PROCEDURE_V2_ACCEPTANCE_LAW,
-        PROCEDURE_V2_REVISION_5_ACCEPTANCE_LAW,
-        LINE_ACCEPTANCE_LAW,
-        LINE_V2_ACCEPTANCE_LAW,
-        LINE_V3_ACCEPTANCE_LAW,
-        LINE_V4_ACCEPTANCE_LAW,
-        LINE_V5_ACCEPTANCE_LAW,
         LINE_V6_ACCEPTANCE_LAW,
+        BLUEPRINT_ACCEPTANCE_LAW,
         TRIGGER_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         PROVIDER_V2_ACCEPTANCE_LAW,

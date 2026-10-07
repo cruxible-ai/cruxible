@@ -35,7 +35,7 @@ def test_the_lines_and_mandates_sections_carry_arm_state_and_validity(line_world
     lines = service_playbill_orient(instance, section="lines", evaluation_time=when, surface="mcp")
     assert lines.section == "lines" and lines.lines is not None
     (row,) = lines.lines
-    assert row.line == line.identity.qualified and row.arm == "stopped"
+    assert row.line == line.identity.qualified and row.enablement == "stopped"
     assert row.trigger == "capture_landing" and row.lifecycle == "live"
     _suggested_get(instance, lines.next[0])
 
@@ -122,4 +122,4 @@ def test_the_lines_section_says_its_arm_state_is_live(line_world) -> None:  # ty
 
     answer = service_playbill_orient(instance, section="lines", evaluation_time=when)
 
-    assert answer.live is not None and answer.live.fields[0] == "lines.arm"
+    assert answer.live is not None and answer.live.fields[0] == "lines.enablement"

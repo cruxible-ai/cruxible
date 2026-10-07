@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
 
 from pydantic import SecretStr, TypeAdapter
 
@@ -59,7 +59,6 @@ from cruxible_client.authoring.sdk_types import (
     PendingClaimTypeRef,
     PendingSubjectRef,
     ProcedureRef,
-    ProcedureSlotRef,
     QueryRef,
     ReferenceKindError,
     ReferentSensitivity,
@@ -76,7 +75,7 @@ from cruxible_client.authoring.selectors import (
     WorkspaceSources,
 )
 from cruxible_client.authoring.signing import ApprovalSigner
-from cruxible_client.authoring.source import ProcedureBlueprint
+from cruxible_client.authoring.source import ProcedureSource
 from cruxible_client.authoring.source_map import (
     DiagnosticSourceMap,
     capture_keyword_sites,
@@ -99,6 +98,8 @@ from cruxible_client.contracts.artifacts import (
     ArtifactRef,
 )
 from cruxible_client.contracts.authoring.inputs import (
+    BlueprintInput,
+    BlueprintInstanceInput,
     ProcedureInput,
     ProcedureMandateInput,
     QueryDefinitionInput,
@@ -129,7 +130,6 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSource,
     LineAuthoringPayload,
     ProcedureAuthoringPayload,
-    ProcedureAuthoringPayloadV1,
     ProcedureMandateAuthoringPayload,
     QueryDefinitionAuthoringPayload,
     ResolutionContractAuthoringPayload,
@@ -205,10 +205,6 @@ from cruxible_client.contracts.get_reads import (
     GetRequest,
     GetResult,
 )
-from cruxible_client.contracts.line_dispatch import (
-    LineTriggerCheckRequest,
-    LineTriggerCheckResult,
-)
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimAdmissionPolicy,
@@ -223,7 +219,7 @@ from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidence,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifactAny,
+    ProcedureArtifact,
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.results import ProcedureTerminalEgress
@@ -381,6 +377,7 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "subject": RefKind.SUBJECT,
     "claim_type": RefKind.CLAIM_TYPE,
     "procedure": RefKind.PROCEDURE,
+    "blueprint": RefKind.BLUEPRINT,
     "query": RefKind.QUERY,
     "document": RefKind.DOCUMENT,
     "capture_contract": RefKind.CAPTURE_CONTRACT,
@@ -417,8 +414,6 @@ def _expectation(
     if isinstance(value, str):
         return None
     _address(value, expected)
-    if expected is RefKind.SLOT:
-        return None
     if isinstance(value, (PendingSubjectRef, PendingClaimTypeRef)):
         # A same-set definition did not exist at the coordinate this ref names,
         # so asserting it there would refuse in preflight against the base tree.
@@ -636,7 +631,6 @@ class _IntentDraft:
         ClaimAuthoringPayloadV1
         | ClaimAuthoringPayloadV2
         | ClaimAuthoringPayload
-        | ProcedureAuthoringPayloadV1
         | ProcedureAuthoringPayload
         | SubjectAuthoringPayload
         | ChangeSetAuthoringPayload
@@ -745,6 +739,12 @@ class PredictionSettlement:
     prediction_id: str
     outcome: bool
     relation: dict[str, object]
+
+
+#: Every form ``cx.procedure`` accepts.
+ProcedureDefinitionInput: TypeAlias = (
+    ProcedureInput | BlueprintInput | BlueprintInstanceInput | ProcedureSequence | ProcedureSource
+)
 
 
 @dataclass(frozen=True)
@@ -1065,14 +1065,20 @@ class ChangeSetDraft:
         return self
 
     def procedure(
-        self, *, definition: ProcedureInput | ProcedureSequence | ProcedureBlueprint
+        self,
+        *,
+        definition: ProcedureInput
+        | BlueprintInput
+        | BlueprintInstanceInput
+        | ProcedureSequence
+        | ProcedureSource,
     ) -> ChangeSetDraft:
         """Compose a Procedure with its Line and mandate in one existing changeset.
 
         Next: ``.line(name=..., procedure=...)`` to run it, then ``.submit()``.
         """
         draft = self._playbill.procedure(definition=definition)
-        assert isinstance(draft.payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayload))
+        assert isinstance(draft.payload, ProcedureAuthoringPayload)
         self._members.append(
             _ChangeSetMember(
                 payload=draft.payload,
@@ -1117,25 +1123,26 @@ class ChangeSetDraft:
 
         Lowering resolves both names -- accepted at the base or defined earlier
         in this same set -- into the exact pins the LineSpec carries. A Line
-        runs when run explicitly, or when a Trigger aimed at it fires
-        (:meth:`trigger`), and inherits the Procedure's hard caps as its budget
-        unless one is given. ``trigger_input`` binds the triggering Capture to a
-        named Source alias; the Line then accepts only that Source's exact
-        CaptureContract event, and every Trigger aimed at it must fire on it.
+        runs when run explicitly, or, once it is enabled, when a Trigger aimed
+        at it fires (:meth:`trigger`; a Trigger does nothing until then), and
+        inherits the Procedure's hard caps as its budget unless one is given.
+        ``trigger_input`` binds the triggering Capture (or a manual run's
+        event input) to a named Source alias; the Line then accepts only that
+        Source's exact CaptureContract event, and every Trigger aimed at it
+        must fire on it.
         Missing or ineligible trigger material refuses admission, without a re-fetch.
 
-        Lowering refuses a Procedure that is not graph-v4/v5/v6 and one whose
-        Source nodes leave a Provider slot open: the Line pins exactly what the
-        Procedure names, and an open slot is nothing to pin.
+        Lowering refuses a Procedure with an ``exhaust_tap`` node: no run path
+        admits one, so the Line could never run.
         ``acquisition_policy`` is required only when the Procedure has Source
         nodes. ``parameters`` is the Procedure's input record; lowering checks it
         against the Procedure's input contract. ``max_authority`` (observe,
         propose or settle) caps this Line below its Procedure's own capability
         and defaults to it. A Line that proposes or settles also needs a live
-        ProcedureMandate covering its Procedure before it can run or be armed;
-        an observe-only Line needs none.
+        ProcedureMandate covering its Procedure before it can run or be enabled;
+        an observe-only Line needs none (enabling still needs governed write).
 
-        Next: ``.submit()``; once accepted, ``cx.arm_line(name)`` or ``cx.run_line(name)``.
+        Next: ``.submit()``; once accepted, ``cx.line(name).enable()`` or ``cx.line(name).run()``.
         """
 
         self._members.append(
@@ -1172,10 +1179,10 @@ class ChangeSetDraft:
         Name exactly one of ``line`` (an accepted Line, or one defined in this
         same set) or ``action`` (a registered internal action such as
         ``floor.refresh``), which takes cadence, cron or generation_accepted;
-        a Line takes any schedule that supplies its input. A
-        Line can have several
-        Triggers; retiring a Line needs its live Triggers retired or retargeted
-        in the same set.
+        a Line takes any schedule that supplies its input. A Trigger aimed at a
+        Line does nothing until the Line is enabled (``cx.line(name).enable()``).
+        A Line can have several Triggers; retiring a Line needs its live
+        Triggers retired or retargeted in the same set.
 
         Next: ``.submit()`` to propose the changeset for review and acceptance.
         """
@@ -3480,7 +3487,7 @@ class Cruxible:
             DiagnosticSourceMap(()),
         )
 
-    def provider_binding(self, interface: str, *, provider: str | None = None) -> ProviderBinding:
+    def provider_interface(self, interface: str, *, provider: str | None = None) -> ProviderBinding:
         """Select a registered interface through existing accepted-state discovery.
 
         Discovery never installs a provider or authorizes its execution. Multiple
@@ -3509,7 +3516,11 @@ class Cruxible:
     def procedure(
         self,
         *,
-        definition: ProcedureInput | ProcedureSequence | ProcedureBlueprint,
+        definition: ProcedureInput
+        | BlueprintInput
+        | BlueprintInstanceInput
+        | ProcedureSequence
+        | ProcedureSource,
     ) -> ProcedureDraft:
         """Author a Procedure from a Sequence or the input shared by CLI and HTTP.
 
@@ -3518,8 +3529,11 @@ class Cruxible:
 
         Declare owned input/output schemas in ``definition.contracts`` and use
         ``carried_contract`` references in its graph. ``accepted`` references
-        resolve at the intent base; ``slot`` references remain deferred. Exact
-        pins belong to accepted graphs and are never silently converted into
+        resolve at the intent base. A Provider position left as a ``slot``
+        makes the definition a Blueprint (``BlueprintInput``); a Procedure binds
+        every slot, by instantiating a Blueprint (``BlueprintInstanceInput``) or
+        by binding each declared slot of a ``ProcedureSource``. Exact pins
+        belong to accepted graphs and are never silently converted into
         references to a potentially different version.
 
         Activation, retirement, and the optional acquisition-policy name are
@@ -3531,57 +3545,27 @@ class Cruxible:
         """
 
         sites = capture_keyword_sites("procedure", stacklevel=1)
-        if isinstance(definition, ProcedureBlueprint):
+        if isinstance(definition, ProcedureSource):
             definition = definition.build(world=self.world())
         if isinstance(definition, ProcedureSequence):
             definition = definition.build()
-        if not isinstance(definition, ProcedureInput):
-            raise TypeError("procedure definition must be a ProcedureInput or authoring Sequence")
+        if not isinstance(definition, ProcedureInput | BlueprintInput | BlueprintInstanceInput):
+            raise TypeError(
+                "procedure definition must be a ProcedureInput, BlueprintInput, "
+                "BlueprintInstanceInput, ProcedureSource or authoring Sequence"
+            )
         payload = lower_authoring_input(definition)
-        assert isinstance(payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayload))
-        # `source` is served by the graph-v4/v5 observation path: a v3 Source
-        # node names no interface or implementation, so nothing can plan its
-        # Provider occurrence. Keep it out of the v3 allow-list rather than
-        # letting authoring succeed on a graph no run lane can admit.
-        allowed = {"state_tap", "transform", "project", "guard", "repeat", "halt"}
-        if definition.definition.get("graph_format") in {4, 5}:
-            # Effectful terminals are served on the Line lane: direct runs
-            # refuse them at admission. The shared compiler enforces that each
-            # terminal ends its path; the SDK must allow authoring that path.
-            allowed = allowed | {
-                "source",
-                "emit_capture",
-                "propose_change_set",
-                "settle_change_set",
-            }
-        if definition.definition.get("graph_format") == 5:
-            allowed = allowed | {"call"}
-        nodes = definition.definition.get("nodes")
-        if "source_request" in definition.definition:
+        assert isinstance(payload, ProcedureAuthoringPayload)
+        if isinstance(definition, BlueprintInstanceInput):
+            pass  # Lowering resolves the Blueprint and each bound Provider.
+        elif "source_request" in definition.definition:
             from cruxible_client.contracts.procedures.source_requests import (
                 ProcedureSourceRequest,
             )
 
             ProcedureSourceRequest.model_validate(definition.definition["source_request"])
-            nodes = ()
-        if not isinstance(nodes, list | tuple):
+        elif not isinstance(definition.definition.get("nodes"), list | tuple):
             raise ValueError("Procedure input must declare its nodes")
-        unsupported = tuple(
-            node.get("node_id")
-            for node in nodes
-            if isinstance(node, Mapping) and node.get("kind") not in allowed
-        )
-        if unsupported:
-            raise CapabilityNotServed(
-                code="cruxible.sdk.procedure_capability_not_served",
-                capability=f"procedure nodes {unsupported}",
-                repair=(
-                    "Use only state_tap, transform, project, guard, repeat, and halt nodes "
-                    "on the served SDK lane, plus source, emit_capture, propose_change_set, "
-                    "and settle_change_set on a graph-v4/v5 definition, and call on a graph-v5 "
-                    "definition."
-                ),
-            )
         return ProcedureDraft(
             self,
             payload,
@@ -3742,122 +3726,14 @@ class Cruxible:
         )
         return Procedure(self, name, None if requested is None else _coordinate(requested))
 
-    def check_line(
-        self,
-        line: str,
-        *,
-        since: datetime | None = None,
-        until: datetime | None = None,
-        limit: int = 100,
-        cursor: str | None = None,
-    ) -> LineTriggerCheckResult:
-        """Inspect trigger eligibility and retained admissions without starting work.
+    def line(self, name: str) -> Line:
+        """A handle on one accepted Line by name: enable, disable, run, evaluate, dispatch.
 
-        Next: ``cx.evaluate_line(...)`` for a missed range, or ``cx.dispatch_line(line)``
-        for pending work.
-        """
-        return self._client.check_line(
-            self._instance_id,
-            line,
-            request=LineTriggerCheckRequest(since=since, until=until, limit=limit, cursor=cursor),
-        )
-
-    def arm_line(
-        self, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> api.LineArm:
-        """Arm a Line forward-only: the daemon admits what it matches from now on.
-
-        Runs use this connection's credential, rechecked before each admission,
-        and the Line version current now. Work already pending stays for
-        `dispatch_line`. Arming it again unchanged returns `outcome="already_armed"`.
-        `dry_run=True` previews it (`would_arm`) and records nothing; commit
-        exactly that with `at=` the preview's `coordinate.git_oid`.
-
-        Next: ``cx.line_status(line)``, or ``cx.get(f"Line:{line}")`` for its occurrences
-        and runs.
-        """
-        return self._client.arm_line(self._instance_id, line, dry_run=dry_run, at=at)
-
-    def disarm_line(
-        self, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> api.LineArm:
-        """Stop a Line admitting work on its own; admitted runs are not cancelled.
-
-        A Line whose arm already stopped returns `outcome="already_disarmed"`.
-        `dry_run=True` previews it (`would_disarm`); `at` pins the commit.
-
-        Next: ``cx.arm_line(line)`` to resume it.
-        """
-        return self._client.disarm_line(self._instance_id, line, dry_run=dry_run, at=at)
-
-    def line_status(self, line: str) -> api.LineArm:
-        """The Line's current arm, or its last one and why it stopped.
-
-        Next: ``cx.arm_line(line)`` if it stopped, or ``cx.get(f"Line:{line}")`` for its
-        runs.
-        """
-        return self._client.line_status(self._instance_id, line)
-
-    def evaluate_line(
-        self,
-        line: str,
-        *,
-        since: datetime,
-        until: datetime,
-        limit: int = 100,
-        cursor: str | None = None,
-    ) -> api.LineTriggerCheckResult:
-        """Explicitly turn a missed range into pending occurrences.
-
-        Next: ``cx.dispatch_line(line)`` to admit what it found.
-        """
-        return self._client.evaluate_line(
-            self._instance_id,
-            line,
-            request=api.LineEvaluateRequest(since=since, until=until, limit=limit, cursor=cursor),
-        )
-
-    def dispatch_line(
-        self, line: str, *, occurrence_id: str | None = None, limit: int = 1, retry: bool = False
-    ) -> api.LineDispatchResult:
-        """Admit pending work using this connection's current actor and authority.
-
-        Next: ``cx.get(f"ProcedureRun:{item.run_id}")`` for each admitted run.
-        """
-        return self._client.dispatch_line(
-            self._instance_id,
-            line,
-            request=api.LineDispatchRequest(occurrence_id=occurrence_id, limit=limit, retry=retry),
-        )
-
-    def run_line(
-        self,
-        line: str,
-        *,
-        trigger: str | None = None,
-        occurrence_id: str | None = None,
-        resolution_contract: ResolutionContractReference | None = None,
-        trigger_event: TriggerEventReference | None = None,
-    ) -> ProcedureRun:
-        """Trigger a named accepted Line; the daemon resolves its exact identity.
-
-        ``trigger`` names the Trigger this occurrence fires on; omit it only for
-        a Line no live Trigger aims at, which runs when run explicitly.
-
-        Next: ``run.succeeded`` and ``run.result``, or
-        ``cx.get(f"ProcedureRun:{run.run_id}")``.
+        Next: ``cx.line(name).enable()`` so its Triggers run it, ``.run()`` for one manual
+        run now, or ``cx.get(f"Line:{name}")`` for its enablement, Triggers and runs.
         """
 
-        result = self._client.run_line(
-            self._instance_id,
-            line,
-            trigger=trigger,
-            occurrence_id=occurrence_id,
-            resolution_contract=resolution_contract,
-            trigger_event=trigger_event,
-            evaluation_time=self._evaluation_time(),
-        )
-        return ProcedureRun(self, result)
+        return Line(self, name.removeprefix("Line:"))
 
     def get(
         self,
@@ -4600,6 +4476,132 @@ def _measurement_batch(raw: api.ProcedureMeasureResult) -> MeasurementBatch:
     )
 
 
+class Line:
+    """A handle on one accepted Line by name. Each call reaches the daemon.
+
+    A Trigger aimed at a Line does nothing until the Line is enabled. ``run``
+    is one manual occurrence now and never consumes a Trigger; ``evaluate``
+    and ``dispatch`` recover what automation missed (``cx.next()`` names it).
+
+    Next: ``line.enable()``, ``line.run()``, or ``cx.get(line.ref)``.
+    """
+
+    def __init__(self, cx: Cruxible, name: str) -> None:
+        self._playbill = cx
+        self.name = name
+
+    @property
+    def ref(self) -> str:
+        """The ``get`` reference for this Line's card. Next: ``cx.get(line.ref)``."""
+
+        return f"Line:{self.name}"
+
+    def enable(self, *, dry_run: bool | None = None, at: str | None = None) -> api.LineEnablement:
+        """Enable the Line forward-only: the daemon admits what its Triggers match from now on.
+
+        Runs use this connection's credential, rechecked before each admission,
+        and the Line and Trigger versions current now; a change to either stops
+        the enablement until it is enabled again. Needs governed write even for
+        an observe-only Line, and a proposing or settling Line needs a covering
+        ProcedureMandate. Enabling it again unchanged returns
+        ``outcome="already_enabled"``. ``dry_run=True`` previews it (``would_enable``);
+        commit exactly that with ``at=`` the preview's ``coordinate.git_oid``.
+
+        Next: ``cx.get(line.ref)`` for its enablement, occurrences and runs.
+        """
+        cx = self._playbill
+        return cx._client.enable_line(cx._instance_id, self.name, dry_run=dry_run, at=at)
+
+    def disable(self, *, dry_run: bool | None = None, at: str | None = None) -> api.LineEnablement:
+        """Stop the Line admitting work on its own; admitted runs are not cancelled.
+
+        A Line whose enablement already stopped returns ``outcome="already_disabled"``.
+        ``dry_run=True`` previews it (``would_disable``); ``at`` pins the commit.
+
+        Next: ``line.enable()`` to resume it.
+        """
+        cx = self._playbill
+        return cx._client.disable_line(cx._instance_id, self.name, dry_run=dry_run, at=at)
+
+    def evaluate(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        dry_run: bool = False,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> api.LineEvaluateResult:
+        """Turn a missed range into pending occurrences; never runs anything.
+
+        ``dry_run=True`` only reports what the range makes eligible (no range
+        needed); otherwise ``since`` and ``until`` are required.
+
+        Next: ``line.dispatch()`` to run what it found.
+        """
+        cx = self._playbill
+        return cx._client.evaluate_line(
+            cx._instance_id,
+            self.name,
+            request=api.LineEvaluateRequest(
+                since=since, until=until, dry_run=dry_run, limit=limit, cursor=cursor
+            ),
+        )
+
+    def dispatch(
+        self,
+        *,
+        occurrence_id: str | None = None,
+        limit: int = 100,
+        retry: bool = False,
+        cursor: str | None = None,
+    ) -> api.LineDispatchResult:
+        """Run up to ``limit`` pending occurrences under this connection's authority.
+
+        A full page returns ``cursor``; pass it back to continue past every
+        occurrence that page attempted, including those that stayed blocked.
+
+        Next: ``cx.get(f"ProcedureRun:{item.run_id}")`` for each admitted run.
+        """
+        cx = self._playbill
+        return cx._client.dispatch_line(
+            cx._instance_id,
+            self.name,
+            request=api.LineDispatchRequest(
+                occurrence_id=occurrence_id, limit=limit, retry=retry, cursor=cursor
+            ),
+        )
+
+    def run(
+        self,
+        *,
+        event: TriggerEventReference | None = None,
+        repeat: bool = False,
+        occurrence_id: str | None = None,
+        resolution_contract: ResolutionContractReference | None = None,
+    ) -> ProcedureRun:
+        """Run the Line once now: one manual occurrence, under the Line's own inputs,
+        budgets, authority ceiling and mandate. It never selects or consumes a Trigger.
+
+        ``event`` is the retained Capture event a Line whose Procedure takes an
+        event input runs on; an event the enabled Line already admitted refuses
+        unless ``repeat=True``.
+
+        Next: ``run.succeeded`` and ``run.result``, or ``cx.get(f"ProcedureRun:{run.run_id}")``.
+        """
+        cx = self._playbill
+        result = cx._client.run_line(
+            cx._instance_id,
+            self.name,
+            occurrence_id=occurrence_id,
+            resolution_contract=resolution_contract,
+            event=event,
+            repeat=repeat,
+            evaluation_time=cx._evaluation_time(),
+        )
+        return ProcedureRun(cx, result)
+
+
 class Procedure:
     """A handle on one accepted Procedure by name, read lazily.
 
@@ -4611,18 +4613,16 @@ class Procedure:
         self._playbill = cx
         self._name = name
         self._coordinate = coordinate
-        self._artifact: ProcedureArtifactAny | None = None
+        self._artifact: ProcedureArtifact | None = None
 
     @property
-    def definition(self) -> ProcedureArtifactAny:
+    def definition(self) -> ProcedureArtifact:
         """Exact accepted definition used for typed inputs and nested bindings.
 
         Next: ``procedure.input(...)`` to build a typed input.
         """
         if self._artifact is None:
-            reading = self.readiness()
-            if reading.artifact is None:
-                raise ValueError("Daemon did not return the accepted Procedure definition")
+            reading = self._readiness()
             if (
                 procedure_artifact_digest(reading.artifact).tagged
                 != reading.procedure_artifact_digest
@@ -4645,59 +4645,19 @@ class Procedure:
     def ref(self) -> ProcedureRef:
         """This Procedure as a typed ref. Next: ``cx.get(procedure.ref)``."""
 
-        coordinate = self._coordinate or _coordinate(self.readiness().coordinate)
+        coordinate = self._coordinate or _coordinate(self._readiness().coordinate)
         return ProcedureRef(self._name, coordinate)
 
-    def readiness(self) -> api.ProcedureReadiness:
-        """Whether this Procedure can run now, and which slots still need binding.
-
-        Next: ``procedure.bind(bindings=...)`` for open slots, else ``procedure.run(...)``.
-        """
-
+    def _readiness(self) -> api.ProcedureReadiness:
+        # The exact accepted artifact behind ``definition`` and ``input``; the
+        # public read of how it can run is ``cx.get(procedure.ref)``.
         requested = self._playbill._read_at(self._coordinate)
         result = self._playbill._client.procedure_readiness(
             self._playbill._instance_id,
             self._name,
-            evaluation_time=self._playbill._evaluation_time(),
             at=requested,
         )
         self._playbill._observe_read(_coordinate(result.coordinate), expected=requested)
-        return result
-
-    def bind(
-        self, *, bindings: Mapping[str | ProcedureSlotRef, TypedRef]
-    ) -> api.ProcedureBindResult:
-        # Binding is a current-state write with the existing daemon admission
-        # contract, not a snapshot read. Preserve its observed-reference guard.
-        """Bind this Procedure's open slots to accepted things.
-
-        Next: ``procedure.readiness()``, then ``procedure.run(...)``.
-        """
-
-        coordinate = self._coordinate or self._playbill.coordinate
-        self._playbill._assert_coordinate(coordinate)
-        rows: list[dict[str, object]] = []
-        for key, value in bindings.items():
-            slot = key if isinstance(key, str) else _address(key, RefKind.SLOT)
-            if isinstance(key, ProcedureSlotRef) and key.coordinate != coordinate:
-                raise ValueError("procedure binding references must match its observed coordinate")
-            if isinstance(value, ProcedureSlotRef):
-                raise ReferenceKindError("a slot cannot be bound to another slot")
-            if value.coordinate != coordinate:
-                raise ValueError("procedure binding references must match its observed coordinate")
-            target_kind = _REFERENCE_KINDS.get(value.kind)
-            if target_kind is None:
-                raise ReferenceKindError(f"cannot bind {value.kind.value} to a procedure slot")
-            rows.append(
-                {
-                    "slot_name": slot,
-                    "target": {"kind": target_kind, "name": value.address},
-                }
-            )
-        rows.sort(key=lambda item: str(item["slot_name"]).encode("utf-8"))
-        result = self._playbill._client.bind_procedure(
-            self._playbill._instance_id, self._name, bindings=rows
-        )
         return result
 
     def run(
@@ -4967,6 +4927,7 @@ __all__ = [
     "ClaimTypeProposal",
     "Intent",
     "KnowledgeCard",
+    "Line",
     "MeasurementBatch",
     "MeasurementOutcome",
     "NextPage",

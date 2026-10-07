@@ -217,19 +217,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "(traversals, disjunctions, projections) without accepting a QueryDefinition. "
         "Same rows, flags and paging as cruxible_query."
     ),
-    "cruxible_procedure_readiness": (
-        "Use when you need to know whether an accepted Procedure can run or which slots must "
-        "be bound first."
-    ),
-    "cruxible_procedure_bind": (
-        "Use when an accepted Procedure's open slots should be bound to exact accepted "
-        "artifacts through governance."
-    ),
     "cruxible_procedure_run": (
         "Use when you need to execute an accepted Procedure with durable outcomes."
-    ),
-    "cruxible_procedure_run_status": (
-        "Use when you need one Procedure run's typed outcomes and exact next operation."
     ),
     "cruxible_procedure_measure": (
         "Use when a Procedure's declared measurements are due: evaluate them from real evidence "
@@ -241,34 +230,27 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need each measurement's standing (pending, expired, resolved) and the "
         "retained exact-grain readings that credit real runs. Read-only and paginated."
     ),
-    "cruxible_line_check": (
-        "Check a named Line without enqueuing or running it. Incomplete coverage is not absence; "
-        "retain the returned checked_until when paging."
+    "cruxible_line_enable": (
+        "Enable a Line: its Triggers do nothing until then. The daemon admits what they match "
+        "from now on, under your credential and the Line and Trigger versions current now. "
+        "Needs governed write even for observe-only Lines. Never catches up. Read it with "
+        "cruxible_get(ref='Line:NAME')."
     ),
-    "cruxible_line_arm": (
-        "Arm a Line so the daemon admits what it matches from now on, under your credential "
-        "and the Line version current now. Never catches up: earlier pending work and daemon "
-        "downtime need evaluate and dispatch. Repeating it unchanged returns already_armed."
-    ),
-    "cruxible_line_disarm": (
+    "cruxible_line_disable": (
         "Stop a Line admitting work on its own. Runs already admitted keep going. "
-        "A Line already stopped returns already_disarmed."
-    ),
-    "cruxible_line_status": (
-        "Read whether a Line is armed, its pending work, and why an arm stopped "
-        "(credential revoked, Line changed, disarmed). Rearm to resume."
+        "A Line already stopped returns already_disabled."
     ),
     "cruxible_line_evaluate": (
-        "Evaluate an explicit missed range into pending work. "
-        "Repeat or page incomplete results; no runs start."
+        "Turn a missed range (since, until) into pending work for dispatch; no runs start. "
+        "dry_run only reports what the range makes eligible. Page incomplete results."
     ),
     "cruxible_line_dispatch": (
-        "Execute pending occurrences under your current authority. An armed Line admits only "
-        "what it matched itself; everything else waits for this call."
+        "Run pending occurrences under your current authority, up to limit (default 100). "
+        "An enabled Line admits only what it matched itself; the rest waits for this call."
     ),
     "cruxible_line_run": (
-        "Trigger one due accepted Line occurrence. Reuse a returned occurrence id only as an "
-        "idempotency assertion; the daemon derives occurrence identity."
+        "Run a Line once now as a manual occurrence under its inputs, budgets, authority and "
+        "mandate; it never consumes a Trigger. Pass event when its Procedure takes one."
     ),
     "cruxible_prediction_list": (
         "Find accepted resolution contracts testing a Claim, by Claim ID. Returns their "

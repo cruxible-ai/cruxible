@@ -40,8 +40,6 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import CruxibleError, FormatError
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
-from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_core.claims.artifact_references import move_references, reference_fields
 from cruxible_core.claims.claim_type_inputs import (
@@ -713,30 +711,14 @@ def _canonical_successor_bytes(
                 "predecessor_digest": current.artifact_digest,
             }
         if current.artifact_kind == "procedure":
-            raw_definition = payload.get("definition")
-            if isinstance(raw_definition, dict) and raw_definition.get("graph_format") in {4, 5}:
-                raise ClaimTypeMigrationDependentInvalid(
-                    f"{ClaimTypeMigrationDependentInvalid.code}: automatic migration of "
-                    f"graph-v{raw_definition['graph_format']} Procedure dependent "
-                    f"{current.identity.qualified} is not "
-                    "supported; supply an explicit successor"
-                )
-            try:
-                definition = ProcedureDefinitionV3.model_validate(payload["definition"])
-            except ValidationError as exc:
-                validation_details = []
-                for error in exc.errors(include_url=False):
-                    path = "$.definition" + "".join(
-                        f"[{part}]" if isinstance(part, int) else f".{part}"
-                        for part in error["loc"]
-                    )
-                    validation_details.append(f"{path}: {error['msg']}")
-                details = "; ".join(validation_details)
-                raise ClaimTypeMigrationDependentInvalid(
-                    f"{ClaimTypeMigrationDependentInvalid.code}: dependent "
-                    f"{current.identity.qualified} has an invalid procedure definition; {details}"
-                ) from exc
-            payload["definition_digest"] = compute_procedure_definition_digest_v3(definition).tagged
+            # A Procedure graph's pins are bound into its definition digest and,
+            # for source Procedures, into the retained source: re-pointing them
+            # is authoring, not migration.
+            raise ClaimTypeMigrationDependentInvalid(
+                f"{ClaimTypeMigrationDependentInvalid.code}: automatic migration of Procedure "
+                f"dependent {current.identity.qualified} is not supported; supply an explicit "
+                "successor"
+            )
     else:
         payload = supplied
     try:

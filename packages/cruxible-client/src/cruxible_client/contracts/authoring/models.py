@@ -6,6 +6,7 @@ import base64
 import binascii
 import hashlib
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
@@ -100,7 +101,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:ce1abee9a2748f020be1dcd9846b3d02f46b2b211dd477b5d7770e8195e655ce"
+    "sha256:93ac03a222a5c9bdd5be5d42f55897788f0ef840748555ac48e47233ff160a77"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -890,25 +891,6 @@ class TriggerAuthoringPayload(_StrictAuthoringModel):
         return self
 
 
-class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
-    tag: Literal["playbill-procedure-authoring-payload-v1"] = (
-        "playbill-procedure-authoring-payload-v1"
-    )
-    definition: dict[str, object]
-    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
-    retire: bool = False
-
-    @field_validator("definition", mode="before")
-    @classmethod
-    def _definition(cls, value: object) -> dict[str, object]:
-        normalized = normalize_canonical(value)
-        if not isinstance(normalized, dict):
-            raise ValueError("Procedure authoring definition must be a canonical object")
-        if "name" not in normalized:
-            raise ValueError("Procedure authoring definition requires a semantic name")
-        return cast(dict[str, object], normalized)
-
-
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
     """A Procedure envelope input, plus the acquisition policy that envelope pins.
 
@@ -947,6 +929,54 @@ class ProcedureAuthoringPayload(_StrictAuthoringModel):
         if value is not None and not _CANONICAL_NAME_RE.fullmatch(value):
             raise ValueError("acquisition policy name is not canonical")
         return value
+
+
+class BlueprintAuthoringPayload(ProcedureAuthoringPayload):
+    """A Blueprint envelope input: a Procedure definition whose Provider slots stay open.
+
+    It lowers to ``blueprints/<name>.json``. A Blueprint pins no acquisition
+    policy: that binding belongs to each Procedure instantiated from it.
+    """
+
+    tag: Literal["cruxible-blueprint-authoring-payload-v1"] = (
+        "cruxible-blueprint-authoring-payload-v1"  # type: ignore[assignment]  # noqa: E501
+    )
+
+    @field_validator("acquisition_policy")
+    @classmethod
+    def _no_policy(cls, value: str | None) -> str | None:
+        if value is not None:
+            raise ValueError("a Blueprint pins no acquisition policy; its instances do")
+        return value
+
+
+class BlueprintInstantiation(_StrictAuthoringModel):
+    """The definition of a Procedure instantiated from a Blueprint.
+
+    ``bindings`` names one accepted Provider per Blueprint slot. Lowering
+    resolves the Blueprint and each Provider at the authoring base, checks every
+    binding against its slot's interface, and writes an ordinary Procedure that
+    records the Blueprint and the exact Providers bound.
+    """
+
+    name: str
+    blueprint: str
+    bindings: dict[str, str] = Field(min_length=1)
+
+    @field_validator("name", "blueprint")
+    @classmethod
+    def _names(cls, value: str) -> str:
+        if not _CANONICAL_NAME_RE.fullmatch(value):
+            raise ValueError("Blueprint and Procedure names must be canonical")
+        return value
+
+
+def blueprint_instantiation(definition: Mapping[str, object]) -> BlueprintInstantiation | None:
+    """The instantiation a Procedure authoring definition states, if it is one."""
+
+    if "blueprint" not in definition:
+        return None
+    return BlueprintInstantiation.model_validate(dict(definition))
 
 
 class ClaimTypeAuthoringPayload(_StrictAuthoringModel):
@@ -1191,7 +1221,7 @@ AuthoringChangeSetMember: TypeAlias = Annotated[
     | SourceAcquisitionPolicyAuthoringPayload
     | LineAuthoringPayload
     | TriggerAuthoringPayload
-    | ProcedureAuthoringPayloadV1
+    | BlueprintAuthoringPayload
     | ProcedureAuthoringPayload,
     Field(discriminator="tag"),
 ]
@@ -1250,6 +1280,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
         return f"Line:{payload.name}"
     if isinstance(payload, TriggerAuthoringPayload):
         return f"Trigger:{payload.name}"
+    if isinstance(payload, BlueprintAuthoringPayload):
+        return f"Blueprint:{payload.definition['name']}"
     return f"Procedure:{payload.definition['name']}"
 
 
@@ -1326,7 +1358,7 @@ AuthoringPayload = Annotated[
     ClaimAuthoringPayloadV1
     | ClaimAuthoringPayloadV2
     | ClaimAuthoringPayload
-    | ProcedureAuthoringPayloadV1
+    | BlueprintAuthoringPayload
     | ProcedureAuthoringPayload
     | ResolutionContractAuthoringPayload
     | AttestationAuthoringPayload
@@ -2237,8 +2269,10 @@ __all__ = [
     "BlockSyncSuccessorCandidate",
     "PreflightCertificate",
     "PreflightResult",
-    "ProcedureAuthoringPayloadV1",
+    "BlueprintAuthoringPayload",
+    "BlueprintInstantiation",
     "ProcedureAuthoringPayload",
+    "blueprint_instantiation",
     "ApprovalPolicyAuthoringPayload",
     "ProcedureRuntimePolicyAuthoringPayload",
     "MandateConditionAuthoring",

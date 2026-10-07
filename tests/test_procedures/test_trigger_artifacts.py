@@ -61,7 +61,6 @@ from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmiss
 from tests.core_support._support import initialize_local
 from tests.support.lines import (
     action_trigger,
-    graph_v4,
     line_trigger,
     successor,
     trigger_members,
@@ -304,7 +303,7 @@ def _line_world(tmp_path):  # type: ignore[no-untyped-def]
     """An accepted Line v6 with no Trigger aimed at it yet."""
 
     instance, owner = initialize_local(tmp_path)
-    accepted = graph_v4(_slotless_procedure("triggered-method"))
+    accepted = _slotless_procedure("triggered-method")
     policy = _acquisition_policy("triggered-policy")
     line = _served_line("triggered-line", accepted=accepted, policy=policy)
     mandate = _line_mandate(accepted)

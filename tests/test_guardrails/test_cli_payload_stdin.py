@@ -82,7 +82,7 @@ def test_every_named_artifact_file_still_exists_and_is_not_a_payload() -> None:
     "args",
     [
         ["procedure", "run", "nightly", "-", "--at", "-"],
-        ["line", "run", "nightly", "--resolution-contract", "-", "--trigger-event", "-"],
+        ["line", "run", "nightly", "--resolution-contract", "-", "--event", "-"],
     ],
 )
 def test_one_command_reads_stdin_for_one_argument_only(args: list[str]) -> None:

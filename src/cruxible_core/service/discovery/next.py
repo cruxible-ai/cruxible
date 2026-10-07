@@ -887,7 +887,8 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.proposal.readmit": "proposal readmit",
     "cruxible.proposal.approve": "proposal approve",
     "cruxible.compiler.upgrade": "compiler upgrade",
-    "cruxible.line.arm": "line arm",
+    "cruxible.line.enable": "line enable",
+    "cruxible.line.evaluate": "line evaluate",
     "cruxible.line.dispatch": "line dispatch",
     "cruxible.prediction.settle": "prediction settle",
 }
@@ -970,7 +971,8 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.proposal.readmit": "cruxible_proposal_readmit",
     "cruxible.proposal.approve": "cruxible_proposal_approve",
     "cruxible.compiler.upgrade": "cruxible_compiler_upgrade",
-    "cruxible.line.arm": "cruxible_line_arm",
+    "cruxible.line.enable": "cruxible_line_enable",
+    "cruxible.line.evaluate": "cruxible_line_evaluate",
     "cruxible.line.dispatch": "cruxible_line_dispatch",
     "cruxible.prediction.settle": "cruxible_prediction_settle",
     "hand_edit": None,
@@ -1128,8 +1130,14 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         value = values.get(key)
         return value if isinstance(value, str) and value else None
 
-    if operation == "cruxible.line.arm" and text("line"):
-        return _mcp_call("cruxible_line_arm", line=text("line"))
+    if operation == "cruxible.line.enable" and text("line"):
+        return _mcp_call("cruxible_line_enable", line=text("line"))
+    if operation == "cruxible.line.evaluate" and text("line") and text("since") and text("until"):
+        return _mcp_call(
+            "cruxible_line_evaluate",
+            line=text("line"),
+            request={"since": text("since"), "until": text("until")},
+        )
     if operation == "cruxible.line.dispatch" and text("line"):
         limit = values.get("limit")
         request = {"limit": limit} if isinstance(limit, int) and limit > 1 else {}
@@ -1225,13 +1233,18 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         value = values.get(key)
         return value if isinstance(value, str) and value else None
 
-    if operation == "cruxible.line.arm" and (line := text("line")):
-        return _sdk_call("cx.arm_line", line)
+    if operation == "cruxible.line.enable" and (line := text("line")):
+        return _sdk_call("cx.line", line) + ".enable()"
+    if operation == "cruxible.line.evaluate" and (line := text("line")):
+        since, until = text("since"), text("until")
+        if since is None or until is None:
+            return None
+        return _sdk_call("cx.line", line) + _sdk_call(".evaluate", since=since, until=until)
     if operation == "cruxible.line.dispatch" and (line := text("line")):
         limit = values.get("limit")
         if isinstance(limit, int) and limit > 1:
-            return _sdk_call("cx.dispatch_line", line, limit=limit)
-        return _sdk_call("cx.dispatch_line", line)
+            return _sdk_call("cx.line", line) + _sdk_call(".dispatch", limit=limit)
+        return _sdk_call("cx.line", line) + ".dispatch()"
     if operation == "cruxible.prediction.settle" and (prediction := text("prediction_id")):
         return _sdk_call("cx.settle", prediction)
     if operation == "cruxible.authoring.example":
@@ -1332,7 +1345,20 @@ def _repair_command(
         if not isinstance(target, str) or not isinstance(name, str):
             return None
         parts.extend(["--to", shlex.quote(target), "--name", shlex.quote(name)])
-    elif operation in {"cruxible.line.arm", "cruxible.line.dispatch"}:
+    elif operation == "cruxible.line.evaluate":
+        line, since, until = values.get("line"), values.get("since"), values.get("until")
+        if not all(isinstance(value, str) and value for value in (line, since, until)):
+            return None
+        parts.extend(
+            [
+                shlex.quote(str(line)),
+                "--since",
+                shlex.quote(str(since)),
+                "--until",
+                shlex.quote(str(until)),
+            ]
+        )
+    elif operation in {"cruxible.line.enable", "cruxible.line.dispatch"}:
         line = values.get("line")
         limit = values.get("limit")
         if not isinstance(line, str) or not line:
@@ -3802,6 +3828,73 @@ def _consumer_stalled_items(healths: tuple[ConsumerHealth, ...]) -> tuple[Playbi
     )
 
 
+def _line_attention_items(
+    instance: PlaybillInstance,
+    *,
+    evaluation_time: datetime,
+    access_profile: CoverageAccessProfile,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """What enabled Lines owe explicit work after a daemon restart.
+
+    A restart rolls an enabled Line forward-only: one row per range its
+    daemon never matched, naming the exact ``line evaluate`` that covers it,
+    and one row per Line whose pending work waits for ``line dispatch``.
+    Automatically dispatching work matched before a restart is not done here.
+    Only enabled Lines are read; a deliberate disable owes nothing.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.service.procedures.line_dispatch import line_attention
+
+    gaps, pending = line_attention(instance, now=evaluation_time)
+    items: list[PlaybillNextItemV1] = []
+    for gap in gaps:
+        line = gap.line.removeprefix("Line:")
+        since, until = format_datetime(gap.since), format_datetime(gap.until)
+        items.append(
+            _item(
+                severity="repair",
+                reason="line_coverage_gap",
+                subject_identity=gap.line,
+                detail={
+                    "since": since,
+                    "until": until,
+                    "detail": "Daemon restarted; uncovered ranges require explicit evaluation.",
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="cruxible.line.evaluate",
+                    target=gap.line,
+                    required_change="evaluate_the_uncovered_range_then_dispatch_what_it_finds",
+                    arguments={"line": line, "since": since, "until": until},
+                ),
+            )
+        )
+    for work in pending:
+        items.append(
+            _item(
+                severity="repair",
+                reason="line_work_pending",
+                subject_identity=work.line,
+                detail={
+                    "due": work.due,
+                    "oldest_eligible_at": format_datetime(work.oldest_eligible_at),
+                    "detail": (
+                        "Matched before a restart or evaluated explicitly; an enabled Line "
+                        "admits only what it matched itself."
+                    ),
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="cruxible.line.dispatch",
+                    target=work.line,
+                    required_change="dispatch_the_lines_pending_work",
+                    arguments={"line": work.line.removeprefix("Line:")},
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _evidence_unavailable_items(
     instance: PlaybillInstance,
     *,
@@ -4204,7 +4297,7 @@ def _consumers_health(
             for health in healths
             if health.kind == kind.name
         )
-    # Armed Lines are governed consumers: their health is not a finding the
+    # Enabled Lines are governed consumers: their health is not a finding the
     # facet's state is about, but an instance caller reads it here without
     # the daemon's registry.
     arms = Counter(health.state for health in healths if health.kind == "line")
@@ -4220,7 +4313,7 @@ def _consumers_health(
     )
     detail: dict[str, object] = {"workers": workers}
     if arms:
-        detail["line_arms"] = {
+        detail["line_enablements"] = {
             "running": arms["running"],
             "stalled": arms["stalled"],
             "stopped": arms["stopped"],
@@ -4957,6 +5050,9 @@ class _CallerView:
 
     def _required_rung(self, repair: PlaybillNextRepairV1, tool: str) -> int:
         static = _tool_rung(tool)
+        if repair.operation == "cruxible.line.evaluate":
+            # The tool's own tier is a dry-run read; enqueueing the range writes.
+            return _GOVERNED_WRITE_RUNG
         if repair.operation != "cruxible.line.dispatch":
             return static
         # A Line dispatch's tier is the Line's own: an observe-only Line
@@ -5267,6 +5363,9 @@ def _next_queue(
             instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
         ),
         *_consumer_stalled_items(consumer_healths),
+        *_line_attention_items(
+            instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
+        ),
     )
     caller = _CallerView(
         instance,

@@ -9,6 +9,8 @@ from cruxible_client.authoring.inputs import (
     AcquisitionPolicyInput,
     ApprovalPolicyInput,
     AuthoringInput,
+    BlueprintInput,
+    BlueprintInstanceInput,
     CarriedContractInput,
     ChangeSetInput,
     ClaimInput,
@@ -247,8 +249,9 @@ def line_example() -> LineInput:
 
     That Procedure has no Source nodes, so the Line names no acquisition
     policy, and its input contract is empty, so `parameters` is `{}`. It only
-    observes, so it runs without a ProcedureMandate. With no Trigger aimed at it
-    it runs when run explicitly; `--example trigger` schedules it.
+    observes, so it runs without a ProcedureMandate. It runs when run explicitly
+    (`line run`); `--example trigger` schedules it, and the Trigger runs it only
+    once the Line is enabled (`line enable`).
     """
 
     return LineInput(kind="line", name="replace-me", procedure_name="replace-me", parameters={})
@@ -266,8 +269,9 @@ def trigger_example() -> TriggerInput:
     `capture_landing` (an exact CaptureContract `event`), or `window_close` (a
     `window`). Actions admit timed or generation-accepted schedules; a Line that binds
     its triggering Capture needs a schedule that fires on that exact event. Nothing
-    fires before the Trigger is accepted: this one first runs at the top of the
-    hour after its acceptance.
+    fires before the Trigger is accepted, and a Trigger aimed at a Line does
+    nothing until that Line is enabled (`line enable`): this one first runs at
+    the top of the hour after both.
     """
 
     return TriggerInput(
@@ -438,7 +442,7 @@ def procedure_example() -> ProcedureInput:
     return ProcedureInput(
         kind="procedure",
         definition={
-            "graph_format": 5,
+            "graph_format": 6,
             "name": "replace-me",
             "description": "Run all six deterministic compute kernels over typed collections.",
             "contract_in": carried("empty-input", "contract-in"),
@@ -616,6 +620,83 @@ def procedure_example() -> ProcedureInput:
     )
 
 
+def blueprint_example() -> BlueprintInput:
+    """A Procedure skeleton: one call whose Provider is an open, interface-typed slot."""
+
+    def carried(name: str, role: str) -> dict[str, str]:
+        return {"kind": "carried_contract", "name": name, "role": role}
+
+    interface_digest = "sha256:" + "0" * 64
+    return BlueprintInput(
+        kind="blueprint",
+        definition={
+            "graph_format": 6,
+            "name": "replace-me",
+            "description": "Replace with what every Procedure made from this Blueprint does.",
+            "contract_in": carried("lookup-request", "contract-in"),
+            "contract_out": carried("lookup-result", "contract-out"),
+            "pin_slots": [
+                {
+                    "slot_name": "lookup",
+                    "pin_role": "provider",
+                    "artifact_kind": "Provider",
+                    "interface_digest": interface_digest,
+                }
+            ],
+            "nodes": [
+                {
+                    "kind": "call",
+                    "node_id": "lookup",
+                    "provider": {"kind": "slot", "slot_name": "lookup"},
+                    "interface": {
+                        "kind": "accepted",
+                        "role": "provider-interface",
+                        "target": "ProviderInterface:replace-me",
+                    },
+                    "interface_digest": interface_digest,
+                    "contract_in": carried("lookup-request", "contract-in"),
+                    "contract_out": carried("lookup-result", "contract-out"),
+                    "input": "$input",
+                    "as": "result",
+                }
+            ],
+            "returns": "result",
+            "budget": {
+                "wall_clock": {"microseconds": 1_000_000},
+                "max_provider_calls": 1,
+                "max_capture_bytes": 0,
+            },
+            "hard_caps": {
+                "max_wall_clock": {"microseconds": 2_000_000},
+                "max_provider_calls": 1,
+                "max_capture_bytes": 0,
+                "max_items": 100,
+                "max_repeat_attempts": 1,
+            },
+            "terminal_capability": 1,
+        },
+        contracts=(
+            CarriedContractInput(
+                name="lookup-request", fields={"key": PropertySchema(type="string")}
+            ),
+            CarriedContractInput(
+                name="lookup-result", fields={"value": PropertySchema(type="string")}
+            ),
+        ),
+    )
+
+
+def blueprint_instance_example() -> BlueprintInstanceInput:
+    """One Procedure made from a Blueprint, binding an installed Provider to each slot."""
+
+    return BlueprintInstanceInput(
+        kind="blueprint_instance",
+        name="replace-me",
+        blueprint="replace-me",
+        bindings={"lookup": "replace-me"},
+    )
+
+
 def query_claims_by_type_example() -> QueryDefinitionInput:
     """Return a governed query template for current supported work-item status."""
 
@@ -702,6 +783,8 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "claim-exact-content": claim_exact_content_example,
     "claim-revision": claim_revision_example,
     "procedure": procedure_example,
+    "blueprint": blueprint_example,
+    "blueprint-instance": blueprint_instance_example,
     "query-claims-by-type": query_claims_by_type_example,
     "query-ontology": query_ontology_example,
     "query-procedures": query_procedures_example,
@@ -718,6 +801,15 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
 
 #: One line shown beside an example's payload, where the payload alone could mislead.
 AUTHORING_EXAMPLE_NOTES: Final[dict[AuthoringExampleName, str]] = {
+    "blueprint": (
+        "Each slot names the interface digest of an accepted ProviderInterface "
+        "(cruxible get ProviderInterface:<name> --detail proof); every node using the slot "
+        "pins that interface."
+    ),
+    "blueprint-instance": (
+        "bindings maps each Blueprint slot to an installed Provider; "
+        "cruxible get Blueprint:<name> lists the Providers that fit each slot."
+    ),
     "trigger": (
         CRON_UTC_HINT + ' Generation floor refresh: {"kind":"trigger",'
         '"name":"floor-refresh","schedule":{"kind":"generation_accepted"},'
@@ -743,6 +835,8 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "claim-exact-content",
     "claim-revision",
     "procedure",
+    "blueprint",
+    "blueprint-instance",
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
@@ -826,6 +920,8 @@ __all__ = [
     "document_example",
     "approval_policy_example",
     "line_example",
+    "blueprint_example",
+    "blueprint_instance_example",
     "procedure_example",
     "procedure_mandate_example",
     "query_claims_by_type_example",

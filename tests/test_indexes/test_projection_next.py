@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
@@ -33,6 +34,13 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionResolvedParameterBinding,
     projection_parameter_digest,
     projection_query_semantic_result_digest,
+)
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.models import (
+    ProcedureBudget,
+    ProcedureDefinition,
+    ProcedureHardCaps,
+    ProjectNode,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts.query.grammar import (
@@ -79,6 +87,7 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.core_support._p2b1_support import pin
 from tests.core_support._published_world import (
     published_world as _published_world,
 )
@@ -86,15 +95,50 @@ from tests.core_support._published_world import (
     retire_claim as _retire,
 )
 from tests.core_support._support import initialize_local
+from tests.support.procedures import accepted_procedure
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 from tests.test_claims.test_claims import _claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
-from tests.test_integration.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_query.test_query_execution_service import _instance_with_query
 
 NOW = datetime(2026, 8, 16, 21, tzinfo=UTC)
 BODY = "sha256:" + hashlib.sha256(b"status: ready\n").hexdigest()
 EDITED_BODY = "sha256:" + hashlib.sha256(b"status: blocked\n").hexdigest()
+
+
+def _accepted_procedure() -> AcceptedProcedure:
+    """One accepted graph-v6 Procedure; these tests only read its identity and path."""
+
+    contract_out = pin("contract-out", "Contract", "procedure-output")
+    definition = ProcedureDefinition(
+        name="catalog-procedure",
+        contract_in=pin("contract-in", "Contract", "procedure-input"),
+        contract_out=contract_out,
+        nodes=(
+            ProjectNode(
+                node_id="finish",
+                fields={"status": "done"},
+                contract_out=contract_out,
+                as_="result",
+            ),
+        ),
+        returns="result",
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=1_000_000),
+            max_provider_calls=0,
+            max_capture_bytes=0,
+            max_items=10,
+        ),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
+            max_provider_calls=0,
+            max_capture_bytes=0,
+            max_items=20,
+            max_repeat_attempts=1,
+        ),
+        terminal_capability=1,
+    )
+    return accepted_procedure(definition)
 
 
 @pytest.fixture(scope="module")
@@ -228,7 +272,7 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
                                 procedure.procedure.identity.qualified,
                                 procedure.path,
                                 "live",
-                                False,
+                                "direct",
                             ),
                         )
                     )
@@ -338,7 +382,7 @@ def test_a_malformed_presentation_policy_fails_the_projection_advisory_closed(
     def with_procedure(self):
         return (
             ProcedureInventoryRow(
-                procedure.procedure.identity.qualified, procedure.path, "live", False
+                procedure.procedure.identity.qualified, procedure.path, "live", "direct"
             ),
         )
 
@@ -390,7 +434,7 @@ def test_service_next_coalesces_projection_advice_in_its_own_observed_domain(
     def with_procedure(self):
         return (
             ProcedureInventoryRow(
-                procedure.procedure.identity.qualified, procedure.path, "live", False
+                procedure.procedure.identity.qualified, procedure.path, "live", "direct"
             ),
         )
 
@@ -472,7 +516,7 @@ def test_many_unprojected_procedures_coalesce_without_a_cardinality_cap(
                 f"Procedure:{template.identity.name}{index:02d}",
                 f"procedures/{template.identity.name}{index:02d}.json",
                 "live",
-                False,
+                "direct",
             )
             for index in range(25)
         )

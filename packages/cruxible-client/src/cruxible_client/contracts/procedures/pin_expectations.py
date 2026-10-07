@@ -1,4 +1,4 @@
-"""Central field-to-pin expectations for graph-format-v3 Procedures.
+"""Central field-to-pin expectations for Procedure graphs.
 
 An ``ArtifactPin`` proves exact bytes and a slot declaration proves an
 interface binding point.  Neither fact says that the artifact is suitable for
@@ -12,26 +12,21 @@ from dataclasses import dataclass
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.procedures.models import (
-    CaptureEgressNodeV3,
+    CallNode,
+    CaptureEgressNode,
     ClaimTapNode,
     ExhaustTapNode,
     InvokeNode,
-    ProcedureDefinitionAny,
+    ProcedureDefinition,
     ProcedurePinBinding,
     ProcedurePinSlot,
     ProcedurePinSlotRef,
     ProjectNode,
     ProposeChangeSetNode,
-    ProviderNode,
-    ProviderNodeV3,
-    RepeatBodyNodeV3,
-    RepeatBodyNodeV4,
-    RepeatNodeV3,
-    RepeatNodeV4,
+    RepeatNode,
     SelectNode,
     SourceNode,
-    SourceNodeV3,
-    StateTapNodeV3,
+    StateTapNode,
     TransformNode,
 )
 
@@ -54,7 +49,6 @@ QUERY = PinExpectation((("query", "QueryDefinition"),))
 PROVIDER = PinExpectation((("provider", "Provider"),))
 PROVIDER_INTERFACE = PinExpectation((("provider-interface", "ProviderInterface"),))
 CAPTURE_CONTRACT = PinExpectation((("capture-contract", "CaptureContract"),))
-ENVIRONMENT = PinExpectation((("environment", "EnvironmentManifest"),))
 EFFECT_POLICY = PinExpectation((("effect-policy", "EffectPolicy"),))
 REDUCER_OR_QUERY = PinExpectation((("query", "QueryDefinition"), ("reducer", "Reducer")))
 
@@ -104,7 +98,7 @@ def _validate_binding_expectation(
         )
 
 
-def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> None:
+def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None:
     """Validate every exact or slot-backed semantic pin field in one graph."""
 
     slots = {slot.slot_name: slot for slot in definition.pin_slots}
@@ -145,80 +139,75 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
         elif isinstance(node, ProposeChangeSetNode):
             for pin in node.claim_types:
                 check(pin, PinExpectation((("claim-type", "ClaimType"),)), f"{prefix} claim_type")
-        elif isinstance(node, StateTapNodeV3):
+        elif isinstance(node, StateTapNode):
             check(node.query, QUERY, f"{prefix} query")
-        elif isinstance(node, SourceNodeV3 | SourceNode):
+        elif isinstance(node, SourceNode):
             check(node.capture_contract, CAPTURE_CONTRACT, f"{prefix} capture_contract")
             check(node.provider, PROVIDER, f"{prefix} provider")
-            if isinstance(node, SourceNode):
-                validate_exact_pin_expectation(
-                    node.interface,
-                    PROVIDER_INTERFACE,
-                    location=f"{prefix} interface",
-                )
-                if isinstance(node.provider, ProcedurePinSlotRef):
-                    slot = slots[node.provider.slot_name]
-                    if slot.interface_digest != node.interface_digest:
-                        raise ValueError(
-                            f"{prefix} interface_digest disagrees with Provider slot "
-                            f"{node.provider.slot_name!r}"
-                        )
+            validate_exact_pin_expectation(
+                node.interface,
+                PROVIDER_INTERFACE,
+                location=f"{prefix} interface",
+            )
+            if isinstance(node.provider, ProcedurePinSlotRef):
+                slot = slots[node.provider.slot_name]
+                if slot.interface_digest != node.interface_digest:
+                    raise ValueError(
+                        f"{prefix} interface_digest disagrees with Provider slot "
+                        f"{node.provider.slot_name!r}"
+                    )
         elif isinstance(node, ExhaustTapNode):
             check(
                 node.reducer_or_query,
                 REDUCER_OR_QUERY,
                 f"{prefix} reducer_or_query",
             )
-        elif isinstance(node, ProviderNodeV3 | ProviderNode):
+        elif isinstance(node, CallNode):
             check(node.provider, PROVIDER, f"{prefix} provider")
             check(node.contract_in, CONTRACT_IN, f"{prefix} contract_in")
             check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
-            if isinstance(node, ProviderNodeV3):
-                check(node.environment, ENVIRONMENT, f"{prefix} environment")
-            else:
-                validate_exact_pin_expectation(
-                    node.interface,
-                    PROVIDER_INTERFACE,
-                    location=f"{prefix} interface",
-                )
-                if isinstance(node.provider, ProcedurePinSlotRef):
-                    slot = slots[node.provider.slot_name]
-                    if slot.interface_digest != node.interface_digest:
-                        raise ValueError(
-                            f"{prefix} interface_digest disagrees with Provider slot "
-                            f"{node.provider.slot_name!r}"
-                        )
+            validate_exact_pin_expectation(
+                node.interface,
+                PROVIDER_INTERFACE,
+                location=f"{prefix} interface",
+            )
+            if isinstance(node.provider, ProcedurePinSlotRef):
+                slot = slots[node.provider.slot_name]
+                if slot.interface_digest != node.interface_digest:
+                    raise ValueError(
+                        f"{prefix} interface_digest disagrees with Provider slot "
+                        f"{node.provider.slot_name!r}"
+                    )
             check(node.effect_policy, EFFECT_POLICY, f"{prefix} effect_policy")
         elif isinstance(node, TransformNode):
             check(node.contract_in, CONTRACT_IN, f"{prefix} contract_in")
             check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
         elif isinstance(node, ProjectNode | SelectNode):
             check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
-        elif isinstance(node, RepeatNodeV3 | RepeatNodeV4):
+        elif isinstance(node, RepeatNode):
             for body in node.body:
                 body_prefix = f"{prefix} repeat body {body.node_id!r}"
                 check(body.provider, PROVIDER, f"{body_prefix} provider")
                 check(body.contract_in, CONTRACT_IN, f"{body_prefix} contract_in")
                 check(body.contract_out, CONTRACT_OUT, f"{body_prefix} contract_out")
-                if isinstance(body, RepeatBodyNodeV3):
-                    check(body.environment, ENVIRONMENT, f"{body_prefix} environment")
-                elif isinstance(body, RepeatBodyNodeV4) and body.operation in {"provider", "call"}:
-                    if body.interface is None or body.interface_digest is None:
-                        raise ValueError(f"{body_prefix} lacks its Provider interface")
-                    validate_exact_pin_expectation(
-                        body.interface,
-                        PROVIDER_INTERFACE,
-                        location=f"{body_prefix} interface",
-                    )
-                    if isinstance(body.provider, ProcedurePinSlotRef):
-                        slot = slots[body.provider.slot_name]
-                        if slot.interface_digest != body.interface_digest:
-                            raise ValueError(
-                                f"{body_prefix} interface_digest disagrees with Provider slot "
-                                f"{body.provider.slot_name!r}"
-                            )
-                    check(body.effect_policy, EFFECT_POLICY, f"{body_prefix} effect_policy")
-        elif isinstance(node, CaptureEgressNodeV3):
+                if body.operation != "call":
+                    continue
+                if body.interface is None or body.interface_digest is None:
+                    raise ValueError(f"{body_prefix} lacks its Provider interface")
+                validate_exact_pin_expectation(
+                    body.interface,
+                    PROVIDER_INTERFACE,
+                    location=f"{body_prefix} interface",
+                )
+                if isinstance(body.provider, ProcedurePinSlotRef):
+                    slot = slots[body.provider.slot_name]
+                    if slot.interface_digest != body.interface_digest:
+                        raise ValueError(
+                            f"{body_prefix} interface_digest disagrees with Provider slot "
+                            f"{body.provider.slot_name!r}"
+                        )
+                check(body.effect_policy, EFFECT_POLICY, f"{body_prefix} effect_policy")
+        elif isinstance(node, CaptureEgressNode):
             check(node.capture_contract, CAPTURE_CONTRACT, f"{prefix} capture_contract")
 
 

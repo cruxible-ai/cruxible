@@ -212,6 +212,7 @@ GOVERNED_TRIGGERS_ARTIFACT_KINDS = ArtifactKindRegistry(
     (
         *AUTHORITY_VERBS_ARTIFACT_KINDS.entries(),
         ArtifactPathKind("trigger", re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")),
+        ArtifactPathKind("blueprint", re.compile(r"^blueprints/[a-z][a-z0-9_.-]{0,255}\.json$")),
     )
 )
 _REVISION_31_AND_LATER = (AUTHORITY_VERBS_ARTIFACT_KINDS, GOVERNED_TRIGGERS_ARTIFACT_KINDS)
@@ -222,6 +223,7 @@ RegisteredPathKind = Literal[
     "resolution-contract",
     "attestation",
     "approval-policy",
+    "blueprint",
     "procedure-runtime-policy",
     "capture-contract",
     "changeset",
@@ -672,6 +674,50 @@ def parse_projection_tree(
                             artifact_digest=digest,
                         ),
                     )
+                )
+                continue
+            if kind == "blueprint":
+                from cruxible_client.contracts.procedures.blueprints import (
+                    blueprint_digest,
+                    parse_blueprint,
+                )
+                from cruxible_client.contracts.procedures.source_compiler import (
+                    verify_source_graph,
+                )
+
+                blueprint = parse_blueprint(content, path=path, codec=artifact_codec)
+                verify_source_graph(blueprint)
+                identity = blueprint.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                digest = blueprint_digest(blueprint).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity,
+                        kind,
+                        blueprint.artifact_format,
+                        path,
+                        digest,
+                        blueprint.lifecycle.predecessor_digest,
+                        projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=file_digest(content).tagged,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                if blueprint.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                        role=pin.role,
+                    )
+                    for pin in blueprint.pins
                 )
                 continue
             if kind == "trigger":
@@ -1499,38 +1545,18 @@ def parse_projection_tree(
                 from cruxible_client.contracts.procedures.artifacts import (
                     parse_procedure,
                     procedure_artifact_digest,
+                    procedure_runnability,
                 )
                 from cruxible_client.contracts.procedures.graph import (
-                    analyze_procedure_v3,
-                    analyze_procedure_v4,
-                    compute_procedure_node_digests_v3,
-                    compute_procedure_node_digests_v4,
+                    analyze_procedure,
+                    compute_procedure_node_digests,
                 )
-                from cruxible_client.contracts.procedures.models import (
-                    ProcedureDefinitionV4,
+                from cruxible_client.contracts.procedures.source_compiler import (
+                    verify_source_graph,
                 )
 
                 procedure = parse_procedure(content, path=path, codec=artifact_codec)
                 if artifact_kinds not in (
-                    RESOURCE_BUDGET_ARTIFACT_KINDS,
-                    SDK_SOURCE_ARTIFACT_KINDS,
-                    CLAIM_EVIDENCE_ARTIFACT_KINDS,
-                    SOURCE_CHECKED_ARTIFACT_KINDS,
-                    TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                    AUTHORITY_VERBS_ARTIFACT_KINDS,
-                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                ) and (
-                    procedure.definition.budget.max_result_bytes is not None
-                    or procedure.definition.hard_caps.max_result_bytes is not None
-                    or procedure.definition.hard_caps.max_repeat_attempts > 25
-                ):
-                    raise ProjectionFormatError(
-                        "resource Procedure budgets require compiler revision 26"
-                    )
-                if int(procedure.definition.graph_format) == 5 and artifact_kinds not in (
-                    PROVIDER_CONTRACT_ARTIFACT_KINDS,
-                    PROVIDER_PACKAGE_ARTIFACT_KINDS,
-                    RESOURCE_BUDGET_ARTIFACT_KINDS,
                     SDK_SOURCE_ARTIFACT_KINDS,
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
                     SOURCE_CHECKED_ARTIFACT_KINDS,
@@ -1538,7 +1564,7 @@ def parse_projection_tree(
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                 ):
-                    raise ProjectionFormatError("graph-v5 requires the provider-contract compiler")
+                    raise ProjectionFormatError("graph-v6 Procedures require compiler revision 27")
                 if (
                     any(
                         getattr(node, "kind", None) == "settle_change_set"
@@ -1547,35 +1573,19 @@ def parse_projection_tree(
                     and artifact_kinds not in _REVISION_31_AND_LATER
                 ):
                     raise ProjectionFormatError("settle_change_set requires compiler revision 31")
-                if int(procedure.definition.graph_format) == 6:
-                    if artifact_kinds not in (
-                        SDK_SOURCE_ARTIFACT_KINDS,
-                        CLAIM_EVIDENCE_ARTIFACT_KINDS,
+                if (
+                    procedure.definition.source is not None
+                    and procedure.definition.source.rules == "cruxible.procedure-source.v2"
+                    and artifact_kinds
+                    not in (
                         SOURCE_CHECKED_ARTIFACT_KINDS,
                         TRIGGER_CAPTURE_ARTIFACT_KINDS,
                         AUTHORITY_VERBS_ARTIFACT_KINDS,
                         GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                    ):
-                        raise ProjectionFormatError("graph-v6 requires compiler revision 27")
-                    from cruxible_client.contracts.procedures.models import ProcedureDefinition
-                    from cruxible_client.contracts.procedures.source_compiler import (
-                        verify_source_graph,
                     )
-
-                    assert isinstance(procedure.definition, ProcedureDefinition)
-                    if (
-                        procedure.definition.source is not None
-                        and procedure.definition.source.rules == "cruxible.procedure-source.v2"
-                        and artifact_kinds
-                        not in (
-                            SOURCE_CHECKED_ARTIFACT_KINDS,
-                            TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                            AUTHORITY_VERBS_ARTIFACT_KINDS,
-                            GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                        )
-                    ):
-                        raise ProjectionFormatError("source-v2 requires compiler revision 29")
-                    verify_source_graph(procedure)
+                ):
+                    raise ProjectionFormatError("source-v2 requires compiler revision 29")
+                verify_source_graph(procedure)
                 identity = procedure.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1609,14 +1619,9 @@ def parse_projection_tree(
                     )
                     for pin in procedure.pins
                 )
-                if isinstance(procedure.definition, ProcedureDefinitionV4):
-                    graph = analyze_procedure_v4(procedure.definition)
-                    node_digests = compute_procedure_node_digests_v4(procedure.definition)
-                    graph_fact_key = f"graph_v{procedure.definition.graph_format}"
-                else:
-                    graph = analyze_procedure_v3(procedure.definition)
-                    node_digests = compute_procedure_node_digests_v3(procedure.definition)
-                    graph_fact_key = "graph_v3"
+                graph = analyze_procedure(procedure.definition)
+                node_digests = compute_procedure_node_digests(procedure.definition)
+                graph_fact_key = "graph_v6"
                 mappings: list[tuple[str, SourceMapping]] = [
                     (
                         "unit",
@@ -1672,7 +1677,7 @@ def parse_projection_tree(
                                 ),
                                 "artifact_digest": {"$digest": artifact_digest},
                                 "definition_digest": {"$digest": procedure.definition_digest},
-                                "directly_runnable": procedure.directly_runnable,
+                                "runnable": procedure_runnability(procedure.definition)[0],
                                 "identity": procedure.identity.model_dump(mode="json"),
                                 "input_digest": {"$digest": input_digest},
                                 "measurements": [
@@ -1790,46 +1795,14 @@ def parse_projection_tree(
                 continue
             if kind == "line":
                 from cruxible_client.contracts.procedures.line_specs import (
-                    EMBEDDED_TRIGGER_LINE_FORMATS,
-                    LineSpec,
-                    LineSpecV3,
-                    LineSpecV4,
-                    LineSpecV5,
                     line_spec_digest,
                     parse_line_spec,
                 )
 
                 line = parse_line_spec(content, path=path, codec=artifact_codec)
-                if artifact_kinds is GOVERNED_TRIGGERS_ARTIFACT_KINDS:
-                    # An embedded-trigger Line survives only as retired history.
-                    if (
-                        line.artifact_format in EMBEDDED_TRIGGER_LINE_FORMATS
-                        and line.lifecycle.state != "retired"
-                    ):
-                        raise ProjectionFormatError(
-                            "compiler revision 32 admits a Line that embeds its trigger only "
-                            "as retired history; a live Line is v6 and Triggers aim at it"
-                        )
-                elif isinstance(line, LineSpec):
+                if artifact_kinds is not GOVERNED_TRIGGERS_ARTIFACT_KINDS:
                     raise ProjectionFormatError("Line v6 requires compiler revision 32")
-                if isinstance(line, LineSpecV4) and artifact_kinds not in (
-                    TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                    *_REVISION_31_AND_LATER,
-                ):
-                    raise ProjectionFormatError("Line v4 requires the trigger-Capture compiler")
-                if isinstance(line, LineSpecV5) and artifact_kinds not in _REVISION_31_AND_LATER:
-                    raise ProjectionFormatError("Line v5 requires compiler revision 31")
-                # Older Lines allowed opaque budget keys. Interpret this key only
-                # in the successor compiler, preserving historical acceptance.
-                if artifact_kinds in (
-                    RESOURCE_BUDGET_ARTIFACT_KINDS,
-                    SDK_SOURCE_ARTIFACT_KINDS,
-                    CLAIM_EVIDENCE_ARTIFACT_KINDS,
-                    SOURCE_CHECKED_ARTIFACT_KINDS,
-                    TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                    AUTHORITY_VERBS_ARTIFACT_KINDS,
-                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                ) and isinstance(line.budgets, dict):
+                if isinstance(line.budgets, dict):
                     result_budget = line.budgets.get("max_result_bytes")
                     if "max_result_bytes" in line.budgets and (
                         not isinstance(result_budget, int)
@@ -1837,22 +1810,6 @@ def parse_projection_tree(
                         or result_budget < 1
                     ):
                         raise ProjectionFormatError("Line result budget must be a positive integer")
-                if isinstance(line, LineSpecV3) and artifact_kinds not in (
-                    RESOLUTION_ARTIFACT_KINDS,
-                    ONTOLOGY_ARTIFACT_KINDS,
-                    UPGRADE_ARTIFACT_KINDS,
-                    PROVIDER_CONTRACT_ARTIFACT_KINDS,
-                    PROVIDER_PACKAGE_ARTIFACT_KINDS,
-                    RESOURCE_BUDGET_ARTIFACT_KINDS,
-                    SDK_SOURCE_ARTIFACT_KINDS,
-                    CLAIM_EVIDENCE_ARTIFACT_KINDS,
-                    SOURCE_CHECKED_ARTIFACT_KINDS,
-                    TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                    *_REVISION_31_AND_LATER,
-                ):
-                    raise ProjectionFormatError(
-                        "Line v3 requires the independent-resolution compiler"
-                    )
                 identity = line.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")

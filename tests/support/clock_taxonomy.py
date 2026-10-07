@@ -76,24 +76,33 @@ def is_time_bearing_field(name: str, annotation: str) -> bool:
 CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("FloorConsumerOutcome", "generation"): "SETTLEMENT ORDER",
     ("LineTriggerBinding", "generation"): "SETTLEMENT ORDER",
-    ("LineRunRequest", "trigger_generation"): "SETTLEMENT ORDER",
+    # The accepted generation a dispatched Trigger occurrence fires on.
+    ("TriggerFire", "generation"): "SETTLEMENT ORDER",
     # A signed mint consent is accepted only within a window around the
     # daemon's clock; issued_at anchors that window.
     ("RuntimeCredentialMintStatement", "issued_at"): "VALIDITY WINDOW",
-    ("LineArm", "armed_at"): "VALIDITY WINDOW",
-    ("LineArm", "evaluated_until"): "VALIDITY WINDOW",
-    ("LineArm", "stopped_at"): "VALIDITY WINDOW",
-    ("LineTriggerCheckRequest", "since"): "VALIDITY WINDOW",
-    ("LineTriggerCheckRequest", "until"): "VALIDITY WINDOW",
+    ("LineEnablement", "enabled_at"): "VALIDITY WINDOW",
+    ("LineEnablement", "evaluated_until"): "VALIDITY WINDOW",
+    ("LineEnablement", "stopped_at"): "VALIDITY WINDOW",
+    ("LineEvaluateRequest", "since"): "VALIDITY WINDOW",
+    ("LineEvaluateRequest", "until"): "VALIDITY WINDOW",
+    ("TriggerRange", "since"): "VALIDITY WINDOW",
+    ("TriggerRange", "until"): "VALIDITY WINDOW",
     ("LineTriggerOccurrence", "eligible_at"): "VALIDITY WINDOW",
-    ("LineTriggerCheckResult", "checked_since"): "VALIDITY WINDOW",
-    ("LineTriggerCheckResult", "checked_until"): "VALIDITY WINDOW",
+    ("LineEvaluateResult", "checked_since"): "VALIDITY WINDOW",
+    ("LineEvaluateResult", "checked_until"): "VALIDITY WINDOW",
+    # A restart gap and the oldest pending occurrence `next` names for an
+    # enabled Line: ranges of the dispatch store's validity windows.
+    ("LineCoverageGap", "since"): "VALIDITY WINDOW",
+    ("LineCoverageGap", "until"): "VALIDITY WINDOW",
+    ("LinePendingWork", "oldest_eligible_at"): "VALIDITY WINDOW",
     ("FixedWindow", "starts_at"): "VALIDITY WINDOW",
     ("FixedWindow", "duration_seconds"): "VALIDITY WINDOW",
     ("CaptureEventWindow", "duration_seconds"): "VALIDITY WINDOW",
     ("BoundObservationWindow", "starts_at"): "VALIDITY WINDOW",
     ("BoundObservationWindow", "ends_at"): "VALIDITY WINDOW",
     ("TriggerEventReference", "sequence"): "SETTLEMENT ORDER",
+    ("GetRunOutcome", "sequence"): "SETTLEMENT ORDER",
     ("ResolutionContractActivationV3", "activated_at"): "EVALUATION INSTANT",
     ("AcceptedGenerationLocation", "sequence"): "SETTLEMENT ORDER",
     ("AcceptedGenerationLocation", "parent_sequence"): "SETTLEMENT ORDER",
@@ -230,9 +239,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("JournalWriterStateV1", "generation"): "SETTLEMENT ORDER",
     ("LineEgressReadingV1", "sequence"): "SETTLEMENT ORDER",
     ("LineRunRequest", "evaluation_time"): "EVALUATION INSTANT",
-    ("CadenceTriggerPolicy", "interval_seconds"): "VALIDITY WINDOW",
     ("CadenceSchedule", "interval_seconds"): "VALIDITY WINDOW",
-    ("WindowCloseTriggerPolicyV1", "window_seconds"): "VALIDITY WINDOW",
     ("MemberLawEvaluation", "evaluation_time"): "EVALUATION INSTANT",
     ("AuditEvidenceRef", "generation"): "SETTLEMENT ORDER",
     ("AuditFactors", "first_accepted_generation"): "SETTLEMENT ORDER",
@@ -277,7 +284,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("NextRequestV1", "expiring_within"): "VALIDITY WINDOW",
     ("NextResult", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillNextResultV1", "evaluation_time"): "EVALUATION INSTANT",
-    ("ProcedureReadiness", "evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureRunState", "evaluation_time"): "EVALUATION INSTANT",
     # When the daemon last tried to push. An assertion about an attempt, not a
     # coordinate: the mirror is a copy of accepted state and its timing orders
@@ -320,12 +326,13 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("GetCoordinate", "generation"): "SETTLEMENT ORDER",
     ("_RevisionEntry", "sequence"): "SETTLEMENT ORDER",
     # Operational reads: Lines, Captures, predictions, mandates and runs. An
-    # arm's and an occurrence's instants are the dispatch store's validity
+    # enablement's and an occurrence's instants are the dispatch store's validity
     # windows; a Capture's observed_at is its producer's assertion; a run's
     # times are its admission's evaluation instant, which the deterministic
     # executor clock stamps on every journal record of the run.
-    ("GetLineArm", "armed_at"): "VALIDITY WINDOW",
-    ("GetLineArm", "stopped_at"): "VALIDITY WINDOW",
+    ("GetLineEnablement", "enabled_at"): "VALIDITY WINDOW",
+    ("GetLineEnablement", "evaluated_until"): "VALIDITY WINDOW",
+    ("GetLineEnablement", "stopped_at"): "VALIDITY WINDOW",
     ("GetLineOccurrence", "eligible_at"): "VALIDITY WINDOW",
     ("GetCaptureCard", "observed_at"): "ASSERTION TIME",
     ("OrientCapture", "observed_at"): "ASSERTION TIME",
@@ -377,8 +384,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureMeasurementDeclaration", "check_after"): "VALIDITY WINDOW",
     ("ProcedureMeasurementDeclaration", "expires_after"): "VALIDITY WINDOW",
     ("ProcedureMeasurementReviewTrigger", "window"): "VALIDITY WINDOW",
-    ("ProcedureReadinessRequestV1", "evaluation_time"): "EVALUATION INSTANT",
-    ("ProcedureReadinessResultV1", "evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureReadingV1", "observed_at"): "ASSERTION TIME",
     ("ProcedureReadingV1", "recorded_at"): "ASSERTION TIME",
     ("ProcedureResolutionDispositionV1", "recorded_at"): "ASSERTION TIME",

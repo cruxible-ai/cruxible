@@ -13,7 +13,6 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
     ProcedureAuthoringPayload,
-    ProcedureAuthoringPayloadV1,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.captures import (
@@ -834,7 +833,7 @@ def _admission_failures(
         if isinstance(payload, ClaimAuthoringPayloadV1):
             authoring_subject = ArtifactIdentity(kind="ClaimType", name=payload.statement.predicate)
             authoring_direction = "payload_side"
-        elif isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload):
+        elif isinstance(payload, ProcedureAuthoringPayload):
             name = payload.definition.get("name")
             authoring_subject = (
                 ArtifactIdentity(kind="Procedure", name=name) if isinstance(name, str) else None

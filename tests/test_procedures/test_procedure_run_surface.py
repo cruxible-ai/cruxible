@@ -35,10 +35,7 @@ from cruxible_client.contracts.procedures.contract_schema import (
     ContractSchema,
     PropertySchema,
 )
-from cruxible_client.contracts.procedures.graph import (
-    compute_procedure_definition_digest_v3,
-    compute_procedure_definition_digest_v4,
-)
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     LineSpec,
@@ -48,21 +45,18 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     GuardNode,
     GuardPredicate,
     HaltNode,
     PredicateOperand,
     ProcedureBudget,
-    ProcedureDefinitionV3,
+    ProcedureDefinition,
     ProcedureHardCaps,
-    ProcedurePinSlot,
-    ProcedurePinSlotRef,
     ProjectNode,
-    ProviderNode,
-    RepeatBodyNodeV4,
-    RepeatNodeV4,
-    SourceNodeV3,
-    StateTapNodeV3,
+    RepeatBodyNode,
+    RepeatNode,
+    StateTapNode,
     TransformNode,
 )
 from cruxible_client.contracts.procedures.results import (
@@ -87,22 +81,16 @@ from cruxible_client.contracts.triggers import (
 from cruxible_core.exhaust import ProcedureExhaustWriter, parse_journal_payload
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.service.procedures.procedure_runs import (
     DirectProcedureReceiptReducer,
     LineRunIdentityMismatch,
     LineRunRequest,
-    ProcedureBindingGraphV4LineClosureRequired,
-    ProcedureBindingTarget,
-    ProcedureBindRequest,
     ProcedureReadinessRequestV1,
     ProcedureRunNotCurrent,
     ProcedureRunNotFound,
     ProcedureRunRecoveryRequired,
     ProcedureRunRequest,
-    ProcedureSlotBindingRequest,
-    service_bind_playbill_procedure,
     service_get_playbill_procedure_run,
     service_playbill_procedure_readiness,
     service_run_playbill_procedure,
@@ -125,7 +113,7 @@ from tests.core_support._knowledge_loop_support import (
     work_item_query,
 )
 from tests.core_support._support import FIXED_TIMESTAMP, initialize_local
-from tests.support.lines import graph_v4, line_trigger, trigger_members
+from tests.support.lines import line_trigger, trigger_members
 from tests.test_integration.test_graph_v4_provider_closure import (
     _accepted_procedure as _accepted_provider_v4_procedure,
 )
@@ -159,7 +147,7 @@ def test_line_run_request_requires_one_route_and_body_identity() -> None:
             SimpleNamespace(require_writable=lambda: None),  # type: ignore[arg-type]
             path_identity_digest=digest,
             request=LineRunRequest(
-                line_identity_digest=_line_digest("other"),
+                line=_line_digest("other"),
                 evaluation_time=READ_TIME,
             ),
             actor_context=SimpleNamespace(),  # type: ignore[arg-type]
@@ -198,7 +186,7 @@ def test_line_without_current_exact_mandate_refuses_typed(
         instance,
         path_identity_digest=line_identity_digest(line.identity),
         request=LineRunRequest(
-            line_identity_digest=line_identity_digest(line.identity),
+            line=line_identity_digest(line.identity),
             evaluation_time=READ_TIME,
         ),
         actor_context=_actor(instance),
@@ -239,7 +227,7 @@ def test_a_read_only_caller_cannot_run_a_line_that_can_propose(
             instance,
             path_identity_digest=line_identity_digest(line.identity),
             request=LineRunRequest(
-                line_identity_digest=line_identity_digest(line.identity),
+                line=line_identity_digest(line.identity),
                 evaluation_time=READ_TIME,
             ),
             actor_context=_actor(instance),
@@ -271,7 +259,7 @@ def test_line_closure_loss_refuses_before_mandate_or_occurrence(
         instance,
         path_identity_digest=line_identity_digest(line.identity),
         request=LineRunRequest(
-            line_identity_digest=line_identity_digest(line.identity),
+            line=line_identity_digest(line.identity),
             evaluation_time=READ_TIME,
         ),
         actor_context=_actor(instance),
@@ -311,7 +299,7 @@ def _slotless_procedure(name: str) -> AcceptedProcedure:
         target=output_contract.identity,
         artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
     )
-    definition = ProcedureDefinitionV3(
+    definition = ProcedureDefinition(
         name=name,
         contract_in=contract_in,
         contract_out=contract_out,
@@ -342,7 +330,7 @@ def _slotless_procedure(name: str) -> AcceptedProcedure:
     procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=name),
         definition=definition,
-        definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
         pins=tuple(
             sorted(
                 (contract_in, contract_out),
@@ -377,7 +365,6 @@ def _scheduled_line(name: str, *, accepted: AcceptedProcedure) -> LineSpec:
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={"status": "open"},
-        slot_bindings=(),
         max_authority="propose",
         budgets={
             "max_capture_bytes": 0,
@@ -387,7 +374,6 @@ def _scheduled_line(name: str, *, accepted: AcceptedProcedure) -> LineSpec:
         },
         epsilon={"$decimal": "0.1"},
         pins=(procedure_pin,),
-        provider_implementation_closures=(),
     )
 
 
@@ -516,7 +502,7 @@ def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree
     """The period is read from the accepted Trigger, never a fabricated path."""
 
     instance, owner = initialize_local(tmp_path)
-    accepted = graph_v4(_slotless_procedure("scheduled-triage"))
+    accepted = _slotless_procedure("scheduled-triage")
     line = _scheduled_line("scheduled-triage-hourly", accepted=accepted)
     hourly = line_trigger(
         "scheduled-triage-hourly-tick",
@@ -585,7 +571,7 @@ def test_warm_line_admission_uses_selected_sources_without_tree_inventory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     instance, owner = initialize_local(tmp_path)
-    procedure = graph_v4(_slotless_procedure("selected-line-procedure"))
+    procedure = _slotless_procedure("selected-line-procedure")
     line = _scheduled_line("selected-line", accepted=procedure)
     hourly = line_trigger(
         "selected-line-tick",
@@ -612,14 +598,11 @@ def test_warm_line_admission_uses_selected_sources_without_tree_inventory(
     result = procedure_run_service.service_run_playbill_line(
         instance,
         path_identity_digest=digest,
-        request=LineRunRequest(
-            line_identity_digest=digest,
-            trigger=hourly.identity.name,
-            evaluation_time=READ_TIME,
-        ),
+        request=LineRunRequest(line=digest, evaluation_time=READ_TIME),
         actor_context=_actor(instance),
         caller_rung=3,
         daemon_clock=_DAEMON_CLOCK,
+        trigger_fire=procedure_run_service.TriggerFire(trigger=hourly.identity.name),
     )
     assert result.status == "admission_refused"
     assert result.terminal.code == "line_mandate_required"
@@ -644,14 +627,11 @@ def test_a_caller_cannot_walk_the_cadence_by_advancing_the_claimed_instant(
         procedure_run_service.service_run_playbill_line(
             instance,
             path_identity_digest=digest,
-            request=LineRunRequest(
-                line_identity_digest=digest,
-                trigger="hourly",
-                evaluation_time=READ_TIME + timedelta(hours=5),
-            ),
+            request=LineRunRequest(line=digest, evaluation_time=READ_TIME + timedelta(hours=5)),
             actor_context=_actor(instance),
             caller_rung=3,
             daemon_clock=_DAEMON_CLOCK,
+            trigger_fire=procedure_run_service.TriggerFire(trigger="hourly"),
         )
     assert "daemon clock skew bound" in str(caught.value)
     assert caught.value.error_code == "evaluation_instant_skewed"
@@ -785,7 +765,7 @@ def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-unt
     return procedure.model_copy(
         update={
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
             "pins": tuple(
                 sorted(
                     (list_output_pin if pin == old_output_pin else pin for pin in procedure.pins),
@@ -817,13 +797,12 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
     readiness = service_playbill_procedure_readiness(
         instance,
         name=procedure.identity.name,
-        request=ProcedureReadinessRequestV1(evaluation_time=READ_TIME),
+        request=ProcedureReadinessRequestV1(),
     )
 
-    assert readiness.state == "ready"
+    assert readiness.runnable == "direct"
     assert readiness.definition_digest == procedure.definition_digest
     assert readiness.next_operation.kind == "run"
-    assert readiness.required_slots == ()
     assert readiness.unsupported_nodes == ()
     request = ProcedureRunRequest(evaluation_time=READ_TIME, input={})
     first = service_run_playbill_procedure(
@@ -1201,7 +1180,7 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
     instance, owner, procedure = _world(tmp_path)
     read = procedure.definition.nodes[0]
     project = procedure.definition.nodes[-1]
-    assert isinstance(read, StateTapNodeV3)
+    assert isinstance(read, StateTapNode)
     filter_in = _contract(
         "pipeline-filter-in",
         {"items": PropertySchema(type="json"), "where": PropertySchema(type="json")},
@@ -1243,7 +1222,7 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
             contract_out=filter_out_pin,
             spec={
                 "tag": "playbill-transform-filter-items-spec-v1",
-                "items": "$steps.query.rows",
+                "items": "$steps.query.result.rows",
                 "where": {},
             },
             as_="filtered",
@@ -1285,7 +1264,7 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
     pipeline = procedure.model_copy(
         update={
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
             "pins": tuple(
                 sorted(
                     (*procedure.pins, *added_pins),
@@ -1437,111 +1416,11 @@ def test_old_final_payload_without_budget_reconstructs_a_v2_receipt(tmp_path: Pa
     assert not isinstance(reconstructed.receipt, ProcedureRunReceiptV3)
 
 
-def test_binding_proposes_same_identity_successor_with_exact_query_pin(
-    tmp_path: Path, monkeypatch
-) -> None:
-    instance, owner = seed_claims(tmp_path)
-    query = work_item_query()
-    query_digest = query_definition_digest(query).tagged
-    inspection = submit_query_definition_candidate(
-        instance,
-        query=query,
-        actor_id="owner",
-        proposal_name="served-procedure-query",
-        timestamp=TIMESTAMP,
-    )
-    accept_proposal(instance, owner, inspection)
-    exact = _accepted_query_procedure(query_digest).procedure
-    assert isinstance(exact, ProcedureArtifact)
-    query_pin = next(pin for pin in exact.pins if pin.target.kind == "QueryDefinition")
-    nodes = list(exact.definition.nodes)
-    read = nodes[0]
-    assert isinstance(read, StateTapNodeV3)
-    nodes[0] = read.model_copy(update={"query": ProcedurePinSlotRef(slot_name="query")})
-    definition = exact.definition.model_copy(
-        update={
-            "nodes": tuple(nodes),
-            "pin_slots": (
-                ProcedurePinSlot(
-                    slot_name="query",
-                    pin_role="query",
-                    artifact_kind="QueryDefinition",
-                    interface_digest=query_digest,
-                ),
-            ),
-        }
-    )
-    abstract = exact.model_copy(
-        update={
-            "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
-            "pins": tuple(pin for pin in exact.pins if pin != query_pin),
-        }
-    )
-    _activate_procedure(
-        instance,
-        owner,
-        abstract,
-        sequence=4,
-        timestamp="2026-08-24T15:00:00.000000Z",
-    )
-
-    blocked = service_run_playbill_procedure(
-        instance,
-        name=abstract.identity.name,
-        request=ProcedureRunRequest(evaluation_time=READ_TIME, input={}),
-        actor_context=_actor(instance),
-    )
-    assert blocked.status == "admission_refused"
-    assert isinstance(blocked.terminal, ProcedureAdmissionRefusal)
-    assert blocked.terminal.code == "binding_required"
-
-    parent = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-    submit = instance.proposal_service().submit
-
-    def submit_delta(**kwargs):
-        candidate = kwargs["candidate_tree"]
-        edits = candidate.edits_from(parent)
-        assert edits is not None and tuple(edits) == (procedure_path(abstract.identity.name),)
-        return submit(**kwargs)
-
-    monkeypatch.setattr(instance.proposal_service(), "submit", submit_delta)
-
-    result = service_bind_playbill_procedure(
-        instance,
-        name=abstract.identity.name,
-        request=ProcedureBindRequest(
-            bindings=(
-                ProcedureSlotBindingRequest(
-                    slot_name="query",
-                    target=ProcedureBindingTarget(
-                        kind="QueryDefinition",
-                        name=QUERY_NAME,
-                    ),
-                ),
-            )
-        ),
-        actor=AuthenticatedActor(actor_id="owner"),
-        timestamp="2026-08-24T16:00:00.000000Z",
-    )
-
-    assert result.accepted_digest == procedure_artifact_digest(abstract).tagged
-    assert result.accepted_readiness.state == "binding_required"
-    assert result.accepted_readiness.definition_digest == abstract.definition_digest
-    assert result.accepted_readiness.procedure_identity == ArtifactIdentity(
-        kind="Procedure", name=abstract.identity.name
-    )
-    assert result.pending is not None
-    assert result.pending.proposal_id.startswith("sha256:")
-    assert result.pending.pending_successor_digest != procedure_artifact_digest(abstract).tagged
-    assert isinstance(query_pin, ArtifactPin)
-
-
 def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None:
     instance, owner, procedure = _world(tmp_path)
     nodes = list(procedure.definition.nodes)
     read = nodes[0]
-    assert isinstance(read, StateTapNodeV3)
+    assert isinstance(read, StateTapNode)
     nodes[0] = read.model_copy(update={"next": "gate"})
     nodes.insert(
         1,
@@ -1561,7 +1440,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     unsupported = procedure.model_copy(
         update={
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
             "lifecycle": procedure.lifecycle.model_copy(
                 update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
             ),
@@ -1580,7 +1459,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     readiness = service_playbill_procedure_readiness(
         instance,
         name=unsupported.identity.name,
-        request=ProcedureReadinessRequestV1(evaluation_time=READ_TIME),
+        request=ProcedureReadinessRequestV1(),
     )
     run = service_run_playbill_procedure(
         instance,
@@ -1589,7 +1468,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
         actor_context=_actor(instance),
     )
 
-    assert readiness.state == "ready"
+    assert readiness.runnable == "direct"
     assert readiness.unsupported_nodes == ()
     assert run.status == "succeeded"
     assert run.terminal is None
@@ -1611,7 +1490,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     refusing = unsupported.model_copy(
         update={
             "definition": refusing_definition,
-            "definition_digest": compute_procedure_definition_digest_v3(refusing_definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(refusing_definition).tagged,
             "lifecycle": unsupported.lifecycle.model_copy(
                 update={"predecessor_digest": procedure_artifact_digest(unsupported).tagged}
             ),
@@ -1660,7 +1539,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     halting = unsupported.model_copy(
         update={
             "definition": halting_definition,
-            "definition_digest": compute_procedure_definition_digest_v3(halting_definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(halting_definition).tagged,
             "lifecycle": refusing.lifecycle.model_copy(
                 update={"predecessor_digest": procedure_artifact_digest(refusing).tagged}
             ),
@@ -1692,106 +1571,23 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     assert halted.receipt.terminal == halted.terminal
 
 
-def test_graph_v3_source_live_and_receiptless_replay_refuse_before_journal(
-    tmp_path: Path,
-    monkeypatch,
+def test_repeat_call_body_refuses_the_direct_lane_before_journal(
+    tmp_path: Path, monkeypatch
 ) -> None:
-    instance, _owner, procedure = _world(tmp_path)
-    capture = ArtifactPin(
-        role="capture-contract",
-        target=ArtifactIdentity(kind="CaptureContract", name="unsupported-source"),
-        artifact_digest="sha256:" + "7" * 64,
-    )
-    provider = ArtifactPin(
-        role="provider",
-        target=ArtifactIdentity(kind="Provider", name="unsupported-source"),
-        artifact_digest="sha256:" + "8" * 64,
-    )
-    definition = procedure.definition.model_copy(
-        update={
-            "nodes": (
-                SourceNodeV3(
-                    node_id="source",
-                    capture_contract=capture,
-                    provider=provider,
-                    request={},
-                    as_="result",
-                ),
-            ),
-            "returns": "result",
-        }
-    )
-    unsupported = procedure.model_copy(
-        update={
-            "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
-            "pins": tuple(
-                sorted(
-                    (*procedure.pins, capture, provider),
-                    key=lambda pin: (
-                        pin.role.encode(),
-                        pin.target.qualified.encode(),
-                        pin.artifact_digest.encode(),
-                    ),
-                )
-            ),
-        }
-    )
-    accepted = AcceptedProcedure(
-        path=procedure_path(unsupported.identity.name),
-        procedure=unsupported,
-        artifact_digest=procedure_artifact_digest(unsupported).tagged,
-    )
-    monkeypatch.setattr(
-        procedure_run_service,
-        "_accepted_procedure",
-        lambda *_args, **_kwargs: accepted,
-    )
-    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
-    assert not journal_root.exists()
+    """A repeated Call runs only as a Line: the direct lane refuses it typed."""
 
-    result = service_run_playbill_procedure(
-        instance,
-        name=unsupported.identity.name,
-        request=ProcedureRunRequest(input={}),
-        actor_context=_actor(instance),
-    )
-
-    assert result.status == "admission_refused"
-    assert isinstance(result.terminal, ProcedureAdmissionRefusal)
-    assert result.terminal.code == "provider_explicit_implementation_required"
-    assert result.terminal.details["legacy_external_occurrences"] == ["source"]
-    assert not journal_root.exists()
-
-    replay = service_run_playbill_procedure(
-        instance,
-        name=unsupported.identity.name,
-        request=ProcedureRunRequest(
-            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-            input={},
-        ),
-        actor_context=_actor(instance),
-    )
-    assert replay.status == "admission_refused"
-    assert isinstance(replay.terminal, ProcedureAdmissionRefusal)
-    assert replay.lane == "current"
-    assert replay.terminal.code == "provider_explicit_implementation_required"
-    assert not journal_root.exists()
-
-
-def test_graph_v4_repeat_provider_refuses_before_journal(tmp_path: Path, monkeypatch) -> None:
     instance, _owner, _procedure = _world(tmp_path)
     accepted = _accepted_provider_v4_procedure()
     definition = accepted.procedure.definition
     direct = definition.nodes[0]
-    assert isinstance(direct, ProviderNode)
-    repeat = RepeatNodeV4(
+    assert isinstance(direct, CallNode)
+    repeat = RepeatNode(
         node_id="repeat",
         max_attempts=2,
         body=(
-            RepeatBodyNodeV4(
+            RepeatBodyNode(
                 node_id="provider",
-                operation="provider",
+                operation="call",
                 provider=direct.provider,
                 interface=direct.interface,
                 interface_digest=direct.interface_digest,
@@ -1809,13 +1605,11 @@ def test_graph_v4_repeat_provider_refuses_before_journal(tmp_path: Path, monkeyp
         ),
         as_="result",
     )
-    repeat_definition = definition.model_copy(
-        update={"nodes": (repeat,), "returns": "result", "pin_slots": ()}
-    )
+    repeat_definition = definition.model_copy(update={"nodes": (repeat,), "returns": "result"})
     repeat_procedure = accepted.procedure.model_copy(
         update={
             "definition": repeat_definition,
-            "definition_digest": compute_procedure_definition_digest_v4(repeat_definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(repeat_definition).tagged,
         }
     )
     repeat_accepted = AcceptedProcedure(
@@ -1840,61 +1634,11 @@ def test_graph_v4_repeat_provider_refuses_before_journal(tmp_path: Path, monkeyp
     assert result.status == "admission_refused"
     assert isinstance(result.terminal, ProcedureAdmissionRefusal)
     assert result.terminal.code == "unsupported_node"
+    assert result.terminal.details["runnable"] == "line"
     assert result.terminal.details["unsupported_nodes"] == [
-        {"node_id": "repeat.provider", "kind": "provider"}
+        {"node_id": "repeat.provider", "kind": "call", "runs_on": "line"}
     ]
     assert not journal_root.exists()
-
-
-def test_graph_v4_bind_routes_only_through_line_closure(tmp_path: Path, monkeypatch) -> None:
-    instance, _owner, _procedure = _world(tmp_path)
-    accepted = _accepted_provider_v4_procedure()
-    monkeypatch.setattr(
-        procedure_run_service,
-        "_accepted_procedure",
-        lambda *_args, **_kwargs: accepted,
-    )
-
-    readiness = service_playbill_procedure_readiness(
-        instance,
-        name=accepted.procedure.identity.name,
-        request=ProcedureReadinessRequestV1(evaluation_time=READ_TIME),
-    )
-    assert readiness.state == "unsupported"
-    assert readiness.next_operation.kind == "terminal"
-    assert readiness.required_slots == ("provider",)
-    assert readiness.unsupported_nodes[-1].node_id == "procedure"
-    assert readiness.unsupported_nodes[-1].kind == "graph_v4_line_closure_required"
-
-    refused = service_run_playbill_procedure(
-        instance,
-        name=accepted.procedure.identity.name,
-        request=ProcedureRunRequest(input={}),
-        actor_context=_actor(instance),
-    )
-    assert isinstance(refused.terminal, ProcedureAdmissionRefusal)
-    assert refused.terminal.message == (
-        "Graph-v4 Provider slots require accepted Line closure before execution."
-    )
-
-    with pytest.raises(
-        ProcedureBindingGraphV4LineClosureRequired,
-        match="resolved only by accepted Line closure",
-    ):
-        service_bind_playbill_procedure(
-            instance,
-            name=accepted.procedure.identity.name,
-            request=ProcedureBindRequest(
-                bindings=(
-                    ProcedureSlotBindingRequest(
-                        slot_name="provider",
-                        target=ProcedureBindingTarget(kind="Provider", name="demo-provider"),
-                    ),
-                )
-            ),
-            actor=AuthenticatedActor(actor_id="owner"),
-            timestamp="2026-08-24T16:00:00.000000Z",
-        )
 
 
 def _line_mandate(
@@ -1986,7 +1730,7 @@ def test_a_replayed_occurrence_refuses_instead_of_running_twice(
         instance,
         path_identity_digest=line_identity_digest(line.identity),
         request=LineRunRequest(
-            line_identity_digest=line_identity_digest(line.identity),
+            line=line_identity_digest(line.identity),
             evaluation_time=READ_TIME,
         ),
         actor_context=_actor(instance),
@@ -2013,7 +1757,7 @@ def test_an_asserted_occurrence_the_daemon_did_not_derive_refuses(
         instance,
         path_identity_digest=line_identity_digest(line.identity),
         request=LineRunRequest(
-            line_identity_digest=line_identity_digest(line.identity),
+            line=line_identity_digest(line.identity),
             occurrence_id=_line_digest("occurrence-the-caller-chose"),
             evaluation_time=READ_TIME,
         ),
@@ -2040,7 +1784,7 @@ def test_an_unaccepted_line_identity_refuses_before_any_authority_read(
             instance,
             path_identity_digest=digest,
             request=LineRunRequest(
-                line_identity_digest=digest,
+                line=digest,
                 evaluation_time=READ_TIME,
             ),
             actor_context=_actor(instance),
@@ -2118,7 +1862,7 @@ def test_a_degraded_provider_lane_refuses_typed_without_granting_authority(
         instance,
         path_identity_digest=line_identity_digest(with_policy.identity),
         request=LineRunRequest(
-            line_identity_digest=line_identity_digest(with_policy.identity),
+            line=line_identity_digest(with_policy.identity),
             evaluation_time=READ_TIME,
         ),
         actor_context=_actor(instance),

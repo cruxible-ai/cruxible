@@ -38,6 +38,7 @@ GetRefKind = Literal[
     "claim_type",
     "document",
     "procedure",
+    "blueprint",
     "query",
     "capture_contract",
     "trigger",
@@ -79,6 +80,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "claim_type": ("summary", "history", "proof"),
     "document": ("summary", "why", "history", "proof", "body"),
     "procedure": ("summary", "history", "proof"),
+    "blueprint": ("summary", "history", "proof"),
     "query": ("summary", "history", "proof"),
     "capture_contract": ("summary", "history", "proof"),
     "trigger": ("summary", "history", "proof"),
@@ -329,13 +331,25 @@ class GetProcedureTrackRecord(_StrictGetModel):
     promotion_digest: str
 
 
+class GetProcedureNode(_StrictGetModel):
+    """One node the direct run lane does not execute, and where it can run."""
+
+    node_id: str
+    kind: str
+    runs_on: Literal["line", "nowhere"]
+
+
 class GetProcedureCard(_StrictGetModel):
     procedure: str
     description: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A retired Procedure stays readable; nothing runs or measures it.
+    lifecycle: Literal["live", "retired"] = "live"
     inputs: dict[str, Any]
-    readiness: str
-    required_slots: tuple[str, ...] = ()
-    unsupported_nodes: int = 0
+    #: ``direct``: ``procedure run``; ``line``: only as a Line (its terminals act
+    #: outward under the Line's authority); ``unsupported``: no run path admits it.
+    runnable: Literal["direct", "line", "unsupported"]
+    #: The nodes behind a ``line`` or ``unsupported`` answer.
+    unsupported_nodes: tuple[GetProcedureNode, ...] = ()
     #: Accepted promotions of this Procedure's runs, by promotion name.
     track_record: tuple[GetProcedureTrackRecord, ...] = ()
     next: tuple[str, ...] = ()
@@ -360,6 +374,27 @@ class GetCaptureContractCard(_StrictGetModel):
     lifecycle: str
     captures: dict[str, Any]
     admitted_by: tuple[str, ...]
+    next: tuple[str, ...] = ()
+
+
+class GetBlueprintSlot(_StrictGetModel):
+    """One open slot: the interface it needs and the accepted Providers that fit it."""
+
+    slot: str
+    #: ``ProviderInterface:<name>``
+    interface: str
+    #: Live Providers implementing that interface exactly once; any one can be bound.
+    fits: tuple[str, ...] = ()
+
+
+class GetBlueprintCard(_StrictGetModel):
+    """A Procedure skeleton and its instantiation preview: each slot and what fits it."""
+
+    blueprint: str
+    description: str | None = Field(default=None, exclude_if=_omit_none)
+    lifecycle: str
+    inputs: dict[str, Any]
+    slots: tuple[GetBlueprintSlot, ...]
     next: tuple[str, ...] = ()
 
 
@@ -480,6 +515,7 @@ GetCard = (
     | GetClaimTypeCard
     | GetDocumentCard
     | GetProcedureCard
+    | GetBlueprintCard
     | GetQueryCard
     | GetCaptureContractCard
     | GetTriggerCard
@@ -647,7 +683,10 @@ __all__ = [
     "GetEvidence",
     "GetHistory",
     "GetPrincipalCard",
+    "GetBlueprintCard",
+    "GetBlueprintSlot",
     "GetProcedureCard",
+    "GetProcedureNode",
     "GetProcedureRuntimePolicyCard",
     "GetProcedureTrackRecord",
     "GetProviderInterfaceCard",

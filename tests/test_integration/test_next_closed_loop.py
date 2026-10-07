@@ -170,8 +170,12 @@ EXPECTED_OPERATIONS = {
     "proposal_stale": "cruxible.proposal.readmit",
     "proposal_awaiting_approval": "cruxible.proposal.approve",
     "mandate_expiring": "cruxible.authoring.example",
-    # A stopped arm is resumed by rearming under authority that still holds.
-    "consumer_stalled": "cruxible.line.arm",
+    # A stopped enablement is resumed by enabling again under authority that holds.
+    "consumer_stalled": "cruxible.line.enable",
+    # A restart leaves the downtime unmatched: evaluating that exact range covers it.
+    "line_coverage_gap": "cruxible.line.evaluate",
+    # Work matched before a restart waits for an explicit dispatch.
+    "line_work_pending": "cruxible.line.dispatch",
     # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
     "evidence_unavailable": "hand_edit",
     "prediction_settleable": "cruxible.prediction.settle",
@@ -1530,7 +1534,7 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
     from cruxible_core.runtime.line_arms import dispatch_armed_line
-    from cruxible_core.service.procedures.line_dispatch import armed_work, service_arm_line
+    from cruxible_core.service.procedures.line_dispatch import armed_work, service_enable_line
     from tests.test_procedures import test_line_arming as arming
 
     instance, line, procedure, start = arming._armed_world(root, principal=arming.CREDENTIAL)
@@ -1553,10 +1557,10 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     row = _row(instance, "consumer_stalled", request)
     assert row.subject_identity == line.identity.qualified
     assert row.detail["stop_reason"] == "credential_revoked"
-    assert row.repair.command == f"cruxible line arm {line.identity.name}"
+    assert row.repair.command == f"cruxible line enable {line.identity.name}"
 
-    # The named repair: rearm under a credential that holds.
-    service_arm_line(
+    # The named repair: enable again under a credential that holds.
+    service_enable_line(
         instance,
         line.identity.name,
         principal=arming.LOCAL,
@@ -1565,6 +1569,81 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         daemon_id="daemon",
     )
     _assert_gone(instance, "consumer_stalled", request)
+
+
+def _restarted_line(root: Path):  # type: ignore[no-untyped-def]
+    """An enabled Line whose daemon restarted after matching one event, missing another."""
+
+    from datetime import timedelta
+
+    from tests.test_procedures import test_line_arming as arming
+
+    instance, line, procedure, start = arming._armed_world(root)
+    arming.capture(instance, procedure, at=start + timedelta(seconds=1))
+    arming._match(instance, start + timedelta(seconds=2))
+    arming.capture(instance, procedure, at=start + timedelta(seconds=3))  # daemon down
+    restarted = start + timedelta(seconds=10)
+    arming._match(instance, restarted, daemon_id="restarted")
+    return instance, line, start, restarted
+
+
+def _line_coverage_gap(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
+    from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+    from tests.test_procedures import test_line_arming as arming
+
+    instance, line, start, restarted = _restarted_line(root)
+    request = _request(instance)
+
+    row = _row(instance, "line_coverage_gap", request)
+    assert row.subject_identity == line.identity.qualified
+    since, until = row.repair.arguments["since"], row.repair.arguments["until"]
+    assert datetime.fromisoformat(until) == restarted
+    assert start + timedelta(seconds=2) <= datetime.fromisoformat(since) < restarted
+    assert row.repair.command == (
+        f"cruxible line evaluate {line.identity.name} --since {since} --until {until}"
+    )
+
+    # The named repair: evaluate exactly that range; nothing runs.
+    service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(
+            since=datetime.fromisoformat(since), until=datetime.fromisoformat(until)
+        ),
+        actor=arming._actor(instance),
+        now=restarted + timedelta(seconds=5),
+    )
+    _assert_gone(instance, "line_coverage_gap", request)
+
+
+def _line_work_pending(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequest
+    from cruxible_core.service.procedures.line_dispatch import service_dispatch_line
+    from tests.test_procedures import test_line_arming as arming
+
+    instance, line, _start, restarted = _restarted_line(root)
+    request = _request(instance)
+
+    row = _row(instance, "line_work_pending", request)
+    assert row.subject_identity == line.identity.qualified and row.detail["due"] == 1
+    assert row.repair.command == f"cruxible line dispatch {line.identity.name}"
+
+    # The named repair: dispatch the Line's pending work.
+    result = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequest(),
+        actor=arming._actor(instance),
+        now=restarted + timedelta(seconds=5),
+        caller_rung=3,
+    )
+    assert [item.status for item in result.items] == ["admitted"]
+    _assert_gone(instance, "line_work_pending", request)
 
 
 def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1711,6 +1790,8 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("proposal_awaiting_approval", None): _proposal_awaiting_approval,
     ("mandate_expiring", None): _mandate_expiring,
     ("consumer_stalled", None): _consumer_stalled,
+    ("line_coverage_gap", None): _line_coverage_gap,
+    ("line_work_pending", None): _line_work_pending,
     ("evidence_unavailable", None): _evidence_unavailable,
     ("prediction_settleable", None): _prediction_settleable,
     ("prediction_window_unbindable", None): _prediction_window_unbindable,

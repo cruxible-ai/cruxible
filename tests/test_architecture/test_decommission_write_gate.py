@@ -63,9 +63,9 @@ DECLARED_ROLL_FORWARD_DOORS = frozenset({f"{COORDINATOR_CLASS}.finalize_complete
 DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
     "cruxible_core/service/procedures/line_dispatch.py": frozenset(
         {
-            "service_evaluate_line",
-            "service_arm_line",
-            "service_disarm_line",
+            "service_enqueue_line_range",
+            "service_enable_line",
+            "service_disable_line",
             "service_stop_line_arm",
             "service_match_listening_lines",
             "service_dispatch_line",
@@ -144,7 +144,6 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
     ),
     "cruxible_core/service/procedures/procedure_runs.py": frozenset(
         {
-            "service_bind_playbill_procedure",
             "service_run_playbill_procedure",
             "service_run_playbill_line",
         }

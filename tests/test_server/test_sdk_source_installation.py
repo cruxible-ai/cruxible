@@ -28,6 +28,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV2,
     ClaimEvidenceAdmissionRuleV2,
 )
+from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
 from cruxible_client.transport.http import CruxibleClient
@@ -165,7 +166,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                 ),
             )
 
-        observer = observer.bind(fetch=pb.provider_binding("web.fetch"))
+        observer = observer.bind(fetch=pb.provider_interface("web.fetch"))
         authored = observer.build(world=pb.world())
         assert "sha256:" not in authored.model_dump_json()
         preview = observer.preview(world=pb.world())
@@ -372,7 +373,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         assert backing.input_claim_digests == (original["envelope"]["artifact_digest"],)
         assert (
             backing.reducer_digest
-            == pb.accepted_procedure("verify-parent").readiness().procedure_artifact_digest
+            == procedure_artifact_digest(pb.accepted_procedure("verify-parent").definition).tagged
         )
         claim_type = _proof(client, instance_id, f"ClaimType:{definition.predicate}")
         assert claim_type["envelope"] == definition.model_dump(mode="json")

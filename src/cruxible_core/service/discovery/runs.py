@@ -23,6 +23,7 @@ from cruxible_client.contracts.operational_reads import (
     GetProcedureRunCard,
     GetRunCurrentNode,
     GetRunNode,
+    GetRunOutcome,
     GetRunTrigger,
     RunRow,
     RunStatus,
@@ -32,6 +33,8 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunAttribution,
     ProcedureRunAttributionWithheld,
     ProcedureRunReceiptWithheld,
+    ProcedureTerminal,
+    ProcedureTerminalEgress,
 )
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_core.exhaust import LocalJournalBackend
@@ -41,7 +44,6 @@ from cruxible_core.procedures.execution import parse_admission_payload, procedur
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.operational_viewer import (
     OperationalViewer,
-    arm_principal_kind,
     may_see_arming,
 )
 from cruxible_core.storage.cas import BodyAccessContext
@@ -166,13 +168,11 @@ def _graph(
 ) -> tuple[dict[str, str], dict[str, dict[str, str]] | None, str | None]:
     """The run's Procedure at its bound coordinate: node kinds, edges, and its first node.
 
-    Edges are ``None`` for a graph format the static analyzers do not read.
+    Edges are ``None`` when the run's Procedure is not readable at its coordinate.
     """
 
-    from cruxible_client.contracts.procedures.graph import (
-        analyze_procedure_v3,
-        analyze_procedure_v4,
-    )
+    from cruxible_client.contracts.procedures.graph import analyze_procedure
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition
 
     bound = instance.resolve_accepted_coordinate(
         **coordinate.model_dump(mode="python", exclude={"tag"})  # type: ignore[attr-defined]
@@ -184,12 +184,9 @@ def _graph(
     kinds = {str(node.node_id): str(node.kind) for node in nodes}
     first = str(nodes[0].node_id) if nodes else None
     edges: dict[str, dict[str, str]] | None = None
-    graph_format = getattr(definition, "graph_format", None)
     try:
-        if graph_format == 3:
-            edges = analyze_procedure_v3(definition).edges  # type: ignore[arg-type]
-        elif graph_format == 4:
-            edges = analyze_procedure_v4(definition).edges  # type: ignore[arg-type]
+        if isinstance(definition, ProcedureDefinition):
+            edges = analyze_procedure(definition).edges
     except Exception:  # noqa: BLE001 -- a graph the analyzer refuses has no known edges
         edges = None
     return kinds, edges, first
@@ -268,9 +265,9 @@ def _run_trigger(
         return GetRunTrigger(
             line=line,
             occurrence=occurrence,
-            armed_by_withheld=viewer is None or not viewer.admin,
+            enabled_by_withheld=viewer is None or not viewer.admin,
         )
-    from cruxible_client.contracts.line_dispatch import LineArmPrincipal
+    from cruxible_client.contracts.line_dispatch import LineEnablementPrincipal
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 
     fields: dict[str, object] = {}
@@ -284,15 +281,15 @@ def _run_trigger(
         if row is not None:
             data = json.loads(row[0])
             if data.get("arm_id"):
-                fields["arm"] = str(data["arm_id"])
+                fields["enablement"] = str(data["arm_id"])
             by = data.get("armed_by")
             if isinstance(by, Mapping):
-                principal = LineArmPrincipal.model_validate(by)
-                fields["principal_kind"] = arm_principal_kind(by, principal)
+                principal = LineEnablementPrincipal.model_validate(by)
+                fields["principal_kind"] = principal.kind
                 if may_see_arming(viewer, principal):
-                    fields["armed_by"] = principal.label
+                    fields["enabled_by"] = principal.label
                 else:
-                    fields["armed_by_withheld"] = True
+                    fields["enabled_by_withheld"] = True
     return GetRunTrigger(line=line, occurrence=occurrence, **fields)  # type: ignore[arg-type]
 
 
@@ -353,7 +350,10 @@ def procedure_run_card(
     status: RunStatus = "running"
     current: GetRunCurrentNode | None = None
     receipt_digest: str | None = None
-    terminal: str | None = None
+    terminal: ProcedureTerminal | None = None
+    result: object | None = None
+    outcomes: tuple[GetRunOutcome, ...] = ()
+    egress: tuple[ProcedureTerminalEgress, ...] = ()
     elapsed: int | None = None
     basis: Literal["read_time", "measured_wall_clock"] | None = None
     if locator.final_payload_digest is None:
@@ -372,7 +372,12 @@ def procedure_run_card(
         state = service_get_playbill_procedure_run(instance, run_id=run_id)
         status = state.status
         receipt_digest = state.receipt_digest
-        terminal = None if state.terminal is None else str(getattr(state.terminal, "code", ""))
+        terminal = state.terminal
+        result = state.result
+        outcomes = tuple(
+            GetRunOutcome.model_validate(item.model_dump(mode="json")) for item in state.outcomes
+        )
+        egress = state.terminal_egress
         final = _payload(instance, locator.final_payload_digest)
         budget = final.get("budget") if isinstance(final, Mapping) else None
         observed = budget.get("observed") if isinstance(budget, Mapping) else None
@@ -384,7 +389,9 @@ def procedure_run_card(
     # An armed run acts as its arming credential's label; that label is the
     # arming credential's to see, as on the Line card.
     actor = (
-        None if trigger is not None and trigger.armed_by_withheld else bound.actor_context.actor_id
+        None
+        if trigger is not None and trigger.enabled_by_withheld
+        else bound.actor_context.actor_id
     )
     next_steps = [render(bound.procedure_identity.qualified, None)]
     if line is not None:
@@ -405,7 +412,10 @@ def procedure_run_card(
         triggered_by=trigger,
         actor=actor,
         receipt_digest=receipt_digest,
-        terminal=terminal or None,
+        result=result,
+        outcomes=outcomes,
+        terminal=terminal,
+        terminal_egress=egress,
         next=tuple(next_steps),
     )
 
@@ -425,7 +435,7 @@ def run_arming_withheld(
     if admission is None:
         return False
     trigger = _run_trigger(instance, run_id, admission, viewer)
-    return trigger is not None and bool(trigger.armed_by_withheld)
+    return trigger is not None and bool(trigger.enabled_by_withheld)
 
 
 def procedure_run_status(

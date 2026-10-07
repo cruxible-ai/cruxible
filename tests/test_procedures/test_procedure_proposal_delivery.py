@@ -37,7 +37,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
     RUNG_AUTHORITY,
     LineSpec,
@@ -45,7 +45,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.procedures.models import ProposeChangeSetNodeV3
+from cruxible_client.contracts.procedures.models import ProposeChangeSetNode
 from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
@@ -144,9 +144,10 @@ def terminal_procedure(
             "nodes": (
                 source,
                 shape.model_copy(update={"next": "propose"}),
-                ProposeChangeSetNodeV3(
+                ProposeChangeSetNode(
                     node_id="propose",
                     candidate_templates=templates or (item_template(),),
+                    result="$steps.result",
                 ),
             ),
         }
@@ -154,7 +155,7 @@ def terminal_procedure(
     return procedure.model_copy(
         update={
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
         }
     )
 
@@ -210,7 +211,7 @@ def run_line(instance, root, line, *, at: datetime = NOW, invoker=None):  # type
         instance,
         path_identity_digest=identity_digest,
         request=LineRunRequest(
-            line_identity_digest=identity_digest,
+            line=identity_digest,
             occurrence_id=None,
             evaluation_time=None,
         ),

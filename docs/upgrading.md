@@ -67,9 +67,9 @@ it was accepted under.
    `next` prints any status facet that needs attention before its rows. After
    a restart, built-in workers resume from where they stopped; a worker whose
    state was written by an earlier release rebuilds that state, and its
-   findings are complete again once it has caught up. Armed Lines keep their
-   arms and watch forward from the restart; time the daemon was down needs an
-   explicit `cruxible line evaluate` (see
+   findings are complete again once it has caught up. Enabled Lines stay
+   enabled and watch forward from the restart; time the daemon was down needs an
+   explicit `cruxible line evaluate`, which `cruxible next` names per gap (see
    [line](cli-reference.md#line)).
 
 If the `compiler` facet reads `current`, the upgrade is done.

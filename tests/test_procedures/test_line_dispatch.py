@@ -9,10 +9,9 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipal,
     LineDispatchRequest,
+    LineEnablementPrincipal,
     LineEvaluateRequest,
-    LineTriggerCheckRequest,
 )
 from cruxible_client.contracts.triggers import (
     CadenceSchedule,
@@ -22,23 +21,29 @@ from cruxible_client.contracts.triggers import (
 )
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore
 from cruxible_core.service.procedures.line_dispatch import (
-    service_arm_line,
     service_dispatch_line,
+    service_enable_line,
     service_evaluate_line,
     service_match_listening_lines,
 )
-from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
+    TriggerFire,
     _journal,
     _stream,
     service_run_playbill_line,
 )
 from tests.support.lines import line_trigger, successor, trigger_members
-from tests.test_procedures.test_line_triggers import SELECTOR, TRIGGER, capture, line_world
+from tests.test_procedures.test_line_triggers import (
+    SELECTOR,
+    TRIGGER,
+    _dry_run,
+    capture,
+    line_world,
+)
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
-LOCAL_OPERATOR = LineArmPrincipal(kind="local_operator", label="local-operator")
+LOCAL_OPERATOR = LineEnablementPrincipal(kind="local_operator", label="local-operator")
 
 
 def _active_segment(instance) -> str:  # type: ignore[no-untyped-def]
@@ -69,12 +74,11 @@ def test_explicit_evaluation_and_pending_rebuild_do_not_execute(tmp_path):
     store = LineDispatchStore(instance)
     before = store.journal.read_head(store.stream, "dispatch")
     store.path.unlink()
-    check = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequest(), now=now
-    )
+    check = _dry_run(instance, line, LineEvaluateRequest(dry_run=True), now=now)
     assert check.occurrences[0].pending
     assert check.occurrences[0].admitted_run_id is None
     assert store.journal.read_head(store.stream, "dispatch") == before
+    transitions = len(store.journal.select_records(store.stream, partition_id="dispatch"))
     service_evaluate_line(
         instance,
         line.identity.name,
@@ -82,12 +86,18 @@ def test_explicit_evaluation_and_pending_rebuild_do_not_execute(tmp_path):
         actor=_actor(instance),
         now=now,
     )
-    assert store.journal.read_head(store.stream, "dispatch") == before
+    # Re-evaluation records only that it covered the range: nothing is queued twice.
+    assert (
+        len(store.journal.select_records(store.stream, partition_id="dispatch")) == transitions + 1
+    )
     with store.locked() as conn:
         assert (
             conn.execute("SELECT count(*) FROM pending WHERE disposition='pending'").fetchone()[0]
             == 1
         )
+        assert conn.execute("SELECT count(*) FROM evaluated").fetchone()[0] == 2
+    journal, _ = _journal(instance)
+    assert journal.select_records(_stream(instance), event_kind="admission_bound") == ()
 
 
 def test_listener_restart_keeps_pending_and_leaves_downtime_for_explicit_evaluation(tmp_path):
@@ -95,7 +105,7 @@ def test_listener_restart_keeps_pending_and_leaves_downtime_for_explicit_evaluat
     capture(instance, procedure)  # before subscribing: never auto-consumed
     actor = _actor(instance)
     start = READ_TIME + timedelta(seconds=10)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -158,11 +168,8 @@ def test_dispatch_races_explicit_line_run_admits_exactly_once(tmp_path):
         return service_run_playbill_line(
             instance,
             path_identity_digest=line.identity.name,
-            request=LineRunRequest(
-                line=line.identity.name,
-                trigger=TRIGGER,
-                trigger_event=occurrence.binding.event,
-            ),
+            request=LineRunRequest(line=line.identity.name),
+            trigger_fire=TriggerFire(trigger=TRIGGER, event=occurrence.binding.event),
             actor_context=actor,
             caller_rung=3,
             daemon_clock=SimpleNamespace(now=lambda: now),
@@ -235,9 +242,7 @@ def test_dispatch_refusal_leaves_exact_pending_binding(tmp_path):
         caller_rung=1,
     )
     assert result.items[0].status == "blocked"
-    check = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequest(), now=now
-    )
+    check = _dry_run(instance, line, LineEvaluateRequest(dry_run=True), now=now)
     assert check.occurrences[0].pending
     assert check.occurrences[0].binding == occurrence.binding
 
@@ -255,7 +260,7 @@ def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
     )
     instance, line, procedure = line_world(tmp_path, WindowCloseSchedule(window=window))
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -293,8 +298,8 @@ def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
         caller_rung=3,
     )
     assert late.items[0].status == "admitted", late
-    check = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequest(), now=end + timedelta(hours=1)
+    check = _dry_run(
+        instance, line, LineEvaluateRequest(dry_run=True), now=end + timedelta(hours=1)
     )
     assert check.occurrences[0].binding.window.ends_at == end
 
@@ -302,7 +307,7 @@ def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
 def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tmp_path):
     instance, line, _ = line_world(tmp_path, CadenceSchedule(interval_seconds=60))
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -317,10 +322,10 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
     store = LineDispatchStore(instance)
     with store.locked() as conn:
         assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == 1
-    checked = service_check_line_trigger(
+    checked = _dry_run(
         instance,
-        line.identity.name,
-        LineTriggerCheckRequest(),
+        line,
+        LineEvaluateRequest(dry_run=True),
         now=READ_TIME + timedelta(seconds=30),
     )
     assert checked.occurrences[0].pending
@@ -340,7 +345,7 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
 def test_event_index_rebuild_never_replays_history_or_loses_pending(tmp_path):
     instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -396,7 +401,7 @@ def test_daemon_listener_matches_without_execution(tmp_path, monkeypatch):
     monkeypatch.setattr(LineDispatchStore, "append", append)
     listener.start()
     try:
-        service_arm_line(
+        service_enable_line(
             instance,
             line.identity.name,
             principal=LOCAL_OPERATOR,
@@ -431,7 +436,7 @@ def test_any_line_or_trigger_change_stops_the_arm_until_it_is_rearmed(
         tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -529,7 +534,7 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
     )
     actor = _actor(instance)
     for line in (first, second):
-        service_arm_line(
+        service_enable_line(
             instance,
             line.identity.name,
             principal=LOCAL_OPERATOR,
@@ -560,7 +565,7 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
 def test_idle_coverage_is_checkpointed_and_restart_claims_only_durable_range(tmp_path):
     instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -811,8 +816,9 @@ def test_restoring_a_schedule_rebinds_an_occurrence_its_change_superseded(tmp_pa
 def test_retry_requires_one_explicit_occurrence():
     with pytest.raises(ValueError, match="retry requires"):
         LineDispatchRequest(retry=True)
-    with pytest.raises(ValueError, match="retry requires"):
-        LineDispatchRequest(retry=True, occurrence_id="one", limit=2)
+    # The occurrence id names the one occurrence; the page limit no longer matters.
+    assert LineDispatchRequest(retry=True, occurrence_id="one", limit=2).retry
+    assert LineDispatchRequest().limit == 100
 
 
 @pytest.mark.parametrize(
@@ -912,7 +918,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
     item = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequest(),
+        LineDispatchRequest(limit=1),
         actor=actor,
         now=now,
         caller_rung=3,
@@ -933,7 +939,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
         later = service_dispatch_line(
             instance,
             line.identity.name,
-            LineDispatchRequest(),
+            LineDispatchRequest(limit=1),
             actor=actor,
             now=READ_TIME + timedelta(seconds=11),
             caller_rung=3,
@@ -966,7 +972,7 @@ def test_arming_a_line_that_can_propose_refuses_up_front_without_a_mandate(tmp_p
     instance, line, _ = line_world(tmp_path, None, triggers=())
     monkeypatch.setattr(procedure_runs, "_accepted_line_mandates", lambda *_a, **_k: ())
     with pytest.raises(LineMandateRequired) as refused:
-        service_arm_line(
+        service_enable_line(
             instance,
             line.identity.name,
             principal=LOCAL_OPERATOR,
@@ -991,9 +997,7 @@ def test_a_timer_trigger_never_ticks_before_its_acceptance_and_a_successor_resta
     accepted = datetime(2026, 8, 24, 15, tzinfo=UTC)  # line_world's acceptance
 
     def due(at):  # type: ignore[no-untyped-def]
-        checked = service_check_line_trigger(
-            instance, line.identity.name, LineTriggerCheckRequest(), now=at
-        )
+        checked = _dry_run(instance, line, LineEvaluateRequest(dry_run=True), now=at)
         return [item.eligible_at for item in checked.occurrences]
 
     # A new cadence first ticks one interval after its acceptance, never on sight.
@@ -1049,9 +1053,7 @@ def test_a_capture_at_or_before_the_triggers_acceptance_never_fires_it(tmp_path,
             ("after", TRIGGER_ACCEPTED + timedelta(seconds=1)),
         )
     }
-    checked = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequest(), now=READ_TIME
-    )
+    checked = _dry_run(instance, line, LineEvaluateRequest(dry_run=True), now=READ_TIME)
     # Strictly after acceptance only: the equal instant is not after it.
     assert [item.binding.event for item in checked.occurrences] == [_event(stored["after"])]
 
@@ -1060,9 +1062,8 @@ def test_a_capture_at_or_before_the_triggers_acceptance_never_fires_it(tmp_path,
         run = service_run_playbill_line(
             instance,
             path_identity_digest=line.identity.name,
-            request=LineRunRequest(
-                line=line.identity.name, trigger=TRIGGER, trigger_event=_event(stored[name])
-            ),
+            request=LineRunRequest(line=line.identity.name),
+            trigger_fire=TriggerFire(trigger=TRIGGER, event=_event(stored[name])),
             actor_context=_actor(instance),
             caller_rung=3,
             daemon_clock=SimpleNamespace(now=lambda: READ_TIME),
@@ -1083,14 +1084,13 @@ def test_a_fixed_window_fires_only_when_it_closes_after_the_triggers_acceptance(
         starts_at=TRIGGER_ACCEPTED - timedelta(hours=1), duration_seconds=3600 + closes_after
     )
     instance, line, _procedure = line_world(tmp_path, WindowCloseSchedule(window=window))
-    checked = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequest(), now=READ_TIME
-    )
+    checked = _dry_run(instance, line, LineEvaluateRequest(dry_run=True), now=READ_TIME)
     assert len(checked.occurrences) == (1 if fires else 0)
     run = service_run_playbill_line(
         instance,
         path_identity_digest=line.identity.name,
-        request=LineRunRequest(line=line.identity.name, trigger=TRIGGER),
+        request=LineRunRequest(line=line.identity.name),
+        trigger_fire=TriggerFire(trigger=TRIGGER),
         actor_context=_actor(instance),
         caller_rung=3,
         daemon_clock=SimpleNamespace(now=lambda: READ_TIME),
@@ -1102,7 +1102,7 @@ def test_a_fixed_window_fires_only_when_it_closes_after_the_triggers_acceptance(
 def test_an_armed_line_never_admits_a_later_append_stamped_before_acceptance(tmp_path):
     instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,

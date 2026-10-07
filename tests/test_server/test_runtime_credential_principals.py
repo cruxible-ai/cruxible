@@ -569,8 +569,8 @@ def test_an_unregistered_claim_is_refused_on_every_instance_write(
 _ACTOR_DOORS = (
     ("/lines/missing/dispatch", {}, PermissionMode.READ_ONLY),
     ("/lines/missing/dispatch", {}, PermissionMode.ADMIN),
-    ("/lines/missing/arm", None, PermissionMode.ADMIN),
-    ("/lines/missing/disarm", None, PermissionMode.ADMIN),
+    ("/lines/missing/enable", None, PermissionMode.ADMIN),
+    ("/lines/missing/disable", None, PermissionMode.ADMIN),
 )
 
 

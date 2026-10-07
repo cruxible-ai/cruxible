@@ -30,6 +30,13 @@ class SourceProviderSelection(_Closed):
     interface: str
 
 
+class SourceSlotSelection(_Closed):
+    """An open Provider slot typed by an accepted interface: the source builds a Blueprint."""
+
+    kind: Literal["slot"] = "slot"
+    interface: str
+
+
 class SourceQuerySelection(_Closed):
     kind: Literal["query"] = "query"
     name: str
@@ -41,7 +48,7 @@ class SourceProcedureSelection(_Closed):
 
 
 SourceSelection = Annotated[
-    SourceProviderSelection | SourceQuerySelection | SourceProcedureSelection,
+    SourceProviderSelection | SourceSlotSelection | SourceQuerySelection | SourceProcedureSelection,
     Field(discriminator="kind"),
 ]
 
@@ -94,6 +101,6 @@ class ProcedureSourcePreview(_Closed):
     def edges(self) -> dict[str, dict[str, str]]:
         if self.definition is None:
             return {}
-        from cruxible_client.contracts.procedures.graph import analyze_procedure_v4
+        from cruxible_client.contracts.procedures.graph import analyze_procedure
 
-        return analyze_procedure_v4(self.definition).edges
+        return analyze_procedure(self.definition).edges

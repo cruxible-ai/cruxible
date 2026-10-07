@@ -27,7 +27,7 @@ from cruxible_core.service.discovery.next import (
     service_playbill_next,
 )
 from tests.core_support._support import initialize_local
-from tests.test_integration.test_graph_v4_provider_closure import _accepted_procedure
+from tests.test_indexes.test_projection_next import _accepted_procedure
 from tests.test_integration.test_next_closed_loop import (
     EVALUATION_TIME,
     _access,
@@ -210,7 +210,7 @@ def test_a_procedure_catalog_is_checked_only_where_the_workspace_asks_for_one(
         "procedure_inventory",
         lambda self: (
             ProcedureInventoryRow(
-                procedure.procedure.identity.qualified, procedure.path, "live", False
+                procedure.procedure.identity.qualified, procedure.path, "live", "direct"
             ),
         ),
     )

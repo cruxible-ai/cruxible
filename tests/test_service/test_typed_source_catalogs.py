@@ -53,7 +53,6 @@ from tests.core_support._p2b1_support import accepted_interface, accepted_provid
 from tests.core_support._pc_c_support import capture_contract, provider
 from tests.core_support._projection_support import MemoryLedger, accepted_coordinate
 from tests.core_support._support import initialize_local
-from tests.support.lines import as_v6
 from tests.test_integration.test_acquisition_policies import _policy, _rule
 from tests.test_procedures.test_line_specs import _line
 from tests.test_procedures.test_procedure_run_surface import (
@@ -224,13 +223,13 @@ def test_mandates_select_exact_procedure_lifecycle_and_half_open_time(
 @pytest.mark.parametrize("unrelated", (2, 17))
 def test_line_identity_and_closure_select_only_bound_sources(tmp_path, monkeypatch, unrelated):
     procedure = _slotless_procedure("selected-procedure")
-    template = as_v6(_line()[0])
+    template = _line()[0]
     pin = ArtifactPin(
         role="procedure",
         target=procedure.procedure.identity,
         artifact_digest=procedure.artifact_digest,
     )
-    selected = template.model_copy(update={"procedure": pin, "pins": (pin,), "slot_bindings": ()})
+    selected = template.model_copy(update={"procedure": pin, "pins": (pin,)})
     others = [
         selected.model_copy(update={"identity": ArtifactIdentity(kind="Line", name=f"other-{i}")})
         for i in range(unrelated)

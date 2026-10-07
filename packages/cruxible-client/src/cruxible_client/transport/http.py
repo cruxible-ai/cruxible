@@ -1356,32 +1356,14 @@ class CruxibleClient:
         instance_id: str,
         name: str,
         *,
-        evaluation_time: str,
         at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
     ) -> contracts.ProcedureReadiness:
         params = self._coordinate_params(at)
-        params["evaluation_time"] = evaluation_time
         response = self._client.get(
             f"/api/v1/{instance_id}/procedures/{name}/readiness",
             params=params,
         )
         return self._parse_model(response, contracts.ProcedureReadiness)
-
-    def bind_procedure(
-        self,
-        instance_id: str,
-        name: str,
-        *,
-        bindings: Sequence[Mapping[str, Any]],
-    ) -> contracts.ProcedureBindResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/procedures/{name}/bind",
-            json={
-                "tag": "playbill-procedure-bind-request-v1",
-                "bindings": [dict(item) for item in bindings],
-            },
-        )
-        return self._parse_model(response, contracts.ProcedureBindResult)
 
     def run_procedure(
         self,
@@ -1449,45 +1431,32 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ProcedureReadingsResult)
 
-    def check_line(
-        self, instance_id: str, line: str, *, request: contracts.LineTriggerCheckRequest
-    ) -> contracts.LineTriggerCheckResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/lines/{line}/check",
-            json=request.model_dump(mode="json"),
-        )
-        return self._parse_model(response, contracts.LineTriggerCheckResult)
-
-    def arm_line(
+    def enable_line(
         self, instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> contracts.LineArm:
+    ) -> contracts.LineEnablement:
         response = self._client.post(
-            f"/api/v1/{instance_id}/lines/{line}/arm",
+            f"/api/v1/{instance_id}/lines/{line}/enable",
             json=_change_control(dry_run, at),
         )
-        return self._parse_model(response, contracts.LineArm)
+        return self._parse_model(response, contracts.LineEnablement)
 
-    def disarm_line(
+    def disable_line(
         self, instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> contracts.LineArm:
+    ) -> contracts.LineEnablement:
         response = self._client.post(
-            f"/api/v1/{instance_id}/lines/{line}/disarm",
+            f"/api/v1/{instance_id}/lines/{line}/disable",
             json=_change_control(dry_run, at),
         )
-        return self._parse_model(response, contracts.LineArm)
-
-    def line_status(self, instance_id: str, line: str) -> contracts.LineArm:
-        response = self._client.get(f"/api/v1/{instance_id}/lines/{line}/arm")
-        return self._parse_model(response, contracts.LineArm)
+        return self._parse_model(response, contracts.LineEnablement)
 
     def evaluate_line(
         self, instance_id: str, line: str, *, request: contracts.LineEvaluateRequest
-    ) -> contracts.LineTriggerCheckResult:
+    ) -> contracts.LineEvaluateResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/lines/{line}/evaluate",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.LineTriggerCheckResult)
+        return self._parse_model(response, contracts.LineEvaluateResult)
 
     def dispatch_line(
         self, instance_id: str, line: str, *, request: contracts.LineDispatchRequest
@@ -1506,23 +1475,19 @@ class CruxibleClient:
         occurrence_id: str | None,
         evaluation_time: str | None = None,
         resolution_contract: contracts.ResolutionContractReference | None = None,
-        trigger_event: contracts.TriggerEventReference | None = None,
-        trigger: str | None = None,
+        event: contracts.TriggerEventReference | None = None,
+        repeat: bool = False,
     ) -> contracts.ProcedureRunState:
         response = self._client.post(
             f"/api/v1/{instance_id}/lines/{line}/runs",
             json={
-                **({"trigger": trigger} if trigger is not None else {}),
                 **(
                     {"resolution_contract": resolution_contract.model_dump(mode="json")}
                     if resolution_contract is not None
                     else {}
                 ),
-                **(
-                    {"trigger_event": trigger_event.model_dump(mode="json")}
-                    if trigger_event is not None
-                    else {}
-                ),
+                **({"event": event.model_dump(mode="json")} if event is not None else {}),
+                **({"repeat": True} if repeat else {}),
                 "tag": "playbill-line-run-request-v1",
                 "line": line,
                 "occurrence_id": occurrence_id,

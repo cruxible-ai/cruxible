@@ -17,12 +17,11 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
-from cruxible_client.contracts.procedures.graph import analyze_procedure_v4
+from cruxible_client.contracts.procedures.graph import analyze_procedure
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
     CaptureEgressNode,
     InvokeNode,
-    ProcedureDefinitionV5,
     ProcedurePinSlotRef,
 )
 from cruxible_client.contracts.procedures.source_compiler import (
@@ -31,13 +30,14 @@ from cruxible_client.contracts.procedures.source_compiler import (
     compile_source,
 )
 from cruxible_client.contracts.procedures.source_program import (
-    ProcedureSource,
+    ProcedureSourceProgram,
     SourceBinding,
     SourceClaimType,
     SourceDiagnostic,
     SourceProcedureBinding,
     SourceProviderBinding,
     SourceQueryBinding,
+    SourceSlotBinding,
     SourceSpan,
 )
 from cruxible_client.contracts.procedures.source_requests import (
@@ -45,6 +45,7 @@ from cruxible_client.contracts.procedures.source_requests import (
     SourceProcedureSelection,
     SourceProviderSelection,
     SourceQuerySelection,
+    SourceSlotSelection,
 )
 from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
 from cruxible_client.contracts.provider_interfaces import (
@@ -144,9 +145,9 @@ def resolve_source(
             )
         if identity in child_shapes:
             return child_shapes[identity]
-        if not child.directly_runnable or not isinstance(child.definition, ProcedureDefinitionV5):
+        if child.definition.open_slots or child.definition.pin_slots:
             fail(f"{identity} must have exact bindings and explicit operation contracts")
-        graph = analyze_procedure_v4(child.definition)
+        graph = analyze_procedure(child.definition)
         leaves = [
             node
             for node in child.definition.nodes
@@ -195,6 +196,17 @@ def resolve_source(
                 effect_class=interface.effect_class,
                 operation=read_provider_operation_contract(interface.interface_bytes_hex),
             )
+        elif isinstance(selected, SourceSlotSelection):
+            interface = require(
+                "ProviderInterface", selected.interface, ProviderInterfaceRegistrationV1
+            )
+            bindings[name] = SourceSlotBinding(
+                interface=interface.identity.name,
+                interface_version=provider_interface_digest(interface).tagged,
+                interface_digest=interface.interface_digest,
+                effect_class=interface.effect_class,
+                operation=read_provider_operation_contract(interface.interface_bytes_hex),
+            )
         elif isinstance(selected, SourceQuerySelection):
             query = require("QueryDefinition", selected.name, QueryDefinition)
             bindings[name] = SourceQueryBinding(
@@ -216,7 +228,7 @@ def resolve_source(
                             return contract.contract_schema
                 fail(f"{selected.name} has no exact owned input/output Contract")
 
-            if not child.directly_runnable:
+            if child.definition.open_slots or child.definition.pin_slots:
                 fail(f"{selected.name} has unresolved slots")
             capture_terminal, required_rung = child_shape(
                 child, (request.name.removeprefix("Procedure:"),)
@@ -259,7 +271,7 @@ def resolve_source(
         )
         kinds.update(claim_type.allowed_subject_kinds)
         kinds.update(claim_type.allowed_object_subject_kinds)
-    program = ProcedureSource(
+    program = ProcedureSourceProgram(
         rules=rules,
         text=request.text,
         # Retain a portable source coordinate. The caller's filesystem location
@@ -339,6 +351,8 @@ def verify_source_bindings(
             selections[name] = SourceProviderSelection(
                 provider=binding.provider, interface=binding.interface
             )
+        elif isinstance(binding, SourceSlotBinding):
+            selections[name] = SourceSlotSelection(interface=binding.interface)
         elif isinstance(binding, SourceQueryBinding):
             selections[name] = SourceQuerySelection(name=binding.name)
         else:

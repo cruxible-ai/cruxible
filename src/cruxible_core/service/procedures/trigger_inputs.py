@@ -17,10 +17,9 @@ from cruxible_client.contracts.captures import CaptureContract
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
-    trigger_capture_selector,
     trigger_capture_source,
 )
-from cruxible_client.contracts.procedures.windows import LineTriggerBinding
+from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_core.procedures.acquisition import (
     ACQUISITION_STALE,
     ProcedureCaptureMaterialV1,
@@ -43,18 +42,24 @@ def bind_trigger_capture(
     *,
     line: LineSpec,
     procedure: AcceptedProcedure,
-    binding: LineTriggerBinding | None,
+    event: TriggerEventReference | None,
     contracts: Mapping[str, CaptureContract],
     policy: SourceAcquisitionPolicy,
     evaluation_time: datetime,
     max_bytes: int,
 ) -> LandedCaptureRunMaterialV1:
-    """A trigger input must select its exact event; defaults and re-fetch are not substitutions."""
+    """A trigger input must select its exact event; defaults and re-fetch are not substitutions.
+
+    The event is the one the Trigger fired on, or, for a manual ``line run``,
+    the one the caller passed as the Line's event input.
+    """
     node = trigger_capture_source(line, procedure)
-    selector = trigger_capture_selector(line)
-    if binding is None or binding.event is None or selector is None:
+    selector = line.trigger_event
+    if event is None or selector is None:
         raise TriggerCaptureRefused(
-            "trigger_capture_invalid", "trigger_capture_input: an exact retained event is required"
+            "trigger_capture_invalid",
+            "trigger_capture_input: an exact retained event is required "
+            "(a manual run passes it as the event input)",
         )
     rule = next((r for r in policy.inputs if r.input_name == node.as_), None)
     if rule is None or not isinstance(policy.coherence, IndependentCoherence):
@@ -73,7 +78,7 @@ def bind_trigger_capture(
             "trigger_capture_forbidden",
             "trigger_capture_input: CaptureContract forbids materialization",
         )
-    record, payload = read_capture_event(instance, selector, binding.event, now=evaluation_time)
+    record, payload = read_capture_event(instance, selector, event, now=evaluation_time)
     digest = payload.get("capture_digest")
     if not isinstance(digest, str):
         raise TriggerCaptureRefused(
@@ -160,7 +165,7 @@ def bind_trigger_capture(
             input_name=node.as_,
             capture_digest=digest,
             capture_contract_digest=selector.capture_contract_digest,
-            landing_cursor="procedure-event:" + binding.event.record_digest,
+            landing_cursor="procedure-event:" + event.record_digest,
         ),
         material=ProcedureCaptureMaterialV1(
             capture_digest=digest,

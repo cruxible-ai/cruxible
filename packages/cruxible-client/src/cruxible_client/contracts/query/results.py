@@ -20,7 +20,7 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.diagnostics import normalize_code
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifactAny,
+    ProcedureArtifact,
     procedure_artifact_digest,
     procedure_path,
 )
@@ -40,7 +40,7 @@ class QueryArtifactDefinition(BaseModel):
     identity: str
     path: str
     artifact_digest: str
-    definition: ClaimType | ProcedureArtifactAny
+    definition: ClaimType | ProcedureArtifact
 
     @model_validator(mode="after")
     def _binding(self) -> "QueryArtifactDefinition":

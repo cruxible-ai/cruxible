@@ -10,6 +10,7 @@ from cruxible_client.authoring.examples import procedure_example
 from cruxible_client.authoring.inputs import AuthoringInputError, QueryDefinitionInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayload
+from cruxible_client.contracts.get_reads import GetProcedureCard
 from cruxible_client.contracts.procedures.artifacts import procedure_owned_contract_digest
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEvaluationPolicy
 from cruxible_client.contracts.query.grammar import QueryBudgets, QueryEntry
@@ -95,7 +96,9 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
     _approve_and_activate(http, instance_id, reviewer_key, proposal.proposal_id)
 
     procedure = pb.accepted_procedure("replace-me")
-    assert procedure.readiness().state == "ready"
+    card = pb.get(procedure.ref).value
+    assert isinstance(card, GetProcedureCard)
+    assert card.runnable == "direct"
     run = procedure.run()
     assert run.status == "succeeded"
     assert run.succeeded
@@ -169,12 +172,10 @@ def test_sdk_never_reinterprets_exact_pins_as_authoring_references(
     )
 
 
-@pytest.mark.parametrize("graph_format", [4, 5])
 @pytest.mark.parametrize("successor", [None, "explicit", "fallthrough"])
 def test_sdk_capture_terminal_prepares_but_cannot_continue(
     playbill_http: tuple[TestClient, str, Path],
     tmp_path: Path,
-    graph_format: int,
     successor: str | None,
 ) -> None:
     http, instance_id, reviewer_key = playbill_http
@@ -190,7 +191,6 @@ def test_sdk_capture_terminal_prepares_but_cannot_continue(
     pb.refresh()
 
     definition = procedure_example()
-    definition.definition["graph_format"] = graph_format
     nodes = definition.definition["nodes"]
     assert isinstance(nodes, list)
     terminal = {
@@ -202,6 +202,7 @@ def test_sdk_capture_terminal_prepares_but_cannot_continue(
             "target": contract.identity.qualified,
         },
         "input": "$steps." + str(definition.definition["returns"]),
+        "result": "$steps." + str(definition.definition["returns"]),
     }
     nodes.append(terminal)
     if successor is not None:

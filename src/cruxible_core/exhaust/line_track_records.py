@@ -30,13 +30,14 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import FormatError
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedure,
+)
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.procedures.models import (
     ExhaustTapNode,
     SourceNode,
-    SourceNodeV3,
-    StateTapNodeV3,
+    StateTapNode,
 )
 from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_core.exhaust.promotions import (
@@ -133,26 +134,21 @@ def line_slot_interface_digest(
 ) -> str:
     """Digest the nominal interface surface this LineSpec closed.
 
-    Only slots the LineSpec actually binds contribute, and only their declared
+    Only the slots the Procedure's Blueprint bound contribute, and only their
     role/kind/interface, never the implementation bound into them.
     """
 
-    declarations = {
-        slot.slot_name: slot for slot in accepted_procedure.procedure.definition.pin_slots
-    }
     surface: list[dict[str, str]] = []
-    for binding in accepted_line.line.slot_bindings:
-        declaration = declarations.get(binding.slot_name)
-        if declaration is None:
-            raise LineTrackRecordError(
-                f"LineSpec binds slot {binding.slot_name!r} that this Procedure never declares"
-            )
+    origin = accepted_procedure.procedure.blueprint
+    for binding in () if origin is None else origin.bindings:
+        # The binding names its slot's interface: one Provider may fill two
+        # slots of different interfaces, so the Provider pin cannot tell them apart.
         surface.append(
             {
-                "artifact_kind": declaration.artifact_kind,
-                "interface_digest": declaration.interface_digest,
-                "pin_role": declaration.pin_role,
-                "slot_name": declaration.slot_name,
+                "artifact_kind": "Provider",
+                "interface_digest": binding.interface_digest,
+                "pin_role": "provider",
+                "slot_name": binding.slot_name,
             }
         )
     surface.sort(key=lambda item: item["slot_name"].encode("utf-8"))
@@ -170,9 +166,9 @@ def line_declared_inputs(
 
     declared: list[LineDeclaredInputV1] = []
     for node in accepted_procedure.procedure.definition.nodes:
-        if isinstance(node, StateTapNodeV3):
+        if isinstance(node, StateTapNode):
             declared.append(LineDeclaredInputV1(plane="accepted_state", input_name=node.as_))
-        elif isinstance(node, SourceNodeV3 | SourceNode):
+        elif isinstance(node, SourceNode):
             declared.append(LineDeclaredInputV1(plane="landed_capture", input_name=node.as_))
         elif isinstance(node, ExhaustTapNode):
             declared.append(LineDeclaredInputV1(plane="exhaust", input_name=node.as_))

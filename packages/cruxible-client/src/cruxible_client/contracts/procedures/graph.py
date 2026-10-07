@@ -1,4 +1,4 @@
-"""Graph-format-v3 static analysis and domain-separated Merkle digests."""
+"""Procedure graph static analysis and domain-separated Merkle digests."""
 
 from __future__ import annotations
 
@@ -13,30 +13,22 @@ from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_NODE_KINDS,
     TERMINAL_REQUIRED_RUNGS,
+    CallNode,
     CaptureEgressNode,
-    CaptureEgressNodeV3,
     ClaimTapNode,
     ConstantNode,
     GuardNode,
     InboxEgressNode,
     InvokeNode,
-    ProcedureDefinitionAny,
-    ProcedureDefinitionV3,
-    ProcedureDefinitionV4,
-    ProcedureNodeAny,
+    ProcedureDefinition,
+    ProcedureNode,
     ProcedurePinSlotRef,
     ProjectNode,
     ProposeChangeSetNode,
-    ProposeChangeSetNodeV3,
-    ProviderNode,
-    ProviderNodeV3,
-    RepeatNodeV3,
-    RepeatNodeV4,
+    RepeatNode,
     SelectNode,
     SourceNode,
-    SourceNodeV3,
     StateTapNode,
-    StateTapNodeV3,
     TransformNode,
     iter_pin_bindings,
 )
@@ -45,11 +37,11 @@ _ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
 
 
 class ProcedureGraphFormatError(FormatError):
-    """A graph-format-v3 definition fails a static law."""
+    """A Procedure definition fails a static law."""
 
 
 @dataclass(frozen=True)
-class ProcedureGraphV3:
+class ProcedureGraph:
     node_ids: tuple[str, ...]
     kinds: dict[str, str]
     edges: dict[str, dict[str, str]]
@@ -63,18 +55,14 @@ class ProcedureGraphV3:
 
 
 @dataclass(frozen=True)
-class ProcedureNodeDigestsV3:
+class ProcedureNodeDigests:
     node_id: str
     kind: str
     local_digest: str
     subtree_digest: str
 
 
-ProcedureGraph = ProcedureGraphV3
-ProcedureNodeDigests = ProcedureNodeDigestsV3
-
-
-def _declared_edges(node: ProcedureNodeAny) -> dict[str, str]:
+def _declared_edges(node: ProcedureNode) -> dict[str, str]:
     if isinstance(node, GuardNode):
         edges: dict[str, str] = {"on_false": node.on_false}
         if node.on_true is not None:
@@ -84,7 +72,7 @@ def _declared_edges(node: ProcedureNodeAny) -> dict[str, str]:
     return {} if target is None else {"next": str(target)}
 
 
-def _node_alias(node: ProcedureNodeAny) -> str | None:
+def _node_alias(node: ProcedureNode) -> str | None:
     value = getattr(node, "as_", None)
     return value if isinstance(value, str) else None
 
@@ -98,9 +86,9 @@ def _successors(edges: dict[str, str]) -> tuple[str, ...]:
 
 
 def _reference_templates(
-    node: ProcedureNodeAny,
+    node: ProcedureNode,
 ) -> Iterator[tuple[str, object]]:
-    """Yield only fields whose values the v3 runtime resolves as references."""
+    """Yield only fields whose values the runtime resolves as references."""
 
     if isinstance(node, ConstantNode):
         return
@@ -108,22 +96,26 @@ def _reference_templates(
         yield "result", node.result
     if isinstance(node, ClaimTapNode):
         yield "subject_id", node.subject_id
-    elif isinstance(node, StateTapNodeV3):
+    elif isinstance(node, StateTapNode):
         yield "parameters", node.parameters
-    elif isinstance(node, SourceNodeV3 | SourceNode):
+    elif isinstance(node, SourceNode):
         yield "request", node.request
-    elif isinstance(node, ProviderNodeV3 | ProviderNode | InvokeNode):
+    elif isinstance(node, CallNode | InvokeNode):
         yield "input", node.input
     elif isinstance(node, TransformNode):
         yield "spec", node.spec
     elif isinstance(node, ProjectNode):
         yield "fields", node.fields
-    elif isinstance(node, RepeatNodeV3 | RepeatNodeV4):
+    elif isinstance(node, RepeatNode):
         return
-    elif isinstance(node, CaptureEgressNodeV3 | InboxEgressNode):
+    elif isinstance(node, CaptureEgressNode | InboxEgressNode):
         yield "input", node.input
-    elif isinstance(node, ProposeChangeSetNodeV3):
-        yield "candidate_templates", node.candidate_templates
+    elif isinstance(node, ProposeChangeSetNode):
+        templates = node.candidate_templates
+        yield (
+            "candidate_templates",
+            templates if isinstance(templates, tuple) else templates.model_dump(mode="json"),
+        )
 
 
 def _step_alias_references(value: object, *, location: str) -> Iterator[str]:
@@ -162,7 +154,7 @@ def _step_alias_references(value: object, *, location: str) -> Iterator[str]:
 
 
 def _alias_dataflow(
-    definition: ProcedureDefinitionAny,
+    definition: ProcedureDefinition,
     *,
     node_ids: tuple[str, ...],
     predecessors: dict[str, tuple[str, ...]],
@@ -194,7 +186,7 @@ def _alias_dataflow(
 
 
 def _validate_node_references(
-    node: ProcedureNodeAny,
+    node: ProcedureNode,
     *,
     available: frozenset[str],
 ) -> None:
@@ -215,7 +207,7 @@ def _validate_node_references(
                 f"reaching it: {sorted(missing)}"
             )
 
-    if not isinstance(node, RepeatNodeV3 | RepeatNodeV4):
+    if not isinstance(node, RepeatNode):
         return
     body_available = set(available)
     for body in node.body:
@@ -235,7 +227,7 @@ def _validate_node_references(
         )
 
 
-def _analyze_procedure(definition: ProcedureDefinitionAny) -> ProcedureGraphV3:
+def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
     """Enforce the shared forward-only, reachable graph law."""
 
     node_ids = tuple(node.node_id for node in definition.nodes)
@@ -377,7 +369,7 @@ def _analyze_procedure(definition: ProcedureDefinitionAny) -> ProcedureGraphV3:
                 f"returns the declared output alias {definition.returns!r}"
             )
 
-    return ProcedureGraphV3(
+    return ProcedureGraph(
         node_ids=node_ids,
         kinds=kinds,
         edges=edges,
@@ -389,19 +381,7 @@ def _analyze_procedure(definition: ProcedureDefinitionAny) -> ProcedureGraphV3:
     )
 
 
-def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
-    """Enforce v3's exact historical static graph law."""
-
-    return _analyze_procedure(definition)
-
-
-def analyze_procedure_v4(definition: ProcedureDefinitionV4) -> ProcedureGraph:
-    """Enforce v4's static graph law without consulting an implementation registry."""
-
-    return _analyze_procedure(definition)
-
-
-def _node_local_payload(node: ProcedureNodeAny) -> dict[str, object]:
+def _node_local_payload(node: ProcedureNode) -> dict[str, object]:
     payload = node.model_dump(mode="json", by_alias=True)
     payload.pop("node_id")
     payload.pop("next", None)
@@ -410,65 +390,17 @@ def _node_local_payload(node: ProcedureNodeAny) -> dict[str, object]:
     return {"kind": node.kind, "spec": payload}
 
 
-def compute_procedure_node_digests_v3(
-    definition: ProcedureDefinitionV3,
-) -> dict[str, ProcedureNodeDigestsV3]:
-    graph = analyze_procedure_v3(definition)
-    nodes = {node.node_id: node for node in definition.nodes}
-    result: dict[str, ProcedureNodeDigestsV3] = {}
-    for node_id in reversed(graph.node_ids):
-        node = nodes[node_id]
-        local = typed_digest(
-            ArtifactDigest,
-            "playbill-procedure-node-local-v3",
-            _node_local_payload(node),
-        ).tagged
-        successor_digests = {
-            label: (target if target == "$abort" else result[target].subtree_digest)
-            for label, target in graph.edges[node_id].items()
-        }
-        subtree = typed_digest(
-            ArtifactDigest,
-            "playbill-procedure-node-subtree-v3",
-            {"local_digest": local, "successors": successor_digests},
-        ).tagged
-        result[node_id] = ProcedureNodeDigestsV3(
-            node_id=node_id,
-            kind=node.kind,
-            local_digest=local,
-            subtree_digest=subtree,
-        )
-    return result
-
-
-def compute_procedure_definition_digest_v3(definition: ProcedureDefinitionV3) -> ArtifactDigest:
-    """Commit the envelope and entry subtree without altering v1/v2 functions."""
-
-    node_digests = compute_procedure_node_digests_v3(definition)
-    payload = definition.model_dump(mode="json", by_alias=True)
-    payload.pop("nodes")
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-procedure-definition-v3",
-        {
-            "definition": payload,
-            "entry_node_id": definition.nodes[0].node_id,
-            "entry_subtree_digest": node_digests[definition.nodes[0].node_id].subtree_digest,
-        },
-    )
-
-
-def compute_procedure_node_digests_v4(
-    definition: ProcedureDefinitionV4,
+def compute_procedure_node_digests(
+    definition: ProcedureDefinition,
 ) -> dict[str, ProcedureNodeDigests]:
-    graph = analyze_procedure_v4(definition)
+    graph = analyze_procedure(definition)
     nodes = {node.node_id: node for node in definition.nodes}
     result: dict[str, ProcedureNodeDigests] = {}
     for node_id in reversed(graph.node_ids):
         node = nodes[node_id]
         local = typed_digest(
             ArtifactDigest,
-            f"playbill-procedure-node-local-v{definition.graph_format}",
+            "playbill-procedure-node-local-v6",
             _node_local_payload(node),
         ).tagged
         successor_digests = {
@@ -477,7 +409,7 @@ def compute_procedure_node_digests_v4(
         }
         subtree = typed_digest(
             ArtifactDigest,
-            f"playbill-procedure-node-subtree-v{definition.graph_format}",
+            "playbill-procedure-node-subtree-v6",
             {"local_digest": local, "successors": successor_digests},
         ).tagged
         result[node_id] = ProcedureNodeDigests(
@@ -489,13 +421,13 @@ def compute_procedure_node_digests_v4(
     return result
 
 
-def compute_procedure_definition_digest_v4(definition: ProcedureDefinitionV4) -> ArtifactDigest:
-    node_digests = compute_procedure_node_digests_v4(definition)
+def compute_procedure_definition_digest(definition: ProcedureDefinition) -> ArtifactDigest:
+    node_digests = compute_procedure_node_digests(definition)
     payload = definition.model_dump(mode="json", by_alias=True)
     payload.pop("nodes")
     return typed_digest(
         ArtifactDigest,
-        f"playbill-procedure-definition-v{definition.graph_format}",
+        "playbill-procedure-definition-v6",
         {
             "definition": payload,
             "entry_node_id": definition.nodes[0].node_id,
@@ -504,23 +436,11 @@ def compute_procedure_definition_digest_v4(definition: ProcedureDefinitionV4) ->
     )
 
 
-def compute_procedure_definition_digest(definition: ProcedureDefinitionAny) -> ArtifactDigest:
-    if isinstance(definition, ProcedureDefinitionV4):
-        return compute_procedure_definition_digest_v4(definition)
-    return compute_procedure_definition_digest_v3(definition)
-
-
 __all__ = [
-    "ProcedureGraphFormatError",
-    "ProcedureGraphV3",
     "ProcedureGraph",
-    "ProcedureNodeDigestsV3",
+    "ProcedureGraphFormatError",
     "ProcedureNodeDigests",
-    "analyze_procedure_v3",
-    "analyze_procedure_v4",
+    "analyze_procedure",
     "compute_procedure_definition_digest",
-    "compute_procedure_definition_digest_v3",
-    "compute_procedure_definition_digest_v4",
-    "compute_procedure_node_digests_v3",
-    "compute_procedure_node_digests_v4",
+    "compute_procedure_node_digests",
 ]

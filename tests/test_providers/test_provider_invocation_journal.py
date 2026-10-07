@@ -9,18 +9,20 @@ from pydantic import ValidationError
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
-    procedure_artifact_digest,
 )
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     GuardPredicate,
     PredicateOperand,
-    ProviderNode,
-    RepeatBodyNodeV4,
-    RepeatNodeV4,
+    ProcedureBudget,
+    ProcedureDefinition,
+    ProcedureHardCaps,
+    RepeatBodyNode,
+    RepeatNode,
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlan,
@@ -76,10 +78,9 @@ from tests.core_support._p2b1_support import (
     accepted_interface,
     accepted_provider,
     install_demo_classifier,
+    pin,
 )
-from tests.test_integration.test_graph_v4_provider_closure import (
-    _accepted_procedure as _provider_v4_procedure,
-)
+from tests.support.procedures import accepted_procedure
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
     _Contracts,
@@ -152,10 +153,20 @@ def _accepted_one_provider(
     mutation: bool = False,
     repeat: bool = False,
 ) -> AcceptedProcedure:
-    accepted = _provider_v4_procedure()
-    definition = accepted.procedure.definition
-    node = definition.nodes[0]
-    assert isinstance(node, ProviderNode)
+    """One exact-pinned demo Provider call, direct or as a one-attempt repeat body."""
+
+    provider = accepted_provider()
+    interface = accepted_interface()
+    provider_pin = pin("provider", "Provider", "demo-provider", value=provider.artifact_digest)
+    interface_pin = pin(
+        "provider-interface",
+        "ProviderInterface",
+        "demo.interface",
+        value=interface.artifact_digest,
+    )
+    contract_in = pin("contract-in", "Contract", "provider-input")
+    contract_out = pin("contract-out", "Contract", "provider-output")
+    implementation_digest = provider.provider.implementations[0].implementation_digest
     effect_policy = (
         ArtifactPin(
             role="effect-policy",
@@ -165,17 +176,28 @@ def _accepted_one_provider(
         if mutation
         else None
     )
-    node = node.model_copy(update={"input": {"size": 3}, "effect_policy": effect_policy})
-    graph_node: ProviderNode | RepeatNodeV4 = node
+    node = CallNode(
+        node_id="direct",
+        provider=provider_pin,
+        interface=interface_pin,
+        interface_digest=interface.registration.interface_digest,
+        implementation_digest=implementation_digest,
+        contract_in=contract_in,
+        contract_out=contract_out,
+        effect_policy=effect_policy,
+        input={"size": 3},
+        as_="direct_result",
+    )
+    graph_node: CallNode | RepeatNode = node
     returns = node.as_
     if repeat:
-        graph_node = RepeatNodeV4(
+        graph_node = RepeatNode(
             node_id="repeat",
             max_attempts=1,
             body=(
-                RepeatBodyNodeV4(
+                RepeatBodyNode(
                     node_id=node.node_id,
-                    operation="provider",
+                    operation="call",
                     provider=node.provider,
                     interface=node.interface,
                     interface_digest=node.interface_digest,
@@ -195,31 +217,28 @@ def _accepted_one_provider(
             as_="repeat_result",
         )
         returns = graph_node.as_
-    definition = definition.model_copy(
-        update={"nodes": (graph_node,), "returns": returns, "pin_slots": ()}
+    definition = ProcedureDefinition(
+        name="provider-call",
+        contract_in=contract_in,
+        contract_out=contract_out,
+        nodes=(graph_node,),
+        returns=returns,
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=2_000_000),
+            max_provider_calls=2,
+            max_capture_bytes=1024,
+            max_items=10,
+        ),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=4_000_000),
+            max_provider_calls=4,
+            max_capture_bytes=2048,
+            max_items=20,
+            max_repeat_attempts=2,
+        ),
+        terminal_capability=1,
     )
-    pins = tuple(
-        sorted(
-            set((*accepted.procedure.pins, *((effect_policy,) if effect_policy else ()))),
-            key=lambda item: (
-                item.role.encode(),
-                item.target.qualified.encode(),
-                item.artifact_digest.encode(),
-            ),
-        )
-    )
-    procedure = accepted.procedure.model_copy(
-        update={
-            "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
-            "pins": pins,
-        }
-    )
-    return AcceptedProcedure(
-        path=accepted.path,
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
+    return accepted_procedure(definition, activation_policy="drain")
 
 
 def _prepared_v5(
@@ -239,13 +258,13 @@ def _prepared_v5(
     interface = interface or accepted_interface()
     graph_node = accepted.procedure.definition.nodes[0]
     repeat_node_id: str | None = None
-    if isinstance(graph_node, RepeatNodeV4):
+    if isinstance(graph_node, RepeatNode):
         repeat_node_id = graph_node.node_id
         node = graph_node.body[0]
-        assert isinstance(node, RepeatBodyNodeV4)
+        assert isinstance(node, RepeatBodyNode)
     else:
         node = graph_node
-        assert isinstance(node, ProviderNode)
+        assert isinstance(node, CallNode)
     registration = interface.registration
     implementation_digest = provider.provider.implementations[0].implementation_digest
     secret_plan = secret_plan or ProviderSecretResolutionPlan()
@@ -323,9 +342,9 @@ def _prepared_v5(
         occurrence_path=(
             f"repeat/{repeat_node_id}/{node.node_id}"
             if repeat_node_id is not None
-            else "provider/direct"
+            else f"call/{node.node_id}"
         ),
-        occurrence_kind="call" if accepted.procedure.definition.graph_format == 5 else "provider",
+        occurrence_kind="call",
         node_id=node.node_id,
         repeat_node_id=repeat_node_id,
         provider_artifact_digest=provider.artifact_digest,
@@ -406,7 +425,7 @@ def _prepared_v5(
 
 @pytest.mark.parametrize("effect_class", ["none", "external_read"])
 @pytest.mark.parametrize("repeat", [False, True])
-def test_graph_v4_provider_journals_completed_receipt_before_progress(
+def test_provider_call_journals_completed_receipt_before_progress(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     effect_class: str,

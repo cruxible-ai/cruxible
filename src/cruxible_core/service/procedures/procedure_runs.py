@@ -1,4 +1,4 @@
-"""Served readiness, binding, and query-only Procedure execution."""
+"""Served readiness and Procedure / Line execution."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from cruxible_client.contracts.acquisition_policies import (
     ACQUISITION_POLICY_PIN_ROLE,
@@ -23,7 +23,7 @@ from cruxible_client.contracts.acquisition_policies import (
     InputAcquisitionRule,
     SourceAcquisitionPolicy,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -56,18 +56,13 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
-    ProcedureArtifactAny,
+    ProcedureArtifact,
+    ProcedureNodeSupport,
+    ProcedureRunnable,
     check_provider_node_contract,
-    procedure_artifact_digest,
     procedure_path,
-    render_procedure,
+    procedure_runnability,
 )
-from cruxible_client.contracts.procedures.closure import (
-    LineSlotBinding,
-    ProcedurePinClosureError,
-    close_procedure_pin_slots,
-)
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     LineSpec,
@@ -78,21 +73,16 @@ from cruxible_client.contracts.procedures.line_specs import (
     parse_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     ExhaustTapNode,
     ProcedureBudget,
-    ProcedureDefinitionV3,
-    ProcedureDefinitionV4,
+    ProcedureDefinition,
     ProcedureHardCaps,
     ProcedurePinSlotRef,
-    ProviderNode,
-    ProviderNodeV3,
-    RepeatBodyNodeV4,
-    RepeatNodeV3,
-    RepeatNodeV4,
+    RepeatBodyNode,
+    RepeatNode,
     SourceNode,
-    SourceNodeV3,
     authority_for_rung,
-    iter_pin_bindings,
     required_authority,
 )
 from cruxible_client.contracts.procedures.results import (
@@ -112,7 +102,6 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureNodeRefusal,
     ProcedureOperationalFailure,
     ProcedureOperationalFailureCode,
-    ProcedurePendingSuccessor,
     ProcedureProviderBinding,
     ProcedureProviderBindingV1,
     ProcedureReplayInputProjection,
@@ -185,10 +174,6 @@ from cruxible_client.contracts.triggers import (
     Trigger,
     WindowCloseSchedule,
     schedule_is_timed,
-)
-from cruxible_client.contracts.workspace_advertisement import (
-    NOT_ATTACHED_ADVERTISEMENT,
-    WorkspaceAdvertisement,
 )
 from cruxible_client.contracts.workspace_file import (
     SourceReadReceipt,
@@ -275,7 +260,6 @@ from cruxible_core.procedures.terminal_dependencies import (
     AcquisitionInputOutcomeV1,
     TerminalItemDependencyManifestV1,
 )
-from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.providers.provider_local_runtime import (
     ProviderLocalRuntimeRefused,
     translate_provider_budget,
@@ -305,30 +289,6 @@ from cruxible_core.triggers.cadence import timer_due
 PROCEDURE_RUN_STREAM_ID = "procedures"
 PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"
 DIRECT_RECEIPT_REDUCER_DOMAIN = "playbill-direct-procedure-receipt-reducer-v1"
-#: The node kinds the direct run lane admits. ``source`` is served only on the
-#: graph-v4 observation path: a graph-v3 Source names no interface or
-#: implementation, so `_graph_v3_external_occurrences` still refuses it before
-#: any journal exists. Lines separately serve capture and proposal terminals.
-SERVED_NODE_KINDS = frozenset(
-    {"state_tap", "transform", "project", "guard", "repeat", "halt", "source"}
-)
-#: Node kinds a graph-v3 definition may not use on a served lane. A v3 Source
-#: names no interface and no implementation, so no occurrence can be planned for
-#: it; it keeps its existing `provider_explicit_implementation_required`
-#: refusal instead of becoming quietly runnable.
-GRAPH_V3_UNSERVED_NODE_KINDS = frozenset({"source"})
-
-
-def served_node_kinds(graph_format: int) -> frozenset[str]:
-    """Return the node kinds one graph generation serves on the run lanes."""
-
-    if graph_format == 6:
-        return SERVED_NODE_KINDS | {"call", "state_claim", "select", "constant", "return", "invoke"}
-    if graph_format == 5:
-        return (SERVED_NODE_KINDS - {"provider"}) | {"call"}
-    if graph_format == 4:
-        return SERVED_NODE_KINDS
-    return SERVED_NODE_KINDS - GRAPH_V3_UNSERVED_NODE_KINDS
 
 
 class _StrictProcedureSurfaceModel(BaseModel):
@@ -359,32 +319,8 @@ class ProcedureRetired(ProcedureSurfaceError):
     code = "cruxible.procedure.retired"
 
 
-class ProcedureBindingSetMismatch(ProcedureSurfaceError):
-    code = "cruxible.procedure.binding_set_mismatch"
-
-
-class ProcedureBindingTargetNotFound(ProcedureSurfaceError):
-    code = "cruxible.procedure.binding_target_not_found"
-
-
-class ProcedureBindingRoleMismatch(ProcedureSurfaceError):
-    code = "cruxible.procedure.binding_role_mismatch"
-
-
-class ProcedureBindingKindMismatch(ProcedureSurfaceError):
-    code = "cruxible.procedure.binding_kind_mismatch"
-
-
-class ProcedureBindingInterfaceMismatch(ProcedureSurfaceError):
-    code = "cruxible.procedure.binding_interface_mismatch"
-
-
-class ProcedureBindingStaleCoordinate(ProcedureSurfaceError):
-    code = "cruxible.procedure.binding_stale_coordinate"
-
-
-class ProcedureBindingGraphV4LineClosureRequired(ProcedureSurfaceError):
-    code = "cruxible.procedure.binding.graph_v4_line_closure_required"
+class ProcedureProviderInterfaceMismatch(ProcedureSurfaceError):
+    code = "cruxible.procedure.provider_interface_mismatch"
 
 
 class ProcedureRunNotCurrent(ProcedureSurfaceError):
@@ -406,23 +342,23 @@ class LineRunNotAccepted(ProcedureSurfaceError):
     http_status = 404
 
 
-class LineNeverArmed(ProcedureSurfaceError):
-    """A Line status read found no arm, current or past."""
+class LineNeverEnabled(ProcedureSurfaceError):
+    """A Line read found no enablement, current or past."""
 
-    code = "cruxible.line.never_armed"
-    error_code = "cruxible.line.never_armed"
+    code = "cruxible.line.never_enabled"
+    error_code = "cruxible.line.never_enabled"
     http_status = 404
 
     def __init__(self, line: str) -> None:
         super().__init__(
-            f"{self.code}: Line {line!r} has never been armed; arm it with "
-            f"`cruxible line arm {line}`"
+            f"{self.code}: Line {line!r} has never been enabled; enable it with "
+            f"`cruxible line enable {line}`"
         )
-        self.repair = RepairOperation(operation="cruxible.line.arm", arguments={"line": line})
+        self.repair = RepairOperation(operation="cruxible.line.enable", arguments={"line": line})
 
 
 class LineMandateRequired(ProcedureSurfaceError):
-    """Arming a Line that can propose or settle when no mandate covers it."""
+    """Enabling a Line that can propose or settle when no mandate covers it."""
 
     code = "cruxible.line.mandate_required"
     error_code = "line_mandate_required"
@@ -433,7 +369,7 @@ class LineMandateRequired(ProcedureSurfaceError):
             f"{self.code}: Line {line!r} can propose or settle, and Procedure {procedure!r} "
             "has no current accepted ProcedureMandate, so every run would refuse; author "
             "and accept one (`cruxible authoring example procedure-mandate`) "
-            "before arming"
+            "before enabling"
         )
         self.repair = RUNNABLE_REFUSAL_REPAIRS["line_mandate_required"]
 
@@ -550,7 +486,8 @@ class PinnedAcquisitionPolicyUnresolved(ProcedureSurfaceError):
 
 
 class ProcedureNextOperationV1(_StrictProcedureSurfaceModel):
-    kind: Literal["run", "bind", "retry", "done", "terminal"]
+    #: ``line`` names a Procedure only a Line runs: ``line run`` one of its Lines.
+    kind: Literal["run", "line", "retry", "done", "terminal"]
 
 
 class ProviderRuntimeOperatorProtocol(Protocol):
@@ -571,72 +508,27 @@ class ProviderRuntimeOperatorProtocol(Protocol):
     ) -> VerifiedProviderBinding: ...
 
 
-class ProcedureUnsupportedNodeV1(_StrictProcedureSurfaceModel):
-    node_id: str
-    kind: str
-
-
 class ProcedureReadinessRequestV1(_StrictProcedureSurfaceModel):
     tag: Literal["playbill-procedure-readiness-request-v1"] = (
         "playbill-procedure-readiness-request-v1"
     )
     at: AcceptedCoordinate | None = None
-    evaluation_time: datetime = Field(description="Reads EVALUATION INSTANT.")
-
-    @field_validator("evaluation_time")
-    @classmethod
-    def _time(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
 
 
 class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
+    """How one accepted Procedure can run: the one runnability answer, with its artifact."""
+
     tag: Literal["playbill-procedure-readiness-result-v1"] = (
         "playbill-procedure-readiness-result-v1"
     )
     coordinate: AcceptedCoordinate
-    evaluation_time: datetime
     procedure_identity: ArtifactIdentity
     procedure_artifact_digest: str
     definition_digest: str
-    artifact: ProcedureArtifactAny
-    state: Literal["ready", "binding_required", "unsupported"]
-    required_slots: tuple[str, ...]
-    unsupported_nodes: tuple[ProcedureUnsupportedNodeV1, ...]
+    artifact: ProcedureArtifact
+    runnable: ProcedureRunnable
+    unsupported_nodes: tuple[ProcedureNodeSupport, ...]
     next_operation: ProcedureNextOperationV1
-
-
-class ProcedureBindingTarget(_StrictProcedureSurfaceModel):
-    kind: str
-    name: str
-
-
-class ProcedureSlotBindingRequest(_StrictProcedureSurfaceModel):
-    slot_name: str
-    target: ProcedureBindingTarget
-
-
-class ProcedureBindRequest(_StrictProcedureSurfaceModel):
-    tag: Literal["playbill-procedure-bind-request-v1"] = "playbill-procedure-bind-request-v1"
-    bindings: tuple[ProcedureSlotBindingRequest, ...]
-
-    @field_validator("bindings")
-    @classmethod
-    def _bindings(
-        cls,
-        value: tuple[ProcedureSlotBindingRequest, ...],
-    ) -> tuple[ProcedureSlotBindingRequest, ...]:
-        names = tuple(item.slot_name for item in value)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Procedure bindings must be byte-sorted and unique")
-        return value
-
-
-class ProcedureBindResultV2(_StrictProcedureSurfaceModel):
-    tag: Literal["playbill-procedure-bind-result-v2"] = "playbill-procedure-bind-result-v2"
-    accepted_digest: str
-    accepted_readiness: ProcedureReadinessResultV1
-    pending: ProcedurePendingSuccessor | None = None
-    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
 class ProcedureRunRequest(_StrictProcedureSurfaceModel):
@@ -659,20 +551,22 @@ class ProcedureRunRequest(_StrictProcedureSurfaceModel):
 
 
 class LineRunRequest(_StrictProcedureSurfaceModel):
-    """An assertion against one daemon-derived accepted Line occurrence."""
+    """One manual run of an accepted Line, now: never a Trigger's occurrence.
+
+    The run uses the Line's own inputs, budgets, authority ceiling and mandate
+    and is recorded on its history. ``event`` is the retained Capture event a
+    Line whose Procedure takes an event input runs on; one the enabled Line
+    already admitted refuses unless ``repeat`` says to run it again.
+    """
 
     tag: Literal["playbill-line-run-request-v1"] = "playbill-line-run-request-v1"
     resolution_contract: ResolutionContractReference | None = None
-    trigger_event: TriggerEventReference | None = None
-    trigger_generation: int | None = Field(default=None, ge=0)
-    line: str = Field(validation_alias=AliasChoices("line", "line_identity_digest"))
-    trigger: str | None = Field(
-        default=None,
-        description=(
-            "The Trigger (name or Trigger:name) this occurrence fires on. Omit it only "
-            "for a Line no live Trigger aims at, which runs when run explicitly."
-        ),
+    event: TriggerEventReference | None = None
+    repeat: bool = Field(
+        default=False,
+        description="Run on an event the enabled Line already admitted, deliberately again.",
     )
+    line: str
     occurrence_id: str | None = None
     evaluation_time: datetime | None = Field(
         default=None,
@@ -690,13 +584,6 @@ class LineRunRequest(_StrictProcedureSurfaceModel):
             Sha256Value.from_tagged(value)
         else:
             ArtifactIdentity(kind="Line", name=value.removeprefix("Line:"))
-        return value
-
-    @field_validator("trigger")
-    @classmethod
-    def _trigger(cls, value: str | None) -> str | None:
-        if value is not None:
-            ArtifactIdentity(kind="Trigger", name=value.removeprefix("Trigger:"))
         return value
 
     @field_validator("evaluation_time")
@@ -828,6 +715,7 @@ def _accepted_procedure(
     *,
     name: str,
     coordinate: AcceptedProjectionCoordinate,
+    allow_retired: bool = False,
 ) -> AcceptedProcedure:
     path = procedure_path(name)
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -836,7 +724,7 @@ def _accepted_procedure(
             raise ProcedureNotFound(f"{ProcedureNotFound.code}: {name}")
         procedure = projection.typed.source(envelope.identity)
         assert procedure is not None
-        if procedure.lifecycle.state == "retired":
+        if procedure.lifecycle.state == "retired" and not allow_retired:
             raise ProcedureRetired(f"{ProcedureRetired.code}: {name}")
         return AcceptedProcedure(
             path=path,
@@ -874,12 +762,16 @@ def _accepted_line_by_reference(
     *,
     coordinate: AcceptedProjectionCoordinate,
     reference: str,
+    allow_retired: bool = False,
 ) -> AcceptedLineSpec:
+    """The accepted Line a reference names: live, or also retired where a caller reads or
+    stops one (disable, the Line card, the listener stopping a retired Line's enablement)."""
+
     identity_digest = _line_reference_digest(reference)
     with instance.bind_accepted_projection(coordinate) as projection:
         matches = projection.typed.connection.execute(
-            "SELECT identity,path,artifact_digest FROM lines "
-            "WHERE identity_digest=? AND lifecycle='live'",
+            "SELECT identity,path,artifact_digest FROM lines WHERE identity_digest=? AND "
+            + ("lifecycle IN ('live','retired')" if allow_retired else "lifecycle='live'"),
             (identity_digest,),
         ).fetchall()
         if len(matches) != 1:
@@ -890,6 +782,14 @@ def _accepted_line_by_reference(
                 ).fetchall()
             )
             shown = reference.removeprefix("Line:")
+            if projection.typed.connection.execute(
+                "SELECT 1 FROM lines WHERE identity_digest=? AND lifecycle='retired'",
+                (identity_digest,),
+            ).fetchone():
+                raise LineRunNotAccepted(
+                    f"{LineRunNotAccepted.code}: Line {shown!r} is retired; nothing runs it "
+                    "(get and disable still read it)"
+                )
             nearest = difflib.get_close_matches(shown, live, n=3, cutoff=0.6)
             listed = ", ".join(live[:20]) + (
                 f", and {len(live) - 20} more" if len(live) > 20 else ""
@@ -901,13 +801,7 @@ def _accepted_line_by_reference(
             )
         identity, path, digest = matches[0]
         line = projection.typed.source(identity)
-        assert line is not None
-        if not isinstance(line, LineSpec):
-            raise LineRunNotAccepted(
-                f"{LineRunNotAccepted.code}: Line {reference.removeprefix('Line:')!r} embeds "
-                f"its trigger ({line.artifact_format}), which is no longer served; upgrade to "
-                "compiler revision 32, then accept a Line v6 and Trigger artifacts aimed at it"
-            )
+        assert isinstance(line, LineSpec)
         return AcceptedLineSpec(path=path, line=line, artifact_digest=digest)
 
 
@@ -1036,22 +930,27 @@ def _line_admission_head_gate(
     )
 
 
+@dataclass(frozen=True)
+class TriggerFire:
+    """The Trigger occurrence a dispatch admits: its Trigger and what it fired on.
+
+    Only dispatch of matched or evaluated work supplies one; ``line run`` is a
+    manual occurrence and never names a Trigger.
+    """
+
+    trigger: str
+    event: TriggerEventReference | None = None
+    generation: int | None = None
+
+
 def select_line_trigger(
     triggers: tuple[AcceptedTrigger, ...],
-    reference: str | None,
+    reference: str,
     *,
     line: ArtifactIdentity,
-) -> AcceptedTrigger | None:
-    """The live Trigger a run fires on; None only for a Line no Trigger aims at."""
+) -> AcceptedTrigger:
+    """The live Trigger aimed at this Line that a dispatched occurrence fires on."""
 
-    if reference is None:
-        if triggers:
-            raise LineTriggerMismatch(
-                f"Line {line.name!r} runs on its Triggers "
-                f"({', '.join(item.trigger.identity.name for item in triggers)}); name the "
-                "Trigger this occurrence fires on"
-            )
-        return None
     wanted = _trigger_reference(reference)
     found = next((item for item in triggers if item.trigger.identity.qualified == wanted), None)
     if found is None:
@@ -1060,7 +959,7 @@ def select_line_trigger(
             + (
                 f"; its Triggers: {', '.join(item.trigger.identity.name for item in triggers)}"
                 if triggers
-                else "; no Trigger aims at it, so run it without one"
+                else "; no Trigger aims at it now"
             )
         )
     return found
@@ -1147,21 +1046,12 @@ def _assert_line_closure_complete(
                 )
 
 
-def _line_slot_pins(accepted_line: AcceptedLineSpec) -> dict[str, ArtifactPin]:
-    return {item.slot_name: item.artifact_pin for item in accepted_line.line.slot_bindings}
+def _exact_pin(value: ArtifactPin | ProcedurePinSlotRef) -> ArtifactPin:
+    """An accepted Procedure pins every dependency exactly; a slot is a Blueprint's."""
 
-
-def _resolve_line_pin(
-    value: ArtifactPin | ProcedurePinSlotRef,
-    *,
-    slot_pins: Mapping[str, ArtifactPin],
-) -> ArtifactPin:
     if isinstance(value, ArtifactPin):
         return value
-    try:
-        return slot_pins[value.slot_name]
-    except KeyError as exc:
-        raise ExecutionError(f"accepted Line closure lost slot {value.slot_name!r}") from exc
+    raise ExecutionError(f"accepted Procedure has an open slot {value.slot_name!r}")
 
 
 def _stored_line_admission(
@@ -1261,6 +1151,26 @@ def _trigger_admissions(
     return () if latest is None else (latest,)
 
 
+def _event_admission(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpec,
+    event: TriggerEventReference,
+) -> str | None:
+    """The run a Trigger of this Line admitted on this exact event, if any."""
+
+    journal, _root = _journal(instance)
+    stream = procedure_line_journal_stream(instance.descriptor.instance_id)
+    partition = procedure_line_partition(accepted_line.line.identity)
+    for stored in journal.select_records(
+        stream, partition_id=partition, event_kind="admission_bound", descending=True
+    ):
+        admission = _stored_line_admission(instance, stored)
+        binding = getattr(admission, "trigger_binding", None)
+        if admission is not None and binding is not None and binding.event == event:
+            return admission.run_id
+    return None
+
+
 def trigger_binding_for(
     trigger: AcceptedTrigger,
     *,
@@ -1299,10 +1209,12 @@ def _line_occurrence(
     not_before: datetime | None = None,
     exact_basis: datetime | None = None,
     accepted_at: datetime | None = None,
+    manual_event: TriggerEventReference | None = None,
 ) -> tuple[str, datetime | None]:
     """Derive one occurrence's identity and its next due instant.
 
-    With no Trigger the occurrence is an explicit run at its evaluation instant.
+    With no Trigger the occurrence is a manual run at its evaluation instant,
+    on the exact event it was given, if any (its record digest names it).
     A cadence or cron occurrence is the tick after the last one its Trigger
     fired (`prior`), and never before the tick after its Trigger version's
     acceptance (`accepted_at`): no Trigger fires retroactively. `not_before`
@@ -1316,7 +1228,11 @@ def _line_occurrence(
     next_due = None
     if trigger is None:
         kind = "manual"
-        occurrence_basis: object = format_datetime(evaluation_time)
+        occurrence_basis: object = (
+            format_datetime(evaluation_time)
+            if manual_event is None
+            else {"at": format_datetime(evaluation_time), "event": manual_event.record_digest}
+        )
     else:
         schedule = trigger.trigger.schedule
         kind = schedule.kind
@@ -1384,7 +1300,6 @@ def _line_state_materials(
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
-    slot_pins: Mapping[str, ArtifactPin],
     invocation_input: object,
 ) -> tuple[AcceptedStateRunMaterialV2, ...]:
     return bind_accepted_state_materials(
@@ -1394,24 +1309,19 @@ def _line_state_materials(
             instance=instance, evaluation_time=evaluation_time
         ),
         bodies=instance.body_store(),
-        slot_pins=slot_pins,
         invocation_input=invocation_input,
     )
 
 
 def _provider_nodes(
-    definition: ProcedureDefinitionV4,
-) -> tuple[tuple[ProviderNode | SourceNode | RepeatBodyNodeV4, str | None], ...]:
-    result: list[tuple[ProviderNode | SourceNode | RepeatBodyNodeV4, str | None]] = []
+    definition: ProcedureDefinition,
+) -> tuple[tuple[CallNode | SourceNode | RepeatBodyNode, str | None], ...]:
+    result: list[tuple[CallNode | SourceNode | RepeatBodyNode, str | None]] = []
     for node in definition.nodes:
-        if isinstance(node, ProviderNode | SourceNode):
+        if isinstance(node, CallNode | SourceNode):
             result.append((node, None))
-        elif isinstance(node, RepeatNodeV4):
-            result.extend(
-                (body, node.node_id)
-                for body in node.body
-                if isinstance(body, RepeatBodyNodeV4) and body.operation in {"provider", "call"}
-            )
+        elif isinstance(node, RepeatNode):
+            result.extend((body, node.node_id) for body in node.body if body.operation == "call")
     return tuple(result)
 
 
@@ -1420,32 +1330,26 @@ def _plan_external_occurrences(
     *,
     providers: Mapping[str, AcceptedProvider],
     interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
-    slot_pins: Mapping[str, ArtifactPin],
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
     runtime_policy: ProcedureRuntimePolicy,
     budget: ProcedureBudget,
-    implementation_closures: Sequence[Any] = (),
     supplied_source_inputs: frozenset[str] = frozenset(),
 ) -> tuple[ProviderExternalOccurrencePlan, ...]:
     """Plan every external Provider occurrence one admitted run will invoke.
 
-    Both served run lanes call THIS function. A Line supplies the accepted
-    implementation closures its slot bindings resolved; a direct actor run
-    supplies none, because a directly runnable Procedure pins its Provider
-    implementation exactly. Nothing else about the plan differs, and nothing
-    else may: two planners would be two admission grammars.
+    Both served run lanes call THIS function: an accepted Procedure pins its
+    Provider implementation exactly, so nothing about the plan differs between
+    them, and nothing may: two planners would be two admission grammars.
     """
 
     definition = accepted_procedure.procedure.definition
-    if not isinstance(definition, ProcedureDefinitionV4):
-        return ()
     occurrences: list[ProviderExternalOccurrencePlan] = []
     for node, repeat_node_id in _provider_nodes(definition):
         if isinstance(node, SourceNode) and node.as_ in supplied_source_inputs:
             continue
         provider_binding = node.provider
         assert provider_binding is not None
-        provider_pin = _resolve_line_pin(provider_binding, slot_pins=slot_pins)
+        provider_pin = _exact_pin(provider_binding)
         interface_pin = node.interface
         assert interface_pin is not None
         try:
@@ -1459,17 +1363,7 @@ def _plan_external_occurrences(
             raise ExecutionError(
                 f"accepted Line Provider node {node.node_id!r} requires Provider v2"
             )
-        closure = next(
-            (item for item in implementation_closures if item.node_id == node.node_id),
-            None,
-        )
-        implementation_digest = (
-            node.implementation_digest
-            if isinstance(provider_binding, ArtifactPin)
-            else None
-            if closure is None
-            else closure.implementation_digest
-        )
+        implementation_digest = node.implementation_digest
         if implementation_digest is None:
             raise ExecutionError(
                 f"accepted Line Provider closure lost implementation for node {node.node_id!r}"
@@ -1486,28 +1380,22 @@ def _plan_external_occurrences(
             raise ExecutionError(
                 f"accepted Line Provider implementation is unavailable for node {node.node_id!r}"
             )
-        eligible = (
-            closure.environment_pin_map.eligible_environment_pin_keys
-            if closure is not None
-            else tuple(
-                sorted(
-                    (
-                        item.environment_pin_key
-                        for item in implementation.materialization_references
-                        if item.kind == "local_env"
-                    ),
-                    key=str.encode,
-                )
+        eligible = tuple(
+            sorted(
+                (
+                    item.environment_pin_key
+                    for item in implementation.materialization_references
+                    if item.kind == "local_env"
+                ),
+                key=str.encode,
             )
         )
-        operation_contract = None
-        if int(definition.graph_format) >= 5:
-            try:
-                operation_contract = check_provider_node_contract(
-                    node, interface, accepted_procedure.procedure, slot_pins=slot_pins
-                )
-            except (ValueError, KeyError) as exc:
-                raise ProcedureBindingInterfaceMismatch(str(exc)) from exc
+        try:
+            operation_contract = check_provider_node_contract(
+                node, interface, accepted_procedure.procedure
+            )
+        except (ValueError, KeyError) as exc:
+            raise ProcedureProviderInterfaceMismatch(str(exc)) from exc
         if provider_runtime_operator is None:
             raise ProviderLocalRuntimeRefused(
                 "provider_unavailable", "No daemon Provider runtime operator is installed."
@@ -1533,7 +1421,7 @@ def _plan_external_occurrences(
             ),
         )
         produces_capture = isinstance(node, SourceNode)
-        call_kind = "call" if int(definition.graph_format) >= 5 else "provider"
+        call_kind = "call"
         translation = translate_provider_budget(
             budget=budget,
             hard_caps=definition.hard_caps,
@@ -1575,7 +1463,7 @@ def _plan_external_occurrences(
             "budget_translation": translation,
         }
         if isinstance(node, SourceNode):
-            capture_pin = _resolve_line_pin(node.capture_contract, slot_pins=slot_pins)
+            capture_pin = _exact_pin(node.capture_contract)
             occurrence = ProviderExternalOccurrencePlan.model_validate(
                 {
                     **common,
@@ -1589,8 +1477,8 @@ def _plan_external_occurrences(
                 }
             )
         else:
-            contract_in = _resolve_line_pin(node.contract_in, slot_pins=slot_pins)
-            contract_out = _resolve_line_pin(node.contract_out, slot_pins=slot_pins)
+            contract_in = _exact_pin(node.contract_in)
+            contract_out = _exact_pin(node.contract_out)
             occurrence = ProviderExternalOccurrencePlan.model_validate(
                 {
                     **common,
@@ -1608,7 +1496,6 @@ def _line_external_occurrences(
     *,
     providers: Mapping[str, AcceptedProvider],
     interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
-    slot_pins: Mapping[str, ArtifactPin],
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
     runtime_policy: ProcedureRuntimePolicy,
     budget: ProcedureBudget,
@@ -1619,15 +1506,12 @@ def _line_external_occurrences(
         accepted_procedure,
         providers=providers,
         interfaces=interfaces,
-        slot_pins=slot_pins,
         provider_runtime_operator=provider_runtime_operator,
         runtime_policy=runtime_policy,
         budget=budget,
-        implementation_closures=getattr(accepted_line.line, "provider_implementation_closures", ()),
         supplied_source_inputs=(
             frozenset({accepted_line.line.trigger_input})
-            if isinstance(accepted_line.line, LineSpec)
-            and accepted_line.line.trigger_input is not None
+            if accepted_line.line.trigger_input is not None
             else frozenset()
         ),
     )
@@ -1635,8 +1519,6 @@ def _line_external_occurrences(
 
 def _source_input_names(accepted: AcceptedProcedure) -> tuple[str, ...]:
     definition = accepted.procedure.definition
-    if not isinstance(definition, ProcedureDefinitionV4):
-        return ()
     return tuple(
         sorted(
             (node.as_ for node in definition.nodes if isinstance(node, SourceNode)),
@@ -1703,7 +1585,7 @@ def _accepted_acquisition_policies(
     return tuple(policies)
 
 
-def _procedure_acquisition_policy_pin(procedure: ProcedureArtifactAny) -> ArtifactPin | None:
+def _procedure_acquisition_policy_pin(procedure: ProcedureArtifact) -> ArtifactPin | None:
     """The Procedure envelope's own acquisition-policy pin, if it declares one."""
 
     return next(
@@ -1721,7 +1603,7 @@ def _direct_acquisition_policy(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    procedure: ProcedureArtifactAny,
+    procedure: ProcedureArtifact,
     input_names: tuple[str, ...],
 ) -> tuple[str, SourceAcquisitionPolicy]:
     """Resolve the accepted policy that governs this direct run's inputs.
@@ -1916,88 +1798,24 @@ def _plan_failure_decision(
     )
 
 
-def _required_slots(procedure: ProcedureArtifactAny) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            {
-                binding.slot_name
-                for binding in iter_pin_bindings(procedure.definition)
-                if isinstance(binding, ProcedurePinSlotRef)
-            },
-            key=lambda item: item.encode("utf-8"),
-        )
-    )
-
-
 def _readiness(
     accepted: AcceptedProcedure,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    evaluation_time: datetime,
 ) -> ProcedureReadinessResultV1:
-    unsupported_rows: list[ProcedureUnsupportedNodeV1] = []
-    served = served_node_kinds(accepted.procedure.definition.graph_format)
-    for node in accepted.procedure.definition.nodes:
-        if node.kind not in served:
-            unsupported_rows.append(
-                ProcedureUnsupportedNodeV1(node_id=node.node_id, kind=node.kind)
-            )
-        if isinstance(node, RepeatNodeV3 | RepeatNodeV4):
-            unsupported_rows.extend(
-                ProcedureUnsupportedNodeV1(
-                    node_id=f"{node.node_id}.{body.node_id}",
-                    kind=body.operation,
-                )
-                for body in node.body
-                if body.operation != "transform"
-            )
-    slots = _required_slots(accepted.procedure)
-    if slots and accepted.procedure.definition.graph_format in {4, 5, 6}:
-        unsupported_rows.append(
-            ProcedureUnsupportedNodeV1(
-                node_id="procedure",
-                kind="graph_v4_line_closure_required",
-            )
-        )
-    unsupported = tuple(unsupported_rows)
-    if unsupported:
-        state: Literal["ready", "binding_required", "unsupported"] = "unsupported"
-        operation = ProcedureNextOperationV1(kind="terminal")
-    elif slots:
-        state = "binding_required"
-        operation = ProcedureNextOperationV1(kind="bind")
-    else:
-        state = "ready"
-        operation = ProcedureNextOperationV1(kind="run")
+    runnable, unsupported = procedure_runnability(accepted.procedure.definition)
     return ProcedureReadinessResultV1(
         coordinate=AcceptedCoordinate.from_internal(coordinate),
-        evaluation_time=evaluation_time,
         procedure_identity=accepted.procedure.identity,
         procedure_artifact_digest=accepted.artifact_digest,
         definition_digest=accepted.procedure.definition_digest,
         artifact=accepted.procedure,
-        state=state,
-        required_slots=slots,
+        runnable=runnable,
         unsupported_nodes=unsupported,
-        next_operation=operation,
+        next_operation=ProcedureNextOperationV1(
+            kind={"direct": "run", "line": "line", "unsupported": "terminal"}[runnable]  # type: ignore[arg-type]
+        ),
     )
-
-
-def _graph_v3_external_occurrences(accepted: AcceptedProcedure) -> tuple[str, ...]:
-    definition = accepted.procedure.definition
-    if definition.graph_format != 3:
-        return ()
-    rows: list[str] = []
-    for node in definition.nodes:
-        if isinstance(node, SourceNodeV3 | ProviderNodeV3):
-            rows.append(node.node_id)
-        elif isinstance(node, RepeatNodeV3):
-            rows.extend(
-                f"{node.node_id}.{body.node_id}"
-                for body in node.body
-                if body.operation in {"provider", "call"}
-            )
-    return tuple(rows)
 
 
 def service_playbill_procedure_readiness(
@@ -2007,184 +1825,9 @@ def service_playbill_procedure_readiness(
     request: ProcedureReadinessRequestV1,
 ) -> ProcedureReadinessResultV1:
     coordinate = _resolve_coordinate(instance, request.at)
-    accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
-    return _readiness(
-        accepted,
-        coordinate=coordinate,
-        evaluation_time=request.evaluation_time,
-    )
-
-
-def _replace_slots(value: object, bindings: Mapping[str, ArtifactPin]) -> object:
-    if isinstance(value, list):
-        return [_replace_slots(item, bindings) for item in value]
-    if isinstance(value, dict):
-        if value.get("tag") == "playbill-procedure-pin-slot-ref-v1" and isinstance(
-            value.get("slot_name"), str
-        ):
-            pin = bindings.get(value["slot_name"])
-            if pin is not None:
-                return pin.model_dump(mode="json")
-        return {key: _replace_slots(item, bindings) for key, item in value.items()}
-    return value
-
-
-def _bound_successor(
-    accepted: AcceptedProcedure,
-    *,
-    bindings: tuple[LineSlotBinding, ...],
-    interface_digests: Mapping[str, str],
-) -> ProcedureArtifactAny:
-    try:
-        closure = close_procedure_pin_slots(
-            accepted.procedure,
-            bindings=bindings,
-            interface_digests=interface_digests,
-        )
-    except ProcedurePinClosureError as exc:
-        message = str(exc)
-        if "extra pin slots" in message or "unfilled_pin_slot" in message:
-            error: type[ProcedureSurfaceError] = ProcedureBindingSetMismatch
-        elif "role" in message:
-            error = ProcedureBindingRoleMismatch
-        elif "kind" in message:
-            error = ProcedureBindingKindMismatch
-        else:
-            error = ProcedureBindingInterfaceMismatch
-        raise error(f"{error.code}: {message}") from exc
-    by_slot = {item.slot_name: item.artifact_pin for item in bindings}
-    raw = accepted.procedure.definition.model_dump(mode="json", by_alias=True)
-    replaced = _replace_slots(raw, by_slot)
-    if not isinstance(replaced, dict):  # pragma: no cover - exact model dump
-        raise ProcedureBindingSetMismatch(f"{ProcedureBindingSetMismatch.code}: invalid graph")
-    replaced["pin_slots"] = [
-        item.model_dump(mode="json")
-        for item in accepted.procedure.definition.pin_slots
-        if item.slot_name not in closure.bound_slot_names
-    ]
-    definition = ProcedureDefinitionV3.model_validate(replaced)
-    return accepted.procedure.model_copy(
-        update={
-            "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
-            "pins": closure.exact_pins,
-            "lifecycle": ArtifactLifecycle(predecessor_digest=accepted.artifact_digest),
-        }
-    )
-
-
-def service_bind_playbill_procedure(
-    instance: PlaybillInstance,
-    *,
-    name: str,
-    request: ProcedureBindRequest,
-    actor: AuthenticatedActor,
-    timestamp: str,
-) -> ProcedureBindResultV2:
-    instance.require_writable()
-    coordinate = instance.accepted_coordinate()
-    accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
-    if accepted.procedure.definition.graph_format in {4, 5, 6}:
-        raise ProcedureBindingGraphV4LineClosureRequired(
-            f"{ProcedureBindingGraphV4LineClosureRequired.code}: graph-v4 Provider slots "
-            "are resolved only by accepted Line closure"
-        )
-    declarations = {item.slot_name: item for item in accepted.procedure.definition.pin_slots}
-    requested = {item.slot_name for item in request.bindings}
-    required = set(_required_slots(accepted.procedure))
-    if requested != required:
-        raise ProcedureBindingSetMismatch(
-            f"{ProcedureBindingSetMismatch.code}: required={sorted(required)!r}; "
-            f"supplied={sorted(requested)!r}"
-        )
-    lowered: list[LineSlotBinding] = []
-    interface_digests: dict[str, str] = {}
-    for item in request.bindings:
-        declaration = declarations[item.slot_name]
-        identity = ArtifactIdentity(kind=item.target.kind, name=item.target.name)
-        with instance.bind_accepted_projection(coordinate) as projection:
-            state = projection.typed.dependency_state(identity.qualified)
-        if state is None or state.lifecycle.state != "live":
-            raise ProcedureBindingTargetNotFound(
-                f"{ProcedureBindingTargetNotFound.code}: {identity.qualified}"
-            )
-        if identity.kind != declaration.artifact_kind:
-            raise ProcedureBindingKindMismatch(
-                f"{ProcedureBindingKindMismatch.code}: slot {item.slot_name} requires "
-                f"{declaration.artifact_kind}"
-            )
-        interface_digests[state.artifact_digest] = state.artifact_digest
-        interface_pin = next(
-            (pin for pin in state.pins if pin.role == "provider-interface"),
-            None,
-        )
-        if interface_pin is not None:
-            with instance.bind_accepted_projection(coordinate) as projection:
-                interface = projection.typed.envelope(interface_pin.target.qualified)
-                if (
-                    interface is not None
-                    and interface.artifact_digest == interface_pin.artifact_digest
-                ):
-                    registration = projection.typed.source(interface.identity)
-                    assert registration is not None
-                    interface_digests[state.artifact_digest] = registration.interface_digest
-        lowered.append(
-            LineSlotBinding(
-                slot_name=item.slot_name,
-                artifact_pin=ArtifactPin(
-                    role=declaration.pin_role,
-                    target=identity,
-                    artifact_digest=state.artifact_digest,
-                ),
-            )
-        )
-    successor = _bound_successor(
-        accepted,
-        bindings=tuple(lowered),
-        interface_digests=interface_digests,
-    )
-    if instance.accepted_coordinate() != coordinate:
-        raise ProcedureBindingStaleCoordinate(
-            f"{ProcedureBindingStaleCoordinate.code}: accepted coordinate advanced"
-        )
-    candidate_tree = instance.immutable_tree_at(coordinate.git_oid).fork()
-    candidate_tree[accepted.path] = render_procedure(successor)
-    operation = typed_digest(
-        Sha256Value,
-        "playbill-procedure-bind-v1",
-        {
-            "actor_id": actor.actor_id,
-            "coordinate": AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json"),
-            "predecessor_digest": accepted.artifact_digest,
-            "successor_digest": procedure_artifact_digest(successor).tagged,
-        },
-    ).tagged
-    proposal = instance.proposal_service().submit(
-        actor=actor,
-        request=ProposalAdmissionRequest(
-            target_ref=(
-                f"refs/proposals/{actor.actor_id}/procedure-bind-"
-                f"{operation.removeprefix('sha256:')}"
-            ),
-            proposed_base_oid=coordinate.git_oid,
-        ),
-        candidate_tree=candidate_tree,
-        timestamp=timestamp,
-    )
-    pending_digest = procedure_artifact_digest(successor).tagged
-    return ProcedureBindResultV2(
-        accepted_digest=accepted.artifact_digest,
-        accepted_readiness=_readiness(
-            accepted,
-            coordinate=coordinate,
-            evaluation_time=ensure_utc(datetime.fromisoformat(timestamp.replace("Z", "+00:00"))),
-        ),
-        pending=ProcedurePendingSuccessor(
-            proposal_id=proposal.admission.proposal_id,
-            pending_successor_digest=pending_digest,
-        ),
-        workspace_advertisement=proposal.workspace_advertisement,
-    )
+    # A read: a retired Procedure is still readable, though nothing runs it.
+    accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, allow_retired=True)
+    return _readiness(accepted, coordinate=coordinate)
 
 
 @dataclass(frozen=True)
@@ -3193,8 +2836,6 @@ def _plan_direct_external_run(
 ):
     """Resolve the shared external closure without executing or binding state reads."""
 
-    definition = accepted.procedure.definition
-    assert isinstance(definition, ProcedureDefinitionV4)
     refuse = partial(
         _direct_refusal_state,
         accepted,
@@ -3259,7 +2900,6 @@ def _plan_direct_external_run(
             accepted,
             providers=providers,
             interfaces=interfaces,
-            slot_pins={},
             provider_runtime_operator=provider_runtime_operator,
             runtime_policy=runtime_policy,
             budget=budget,
@@ -3520,59 +3160,14 @@ def service_run_playbill_procedure(
             target_rung=int(accepted.procedure.definition.terminal_capability),
             caller_rung=caller_rung,
         )
-    readiness = _readiness(
-        accepted,
-        coordinate=coordinate,
-        evaluation_time=evaluation_time,
-    )
-    if readiness.state == "binding_required":
-        return ProcedureRunStateV2(
-            run_id=None,
-            procedure_identity=accepted.procedure.identity,
-            procedure_artifact_digest=accepted.artifact_digest,
-            bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
-            head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
-            lane=lane,
-            evaluation_time=evaluation_time,
-            status="admission_refused",
-            pending_inputs=readiness.required_slots,
-            outcomes=(),
-            next_operation=ProcedureNextOperationV1(kind="bind"),
-            terminal=ProcedureAdmissionRefusal(
-                code="binding_required",
-                message="Procedure accepted bindings are incomplete.",
-                details={"required_slots": list(readiness.required_slots)},
-                repair=served_repair_for_refusal("binding_required"),
-            ),
+    readiness = _readiness(accepted, coordinate=coordinate)
+    if readiness.runnable != "direct":
+        refusal_message = (
+            "Procedure terminals act outward under a Line's authority; run one of its Lines "
+            "with cruxible line run."
+            if readiness.runnable == "line"
+            else "Procedure contains node kinds no run lane executes."
         )
-    if readiness.state == "unsupported":
-        legacy_external = _graph_v3_external_occurrences(accepted)
-        refusal_code: Literal[
-            "unsupported_node",
-            "provider_explicit_implementation_required",
-        ] = "unsupported_node"
-        refusal_message = "Procedure contains node kinds unavailable on the direct run lane."
-        if legacy_external:
-            refusal_code = "provider_explicit_implementation_required"
-            refusal_message = (
-                "Graph-v3 Source/Provider occurrences require explicit graph-v4 "
-                "implementation pins for live invocation."
-            )
-        elif any(
-            item.kind == "graph_v4_line_closure_required" for item in readiness.unsupported_nodes
-        ):
-            refusal_message = (
-                "Graph-v4 Provider slots require accepted Line closure before execution."
-            )
-        elif {item.kind for item in readiness.unsupported_nodes} <= {
-            "emit_capture",
-            "propose_change_set",
-        }:
-            refusal_message = (
-                "Capture and proposal terminals require an accepted Line and its authority "
-                "bindings; "
-                "invoke the Line through cruxible line run."
-            )
         return ProcedureRunStateV2(
             run_id=None,
             procedure_identity=accepted.procedure.identity,
@@ -3584,17 +3179,17 @@ def service_run_playbill_procedure(
             status="admission_refused",
             pending_inputs=(),
             outcomes=(),
-            next_operation=ProcedureNextOperationV1(kind="terminal"),
+            next_operation=readiness.next_operation,
             terminal=ProcedureAdmissionRefusal(
-                code=refusal_code,
+                code="unsupported_node",
                 message=refusal_message,
                 details={
+                    "runnable": readiness.runnable,
                     "unsupported_nodes": [
                         item.model_dump(mode="json") for item in readiness.unsupported_nodes
                     ],
-                    "legacy_external_occurrences": list(legacy_external),
                 },
-                repair=served_repair_for_refusal(refusal_code),
+                repair=served_repair_for_refusal("unsupported_node"),
             ),
         )
     current_digest = _CurrentProcedureAuthority(instance).current_procedure_digest(
@@ -3622,11 +3217,7 @@ def service_run_playbill_procedure(
     prepared: PreparedProcedureRunV2 | PreparedProcedureRunV5
     acquisition_policy: SourceAcquisitionPolicy | None = None
     capture_contracts: Mapping[str, CaptureContract] = {}
-    if _source_input_names(accepted) or (
-        isinstance(accepted.procedure.definition, ProcedureDefinitionV4)
-        and int(accepted.procedure.definition.graph_format) >= 5
-        and _provider_nodes(accepted.procedure.definition)
-    ):
+    if _source_input_names(accepted) or _provider_nodes(accepted.procedure.definition):
         planned = _prepare_direct_external_run(
             instance,
             accepted,
@@ -3687,7 +3278,6 @@ def service_run_playbill_procedure(
             run_index_path=root / "procedure-run-index.sqlite",
             fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
             activation_authority=_CurrentProcedureAuthority(instance),
-            provider_executor=None,
             provider_runtime_invoker_factory=(
                 None
                 if provider_runtime_operator is None
@@ -3852,6 +3442,7 @@ def service_run_playbill_line(
     expected_trigger_artifact_digest: str | None = None,
     expected_trigger_pins: dict[str, str] | None = None,
     explicit_occurrence: bool = False,
+    trigger_fire: TriggerFire | None = None,
 ) -> ProcedureRunStateV2:
     instance.require_writable()
     if request.line != path_identity_digest:
@@ -3876,6 +3467,7 @@ def service_run_playbill_line(
             expected_trigger_artifact_digest=expected_trigger_artifact_digest,
             expected_trigger_pins=expected_trigger_pins,
             explicit_occurrence=explicit_occurrence,
+            trigger_fire=trigger_fire,
         )
 
 
@@ -3895,8 +3487,14 @@ def _run_playbill_line(
     expected_trigger_artifact_digest: str | None = None,
     expected_trigger_pins: dict[str, str] | None = None,
     explicit_occurrence: bool = False,
+    trigger_fire: TriggerFire | None = None,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
+
+    With ``trigger_fire`` (dispatch only) the occurrence is that Trigger's;
+    without it, the run is manual: no Trigger is selected or consumed, so a
+    Trigger's tick accounting never sees it, and ``request.event`` reaches the
+    Procedure as its event input.
 
     The occurrence's EVALUATION INSTANT is the daemon's, never the caller's: a
     schedule whose due proof is an instant the caller chooses is not a rate at
@@ -3981,17 +3579,10 @@ def _run_playbill_line(
     providers, interfaces = _line_catalogs(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )
-    interface_digests = {
-        provider_digest_value: implementation.interface_digest
-        for provider_digest_value, provider in providers.items()
-        if isinstance(provider.provider, ProviderV2)
-        for implementation in provider.provider.implementations[:1]
-    }
     law = evaluate_line_spec_law(
         accepted_line.line,
         path=accepted_line.path,
         procedure=accepted,
-        interface_digests=interface_digests,
         predecessor=_accepted_line_predecessor(instance, accepted_line, coordinate),
         providers=providers,
         provider_interfaces=interfaces,
@@ -4040,13 +3631,15 @@ def _run_playbill_line(
         # An arm runs only under the complete Trigger set it pinned; one added,
         # changed or retired since dispatch checked it stops the arm instead.
         raise LineTriggersChanged(
-            "the Triggers aimed at this Line changed after the arm pinned them"
+            "the Triggers aimed at this Line changed after the enablement pinned them"
         )
     try:
-        trigger = select_line_trigger(
-            current_triggers,
-            request.trigger,
-            line=accepted_line.line.identity,
+        trigger = (
+            None
+            if trigger_fire is None
+            else select_line_trigger(
+                current_triggers, trigger_fire.trigger, line=accepted_line.line.identity
+            )
         )
     except LineTriggerMismatch as exc:
         return _line_refusal_state(
@@ -4075,6 +3668,7 @@ def _run_playbill_line(
             details={"expected_trigger_artifact_digest": expected_trigger_artifact_digest},
         )
     schedule = None if trigger is None else trigger.trigger.schedule
+    event = request.event if trigger_fire is None else trigger_fire.event
     trigger_binding = None
     # The event, or the fixed window's close, this occurrence fires on.
     anchor: datetime | None = None
@@ -4085,8 +3679,8 @@ def _run_playbill_line(
             with instance.accepted_history_reader() as history:
                 generation = (
                     history.sequence
-                    if request.trigger_generation is None
-                    else request.trigger_generation
+                    if trigger_fire is None or trigger_fire.generation is None
+                    else trigger_fire.generation
                 )
                 if (
                     generation <= trigger_generation(instance, trigger.trigger)
@@ -4109,7 +3703,7 @@ def _run_playbill_line(
         elif trigger is not None and schedule is not None and schedule_is_timed(schedule):
             trigger_binding = trigger_binding_for(trigger)
         elif trigger is not None and isinstance(schedule, CaptureLandingSchedule):
-            if request.trigger_event is None:
+            if event is None:
                 return _line_refusal_state(
                     accepted,
                     accepted_line,
@@ -4120,12 +3714,10 @@ def _run_playbill_line(
                     message="The Trigger is waiting for a matching retained capture event.",
                     details={"repair": "Supply the retained capture event when it arrives."},
                 )
-            anchor = capture_event_time(
-                instance, schedule.event, request.trigger_event, now=evaluation_time
-            )
-            trigger_binding = trigger_binding_for(trigger, event=request.trigger_event)
+            anchor = capture_event_time(instance, schedule.event, event, now=evaluation_time)
+            trigger_binding = trigger_binding_for(trigger, event=event)
         elif trigger is not None and isinstance(schedule, WindowCloseSchedule):
-            if isinstance(schedule.window, CaptureEventWindow) and request.trigger_event is None:
+            if isinstance(schedule.window, CaptureEventWindow) and event is None:
                 return _line_refusal_state(
                     accepted,
                     accepted_line,
@@ -4136,7 +3728,7 @@ def _run_playbill_line(
                     message="The observation window is waiting for its capture event anchor.",
                     details={"repair": "Supply the retained anchor event when it arrives."},
                 )
-            line_event = request.trigger_event
+            line_event = event
             if (
                 not isinstance(schedule.window, CaptureEventWindow)
                 and request.resolution_contract is not None
@@ -4149,8 +3741,14 @@ def _run_playbill_line(
                 if isinstance(schedule.window, CaptureEventWindow)
                 else window.ends_at
             )
-        elif request.trigger_event is not None and request.resolution_contract is None:
-            raise ExecutionError("this Line occurrence does not accept a capture event")
+        elif (
+            event is not None
+            and request.resolution_contract is None
+            and accepted_line.line.trigger_input is None
+        ):
+            raise ExecutionError(
+                "this Line takes no event input: its Procedure reads no triggering Capture"
+            )
         if (
             trigger is not None
             and anchor is not None
@@ -4179,7 +3777,7 @@ def _run_playbill_line(
             else bind_investigation(
                 instance,
                 request.resolution_contract,
-                event=request.trigger_event,
+                event=event,
                 now=evaluation_time,
                 trigger_binding=trigger_binding,
             )
@@ -4214,12 +3812,31 @@ def _run_playbill_line(
         if occurrence_basis_time is not None and is_timed
         else None
     )
+    if trigger is None and event is not None and not request.repeat:
+        # A manual run on an event the enabled Line's automation already ran is
+        # almost always a mistake; it runs again only when asked to.
+        admitted = _event_admission(instance, accepted_line, event)
+        if admitted is not None:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="occurrence_already_admitted",
+                message=(
+                    f"The enabled Line already admitted this event as run {admitted}; "
+                    "pass repeat to run it again deliberately."
+                ),
+                details={"run_id": admitted, "repair": "Read its run, or run with repeat."},
+            )
     occurrence_id, next_due = _line_occurrence(
         accepted_line,
         evaluation_time=cadence_basis or evaluation_time,
         prior=prior,
         trigger=trigger,
         binding=trigger_binding,
+        manual_event=event if trigger is None else None,
         # A retained tick is validated against the same calculation that queued
         # it: automatically, as the chain's next tick floored at its own due
         # instant; explicitly, as exactly the tick it names.
@@ -4300,7 +3917,6 @@ def _run_playbill_line(
             details={"repair": "Accept a Line successor with an acquisition policy."},
         )
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
-    slot_pins = _line_slot_pins(accepted_line)
     budget = _line_budget(accepted_line, accepted)
     capture_contracts = _accepted_capture_contracts(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
@@ -4342,7 +3958,7 @@ def _run_playbill_line(
                     instance,
                     line=accepted_line.line,
                     procedure=accepted,
-                    binding=trigger_binding,
+                    event=event,
                     contracts=capture_contracts,
                     policy=line_policy,
                     evaluation_time=evaluation_time,
@@ -4378,7 +3994,6 @@ def _run_playbill_line(
             accepted,
             providers=providers,
             interfaces=interfaces,
-            slot_pins=slot_pins,
             provider_runtime_operator=provider_runtime_operator,
             runtime_policy=runtime_policy,
             budget=budget,
@@ -4480,15 +4095,10 @@ def _run_playbill_line(
         accepted,
         coordinate=coordinate,
         evaluation_time=evaluation_time,
-        slot_pins=slot_pins,
         invocation_input=accepted_line.line.parameters,
     )
-    full_pins = close_procedure_pin_slots(
-        accepted.procedure,
-        bindings=accepted_line.line.slot_bindings,
-        interface_digests=interface_digests,
-    ).exact_pins
-    node_pin_sets = procedure_node_pin_sets(accepted, slot_pins)
+    full_pins = accepted.procedure.pins
+    node_pin_sets = procedure_node_pin_sets(accepted)
     mandate_coordinate_digest = typed_digest(
         Sha256Value,
         "playbill-line-mandate-coordinate-v1",
@@ -4764,7 +4374,6 @@ def _run_playbill_line(
                 acquisition_policy=line_policy,
                 capture_contracts=capture_contracts,
                 workspace_file_reader=workspace_file_reader,
-                slot_pins=slot_pins,
                 effective_rung=effective_rung,
                 egress_sink=egress_sink,
                 clock=_DeterministicClock(evaluation_time),
@@ -5291,16 +4900,11 @@ __all__ = [
     "LineRunIdentityMismatch",
     "LineRunNotAccepted",
     "LineRunRequest",
-    "ProcedureBindRequest",
-    "ProcedureBindResultV2",
-    "ProcedureBindingGraphV4LineClosureRequired",
-    "ProcedurePendingSuccessor",
     "ProcedureReadinessRequestV1",
     "ProcedureReadinessResultV1",
     "ProcedureRunRequest",
     "ProcedureRunStateV2",
     "ProcedureSurfaceError",
-    "service_bind_playbill_procedure",
     "service_get_playbill_procedure_run",
     "service_playbill_procedure_readiness",
     "service_prepare_playbill_line_admission",

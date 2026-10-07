@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.procedures.models import (
     InboxEgressNode,
-    ProcedureDefinitionV3,
-    StateTapNodeV3,
+    ProcedureDefinition,
+    StateTapNode,
 )
 from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
 from cruxible_core.exhaust import parse_journal_payload
@@ -44,19 +44,19 @@ def _terminal_procedure():
     contract_in = _pin("contract-in", "Contract", "terminal-input")
     contract_out = _pin("contract-out", "Contract", "terminal-output")
     query = _pin("query", "QueryDefinition", "terminal-items")
-    definition = ProcedureDefinitionV3(
+    definition = ProcedureDefinition(
         name="terminal-procedure",
         contract_in=contract_in,
         contract_out=contract_out,
         nodes=(
-            StateTapNodeV3(
+            StateTapNode(
                 node_id="read",
                 query=query,
                 parameters={},
                 as_="rows",
                 next="inbox",
             ),
-            InboxEgressNode(node_id="inbox", input={"items": "$steps.rows.items"}),
+            InboxEgressNode(node_id="inbox", input={"items": "$steps.rows.result.rows"}),
         ),
         returns="rows",
         budget=_budget(items=100),

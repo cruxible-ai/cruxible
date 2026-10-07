@@ -253,7 +253,6 @@ from cruxible_core.service.procedures.predictions import (
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunNotAccepted,
     LineRunRequest,
-    ProcedureBindRequest,
     ProcedureNotFound,
     ProcedureReadinessRequestV1,
     ProcedureRetired,
@@ -261,7 +260,6 @@ from cruxible_core.service.procedures.procedure_runs import (
     line_run_target_rung,
     procedure_run_target_rung,
     run_permission_rung,
-    service_bind_playbill_procedure,
     service_playbill_procedure_readiness,
     service_run_playbill_line,
     service_run_playbill_procedure,
@@ -1806,7 +1804,7 @@ def playbill_procedure_source_preview(
 ) -> ProcedureSourcePreview:
     from cruxible_core.service.procedures.source_preview import service_preview_procedure_source
 
-    check_permission("cruxible_procedure_readiness", instance_id=instance_id)
+    check_permission("cruxible_get", instance_id=instance_id)
     return service_preview_procedure_source(
         get_playbill_manager().get(instance_id), request=request
     )
@@ -1818,30 +1816,13 @@ def playbill_procedure_readiness(
     *,
     request: ProcedureReadinessRequestV1,
 ) -> contracts.ProcedureReadiness:
-    check_permission("cruxible_procedure_readiness", instance_id=instance_id)
+    check_permission("cruxible_get", instance_id=instance_id)
     result = service_playbill_procedure_readiness(
         get_playbill_manager().get(instance_id),
         name=name,
         request=request,
     )
     return contracts.ProcedureReadiness.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_procedure_bind(
-    instance_id: str,
-    name: str,
-    *,
-    request: ProcedureBindRequest,
-) -> contracts.ProcedureBindResult:
-    check_permission("cruxible_procedure_bind", instance_id=instance_id)
-    result = service_bind_playbill_procedure(
-        get_playbill_manager().get(instance_id),
-        name=name,
-        request=request,
-        actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
-        timestamp=canonical_candidate_timestamp(utc_now()),
-    )
-    return contracts.ProcedureBindResult.model_validate(result.model_dump(mode="json"))
 
 
 def _check_run_target_permission(
@@ -1932,11 +1913,11 @@ def playbill_procedure_run_status(
     instance_id: str,
     run_id: str,
 ) -> contracts.ProcedureRunState:
-    """One run's state; another principal's arming credential is withheld as on its card."""
+    """One run's state; another principal's enabling credential is withheld as on its card."""
 
     from cruxible_core.service.discovery.runs import procedure_run_status
 
-    check_permission("cruxible_procedure_run_status", instance_id=instance_id)
+    check_permission("cruxible_get", instance_id=instance_id)
     return procedure_run_status(
         get_playbill_manager().get(instance_id),
         run_id,
@@ -1987,22 +1968,22 @@ def playbill_procedure_readings(
     )
 
 
-def playbill_line_arm(
+def playbill_line_enable(
     instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-) -> contracts.LineArm:
-    """Arm a Line forward-only under the calling credential."""
+) -> contracts.LineEnablement:
+    """Enable a Line forward-only under the calling credential."""
 
-    check_permission("cruxible_line_arm", instance_id=instance_id)
+    check_permission("cruxible_line_enable", instance_id=instance_id)
     from cruxible_core.runtime.line_arms import current_arm_principal
-    from cruxible_core.service.procedures.line_dispatch import service_arm_line
+    from cruxible_core.service.procedures.line_dispatch import service_enable_line
 
     with change_entry(dry_run, "direct"):
         # Resolved behind the guards: a principal claim's check opens the instance.
         actor = _write_actor_context(instance_id)
         if actor is None:
-            raise AuthenticationError("Arming requires an authenticated actor identity")
+            raise AuthenticationError("Enabling a Line requires an authenticated actor identity")
         manager = get_playbill_manager()
-        return service_arm_line(
+        return service_enable_line(
             manager.get(instance_id),
             line,
             principal=current_arm_principal(),
@@ -2014,19 +1995,19 @@ def playbill_line_arm(
         )
 
 
-def playbill_line_disarm(
+def playbill_line_disable(
     instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-) -> contracts.LineArm:
+) -> contracts.LineEnablement:
     """Stop a Line admitting work on its own; admitted runs are not cancelled."""
 
-    check_permission("cruxible_line_disarm", instance_id=instance_id)
-    from cruxible_core.service.procedures.line_dispatch import service_disarm_line
+    check_permission("cruxible_line_disable", instance_id=instance_id)
+    from cruxible_core.service.procedures.line_dispatch import service_disable_line
 
     with change_entry(dry_run, "direct"):
         actor = _write_actor_context(instance_id)
         if actor is None:
-            raise AuthenticationError("Disarming requires an authenticated actor identity")
-        return service_disarm_line(
+            raise AuthenticationError("Disabling a Line requires an authenticated actor identity")
+        return service_disable_line(
             get_playbill_manager().get(instance_id),
             line,
             actor=actor,
@@ -2036,22 +2017,22 @@ def playbill_line_disarm(
         )
 
 
-def playbill_line_status(instance_id: str, line: str) -> contracts.LineArm:
-    """The Line's current arm, or its last one and why it stopped."""
-
-    check_permission("cruxible_line_status", instance_id=instance_id)
-    from cruxible_core.service.procedures.line_dispatch import service_line_status
-
-    return service_line_status(get_playbill_manager().get(instance_id), line)
-
-
 def playbill_line_evaluate(
     instance_id: str, line: str, *, request: contracts.LineEvaluateRequest
-) -> contracts.LineTriggerCheckResult:
-    check_permission("cruxible_line_evaluate", instance_id=instance_id)
-    actor = _write_actor_context(instance_id)
-    if actor is None:
-        raise AuthenticationError("Historical evaluation requires an authenticated actor identity")
+) -> contracts.LineEvaluateResult:
+    """Evaluate a Line's Triggers over a range: a dry run reads, otherwise it enqueues.
+
+    A dry run is a read; enqueueing records dispatch state, so it needs governed write.
+    """
+
+    check_permission(
+        "cruxible_line_evaluate",
+        instance_id=instance_id,
+        required_override=None if request.dry_run else PermissionMode.GOVERNED_WRITE,
+    )
+    actor = None if request.dry_run else _write_actor_context(instance_id)
+    if actor is None and not request.dry_run:
+        raise AuthenticationError("Evaluation requires an authenticated actor identity")
     from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
 
     return service_evaluate_line(
@@ -2095,17 +2076,6 @@ def playbill_line_dispatch(
         caller_rung=get_current_mode().value - 1,
         provider_runtime_operator=manager.provider_runtime_operator(),
         workspace_file_reader=workspace_file_reader,
-    )
-
-
-def playbill_line_check(
-    instance_id: str, line: str, *, request: contracts.LineTriggerCheckRequest
-) -> contracts.LineTriggerCheckResult:
-    check_permission("cruxible_line_check", instance_id=instance_id)
-    from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
-
-    return service_check_line_trigger(
-        get_playbill_manager().get(instance_id), line, request, now=_evaluation_time(None)
     )
 
 

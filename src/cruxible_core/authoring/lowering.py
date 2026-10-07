@@ -39,6 +39,8 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringChangeSetMember,
     AuthoringExactContentObject,
     AuthoringIntentV1,
+    BlueprintAuthoringPayload,
+    BlueprintInstantiation,
     CaptureContractAuthoringPayload,
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,
@@ -51,7 +53,6 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSource,
     LineAuthoringPayload,
     ProcedureAuthoringPayload,
-    ProcedureAuthoringPayloadV1,
     ProcedureMandateAuthoringPayload,
     ProcedureRuntimePolicyAuthoringPayload,
     QueryDefinitionAuthoringPayload,
@@ -63,6 +64,7 @@ from cruxible_client.contracts.authoring.models import (
     TriggerAuthoringPayload,
     WorkingSelectionObservation,
     authoring_member_identity,
+    blueprint_instantiation,
 )
 from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
 from cruxible_client.contracts.captures import (
@@ -120,7 +122,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_window_intersecting,
     stamped_projection_windows,
 )
-from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
     MandateClaimScope,
@@ -138,15 +140,22 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
+    BlueprintArtifact,
     ProcedureArtifact,
-    ProcedureArtifactAny,
-    ProcedureArtifactV1,
     ProcedureOwnedContract,
     parse_procedure,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
+)
+from cruxible_client.contracts.procedures.blueprints import (
+    BlueprintInstantiationError,
+    blueprint_digest,
+    blueprint_path,
+    instantiate_blueprint,
+    parse_blueprint,
+    render_blueprint,
 )
 from cruxible_client.contracts.procedures.contracts import (
     OwnedProcedureContractValidator,
@@ -167,17 +176,16 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.models import (
     ExhaustTapNode,
     ProcedureDefinition,
-    ProcedureDefinitionAny,
-    ProcedureDefinitionV3,
-    ProcedureDefinitionV4,
-    ProcedureDefinitionV5,
-    ProcedurePinSlotRef,
     SourceNode,
-    SourceNodeV3,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.windows import CaptureEventSelector
-from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
+from cruxible_client.contracts.providers import (
+    AcceptedProvider,
+    parse_provider,
+    provider_digest,
+    provider_path,
+)
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
     QueryDefinition,
@@ -1562,7 +1570,7 @@ def _validation_error_lines(exc: ValidationError, *, root: str) -> tuple[str, ..
 
 
 def _acquisition_policy_pin(
-    payload: ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload,
+    payload: ProcedureAuthoringPayload,
     *,
     accepted: dict[str, tuple[str, str]],
     candidates: dict[str, tuple[str, str]],
@@ -1802,7 +1810,7 @@ def _lower_procedure(
     candidate_paths: tuple[str, ...] = (),
 ) -> LoweredAuthoring:
     payload = intent.payload
-    assert isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload)
+    assert isinstance(payload, ProcedureAuthoringPayload)
     source_authoring = "source_request" in payload.definition
     accepted: dict[str, tuple[str, str]] = {}
     candidate_artifacts: dict[str, tuple[str, str]] = {}
@@ -1838,7 +1846,7 @@ def _lower_procedure(
                         ).fetchone()
                         if row is not None:
                             target[identity] = (row[0], row[1])
-            payload = ProcedureAuthoringPayload(
+            payload = type(payload)(
                 definition=compiled.definition.model_dump(mode="json", by_alias=True),
                 activation_policy=payload.activation_policy,
                 owned_contracts=tuple(
@@ -1848,7 +1856,7 @@ def _lower_procedure(
                     )
                     for contract in compiled.contracts
                 ),
-                acquisition_policy=getattr(payload, "acquisition_policy", None),
+                acquisition_policy=payload.acquisition_policy,
                 retire=payload.retire,
             )
         except (SourceCompileError, ValueError) as exc:
@@ -1886,6 +1894,19 @@ def _lower_procedure(
                         envelope.path,
                         envelope.artifact_digest,
                     )
+    is_blueprint = isinstance(payload, BlueprintAuthoringPayload)
+    instantiation = None if is_blueprint else blueprint_instantiation(payload.definition)
+    if instantiation is not None:
+        return _lower_blueprint_instance(
+            instance,
+            payload,
+            instantiation,
+            base=base,
+            base_tree=base_tree,
+            accepted=accepted,
+            candidate_artifacts=candidate_artifacts,
+            candidate_identities=candidate_identities,
+        )
     owned_contracts = (
         {contract.identity.name: contract for contract in payload.owned_contracts}
         if isinstance(payload, ProcedureAuthoringPayload)
@@ -1902,26 +1923,9 @@ def _lower_procedure(
             owned_contracts=owned_contracts,
         )
     )
-    graph_format = (
-        resolved_definition.get("graph_format") if isinstance(resolved_definition, dict) else None
-    )
-    # The accepted Procedure envelope already carries either generation, and the
-    # definition digest already dispatches on the declared graph_format, so a
-    # graph-v4 definition lowers into the SAME accepted artifact shape a v3 one
-    # does. Only the parse generation differs; historical v3 bytes are untouched.
-    graph_generation = graph_format if graph_format in {4, 5, 6} else 3
-    definition_model = (
-        ProcedureDefinition
-        if graph_generation == 6
-        else ProcedureDefinitionV5
-        if graph_generation == 5
-        else ProcedureDefinitionV4
-        if graph_generation == 4
-        else ProcedureDefinitionV3
-    )
-    definition: ProcedureDefinitionAny
+    definition: ProcedureDefinition
     try:
-        definition = definition_model.model_validate(resolved_definition)
+        definition = ProcedureDefinition.model_validate(resolved_definition)
     except (ProcedureGraphFormatError, ValidationError) as exc:
         message = (
             str(exc)
@@ -1931,17 +1935,21 @@ def _lower_procedure(
         _refuse(
             "cruxible.authoring.procedure_definition_invalid",
             "definition",
-            f"The lowered graph-v{graph_generation} Procedure definition is invalid: " + message,
+            "The lowered Procedure definition is invalid: " + message,
             repair_kind="replace_definition",
-            repair_description=(
-                f"Repair the indicated graph-v{graph_generation} definition field."
-            ),
+            repair_description="Repair the indicated definition field.",
         )
-    identity = ArtifactIdentity(kind="Procedure", name=definition.name)
-    path = procedure_path(definition.name)
-    predecessor: ProcedureArtifactAny | None = None
+    identity = ArtifactIdentity(
+        kind="Blueprint" if is_blueprint else "Procedure", name=definition.name
+    )
+    path = blueprint_path(definition.name) if is_blueprint else procedure_path(definition.name)
+    predecessor: ProcedureArtifact | BlueprintArtifact | None = None
     if path in base_tree:
-        predecessor = parse_procedure(base_tree[path], path=path)
+        predecessor = (
+            parse_blueprint(base_tree[path], path=path)
+            if is_blueprint
+            else parse_procedure(base_tree[path], path=path)
+        )
     declared_pins = {
         binding for binding in iter_pin_bindings(definition) if isinstance(binding, ArtifactPin)
     }
@@ -2026,30 +2034,30 @@ def _lower_procedure(
             )
     lifecycle = ArtifactLifecycle(
         state="retired" if payload.retire else "live",
-        predecessor_digest=(
-            None if predecessor is None else procedure_artifact_digest(predecessor).tagged
-        ),
+        predecessor_digest=(None if predecessor is None else _envelope_digest(predecessor)),
     )
+    if not is_blueprint and (definition.open_slots or definition.pin_slots):
+        _refuse(
+            "cruxible.authoring.procedure_open_slots",
+            "definition",
+            "A Procedure pins every Provider exactly; open slots belong only to a Blueprint.",
+            repair_kind="author_a_blueprint",
+            repair_description=(
+                "Author it as a Blueprint (kind blueprint), then instantiate it with one "
+                "Provider per slot (kind blueprint_instance)."
+            ),
+        )
     try:
-        if isinstance(payload, ProcedureAuthoringPayload):
-            procedure: ProcedureArtifactAny = ProcedureArtifact(
-                identity=identity,
-                definition=definition,
-                definition_digest=compute_procedure_definition_digest(definition).tagged,
-                pins=pins,
-                owned_contracts=payload.owned_contracts,
-                activation_policy=payload.activation_policy,
-                lifecycle=lifecycle,
-            )
-        else:
-            procedure = ProcedureArtifactV1(
-                identity=identity,
-                definition=definition,
-                definition_digest=compute_procedure_definition_digest(definition).tagged,
-                pins=pins,
-                activation_policy=payload.activation_policy,
-                lifecycle=lifecycle,
-            )
+        envelope_class = BlueprintArtifact if is_blueprint else ProcedureArtifact
+        procedure: ProcedureArtifact | BlueprintArtifact = envelope_class(
+            identity=identity,
+            definition=definition,
+            definition_digest=compute_procedure_definition_digest(definition).tagged,
+            pins=pins,
+            owned_contracts=payload.owned_contracts,
+            activation_policy=payload.activation_policy,
+            lifecycle=lifecycle,
+        )
     except ValidationError as exc:
         _refuse(
             "cruxible.authoring.procedure_definition_invalid",
@@ -2061,10 +2069,32 @@ def _lower_procedure(
                 "Repair the Procedure definition or its owned Contract declarations."
             ),
         )
+    return _procedure_lowered(
+        instance, procedure, predecessor, path=path, base=base, base_tree=base_tree
+    )
+
+
+def _envelope_digest(envelope: ProcedureArtifact | BlueprintArtifact) -> str:
+    if isinstance(envelope, BlueprintArtifact):
+        return blueprint_digest(envelope).tagged
+    return procedure_artifact_digest(envelope).tagged
+
+
+def _procedure_lowered(
+    instance: PlaybillInstance,
+    procedure: ProcedureArtifact | BlueprintArtifact,
+    predecessor: ProcedureArtifact | BlueprintArtifact | None,
+    *,
+    path: str,
+    base: AcceptedProjectionCoordinate,
+    base_tree: Mapping[str, bytes],
+) -> LoweredAuthoring:
     candidate_tree = fork_tree(base_tree)
     if predecessor is not None and _same_revision_content(procedure, predecessor):
         procedure = predecessor
         procedure_bytes = base_tree[path]
+    elif isinstance(procedure, BlueprintArtifact):
+        procedure_bytes = render_blueprint(procedure)
     else:
         procedure_bytes = render_procedure(procedure)
     candidate_tree[path] = procedure_bytes
@@ -2072,16 +2102,149 @@ def _lower_procedure(
     return LoweredAuthoring(
         proposed_tree=candidate_tree,
         resolved_authoring={
-            "artifact_digest": procedure_artifact_digest(procedure).tagged,
+            "artifact_digest": _envelope_digest(procedure),
             "changed_members": _encoded_members(changed),
-            "definition": definition.model_dump(mode="json", by_alias=True),
+            "definition": procedure.definition.model_dump(mode="json", by_alias=True),
             "definition_digest": procedure.definition_digest,
-            "identity": identity.model_dump(mode="json"),
-            "pins": [pin.model_dump(mode="json") for pin in pins],
+            "identity": procedure.identity.model_dump(mode="json"),
+            "pins": [pin.model_dump(mode="json") for pin in procedure.pins],
             "predecessor_digest": procedure.lifecycle.predecessor_digest,
         },
         changed_members=changed,
         idempotent=not changed and base.git_oid == instance.accepted_coordinate().git_oid,
+    )
+
+
+def _lower_blueprint_instance(
+    instance: PlaybillInstance,
+    payload: ProcedureAuthoringPayload,
+    instantiation: BlueprintInstantiation,
+    *,
+    base: AcceptedProjectionCoordinate,
+    base_tree: Mapping[str, bytes],
+    accepted: dict[str, tuple[str, str]],
+    candidate_artifacts: dict[str, tuple[str, str]],
+    candidate_identities: frozenset[str],
+) -> LoweredAuthoring:
+    """Bind one accepted Provider per Blueprint slot and lower the Procedure it yields.
+
+    Retiring an instance never re-instantiates it: the retired successor is the
+    accepted definition that ran, with its origin, whatever has become of its
+    Blueprint or Providers since.
+    """
+
+    path = procedure_path(instantiation.name)
+    predecessor = parse_procedure(base_tree[path], path=path) if path in base_tree else None
+    if payload.retire:
+        if predecessor is None or predecessor.blueprint is None:
+            _refuse(
+                "cruxible.authoring.blueprint_instance_missing",
+                "definition.name",
+                f"No accepted instance of a Blueprint named {instantiation.name!r} to retire.",
+                repair_kind="replace_name",
+                repair_description="Name an accepted Procedure instantiated from a Blueprint.",
+            )
+        assert predecessor is not None
+        retired = predecessor.model_copy(
+            update={
+                "lifecycle": ArtifactLifecycle(
+                    state="retired",
+                    predecessor_digest=procedure_artifact_digest(predecessor).tagged,
+                )
+            }
+        )
+        return _procedure_lowered(
+            instance, retired, predecessor, path=path, base=base, base_tree=base_tree
+        )
+    blueprint_target = blueprint_path(instantiation.blueprint)
+    blueprint_content = base_tree.get(blueprint_target)
+    if blueprint_content is None:
+        _refuse(
+            "cruxible.authoring.blueprint_missing",
+            "definition.blueprint",
+            f"No accepted or same-ChangeSet Blueprint named {instantiation.blueprint!r}.",
+            repair_kind="replace_blueprint",
+            repair_description="Name a Blueprint present at the authoring coordinate.",
+        )
+    assert blueprint_content is not None
+    blueprint = parse_blueprint(blueprint_content, path=blueprint_target)
+    if blueprint.lifecycle.state != "live":
+        _refuse(
+            "cruxible.authoring.blueprint_retired",
+            "definition.blueprint",
+            f"Blueprint {instantiation.blueprint!r} is retired.",
+            repair_kind="replace_blueprint",
+            repair_description="Instantiate a live Blueprint.",
+        )
+    providers: dict[str, AcceptedProvider] = {}
+    for slot, name in sorted(instantiation.bindings.items()):
+        target = provider_path(name)
+        content = base_tree.get(target)
+        if content is None:
+            _refuse(
+                "cruxible.authoring.blueprint_provider_missing",
+                f"definition.bindings.{slot}",
+                f"No accepted Provider named {name!r} for slot {slot!r}.",
+                repair_kind="replace_binding",
+                repair_description=(
+                    "Bind an installed Provider that implements the slot's interface "
+                    f"(cruxible get Blueprint:{instantiation.blueprint} lists them)."
+                ),
+            )
+        assert content is not None
+        provider = parse_provider(content, path=target)
+        if provider.lifecycle.state != "live":
+            _refuse(
+                "cruxible.authoring.blueprint_provider_missing",
+                f"definition.bindings.{slot}",
+                f"Provider {name!r} is retired.",
+                repair_kind="replace_binding",
+                repair_description="Bind a live Provider.",
+            )
+        providers[slot] = AcceptedProvider(
+            path=target, provider=provider, artifact_digest=provider_digest(provider).tagged
+        )
+    policy_pin = _acquisition_policy_pin(
+        payload,
+        accepted=accepted,
+        candidates=candidate_artifacts,
+        candidate_identities=candidate_identities,
+    )
+    try:
+        procedure = instantiate_blueprint(
+            blueprint,
+            blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
+            name=instantiation.name,
+            providers=providers,
+            activation_policy=payload.activation_policy,
+            extra_pins=() if policy_pin is None else (policy_pin,),
+            lifecycle=ArtifactLifecycle(
+                predecessor_digest=(
+                    None if predecessor is None else procedure_artifact_digest(predecessor).tagged
+                ),
+            ),
+        )
+    except BlueprintInstantiationError as exc:
+        _refuse(
+            exc.code.replace("cruxible.blueprint.", "cruxible.authoring.blueprint_"),
+            "definition.bindings" + ("" if exc.slot is None else f".{exc.slot}"),
+            str(exc),
+            repair_kind="replace_binding",
+            repair_description=(
+                "Bind one Provider per slot that implements the slot's interface exactly "
+                f"once (cruxible get Blueprint:{instantiation.blueprint} lists them)."
+            ),
+        )
+    except (ValueError, FormatError) as exc:
+        _refuse(
+            "cruxible.authoring.procedure_definition_invalid",
+            "definition",
+            f"The instantiated Procedure is invalid: {exc}",
+            repair_kind="replace_binding",
+            repair_description="Bind Providers whose operation contracts fit the Blueprint.",
+        )
+    return _procedure_lowered(
+        instance, procedure, predecessor, path=path, base=base, base_tree=base_tree
     )
 
 
@@ -2227,9 +2390,7 @@ def _render_line_member(
 
     The Procedure and the acquisition policy are named; both must be present in
     the staged tree -- accepted at the base or authored earlier in the same
-    set -- and lowering pins their exact digests. A Procedure that pins every
-    Provider it names fills no slot, so the Line's slot bindings and Provider
-    closures are empty. Every Line lowers to v6: it embeds no trigger, and a
+    set -- and lowering pins their exact digests. A Line embeds no trigger; a
     ``trigger_input`` Line declares the exact event its Source input accepts,
     read from that Source's pinned CaptureContract.
     """
@@ -2248,15 +2409,13 @@ def _render_line_member(
     policy_pin: ArtifactPin | None = None
     if payload.acquisition_policy_name is None:
         acquiring = sorted(
-            node.node_id
-            for node in procedure.definition.nodes
-            if isinstance(node, SourceNodeV3 | SourceNode | ExhaustTapNode)
+            node.node_id for node in procedure.definition.nodes if isinstance(node, SourceNode)
         )
         if acquiring:
             _refuse(
                 "cruxible.authoring.line_acquisition_policy_required",
                 "acquisition_policy_name",
-                f"Procedure {payload.procedure_name!r} acquires through Source or exhaust nodes "
+                f"Procedure {payload.procedure_name!r} acquires through Source nodes "
                 f"{acquiring}, so its Line must name a SourceAcquisitionPolicy.",
                 repair_kind="set_acquisition_policy_name",
                 repair_description=(
@@ -2285,22 +2444,17 @@ def _render_line_member(
             target=policy.identity,
             artifact_digest=acquisition_policy_digest(policy).tagged,
         )
-    if procedure.definition.graph_format not in {4, 5, 6}:
+    exhaust_taps = sorted(
+        node.node_id for node in procedure.definition.nodes if isinstance(node, ExhaustTapNode)
+    )
+    if exhaust_taps:
         _refuse(
-            "cruxible.authoring.line_graph_format_unsupported",
+            "cruxible.authoring.line_exhaust_tap_unsupported",
             "procedure_name",
-            "Line authoring requires a supported Procedure graph.",
+            f"Procedure {payload.procedure_name!r} reads exhaust through {exhaust_taps}; no v1 "
+            "run path admits an exhaust_tap node, so a Line over it could never run.",
             repair_kind="replace_procedure_name",
-            repair_description="Name a graph-v4, graph-v5, or source-compiled graph-v6 Procedure.",
-        )
-    if _required_slot_names(procedure):
-        _refuse(
-            "cruxible.authoring.line_slots_unsupported",
-            "procedure_name",
-            "Line authoring supports Procedures that pin every Provider exactly; "
-            "this one declares open slots.",
-            repair_kind="replace_procedure_name",
-            repair_description="Name a Procedure with no open Provider slots.",
+            repair_description="Name a Procedure without exhaust_tap nodes.",
         )
     procedure_pin = ArtifactPin(
         role="procedure",
@@ -2342,7 +2496,7 @@ def _render_line_member(
             _refuse(
                 "cruxible.authoring.line_trigger_input_invalid",
                 "trigger_input",
-                f"trigger_input {payload.trigger_input!r} must name exactly one graph-v4 "
+                f"trigger_input {payload.trigger_input!r} must name exactly one "
                 "Source input of the Procedure that pins its CaptureContract exactly.",
                 repair_kind="replace_trigger_input",
                 repair_description="Name the `as` alias of one Source node, or omit it.",
@@ -2364,7 +2518,6 @@ def _render_line_member(
         occurrence_epoch=payload.occurrence_epoch,
         procedure=procedure_pin,
         parameters=payload.parameters,
-        slot_bindings=(),
         acquisition_policy=policy_pin,
         max_authority=(
             payload.max_authority or RUNG_AUTHORITY[procedure.definition.terminal_capability]
@@ -2387,7 +2540,6 @@ def _render_line_member(
                 ),
             )
         ),
-        provider_implementation_closures=(),
         lifecycle=ArtifactLifecycle(
             state="retired" if payload.retire else "live",
             predecessor_digest=predecessor_digest,
@@ -2482,7 +2634,7 @@ def _contract_fields_summary(procedure: ProcedureArtifact, contract: ArtifactPin
 def _check_line_parameters(
     payload: LineAuthoringPayload,
     *,
-    procedure: ProcedureArtifactAny,
+    procedure: ProcedureArtifact,
     procedure_path_value: str,
 ) -> None:
     """Refuse Line parameters the Procedure's input contract would refuse at run time.
@@ -2493,8 +2645,6 @@ def _check_line_parameters(
     is authored rather than on every later run.
     """
 
-    if not isinstance(procedure, ProcedureArtifact):
-        return
     contract = procedure.definition.contract_in
     if not isinstance(contract, ArtifactPin):
         return
@@ -2523,15 +2673,6 @@ def _check_line_parameters(
             ),
             replacement=_contract_fields_summary(procedure, contract),
         )
-
-
-def _required_slot_names(procedure: ProcedureArtifactAny) -> tuple[str, ...]:
-    names: list[str] = []
-    for node in procedure.definition.nodes:
-        for binding in iter_pin_bindings(node):
-            if isinstance(binding, ProcedurePinSlotRef):
-                names.append(binding.slot_name)
-    return tuple(sorted(set(names)))
 
 
 def _render_procedure_mandate_member(
@@ -2707,7 +2848,7 @@ def _member_stage(member: AuthoringChangeSetMember) -> str:
         return "claim_type_succession"
     if isinstance(member, ClaimRetirementMember):
         return "claim_retirement"
-    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload):
+    if isinstance(member, ProcedureAuthoringPayload):
         return "procedure"
     if isinstance(member, ProcedureMandateAuthoringPayload):
         return "procedure_mandate"
@@ -2731,7 +2872,7 @@ def _member_primary_path(
         return claim_type_path(member.predicate)
     if isinstance(member, ClaimRetirementMember):
         return claim_path(member.claim_id)
-    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload):
+    if isinstance(member, ProcedureAuthoringPayload):
         return procedure_path(str(member.definition["name"]))
     if isinstance(member, ProcedureMandateAuthoringPayload):
         return procedure_mandate_path(member.name)
@@ -2899,12 +3040,12 @@ def _lower_change_set(
     candidate_identities = frozenset(
         authoring_member_identity(member)
         for member in payload.members
-        if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload)
+        if not isinstance(member, ProcedureAuthoringPayload)
     )
     candidate_paths = tuple(
         primary_paths[i]
         for i, member in enumerate(payload.members)
-        if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload)
+        if not isinstance(member, ProcedureAuthoringPayload)
     )
     for stage in MEMBER_STAGING_ORDER:
         for index, member in enumerate(payload.members):
@@ -3060,7 +3201,7 @@ def _stage_change_set_member(
             path=path,
         )
         return tree, resolved, extra, {}
-    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload):
+    if isinstance(member, ProcedureAuthoringPayload):
         lowered = _lower_procedure(
             instance,
             intent=intent.model_copy(update={"payload": member}),
@@ -3681,7 +3822,7 @@ def lower_authoring(
             base_tree=base_tree,
             derivation_procedure=derivation_procedure,
         )
-    if isinstance(intent.payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload):
+    if isinstance(intent.payload, ProcedureAuthoringPayload):
         return _lower_procedure(instance, intent=intent, base=base, base_tree=base_tree)
     if isinstance(intent.payload, ProcedureMandateAuthoringPayload):
         path, content, digest = _render_procedure_mandate_member(

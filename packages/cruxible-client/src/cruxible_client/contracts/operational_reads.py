@@ -22,6 +22,13 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cruxible_client.contracts.line_dispatch import LineTriggerVersion
+from cruxible_client.contracts.procedures.results import (
+    ProcedureTerminal,
+    ProcedureTerminalEgress,
+)
+from cruxible_client.contracts.procedures.windows import TriggerEventReference
+
 #: A Capture handle is ``CAP-`` plus at least this many hex digits of its digest.
 CAPTURE_HANDLE_HEX = 12
 #: Arms, occurrences, runs, windows, citing Claims and per-node rows a card lists at most.
@@ -40,7 +47,10 @@ RunStatus: TypeAlias = Literal[
     "halted",
 ]
 #: What a Line arm's automation is doing, as the Line consumer reports it.
-LineArmState: TypeAlias = Literal["running", "stalled", "stopped", "disarmed"]
+LineEnablementState: TypeAlias = Literal["running", "stalled", "stopped", "disabled"]
+#: Why a Line's Triggers run nothing: a Trigger aimed at a Line that is not
+#: enabled does nothing.
+LineTriggersInactive: TypeAlias = Literal["not enabled"]
 MandateState: TypeAlias = Literal[
     "active", "expiring", "expired", "not_yet_valid", "suspended", "retired"
 ]
@@ -97,28 +107,32 @@ class RunRow(_StrictOperationalModel):
     nodes_done: int = Field(ge=0)
 
 
-#: Who armed a Line, as a card shows it. ``unverified`` is an arm persisted
-#: before arms recorded their provenance: it is never resolved as any
-#: principal, and stops with ``arm_requires_rearm`` until it is rearmed.
-ArmPrincipalKind: TypeAlias = Literal[
-    "runtime_credential", "principal_claim", "local_operator", "unverified"
+#: Who armed a Line, as a card shows it.
+EnablementPrincipalKind: TypeAlias = Literal[
+    "runtime_credential", "principal_claim", "local_operator"
 ]
 
 
-class GetLineArm(_StrictOperationalModel):
-    """One arm of a Line: who armed it, and what its automation is doing."""
+class GetLineEnablement(_StrictOperationalModel):
+    """One enablement of a Line: who enabled it, and what its automation is doing."""
 
-    arm: str
-    state: LineArmState
-    principal_kind: ArmPrincipalKind
-    # Who armed it: the local operator, a claimed principal, or a runtime
+    enablement: str
+    state: LineEnablementState
+    principal_kind: EnablementPrincipalKind
+    # Who enabled it: the local operator, a claimed principal, or a runtime
     # credential's label and id. A runtime credential's are shown only to an
     # admin, that credential, or another credential bound to its principal;
-    # anyone else reads ``armed_by_withheld``.
-    armed_by: str | None = Field(default=None, exclude_if=_omit_none)
+    # anyone else reads ``enabled_by_withheld``.
+    enabled_by: str | None = Field(default=None, exclude_if=_omit_none)
     credential: str | None = Field(default=None, exclude_if=_omit_none)
-    armed_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
-    armed_at: datetime
+    enabled_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
+    enabled_at: datetime
+    #: The Line version and the exact Trigger versions this enablement is pinned
+    #: to; any change to them stops it until the Line is enabled again.
+    line_artifact_digest: str
+    triggers: tuple[LineTriggerVersion, ...] = ()
+    #: The instant through which the daemon matched this enablement's Triggers.
+    evaluated_until: datetime
     stopped_at: datetime | None = Field(default=None, exclude_if=_omit_none)
     stop_reason: str | None = Field(default=None, exclude_if=_omit_none)
     detail: str | None = Field(default=None, exclude_if=_omit_none)
@@ -154,9 +168,11 @@ class GetLineCard(_StrictOperationalModel):
     #: ``get Trigger:<name>`` reads one, ``query Trigger --where target=...`` lists all.
     triggers: tuple[GetLineTrigger, ...] = ()
     triggers_total: int = Field(default=0, ge=0)
+    #: Set while Triggers aim at this live Line but it is not enabled.
+    triggers_inactive: LineTriggersInactive | None = Field(default=None, exclude_if=_omit_none)
     occurrence_epoch: int = Field(ge=1)
-    arms: tuple[GetLineArm, ...] = ()
-    arms_total: int = Field(default=0, ge=0)
+    enablements: tuple[GetLineEnablement, ...] = ()
+    enablements_total: int = Field(default=0, ge=0)
     due: int = Field(default=0, ge=0)
     waiting: int = Field(default=0, ge=0)
     occurrences: tuple[GetLineOccurrence, ...] = ()
@@ -246,20 +262,30 @@ class GetRunCurrentNode(_StrictOperationalModel):
 
 
 class GetRunTrigger(_StrictOperationalModel):
-    """What admitted a Line run: the Line, its occurrence, and the arm that dispatched it."""
+    """What admitted a Line run: the Line, its occurrence, and the enablement that dispatched it."""
 
     line: str
     occurrence: str | None = Field(default=None, exclude_if=_omit_none)
-    arm: str | None = Field(default=None, exclude_if=_omit_none)
-    principal_kind: ArmPrincipalKind | None = Field(default=None, exclude_if=_omit_none)
-    # Withheld, as on a Line card, unless the reader is the arming credential or an admin.
-    armed_by: str | None = Field(default=None, exclude_if=_omit_none)
-    armed_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
+    enablement: str | None = Field(default=None, exclude_if=_omit_none)
+    principal_kind: EnablementPrincipalKind | None = Field(default=None, exclude_if=_omit_none)
+    # Withheld, as on a Line card, unless the reader is the enabling credential or an admin.
+    enabled_by: str | None = Field(default=None, exclude_if=_omit_none)
+    enabled_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 class GetPendingInput(_StrictOperationalModel):
     name: str
     waiting_since: datetime
+
+
+class GetRunOutcome(_StrictOperationalModel):
+    """One durable outcome a finished run recorded."""
+
+    sequence: int = Field(ge=1)
+    event_kind: str
+    node_id: str | None = Field(default=None, exclude_if=_omit_none)
+    payload_digest: str
+    capture_event: TriggerEventReference | None = Field(default=None, exclude_if=_omit_none)
 
 
 class GetProcedureRunCard(_StrictOperationalModel):
@@ -280,7 +306,13 @@ class GetProcedureRunCard(_StrictOperationalModel):
     triggered_by: GetRunTrigger | None = Field(default=None, exclude_if=_omit_none)
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     receipt_digest: str | None = Field(default=None, exclude_if=_omit_none)
-    terminal: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A finished run's typed result value.
+    result: Any = Field(default=None, exclude_if=_omit_none)
+    outcomes: tuple[GetRunOutcome, ...] = ()
+    #: Why a run stopped short of a result: code, message, details and repair.
+    terminal: ProcedureTerminal | None = Field(default=None, exclude_if=_omit_none)
+    #: What each terminal node did (the proposal it opened, the Capture it emitted).
+    terminal_egress: tuple[ProcedureTerminalEgress, ...] = ()
     next: tuple[str, ...] = ()
 
 
@@ -293,7 +325,8 @@ class OrientLine(_StrictOperationalModel):
     procedure: str
     authority: Literal["observe", "propose", "settle"]
     trigger: str
-    arm: LineArmState | None = Field(default=None, exclude_if=_omit_none)
+    enablement: LineEnablementState | None = Field(default=None, exclude_if=_omit_none)
+    triggers_inactive: LineTriggersInactive | None = Field(default=None, exclude_if=_omit_none)
     due: int = Field(default=0, ge=0)
     waiting: int = Field(default=0, ge=0)
 
@@ -336,9 +369,9 @@ __all__ = [
     "LINE_CARD_ARMS",
     "LINE_CARD_RUNS",
     "OPERATIONAL_CARD_LIST_LIMIT",
-    "ArmPrincipalKind",
+    "EnablementPrincipalKind",
     "GetCaptureCard",
-    "GetLineArm",
+    "GetLineEnablement",
     "GetLineCard",
     "GetLineOccurrence",
     "GetLineTrigger",
@@ -350,7 +383,8 @@ __all__ = [
     "GetRunCurrentNode",
     "GetRunNode",
     "GetRunTrigger",
-    "LineArmState",
+    "LineEnablementState",
+    "LineTriggersInactive",
     "LiveHead",
     "LiveView",
     "MandateState",

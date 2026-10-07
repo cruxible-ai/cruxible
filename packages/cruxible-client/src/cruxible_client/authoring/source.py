@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 from pydantic import JsonValue
 
-from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
+from cruxible_client.authoring.inputs import BlueprintInput, CarriedContractInput, ProcedureInput
 from cruxible_client.authoring.procedures import (
     CompositionDiagnostic,
     ProcedureBindingRequirement,
@@ -44,6 +44,7 @@ from cruxible_client.contracts.procedures.source_requests import (
     SourceProviderSelection,
     SourceQuerySelection,
     SourceSelection,
+    SourceSlotSelection,
 )
 
 if TYPE_CHECKING:
@@ -60,13 +61,32 @@ def _contract(value: CarriedContractInput) -> SourceContract:
 
 
 @dataclass(frozen=True)
-class ProcedureBlueprint:
+class ProcedureSource:
+    """Retained Procedure source and its binding selections.
+
+    ``slots`` (slot name -> ProviderInterface name) are open Provider slots: bind
+    each with ``bind(slot=cx.provider_interface(...))`` and the source builds a
+    Procedure; leave any open and it builds a Blueprint (a skeleton that never
+    runs, instantiated later with one installed Provider per slot).
+    """
+
     _request: ProcedureSourceRequest
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
     acquisition_policy: str | None = None
     _bindings: Mapping[str, ProviderBinding | QueryRef | ProcedureRef] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    slots: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+
+    @property
+    def open_slots(self) -> tuple[str, ...]:
+        """Declared slots no Provider is bound to yet."""
+
+        return tuple(sorted(set(self.slots) - set(self._bindings)))
+
+    @property
+    def is_blueprint(self) -> bool:
+        return bool(self.open_slots)
 
     @property
     def name(self) -> str:
@@ -112,11 +132,11 @@ class ProcedureBlueprint:
 
     def __call__(self, *args: object, **kwargs: object) -> None:
         raise TypeError(
-            "A Procedure blueprint is source, not executable Python. "
+            "Procedure source is not executable Python. "
             "Use preview/build or run its accepted Procedure."
         )
 
-    def bind(self, **bindings: ProviderBinding | QueryRef | ProcedureRef) -> ProcedureBlueprint:
+    def bind(self, **bindings: ProviderBinding | QueryRef | ProcedureRef) -> ProcedureSource:
         unknown = set(bindings) - _binding_slots(self.source)
         if unknown:
             raise ValueError(f"Unknown Procedure binding slots: {sorted(unknown)}")
@@ -125,6 +145,13 @@ class ProcedureBlueprint:
                 value, (ProviderBinding, QueryRef, ProcedureRef)
             ):
                 raise TypeError("Bindings require named accepted provider/query/Procedure handles")
+            if name in self.slots and not isinstance(value, ProviderBinding):
+                raise TypeError(f"Slot {name!r} binds a Provider (cx.provider_interface(...))")
+            if name in self.slots and value.interface != self.slots[name]:  # type: ignore[union-attr]
+                raise ValueError(
+                    f"Slot {name!r} declares interface {self.slots[name]!r}; "
+                    f"the binding serves {value.interface!r}"  # type: ignore[union-attr]
+                )
         return replace(self, _bindings=MappingProxyType(dict(self._bindings, **bindings)))
 
     def _at(self, world: World) -> ProcedureSourceRequest:
@@ -132,7 +159,7 @@ class ProcedureBlueprint:
         for name, value in self._bindings.items():
             if isinstance(value, ProviderBinding):
                 if value.coordinate is None:
-                    raise ValueError("Select source providers through cx.provider_binding()")
+                    raise ValueError("Select source providers through cx.provider_interface()")
                 world._playbill._assert_coordinate(value.coordinate)
                 selections[name] = SourceProviderSelection(
                     provider=value.provider, interface=value.interface
@@ -143,6 +170,8 @@ class ProcedureBlueprint:
             else:
                 world._playbill._assert_coordinate(value.coordinate)
                 selections[name] = SourceProcedureSelection(name=value.address)
+        for name in self.open_slots:
+            selections[name] = SourceSlotSelection(interface=self.slots[name])
         return self._request.model_copy(update={"bindings": selections}, deep=True)
 
     def preview(self, *, world: World | None = None) -> ProcedurePreview:
@@ -289,7 +318,9 @@ class ProcedureBlueprint:
             ),
         )
 
-    def build(self, *, world: World | None = None) -> ProcedureInput:
+    def build(self, *, world: World | None = None) -> ProcedureInput | BlueprintInput:
+        """The shared authoring input: a Procedure, or a Blueprint while slots stay open."""
+
         preview = self.preview(world=world)
         if not preview.ready_for_prepare:
             raise ProcedureCompositionError(preview)
@@ -297,20 +328,31 @@ class ProcedureBlueprint:
         request = self._at(world)
         # This is the same symbolic authoring input used by HTTP/CLI/MCP. It
         # contains no resolved digests; prepare runs the shared backend compiler.
+        definition: dict[str, object] = {
+            "name": request.name,
+            "source_request": request.model_dump(mode="json", by_alias=True),
+        }
+        contracts = tuple(
+            CarriedContractInput(
+                name=c.name, fields=c.schema_.fields, allow_extra=c.schema_.allow_extra
+            )
+            for c in {c.name: c for c in (request.input, request.output)}.values()
+        )
+        if self.is_blueprint:
+            if self.acquisition_policy is not None:
+                raise ValueError("A Blueprint pins no acquisition policy; its instances do")
+            return BlueprintInput(
+                kind="blueprint",
+                definition=definition,
+                activation_policy=self.activation_policy,
+                contracts=contracts,
+            )
         return ProcedureInput(
             kind="procedure",
-            definition={
-                "name": request.name,
-                "source_request": request.model_dump(mode="json", by_alias=True),
-            },
+            definition=definition,
             activation_policy=self.activation_policy,
             acquisition_policy=self.acquisition_policy,
-            contracts=tuple(
-                CarriedContractInput(
-                    name=c.name, fields=c.schema_.fields, allow_extra=c.schema_.allow_extra
-                )
-                for c in {c.name: c for c in (request.input, request.output)}.values()
-            ),
+            contracts=contracts,
         )
 
 
@@ -338,8 +380,18 @@ def procedure(
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot",
     acquisition_policy: str | None = None,
     description: str | None = None,
-) -> Callable[[Callable[..., Any]], ProcedureBlueprint]:
-    def decorate(function: Callable[..., Any]) -> ProcedureBlueprint:
+    slots: Mapping[str, str] | None = None,
+) -> Callable[[Callable[..., Any]], ProcedureSource]:
+    """Declare Procedure source. ``slots`` maps open Provider slots to their interfaces.
+
+    Every declared slot must be used in the source as ``bindings.<slot>`` passed
+    to ``source(...)`` or ``call(...)``. With every slot bound the source builds
+    a Procedure; with any left open it builds a Blueprint.
+    """
+
+    declared = dict(slots or {})
+
+    def decorate(function: Callable[..., Any]) -> ProcedureSource:
         try:
             lines, first_line = inspect.getsourcelines(function)
             text = textwrap.dedent("".join(lines))
@@ -365,8 +417,15 @@ def procedure(
             for key, value in visible.items()
             if key in referenced and isinstance(value, CarriedContractInput)
         }
+        used = _binding_slots(text)
+        unused = sorted(set(declared) - used)
+        if unused:
+            raise ValueError(f"Declared slots the source never uses: {unused}")
+        for slot, interface in declared.items():
+            if not slot.isidentifier() or not isinstance(interface, str) or not interface:
+                raise ValueError("slots map a binding name to a ProviderInterface name")
         # Only schema data crosses the boundary. No functions, closures or module objects.
-        return ProcedureBlueprint(
+        return ProcedureSource(
             ProcedureSourceRequest(
                 name=name,
                 text=text,
@@ -382,6 +441,12 @@ def procedure(
             ),
             activation_policy=activation_policy,
             acquisition_policy=acquisition_policy,
+            slots=MappingProxyType(
+                {
+                    key: interface.removeprefix("ProviderInterface:")
+                    for key, interface in declared.items()
+                }
+            ),
         )
 
     return decorate
@@ -406,7 +471,7 @@ settle_change_set = _intrinsic
 halt = _intrinsic
 
 __all__ = [
-    "ProcedureBlueprint",
+    "ProcedureSource",
     "procedure",
     "query",
     "source",

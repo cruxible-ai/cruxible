@@ -53,8 +53,8 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.graph import (
-    compute_procedure_definition_digest_v3,
-    compute_procedure_node_digests_v3,
+    compute_procedure_definition_digest,
+    compute_procedure_node_digests,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -74,10 +74,10 @@ from cruxible_client.contracts.procedures.models import (
     GuardPredicate,
     PredicateOperand,
     ProcedureBudget,
-    ProcedureDefinitionV3,
+    ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    StateTapNodeV3,
+    StateTapNode,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.readings import (
@@ -262,12 +262,12 @@ def _procedure(
         target=ArtifactIdentity(kind="QueryDefinition", name=QUERY_NAME),
         artifact_digest=query_digest,
     )
-    definition = ProcedureDefinitionV3(
+    definition = ProcedureDefinition(
         name=PROCEDURE_NAME,
         contract_in=contract_in,
         contract_out=contract_out,
         nodes=(
-            StateTapNodeV3(node_id="read", query=query, parameters={}, as_="query", next="gate"),
+            StateTapNode(node_id="read", query=query, parameters={}, as_="query", next="gate"),
             GuardNode(
                 node_id="gate",
                 predicate=GuardPredicate(
@@ -282,21 +282,21 @@ def _procedure(
             ),
             ProjectNode(
                 node_id="hot",
-                fields={"rows": "$steps.query.rows"},
+                fields={"rows": "$steps.query.result.rows"},
                 contract_out=contract_out,
                 as_="hot_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="cold",
-                fields={"rows": "$steps.query.rows"},
+                fields={"rows": "$steps.query.result.rows"},
                 contract_out=contract_out,
                 as_="cold_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="finish",
-                fields={"rows": "$steps.query.rows"},
+                fields={"rows": "$steps.query.result.rows"},
                 contract_out=contract_out,
                 as_="result",
             ),
@@ -335,7 +335,7 @@ def _procedure(
     return ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
-        definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
         pins=pins,
         owned_contracts=tuple(
             sorted(
@@ -545,7 +545,7 @@ def test_all_kinds_and_grains_resolve_from_real_evidence_and_credit_the_run(
     assert node.resolution is not None and node.resolution.verdict == "satisfied"
     assert node.resolution.value == "supported"
     assert node.reading is not None and node.reading.node_id == "hot"
-    expected = compute_procedure_node_digests_v3(procedure.definition)
+    expected = compute_procedure_node_digests(procedure.definition)
     assert node.reading.subject.selector.scheme == "procedure-node-v1"
 
     arm = rows["hot-arm-attested"]
@@ -1347,10 +1347,8 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
-        slot_bindings=(),
         acquisition_policy=policy_pin,
         max_authority="observe",
-        provider_implementation_closures=(),
         budgets={
             "max_capture_bytes": 0,
             "max_items": caps.max_items,
@@ -1392,7 +1390,7 @@ def _run_line(instance, line, *, at: datetime):  # type: ignore[no-untyped-def]
     return service_run_playbill_line(
         instance,
         path_identity_digest=digest,
-        request=LineRunRequest(line_identity_digest=digest, evaluation_time=None),
+        request=LineRunRequest(line=digest, evaluation_time=None),
         actor_context=_actor(instance),
         caller_rung=2,
         daemon_clock=procedure_run_service._DeterministicClock(at),  # noqa: SLF001

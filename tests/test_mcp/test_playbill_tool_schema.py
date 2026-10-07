@@ -53,10 +53,10 @@ def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation()
 
     assert set(schema["properties"]) == {
         "resolution_contract",
-        "trigger_event",
+        "event",
+        "repeat",
         "instance_id",
         "line",
-        "trigger",
         "evaluation_time",
         "occurrence_id",
     }
@@ -130,6 +130,8 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "claim-exact-content",
         "claim-revision",
         "procedure",
+        "blueprint",
+        "blueprint-instance",
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",

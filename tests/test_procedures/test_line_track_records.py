@@ -14,14 +14,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import CanonicalDuration
-from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedure,
-    ProcedureArtifactV1,
-    procedure_artifact_digest,
-    procedure_path,
-    render_procedure,
-)
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure, render_procedure
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     LineSpec,
@@ -32,9 +25,9 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.models import (
     InboxEgressNode,
     ProcedureBudget,
-    ProcedureDefinitionV3,
+    ProcedureDefinition,
     ProcedureHardCaps,
-    StateTapNodeV3,
+    StateTapNode,
 )
 from cruxible_client.contracts.projection_extensions import runtime_extension_registry
 from cruxible_core.exhaust import (
@@ -68,6 +61,7 @@ from cruxible_core.service.procedures.procedures import (
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
+from tests.support.procedures import accepted_procedure as carried_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree, _actor
 
 NOW = datetime(2026, 8, 18, 15, 0, tzinfo=timezone.utc)
@@ -90,12 +84,12 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
     contract_in = _pin("contract-in", "Contract", "run-input")
     contract_out = _pin("contract-out", "Contract", "run-output")
     query = _pin("query", "QueryDefinition", "open-orders")
-    definition = ProcedureDefinitionV3(
+    definition = ProcedureDefinition(
         name="orders-triage",
         contract_in=contract_in,
         contract_out=contract_out,
         nodes=(
-            StateTapNodeV3(node_id="read", query=query, parameters={}, as_="rows", next="emit"),
+            StateTapNode(node_id="read", query=query, parameters={}, as_="rows", next="emit"),
             InboxEgressNode(node_id="emit", input={"items": "$steps.rows.items"}),
         ),
         returns="rows",
@@ -114,18 +108,7 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
         ),
         terminal_capability=1,
     )
-    procedure = ProcedureArtifactV1(
-        identity=ArtifactIdentity(kind="Procedure", name=definition.name),
-        definition=definition,
-        definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-        pins=tuple(sorted((contract_in, contract_out, query), key=lambda pin: pin.role)),
-        activation_policy="drain",
-    )
-    accepted_procedure = AcceptedProcedure(
-        path=procedure_path(definition.name),
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
+    accepted_procedure = carried_procedure(definition, activation_policy="drain")
     procedure_pin = _pin(
         "procedure", "Procedure", definition.name, digest=accepted_procedure.artifact_digest
     )
@@ -134,9 +117,7 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
-        slot_bindings=(),
         max_authority="observe",
-        provider_implementation_closures=(),
         budgets={
             "max_capture_bytes": 0,
             "max_items": 100,

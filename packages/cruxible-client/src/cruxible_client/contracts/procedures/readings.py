@@ -53,6 +53,8 @@ ProcedureMeasurementRefusalCode: TypeAlias = Literal[
 ProcedureMeasurementStatus: TypeAlias = Literal[
     # The observation instant precedes check_at; nothing was evaluated.
     "pending",
+    # The window is open and no resolution stands yet: `procedure measure` evaluates it.
+    "open",
     # The window closed with no standing resolution; nothing was evaluated.
     "expired",
     # A non-overturned resolution stands (written now or found).

@@ -240,7 +240,7 @@ def test_calls_share_the_parent_provider_budget(tmp_path, planning_delay):
     from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
     from cruxible_client.contracts.procedures.source_compiler import compile_source
     from cruxible_client.contracts.procedures.source_program import (
-        ProcedureSource,
+        ProcedureSourceProgram,
         SourceProcedureBinding,
     )
     from cruxible_core.procedures.execution import ProcedureExecutor
@@ -260,7 +260,7 @@ def test_calls_share_the_parent_provider_budget(tmp_path, planning_delay):
     child = call_procedure()
     base, fixture = _prepared_v5(child, tmp_path, operation_contract=operation())
     compiled = compile_source(
-        ProcedureSource(
+        ProcedureSourceProgram(
             text=textwrap.dedent("""
                 def example(request, bindings):
                     first = invoke(bindings.child, input=bindings.child.input(size=1))

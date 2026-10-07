@@ -65,7 +65,7 @@ from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
     _seed_claim_surface,
 )
-from tests.test_authoring.test_authoring_procedures import _slot_definition
+from tests.test_authoring.test_authoring_procedures import _triage_definition
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
 
@@ -217,42 +217,10 @@ def test_create_and_compile_refuse_working_selection_with_bind_repair(
     assert "authoring bind" in raised.value.repair
 
 
-def test_tagless_procedure_input_injects_slot_tags_and_compiles(tmp_path: Path) -> None:
-    instance, _owner = initialize_local(tmp_path)
-    coordinator = _coordinator(instance)
-    definition = _slot_definition().model_dump(mode="json", by_alias=True)
-
-    def remove_tags(value: object) -> object:
-        if isinstance(value, dict):
-            return {key: remove_tags(item) for key, item in value.items() if key != "tag"}
-        if isinstance(value, list):
-            return [remove_tags(item) for item in value]
-        return value
-
-    tagless = remove_tags(definition)
-    assert isinstance(tagless, dict)
-    for key in ("contract_in", "contract_out"):
-        tagless[key] = {
-            "kind": "slot",
-            "slot_name": definition[key]["slot_name"],  # type: ignore[index]
-        }
-    result = coordinator.compile_input(
-        actor=AuthenticatedActor(actor_id="owner"),
-        input=ProcedureInput(
-            kind="procedure",
-            definition=tagless,
-            activation_policy="drain",
-        ),
-        canonical_timestamp=TIMESTAMP,
-    )
-
-    assert result.verdict == "passed", result.frontier.model_dump_json(indent=2)
-
-
 def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     coordinator = _coordinator(instance)
-    definition = _slot_definition().model_dump(mode="json", by_alias=True)
+    definition = _triage_definition()
 
     def remove_tags(value: object) -> object:
         if isinstance(value, dict):
@@ -275,7 +243,7 @@ def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: P
     }
     nodes = tagless["nodes"]
     assert isinstance(nodes, list)
-    project = nodes[1]
+    project = nodes[0]
     assert isinstance(project, dict)
     project["contract_out"] = {
         "kind": "carried_contract",
@@ -646,32 +614,18 @@ def test_a_procedure_input_names_its_acquisition_policy_and_lowering_owns_the_di
 
     instance, _owner = initialize_local(tmp_path)
     coordinator = _coordinator(instance)
-    definition = _slot_definition().model_dump(mode="json", by_alias=True)
-
-    def remove_tags(value: object) -> object:
-        if isinstance(value, dict):
-            return {key: remove_tags(item) for key, item in value.items() if key != "tag"}
-        if isinstance(value, list):
-            return [remove_tags(item) for item in value]
-        return value
-
-    tagless = remove_tags(definition)
-    assert isinstance(tagless, dict)
-    for key in ("contract_in", "contract_out"):
-        tagless[key] = {
-            "kind": "slot",
-            "slot_name": definition[key]["slot_name"],  # type: ignore[index]
-        }
-
     member = ProcedureInput(
         kind="procedure",
-        definition=tagless,
+        definition=_triage_definition(),
         activation_policy="drain",
+        contracts=(
+            CarriedContractInput(name="empty-input", fields={}),
+            CarriedContractInput(name="rows-output", fields={"rows": PropertySchema(type="json")}),
+        ),
         acquisition_policy="advisory-reads",
     )
     payload = lower_authoring_input(member)
-    # A named policy makes this a v2 payload even with no carried Contract, and
-    # the payload carries the NAME: no caller ever supplies the digest.
+    # The payload carries the policy NAME: no caller ever supplies the digest.
     assert payload.tag == "playbill-procedure-authoring-payload-v2"
     assert payload.acquisition_policy == "advisory-reads"
 

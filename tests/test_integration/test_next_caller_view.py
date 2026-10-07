@@ -171,30 +171,30 @@ def test_every_repair_operation_names_its_door_in_one_table() -> None:
     assert {tool for tool in _REPAIR_TOOLS.values() if tool is not None} <= set(TOOL_PERMISSIONS)
 
 
-def _line_arm_row() -> PlaybillNextItemV1:
+def _line_enable_row() -> PlaybillNextItemV1:
     return _item(
         severity="repair",
         reason="consumer_stalled",
         subject_identity="Line:hourly",
         detail={},
         repair=PlaybillNextRepairV1(
-            operation="cruxible.line.arm",
+            operation="cruxible.line.enable",
             target="Line:hourly",
-            required_change="arm_the_line",
+            required_change="enable_the_line",
             arguments={"line": "hourly"},
         ),
     )
 
 
 def test_sdk_rows_render_sdk_calls_not_cli_commands() -> None:
-    rows = [_line_arm_row(), _approval_row()]
+    rows = [_line_enable_row(), _approval_row()]
 
     kept, _held = _caller_queue(rows, _view(surface="sdk"), None)
 
     commands = {
         item.repair.operation: item.repair.command for item in kept if item.repair is not None
     }
-    assert commands["cruxible.line.arm"] == 'cx.arm_line("hourly")'
+    assert commands["cruxible.line.enable"] == 'cx.line("hourly").enable()'
     assert commands["cruxible.proposal.approve"] == (
         'cx.proposal("PRP-0001").approve(reviewed=cx.proposal("PRP-0001").review())'
     )
@@ -373,8 +373,12 @@ def test_supporting_evidence_folded_into_a_conflict_is_rendered_for_the_caller(
 
 
 _SDK_REPAIRS: tuple[tuple[str, dict[str, object]], ...] = (
-    ("cruxible.line.arm", {"line": "hourly"}),
+    ("cruxible.line.enable", {"line": "hourly"}),
     ("cruxible.line.dispatch", {"line": "hourly", "limit": 3}),
+    (
+        "cruxible.line.evaluate",
+        {"line": "hourly", "since": "2026-08-24T16:00:00Z", "until": "2026-08-24T17:00:00Z"},
+    ),
     ("cruxible.prediction.settle", {"prediction_id": "RSC-0001"}),
     ("cruxible.authoring.example", {"example": "procedure-mandate"}),
     ("cruxible.proposal.approve", {"proposal_id": "PRP-0001", "signer_id": "reviewer"}),
@@ -447,10 +451,10 @@ def test_the_sdk_reads_a_row_whose_repair_is_withheld(
 ) -> None:
     from cruxible_client import contracts
 
-    withheld = _view(surface="sdk", caller_rung=0).render([_line_arm_row()])
+    withheld = _view(surface="sdk", caller_rung=0).render([_line_enable_row()])
     wire = contracts.NextItem.model_validate(withheld[0].model_dump(mode="json"))
 
     assert wire.repair is None
     assert wire.repair_requires is not None
-    assert wire.repair_requires.tool == "cruxible_line_arm"
+    assert wire.repair_requires.tool == "cruxible_line_enable"
     assert wire.repair_requires.because == ["tier"]

@@ -196,7 +196,6 @@ from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
 from cruxible_core.server.config import get_runtime_bearer_token, get_server_state_root
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
-    ProcedureBindRequest,
 )
 from cruxible_core.service.proposals.review import (
     ProposalReview,
@@ -3356,14 +3355,15 @@ def authoring_example_command(
     to the daemon.
 
     \b
-    Input kind family: claim | procedure | subject | query_definition |
-    approval_policy | procedure_runtime_policy | procedure_mandate |
-    acquisition_policy | line | trigger | change_set (tagless).
+    Input kind family: claim | procedure | blueprint | blueprint_instance |
+    subject | query_definition | approval_policy | procedure_runtime_policy |
+    procedure_mandate | acquisition_policy | line | trigger | change_set (tagless).
 
     \b
     Change-set member kind family: claim | claim_type | claim_type_succession |
     claim_retirement | subject | query_definition | procedure_mandate |
-    acquisition_policy | line | trigger | procedure. claim_type, claim_type_succession and
+    acquisition_policy | line | trigger | procedure | blueprint | blueprint_instance.
+    claim_type, claim_type_succession and
     claim_retirement are member kinds only -- none is a top-level input.
     approval_policy and procedure_runtime_policy are the reverse: the member
     union parses either, but a change set refuses either, so author each as its
@@ -5124,50 +5124,7 @@ def query_group(
 
 @playbill_group.group("procedure")
 def procedure_group() -> None:
-    """Inspect, bind, run, and measure accepted Procedures."""
-
-
-@procedure_group.command("readiness")
-@click.argument("name")
-@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
-@json_option
-@handle_errors
-def procedure_readiness(name: str, evaluation_time: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.procedure_readiness(
-            instance_id,
-            name,
-            evaluation_time=evaluation_time,
-        ),
-        command_name="cruxible procedure readiness",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    click.echo(f"{name}: {result.state}")
-    click.echo(f"Next: {result.next_operation['kind']}")
-    for slot in result.required_slots:
-        click.echo(f"Required slot: {slot}")
-    for node in result.unsupported_nodes:
-        click.echo(f"Unsupported node: {node['node_id']} ({node['kind']})")
-
-
-@procedure_group.command("bind")
-@click.argument("name")
-@click.argument("request_file", type=PayloadFile())
-@json_option
-@handle_errors
-def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
-    request = _read_model(request_file, ProcedureBindRequest)
-    result = _server_call(
-        lambda client, instance_id: client.bind_procedure(
-            instance_id,
-            name,
-            bindings=[item.model_dump(mode="json") for item in request.bindings],
-        ),
-        command_name="cruxible procedure bind",
-    )
-    _emit_json(result.model_dump(mode="json"))
+    """Run and measure accepted Procedures; read one with cruxible get Procedure:<name>."""
 
 
 #: Repair arguments a CLI leaf takes as its positional operand.
@@ -5287,7 +5244,10 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
     "at_file",
     default=None,
     type=PayloadFile(),
-    help="AcceptedCoordinate JSON/YAML file; its presence selects replay lane.",
+    help=(
+        "AcceptedCoordinate JSON/YAML file (- for stdin) to bind the run to; it runs only "
+        "while the Procedure is still current there."
+    ),
 )
 @click.option(
     "--resolution-contract",
@@ -5336,18 +5296,6 @@ def run_procedure(
     if result.receipt_digest is not None:
         click.echo(f"Receipt: {result.receipt_digest}")
     _echo_source_observations(result)
-
-
-@procedure_group.command("status")
-@click.argument("run_id")
-@json_option
-@handle_errors
-def procedure_run_status(run_id: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.get_procedure_run(instance_id, run_id),
-        command_name="cruxible procedure status",
-    )
-    _emit_json(result.model_dump(mode="json"))
 
 
 @procedure_group.command("measure")
@@ -5418,6 +5366,24 @@ def procedure_measure(
 @click.argument("name")
 @click.option("--run-id", default=None, help="Only readings crediting this run.")
 @click.option("--measurement", "measurements", multiple=True, help="Only these measurements.")
+@click.option(
+    "--subject-grain",
+    type=click.Choice(["procedure_unit", "node", "arm"]),
+    default=None,
+    help="Only readings at this grain.",
+)
+@click.option(
+    "--evaluation-time",
+    default=None,
+    help="Explicit ISO-8601 instant the standing is read at (default: now).",
+)
+@click.option(
+    "--at",
+    "at_file",
+    default=None,
+    type=PayloadFile(),
+    help="AcceptedCoordinate JSON/YAML file (- for stdin) to read the Procedure at.",
+)
 @click.option("--limit", default=50, show_default=True, type=click.IntRange(1, 200))
 @click.option("--cursor", default=None, help="Continue a previous page.")
 @json_option
@@ -5426,15 +5392,29 @@ def procedure_readings(
     name: str,
     run_id: str | None,
     measurements: tuple[str, ...],
+    subject_grain: str | None,
+    evaluation_time: str | None,
+    at_file: str | None,
     limit: int,
     cursor: str | None,
     output_json: bool,
 ) -> None:
-    """Inspect measurement standing and retained readings. Read-only."""
+    """Inspect measurement standing and retained readings. Read-only.
+
+    A measurement reads `pending` before its window opens, `open` while it is open
+    and unresolved (run `cruxible procedure measure`), `resolved`, or `expired`.
+    """
 
     request = contracts.ProcedureReadingsRequest(
         run_id=run_id,
         measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
+        subject_grain=subject_grain,  # type: ignore[arg-type]
+        evaluation_time=(
+            None
+            if evaluation_time is None
+            else datetime.fromisoformat(evaluation_time.replace("Z", "+00:00"))
+        ),
+        at=None if at_file is None else _read_model(at_file, AcceptedCoordinate),
         limit=limit,
         cursor=cursor,
     )
@@ -5463,58 +5443,26 @@ def procedure_readings(
 
 @playbill_group.group("line")
 def line_group() -> None:
-    """Trigger accepted Lines."""
+    """Enable, run and recover accepted Lines.
+
+    enable, disable and run are the normal flow; evaluate and dispatch recover
+    what automation missed, as `cruxible next` names it. `cruxible get
+    Line:NAME` reads a Line's enablement, Triggers, pending work and runs.
+    """
 
 
-@line_group.command("check")
-@click.argument("line")
-@click.option("--since", default=None, help="Inclusive eligibility timestamp.")
-@click.option("--until", default=None, help="Exclusive eligibility timestamp.")
-@click.option("--limit", default=100, type=click.IntRange(1, 256))
-@click.option("--cursor", default=None)
-@json_option
-@handle_errors
-def check_line(
-    line: str,
-    since: str | None,
-    until: str | None,
-    limit: int,
-    cursor: str | None,
-    output_json: bool,
-) -> None:
-    from cruxible_client.contracts.line_dispatch import LineTriggerCheckRequest
-
-    request = LineTriggerCheckRequest.model_validate(
-        dict(since=since, until=until, limit=limit, cursor=cursor)
-    )
-    result = _server_call(
-        lambda client, instance_id: client.check_line(instance_id, line, request=request),
-        command_name="cruxible line check",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        click.echo(f"{result.line}: {result.status} ({len(result.occurrences)} occurrences)")
-        if result.detail:
-            click.echo(result.detail)
-        if result.cursor:
-            click.echo(
-                f"Next cursor: {result.cursor}; retain --until {result.checked_until.isoformat()}"
-            )
-
-
-def _echo_line_arm(result: Any) -> None:
-    state = "armed" if result.state == "armed" else f"stopped ({result.stop_reason})"
+def _echo_line_enablement(result: Any) -> None:
+    state = "enabled" if result.state == "enabled" else f"stopped ({result.stop_reason})"
     unchanged = {
-        "already_armed": "already armed",
-        "already_disarmed": "already disarmed",
-        "would_arm": "preview: would arm",
-        "would_rearm": "preview: would rearm",
-        "would_disarm": "preview: would disarm",
+        "already_enabled": "already enabled",
+        "already_disabled": "already disabled",
+        "would_enable": "preview: would enable",
+        "would_reenable": "preview: would re-enable",
+        "would_disable": "preview: would disable",
     }
     note = unchanged.get(result.outcome or "")
     click.echo(f"{result.line}: {state}" + (f" ({note}; nothing changed)" if note else ""))
-    click.echo(f"Armed by: {result.armed_by.label} at {result.armed_at.isoformat()}")
+    click.echo(f"Enabled by: {result.enabled_by.label} at {result.enabled_at.isoformat()}")
     click.echo(f"Matched through: {result.evaluated_until.isoformat()}")
     click.echo(
         f"Pending: {result.pending_automatic} automatic, "
@@ -5525,74 +5473,90 @@ def _echo_line_arm(result: Any) -> None:
     echo_preview_next(result.outcome or "", result.coordinate)
 
 
-@line_group.command("arm")
+@line_group.command("enable")
 @click.argument("line")
 @change_control_options
 @json_option
 @handle_errors
-def arm_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
-    """Admit what this Line matches from now on, under your credential."""
+def enable_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+    """Enable LINE: its Triggers admit what they match from now on, under your credential.
+
+    A Trigger aimed at a Line does nothing until the Line is enabled. The
+    enablement pins the current Line version and the exact Trigger versions
+    aimed at it; any change to them stops it until you enable it again. It
+    never catches up: `cruxible next` names restart gaps and pending work for
+    `line evaluate` and `line dispatch`. Enabling needs governed write, even for
+    an observe-only Line; a Line that proposes or settles also needs a covering
+    ProcedureMandate. Read it with `cruxible get Line:LINE`.
+    """
 
     result = _server_call(
-        lambda client, instance_id: client.arm_line(instance_id, line, dry_run=dry_run, at=at),
-        command_name="cruxible line arm",
+        lambda client, instance_id: client.enable_line(instance_id, line, dry_run=dry_run, at=at),
+        command_name="cruxible line enable",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_line_arm(result)
+        _echo_line_enablement(result)
 
 
-@line_group.command("disarm")
+@line_group.command("disable")
 @click.argument("line")
 @change_control_options
 @json_option
 @handle_errors
-def disarm_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
-    """Stop admitting work automatically; admitted runs keep going."""
+def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+    """Stop LINE admitting work on its own; runs already admitted keep going.
+
+    Disabling a Line whose enablement already stopped changes nothing. A
+    retired Line can be disabled too.
+    """
 
     result = _server_call(
-        lambda client, instance_id: client.disarm_line(instance_id, line, dry_run=dry_run, at=at),
-        command_name="cruxible line disarm",
+        lambda client, instance_id: client.disable_line(instance_id, line, dry_run=dry_run, at=at),
+        command_name="cruxible line disable",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_line_arm(result)
-
-
-@line_group.command("status")
-@click.argument("line")
-@json_option
-@handle_errors
-def line_status(line: str, output_json: bool) -> None:
-    """Show whether the Line is armed and why an arm stopped."""
-
-    result = _server_call(
-        lambda client, instance_id: client.line_status(instance_id, line),
-        command_name="cruxible line status",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        _echo_line_arm(result)
+        _echo_line_enablement(result)
 
 
 @line_group.command("evaluate")
 @click.argument("line")
-@click.option("--since", required=True)
-@click.option("--until", required=True)
-@click.option("--limit", default=100, type=click.IntRange(1, 256))
-@click.option("--cursor", default=None)
+@click.option("--since", default=None, help="Inclusive ISO-8601 start of the range.")
+@click.option(
+    "--until", default=None, help="Exclusive ISO-8601 end of the range, capped at daemon time."
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Only report what the range makes eligible; enqueue nothing (no range needed).",
+)
+@click.option("--limit", default=100, type=click.IntRange(1, 256), help="Occurrences per page.")
+@click.option("--cursor", default=None, help="Continue an incomplete page of the same range.")
 @json_option
 @handle_errors
 def evaluate_line(
-    line: str, since: str, until: str, limit: int, cursor: str | None, output_json: bool
+    line: str,
+    since: str | None,
+    until: str | None,
+    dry_run: bool,
+    limit: int,
+    cursor: str | None,
+    output_json: bool,
 ) -> None:
+    """Turn a missed range of LINE's Triggers into pending work; never runs anything.
+
+    Use it to recover what automation missed (a daemon restart leaves a gap
+    `cruxible next` names with the exact command), then `line dispatch`.
+    Without --dry-run, --since and --until are required.
+    """
+
     from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
 
     request = LineEvaluateRequest.model_validate(
-        dict(since=since, until=until, limit=limit, cursor=cursor)
+        dict(since=since, until=until, limit=limit, cursor=cursor, dry_run=dry_run)
     )
     result = _server_call(
         lambda client, instance_id: client.evaluate_line(instance_id, line, request=request),
@@ -5610,36 +5574,63 @@ def evaluate_line(
             )
 
 
+#: Occurrences one `line dispatch` request attempts while draining.
+_LINE_DISPATCH_PAGE = 100
+
+
 @line_group.command("dispatch")
+@click.argument("line")
+@click.option("--occurrence-id", default=None, help="Dispatch only this pending occurrence.")
 @click.option(
     "--retry",
     is_flag=True,
     help="Explicitly retry --occurrence-id against the current Line in the same epoch.",
 )
-@click.argument("line")
-@click.option("--occurrence-id", default=None)
-@click.option("--limit", default=1, type=click.IntRange(1, 100))
+@click.option(
+    "--limit",
+    default=None,
+    type=click.IntRange(1, 100),
+    help="Dispatch at most this many; by default every pending occurrence is drained.",
+)
 @json_option
 @handle_errors
 def dispatch_line(
-    line: str, occurrence_id: str | None, limit: int, retry: bool, output_json: bool
+    line: str, occurrence_id: str | None, limit: int | None, retry: bool, output_json: bool
 ) -> None:
-    from cruxible_client.contracts.line_dispatch import LineDispatchRequest
+    """Run LINE's pending occurrences under your current authority.
 
-    result = _server_call(
-        lambda client, instance_id: client.dispatch_line(
-            instance_id,
-            line,
-            request=LineDispatchRequest(occurrence_id=occurrence_id, limit=limit, retry=retry),
-        ),
-        command_name="cruxible line dispatch",
-    )
+    An enabled Line admits only what it matched itself; work evaluated
+    explicitly, or matched before a restart, waits for this command. By
+    default it drains every pending occurrence; one that stays blocked is
+    reported once.
+    """
+
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequest, LineDispatchResult
+
+    page = _LINE_DISPATCH_PAGE if limit is None else limit
+    items: list[Any] = []
+    cursor: str | None = None
+    while True:
+        request = LineDispatchRequest(
+            occurrence_id=occurrence_id, limit=page, retry=retry, cursor=cursor
+        )
+        result = _server_call(
+            lambda client, instance_id: client.dispatch_line(instance_id, line, request=request),
+            command_name="cruxible line dispatch",
+        )
+        items.extend(result.items)
+        # Each page continues past every occurrence the last one attempted, so
+        # a page that stayed blocked never hides the occurrences after it.
+        if limit is not None or result.cursor is None:
+            break
+        cursor = result.cursor
+    drained = LineDispatchResult(items=tuple(items))
     if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    elif not result.items:
+        _emit_json(drained.model_dump(mode="json"))
+    elif not drained.items:
         click.echo("No pending occurrences for this Line epoch.")
     else:
-        for item in result.items:
+        for item in drained.items:
             click.echo(
                 f"{item.occurrence_id}: {item.status}"
                 + (f" run={item.run_id}" if item.run_id else "")
@@ -5651,57 +5642,70 @@ def dispatch_line(
 @line_group.command("run")
 @click.argument("line")
 @click.option(
-    "--trigger",
-    default=None,
-    help="The Trigger this occurrence fires on; omit for a Line no Trigger aims at.",
+    "--event",
+    "event_file",
+    type=PayloadFile(),
+    help=(
+        "Retained Capture event reference JSON/YAML (- for stdin) for a Line whose "
+        "Procedure takes an event input."
+    ),
 )
-@click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")
-@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
+@click.option(
+    "--repeat",
+    is_flag=True,
+    help="Run on an event the enabled Line already admitted, deliberately again.",
+)
 @click.option(
     "--resolution-contract",
     "contract_file",
     type=PayloadFile(),
-    help="Exact accepted ResolutionContract reference JSON/YAML.",
+    help="Exact accepted ResolutionContract reference JSON/YAML (- for stdin).",
 )
+@click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")
 @click.option(
-    "--trigger-event",
-    "event_file",
-    type=PayloadFile(),
-    help="Exact retained Capture event reference JSON/YAML.",
+    "--evaluation-time",
+    default=None,
+    help="Assert the ISO-8601 instant you expect; the daemon clock decides.",
 )
 @json_option
 @handle_errors
 def run_line(
     line: str,
-    trigger: str | None,
+    event_file: str | None,
+    repeat: bool,
+    contract_file: str | None,
     occurrence_id: str | None,
     evaluation_time: str | None,
     output_json: bool,
-    contract_file: str | None,
-    event_file: str | None,
 ) -> None:
+    """Run LINE once now: one manual occurrence under the Line's inputs, budgets and authority.
+
+    It never selects, consumes or waits on a Trigger, and runs whether or not
+    the Line is enabled; the run is recorded on the Line's history.
+    """
+
     resolution_contract = (
         None if contract_file is None else _read_model(contract_file, ResolutionContractReference)
     )
-    trigger_event = None if event_file is None else _read_model(event_file, TriggerEventReference)
+    event = None if event_file is None else _read_model(event_file, TriggerEventReference)
     request = LineRunRequest.model_validate(
         {
             "line": line,
-            "trigger": trigger,
             "occurrence_id": occurrence_id,
             "evaluation_time": evaluation_time,
             "resolution_contract": resolution_contract,
-            "trigger_event": trigger_event,
+            "event": event,
+            "repeat": repeat,
         }
     )
     result = _server_call(
         lambda client, instance_id: client.run_line(
             instance_id,
             line,
-            trigger=request.trigger,
             occurrence_id=request.occurrence_id,
             resolution_contract=resolution_contract,
-            trigger_event=trigger_event,
+            event=event,
+            repeat=repeat,
             evaluation_time=(
                 None if request.evaluation_time is None else request.evaluation_time.isoformat()
             ),
@@ -5912,13 +5916,14 @@ def _echo_next_status(status: contracts.NextStatus) -> None:
         label = facet.replace("_", " ")
         click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
     arms = (
-        status.consumers.detail.get("line_arms")
+        status.consumers.detail.get("line_enablements")
         if isinstance(status.consumers.detail, dict)
         else None
     )
     if isinstance(arms, dict) and (arms.get("stalled") or arms.get("stopped")):
         click.echo(
-            f"Status: line arms stalled={arms.get('stalled', 0)} stopped={arms.get('stopped', 0)}"
+            f"Status: line enablements stalled={arms.get('stalled', 0)} "
+            f"stopped={arms.get('stopped', 0)}"
             "  next=cruxible orient --section lines"
         )
 
@@ -6515,13 +6520,13 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         )
         lines.extend(f"  {line}" for line in attention["top"])
         lines.extend(f"  note: {line}" for line in attention.get("notes", ()))
-        arms = attention.get("arms")
-        if arms is not None:
+        enablements = attention.get("enablements")
+        if enablements is not None:
             lines.append(
-                f"  Line arms: running={arms['running']} stalled={arms['stalled']} "
-                f"stopped={arms['stopped']}"
+                f"  Line enablements: running={enablements['running']} "
+                f"stalled={enablements['stalled']} stopped={enablements['stopped']}"
             )
-            lines.extend(f"    {line}" for line in arms.get("needs_attention", ()))
+            lines.extend(f"    {line}" for line in enablements.get("needs_attention", ()))
     if result.get("next"):
         lines.append("Next:")
         lines.extend(f"  {line}" for line in result["next"])

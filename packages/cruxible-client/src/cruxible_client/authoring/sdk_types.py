@@ -27,7 +27,6 @@ class RefKind(str, Enum):
     PROCEDURE = "procedure"
     QUERY = "query"
     SOURCE = "source"
-    SLOT = "slot"
     DOCUMENT = "document"
     CAPTURE_CONTRACT = "capture_contract"
     PROPOSAL = "proposal"
@@ -37,6 +36,7 @@ class RefKind(str, Enum):
     MANDATE = "mandate"
     PROCEDURE_RUN = "procedure_run"
     TRIGGER = "trigger"
+    BLUEPRINT = "blueprint"
     PRINCIPAL = "principal"
     APPROVAL_POLICY = "approval_policy"
     PROCEDURE_RUNTIME_POLICY = "procedure_runtime_policy"
@@ -235,18 +235,6 @@ class CaptureView:
 
     def json(self) -> object:
         return json.loads(self.content)
-
-
-@dataclass(frozen=True, repr=False)
-class ProcedureSlotRef(_ShortRefRepr):
-    """One input slot of a Procedure, as ``Procedure.bind`` names it.
-
-    Not a Claim slot: a Subject's field is ``cruxible_client.contracts.write.SlotRef``.
-    """
-
-    address: str
-    coordinate: AcceptedCoordinate
-    kind: ClassVar[RefKind] = RefKind.SLOT
 
 
 @dataclass(frozen=True)
@@ -607,7 +595,6 @@ __all__ = [
     "CaptureView",
     "ReferenceKindError",
     "ReferentSensitivity",
-    "ProcedureSlotRef",
     "SourceMapEntry",
     "SourceRef",
     "SourceSelectionError",

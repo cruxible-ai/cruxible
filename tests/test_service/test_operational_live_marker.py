@@ -30,8 +30,8 @@ def test_live_state_beside_a_historical_at_is_announced(credential_world) -> Non
     assert runs.live.as_of.git_oid == head.oid[:12]
 
     lines = service_playbill_orient(instance, section="lines", evaluation_time=when)
-    assert lines.live is not None and "lines.arm" in lines.live.fields
-    assert lines.lines is not None and lines.lines[0].arm == "running"
+    assert lines.live is not None and "lines.enablement" in lines.live.fields
+    assert lines.lines is not None and lines.lines[0].enablement == "running"
     older = service_playbill_orient(instance, section="predictions", at=first.oid)
     assert older.live is not None and older.live.as_of.generation == head.sequence
 
@@ -40,8 +40,8 @@ def test_live_state_beside_a_historical_at_is_announced(credential_world) -> Non
 
     at_head = _get(instance, line.identity.qualified, evaluation_time=when)
     assert at_head.live is not None and at_head.live.as_of.generation == head.sequence
-    assert "arms" in at_head.live.fields
-    assert isinstance(at_head.card, GetLineCard) and at_head.card.arms
+    assert "enablements" in at_head.live.fields
+    assert isinstance(at_head.card, GetLineCard) and at_head.card.enablements
     definition = _get(instance, "Mandate:served-line-mandate", evaluation_time=when)
     assert definition.live is None
 

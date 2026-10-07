@@ -8,7 +8,7 @@ import pytest
 
 from cruxible_client import Cruxible
 from cruxible_client import contracts as api
-from cruxible_client.authoring.sdk_types import ClaimRef, ProcedureSlotRef
+from cruxible_client.authoring.sdk_types import ClaimRef
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 from .test_playbill_sdk_world import _COORDINATE, _MOVED_COORDINATE, _WorldClient
@@ -121,20 +121,6 @@ def test_closing_borrowed_context_does_not_close_shared_transport(connection):
     pb.get("CLM-first")
     pb.close()
     assert client.closed == 1
-
-
-def test_live_procedure_binding_rejects_mixed_coordinates_before_transport(connection):
-    pb, client = connection
-    old = AcceptedCoordinate.model_validate(_COORDINATE.model_dump())
-    new = AcceptedCoordinate.model_validate(_MOVED_COORDINATE.model_dump())
-    procedure = pb.accepted_procedure("daily-summary")
-    # The spy intentionally has no bind endpoint: both refusals precede I/O.
-    with pytest.raises(ValueError, match="observed coordinate"):
-        procedure.bind(
-            bindings={"first": ClaimRef("CLM-old", old), "second": ClaimRef("CLM-new", new)}
-        )
-    with pytest.raises(ValueError, match="observed coordinate"):
-        procedure.bind(bindings={ProcedureSlotRef("input", new): ClaimRef("CLM-old", old)})
 
 
 def test_explicit_connect_skips_current_orientation(connection, monkeypatch, tmp_path):

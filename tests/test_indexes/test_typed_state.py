@@ -84,7 +84,7 @@ def test_typed_reverse_and_full_address_indexes_are_present():
         )
     )
     searches = tuple(row[3] for row in branches if row[3].startswith("SEARCH "))
-    assert len(searches) == 16
+    assert len(searches) == 17
     assert all("(identity=?)" in detail for detail in searches)
     connection.close()
 
@@ -104,6 +104,7 @@ def test_claim_lifecycle_selection_uses_covering_index():
 
 def test_registered_procedure_and_singletons_read_exact_selected_sources(tmp_path, monkeypatch):
     from cruxible_client.contracts.approval_policy import APPROVAL_POLICY_IDENTITY
+    from cruxible_client.contracts.procedures.artifacts import procedure_runnability
     from tests.test_procedures.test_procedure_measurement_readings import _world
 
     instance, _, procedure = _world(tmp_path)
@@ -112,12 +113,12 @@ def test_registered_procedure_and_singletons_read_exact_selected_sources(tmp_pat
         reader = projection.typed
         assert reader is not None
         row = reader.connection.execute(
-            "SELECT definition_format,directly_runnable FROM procedures WHERE identity=?",
+            "SELECT definition_format,runnable FROM procedures WHERE identity=?",
             (procedure.identity.qualified,),
         ).fetchone()
         assert tuple(row) == (
             str(procedure.definition.graph_format),
-            int(procedure.directly_runnable),
+            procedure_runnability(procedure.definition)[0],
         )
         assert reader.source(procedure.identity.qualified) == procedure
         from cruxible_core.indexes.history.history_index import HistoryReader
@@ -135,6 +136,7 @@ def test_registered_procedure_and_singletons_read_exact_selected_sources(tmp_pat
 
 
 def test_line_identity_lookup_and_role_sensitive_dependency_read(tmp_path):
+    from cruxible_client.contracts.procedures.artifacts import procedure_runnability
     from cruxible_client.contracts.procedures.line_specs import line_identity_digest
     from tests.test_procedures.test_procedure_measurement_readings import _line_world
 
@@ -156,14 +158,14 @@ def test_line_identity_lookup_and_role_sensitive_dependency_read(tmp_path):
         assert selected_procedure.pins == procedure.pins
         assert reader.dependency_state("Procedure:missing") is None
         assert [
-            (row.identity, row.path, row.lifecycle, row.directly_runnable)
+            (row.identity, row.path, row.lifecycle, row.runnable)
             for row in reader.procedure_inventory()
         ] == [
             (
                 procedure.identity.qualified,
                 selected_procedure.path,
                 procedure.lifecycle.state,
-                procedure.directly_runnable,
+                procedure_runnability(procedure.definition)[0],
             )
         ]
 
@@ -286,6 +288,7 @@ STORAGE_SCHEMA_DIGESTS = {
     9: "93bd1a016b1d911c7b2058ca807f84cf246eaf00cac2dc4a48393015786cf3b3",
     10: "21933be373eef1eea10fd56ae8ad74a2ee7bf3d3b6b6edcab7b6f88a5d966885",
     11: "ced6a434e5834f00f7bbfe9430ba44df7fe63283cf967d12c143cb40ec045d33",
+    12: "0c0cd9e2fc899c49246c794488751e4163ebf07027bbfc3ef3fb5250dd0ad2c2",
 }
 
 

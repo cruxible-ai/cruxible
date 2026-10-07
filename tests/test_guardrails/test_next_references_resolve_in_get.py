@@ -60,6 +60,8 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace"]] = {
     "evidence_unavailable": "get",
     "prediction_settleable": "get",
     "prediction_window_unbindable": "get",
+    "line_coverage_gap": "get",
+    "line_work_pending": "get",
 }
 
 
@@ -130,6 +132,30 @@ def test_line_mandate_and_due_line_references_resolve(tmp_path: Path) -> None:
     assert line.identity.qualified in refs
     assert any(ref.startswith("ProcedureMandate:") for ref in refs)
     assert any(ref.startswith("sha256:") for ref in refs)
+
+
+def test_an_enabled_lines_pending_work_reference_resolves(tmp_path: Path) -> None:
+    from tests.test_procedures.test_line_arming import _armed_world
+    from tests.test_procedures.test_line_triggers import capture
+    from tests.test_procedures.test_procedure_run_surface import _actor
+
+    instance, line, procedure, start = _armed_world(tmp_path)
+    capture(instance, procedure, at=start + timedelta(seconds=2))
+    later = start + timedelta(seconds=3)
+    service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=start, until=later),
+        actor=_actor(instance),
+        now=later,
+    )
+
+    result = _queue(instance, later + timedelta(seconds=1))
+
+    pending = [item for item in result.items if item.reason == "line_work_pending"]
+    assert [item.subject_identity for item in pending] == [line.identity.qualified]
+    refs = _assert_every_reference_resolves(instance, result)
+    assert line.identity.qualified in refs
 
 
 def test_prediction_and_capture_references_resolve(

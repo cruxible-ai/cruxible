@@ -78,10 +78,13 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("authoring", "preflight"): "active",
     ("authoring", "rebase"): "active",
     ("authoring", "submit"): "active",
-    ("procedure", "bind"): "active",
     ("procedure", "run"): "active",
     ("procedure", "measure"): "active",
     ("line", "run"): "active",
+    ("line", "enable"): "active",
+    ("line", "disable"): "active",
+    ("line", "evaluate"): "active",
+    ("line", "dispatch"): "active",
     ("proposal", "approve"): "active",
     ("proposal", "activate"): "active",
     ("proposal", "readmit"): "active",
@@ -167,6 +170,8 @@ def handle_errors(f: Any) -> Any:
                 if command_path == ("claim-type", "propose") and kwargs.get("template"):
                     target_mode = None
                 if command_path == ("write",) and kwargs.get("schema"):
+                    target_mode = None
+                if command_path == ("line", "evaluate") and kwargs.get("dry_run"):
                     target_mode = None
                 if target_mode is not None and target_mode != "manual":
                     # Runtime import avoids the main <-> commands import cycle.
@@ -658,14 +663,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "Query accepted state: values with flags, a spec, or a named query.",
     ),
     "procedure": _group(
-        "Inspect, bind, run, and measure accepted Procedures.",
+        "Run and measure accepted Procedures; read one with cruxible get Procedure:<name>.",
         {
-            "readiness": _command(
-                "playbill", "procedure_readiness", "Inspect Procedure readiness."
-            ),
-            "bind": _command("playbill", "bind_procedure", "Bind accepted artifacts to slots."),
             "run": _command("playbill", "run_procedure", "Run an accepted Procedure."),
-            "status": _command("playbill", "procedure_run_status", "Read one Procedure run state."),
             "measure": _command(
                 "playbill",
                 "procedure_measure",
@@ -681,21 +681,19 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         attr="procedure_group",
     ),
     "line": _group(
-        "Trigger accepted Lines.",
+        "Enable, run and recover accepted Lines.",
         {
-            "dispatch": _command("playbill", "dispatch_line", "Dispatch accepted Line work."),
-            "evaluate": _command("playbill", "evaluate_line", "Evaluate accepted Line work."),
-            "arm": _command("playbill", "arm_line", "Admit what a Line matches from now on."),
-            "disarm": _command(
-                "playbill", "disarm_line", "Stop a Line admitting work automatically."
+            "enable": _command(
+                "playbill", "enable_line", "Enable a Line so its Triggers admit work."
             ),
-            "status": _command("playbill", "line_status", "Show a Line's arm and why it stopped."),
-            "check": _command(
-                "playbill",
-                "check_line",
-                "Check trigger eligibility without running a Line.",
+            "disable": _command(
+                "playbill", "disable_line", "Stop a Line admitting work automatically."
             ),
-            "run": _command("playbill", "run_line", "Trigger one due accepted Line occurrence."),
+            "run": _command("playbill", "run_line", "Run a Line once now (manual occurrence)."),
+            "evaluate": _command(
+                "playbill", "evaluate_line", "Turn a missed range into pending Line work."
+            ),
+            "dispatch": _command("playbill", "dispatch_line", "Run a Line's pending work."),
         },
         module="playbill",
         attr="line_group",

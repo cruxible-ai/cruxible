@@ -63,18 +63,6 @@ from cruxible_client.contracts.compact_query import QueryRequest as QueryRequest
 from cruxible_client.contracts.compact_query import QueryResultRecord as QueryResultRecord
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.line_dispatch import (
-    LineArm as LineArm,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineArmOutcome as LineArmOutcome,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipal as LineArmPrincipal,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineArmStopReason as LineArmStopReason,
-)
-from cruxible_client.contracts.line_dispatch import (
     LineDispatchItem as LineDispatchItem,
 )
 from cruxible_client.contracts.line_dispatch import (
@@ -84,13 +72,22 @@ from cruxible_client.contracts.line_dispatch import (
     LineDispatchResult as LineDispatchResult,
 )
 from cruxible_client.contracts.line_dispatch import (
+    LineEnablement as LineEnablement,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineEnablementOutcome as LineEnablementOutcome,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineEnablementPrincipal as LineEnablementPrincipal,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineEnablementStopReason as LineEnablementStopReason,
+)
+from cruxible_client.contracts.line_dispatch import (
     LineEvaluateRequest as LineEvaluateRequest,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineTriggerCheckRequest as LineTriggerCheckRequest,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineTriggerCheckResult as LineTriggerCheckResult,
+    LineEvaluateResult as LineEvaluateResult,
 )
 from cruxible_client.contracts.line_dispatch import (
     LineTriggerOccurrence as LineTriggerOccurrence,
@@ -151,7 +148,11 @@ from cruxible_client.contracts.predictions import (
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifactAny as _ProcedureArtifactAny,
+    ProcedureArtifact as _ProcedureArtifact,
+)
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureNodeSupport,
+    ProcedureRunnable,
 )
 from cruxible_client.contracts.procedures.readings import (
     ProcedureMeasurementContractStatus as ProcedureMeasurementContractStatus,
@@ -185,7 +186,6 @@ from cruxible_client.contracts.procedures.readings import (
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureChildInvocation,
-    ProcedurePendingSuccessor,
     ProcedureRunAttribution,
     ProcedureRunAttributionWithheld,
     ProcedureRunReceipt,
@@ -283,6 +283,8 @@ AuthoringExampleName = Literal[
     "claim-exact-content",
     "claim-revision",
     "procedure",
+    "blueprint",
+    "blueprint-instance",
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
@@ -322,6 +324,8 @@ NextReason: TypeAlias = Literal[
     "proposal_awaiting_approval",
     "mandate_expiring",
     "consumer_stalled",
+    "line_coverage_gap",
+    "line_work_pending",
     "evidence_unavailable",
     "prediction_settleable",
     "prediction_window_unbindable",
@@ -342,7 +346,8 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.proposal.readmit",
     "cruxible.proposal.approve",
     "cruxible.compiler.upgrade",
-    "cruxible.line.arm",
+    "cruxible.line.enable",
+    "cruxible.line.evaluate",
     "cruxible.line.dispatch",
     "cruxible.prediction.settle",
     "hand_edit",
@@ -554,7 +559,7 @@ class ProviderLaneStatus(BaseModel):
 
 
 class ConsumerStatus(BaseModel):
-    """One daemon consumer on one instance: an armed Line, or a built-in worker."""
+    """One daemon consumer on one instance: an enabled Line, or a built-in worker."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1271,20 +1276,20 @@ class BlockDepublishResult(BaseModel):
 
 
 class ProcedureReadiness(BaseModel):
+    """How one accepted Procedure can run, with its exact artifact (SDK internal read)."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-procedure-readiness-result-v1"] = (
         "playbill-procedure-readiness-result-v1"
     )
     coordinate: AcceptedCoordinate
-    evaluation_time: str
     procedure_identity: dict[str, Any]
     procedure_artifact_digest: str
     definition_digest: str
-    artifact: _ProcedureArtifactAny | None = None
-    state: Literal["ready", "binding_required", "unsupported"]
-    required_slots: list[str]
-    unsupported_nodes: list[dict[str, Any]]
+    artifact: _ProcedureArtifact
+    runnable: ProcedureRunnable
+    unsupported_nodes: list[ProcedureNodeSupport]
     next_operation: dict[str, Any]
 
 
@@ -1296,16 +1301,6 @@ class PolicyInForceList(BaseModel):
     policies: list[PolicyInForce]
     truncated: bool = False
     next_cursor: str | None = None
-
-
-class ProcedureBindResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-procedure-bind-result-v2"] = "playbill-procedure-bind-result-v2"
-    accepted_digest: str
-    accepted_readiness: ProcedureReadiness
-    pending: "ProcedurePendingSuccessor | None" = None
-    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
 class ProcedureRunState(BaseModel):

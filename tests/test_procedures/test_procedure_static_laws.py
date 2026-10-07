@@ -1,4 +1,4 @@
-"""PC-D static laws for semantic pins, aliases, and terminal authority."""
+"""Static laws for semantic pins, aliases, and terminal authority."""
 
 from __future__ import annotations
 
@@ -12,12 +12,13 @@ from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
-    analyze_procedure_v3,
-    compute_procedure_definition_digest_v3,
-    compute_procedure_node_digests_v3,
+    analyze_procedure,
+    compute_procedure_definition_digest,
+    compute_procedure_node_digests,
 )
 from cruxible_client.contracts.procedures.models import (
-    CaptureEgressNodeV3,
+    CallNode,
+    CaptureEgressNode,
     ExhaustTapNode,
     GuardNode,
     GuardPredicate,
@@ -25,17 +26,16 @@ from cruxible_client.contracts.procedures.models import (
     InboxEgressNode,
     PredicateOperand,
     ProcedureBudget,
-    ProcedureDefinitionV3,
+    ProcedureDefinition,
     ProcedureHardCaps,
     ProcedurePinSlot,
     ProcedurePinSlotRef,
     ProjectNode,
-    ProposeChangeSetNodeV3,
-    ProviderNodeV3,
-    RepeatBodyNodeV3,
-    RepeatNodeV3,
-    SourceNodeV3,
-    StateTapNodeV3,
+    ProposeChangeSetNode,
+    RepeatBodyNode,
+    RepeatNode,
+    SourceNode,
+    StateTapNode,
     TransformNode,
 )
 
@@ -67,8 +67,8 @@ def _definition(
     terminal_capability: int = 3,
     pin_slots: tuple[ProcedurePinSlot, ...] = (),
     parameter_contract: ArtifactPin | None = None,
-) -> ProcedureDefinitionV3:
-    return ProcedureDefinitionV3(
+) -> ProcedureDefinition:
+    return ProcedureDefinition(
         name="static-laws",
         contract_in=_pin("contract-in", "Contract", "definition-input"),
         contract_out=_pin("contract-out", "Contract", "definition-output"),
@@ -93,23 +93,29 @@ def _definition(
     )
 
 
-def _kitchen_sink_definition() -> ProcedureDefinitionV3:
+def _kitchen_sink_definition() -> ProcedureDefinition:
     contract_in = _pin("contract-in", "Contract", "node-input")
     contract_out = _pin("contract-out", "Contract", "node-output")
-    environment = _pin("environment", "EnvironmentManifest", "runtime")
     provider = _pin("provider", "Provider", "worker")
+    interface = _pin("provider-interface", "ProviderInterface", "worker.interface")
+    provider_binding = {
+        "provider": provider,
+        "interface": interface,
+        "interface_digest": _digest("worker-interface"),
+        "implementation_digest": _digest("worker-implementation"),
+    }
     return _definition(
         (
-            StateTapNodeV3(
+            StateTapNode(
                 node_id="state",
                 query=_pin("query", "QueryDefinition", "accepted-state"),
                 parameters={},
                 as_="state_rows",
             ),
-            SourceNodeV3(
+            SourceNode(
                 node_id="source",
                 capture_contract=_pin("capture-contract", "CaptureContract", "source-capture"),
-                provider=provider,
+                **provider_binding,
                 request={"state": "$steps.state_rows"},
                 as_="source_rows",
             ),
@@ -119,12 +125,11 @@ def _kitchen_sink_definition() -> ProcedureDefinitionV3:
                 journal_identity="run-exhaust",
                 as_="exhaust_rows",
             ),
-            ProviderNodeV3(
+            CallNode(
                 node_id="provider",
-                provider=provider,
+                **provider_binding,
                 contract_in=contract_in,
                 contract_out=contract_out,
-                environment=environment,
                 effect_policy=_pin("effect-policy", "EffectPolicy", "provider-effects"),
                 input={"source": "$steps.source_rows"},
                 as_="provider_rows",
@@ -148,11 +153,11 @@ def _kitchen_sink_definition() -> ProcedureDefinitionV3:
                 contract_out=contract_out,
                 as_="projected_rows",
             ),
-            RepeatNodeV3(
+            RepeatNode(
                 node_id="repeat",
                 max_attempts=2,
                 body=(
-                    RepeatBodyNodeV3(
+                    RepeatBodyNode(
                         node_id="body-transform",
                         operation="transform",
                         transform_kind="adapter",
@@ -164,13 +169,12 @@ def _kitchen_sink_definition() -> ProcedureDefinitionV3:
                         },
                         as_="body_rows",
                     ),
-                    RepeatBodyNodeV3(
+                    RepeatBodyNode(
                         node_id="body-provider",
-                        operation="provider",
-                        provider=provider,
+                        operation="call",
+                        **provider_binding,
                         contract_in=contract_in,
                         contract_out=contract_out,
-                        environment=environment,
                         spec={"rows": "$steps.body_rows"},
                         as_="body_result",
                     ),
@@ -178,10 +182,11 @@ def _kitchen_sink_definition() -> ProcedureDefinitionV3:
                 until=_predicate("body_result"),
                 as_="repeated_rows",
             ),
-            CaptureEgressNodeV3(
+            CaptureEgressNode(
                 node_id="capture",
                 capture_contract=_pin("capture-contract", "CaptureContract", "result-capture"),
                 input={"rows": "$steps.repeated_rows"},
+                result="$steps.repeated_rows",
             ),
         ),
         returns="repeated_rows",
@@ -205,11 +210,12 @@ def _replace_path(root: object, path: tuple[object, ...], value: object) -> None
         ("nodes", 0, "query"),
         ("nodes", 1, "capture_contract"),
         ("nodes", 1, "provider"),
+        ("nodes", 1, "interface"),
         ("nodes", 2, "reducer_or_query"),
         ("nodes", 3, "provider"),
+        ("nodes", 3, "interface"),
         ("nodes", 3, "contract_in"),
         ("nodes", 3, "contract_out"),
-        ("nodes", 3, "environment"),
         ("nodes", 3, "effect_policy"),
         ("nodes", 4, "contract_in"),
         ("nodes", 4, "contract_out"),
@@ -217,9 +223,9 @@ def _replace_path(root: object, path: tuple[object, ...], value: object) -> None
         ("nodes", 6, "body", 0, "contract_in"),
         ("nodes", 6, "body", 0, "contract_out"),
         ("nodes", 6, "body", 1, "provider"),
+        ("nodes", 6, "body", 1, "interface"),
         ("nodes", 6, "body", 1, "contract_in"),
         ("nodes", 6, "body", 1, "contract_out"),
-        ("nodes", 6, "body", 1, "environment"),
         ("nodes", 7, "capture_contract"),
     ),
 )
@@ -231,7 +237,7 @@ def test_semantic_pin_expectations_cover_every_exact_field(
     _replace_path(payload, path, wrong)
 
     with pytest.raises(ValidationError, match="requires role="):
-        ProcedureDefinitionV3.model_validate(payload)
+        ProcedureDefinition.model_validate(payload)
 
 
 def test_semantic_pin_expectations_validate_slot_declarations_not_only_bindings() -> None:
@@ -244,7 +250,7 @@ def test_semantic_pin_expectations_validate_slot_declarations_not_only_bindings(
     with pytest.raises(ValidationError, match="slot 'query'.*requires role='query'"):
         _definition(
             (
-                StateTapNodeV3(
+                StateTapNode(
                     node_id="state",
                     query=ProcedurePinSlotRef(slot_name="query"),
                     as_="rows",
@@ -259,7 +265,7 @@ def test_branch_join_tracks_must_availability_separately_from_may_reachability()
     contract_out = _pin("contract-out", "Contract", "result")
     definition = _definition(
         (
-            StateTapNodeV3(
+            StateTapNode(
                 node_id="state",
                 query=_pin("query", "QueryDefinition", "state"),
                 as_="rows",
@@ -289,14 +295,14 @@ def test_branch_join_tracks_must_availability_separately_from_may_reachability()
         returns="result",
     )
 
-    graph = analyze_procedure_v3(definition)
+    graph = analyze_procedure(definition)
     assert graph.available_aliases["join"] == frozenset({"rows"})
     assert graph.reachable_aliases["join"] == frozenset({"rows", "hot_rows"})
 
     payload = definition.model_dump(mode="json", by_alias=True)
     payload["nodes"][3]["fields"] = {"hot": "$steps.hot_rows"}
     with pytest.raises(ProcedureGraphFormatError, match="not produced on every path"):
-        ProcedureDefinitionV3.model_validate(payload)
+        ProcedureDefinition.model_validate(payload)
 
 
 def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
@@ -304,7 +310,7 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
     with pytest.raises(ProcedureGraphFormatError, match="not produced on every path"):
         _definition(
             (
-                StateTapNodeV3(
+                StateTapNode(
                     node_id="state",
                     query=_pin("query", "QueryDefinition", "state"),
                     as_="rows",
@@ -345,7 +351,7 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
 def test_trailing_halt_is_a_terminal_graph_leaf_without_edges() -> None:
     definition = _definition(
         (
-            StateTapNodeV3(
+            StateTapNode(
                 node_id="read",
                 query=_pin("query", "QueryDefinition", "halt-input"),
                 as_="rows",
@@ -356,15 +362,15 @@ def test_trailing_halt_is_a_terminal_graph_leaf_without_edges() -> None:
         terminal_capability=1,
     )
 
-    graph = analyze_procedure_v3(definition)
+    graph = analyze_procedure(definition)
 
     assert graph.edges["read"] == {"next": "stop"}
     assert graph.edges["stop"] == {}
 
 
-def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinitionV3:
+def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinition:
     contract_out = _pin("contract-out", "Contract", "guard-layout-result")
-    read = StateTapNodeV3(
+    read = StateTapNode(
         node_id="read",
         query=_pin("query", "QueryDefinition", "guard-layout-input"),
         as_="rows",
@@ -393,16 +399,14 @@ def test_guard_arm_halt_layout_order_has_identical_graph_identity() -> None:
     halt_first = _guard_halt_layout(halt_before_return=True)
     halt_last = _guard_halt_layout(halt_before_return=False)
 
-    first_graph = analyze_procedure_v3(halt_first)
-    last_graph = analyze_procedure_v3(halt_last)
+    first_graph = analyze_procedure(halt_first)
+    last_graph = analyze_procedure(halt_last)
     assert first_graph.edges == last_graph.edges
     assert last_graph.edges["result"] == {}
     assert last_graph.predecessors["stop"] == ("gate",)
-    assert compute_procedure_node_digests_v3(halt_first) == (
-        compute_procedure_node_digests_v3(halt_last)
-    )
-    assert compute_procedure_definition_digest_v3(halt_first) == (
-        compute_procedure_definition_digest_v3(halt_last)
+    assert compute_procedure_node_digests(halt_first) == (compute_procedure_node_digests(halt_last))
+    assert compute_procedure_definition_digest(halt_first) == (
+        compute_procedure_definition_digest(halt_last)
     )
 
 
@@ -465,7 +469,7 @@ def test_nonterminal_guard_keeps_implicit_true_fallthrough() -> None:
         returns="result",
     )
 
-    assert analyze_procedure_v3(definition).edges["gate"] == {
+    assert analyze_procedure(definition).edges["gate"] == {
         "on_false": "$abort",
         "on_true": "result",
     }
@@ -476,7 +480,7 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
     with pytest.raises(ProcedureGraphFormatError) as raised:
         _definition(
             (
-                StateTapNodeV3(
+                StateTapNode(
                     node_id="read",
                     query=_pin("query", "QueryDefinition", "guard-tail-input"),
                     as_="rows",
@@ -529,6 +533,7 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
         ("nodes", 5, "fields"),
         ("nodes", 6, "body", 0, "spec", "value"),
         ("nodes", 7, "input"),
+        ("nodes", 7, "result"),
     ),
 )
 def test_structured_step_references_are_checked_in_every_runtime_template(
@@ -537,7 +542,7 @@ def test_structured_step_references_are_checked_in_every_runtime_template(
     payload = _kitchen_sink_definition().model_dump(mode="json", by_alias=True)
     _replace_path(payload, path, {"missing": "$steps.missing"})
     with pytest.raises(ProcedureGraphFormatError, match="missing"):
-        ProcedureDefinitionV3.model_validate(payload)
+        ProcedureDefinition.model_validate(payload)
 
 
 def test_transform_specs_are_tagged_closed_and_kind_matched() -> None:
@@ -568,17 +573,19 @@ def test_transform_specs_are_tagged_closed_and_kind_matched() -> None:
     (
         (InboxEgressNode(node_id="inbox", input="$steps.result"), 1, True),
         (
-            ProposeChangeSetNodeV3(
+            ProposeChangeSetNode(
                 node_id="propose",
                 candidate_templates=({"input": "$steps.result"},),
+                result="$steps.result",
             ),
             1,
             False,
         ),
         (
-            ProposeChangeSetNodeV3(
+            ProposeChangeSetNode(
                 node_id="propose",
                 candidate_templates=({"input": "$steps.result"},),
+                result="$steps.result",
             ),
             2,
             True,
@@ -618,12 +625,14 @@ def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
     contract_out = _pin("contract-out", "Contract", "provider-output")
     definition = _definition(
         (
-            ProviderNodeV3(
+            CallNode(
                 node_id="provider",
                 provider=_pin("provider", "Provider", "external"),
+                interface=_pin("provider-interface", "ProviderInterface", "external.interface"),
+                interface_digest=_digest("external-interface"),
+                implementation_digest=_digest("external-implementation"),
                 contract_in=contract_in,
                 contract_out=contract_out,
-                environment=_pin("environment", "EnvironmentManifest", "runtime"),
                 effect_policy=_pin("effect-policy", "EffectPolicy", "external-effects"),
                 input={},
                 as_="provider_result",
@@ -645,9 +654,10 @@ def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
     "terminal",
     (
         InboxEgressNode(node_id="inbox", input="$steps.missing"),
-        ProposeChangeSetNodeV3(
+        ProposeChangeSetNode(
             node_id="propose",
             candidate_templates=({"input": "$steps.missing"},),
+            result="$steps.result",
         ),
     ),
 )

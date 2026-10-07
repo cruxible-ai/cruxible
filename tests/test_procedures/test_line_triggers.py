@@ -1,4 +1,4 @@
-"""Accepted Line trigger checks share exact binding semantics with admission."""
+"""Accepted Line trigger evaluation shares exact binding semantics with admission."""
 
 from datetime import timedelta
 from pathlib import Path
@@ -15,7 +15,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_client.contracts.line_dispatch import LineTriggerCheckRequest
+from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
@@ -29,14 +29,14 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.triggers import CaptureLandingSchedule, WindowCloseSchedule
 from cruxible_core.exhaust import ProcedureExhaustWriter
-from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
+from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
 from cruxible_core.service.procedures.procedure_runs import (
     PROCEDURE_RUN_FENCING_TOKEN,
     _activate_writer,
     _journal,
     _stream,
 )
-from tests.support.lines import graph_v4, line_trigger, trigger_members
+from tests.support.lines import line_trigger, trigger_members
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_independent_resolution_contracts import contract_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor, _slotless_procedure
@@ -56,13 +56,13 @@ TRIGGER = "trigger-test-trigger"
 
 
 def line_world(tmp_path, schedule, *, with_owner=False, triggers=None):
-    """An accepted Line v6 and the Trigger aimed at it on `schedule`.
+    """An accepted Line and the Trigger aimed at it on `schedule`.
 
     `triggers` replaces the one default Trigger with several (or none).
     """
 
     instance, owner, contract = contract_world(tmp_path)
-    accepted = graph_v4(_slotless_procedure("trigger-method"))
+    accepted = _slotless_procedure("trigger-method")
     procedure = accepted.procedure
     policy = _acquisition_policy("trigger-policy")
     line = _served_line("trigger-test", accepted=accepted, policy=policy)
@@ -124,12 +124,16 @@ def capture(
     )
 
 
+def _dry_run(instance, line, request, *, now):  # type: ignore[no-untyped-def]
+    """The public read of what a range makes eligible: evaluate --dry-run, no actor."""
+
+    return service_evaluate_line(instance, line.identity.name, request, actor=None, now=now)
+
+
 def test_indexed_capture_check_is_read_only_scoped_and_paginated(tmp_path: Path, monkeypatch):
     instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     assert (
-        service_check_line_trigger(
-            instance, line.identity.name, LineTriggerCheckRequest(), now=READ_TIME
-        ).status
+        _dry_run(instance, line, LineEvaluateRequest(dry_run=True), now=READ_TIME).status
         == "not_met"
     )
     capture(instance, procedure, digest="sha256:" + "b" * 64)
@@ -138,16 +142,11 @@ def test_indexed_capture_check_is_read_only_scoped_and_paginated(tmp_path: Path,
     journal, _ = _journal(instance)
     before = journal.read_head(_stream(instance), first.record.partition_id)
     until = READ_TIME + timedelta(seconds=2)
-    request = LineTriggerCheckRequest(until=until, limit=1)
-    result = service_check_line_trigger(instance, line.identity.name, request, now=until)
+    request = LineEvaluateRequest(until=until, limit=1, dry_run=True)
+    result = _dry_run(instance, line, request, now=until)
     assert result.status == "incomplete" and result.cursor
     assert result.occurrences[0].binding.event.record_digest == second.record_digest
-    page = service_check_line_trigger(
-        instance,
-        line.identity.name,
-        request.model_copy(update={"cursor": result.cursor}),
-        now=until,
-    )
+    page = _dry_run(instance, line, request.model_copy(update={"cursor": result.cursor}), now=until)
     assert page.status == "met" and page.cursor is None
     assert page.occurrences[0].binding.event.record_digest == first.record_digest
     assert not page.occurrences[0].pending and page.occurrences[0].admitted_run_id is None
@@ -157,9 +156,7 @@ def test_indexed_capture_check_is_read_only_scoped_and_paginated(tmp_path: Path,
     monkeypatch.setattr(type(journal), "all_records", lambda *a: pytest.fail("full journal scan"))
     monkeypatch.setattr(type(journal), "partition_ids", lambda *a: pytest.fail("partition walk"))
     assert (
-        service_check_line_trigger(
-            instance, line.identity.name, LineTriggerCheckRequest(until=until), now=until
-        ).status
+        _dry_run(instance, line, LineEvaluateRequest(until=until, dry_run=True), now=until).status
         == "met"
     )
 
@@ -168,18 +165,18 @@ def test_window_eligibility_uses_fixed_event_boundary_and_missing_evidence_is_in
     policy = WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=60))
     instance, line, procedure = line_world(tmp_path, policy)
     stored = capture(instance, procedure)
-    before = service_check_line_trigger(
+    before = _dry_run(
         instance,
-        line.identity.name,
-        LineTriggerCheckRequest(),
+        line,
+        LineEvaluateRequest(dry_run=True),
         now=READ_TIME + timedelta(seconds=59),
     )
     assert before.status == "not_met"
     end = READ_TIME + timedelta(seconds=60)
-    after = service_check_line_trigger(
+    after = _dry_run(
         instance,
-        line.identity.name,
-        LineTriggerCheckRequest(since=end, until=end + timedelta(seconds=1)),
+        line,
+        LineEvaluateRequest(since=end, until=end + timedelta(seconds=1), dry_run=True),
         now=end + timedelta(days=1),
     )
     assert after.status == "met"
@@ -188,8 +185,5 @@ def test_window_eligibility_uses_fixed_event_boundary_and_missing_evidence_is_in
     path = journal._record_log_path_for_testing(_stream(instance), stored.record.partition_id)
     path.unlink()
     assert (
-        service_check_line_trigger(
-            instance, line.identity.name, LineTriggerCheckRequest(), now=end
-        ).status
-        == "incomplete"
+        _dry_run(instance, line, LineEvaluateRequest(dry_run=True), now=end).status == "incomplete"
     )

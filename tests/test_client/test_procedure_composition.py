@@ -401,5 +401,6 @@ def test_a_settle_step_ends_its_path_and_derives_settle_authority():
     preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
     assert preview.terminals == ("settle",)
-    assert preview.nodes[-1]["kind"] == "settle_change_set"
+    last = preview.nodes[-1]
+    assert (last["kind"] if isinstance(last, dict) else last.kind) == "settle_change_set"
     assert plan.build().definition["terminal_capability"] == 3

@@ -36,14 +36,15 @@ from cruxible_client.contracts.operational_reads import (
     LINE_CARD_RUNS,
     OPERATIONAL_CARD_LIST_LIMIT,
     GetCaptureCard,
-    GetLineArm,
     GetLineCard,
+    GetLineEnablement,
     GetLineOccurrence,
     GetLineTrigger,
     GetMandateCard,
     GetPredictionWindow,
     GetResolutionContractCard,
-    LineArmState,
+    LineEnablementState,
+    LineTriggersInactive,
     LiveHead,
     LiveView,
     MandateState,
@@ -61,7 +62,6 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
-    LineSpecAny,
     line_identity_digest,
     line_requested_rung,
 )
@@ -85,7 +85,6 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.operational_viewer import (
     OperationalViewer,
-    arm_principal_kind,
     may_see_arming,
 )
 from cruxible_core.service.discovery.runs import run_counts, run_rows
@@ -118,7 +117,16 @@ def live_view(instance: PlaybillInstance, fields: tuple[str, ...]) -> LiveView:
 
 #: What each card reads live.
 LIVE_CARD_FIELDS: dict[str, tuple[str, ...]] = {
-    "line": ("arms", "arms_total", "due", "waiting", "occurrences", "recent_runs", "runs_total"),
+    "line": (
+        "triggers_inactive",
+        "enablements",
+        "enablements_total",
+        "due",
+        "waiting",
+        "occurrences",
+        "recent_runs",
+        "runs_total",
+    ),
     "resolution_contract": ("state", "windows", "windows_total"),
     "capture": ("status", "status_detail"),
     "procedure_run": ("card",),
@@ -200,19 +208,17 @@ def uncited_capture_present(instance: PlaybillInstance, digest: str) -> bool:
 # -- Lines -----------------------------------------------------------------------------
 
 
-def trigger_kind(line: LineSpecAny, schedule_kinds: Sequence[str]) -> str:
+def trigger_kind(schedule_kinds: Sequence[str]) -> str:
     """The kinds of schedule that set a Line off.
 
-    A v6 Line embeds no trigger: the schedule kinds of the live Triggers aimed
-    at it say when it fires, and with none it is ``manual`` (it runs only when
-    run explicitly). An older Line answers from the trigger it embeds.
+    A Line embeds no trigger: the schedule kinds of the live Triggers aimed at
+    it say when it fires, and with none it is ``manual`` (it runs only when run
+    explicitly).
     """
 
-    if isinstance(line, LineSpec):
-        if not schedule_kinds:
-            return "manual"
-        return "+".join(sorted(set(schedule_kinds)))
-    return line.trigger_policy.kind
+    if not schedule_kinds:
+        return "manual"
+    return "+".join(sorted(set(schedule_kinds)))
 
 
 @dataclass(frozen=True)
@@ -265,7 +271,7 @@ def aimed_trigger_page(
 
 def line_arm_states(
     instance: PlaybillInstance, digests: Mapping[str, str], *, now: datetime
-) -> dict[str, LineArmState | None]:
+) -> dict[str, LineEnablementState | None]:
     """Each Line's latest arm state (by Line identity), from one dispatch-store session."""
 
     if not digests or not dispatch_root(instance).exists():
@@ -310,7 +316,7 @@ def window_summary(window: object) -> str:
     return "its window"
 
 
-def line_authority(line: LineSpecAny) -> Literal["observe", "propose", "settle"]:
+def line_authority(line: LineSpec) -> Literal["observe", "propose", "settle"]:
     return RUNG_AUTHORITY[line_requested_rung(line)]
 
 
@@ -324,14 +330,14 @@ def _line_stall_after() -> timedelta:
 class LineOperations:
     """What the Line dispatch projection holds for one Line, as of ``now``."""
 
-    arms: tuple[GetLineArm, ...] = ()
+    arms: tuple[GetLineEnablement, ...] = ()
     arms_total: int = 0
     due: int = 0
     waiting: int = 0
     occurrences: tuple[GetLineOccurrence, ...] = ()
 
     @property
-    def arm_state(self) -> LineArmState | None:
+    def arm_state(self) -> LineEnablementState | None:
         return self.arms[0].state if self.arms else None
 
 
@@ -342,7 +348,7 @@ def _arm(
     *,
     now: datetime,
     viewer: OperationalViewer | None,
-) -> GetLineArm:
+) -> GetLineEnablement:
     active = data["stops_at"] is None
     automatic = (
         int(
@@ -361,7 +367,7 @@ def _arm(
         ).fetchone()[0]
     )
     view = store.arm_view(data, pending_automatic=automatic, pending_explicit=total - automatic)
-    state: LineArmState
+    state: LineEnablementState
     if active:
         oldest = conn.execute(
             "SELECT min(eligible_at) FROM pending WHERE session_id=? AND disposition='pending'",
@@ -370,16 +376,19 @@ def _arm(
         stalled = oldest is not None and _instant(oldest) <= now - _line_stall_after()
         state = "stalled" if stalled else "running"
     else:
-        state = "disarmed" if view.stop_reason in {None, "disarmed"} else "stopped"
-    visible = may_see_arming(viewer, view.armed_by)
-    return GetLineArm(
-        arm=view.arm_id,
+        state = "disabled" if view.stop_reason in {None, "disabled"} else "stopped"
+    visible = may_see_arming(viewer, view.enabled_by)
+    return GetLineEnablement(
+        enablement=view.enablement_id,
         state=state,
-        principal_kind=arm_principal_kind(data["armed_by"], view.armed_by),
-        armed_by=view.armed_by.label if visible else None,
-        credential=view.armed_by.credential_id if visible else None,
-        armed_by_withheld=not visible,
-        armed_at=view.armed_at,
+        principal_kind=view.enabled_by.kind,
+        enabled_by=view.enabled_by.label if visible else None,
+        credential=view.enabled_by.credential_id if visible else None,
+        enabled_by_withheld=not visible,
+        enabled_at=view.enabled_at,
+        line_artifact_digest=view.line_artifact_digest,
+        triggers=view.triggers,
+        evaluated_until=view.evaluated_until,
         stopped_at=view.stopped_at,
         stop_reason=view.stop_reason,
         detail=view.detail,
@@ -481,7 +490,7 @@ def line_card(
     viewer: OperationalViewer | None = None,
 ) -> GetLineCard:
     with instance.bind_accepted_projection(coordinate) as projection:
-        line = cast(LineSpecAny, projection.typed.source(identity))
+        line = cast(LineSpec, projection.typed.source(identity))
         aimed = aimed_trigger_page(
             projection, (line.identity.qualified,), limit=OPERATIONAL_CARD_LIST_LIMIT
         )[line.identity.qualified]
@@ -494,7 +503,7 @@ def line_card(
             for name in aimed.identities
         )
     digest = line_identity_digest(line.identity)
-    trigger = trigger_kind(line, aimed.schedule_kinds)
+    trigger = trigger_kind(aimed.schedule_kinds)
     procedure = line.procedure.target.qualified
     next_steps = [render(procedure, None)]
     next_steps.extend(render(item.trigger, None) for item in triggers)
@@ -502,8 +511,8 @@ def line_card(
     runs, _more = run_rows(instance, limit=LINE_CARD_RUNS, line=line.identity)
     total, _running = run_counts(instance, line=line.identity)
     fields: dict[str, Any] = dict(
-        arms=operations.arms,
-        arms_total=operations.arms_total,
+        enablements=operations.arms,
+        enablements_total=operations.arms_total,
         due=operations.due,
         waiting=operations.waiting,
         occurrences=operations.occurrences,
@@ -521,10 +530,21 @@ def line_card(
         trigger=trigger,
         triggers=triggers,
         triggers_total=aimed.total,
+        triggers_inactive=_triggers_inactive(line, aimed.total, operations.arm_state),
         occurrence_epoch=line.occurrence_epoch,
         next=tuple(next_steps),
         **fields,
     )
+
+
+def _triggers_inactive(
+    line: LineSpec, aimed: int, state: LineEnablementState | None
+) -> LineTriggersInactive | None:
+    """Triggers aimed at a live Line that is not enabled do nothing: say so."""
+
+    if aimed and line.lifecycle.state == "live" and state not in {"running", "stalled"}:
+        return "not enabled"
+    return None
 
 
 def _revision(projection: Any, identity: str) -> int:
@@ -542,7 +562,7 @@ def line_rows(
 
     with instance.bind_accepted_projection(coordinate) as projection:
         lines = [
-            cast(LineSpecAny, projection.typed.source(str(identity)))
+            cast(LineSpec, projection.typed.source(str(identity)))
             for (identity,) in projection.typed.connection.execute(
                 "SELECT identity FROM lines ORDER BY identity"
             )
@@ -573,8 +593,11 @@ def line_rows(
                 lifecycle="retired" if line.lifecycle.state == "retired" else "live",
                 procedure=line.procedure.target.qualified,
                 authority=line_authority(line),
-                trigger=trigger_kind(line, triggers[line.identity.qualified].schedule_kinds),
-                arm=operations.arm_state,
+                trigger=trigger_kind(triggers[line.identity.qualified].schedule_kinds),
+                enablement=operations.arm_state,
+                triggers_inactive=_triggers_inactive(
+                    line, triggers[line.identity.qualified].total, operations.arm_state
+                ),
                 due=operations.due,
                 waiting=operations.waiting,
             )

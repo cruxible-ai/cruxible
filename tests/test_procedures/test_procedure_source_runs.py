@@ -1,4 +1,4 @@
-"""Served graph-v4 Source runs: a Procedure reads a workspace file, typed.
+"""Served Source runs: a Procedure reads a workspace file, typed.
 
 These are lane tests, not kernel tests: everything from the accepted tree to the
 run receipt is the real served path -- accepted Provider seed, accepted
@@ -49,6 +49,8 @@ from cruxible_client.contracts.procedure_mandates import (
     render_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.artifacts import (
+    DIRECT_NODE_KINDS,
+    LINE_NODE_KINDS,
     ProcedureArtifact,
     ProcedureOwnedContract,
     procedure_artifact_digest,
@@ -57,7 +59,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
     line_identity_digest,
@@ -65,14 +67,12 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    CaptureEgressNodeV3,
+    CaptureEgressNode,
     ProcedureBudget,
-    ProcedureDefinitionV3,
-    ProcedureDefinitionV4,
+    ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
     SourceNode,
-    SourceNodeV3,
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusal,
@@ -115,11 +115,9 @@ from cruxible_core.providers.provider_runtime_contract import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.procedures.procedure_runs import (
-    SERVED_NODE_KINDS,
     LineRunRequest,
     ProcedureReadinessRequestV1,
     ProcedureRunRequest,
-    served_node_kinds,
     service_get_playbill_procedure_run,
     service_playbill_procedure_readiness,
     service_run_playbill_line,
@@ -286,7 +284,7 @@ def _procedure(  # noqa: PLR0913
         artifact_digest=capture_contract_digest(contract).tagged,
     )
     request = _source_request(instance, root).model_copy(update={"relative_path": relative_path})
-    definition = ProcedureDefinitionV4(
+    definition = ProcedureDefinition(
         name=PROCEDURE_NAME,
         description="Read one accepted advisory document and shape its severity.",
         contract_in=contract_in,
@@ -331,7 +329,7 @@ def _procedure(  # noqa: PLR0913
     return ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=PROCEDURE_NAME),
         definition=definition,
-        definition_digest=compute_procedure_definition_digest_v4(definition).tagged,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
         pins=tuple(
             sorted(
                 (
@@ -512,82 +510,41 @@ def _run(  # type: ignore[no-untyped-def]
 # --- law ---------------------------------------------------------------------
 
 
-def test_source_is_served_on_both_run_lanes_only_in_graph_v4() -> None:
-    """The law moves by one token, and only for the generation that can plan it."""
+def test_source_is_served_on_the_direct_lane_and_terminals_only_on_a_line() -> None:
+    """A Source reads; it runs on its own. Every terminal waits for a Line."""
 
-    assert "source" in SERVED_NODE_KINDS
-    assert "source" in served_node_kinds(4)
-    assert "source" not in served_node_kinds(3)
-    # Terminals and post_inbox stay dark on both lanes.
-    assert SERVED_NODE_KINDS.isdisjoint({"emit_capture", "post_inbox", "propose_change_set"})
+    assert "source" in DIRECT_NODE_KINDS
+    # Terminals and post_inbox stay dark on the direct lane.
+    assert DIRECT_NODE_KINDS.isdisjoint({"emit_capture", "post_inbox", "propose_change_set"})
+    assert {"emit_capture", "post_inbox", "propose_change_set"} <= LINE_NODE_KINDS
 
 
-def test_the_sdk_authors_a_source_node_on_v4_and_refuses_it_on_v3(tmp_path: Path) -> None:
-    """The SDK gate and the run lane move together: one token, one generation."""
+def test_the_sdk_authors_a_source_node(tmp_path: Path) -> None:
+    """The SDK authors the same Source graph the run lane executes."""
 
-    from cruxible_client.authoring.sdk import CapabilityNotServed, Cruxible, ProcedureDraft
+    from cruxible_client.authoring.sdk import Cruxible, ProcedureDraft
 
-    instance, _owner, procedure, _root, _policy_artifact = _world(tmp_path)
+    _instance, _owner, procedure, _root, _policy_artifact = _world(tmp_path)
     draft = Cruxible.procedure(
         object(),
         definition=_sdk_procedure_input(procedure),
     )
     assert isinstance(draft, ProcedureDraft)
 
-    v3_source = _graph_v3_source_definition(procedure)
-    with pytest.raises(CapabilityNotServed) as excinfo:
-        Cruxible.procedure(
-            object(),
-            definition=ProcedureInput(
-                kind="procedure",
-                definition=v3_source.model_dump(mode="json", by_alias=True),
-                activation_policy="drain",
-            ),
-        )
-    assert excinfo.value.code == "cruxible.sdk.procedure_capability_not_served"
-    assert served_node_kinds(4) - served_node_kinds(3) == {"source"}
-
-
-def _graph_v3_source_definition(procedure: ProcedureArtifact) -> ProcedureDefinitionV3:
-    """The same shape one generation back, where nothing can plan the read."""
-
-    source = procedure.definition.nodes[0]
-    assert isinstance(source, SourceNode)
-    return ProcedureDefinitionV3(
-        name=procedure.definition.name,
-        contract_in=procedure.definition.contract_in,
-        contract_out=procedure.definition.contract_out,
-        nodes=(
-            SourceNodeV3(
-                node_id=source.node_id,
-                capture_contract=source.capture_contract,
-                provider=source.provider,
-                request=source.request,
-                as_=source.as_,
-                next="shape",
-            ),
-            procedure.definition.nodes[1],
-        ),
-        returns=procedure.definition.returns,
-        budget=procedure.definition.budget,
-        hard_caps=procedure.definition.hard_caps,
-        terminal_capability=procedure.definition.terminal_capability,
-    )
-
 
 # --- the served direct lane --------------------------------------------------
 
 
-def test_readiness_reports_a_v4_source_procedure_ready(tmp_path: Path) -> None:
+def test_readiness_reports_a_source_procedure_directly_runnable(tmp_path: Path) -> None:
     instance, _owner, _procedure, _root, _policy_artifact = _world(tmp_path)
 
     readiness = service_playbill_procedure_readiness(
         instance,
         name=PROCEDURE_NAME,
-        request=ProcedureReadinessRequestV1(evaluation_time=NOW),
+        request=ProcedureReadinessRequestV1(),
     )
 
-    assert readiness.state == "ready"
+    assert readiness.runnable == "direct"
     assert readiness.unsupported_nodes == ()
     assert readiness.next_operation.kind == "run"
 
@@ -690,11 +647,7 @@ def _served_line(
     procedure: ProcedureArtifact,
     policy: SourceAcquisitionPolicy,
 ) -> LineSpec:
-    """A Line over the same graph-v4 Source Procedure the direct lane runs.
-
-    This Procedure pins its Provider exactly, so it fills no slot and its
-    closure list is empty.
-    """
+    """A Line over the same Source Procedure the direct lane runs."""
 
     procedure_pin = ArtifactPin(
         role="procedure",
@@ -708,7 +661,6 @@ def _served_line(
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
-        slot_bindings=(),
         acquisition_policy=policy_pin,
         max_authority="observe",
         budgets={
@@ -728,7 +680,6 @@ def _served_line(
                 ),
             )
         ),
-        provider_implementation_closures=(),
     )
 
 
@@ -774,7 +725,7 @@ def _run_line(instance, root, line, *, invoker=None):  # type: ignore[no-untyped
             instance,
             path_identity_digest=identity_digest,
             request=LineRunRequest(
-                line_identity_digest=identity_digest,
+                line=identity_digest,
                 occurrence_id=None,
                 evaluation_time=None,
             ),
@@ -1179,14 +1130,14 @@ def _acquisition_decisions(instance: PlaybillInstance) -> list[tuple[str, str]]:
 # --- C2: a direct run causes no effect ---------------------------------------
 
 
-def test_a_v4_terminal_cannot_fire_on_the_direct_lane(tmp_path: Path) -> None:
+def test_a_terminal_cannot_fire_on_the_direct_lane(tmp_path: Path) -> None:
     """The restated C2 law, driven rather than read.
 
-    Graph-v4 serves `source`; it does not serve a terminal, and a direct run
-    binds no effective rung, so `_verify_effective_rung` would refuse one even
-    if a caller found a way to hand it over. What a caller can actually reach is
-    this: a v4 Procedure whose Source flows into an `emit_capture` terminal.
-    Readiness names the terminal unsupported, the run refuses at ADMISSION --
+    The direct lane serves `source`; it does not serve a terminal, and a direct
+    run binds no effective rung, so `_verify_effective_rung` would refuse one
+    even if a caller found a way to hand it over. What a caller can actually
+    reach is this: a Procedure whose Source flows into an `emit_capture`
+    terminal. Readiness says it runs only as a Line, the run refuses at ADMISSION --
     before any journal directory exists -- no Provider is spawned, and no egress
     is observed.
     """
@@ -1198,10 +1149,11 @@ def test_a_v4_terminal_cannot_fire_on_the_direct_lane(tmp_path: Path) -> None:
         update={
             "nodes": (
                 source.model_copy(update={"next": "emit"}),
-                CaptureEgressNodeV3(
+                CaptureEgressNode(
                     node_id="emit",
                     capture_contract=source.capture_contract,
                     input=f"$steps.{SOURCE_ALIAS}",
+                    result=f"$steps.{SOURCE_ALIAS}",
                 ),
             ),
             "returns": SOURCE_ALIAS,
@@ -1210,7 +1162,7 @@ def test_a_v4_terminal_cannot_fire_on_the_direct_lane(tmp_path: Path) -> None:
     with_terminal = procedure.model_copy(
         update={
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
         }
     )
     _accept_more(
@@ -1225,10 +1177,10 @@ def test_a_v4_terminal_cannot_fire_on_the_direct_lane(tmp_path: Path) -> None:
     readiness = service_playbill_procedure_readiness(
         instance,
         name=PROCEDURE_NAME,
-        request=ProcedureReadinessRequestV1(evaluation_time=NOW),
+        request=ProcedureReadinessRequestV1(),
     )
     assert [row.kind for row in readiness.unsupported_nodes] == ["emit_capture"]
-    assert readiness.state == "unsupported"
+    assert readiness.runnable == "line"
 
     state, invoker = _run(instance, root)
 
@@ -1414,8 +1366,8 @@ def test_the_policy_pin_leaves_the_definition_digest_byte_identical(tmp_path: Pa
     )
 
     assert pinned.definition_digest == unpinned.definition_digest
-    assert compute_procedure_definition_digest_v4(pinned.definition).tagged == (
-        compute_procedure_definition_digest_v4(unpinned.definition).tagged
+    assert compute_procedure_definition_digest(pinned.definition).tagged == (
+        compute_procedure_definition_digest(unpinned.definition).tagged
     )
     # The ARTIFACT digest moves, because adopting the pin authors a new
     # Procedure; nothing already accepted is rewritten.
@@ -1636,7 +1588,7 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
 
     The served surfaces -- SDK, HTTP, MCP and CLI -- all submit the same
     authoring intent into the one coordinator, so proving the coordinator lowers
-    this graph-v4 Source Procedure into the exact accepted artifact the run lane
+    this Source Procedure into the exact accepted artifact the run lane
     executed above is what "the same definition gives the same digest" means.
     """
 
@@ -1665,7 +1617,7 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     assert lowered.resolved_authoring["artifact_digest"] == (
         procedure_artifact_digest(procedure).tagged
     )
-    assert lowered.resolved_authoring["definition"]["graph_format"] == 4
+    assert lowered.resolved_authoring["definition"]["graph_format"] == 6
     assert lowered.proposed_tree[procedure_path(PROCEDURE_NAME)] == render_procedure(procedure)
 
 

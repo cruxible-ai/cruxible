@@ -51,7 +51,11 @@ from cruxible_client.contracts.floor import (
     render_floor_manifest,
 )
 from cruxible_client.contracts.primitives import pretty_json
-from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact, ProcedureArtifactV1
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureArtifact,
+    ProcedureRunnable,
+    procedure_runnability,
+)
 from cruxible_client.contracts.procedures.models import (
     RUNG_AUTHORITY,
     ProcedureBudget,
@@ -165,7 +169,7 @@ class PlaybillProcedureFloorCardV1(_StrictFloorModel):
     accepted_coordinate: AcceptedCoordinate
     input_contract: PlaybillProcedureInputContractV1
     output_contract: ArtifactPin | ProcedurePinSlotRef
-    binding_state: Literal["directly_runnable", "binding_required"]
+    runnable: ProcedureRunnable
     capabilities: PlaybillProcedureCapabilitiesV1
     budget: ProcedureBudget
     hard_caps: ProcedureHardCaps
@@ -355,7 +359,7 @@ def _procedure_cards(
     track_records = _procedure_track_records(instance, coordinate=coordinate)
     files: dict[str, bytes] = {}
     for row, procedure in procedures:
-        if not isinstance(procedure, ProcedureArtifactV1 | ProcedureArtifact):
+        if not isinstance(procedure, ProcedureArtifact):
             raise ProjectionIntegrityError("Procedure floor source is unavailable")
         path = row.path
         definition = procedure.definition
@@ -369,9 +373,7 @@ def _procedure_cards(
                 parameters=definition.parameter_contract,
             ),
             output_contract=definition.contract_out,
-            binding_state=(
-                "directly_runnable" if procedure.directly_runnable else "binding_required"
-            ),
+            runnable=procedure_runnability(definition)[0],
             capabilities=PlaybillProcedureCapabilitiesV1(
                 node_kinds=tuple(
                     sorted({node.kind for node in definition.nodes}, key=lambda item: item.encode())

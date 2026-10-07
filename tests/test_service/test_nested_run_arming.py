@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.get_reads import GetRequest
-from cruxible_client.contracts.line_dispatch import LineArmPrincipal
+from cruxible_client.contracts.line_dispatch import LineEnablementPrincipal
 from cruxible_client.contracts.operational_reads import GetProcedureRunCard
 from cruxible_client.contracts.procedures.results import (
     ProcedureRunAttribution,
@@ -28,7 +28,7 @@ from cruxible_core.service.discovery.runs import procedure_run_status
 from cruxible_core.storage.cas import BodyAccessContext
 
 _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=False)
-_ARMED_BY = LineArmPrincipal(
+_ARMED_BY = LineEnablementPrincipal(
     kind="runtime_credential", credential_id="cred-arm", label="line-operator"
 )
 
@@ -191,7 +191,7 @@ def test_every_run_of_an_armed_tree_withholds_the_arming_actor(
         assert isinstance(state.attribution, ProcedureRunAttributionWithheld), run_id
         assert isinstance(state.receipt, ProcedureRunReceiptWithheld), run_id
         assert card.actor is None and card.triggered_by is not None
-        assert card.triggered_by.armed_by_withheld and card.triggered_by.armed_by is None
+        assert card.triggered_by.enabled_by_withheld and card.triggered_by.enabled_by is None
         assert proof["attribution"]["tag"] == "playbill-procedure-run-attribution-withheld-v1"
         assert "actor_id" not in proof["attribution"]
         assert proof["receipt"]["tag"] == "playbill-procedure-run-receipt-withheld-v1"
@@ -209,7 +209,7 @@ def test_whoever_may_see_the_arm_sees_every_run_of_the_tree(
         state, card, proof = _reads(instance, run_id, viewer)
         assert isinstance(state.attribution, ProcedureRunAttribution), run_id
         assert card.triggered_by is not None
-        assert card.triggered_by.armed_by == "line-operator"
+        assert card.triggered_by.enabled_by == "line-operator"
         assert card.actor == state.attribution.actor_id
         assert proof["attribution"]["actor_id"] == state.attribution.actor_id
 

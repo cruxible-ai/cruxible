@@ -372,7 +372,7 @@ governed host as `uninitialized`, `writable`, `reseed_required`, or
 decommissioned state. Its `Instances` count is the number
 of governed daemon hosts shown, excluding unrelated local registry entries.
 `server status` also lists the daemon's consumers on every instance it holds
-open: each armed Line and each built-in worker, as `running`, `stalled`,
+open: each enabled Line and each built-in worker, as `running`, `stalled`,
 `lagging`, `stopped`, or `disabled`. The built-in `next` worker runs on every
 instance by default. It maintains the
 current Claim queue, cited evidence availability and prediction windows under
@@ -395,7 +395,7 @@ has closed at the request's evaluation time. Unbindable anchors are retried on
 `prediction.anchor_retry` events (hourly by default) and new capture landings. A retired or revised contract withdraws its
 windows. `CRUXIBLE_DISABLED_CONSUMERS=next` turns off the whole findings worker.
 Unknown names, including the former `evidence` and `prediction` names, refuse
-the setting. Armed Lines remain a separate governed consumer.
+the setting. Enabled Lines remain a separate governed consumer.
 `server status` also renders `Provider lane:` and, when degraded,
 `Provider lane reason:`. Provider-lane degradation never prevents the daemon's
 non-Provider surfaces from starting, so these lines are the operator's recovery
@@ -1408,23 +1408,31 @@ separate from freeform prose; sync does not render Markdown or HTML.
 ## procedure
 
 ~~~text
-cruxible procedure readiness NAME --evaluation-time TS
-cruxible procedure bind NAME REQUEST_FILE
 cruxible procedure run NAME INPUT_FILE --evaluation-time TS
-cruxible procedure status RUN_ID
 cruxible procedure measure NAME [--run-id RUN_ID] [--measurement NAME]...
   [--evaluation-time TS] [--at FILE] [--json]
-cruxible procedure readings NAME [--run-id RUN_ID] [--measurement NAME]...
+cruxible procedure readings NAME [--run-id RUN_ID] [--measurement NAME]... [--subject-grain G]
+  [--evaluation-time TS] [--at FILE]
   [--limit N] [--cursor C] [--json]
 ~~~
 
-The served lanes run deterministic `state_tap`, `transform`, `project`, `guard`,
-`repeat` and `halt` graphs, plus `source` on a graph-v4 definition: a Procedure
-may READ an external source through an accepted Provider. On the DIRECT lane
-the effectful terminals -- `emit_capture`, `post_inbox`, `propose_change_set`,
-`settle_change_set` -- are not served, and `readiness` lists them as
-unsupported nodes before execution: a direct invocation carries no requested
-rung, no occurrence, and no mandate coordinate, and none is fabricated for it.
+Read a Procedure with `cruxible get Procedure:NAME`: its card says how it runs
+(`runnable`): `direct` (`procedure run`), `line` (only as a Line), or
+`unsupported` (no run path admits it, e.g. an `exhaust_tap` node), with the
+nodes behind that answer. Procedures are graph format 6 and pin every Provider
+exactly; open slots belong only to a Blueprint. The direct lane runs `state_tap`,
+`state_claim`, `transform`, `project`, `guard`, `repeat`, `select`, `constant`,
+`return`, `invoke`, `halt`, `source` and `call` nodes. The effectful terminals --
+`emit_capture`, `post_inbox`, `propose_change_set`, `settle_change_set` -- run
+only as a Line: a direct invocation carries no requested authority, no
+occurrence, and no mandate coordinate, and none is fabricated for it.
+
+A **Blueprint** is the same definition with interface-typed Provider slots left
+open (`cruxible authoring example blueprint`); it is accepted but never runs.
+`cruxible get Blueprint:NAME` lists each slot's interface and the installed
+Providers that fit it. Instantiate it with one Provider per slot
+(`cruxible authoring example blueprint-instance`, kind `blueprint_instance`):
+the result is an ordinary Procedure that records its Blueprint and bindings.
 The Line lane serves `propose_change_set`, and `settle_change_set` under a live
 settle ProcedureMandate; see `cruxible line`.
 
@@ -1553,27 +1561,33 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 ## line
 
 ~~~text
-cruxible line check LINE [--since TS] [--until TS] [--limit 100] [--cursor CURSOR] [--json]
-cruxible line arm LINE [--dry-run|--commit] [--at OID] [--json]
-cruxible line disarm LINE [--dry-run|--commit] [--at OID] [--json]
-cruxible line status LINE [--json]
-cruxible line evaluate LINE --since TS --until TS [--limit 100] [--cursor CURSOR] [--json]
-cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit 1] [--json]
-cruxible line run LINE --evaluation-time TS [--trigger TRIGGER]
-  [--occurrence-id ID] [--json]
+cruxible line enable LINE [--dry-run|--commit] [--at OID] [--json]
+cruxible line disable LINE [--dry-run|--commit] [--at OID] [--json]
+cruxible line run LINE [--event FILE|-] [--repeat] [--resolution-contract FILE|-]
+  [--occurrence-id ID] [--evaluation-time TS] [--json]
+cruxible line evaluate LINE [--since TS --until TS] [--dry-run] [--limit 100] [--cursor CURSOR] [--json]
+cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit N] [--json]
 ~~~
+
+`enable`, `disable` and `run` are the normal flow; `evaluate` and `dispatch`
+recover what automation missed, and `cruxible next` points to them. `cruxible
+get Line:NAME` reads a Line: its Triggers, its enablements (state, who enabled
+it, the pinned Line version and Trigger versions, how far its daemon has
+matched), its pending occurrences and its recent runs.
 
 A Line is authored like any other definition: a `line` input (alone or as a
 change-set member) names its Procedure and `parameters` -- the Procedure's
 input record, which lowering checks against the Procedure's input contract,
 refusing `cruxible.authoring.line_parameters_refused` with the expected
 fields. It names an `acquisition_policy` (an `acquisition_policy` input) only
-when the Procedure has Source nodes. `authoring example line` prints a
-Line over the `authoring example procedure` Procedure, and `authoring example
-acquisition-policy` a policy for a Source Procedure's Line.
+when the Procedure has Source nodes. A Procedure with an `exhaust_tap` node
+cannot be a Line's (`cruxible.authoring.line_exhaust_tap_unsupported`): no run
+path admits one. `authoring example line` prints a Line over the `authoring
+example procedure` Procedure, and `authoring example acquisition-policy` a
+policy for a Source Procedure's Line.
 
-When a Line runs is not the Line's own: a `trigger` input authors a Trigger
-(`triggers/<name>.json`) whose `schedule` is a `cadence`, a `cron`,
+When a Line runs on its own is not the Line's own: a `trigger` input authors a
+Trigger (`triggers/<name>.json`) whose `schedule` is a `cadence`, a `cron`,
 `generation_accepted`, `capture_landing` on one exact CaptureContract, or a
 `window_close`, and whose
 target is one Line (`line_name`) or one registered internal action (`action`,
@@ -1585,9 +1599,10 @@ UTC, always: a schedule names no timezone, so an instant never depends on a
 host's timezone database. Convert local times first (09:00 New York in winter
 is 14:00 UTC); a schedule that supplies a `timezone` is refused with that
 reason. The Trigger law refuses an expression outside this grammar
-(`cruxible.trigger.cron_invalid`). A Line can
-have several Triggers; one with none runs only when run explicitly, and `run`
-of a Line with Triggers names the Trigger it fires on (`--trigger`). Retiring
+(`cruxible.trigger.cron_invalid`). A Line can have several Triggers. **A
+Trigger aimed at a Line does nothing until the Line is enabled**: `get` shows
+`triggers_inactive: not enabled` on the Line card and on its `orient --section
+lines` row until then. Internal-action Triggers need no enablement. Retiring
 a Line with live Triggers aimed at it refuses unless they are retired or
 retargeted in the same change set. `authoring example trigger` prints
 an hourly cron Trigger for the `authoring example line` Line, and `get Trigger:NAME` reads
@@ -1596,81 +1611,95 @@ strictly after its version was accepted and fixed windows that close strictly
 after it, and admission refuses an earlier one supplied or queued anyway
 (`trigger_event_precedes_acceptance`).
 
-`check` is read-only: it evaluates every live Trigger aimed at the Line and
-returns `met`, `not_met`, or `incomplete`, exact matching events/windows (each
-naming its Trigger), and the dispatch status of each occurrence (pending,
-admitted, rejected, or superseded).
+`enable` makes the daemon match the Line's Triggers forward from now and admit
+what they match, with no explicit call. Enabling needs governed write, even for
+an observe-only Line, and keeps only the credential's identifier, never a
+token. Runs use the enabling caller's credential, which the daemon rechecks
+before every admission: a revoked credential, one moved to another instance, or
+one no longer permitted to dispatch stops the enablement with that reason
+(`credential_revoked`, `credential_scope_changed`, `permission_insufficient`,
+`credential_unbound`). The accepted standing of the principal the enablement
+acts as is rechecked too: a credential's bound principal, or on an auth-off
+daemon the principal the enabling request claimed, that is no longer active
+stops it (`principal_inactive`) and revokes that principal's credentials; an
+enablement made with no principal claimed runs as the implicit local operator.
+A Line that can propose or settle needs a current ProcedureMandate covering its
+Procedure, and refuses to enable while none does. Enablement is per Line, not
+per Trigger: it is pinned to the Line version and the exact Trigger versions
+aimed at the Line when it was enabled, so any accepted change to the Line stops
+it (`line_changed`, or `epoch_changed`), adding, changing or retiring a Trigger
+aimed at it stops it (`trigger_changed`), and retiring the Line stops it
+(`line_retired`) and closes its pending occurrences, until it is enabled again.
+Because a settle mandate, not the caller's tier, authorizes settling, an
+enabled Line whose Procedure settles does so on its own under its mandate.
 
-`arm` makes the daemon match the Line's Triggers forward from now and admit what
-they match, with no explicit call. Runs use the arming caller's credential,
-which the daemon rechecks before every admission: a revoked credential, one
-moved to another instance, or one no longer permitted to dispatch stops the arm
-with that reason (`credential_revoked`, `credential_scope_changed`,
-`permission_insufficient`, `credential_unbound`). The accepted standing of the
-principal the arm acts as is rechecked too: a credential's bound principal, or
-on an auth-off daemon the principal the arming request claimed, that is no
-longer active stops the arm (`principal_inactive`) and revokes that principal's
-credentials; an arm made with no principal claimed runs as the implicit local
-operator. An arm recorded before arms named this provenance cannot say which it
-was, so it is stopped (`arm_requires_rearm`) rather than carried across a
-restart, and `line status`, `server status` and `next` name the rearm repair.
-Arming needs governed write, and keeps only the
-credential's identifier, never a token. A Line that can propose
-or settle refuses to arm while no current mandate covers it. An arm is pinned to the
-Line version and the exact Trigger versions aimed at it when it was armed: any
-accepted change to the Line stops it (`line_changed`, or `epoch_changed`), and
-so does adding, changing or retiring a Trigger aimed at it (`trigger_changed`),
-until it is rearmed. Because a settle
-mandate, not the caller's tier, authorizes settling, an armed Line whose
-Procedure settles does so on its own under its mandate.
-
-An arm never catches up. It admits only what it matched itself since it was
-armed or since the daemon last restarted; anything pending before that, or
-recorded by `evaluate`, waits for explicit `dispatch`. A cadence or cron tick is
-the exception: it is not an event but "the Trigger is due", so when a Line is
-armed or its arm resumes, a tick still pending from before closes as `lapsed`
--- retained, never run implicitly, and still runnable as exactly that tick
-with `dispatch --occurrence-id DIGEST --retry`, even after newer ticks ran --
-and the arm ticks on from its own start rather than catching up on ticks it
-missed. Each cadence or cron Trigger keeps its own chain: it is due one interval,
-or at the next calendar instant, after the last occurrence it fired, whatever
-other Triggers aimed at the Line fired, and never before the first instant
-after its Trigger version's acceptance: a new cadence ticks first one interval
-after it was accepted, a successor schedule from its own acceptance. `disarm`
-stops further
-admissions; a run already admitted keeps going. Both are idempotent: arming a
-Line already armed by the same credential at the same version returns it
-unchanged with `outcome: already_armed`, and disarming a stopped arm returns
-it with `outcome: already_disarmed`. Arming under a different credential or
-after the Line changed rebinds the arm from now (`outcome: rearmed`).
-`status` shows whether the
-Line is armed, how many pending occurrences it will admit on its own
-(`pending_automatic`) and how many await explicit dispatch
-(`pending_explicit`), and why an arm stopped; a Line never armed refuses with
-`cruxible.line.never_armed`. Idle coverage is checkpointed at
+An enablement never catches up. It admits only what it matched itself since it
+was enabled or since the daemon last restarted; anything pending before that,
+or recorded by `evaluate`, waits for explicit `dispatch`. A cadence or cron
+tick is the exception: it is not an event but "the Trigger is due", so when a
+Line is enabled or its enablement resumes, a tick still pending from before
+closes as `lapsed` -- retained, never run implicitly, and still runnable as
+exactly that tick with `dispatch --occurrence-id DIGEST --retry`, even after
+newer ticks ran -- and the enablement ticks on from its own start rather than
+catching up on ticks it missed. Each cadence or cron Trigger keeps its own
+chain: it is due one interval, or at the next calendar instant, after the last
+occurrence it fired, whatever other Triggers aimed at the Line fired, and never
+before the first instant after its Trigger version's acceptance: a new cadence
+ticks first one interval after it was accepted, a successor schedule from its
+own acceptance. `disable` stops further admissions; a run already admitted
+keeps going, and a retired Line can be disabled too. Both are idempotent:
+enabling a Line already enabled by the same credential at the same versions
+returns it unchanged with `outcome: already_enabled`, and disabling a stopped
+enablement returns it with `outcome: already_disabled`. Enabling under a
+different credential or after the Line changed rebinds it from now (`outcome:
+reenabled`). `get Line:NAME` shows each enablement's state, how many pending
+occurrences it will admit on its own (`pending_automatic`) and how many await
+explicit dispatch (`pending_explicit`), and why it stopped; another
+principal's enabling credential is withheld. Idle coverage is checkpointed at
 one-minute intervals; event progress and partial scans are retained
-immediately. Each armed Line is drained by at most one worker at a time, so a
-slow Procedure never delays matching or another Line.
-An armed Line is one kind of daemon consumer. `cruxible next` reports
-`consumer_stalled` (with `detail.kind: line`) for an arm that stopped by itself
-(its repair rearms it) or an armed Line whose own due work has waited more than
-15 minutes (its repair dispatches it, which shows the refusal). A deliberate
-disarm is not reported.
-`evaluate` explicitly checks a historical `[since, until)` range and records
-its matches as pending. Follow its cursor to finish a bounded page.
+immediately. Each enabled Line is drained by at most one worker at a time, so a
+slow Procedure never delays matching or another Line. An enabled Line is one
+kind of daemon consumer. `cruxible next` reports `consumer_stalled` (with
+`detail.kind: line`) for an enablement that stopped by itself (its repair
+enables it again) or an enabled Line whose own due work has waited more than 15
+minutes (its repair dispatches it, which shows the refusal). A deliberate
+disable is not reported.
+
+A restart keeps each enablement and opens a new forward range from the
+restart: the downtime is not matched, what the previous range matched but did
+not admit stays pending, and timed ticks lapse. For each enabled Line `next`
+then shows one `line_coverage_gap` row per range its daemon never matched,
+naming the exact `cruxible line evaluate LINE --since S --until U` that covers
+it (the row leaves once an evaluation covers the range), and one
+`line_work_pending` row while work it matched before the restart, or that was
+evaluated explicitly, waits for `line dispatch`. Nothing evaluated or matched
+before a restart is dispatched automatically. Rebuilding the disposable event
+index similarly opens a new forward range, while retained pending work
+survives. Pending work bound to an older Line version is closed as superseded
+rather than silently rebound.
+
+`evaluate` checks a historical `[since, until)` range against every live
+Trigger aimed at the Line and records its matches as pending; it never runs
+anything. `--dry-run` only reports what the range makes eligible -- `met`,
+`not_met`, or `incomplete`, the exact matching events/windows (each naming its
+Trigger), and each occurrence's dispatch status (pending, admitted, rejected,
+superseded or lapsed) -- enqueues nothing, needs no range, and is a read.
+Without `--dry-run`, `--since` and `--until` are required and it needs governed
+write. Follow its cursor to finish a bounded page.
 `dispatch` admits pending occurrences using the caller's current permissions
-and the ordinary Line admission checks. `run` and `dispatch` of a Line whose
+and the ordinary Line admission checks; by default it drains every pending
+occurrence (`--limit N` stops after N). `run` and `dispatch` of a Line whose
 runs can propose or settle (and `procedure run` of such a Procedure) need
-governed write; an observe-only Line or Procedure runs at read-only. Permanent input failures close as
-`rejected`; changed Line bindings, and occurrences whose Trigger changed or no
-longer aims at the Line, close as `superseded`. Both leave the runnable
-queue, retaining their evidence and a typed refusal with repair instructions.
-Invalid event bindings, unavailable event material, and Captures that exceed
-their fixed read budget close as rejected. Budget refusals name the limiting
-Line or CaptureContract cap. Accepting a successor Line can raise its own limit;
-it cannot override the exact CaptureContract's cap. Transient authority/provider
-failures and events whose recorded time has not arrived remain blocked.
-Historical evaluation does not reopen closed work.
+governed write; an observe-only Line or Procedure runs at read-only. Permanent
+input failures close as `rejected`; changed Line bindings, and occurrences
+whose Trigger changed or no longer aims at the Line, close as `superseded`.
+Both leave the runnable queue, retaining their evidence and a typed refusal
+with repair instructions. Invalid event bindings, unavailable event material,
+and Captures that exceed their fixed read budget close as rejected. Budget
+refusals name the limiting Line or CaptureContract cap. Accepting a successor
+Line can raise its own limit; it cannot override the exact CaptureContract's
+cap. Transient authority/provider failures and events whose recorded time has
+not arrived remain blocked. Historical evaluation does not reopen closed work.
 
 `dispatch --occurrence-id DIGEST --retry` explicitly retries one occurrence,
 binding the current accepted Line version only within the same occurrence epoch
@@ -1678,27 +1707,29 @@ and only while its Trigger still aims at the Line unchanged.
 It preserves the exact event/window and rechecks present authority and freshness;
 it cannot substitute a newer Capture. An existing admission is always reused.
 
-A restart keeps each arm and opens a new forward range from the restart. Time
-not covered by completed ranges requires explicit `evaluate`; it is never
-replayed automatically, and what the previous range matched but did not admit
-waits for explicit `dispatch`. Rebuilding the disposable event index similarly
-opens a new forward range, while retained pending work survives. Pending work
-bound to an older Line version is closed as superseded rather than silently
-rebound. A Line can bind its
-trigger Capture to a named Source input (`trigger_input`); it then declares the
-exact event it accepts, and every Trigger aimed at it must fire on that event. Its `max_age` is checked at admission
-time, not backdated to when the trigger occurred.
+A Line can bind its trigger Capture to a named Source input
+(`trigger_input`); it then declares the exact event it accepts, and every
+Trigger aimed at it must fire on that event. Its `max_age` is checked at
+admission time, not backdated to when the trigger occurred.
 
-`run` triggers one daemon-derived due occurrence. The occurrence's evaluation
-instant is the daemon's; `--evaluation-time` only asserts the instant the
-caller believes it is running at, and an assertion outside the daemon's skew
-bound is refused. That bound is operational, not wire: the daemon reads
+`run` runs the Line once now: one manual occurrence under the Line's own
+inputs, budgets, authority ceiling and mandate, recorded on the Line's history.
+It never selects, consumes or waits on a Trigger, and runs whether or not the
+Line is enabled; a Trigger's ticks and events are unaffected by it. A Line
+whose Procedure takes an event (`trigger_input`) gets it through `--event`, a
+retained Capture event reference (JSON/YAML, or `-` for stdin); the manual
+occurrence's identity names that event. A run on an event the Line's Triggers
+already admitted refuses (`occurrence_already_admitted`, naming the run) unless
+`--repeat` says to run it again. The occurrence's evaluation instant is the
+daemon's; `--evaluation-time` only asserts the instant the caller believes it
+is running at, and an assertion outside the daemon's skew bound is refused.
+That bound is operational, not wire: the daemon reads
 `evaluation_instant_skew_seconds` from `daemon/procedure-runs.json` in its own
 state root, defaulting to the 300-second ProcedureMandate skew the bound
 protects, and refuses the run if that file exists but cannot be read as one.
 A Line whose runs can propose or settle needs a current accepted
 ProcedureMandate over its exact Procedure; without one each run refuses
-`line_mandate_required`, and `arm` refuses up front with
+`line_mandate_required`, and `enable` refuses up front with
 `cruxible.line.mandate_required`, both naming `authoring example
 procedure-mandate`. An observe-only Line -- one whose Procedure's terminals, or
 whose `max_authority`, stop at observe -- needs no mandate. A mandate whose
@@ -1707,10 +1738,26 @@ widened cap with both values; `authoring example procedure-mandate` uses the
 `authoring example procedure` caps.
 
 A Line whose Procedure ends in a `propose_change_set` terminal produces a
-proposal. Each resolved candidate template must be one Claim proposal item --
+proposal. Its `candidate_templates` are a fixed list of templates, or
+`{"items": "$steps.<alias>.<list>"}` to fan out over data: each element a
+provider, Source or transform produced becomes one item of the one proposal,
+with its own dependency closure and evidence. An empty list proposes nothing
+and the run succeeds; an element that is not a Claim proposal item refuses
+`proposal_item_invalid` naming its `child_index`, and `items` that does not
+resolve or is not a list refuses `proposal_item_invalid` with reason
+`items_unresolved` or `items_not_a_list` (an object is never unwrapped). Each
+element cites the Capture its own lineage reached; a list built from several
+Captures by a step that keeps no per-element lineage refuses
+`proposal_item_evidence_ambiguous` rather than giving every element all of
+them. Each resolved candidate
+template must be one Claim proposal item --
 a statement, a rationale, and optionally the Claim lineage it revises. The
 daemon supplies the evidence: the produced Capture in that item's own
-dependency closure is cited, so a computed interpretation is a Claim under its
+dependency closure is cited -- or, when the closure produced none, the one
+Capture the run was admitted (a Line's `trigger_input` Capture); none is
+`proposal_item_evidence_missing` and more than one
+`proposal_item_evidence_ambiguous`, and an item that names its Capture must
+name one in its own closure, produced or admitted -- so a computed interpretation is a Claim under its
 ClaimType's evidence admission policy, never an attested observation and never
 a self-asserted one. The items are lowered through the same change-set
 authoring every surface uses, the exact live ProcedureMandate is evaluated
@@ -2092,9 +2139,9 @@ this facet asks for
 attention), `stalled` (already a `consumer_stalled` row), or `not_running` when
 no consumer loop is running, as while a daemon shuts down. There, worker rows stand as
 of each worker's last pass. `detail.workers` lists each built-in worker's state
-and cursor, including disabled ones, and `detail.line_arms` counts the
-instance's armed Lines as `running`, `stalled` or `stopped` (the text header
-prints `Status: line arms ...` when any is stalled or stopped). The `next` entry
+and cursor, including disabled ones, and `detail.line_enablements` counts the
+instance's enabled Lines as `running`, `stalled` or `stopped` (the text header
+prints `Status: line enablements ...` when any is stalled or stopped). The `next` entry
 keeps each part's figures under `queue`, `evidence` and `prediction`. Evidence
 rows carry when they were observed in their own detail; prediction rows omit
 observation timestamps so their identity stays stable while the finding is
@@ -2114,8 +2161,8 @@ A revised Claim, a later support or contradict from the same principal, or a
 lapsed validity window ends the hold, and the row returns.
 
 Every caller sees every row. Each repair needs the permission tier of the tool
-that performs it (approval needs graph write; settle, arm and authoring need
-governed write; a Line dispatch needs what the Line's runs need). When the
+that performs it (approval needs graph write; settle, line enable, line evaluate and
+authoring need governed write; a Line dispatch needs what the Line's runs need). When the
 caller cannot perform a row's repair, or a nested finding's, the row stays: its
 `repair` is withheld (`null`) and `repair_requires` names the `tool`, the `tier`
 it runs at, and `because` (`tier`, or `profile` when an MCP session's tool
@@ -2366,21 +2413,22 @@ an artifact path, or a proposal id or prefix. Operational things resolve too:
 `Line:<name>` (or the Line identity digest `next` names a due Line by, in full
 or as a 12+ hex prefix) answers the Line's Procedure, its schedule kinds, each
 Trigger aimed at it by name and version (with the `get Trigger:<name>` that
-reads it), its authority, its
-arms (the principal kind, state and stop reason, and who armed each: a runtime
-credential's id and label only to that credential or an admin, otherwise
-`armed_by_withheld`), due and
-waiting occurrences and recent runs; `CAP-<12+ hex>` or `Capture:<digest>`
+reads it), its authority, `triggers_inactive: not enabled` while Triggers aim
+at it but it is not enabled, its enablements (the principal kind, state and
+stop reason, the pinned Line digest and Trigger versions, how far its daemon
+matched (`evaluated_until`), and who enabled each: a runtime credential's id
+and label only to that credential or an admin, otherwise
+`enabled_by_withheld`), due and waiting occurrences and recent runs; `CAP-<12+ hex>` or `Capture:<digest>`
 answers a Capture's contract and version, observation time, size, availability
 and the Claims (and their Subjects) that cite it; `ResolutionContract:<name>`
 answers the hypothesis Claim, window, rule and bound-window state; and
 `Mandate:<name>` (or `ProcedureMandate:<name>`) answers the grant, validity and
-state. Arms, occurrences, runs, windows and capture availability are
+state. Enablements, occurrences, runs, windows and capture availability are
 operational state with no history: they are always read as of now at the
 current head, whatever `--at` names, and the answer says so with `live`
 (`as_of`: that head's 12-hex git oid and generation; `fields`: what was read
 live). `orient` marks its runs, lines and predictions sections, and its map's
-arm attention and run counts, the same way. `--detail` picks the depth:
+enablement attention and run counts, the same way. `--detail` picks the depth:
 `summary` (default) prints a values-first card -- a Subject's Claims as an
 aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
 `contradicted`, `unsure_hold`) -- `evidence` lists a Claim's captures by
@@ -2415,11 +2463,11 @@ type or enum members, and the CaptureContracts whose evidence the ClaimType
 admits, by name), the artifact counts, the named queries with their parameters,
 who you are and whether you can author (when not, the same `authoring_refusal`
 code, detail and repair that `whoami` reports), what the `next` queue
-holds, and the next commands to run. When any Line was ever armed, attention
-counts the arms as the instance's Line consumer reports them (running,
+holds, and the next commands to run. When any Line was ever enabled, attention
+counts the enablements as the instance's Line consumer reports them (running,
 stalled, stopped) and names up to three stalled or stopped Lines with the stop
 reason, for any caller of the instance, without daemon scope; it also notes
-when armed Lines have no consumer loop running here and when the provider lane
+when enabled Lines have no consumer loop running here and when the provider lane
 is unavailable. When any live ClaimType still names
 CaptureContracts by digest, attention says so and suggests
 `cruxible claim-type upgrade`.
@@ -2440,11 +2488,12 @@ with `cruxible get ProcedureRun:RUN-...` (or a `RUN-` prefix of 12+
 hex): nodes done over the graph's nodes, the node a running run is on,
 elapsed time (against the read's evaluation time while it runs, the measured
 wall clock once it finished), the last finished nodes, the Line, occurrence and
-arm that admitted it, and the receipt digest once it is terminal. Per-node
+enablement that admitted it, and the receipt digest once it is terminal. Per-node
 durations are not shown: every journal record of a run carries the run's
 evaluation instant.
 The other operational sections page the same way: `lines` (each Line's
-Procedure, trigger, authority, latest arm state and due/waiting counts),
+Procedure, trigger, authority, latest enablement state, `triggers_inactive`
+when its Triggers do nothing because it is not enabled, and due/waiting counts),
 `captures` (the Captures accepted Claims cite, newest first, keyset-paged,
 each as its `CAP-` handle), `capture_contracts` (version, grade, how many
 ClaimTypes admit each), `predictions` (each live ResolutionContract with its

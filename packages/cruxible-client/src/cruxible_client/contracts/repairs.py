@@ -83,6 +83,8 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
         "Explicitly retry this occurrence to bind the current Line in "
         "the same epoch, or evaluate the new trigger epoch."
     ),
+    # The Trigger a pending occurrence names no longer aims at the Line.
+    "line_trigger_mismatch": "evaluate_the_line_against_the_triggers_aimed_at_it_now",
     "prediction_unsettleable_rule": (
         "revise_the_resolution_contract_rule_or_hypothesis_and_submit_a_successor"
     ),
@@ -98,6 +100,8 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "provider_replay_receipt_required": "record_the_durable_provider_completion_before_replay",
     "state_tap_refused": "restore_the_accepted_state_query_backend",
     "consumer_stalled": "restart_the_consumer_through_its_named_repair",
+    "line_coverage_gap": "evaluate_the_uncovered_range_then_dispatch_what_it_finds",
+    "line_work_pending": "dispatch_the_lines_pending_work",
     "evidence_unavailable": "restore_the_capture_from_backup_or_recapture_and_recite_its_claims",
     # The row names `settle RSC-...`; the daemon resolves the exact contract and
     # bound window, and which accepted observation settles it is the settler's call.
@@ -202,7 +206,6 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
 # every served refusal producer -- core service, client authoring, CLI -- reads
 # the same one instead of re-inventing prose at its own boundary.
 RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
-    "binding_required": RepairOperation(operation="cruxible.procedure.bind"),
     "line_mandate_required": RepairOperation(
         operation="cruxible.authoring.example",
         arguments={"example": "procedure-mandate"},
