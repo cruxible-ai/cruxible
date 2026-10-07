@@ -1008,28 +1008,28 @@ def check_line_trigger(
     )
 
 
-@router.post("/{instance_id}/lines/{line}/arm", response_model=contracts.LineArm)
-def arm_line(
+@router.post("/{instance_id}/lines/{line}/enable", response_model=contracts.LineEnablement)
+def enable_line(
     instance_id: str, line: str, req: ChangeControlRequest | None = None
-) -> contracts.LineArm:
+) -> contracts.LineEnablement:
     control = req or ChangeControlRequest()
-    return playbill_api.playbill_line_arm(
+    return playbill_api.playbill_line_enable(
         resolve_server_instance_id(instance_id), line, dry_run=control.dry_run, at=control.at
     )
 
 
-@router.post("/{instance_id}/lines/{line}/disarm", response_model=contracts.LineArm)
-def disarm_line(
+@router.post("/{instance_id}/lines/{line}/disable", response_model=contracts.LineEnablement)
+def disable_line(
     instance_id: str, line: str, req: ChangeControlRequest | None = None
-) -> contracts.LineArm:
+) -> contracts.LineEnablement:
     control = req or ChangeControlRequest()
-    return playbill_api.playbill_line_disarm(
+    return playbill_api.playbill_line_disable(
         resolve_server_instance_id(instance_id), line, dry_run=control.dry_run, at=control.at
     )
 
 
-@router.get("/{instance_id}/lines/{line}/arm", response_model=contracts.LineArm)
-def line_status(instance_id: str, line: str) -> contracts.LineArm:
+@router.get("/{instance_id}/lines/{line}/enable", response_model=contracts.LineEnablement)
+def line_status(instance_id: str, line: str) -> contracts.LineEnablement:
     return playbill_api.playbill_line_status(resolve_server_instance_id(instance_id), line)
 
 

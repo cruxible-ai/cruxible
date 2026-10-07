@@ -96,15 +96,15 @@ def test_a_line_card_names_its_procedure_trigger_arms_and_runs(line_world) -> No
     assert "lands" in aimed.fires
     assert any(aimed.trigger in step for step in card.next)
     assert card.authority in {"observe", "propose", "settle"}
-    (arm,) = card.arms
+    (arm,) = card.enablements
     assert arm.state == "stopped" and arm.stop_reason == "credential_revoked"
-    assert arm.armed_by == "operator" and arm.principal_kind == "local_operator"
-    assert card.arms_total == 1
+    assert arm.enabled_by == "operator" and arm.principal_kind == "local_operator"
+    assert card.enablements_total == 1
     admitted = [item.run_id for item in dispatched.items if item.run_id is not None]
     assert [row.run for row in card.recent_runs] == admitted
     assert card.runs_total == len(admitted)
     assert card.recent_runs[0].line == line.identity.qualified
-    assert result.live is not None and "arms" in result.live.fields
+    assert result.live is not None and "enablements" in result.live.fields
     assert any(step.startswith("cruxible_get(") for step in card.next)
 
 
@@ -125,7 +125,7 @@ def test_a_line_read_at_an_older_generation_shows_the_definition_only(line_world
     assert history.history is not None and history.history.revisions
 
     at_head = _get(instance, line.identity.qualified, at=head.git_oid, evaluation_time=when)
-    assert isinstance(at_head.card, GetLineCard) and at_head.card.arms
+    assert isinstance(at_head.card, GetLineCard) and at_head.card.enablements
 
 
 def test_a_mandate_reads_by_either_reference_form(line_world) -> None:  # type: ignore[no-untyped-def]
@@ -283,7 +283,7 @@ def test_a_stopped_arm_line_card_is_bounded(tmp_path: Path) -> None:
 
     assert isinstance(card, GetLineCard)
     assert card.recent_runs == () and card.runs_total == 0
-    assert [arm.stop_reason for arm in card.arms] == ["permission_insufficient"]
+    assert [arm.stop_reason for arm in card.enablements] == ["permission_insufficient"]
 
 
 def test_get_reads_every_policy_orient_lists_by_its_reference(line_world) -> None:  # type: ignore[no-untyped-def]

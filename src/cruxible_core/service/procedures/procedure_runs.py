@@ -342,23 +342,23 @@ class LineRunNotAccepted(ProcedureSurfaceError):
     http_status = 404
 
 
-class LineNeverArmed(ProcedureSurfaceError):
-    """A Line status read found no arm, current or past."""
+class LineNeverEnabled(ProcedureSurfaceError):
+    """A Line read found no enablement, current or past."""
 
-    code = "cruxible.line.never_armed"
-    error_code = "cruxible.line.never_armed"
+    code = "cruxible.line.never_enabled"
+    error_code = "cruxible.line.never_enabled"
     http_status = 404
 
     def __init__(self, line: str) -> None:
         super().__init__(
-            f"{self.code}: Line {line!r} has never been armed; arm it with "
-            f"`cruxible line arm {line}`"
+            f"{self.code}: Line {line!r} has never been enabled; enable it with "
+            f"`cruxible line enable {line}`"
         )
-        self.repair = RepairOperation(operation="cruxible.line.arm", arguments={"line": line})
+        self.repair = RepairOperation(operation="cruxible.line.enable", arguments={"line": line})
 
 
 class LineMandateRequired(ProcedureSurfaceError):
-    """Arming a Line that can propose or settle when no mandate covers it."""
+    """Enabling a Line that can propose or settle when no mandate covers it."""
 
     code = "cruxible.line.mandate_required"
     error_code = "line_mandate_required"
@@ -369,7 +369,7 @@ class LineMandateRequired(ProcedureSurfaceError):
             f"{self.code}: Line {line!r} can propose or settle, and Procedure {procedure!r} "
             "has no current accepted ProcedureMandate, so every run would refuse; author "
             "and accept one (`cruxible authoring example procedure-mandate`) "
-            "before arming"
+            "before enabling"
         )
         self.repair = RUNNABLE_REFUSAL_REPAIRS["line_mandate_required"]
 
@@ -3586,7 +3586,7 @@ def _run_playbill_line(
         # An arm runs only under the complete Trigger set it pinned; one added,
         # changed or retired since dispatch checked it stops the arm instead.
         raise LineTriggersChanged(
-            "the Triggers aimed at this Line changed after the arm pinned them"
+            "the Triggers aimed at this Line changed after the enablement pinned them"
         )
     try:
         trigger = select_line_trigger(

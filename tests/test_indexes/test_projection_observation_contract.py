@@ -141,7 +141,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "cruxible.proposal.readmit",
         "cruxible.proposal.approve",
         "cruxible.compiler.upgrade",
-        "cruxible.line.arm",
+        "cruxible.line.enable",
         "cruxible.line.dispatch",
         "cruxible.prediction.settle",
         "hand_edit",

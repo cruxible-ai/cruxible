@@ -1522,15 +1522,15 @@ and repair hints. To explicitly retry closed work after repair, use
 successor Line only in the same epoch and never substitutes another event or
 Capture. Historical evaluation alone does not reopen closed work.
 
-`cx.arm_line(name)` has the daemon admit what the Line's Triggers match from now
+`cx.enable_line(name)` has the daemon admit what the Line's Triggers match from now
 on, under this connection's credential (rechecked before each run), the Line
 version current now and the Trigger versions aimed at it now; a change to any
 of them stops the arm until it is rearmed. It never catches up: earlier pending work and daemon
 downtime still need `evaluate_line` and `dispatch_line`. `cx.line_status(name)`
 reports whether the Line is armed, its automatic and explicit pending counts,
-and why an arm stopped; `cx.disarm_line(name)` stops further admissions.
+and why an arm stopped; `cx.disable_line(name)` stops further admissions.
 Both calls are idempotent: repeating one returns the arm unchanged with
-`outcome` `already_armed` or `already_disarmed`.
+`outcome` `already_enabled` or `already_disabled`.
 
 Matching itself never executes a Procedure; admission does. Admission verifies
 the exact retained Capture against its producer coordinate, acquisition policy,

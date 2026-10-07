@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.line_dispatch import LineArm, LineTriggerVersion
+from cruxible_client.contracts.line_dispatch import LineEnablement, LineTriggerVersion
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.backends import LocalJournalBackend
@@ -254,10 +254,10 @@ class LineDispatchStore:
     @staticmethod
     def arm_view(
         data: dict[str, Any], *, pending_automatic: int = 0, pending_explicit: int = 0
-    ) -> LineArm:
+    ) -> LineEnablement:
         stopped = data["stops_at"] is not None and data.get("stop_reason") is not None
-        return LineArm(
-            arm_id=data["arm_id"],
+        return LineEnablement(
+            enablement_id=data["arm_id"],
             line=data["line"],
             line_artifact_digest=data["line_artifact_digest"],
             occurrence_epoch=data["occurrence_epoch"],
@@ -267,9 +267,9 @@ class LineDispatchStore:
                     data.get("trigger_pins", {}).items(), key=lambda item: item[0].encode()
                 )
             ),
-            state="stopped" if stopped else "armed",
-            armed_at=data["armed_at"],
-            armed_by=data["armed_by"],
+            state="stopped" if stopped else "enabled",
+            enabled_at=data["armed_at"],
+            enabled_by=data["armed_by"],
             evaluated_until=data["evaluated_until"],
             stopped_at=data["stops_at"] if stopped else None,
             stop_reason=data.get("stop_reason") if stopped else None,

@@ -70,15 +70,15 @@ def test_another_principals_credential_is_withheld_from_the_line_and_run_cards(
     for viewer in (None, OperationalViewer(credential_id="cred-someone-else", admin=False)):
         card = _get(instance, line.identity.qualified, viewer, evaluation_time=when).card
         assert isinstance(card, GetLineCard)
-        (arm,) = card.arms
+        (arm,) = card.enablements
         assert arm.principal_kind == "runtime_credential"
-        assert arm.credential is None and arm.armed_by is None and arm.armed_by_withheld
+        assert arm.credential is None and arm.enabled_by is None and arm.enabled_by_withheld
         dumped = str(card.model_dump(mode="json"))
         assert "cred-arm" not in dumped and "line-operator" not in dumped
 
         run = _get(instance, f"ProcedureRun:{run_id}", viewer).card
         assert isinstance(run, GetProcedureRunCard) and run.triggered_by is not None
-        assert run.triggered_by.armed_by is None
+        assert run.triggered_by.enabled_by is None
         assert "line-operator" not in str(run.model_dump(mode="json"))
 
 
@@ -95,9 +95,9 @@ def test_the_arming_credential_or_an_admin_sees_it(credential_world, viewer) -> 
     card = _get(instance, line.identity.qualified, viewer, evaluation_time=when).card
 
     assert isinstance(card, GetLineCard)
-    (arm,) = card.arms
-    assert (arm.credential, arm.armed_by) == ("cred-arm", "line-operator")
-    assert not arm.armed_by_withheld
+    (arm,) = card.enablements
+    assert (arm.credential, arm.enabled_by) == ("cred-arm", "line-operator")
+    assert not arm.enabled_by_withheld
 
 
 def _resolver(credential_id: str) -> str | None:
@@ -149,15 +149,15 @@ def test_a_credential_bound_to_the_arming_principal_sees_it_and_no_one_else(
 
     card = _get(instance, line.identity.qualified, viewer, evaluation_time=when).card
     assert isinstance(card, GetLineCard)
-    (arm,) = card.arms
+    (arm,) = card.enablements
     run = _get(instance, f"ProcedureRun:{run_id}", viewer).card
     assert isinstance(run, GetProcedureRunCard) and run.triggered_by is not None
     if visible:
-        assert (arm.credential, arm.armed_by) == ("cred-arm", "line-operator")
-        assert run.triggered_by.armed_by == "line-operator" and run.actor == "owner"
+        assert (arm.credential, arm.enabled_by) == ("cred-arm", "line-operator")
+        assert run.triggered_by.enabled_by == "line-operator" and run.actor == "owner"
     else:
-        assert arm.credential is None and arm.armed_by is None and arm.armed_by_withheld
-        assert run.triggered_by.armed_by is None and run.actor is None
+        assert arm.credential is None and arm.enabled_by is None and arm.enabled_by_withheld
+        assert run.triggered_by.enabled_by is None and run.actor is None
 
 
 def test_the_runtime_get_passes_the_authenticated_viewer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -277,7 +277,7 @@ def test_a_run_proof_reads_live_and_withholds_another_principals_credential(
     assert "actor_id" not in hidden.proof["attribution"]
     assert hidden.proof["receipt"] == {
         "tag": "playbill-procedure-run-receipt-withheld-v1",
-        "withheld": "names_the_arming_credential",
+        "withheld": "names_the_enabling_credential",
     }
     assert hidden.proof["receipt_digest"] is not None
 

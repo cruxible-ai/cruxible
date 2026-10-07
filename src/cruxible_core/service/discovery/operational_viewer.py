@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipal,
+    LineEnablementPrincipal,
 )
 
 
@@ -41,7 +41,7 @@ class OperationalViewer:
         default=None, compare=False, repr=False
     )
 
-    def may_see(self, principal: LineArmPrincipal) -> bool:
+    def may_see(self, principal: LineEnablementPrincipal) -> bool:
         if principal.kind != "runtime_credential":
             # The local operator is one fixed identity with no credential, and
             # a claimed principal's label is its principal ID, which principal
@@ -59,7 +59,7 @@ class OperationalViewer:
         return self.credential_principal(arming) == self.principal_id
 
 
-def may_see_arming(viewer: OperationalViewer | None, principal: LineArmPrincipal) -> bool:
+def may_see_arming(viewer: OperationalViewer | None, principal: LineEnablementPrincipal) -> bool:
     """Whether this reader may see who armed a Line: its runtime credential id and label."""
 
     if principal.kind != "runtime_credential":

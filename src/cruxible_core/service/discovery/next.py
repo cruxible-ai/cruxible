@@ -886,7 +886,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.proposal.readmit": "proposal readmit",
     "cruxible.proposal.approve": "proposal approve",
     "cruxible.compiler.upgrade": "compiler upgrade",
-    "cruxible.line.arm": "line arm",
+    "cruxible.line.enable": "line enable",
     "cruxible.line.dispatch": "line dispatch",
     "cruxible.prediction.settle": "prediction settle",
 }
@@ -955,7 +955,7 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.proposal.readmit": "cruxible_proposal_readmit",
     "cruxible.proposal.approve": "cruxible_proposal_approve",
     "cruxible.compiler.upgrade": "cruxible_compiler_upgrade",
-    "cruxible.line.arm": "cruxible_line_arm",
+    "cruxible.line.enable": "cruxible_line_enable",
     "cruxible.line.dispatch": "cruxible_line_dispatch",
     "cruxible.prediction.settle": "cruxible_prediction_settle",
     "hand_edit": None,
@@ -1113,8 +1113,8 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         value = values.get(key)
         return value if isinstance(value, str) and value else None
 
-    if operation == "cruxible.line.arm" and text("line"):
-        return _mcp_call("cruxible_line_arm", line=text("line"))
+    if operation == "cruxible.line.enable" and text("line"):
+        return _mcp_call("cruxible_line_enable", line=text("line"))
     if operation == "cruxible.line.dispatch" and text("line"):
         limit = values.get("limit")
         request = {"limit": limit} if isinstance(limit, int) and limit > 1 else {}
@@ -1204,8 +1204,8 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         value = values.get(key)
         return value if isinstance(value, str) and value else None
 
-    if operation == "cruxible.line.arm" and (line := text("line")):
-        return _sdk_call("cx.arm_line", line)
+    if operation == "cruxible.line.enable" and (line := text("line")):
+        return _sdk_call("cx.enable_line", line)
     if operation == "cruxible.line.dispatch" and (line := text("line")):
         limit = values.get("limit")
         if isinstance(limit, int) and limit > 1:
@@ -1301,7 +1301,7 @@ def _repair_command(
         if not isinstance(target, str) or not isinstance(name, str):
             return None
         parts.extend(["--to", shlex.quote(target), "--name", shlex.quote(name)])
-    elif operation in {"cruxible.line.arm", "cruxible.line.dispatch"}:
+    elif operation in {"cruxible.line.enable", "cruxible.line.dispatch"}:
         line = values.get("line")
         limit = values.get("limit")
         if not isinstance(line, str) or not line:
@@ -4166,7 +4166,7 @@ def _consumers_health(
             for health in healths
             if health.kind == kind.name
         )
-    # Armed Lines are governed consumers: their health is not a finding the
+    # Enabled Lines are governed consumers: their health is not a finding the
     # facet's state is about, but an instance caller reads it here without
     # the daemon's registry.
     arms = Counter(health.state for health in healths if health.kind == "line")
@@ -4182,7 +4182,7 @@ def _consumers_health(
     )
     detail: dict[str, object] = {"workers": workers}
     if arms:
-        detail["line_arms"] = {
+        detail["line_enablements"] = {
             "running": arms["running"],
             "stalled": arms["stalled"],
             "stopped": arms["stopped"],

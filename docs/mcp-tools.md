@@ -260,8 +260,8 @@ exactly one may omit it.
 | `cruxible_procedure_measure` | Evaluate due Procedure measurements from real evidence, persist the resolution, and credit one run's exact grain | `GOVERNED_WRITE` |
 | `cruxible_procedure_readings` | Inspect measurement standing and retained exact-grain readings (read-only, paginated) | `READ_ONLY` |
 | `cruxible_line_check` | Read trigger eligibility, exact matches, and admitted occurrences without queuing or running. | `READ_ONLY` |
-| `cruxible_line_arm` | Arm a Line forward-only: the daemon admits what it matches under the caller's credential, rechecked before each run. Repeating it unchanged returns `outcome: already_armed`. | `GOVERNED_WRITE` |
-| `cruxible_line_disarm` | Stop a Line admitting work on its own; admitted runs keep going. A stopped arm returns `outcome: already_disarmed`. | `GOVERNED_WRITE` |
+| `cruxible_line_enable` | Arm a Line forward-only: the daemon admits what it matches under the caller's credential, rechecked before each run. Repeating it unchanged returns `outcome: already_enabled`. | `GOVERNED_WRITE` |
+| `cruxible_line_disable` | Stop a Line admitting work on its own; admitted runs keep going. A stopped arm returns `outcome: already_disabled`. | `GOVERNED_WRITE` |
 | `cruxible_line_status` | Read a Line's arm, its pending work, and why an arm stopped. | `READ_ONLY` |
 | `cruxible_line_evaluate` | Evaluate an explicit historical range into pending work; never executes. | `GOVERNED_WRITE` |
 | `cruxible_line_dispatch` | Admit retained pending occurrences under the current caller’s authority. | `READ_ONLY` |

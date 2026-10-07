@@ -64,8 +64,8 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
     "cruxible_core/service/procedures/line_dispatch.py": frozenset(
         {
             "service_evaluate_line",
-            "service_arm_line",
-            "service_disarm_line",
+            "service_enable_line",
+            "service_disable_line",
             "service_stop_line_arm",
             "service_match_listening_lines",
             "service_dispatch_line",

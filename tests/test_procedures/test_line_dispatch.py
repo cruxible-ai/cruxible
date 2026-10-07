@@ -9,8 +9,8 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipal,
     LineDispatchRequest,
+    LineEnablementPrincipal,
     LineEvaluateRequest,
     LineTriggerCheckRequest,
 )
@@ -22,8 +22,8 @@ from cruxible_client.contracts.triggers import (
 )
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore
 from cruxible_core.service.procedures.line_dispatch import (
-    service_arm_line,
     service_dispatch_line,
+    service_enable_line,
     service_evaluate_line,
     service_match_listening_lines,
 )
@@ -38,7 +38,7 @@ from tests.support.lines import line_trigger, successor, trigger_members
 from tests.test_procedures.test_line_triggers import SELECTOR, TRIGGER, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
-LOCAL_OPERATOR = LineArmPrincipal(kind="local_operator", label="local-operator")
+LOCAL_OPERATOR = LineEnablementPrincipal(kind="local_operator", label="local-operator")
 
 
 def _active_segment(instance) -> str:  # type: ignore[no-untyped-def]
@@ -95,7 +95,7 @@ def test_listener_restart_keeps_pending_and_leaves_downtime_for_explicit_evaluat
     capture(instance, procedure)  # before subscribing: never auto-consumed
     actor = _actor(instance)
     start = READ_TIME + timedelta(seconds=10)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -255,7 +255,7 @@ def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
     )
     instance, line, procedure = line_world(tmp_path, WindowCloseSchedule(window=window))
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -302,7 +302,7 @@ def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
 def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tmp_path):
     instance, line, _ = line_world(tmp_path, CadenceSchedule(interval_seconds=60))
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -340,7 +340,7 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
 def test_event_index_rebuild_never_replays_history_or_loses_pending(tmp_path):
     instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -396,7 +396,7 @@ def test_daemon_listener_matches_without_execution(tmp_path, monkeypatch):
     monkeypatch.setattr(LineDispatchStore, "append", append)
     listener.start()
     try:
-        service_arm_line(
+        service_enable_line(
             instance,
             line.identity.name,
             principal=LOCAL_OPERATOR,
@@ -431,7 +431,7 @@ def test_any_line_or_trigger_change_stops_the_arm_until_it_is_rearmed(
         tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -529,7 +529,7 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
     )
     actor = _actor(instance)
     for line in (first, second):
-        service_arm_line(
+        service_enable_line(
             instance,
             line.identity.name,
             principal=LOCAL_OPERATOR,
@@ -560,7 +560,7 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
 def test_idle_coverage_is_checkpointed_and_restart_claims_only_durable_range(tmp_path):
     instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,
@@ -966,7 +966,7 @@ def test_arming_a_line_that_can_propose_refuses_up_front_without_a_mandate(tmp_p
     instance, line, _ = line_world(tmp_path, None, triggers=())
     monkeypatch.setattr(procedure_runs, "_accepted_line_mandates", lambda *_a, **_k: ())
     with pytest.raises(LineMandateRequired) as refused:
-        service_arm_line(
+        service_enable_line(
             instance,
             line.identity.name,
             principal=LOCAL_OPERATOR,
@@ -1102,7 +1102,7 @@ def test_a_fixed_window_fires_only_when_it_closes_after_the_triggers_acceptance(
 def test_an_armed_line_never_admits_a_later_append_stamped_before_acceptance(tmp_path):
     instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,

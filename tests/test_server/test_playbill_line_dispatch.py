@@ -38,24 +38,24 @@ def test_typed_sdk_http_check_listen_evaluate_and_dispatch(playbill_http, tmp_pa
     checked = sdk.check_line(line.identity.name)
     assert checked.status == "met" and not checked.occurrences[0].pending
     assert not dispatch_root(instance).exists()
-    armed = sdk.arm_line(line.identity.name)
-    assert armed.state == "armed" and armed.armed_by.kind == "local_operator"
-    assert armed.outcome == "armed"
+    armed = sdk.enable_line(line.identity.name)
+    assert armed.state == "enabled" and armed.enabled_by.kind == "local_operator"
+    assert armed.outcome == "enabled"
     assert sdk.line_status(line.identity.name) == armed.model_copy(
         update={"outcome": None, "coordinate": None}
     )
-    again = sdk.arm_line(line.identity.name)
-    assert (again.arm_id, again.outcome) == (armed.arm_id, "already_armed")
-    disarmed = sdk.disarm_line(line.identity.name)
-    assert (disarmed.arm_id, disarmed.state, disarmed.stop_reason, disarmed.outcome) == (
-        armed.arm_id,
+    again = sdk.enable_line(line.identity.name)
+    assert (again.enablement_id, again.outcome) == (armed.enablement_id, "already_enabled")
+    disarmed = sdk.disable_line(line.identity.name)
+    assert (disarmed.enablement_id, disarmed.state, disarmed.stop_reason, disarmed.outcome) == (
+        armed.enablement_id,
         "stopped",
-        "disarmed",
-        "disarmed",
+        "disabled",
+        "disabled",
     )
     assert disarmed.stopped_at == armed.evaluated_until
-    repeat = sdk.disarm_line(line.identity.name)
-    assert (repeat.arm_id, repeat.outcome) == (armed.arm_id, "already_disarmed")
+    repeat = sdk.disable_line(line.identity.name)
+    assert (repeat.enablement_id, repeat.outcome) == (armed.enablement_id, "already_disabled")
     evaluated = sdk.evaluate_line(line.identity.name, since=READ_TIME, until=now)
     assert evaluated.occurrences[0].pending
     result = sdk.dispatch_line(line.identity.name)
@@ -83,9 +83,9 @@ def test_typed_sdk_http_check_listen_evaluate_and_dispatch(playbill_http, tmp_pa
     )
     assert cli_retry.exit_code == 0, cli_retry.output
     assert result.items[0].run_id in cli_retry.output
-    cli_disarm = CliRunner().invoke(commands.line_group, ["disarm", line.identity.name])
+    cli_disarm = CliRunner().invoke(commands.line_group, ["disable", line.identity.name])
     assert cli_disarm.exit_code == 0, cli_disarm.output
-    assert "already disarmed; nothing changed" in cli_disarm.output
+    assert "already disabled; nothing changed" in cli_disarm.output
     final = sdk.check_line(line.identity.name)
     assert not final.occurrences[0].pending
     assert final.occurrences[0].admitted_run_id == result.items[0].run_id

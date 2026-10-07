@@ -36,14 +36,14 @@ from cruxible_client.contracts.operational_reads import (
     LINE_CARD_RUNS,
     OPERATIONAL_CARD_LIST_LIMIT,
     GetCaptureCard,
-    GetLineArm,
     GetLineCard,
+    GetLineEnablement,
     GetLineOccurrence,
     GetLineTrigger,
     GetMandateCard,
     GetPredictionWindow,
     GetResolutionContractCard,
-    LineArmState,
+    LineEnablementState,
     LiveHead,
     LiveView,
     MandateState,
@@ -116,7 +116,15 @@ def live_view(instance: PlaybillInstance, fields: tuple[str, ...]) -> LiveView:
 
 #: What each card reads live.
 LIVE_CARD_FIELDS: dict[str, tuple[str, ...]] = {
-    "line": ("arms", "arms_total", "due", "waiting", "occurrences", "recent_runs", "runs_total"),
+    "line": (
+        "enablements",
+        "enablements_total",
+        "due",
+        "waiting",
+        "occurrences",
+        "recent_runs",
+        "runs_total",
+    ),
     "resolution_contract": ("state", "windows", "windows_total"),
     "capture": ("status", "status_detail"),
     "procedure_run": ("card",),
@@ -261,7 +269,7 @@ def aimed_trigger_page(
 
 def line_arm_states(
     instance: PlaybillInstance, digests: Mapping[str, str], *, now: datetime
-) -> dict[str, LineArmState | None]:
+) -> dict[str, LineEnablementState | None]:
     """Each Line's latest arm state (by Line identity), from one dispatch-store session."""
 
     if not digests or not dispatch_root(instance).exists():
@@ -320,14 +328,14 @@ def _line_stall_after() -> timedelta:
 class LineOperations:
     """What the Line dispatch projection holds for one Line, as of ``now``."""
 
-    arms: tuple[GetLineArm, ...] = ()
+    arms: tuple[GetLineEnablement, ...] = ()
     arms_total: int = 0
     due: int = 0
     waiting: int = 0
     occurrences: tuple[GetLineOccurrence, ...] = ()
 
     @property
-    def arm_state(self) -> LineArmState | None:
+    def arm_state(self) -> LineEnablementState | None:
         return self.arms[0].state if self.arms else None
 
 
@@ -338,7 +346,7 @@ def _arm(
     *,
     now: datetime,
     viewer: OperationalViewer | None,
-) -> GetLineArm:
+) -> GetLineEnablement:
     active = data["stops_at"] is None
     automatic = (
         int(
@@ -357,7 +365,7 @@ def _arm(
         ).fetchone()[0]
     )
     view = store.arm_view(data, pending_automatic=automatic, pending_explicit=total - automatic)
-    state: LineArmState
+    state: LineEnablementState
     if active:
         oldest = conn.execute(
             "SELECT min(eligible_at) FROM pending WHERE session_id=? AND disposition='pending'",
@@ -366,16 +374,16 @@ def _arm(
         stalled = oldest is not None and _instant(oldest) <= now - _line_stall_after()
         state = "stalled" if stalled else "running"
     else:
-        state = "disarmed" if view.stop_reason in {None, "disarmed"} else "stopped"
-    visible = may_see_arming(viewer, view.armed_by)
-    return GetLineArm(
-        arm=view.arm_id,
+        state = "disabled" if view.stop_reason in {None, "disabled"} else "stopped"
+    visible = may_see_arming(viewer, view.enabled_by)
+    return GetLineEnablement(
+        enablement=view.enablement_id,
         state=state,
-        principal_kind=view.armed_by.kind,
-        armed_by=view.armed_by.label if visible else None,
-        credential=view.armed_by.credential_id if visible else None,
-        armed_by_withheld=not visible,
-        armed_at=view.armed_at,
+        principal_kind=view.enabled_by.kind,
+        enabled_by=view.enabled_by.label if visible else None,
+        credential=view.enabled_by.credential_id if visible else None,
+        enabled_by_withheld=not visible,
+        enabled_at=view.enabled_at,
         stopped_at=view.stopped_at,
         stop_reason=view.stop_reason,
         detail=view.detail,
@@ -498,8 +506,8 @@ def line_card(
     runs, _more = run_rows(instance, limit=LINE_CARD_RUNS, line=line.identity)
     total, _running = run_counts(instance, line=line.identity)
     fields: dict[str, Any] = dict(
-        arms=operations.arms,
-        arms_total=operations.arms_total,
+        enablements=operations.arms,
+        enablements_total=operations.arms_total,
         due=operations.due,
         waiting=operations.waiting,
         occurrences=operations.occurrences,
@@ -570,7 +578,7 @@ def line_rows(
                 procedure=line.procedure.target.qualified,
                 authority=line_authority(line),
                 trigger=trigger_kind(triggers[line.identity.qualified].schedule_kinds),
-                arm=operations.arm_state,
+                enablement=operations.arm_state,
                 due=operations.due,
                 waiting=operations.waiting,
             )

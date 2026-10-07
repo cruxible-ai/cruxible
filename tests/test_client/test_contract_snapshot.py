@@ -103,8 +103,8 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "LineDispatchRequest",
         "LineDispatchResult",
         "LineEvaluateRequest",
-        "LineArmPrincipal",
-        "LineArm",
+        "LineEnablementPrincipal",
+        "LineEnablement",
         "LineTriggerCheckRequest",
         "LineTriggerCheckResult",
         "LineTriggerOccurrence",
@@ -288,8 +288,8 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
     }
     assert set(current["literal_aliases"]) == {
         "ProcedureMeasurementRefusalCode",
-        "LineArmOutcome",
-        "LineArmStopReason",
+        "LineEnablementOutcome",
+        "LineEnablementStopReason",
         "ApprovalPolicyMode",
         "AuthoringExampleName",
         "HostCompatibilityReasonCode",

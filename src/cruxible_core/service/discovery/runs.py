@@ -265,9 +265,9 @@ def _run_trigger(
         return GetRunTrigger(
             line=line,
             occurrence=occurrence,
-            armed_by_withheld=viewer is None or not viewer.admin,
+            enabled_by_withheld=viewer is None or not viewer.admin,
         )
-    from cruxible_client.contracts.line_dispatch import LineArmPrincipal
+    from cruxible_client.contracts.line_dispatch import LineEnablementPrincipal
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 
     fields: dict[str, object] = {}
@@ -281,15 +281,15 @@ def _run_trigger(
         if row is not None:
             data = json.loads(row[0])
             if data.get("arm_id"):
-                fields["arm"] = str(data["arm_id"])
+                fields["enablement"] = str(data["arm_id"])
             by = data.get("armed_by")
             if isinstance(by, Mapping):
-                principal = LineArmPrincipal.model_validate(by)
+                principal = LineEnablementPrincipal.model_validate(by)
                 fields["principal_kind"] = principal.kind
                 if may_see_arming(viewer, principal):
-                    fields["armed_by"] = principal.label
+                    fields["enabled_by"] = principal.label
                 else:
-                    fields["armed_by_withheld"] = True
+                    fields["enabled_by_withheld"] = True
     return GetRunTrigger(line=line, occurrence=occurrence, **fields)  # type: ignore[arg-type]
 
 
@@ -389,7 +389,9 @@ def procedure_run_card(
     # An armed run acts as its arming credential's label; that label is the
     # arming credential's to see, as on the Line card.
     actor = (
-        None if trigger is not None and trigger.armed_by_withheld else bound.actor_context.actor_id
+        None
+        if trigger is not None and trigger.enabled_by_withheld
+        else bound.actor_context.actor_id
     )
     next_steps = [render(bound.procedure_identity.qualified, None)]
     if line is not None:
@@ -433,7 +435,7 @@ def run_arming_withheld(
     if admission is None:
         return False
     trigger = _run_trigger(instance, run_id, admission, viewer)
-    return trigger is not None and bool(trigger.armed_by_withheld)
+    return trigger is not None and bool(trigger.enabled_by_withheld)
 
 
 def procedure_run_status(

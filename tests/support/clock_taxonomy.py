@@ -80,9 +80,9 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # A signed mint consent is accepted only within a window around the
     # daemon's clock; issued_at anchors that window.
     ("RuntimeCredentialMintStatement", "issued_at"): "VALIDITY WINDOW",
-    ("LineArm", "armed_at"): "VALIDITY WINDOW",
-    ("LineArm", "evaluated_until"): "VALIDITY WINDOW",
-    ("LineArm", "stopped_at"): "VALIDITY WINDOW",
+    ("LineEnablement", "armed_at"): "VALIDITY WINDOW",
+    ("LineEnablement", "evaluated_until"): "VALIDITY WINDOW",
+    ("LineEnablement", "stopped_at"): "VALIDITY WINDOW",
     ("LineTriggerCheckRequest", "since"): "VALIDITY WINDOW",
     ("LineTriggerCheckRequest", "until"): "VALIDITY WINDOW",
     ("LineTriggerOccurrence", "eligible_at"): "VALIDITY WINDOW",
@@ -318,8 +318,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # windows; a Capture's observed_at is its producer's assertion; a run's
     # times are its admission's evaluation instant, which the deterministic
     # executor clock stamps on every journal record of the run.
-    ("GetLineArm", "armed_at"): "VALIDITY WINDOW",
-    ("GetLineArm", "stopped_at"): "VALIDITY WINDOW",
+    ("GetLineEnablement", "armed_at"): "VALIDITY WINDOW",
+    ("GetLineEnablement", "stopped_at"): "VALIDITY WINDOW",
     ("GetLineOccurrence", "eligible_at"): "VALIDITY WINDOW",
     ("GetCaptureCard", "observed_at"): "ASSERTION TIME",
     ("OrientCapture", "observed_at"): "ASSERTION TIME",

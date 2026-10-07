@@ -178,7 +178,7 @@ def _line_arm_row() -> PlaybillNextItemV1:
         subject_identity="Line:hourly",
         detail={},
         repair=PlaybillNextRepairV1(
-            operation="cruxible.line.arm",
+            operation="cruxible.line.enable",
             target="Line:hourly",
             required_change="arm_the_line",
             arguments={"line": "hourly"},
@@ -194,7 +194,7 @@ def test_sdk_rows_render_sdk_calls_not_cli_commands() -> None:
     commands = {
         item.repair.operation: item.repair.command for item in kept if item.repair is not None
     }
-    assert commands["cruxible.line.arm"] == 'cx.arm_line("hourly")'
+    assert commands["cruxible.line.enable"] == 'cx.enable_line("hourly")'
     assert commands["cruxible.proposal.approve"] == (
         'cx.proposal("PRP-0001").approve(reviewed=cx.proposal("PRP-0001").review())'
     )
@@ -373,7 +373,7 @@ def test_supporting_evidence_folded_into_a_conflict_is_rendered_for_the_caller(
 
 
 _SDK_REPAIRS: tuple[tuple[str, dict[str, object]], ...] = (
-    ("cruxible.line.arm", {"line": "hourly"}),
+    ("cruxible.line.enable", {"line": "hourly"}),
     ("cruxible.line.dispatch", {"line": "hourly", "limit": 3}),
     ("cruxible.prediction.settle", {"prediction_id": "RSC-0001"}),
     ("cruxible.authoring.example", {"example": "procedure-mandate"}),
@@ -435,5 +435,5 @@ def test_the_sdk_reads_a_row_whose_repair_is_withheld(
 
     assert wire.repair is None
     assert wire.repair_requires is not None
-    assert wire.repair_requires.tool == "cruxible_line_arm"
+    assert wire.repair_requires.tool == "cruxible_line_enable"
     assert wire.repair_requires.because == ["tier"]

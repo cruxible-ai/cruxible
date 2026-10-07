@@ -21,13 +21,13 @@ from uuid import uuid4
 
 from cruxible_client.contracts.errors import CruxibleError, ExecutionError
 from cruxible_client.contracts.line_dispatch import (
-    LineArm,
-    LineArmOutcome,
-    LineArmPrincipal,
-    LineArmStopReason,
     LineDispatchItem,
     LineDispatchRequest,
     LineDispatchResult,
+    LineEnablement,
+    LineEnablementOutcome,
+    LineEnablementPrincipal,
+    LineEnablementStopReason,
     LineEvaluateRequest,
     LineTriggerCheckRequest,
     LineTriggerCheckResult,
@@ -59,7 +59,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.change_preview import change_scope
 from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 from cruxible_core.service.procedures.procedure_runs import (
-    LineNeverArmed,
+    LineNeverEnabled,
     LineRunRequest,
     LineTriggersChanged,
     LineVersionChanged,
@@ -86,9 +86,11 @@ _ARM_FIELDS = (
     "armed_at",
     "armed_by",
 )
-_EPOCH_CHANGED = "The Line's trigger epoch changed; rearm to match the new epoch."
-_LINE_CHANGED = "The Line changed; rearm to run its new version automatically."
-_TRIGGER_CHANGED = "The Triggers aimed at this Line changed; rearm to run under the current ones."
+_EPOCH_CHANGED = "The Line's trigger epoch changed; enable it again to match the new epoch."
+_LINE_CHANGED = "The Line changed; enable it again to run its new version automatically."
+_TRIGGER_CHANGED = (
+    "The Triggers aimed at this Line changed; enable it again to run under the current ones."
+)
 
 # Idle polls need not retain a record per tick. A crash may leave at most this
 # checkpoint interval uncovered; restart never advances beyond durable coverage.
@@ -191,7 +193,7 @@ def service_evaluate_line(
 class LineArmAuthorityLost(ExecutionError):
     """The arming credential, scope or permission no longer holds; the arm stops."""
 
-    def __init__(self, reason: LineArmStopReason, detail: str) -> None:
+    def __init__(self, reason: LineEnablementStopReason, detail: str) -> None:
         super().__init__(detail)
         self.reason = reason
         self.detail = detail
@@ -210,7 +212,7 @@ def require_active_segment(instance: PlaybillInstance, session_id: str) -> None:
             "SELECT active FROM sessions WHERE session_id=?", (session_id,)
         ).fetchone()
     if row is None or not row[0]:
-        raise LineArmSegmentEnded("the arm that matched this work is no longer active")
+        raise LineArmSegmentEnded("the enablement that matched this work is no longer active")
 
 
 @contextmanager
@@ -326,7 +328,7 @@ def _lapse_cadence_backlog(
                 line_id=line_id,
                 epoch=accepted.line.occurrence_epoch,
                 occurrence_id=occurrence_id,
-                detail=("A tick due before this arm lapsed; retry it explicitly to run it."),
+                detail=("A tick due before this enablement lapsed; retry it explicitly to run it."),
                 status="lapsed",
                 refusal=None,
             ),
@@ -340,7 +342,7 @@ def _stop(
     conn: Any,
     session: dict[str, Any],
     *,
-    reason: LineArmStopReason | None,
+    reason: LineEnablementStopReason | None,
     detail: str,
     actor: GovernedActorContext,
     now: datetime,
@@ -364,9 +366,9 @@ def _arm_view(
     conn: Any,
     data: dict[str, Any],
     *,
-    outcome: LineArmOutcome | None = None,
+    outcome: LineEnablementOutcome | None = None,
     coordinate: AcceptedCoordinate | None = None,
-) -> LineArm:
+) -> LineEnablement:
     active = data["stops_at"] is None
     automatic = (
         conn.execute(
@@ -386,21 +388,21 @@ def _arm_view(
     return view.model_copy(update={"outcome": outcome, "coordinate": coordinate})
 
 
-def service_arm_line(
+def service_enable_line(
     instance: PlaybillInstance,
     line: str,
     *,
-    principal: LineArmPrincipal,
+    principal: LineEnablementPrincipal,
     actor: GovernedActorContext,
     now: datetime,
     daemon_id: str,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> LineArm:
+) -> LineEnablement:
     """Arm the current Line version forward-only under the caller's credential.
 
     ``dry_run`` previews the arm on this same path and records nothing; its
-    outcome reads ``would_arm`` or ``would_rearm`` (R12).
+    outcome reads ``would_enable`` or ``would_reenable`` (R12).
 
     The arm matches the live Triggers aimed at the Line now, pinned to their
     exact versions. Arming never catches up: matching starts at `now`, and any
@@ -408,7 +410,7 @@ def service_arm_line(
     or settle refuses to arm (`cruxible.line.mandate_required`) while no
     current mandate covers its Procedure. Arming a Line already armed by this
     caller, at the current version, epoch and Triggers, on this daemon changes
-    nothing and reports `already_armed`. Rearming with any of those different
+    nothing and reports `already_enabled`. Rearming with any of those different
     rebinds it to this caller and the current versions, again from `now`.
     """
 
@@ -418,8 +420,8 @@ def service_arm_line(
         dry_run=dry_run,
         at=at,
         kind="direct",
-        operation="cruxible.line.arm",
-        describe=f"arming Line {line}",
+        operation="cruxible.line.enable",
+        describe=f"enabling Line {line}",
     ) as mode:
         return _previewed(
             mode.previewing,
@@ -435,7 +437,7 @@ def service_arm_line(
         )
 
 
-def _previewed(previewing: bool, view: LineArm) -> LineArm:
+def _previewed(previewing: bool, view: LineEnablement) -> LineEnablement:
     """A preview's arm view: the state the commit would leave, outcome ``would_*``."""
 
     if not previewing or view.outcome not in _WOULD_OUTCOMES:
@@ -443,10 +445,10 @@ def _previewed(previewing: bool, view: LineArm) -> LineArm:
     return view.model_copy(update={"outcome": _WOULD_OUTCOMES[view.outcome]})
 
 
-_WOULD_OUTCOMES: dict[str | None, LineArmOutcome] = {
-    "armed": "would_arm",
-    "rearmed": "would_rearm",
-    "disarmed": "would_disarm",
+_WOULD_OUTCOMES: dict[str | None, LineEnablementOutcome] = {
+    "enabled": "would_enable",
+    "reenabled": "would_reenable",
+    "disabled": "would_disable",
 }
 
 
@@ -454,12 +456,12 @@ def _arm_line(
     instance: PlaybillInstance,
     line: str,
     *,
-    principal: LineArmPrincipal,
+    principal: LineEnablementPrincipal,
     actor: GovernedActorContext,
     now: datetime,
     daemon_id: str,
     committing: Callable[[], AbstractContextManager[None]],
-) -> LineArm:
+) -> LineEnablement:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
     evaluated = AcceptedCoordinate.from_internal(coordinate)
@@ -483,14 +485,14 @@ def _arm_line(
             and current.get("trigger_pins") == trigger_pins
             and current["daemon_id"] == daemon_id
         ):
-            return _arm_view(store, conn, current, outcome="already_armed", coordinate=evaluated)
+            return _arm_view(store, conn, current, outcome="already_enabled", coordinate=evaluated)
         if current is not None:
             _stop(
                 store,
                 conn,
                 current,
-                reason="disarmed",
-                detail="Rearmed; the new arm matches forward from its own start.",
+                reason="disabled",
+                detail="Enabled again; the new enablement matches forward from its own start.",
                 actor=actor,
                 now=now,
             )
@@ -512,12 +514,12 @@ def _arm_line(
             store,
             conn,
             data,
-            outcome="armed" if current is None else "rearmed",
+            outcome="enabled" if current is None else "reenabled",
             coordinate=evaluated,
         )
 
 
-def service_disarm_line(
+def service_disable_line(
     instance: PlaybillInstance,
     line: str,
     *,
@@ -525,12 +527,12 @@ def service_disarm_line(
     now: datetime,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> LineArm:
+) -> LineEnablement:
     """Stop admitting new work; a run already admitted is not cancelled.
 
     Disarming a Line whose arm already stopped changes nothing and returns that
-    arm with `already_disarmed`. A Line never armed has no arm to return.
-    ``dry_run`` previews it and records nothing (outcome ``would_disarm``).
+    arm with `already_disabled`. A Line never armed has no arm to return.
+    ``dry_run`` previews it and records nothing (outcome ``would_disable``).
     """
 
     instance.require_writable()
@@ -539,8 +541,8 @@ def service_disarm_line(
         dry_run=dry_run,
         at=at,
         kind="direct",
-        operation="cruxible.line.disarm",
-        describe=f"disarming Line {line}",
+        operation="cruxible.line.disable",
+        describe=f"disabling Line {line}",
     ) as mode:
         return _previewed(
             mode.previewing,
@@ -555,7 +557,7 @@ def _disarm_line(
     actor: GovernedActorContext,
     now: datetime,
     committing: Callable[[], AbstractContextManager[None]],
-) -> LineArm:
+) -> LineEnablement:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
     evaluated = AcceptedCoordinate.from_internal(coordinate)
@@ -569,21 +571,21 @@ def _disarm_line(
                 (identity,),
             ).fetchone()
             if last is None:
-                raise LineNeverArmed(accepted.line.identity.name)
+                raise LineNeverEnabled(accepted.line.identity.name)
             return _arm_view(
                 store,
                 conn,
                 json.loads(last[0]),
-                outcome="already_disarmed",
+                outcome="already_disabled",
                 coordinate=evaluated,
             )
         data = _stop(
-            store, conn, current, reason="disarmed", detail="Disarmed.", actor=actor, now=now
+            store, conn, current, reason="disabled", detail="Disabled.", actor=actor, now=now
         )
-        return _arm_view(store, conn, data, outcome="disarmed", coordinate=evaluated)
+        return _arm_view(store, conn, data, outcome="disabled", coordinate=evaluated)
 
 
-def service_line_status(instance: PlaybillInstance, line: str) -> LineArm:
+def service_line_status(instance: PlaybillInstance, line: str) -> LineEnablement:
     """The Line's current arm, or the last one and why it stopped."""
 
     accepted = _accepted_line_by_reference(
@@ -591,7 +593,7 @@ def service_line_status(instance: PlaybillInstance, line: str) -> LineArm:
     )
     identity = line_identity_digest(accepted.line.identity)
     if not dispatch_root(instance).exists():
-        raise LineNeverArmed(accepted.line.identity.name)
+        raise LineNeverEnabled(accepted.line.identity.name)
     store = LineDispatchStore(instance)
     with store.locked() as conn:
         row = conn.execute(
@@ -599,7 +601,7 @@ def service_line_status(instance: PlaybillInstance, line: str) -> LineArm:
             (identity,),
         ).fetchone()
         if row is None:
-            raise LineNeverArmed(accepted.line.identity.name)
+            raise LineNeverEnabled(accepted.line.identity.name)
         return _arm_view(store, conn, json.loads(row[0]))
 
 
@@ -607,7 +609,7 @@ def service_stop_line_arm(
     instance: PlaybillInstance,
     session_id: str,
     *,
-    reason: LineArmStopReason,
+    reason: LineEnablementStopReason,
     detail: str,
     actor: GovernedActorContext,
     now: datetime,
@@ -634,7 +636,7 @@ def service_stop_line_arm(
 
 def line_arm_health(
     instance: PlaybillInstance, *, now: datetime, stall_after: timedelta
-) -> tuple[tuple[Literal["running", "stalled", "stopped"], LineArm], ...]:
+) -> tuple[tuple[Literal["running", "stalled", "stopped"], LineEnablement], ...]:
     """Every Line's latest arm segment, and whether its automation is doing its job.
 
     An arm that stopped for any reason but a deliberate disarm is `stopped`; an
@@ -646,7 +648,7 @@ def line_arm_health(
     if not dispatch_root(instance).exists():
         return ()
     store = LineDispatchStore(instance)
-    arms: list[tuple[Literal["running", "stalled", "stopped"], LineArm]] = []
+    arms: list[tuple[Literal["running", "stalled", "stopped"], LineEnablement]] = []
     with store.locked() as conn:
         latest = conn.execute(
             "SELECT s.payload FROM sessions s WHERE s.rowid = "
@@ -655,7 +657,7 @@ def line_arm_health(
         for (payload,) in latest:
             data = json.loads(payload)
             if data["stops_at"] is not None:
-                if data.get("stop_reason") not in {None, "disarmed"}:
+                if data.get("stop_reason") not in {None, "disabled"}:
                     arms.append(("stopped", _arm_view(store, conn, data)))
                 continue
             oldest = conn.execute(
@@ -692,7 +694,7 @@ def _arm_stop(
     occurrence_epoch: int,
     line_artifact_digest: str,
     trigger_pins: dict[str, str],
-) -> tuple[LineArmStopReason, str] | None:
+) -> tuple[LineEnablementStopReason, str] | None:
     """Why an arm no longer matches what is accepted, or None while it still does."""
 
     if occurrence_epoch != session["occurrence_epoch"]:
@@ -783,7 +785,7 @@ def service_match_listening_lines(
                         store.append(conn, "coverage", session, actor=actor, now=now)
             continue
         pins = line_trigger_pins(triggers)
-        stop: tuple[LineArmStopReason, str] | None
+        stop: tuple[LineEnablementStopReason, str] | None
         stop = _arm_stop(
             session,
             occurrence_epoch=accepted.line.occurrence_epoch,

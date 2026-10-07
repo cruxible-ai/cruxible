@@ -912,7 +912,7 @@ next(*, expiring_within: Duration) -> NextPage
 
 Scans the attached workspace and reads actionable work with explicit access profile, evaluation time, and expiry horizon.
 
-**Conditions and effects:** Inspect observed_domains/unobserved_domains; an empty page does not imply every possible domain was observed. Each row's `repair.command` is the SDK call that performs it (for example `cx.arm_line("hourly")`), leaving out an operand only the caller holds, such as the signer or the observation; it is `None` when the SDK has no method for that repair.
+**Conditions and effects:** Inspect observed_domains/unobserved_domains; an empty page does not imply every possible domain was observed. Each row's `repair.command` is the SDK call that performs it (for example `cx.enable_line("hourly")`), leaving out an operand only the caller holds, such as the signer or the observation; it is `None` when the SDK has no method for that repair.
 
 | Parameter | Default | Meaning |
 |---|---|---|

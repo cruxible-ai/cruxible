@@ -231,14 +231,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Check a named Line without enqueuing or running it. Incomplete coverage is not absence; "
         "retain the returned checked_until when paging."
     ),
-    "cruxible_line_arm": (
-        "Arm a Line so the daemon admits what it matches from now on, under your credential "
+    "cruxible_line_enable": (
+        "Enable a Line so the daemon admits what it matches from now on, under your credential "
         "and the Line version current now. Never catches up: earlier pending work and daemon "
-        "downtime need evaluate and dispatch. Repeating it unchanged returns already_armed."
+        "downtime need evaluate and dispatch. Repeating it unchanged returns already_enabled."
     ),
-    "cruxible_line_disarm": (
+    "cruxible_line_disable": (
         "Stop a Line admitting work on its own. Runs already admitted keep going. "
-        "A Line already stopped returns already_disarmed."
+        "A Line already stopped returns already_disabled."
     ),
     "cruxible_line_status": (
         "Read whether a Line is armed, its pending work, and why an arm stopped "
@@ -249,7 +249,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Repeat or page incomplete results; no runs start."
     ),
     "cruxible_line_dispatch": (
-        "Execute pending occurrences under your current authority. An armed Line admits only "
+        "Execute pending occurrences under your current authority. An enabled Line admits only "
         "what it matched itself; everything else waits for this call."
     ),
     "cruxible_line_run": (

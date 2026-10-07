@@ -497,8 +497,8 @@ def test_cli_next_keeps_a_row_whose_repair_is_withheld_and_names_what_it_needs(
         "detail": {"state": "stopped"},
         "repair": None,
         "repair_requires": {
-            "operation": "cruxible.line.arm",
-            "tool": "cruxible_line_arm",
+            "operation": "cruxible.line.enable",
+            "tool": "cruxible_line_enable",
             "tier": "governed_write",
             "because": ["tier"],
         },
@@ -529,6 +529,6 @@ def test_cli_next_keeps_a_row_whose_repair_is_withheld_and_names_what_it_needs(
 
     assert _invoke_next().splitlines()[0] == (
         "repair  consumer_stalled  Line:hourly  repair withheld: "
-        "cruxible_line_arm needs the governed_write tier"
+        "cruxible_line_enable needs the governed_write tier"
     )
     assert _invoke_next("--brief").splitlines() == ["repair  consumer_stalled  Line:hourly"]

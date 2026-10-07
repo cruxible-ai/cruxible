@@ -1208,33 +1208,35 @@ def register_tools(
         return handlers.handle_playbill_line_check(require_instance_id(instance_id), line, request)
 
     @_tool
-    def cruxible_line_arm(
+    def cruxible_line_enable(
         instance_id: InstanceId = None,
         *,
         line: str,
         dry_run: DryRun = None,
         at: PreviewAt = None,
-    ) -> contracts.LineArm:
-        """Arm a Line forward-only; the daemon admits what it matches under your credential."""
-        return handlers.handle_playbill_line_arm(
+    ) -> contracts.LineEnablement:
+        """Enable a Line forward-only; the daemon admits what it matches under your credential."""
+        return handlers.handle_playbill_line_enable(
             require_instance_id(instance_id), line, dry_run=dry_run, at=at
         )
 
     @_tool
-    def cruxible_line_disarm(
+    def cruxible_line_disable(
         instance_id: InstanceId = None,
         *,
         line: str,
         dry_run: DryRun = None,
         at: PreviewAt = None,
-    ) -> contracts.LineArm:
+    ) -> contracts.LineEnablement:
         """Stop a Line admitting work on its own; admitted runs are not cancelled."""
-        return handlers.handle_playbill_line_disarm(
+        return handlers.handle_playbill_line_disable(
             require_instance_id(instance_id), line, dry_run=dry_run, at=at
         )
 
     @_tool
-    def cruxible_line_status(instance_id: InstanceId = None, *, line: str) -> contracts.LineArm:
+    def cruxible_line_status(
+        instance_id: InstanceId = None, *, line: str
+    ) -> contracts.LineEnablement:
         """Read a Line's current arm, or its last one and why it stopped."""
         return handlers.handle_playbill_line_status(require_instance_id(instance_id), line)
 

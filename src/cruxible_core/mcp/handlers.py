@@ -338,8 +338,8 @@ def _get_client() -> CruxibleClient | None:
 MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_line_dispatch": TypeAdapter(contracts.LineDispatchRequest),
     "cruxible_line_evaluate": TypeAdapter(contracts.LineEvaluateRequest),
-    "cruxible_line_arm": TypeAdapter(ChangeControlRequest),
-    "cruxible_line_disarm": TypeAdapter(ChangeControlRequest),
+    "cruxible_line_enable": TypeAdapter(ChangeControlRequest),
+    "cruxible_line_disable": TypeAdapter(ChangeControlRequest),
     "cruxible_provider_install": TypeAdapter(ProviderInstallRequest),
     "cruxible_kit_add": TypeAdapter(KitAddRequest),
     "cruxible_kit_remove": TypeAdapter(KitRemoveRequest),
@@ -1752,29 +1752,29 @@ def handle_playbill_line_check(
     )
 
 
-def handle_playbill_line_arm(
+def handle_playbill_line_enable(
     instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-) -> contracts.LineArm:
+) -> contracts.LineEnablement:
     return _dispatch_remote_or_local(
-        lambda client: client.arm_line(instance_id, line, dry_run=dry_run, at=at),
-        lambda: playbill_api.playbill_line_arm(instance_id, line, dry_run=dry_run, at=at),
-        operation_name="cruxible_line_arm",
+        lambda client: client.enable_line(instance_id, line, dry_run=dry_run, at=at),
+        lambda: playbill_api.playbill_line_enable(instance_id, line, dry_run=dry_run, at=at),
+        operation_name="cruxible_line_enable",
         local_payload={"dry_run": dry_run, "at": at},
     )
 
 
-def handle_playbill_line_disarm(
+def handle_playbill_line_disable(
     instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-) -> contracts.LineArm:
+) -> contracts.LineEnablement:
     return _dispatch_remote_or_local(
-        lambda client: client.disarm_line(instance_id, line, dry_run=dry_run, at=at),
-        lambda: playbill_api.playbill_line_disarm(instance_id, line, dry_run=dry_run, at=at),
-        operation_name="cruxible_line_disarm",
+        lambda client: client.disable_line(instance_id, line, dry_run=dry_run, at=at),
+        lambda: playbill_api.playbill_line_disable(instance_id, line, dry_run=dry_run, at=at),
+        operation_name="cruxible_line_disable",
         local_payload={"dry_run": dry_run, "at": at},
     )
 
 
-def handle_playbill_line_status(instance_id: str, line: str) -> contracts.LineArm:
+def handle_playbill_line_status(instance_id: str, line: str) -> contracts.LineEnablement:
     return _dispatch_remote_or_local(
         lambda client: client.line_status(instance_id, line),
         lambda: playbill_api.playbill_line_status(instance_id, line),

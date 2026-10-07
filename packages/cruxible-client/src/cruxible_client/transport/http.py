@@ -1437,27 +1437,27 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.LineTriggerCheckResult)
 
-    def arm_line(
+    def enable_line(
         self, instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> contracts.LineArm:
+    ) -> contracts.LineEnablement:
         response = self._client.post(
-            f"/api/v1/{instance_id}/lines/{line}/arm",
+            f"/api/v1/{instance_id}/lines/{line}/enable",
             json=_change_control(dry_run, at),
         )
-        return self._parse_model(response, contracts.LineArm)
+        return self._parse_model(response, contracts.LineEnablement)
 
-    def disarm_line(
+    def disable_line(
         self, instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> contracts.LineArm:
+    ) -> contracts.LineEnablement:
         response = self._client.post(
-            f"/api/v1/{instance_id}/lines/{line}/disarm",
+            f"/api/v1/{instance_id}/lines/{line}/disable",
             json=_change_control(dry_run, at),
         )
-        return self._parse_model(response, contracts.LineArm)
+        return self._parse_model(response, contracts.LineEnablement)
 
-    def line_status(self, instance_id: str, line: str) -> contracts.LineArm:
-        response = self._client.get(f"/api/v1/{instance_id}/lines/{line}/arm")
-        return self._parse_model(response, contracts.LineArm)
+    def line_status(self, instance_id: str, line: str) -> contracts.LineEnablement:
+        response = self._client.get(f"/api/v1/{instance_id}/lines/{line}/enable")
+        return self._parse_model(response, contracts.LineEnablement)
 
     def evaluate_line(
         self, instance_id: str, line: str, *, request: contracts.LineEvaluateRequest

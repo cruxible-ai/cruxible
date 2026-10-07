@@ -432,7 +432,7 @@ class ProcedureRunAttributionWithheld(_StrictResultModel):
     operation_id: str
     request_id: str | None = None
     recorded_time: datetime
-    withheld: Literal["names_the_arming_credential"] = "names_the_arming_credential"
+    withheld: Literal["names_the_enabling_credential"] = "names_the_enabling_credential"
 
     @field_validator("recorded_time")
     @classmethod
@@ -459,7 +459,7 @@ class ProcedureRunReceiptWithheld(_StrictResultModel):
     tag: Literal["playbill-procedure-run-receipt-withheld-v1"] = (
         "playbill-procedure-run-receipt-withheld-v1"
     )
-    withheld: Literal["names_the_arming_credential"] = "names_the_arming_credential"
+    withheld: Literal["names_the_enabling_credential"] = "names_the_enabling_credential"
 
 
 class ProcedureChildInvocation(_StrictResultModel):

@@ -39,11 +39,11 @@ from cruxible_client.contracts.orient import (
     ORIENT_DEFAULT_QUERIES,
     ORIENT_SAMPLE_SUBJECTS,
     Head,
-    OrientArms,
     OrientArtifactCounts,
     OrientAttention,
     OrientClaimCounts,
     OrientDocument,
+    OrientEnablements,
     OrientInterface,
     OrientInterfaceProvider,
     OrientKind,
@@ -622,15 +622,19 @@ def _attention(
             f"{state.digest_named} {noun} CaptureContracts by digest; run claim-type upgrade"
         )
         upgrade = True
-    arms = _arms(instance, evaluation_time=evaluation_time)
+    enablements = _enablements(instance, evaluation_time=evaluation_time)
     if provider_lane is not None and provider_lane.state == "unavailable":
         notes.append(
             f"the provider lane is unavailable ({provider_lane.code}): Procedures that call "
             "providers refuse until the daemon's provider runtime is repaired"
         )
-    if arms is not None and arms.running + arms.stalled and not consumers_running:
+    if (
+        enablements is not None
+        and enablements.running + enablements.stalled
+        and not consumers_running
+    ):
         notes.append(
-            "the daemon's consumer loop is not running here: armed Lines do not admit their "
+            "the daemon's consumer loop is not running here: enabled Lines do not admit their "
             "own work and worker findings do not advance until a daemon runs it"
         )
     open_proposals = len(service_list_playbill_proposals(instance, status="open").entries)
@@ -640,14 +644,16 @@ def _attention(
             open_proposals=open_proposals,
             top=tuple(_line(item) for item in items[:ORIENT_ATTENTION_TOP]),
             notes=tuple(notes),
-            arms=arms,
+            enablements=enablements,
         ),
         upgrade,
     )
 
 
-def _arms(instance: PlaybillInstance, *, evaluation_time: datetime) -> OrientArms | None:
-    """Every Line's latest arm as the Line consumer reports it, read from the instance alone."""
+def _enablements(
+    instance: PlaybillInstance, *, evaluation_time: datetime
+) -> OrientEnablements | None:
+    """Every Line's latest enablement as the Line consumer reports it, read from the instance."""
 
     from cruxible_core.consumers.lines import LINE_STALL_AFTER
     from cruxible_core.service.procedures.line_dispatch import line_arm_health
@@ -661,7 +667,7 @@ def _arms(instance: PlaybillInstance, *, evaluation_time: datetime) -> OrientArm
         for state, arm in health
         if state != "running"
     ]
-    return OrientArms(
+    return OrientEnablements(
         running=counts["running"],
         stalled=counts["stalled"],
         stopped=counts["stopped"],
@@ -958,13 +964,13 @@ def service_playbill_orient(
     if next_cursor is not None:
         calls.append(_Call("orient", (("cursor", next_cursor),)))
     live_procedures = sum(item.lifecycle == "live" for item in state.procedures)
-    if attention.arms is not None or counts["runs"]:
+    if attention.enablements is not None or counts["runs"]:
         base["live"] = live_view(
             instance,
             tuple(
                 name
                 for name, present in (
-                    ("attention.arms", attention.arms is not None),
+                    ("attention.enablements", attention.enablements is not None),
                     ("artifacts.runs", bool(counts["runs"])),
                     ("artifacts.running", bool(counts["runs"])),
                 )
@@ -995,7 +1001,7 @@ def service_playbill_orient(
 _KEYSET = "keyset"
 #: The sections that carry live operational state, and which of their fields do.
 _LIVE_SECTIONS: dict[str, tuple[str, ...]] = {
-    "lines": ("lines.arm", "lines.due", "lines.waiting"),
+    "lines": ("lines.enablement", "lines.due", "lines.waiting"),
     "predictions": ("predictions.open", "predictions.settleable", "predictions.resolved"),
 }
 _OPERATIONAL_SECTIONS: frozenset[str] = frozenset(

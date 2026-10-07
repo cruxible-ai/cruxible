@@ -1509,8 +1509,8 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 
 ~~~text
 cruxible line check LINE [--since TS] [--until TS] [--limit 100] [--cursor CURSOR] [--json]
-cruxible line arm LINE [--dry-run|--commit] [--at OID] [--json]
-cruxible line disarm LINE [--dry-run|--commit] [--at OID] [--json]
+cruxible line enable LINE [--dry-run|--commit] [--at OID] [--json]
+cruxible line disable LINE [--dry-run|--commit] [--at OID] [--json]
 cruxible line status LINE [--json]
 cruxible line evaluate LINE --since TS --until TS [--limit 100] [--cursor CURSOR] [--json]
 cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit 1] [--json]
@@ -1595,14 +1595,14 @@ after it was accepted, a successor schedule from its own acceptance. `disarm`
 stops further
 admissions; a run already admitted keeps going. Both are idempotent: arming a
 Line already armed by the same credential at the same version returns it
-unchanged with `outcome: already_armed`, and disarming a stopped arm returns
-it with `outcome: already_disarmed`. Arming under a different credential or
+unchanged with `outcome: already_enabled`, and disarming a stopped arm returns
+it with `outcome: already_disabled`. Arming under a different credential or
 after the Line changed rebinds the arm from now (`outcome: rearmed`).
 `status` shows whether the
 Line is armed, how many pending occurrences it will admit on its own
 (`pending_automatic`) and how many await explicit dispatch
 (`pending_explicit`), and why an arm stopped; a Line never armed refuses with
-`cruxible.line.never_armed`. Idle coverage is checkpointed at
+`cruxible.line.never_enabled`. Idle coverage is checkpointed at
 one-minute intervals; event progress and partial scans are retained
 immediately. Each armed Line is drained by at most one worker at a time, so a
 slow Procedure never delays matching or another Line.

@@ -536,13 +536,13 @@ def test_an_armed_capture_triggered_line_settles_or_falls_back_on_its_own(
     from datetime import timedelta
     from types import SimpleNamespace
 
-    from cruxible_client.contracts.line_dispatch import LineArmPrincipal
+    from cruxible_client.contracts.line_dispatch import LineEnablementPrincipal
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
     from cruxible_core.runtime import line_arms
     from cruxible_core.runtime.line_arms import dispatch_armed_line
     from cruxible_core.service.procedures.line_dispatch import (
         armed_work,
-        service_arm_line,
+        service_enable_line,
         service_match_listening_lines,
     )
     from cruxible_core.service.procedures.procedure_runs import (
@@ -567,10 +567,10 @@ def test_an_armed_capture_triggered_line_settles_or_falls_back_on_its_own(
             )
         ),
     )
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
-        principal=LineArmPrincipal(
+        principal=LineEnablementPrincipal(
             kind="runtime_credential", credential_id="cred-arm", label="owner"
         ),
         actor=actor,

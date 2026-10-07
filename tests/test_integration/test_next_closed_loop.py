@@ -171,7 +171,7 @@ EXPECTED_OPERATIONS = {
     "proposal_awaiting_approval": "cruxible.proposal.approve",
     "mandate_expiring": "cruxible.authoring.example",
     # A stopped arm is resumed by rearming under authority that still holds.
-    "consumer_stalled": "cruxible.line.arm",
+    "consumer_stalled": "cruxible.line.enable",
     # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
     "evidence_unavailable": "hand_edit",
     "prediction_settleable": "cruxible.prediction.settle",
@@ -1530,7 +1530,7 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
     from cruxible_core.runtime.line_arms import dispatch_armed_line
-    from cruxible_core.service.procedures.line_dispatch import armed_work, service_arm_line
+    from cruxible_core.service.procedures.line_dispatch import armed_work, service_enable_line
     from tests.test_procedures import test_line_arming as arming
 
     instance, line, procedure, start = arming._armed_world(root, principal=arming.CREDENTIAL)
@@ -1553,10 +1553,10 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     row = _row(instance, "consumer_stalled", request)
     assert row.subject_identity == line.identity.qualified
     assert row.detail["stop_reason"] == "credential_revoked"
-    assert row.repair.command == f"cruxible line arm {line.identity.name}"
+    assert row.repair.command == f"cruxible line enable {line.identity.name}"
 
     # The named repair: rearm under a credential that holds.
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=arming.LOCAL,

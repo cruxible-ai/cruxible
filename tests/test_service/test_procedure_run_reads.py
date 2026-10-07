@@ -195,8 +195,8 @@ def test_a_line_run_names_the_line_occurrence_and_arm_that_admitted_it(tmp_path:
     assert card.triggered_by is not None
     assert card.triggered_by.line == line.identity.qualified
     assert card.triggered_by.occurrence is not None
-    assert card.triggered_by.arm == arm["arm_id"]
-    assert card.triggered_by.armed_by == "operator"
+    assert card.triggered_by.enablement == arm["arm_id"]
+    assert card.triggered_by.enabled_by == "operator"
     assert card.nodes_total >= card.nodes_done >= 1
     assert f'cruxible_get(ref="{line.identity.qualified}")' in card.next
 
@@ -226,7 +226,7 @@ def test_an_explicitly_dispatched_line_run_names_no_arm(tmp_path: Path) -> None:
 
     assert isinstance(card, GetProcedureRunCard)
     assert card.triggered_by is not None and card.triggered_by.line == line.identity.qualified
-    assert card.triggered_by.arm is None
+    assert card.triggered_by.enablement is None
 
 
 def test_a_run_interrupted_mid_graph_names_the_node_it_is_on(tmp_path: Path) -> None:

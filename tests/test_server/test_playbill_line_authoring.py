@@ -76,8 +76,8 @@ def test_an_observe_only_line_runs_without_a_mandate(
     run = transport.run_line(instance_id, "replace-me", occurrence_id=None)
     assert run.status == "succeeded", run.terminal
     assert run.result == {"count": 1}
-    armed = transport.arm_line(instance_id, "replace-me")
-    assert armed.state == "armed"
+    armed = transport.enable_line(instance_id, "replace-me")
+    assert armed.state == "enabled"
 
 
 def test_a_line_may_name_the_example_policy_even_though_it_acquires_nothing(

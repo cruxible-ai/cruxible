@@ -8,8 +8,8 @@ from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipal,
     LineDispatchRequest,
+    LineEnablementPrincipal,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -21,8 +21,8 @@ from cruxible_client.contracts.triggers import CaptureLandingSchedule, WindowClo
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.procedures.execution import parse_admission_payload
 from cruxible_core.service.procedures.line_dispatch import (
-    service_arm_line,
     service_dispatch_line,
+    service_enable_line,
     service_match_listening_lines,
 )
 from cruxible_core.service.procedures.procedure_runs import (
@@ -47,7 +47,7 @@ from tests.test_procedures.test_procedure_source_runs import (
     capture_contract,
 )
 
-LOCAL_OPERATOR = LineArmPrincipal(kind="local_operator", label="local-operator")
+LOCAL_OPERATOR = LineEnablementPrincipal(kind="local_operator", label="local-operator")
 TRIGGER = "trigger-source-trigger"
 
 
@@ -218,7 +218,7 @@ def test_pending_dispatch_and_restart_keep_the_same_capture_binding(tmp_path):
 
     instance, root, line = world(tmp_path)
     actor = _actor(instance)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL_OPERATOR,

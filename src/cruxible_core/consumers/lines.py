@@ -73,8 +73,8 @@ class LineArmConsumers:
                 state=state,
                 repair=_repair(state, arm.line),
                 detail={
-                    "arm_id": arm.arm_id,
-                    "arm_state": arm.state,
+                    "enablement_id": arm.enablement_id,
+                    "enablement_state": arm.state,
                     "stop_reason": arm.stop_reason,
                     "stopped_at": None if arm.stopped_at is None else arm.stopped_at.isoformat(),
                     "pending_automatic": arm.pending_automatic,
@@ -91,8 +91,8 @@ def _repair(state: str, line: str) -> ConsumerRepair | None:
     # that stopped draining shows its refusal when dispatched.
     if state == "stopped":
         return ConsumerRepair(
-            operation="cruxible.line.arm",
-            required_change="rearm_the_line_under_a_current_credential_and_version",
+            operation="cruxible.line.enable",
+            required_change="enable_the_line_again_under_a_current_credential_and_version",
             arguments={"line": line.removeprefix("Line:")},
         )
     if state == "stalled":

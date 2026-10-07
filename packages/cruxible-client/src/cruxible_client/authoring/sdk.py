@@ -1144,7 +1144,7 @@ class ChangeSetDraft:
         ProcedureMandate covering its Procedure before it can run or be armed;
         an observe-only Line needs none.
 
-        Next: ``.submit()``; once accepted, ``cx.arm_line(name)`` or ``cx.run_line(name)``.
+        Next: ``.submit()``; once accepted, ``cx.enable_line(name)`` or ``cx.run_line(name)``.
         """
 
         self._members.append(
@@ -3737,38 +3737,38 @@ class Cruxible:
             request=LineTriggerCheckRequest(since=since, until=until, limit=limit, cursor=cursor),
         )
 
-    def arm_line(
+    def enable_line(
         self, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> api.LineArm:
+    ) -> api.LineEnablement:
         """Arm a Line forward-only: the daemon admits what it matches from now on.
 
         Runs use this connection's credential, rechecked before each admission,
         and the Line version current now. Work already pending stays for
-        `dispatch_line`. Arming it again unchanged returns `outcome="already_armed"`.
-        `dry_run=True` previews it (`would_arm`) and records nothing; commit
+        `dispatch_line`. Arming it again unchanged returns `outcome="already_enabled"`.
+        `dry_run=True` previews it (`would_enable`) and records nothing; commit
         exactly that with `at=` the preview's `coordinate.git_oid`.
 
         Next: ``cx.line_status(line)``, or ``cx.get(f"Line:{line}")`` for its occurrences
         and runs.
         """
-        return self._client.arm_line(self._instance_id, line, dry_run=dry_run, at=at)
+        return self._client.enable_line(self._instance_id, line, dry_run=dry_run, at=at)
 
-    def disarm_line(
+    def disable_line(
         self, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> api.LineArm:
+    ) -> api.LineEnablement:
         """Stop a Line admitting work on its own; admitted runs are not cancelled.
 
-        A Line whose arm already stopped returns `outcome="already_disarmed"`.
-        `dry_run=True` previews it (`would_disarm`); `at` pins the commit.
+        A Line whose arm already stopped returns `outcome="already_disabled"`.
+        `dry_run=True` previews it (`would_disable`); `at` pins the commit.
 
-        Next: ``cx.arm_line(line)`` to resume it.
+        Next: ``cx.enable_line(line)`` to resume it.
         """
-        return self._client.disarm_line(self._instance_id, line, dry_run=dry_run, at=at)
+        return self._client.disable_line(self._instance_id, line, dry_run=dry_run, at=at)
 
-    def line_status(self, line: str) -> api.LineArm:
+    def line_status(self, line: str) -> api.LineEnablement:
         """The Line's current arm, or its last one and why it stopped.
 
-        Next: ``cx.arm_line(line)`` if it stopped, or ``cx.get(f"Line:{line}")`` for its
+        Next: ``cx.enable_line(line)`` if it stopped, or ``cx.get(f"Line:{line}")`` for its
         runs.
         """
         return self._client.line_status(self._instance_id, line)

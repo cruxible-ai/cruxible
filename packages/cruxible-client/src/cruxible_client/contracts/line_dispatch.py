@@ -109,12 +109,13 @@ class LineDispatchRequest(BaseModel):
         return self
 
 
-#: Why an arm stopped admitting work on its own. Every reason but `disarmed`
-#: is the daemon noticing that the authority, Line or Triggers the arm was
-#: bound to no longer hold; rearming is the explicit way back.
-LineArmStopReason = Literal[
-    "disarmed",
+#: Why an enablement stopped admitting work on its own. Every reason but
+#: `disabled` is the daemon noticing that the authority, Line or Triggers the
+#: enablement was bound to no longer hold; enabling again is the way back.
+LineEnablementStopReason = Literal[
+    "disabled",
     "line_changed",
+    "line_retired",
     "trigger_changed",
     "epoch_changed",
     "credential_revoked",
@@ -126,92 +127,94 @@ LineArmStopReason = Literal[
 ]
 
 
-#: What one arm or disarm call did. Arming an arm that already stands with the
-#: same credential, Line version and epoch, or disarming a stopped arm, changes
-#: nothing and says so.
-LineArmOutcome = Literal[
-    "armed",
-    "rearmed",
-    "already_armed",
-    "disarmed",
-    "already_disarmed",
-    "would_arm",
-    "would_rearm",
-    "would_disarm",
+#: What one enable or disable call did. Enabling a Line already enabled with
+#: the same credential, Line version and epoch, or disabling a stopped
+#: enablement, changes nothing and says so.
+LineEnablementOutcome = Literal[
+    "enabled",
+    "reenabled",
+    "already_enabled",
+    "disabled",
+    "already_disabled",
+    "would_enable",
+    "would_reenable",
+    "would_disable",
 ]
 
 
-class LineArmPrincipal(BaseModel):
-    """Who armed a Line: the authority rechecked before every automatic admission.
+class LineEnablementPrincipal(BaseModel):
+    """Who enabled a Line: the authority rechecked before every automatic admission.
 
     ``runtime_credential`` retains only the credential's identifier, never a
-    token. On an auth-off daemon, ``principal_claim`` is an arm made under a
-    configured principal ID (``label``), whose accepted standing is rechecked
+    token. On an auth-off daemon, ``principal_claim`` is an enablement made under
+    a configured principal ID (``label``), whose accepted standing is rechecked
     before every admission; ``local_operator`` is the implicit local operator
     that claimed no principal, and never resolves to a registered principal.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+    # The dispatch store's record format (an internal name).
     tag: Literal["line-arm-principal-v2"] = "line-arm-principal-v2"
     kind: Literal["runtime_credential", "principal_claim", "local_operator"]
     credential_id: str | None = None
     label: str
 
     @model_validator(mode="after")
-    def _credential(self) -> LineArmPrincipal:
+    def _credential(self) -> LineEnablementPrincipal:
         if (self.kind == "runtime_credential") != (self.credential_id is not None):
-            raise ValueError("exactly a runtime-credential arm names its credential")
+            raise ValueError("exactly a runtime-credential enablement names its credential")
         return self
 
 
-class LineArm(BaseModel):
-    """One Line's automatic dispatch: armed forward-only, or why it stopped.
+class LineEnablement(BaseModel):
+    """One Line's automatic dispatch: enabled forward-only, or why it stopped.
 
-    An armed Line admits the occurrences its daemon matched since it was armed
-    or last restarted, under the pinned Line version, the exact Trigger versions
-    aimed at it when it was armed, and the arming credential. Occurrences
+    An enabled Line admits the occurrences its daemon matched since it was
+    enabled or last restarted, under the pinned Line version, the exact Trigger
+    versions aimed at it when it was enabled, and the enabling credential. A
+    Trigger aimed at a Line does nothing until the Line is enabled. Occurrences
     matched before a restart, or by explicit evaluation, stay pending for
     explicit dispatch.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    arm_id: str
+    enablement_id: str
     line: str
     line_artifact_digest: str
     occurrence_epoch: int
-    #: The Trigger versions the arm matches; any change to the Triggers aimed
-    #: at the Line stops it (`trigger_changed`).
+    #: The Trigger versions the enablement matches; any change to the Triggers
+    #: aimed at the Line stops it (`trigger_changed`) until it is enabled again.
     triggers: tuple[LineTriggerVersion, ...] = ()
-    state: Literal["armed", "stopped"]
-    armed_at: datetime = Field(description="Reads VALIDITY WINDOW.")
-    armed_by: LineArmPrincipal
+    state: Literal["enabled", "stopped"]
+    enabled_at: datetime = Field(description="Reads VALIDITY WINDOW.")
+    enabled_by: LineEnablementPrincipal
     evaluated_until: datetime = Field(description="Reads VALIDITY WINDOW.")
     stopped_at: datetime | None = Field(default=None, description="Reads VALIDITY WINDOW.")
-    stop_reason: LineArmStopReason | None = None
+    stop_reason: LineEnablementStopReason | None = None
     detail: str | None = None
     pending_automatic: int = Field(default=0, ge=0)
     pending_explicit: int = Field(default=0, ge=0)
-    outcome: LineArmOutcome | None = Field(
+    outcome: LineEnablementOutcome | None = Field(
         default=None,
         description=(
-            "What this arm or disarm call did; absent on a status read. "
-            "`already_armed` and `already_disarmed` changed nothing."
+            "What this enable or disable call did. "
+            "`already_enabled` and `already_disabled` changed nothing."
         ),
     )
     coordinate: AcceptedCoordinate | None = Field(
         default=None,
         description=(
-            "The accepted coordinate this arm or disarm call evaluated the Line at; "
-            "absent on a status read. Commit a preview with at=<its git_oid>."
+            "The accepted coordinate this enable or disable call evaluated the Line at. "
+            "Commit a preview with at=<its git_oid>."
         ),
     )
 
     @model_validator(mode="after")
-    def _state(self) -> LineArm:
+    def _state(self) -> LineEnablement:
         if (self.state == "stopped") != (self.stop_reason is not None):
-            raise ValueError("exactly a stopped arm names why it stopped")
+            raise ValueError("exactly a stopped enablement names why it stopped")
         if (self.state == "stopped") != (self.stopped_at is not None):
-            raise ValueError("exactly a stopped arm names when it stopped")
+            raise ValueError("exactly a stopped enablement names when it stopped")
         return self
 
 

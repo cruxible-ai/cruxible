@@ -683,9 +683,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         {
             "dispatch": _command("playbill", "dispatch_line", "Dispatch accepted Line work."),
             "evaluate": _command("playbill", "evaluate_line", "Evaluate accepted Line work."),
-            "arm": _command("playbill", "arm_line", "Admit what a Line matches from now on."),
-            "disarm": _command(
-                "playbill", "disarm_line", "Stop a Line admitting work automatically."
+            "enable": _command("playbill", "enable_line", "Admit what a Line matches from now on."),
+            "disable": _command(
+                "playbill", "disable_line", "Stop a Line admitting work automatically."
             ),
             "status": _command("playbill", "line_status", "Show a Line's arm and why it stopped."),
             "check": _command(

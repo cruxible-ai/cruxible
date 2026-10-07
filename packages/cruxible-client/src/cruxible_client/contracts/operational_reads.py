@@ -46,7 +46,7 @@ RunStatus: TypeAlias = Literal[
     "halted",
 ]
 #: What a Line arm's automation is doing, as the Line consumer reports it.
-LineArmState: TypeAlias = Literal["running", "stalled", "stopped", "disarmed"]
+LineEnablementState: TypeAlias = Literal["running", "stalled", "stopped", "disabled"]
 MandateState: TypeAlias = Literal[
     "active", "expiring", "expired", "not_yet_valid", "suspended", "retired"
 ]
@@ -104,23 +104,25 @@ class RunRow(_StrictOperationalModel):
 
 
 #: Who armed a Line, as a card shows it.
-ArmPrincipalKind: TypeAlias = Literal["runtime_credential", "principal_claim", "local_operator"]
+EnablementPrincipalKind: TypeAlias = Literal[
+    "runtime_credential", "principal_claim", "local_operator"
+]
 
 
-class GetLineArm(_StrictOperationalModel):
-    """One arm of a Line: who armed it, and what its automation is doing."""
+class GetLineEnablement(_StrictOperationalModel):
+    """One enablement of a Line: who enabled it, and what its automation is doing."""
 
-    arm: str
-    state: LineArmState
-    principal_kind: ArmPrincipalKind
-    # Who armed it: the local operator, a claimed principal, or a runtime
+    enablement: str
+    state: LineEnablementState
+    principal_kind: EnablementPrincipalKind
+    # Who enabled it: the local operator, a claimed principal, or a runtime
     # credential's label and id. A runtime credential's are shown only to an
     # admin, that credential, or another credential bound to its principal;
-    # anyone else reads ``armed_by_withheld``.
-    armed_by: str | None = Field(default=None, exclude_if=_omit_none)
+    # anyone else reads ``enabled_by_withheld``.
+    enabled_by: str | None = Field(default=None, exclude_if=_omit_none)
     credential: str | None = Field(default=None, exclude_if=_omit_none)
-    armed_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
-    armed_at: datetime
+    enabled_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
+    enabled_at: datetime
     stopped_at: datetime | None = Field(default=None, exclude_if=_omit_none)
     stop_reason: str | None = Field(default=None, exclude_if=_omit_none)
     detail: str | None = Field(default=None, exclude_if=_omit_none)
@@ -157,8 +159,8 @@ class GetLineCard(_StrictOperationalModel):
     triggers: tuple[GetLineTrigger, ...] = ()
     triggers_total: int = Field(default=0, ge=0)
     occurrence_epoch: int = Field(ge=1)
-    arms: tuple[GetLineArm, ...] = ()
-    arms_total: int = Field(default=0, ge=0)
+    enablements: tuple[GetLineEnablement, ...] = ()
+    enablements_total: int = Field(default=0, ge=0)
     due: int = Field(default=0, ge=0)
     waiting: int = Field(default=0, ge=0)
     occurrences: tuple[GetLineOccurrence, ...] = ()
@@ -248,15 +250,15 @@ class GetRunCurrentNode(_StrictOperationalModel):
 
 
 class GetRunTrigger(_StrictOperationalModel):
-    """What admitted a Line run: the Line, its occurrence, and the arm that dispatched it."""
+    """What admitted a Line run: the Line, its occurrence, and the enablement that dispatched it."""
 
     line: str
     occurrence: str | None = Field(default=None, exclude_if=_omit_none)
-    arm: str | None = Field(default=None, exclude_if=_omit_none)
-    principal_kind: ArmPrincipalKind | None = Field(default=None, exclude_if=_omit_none)
-    # Withheld, as on a Line card, unless the reader is the arming credential or an admin.
-    armed_by: str | None = Field(default=None, exclude_if=_omit_none)
-    armed_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
+    enablement: str | None = Field(default=None, exclude_if=_omit_none)
+    principal_kind: EnablementPrincipalKind | None = Field(default=None, exclude_if=_omit_none)
+    # Withheld, as on a Line card, unless the reader is the enabling credential or an admin.
+    enabled_by: str | None = Field(default=None, exclude_if=_omit_none)
+    enabled_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 class GetPendingInput(_StrictOperationalModel):
@@ -311,7 +313,7 @@ class OrientLine(_StrictOperationalModel):
     procedure: str
     authority: Literal["observe", "propose", "settle"]
     trigger: str
-    arm: LineArmState | None = Field(default=None, exclude_if=_omit_none)
+    enablement: LineEnablementState | None = Field(default=None, exclude_if=_omit_none)
     due: int = Field(default=0, ge=0)
     waiting: int = Field(default=0, ge=0)
 
@@ -354,9 +356,9 @@ __all__ = [
     "LINE_CARD_ARMS",
     "LINE_CARD_RUNS",
     "OPERATIONAL_CARD_LIST_LIMIT",
-    "ArmPrincipalKind",
+    "EnablementPrincipalKind",
     "GetCaptureCard",
-    "GetLineArm",
+    "GetLineEnablement",
     "GetLineCard",
     "GetLineOccurrence",
     "GetLineTrigger",
@@ -368,7 +370,7 @@ __all__ = [
     "GetRunCurrentNode",
     "GetRunNode",
     "GetRunTrigger",
-    "LineArmState",
+    "LineEnablementState",
     "LiveHead",
     "LiveView",
     "MandateState",

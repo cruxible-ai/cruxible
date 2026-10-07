@@ -11,8 +11,8 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipal,
     LineDispatchRequest,
+    LineEnablementPrincipal,
     LineEvaluateRequest,
 )
 from cruxible_client.contracts.triggers import CadenceSchedule, CaptureLandingSchedule
@@ -26,9 +26,9 @@ from cruxible_core.server.credentials import RuntimeCredentialRecord
 from cruxible_core.service.procedures.line_dispatch import (
     LineArmAuthorityLost,
     armed_work,
-    service_arm_line,
-    service_disarm_line,
+    service_disable_line,
     service_dispatch_line,
+    service_enable_line,
     service_evaluate_line,
     service_line_status,
     service_match_listening_lines,
@@ -37,8 +37,8 @@ from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
-LOCAL = LineArmPrincipal(kind="local_operator", label="operator")
-CREDENTIAL = LineArmPrincipal(
+LOCAL = LineEnablementPrincipal(kind="local_operator", label="operator")
+CREDENTIAL = LineEnablementPrincipal(
     kind="runtime_credential", credential_id="cred-arm", label="line-operator"
 )
 
@@ -59,7 +59,7 @@ def _admissions(instance) -> int:  # type: ignore[no-untyped-def]
 def _armed_world(tmp_path, *, principal=LOCAL):  # type: ignore[no-untyped-def]
     instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     start = READ_TIME + timedelta(seconds=10)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=principal,
@@ -108,7 +108,7 @@ def test_an_armed_line_admits_the_occurrence_its_daemon_matched(tmp_path, monkey
     assert result is not None and [item.status for item in result.items] == ["admitted"]
     assert _admissions(instance) == 1
     status = service_line_status(instance, line.identity.name)
-    assert status.state == "armed" and status.pending_automatic == 0
+    assert status.state == "enabled" and status.pending_automatic == 0
 
 
 def test_the_daemon_listener_runs_armed_work_on_its_own(tmp_path, monkeypatch):
@@ -128,7 +128,7 @@ def test_the_daemon_listener_runs_armed_work_on_its_own(tmp_path, monkeypatch):
     listener = ConsumerRunner(_manager(instance))
     listener.start()
     try:
-        service_arm_line(
+        service_enable_line(
             instance,
             line.identity.name,
             principal=LOCAL,
@@ -154,7 +154,7 @@ def test_a_restart_keeps_the_arm_forward_only_and_leaves_earlier_work_explicit(t
     _match(instance, restarted, daemon_id="restarted")
 
     status = service_line_status(instance, line.identity.name)
-    assert status.state == "armed"
+    assert status.state == "enabled"
     # What the pre-restart segment matched is never run implicitly.
     assert status.pending_automatic == 0 and status.pending_explicit == 1
     assert armed_work(instance, now=restarted + timedelta(seconds=1)) == ()
@@ -185,7 +185,7 @@ def test_arming_never_drains_a_backlog_that_explicit_evaluation_left(tmp_path):
         actor=_actor(instance),
         now=now,
     )
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -205,10 +205,10 @@ def test_disarming_stops_admission_of_work_already_scheduled(tmp_path):
     capture(instance, procedure, at=start + timedelta(seconds=1))
     _match(instance, start + timedelta(seconds=2))
     (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
-    disarmed = service_disarm_line(
+    disarmed = service_disable_line(
         instance, line.identity.name, actor=_actor(instance), now=start + timedelta(seconds=3)
     )
-    assert disarmed.state == "stopped" and disarmed.stop_reason == "disarmed"
+    assert disarmed.state == "stopped" and disarmed.stop_reason == "disabled"
 
     assert (
         dispatch_armed_line(
@@ -398,9 +398,9 @@ def test_a_deliberate_disarm_is_not_a_stall_but_undrained_armed_work_is(tmp_path
     _match(instance, start + timedelta(seconds=2))
     assert _stalled(instance, start + timedelta(seconds=3)) == ()
     (stalled,) = _stalled(instance, start + LINE_STALL_AFTER + timedelta(seconds=2))
-    assert (stalled.state, stalled.pending_automatic) == ("armed", 1)
+    assert (stalled.state, stalled.pending_automatic) == ("enabled", 1)
 
-    service_disarm_line(
+    service_disable_line(
         instance, line.identity.name, actor=_actor(instance), now=start + timedelta(minutes=30)
     )
     assert _stalled(instance, start + timedelta(minutes=31)) == ()
@@ -465,7 +465,7 @@ def test_a_disarm_that_lands_before_the_admission_record_prevents_the_run(tmp_pa
         )
         assert entered.wait(15)
         try:
-            stopped = service_disarm_line(
+            stopped = service_disable_line(
                 instance,
                 line.identity.name,
                 actor=_actor(instance),
@@ -495,7 +495,7 @@ def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old
     instance, line, procedure, owner = line_world(
         tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -547,7 +547,7 @@ def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp
     from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 
     instance, line, _procedure = _cadence_world(tmp_path)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -575,7 +575,7 @@ def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp
         _match(instance, restarted + timedelta(seconds=offset), daemon_id="restarted")
 
     status = service_line_status(instance, line.identity.name)
-    assert status.state == "armed"
+    assert status.state == "enabled"
     assert status.pending_automatic == 1 and status.pending_explicit == 0
     # The lapsed tick is retained and still runnable with an explicit retry.
     retried = service_dispatch_line(
@@ -591,7 +591,7 @@ def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp
 
 def test_an_earlier_arms_cadence_tick_never_holds_back_a_new_arms_own(tmp_path):
     instance, line, _procedure = _cadence_world(tmp_path)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -600,9 +600,9 @@ def test_an_earlier_arms_cadence_tick_never_holds_back_a_new_arms_own(tmp_path):
         daemon_id="daemon",
     )
     _match(instance, READ_TIME)
-    service_disarm_line(instance, line.identity.name, actor=_actor(instance), now=READ_TIME)
+    service_disable_line(instance, line.identity.name, actor=_actor(instance), now=READ_TIME)
     # The disarmed arm's tick lapses as the new arm opens, and the new arm ticks on.
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -618,7 +618,7 @@ def test_an_earlier_arms_cadence_tick_never_holds_back_a_new_arms_own(tmp_path):
 
 def test_a_restart_after_a_real_cadence_admission_keeps_ticking(tmp_path):
     instance, line, _procedure = _cadence_world(tmp_path)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -644,7 +644,7 @@ def test_a_restart_after_a_real_cadence_admission_keeps_ticking(tmp_path):
 
 def test_explicit_evaluation_during_an_arm_never_starves_its_ticks(tmp_path):
     instance, line, _procedure = _cadence_world(tmp_path)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -673,7 +673,7 @@ def test_a_lapsed_tick_is_retried_as_itself_after_a_newer_tick_ran(tmp_path):
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore
 
     instance, line, _procedure = _cadence_world(tmp_path)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -746,7 +746,7 @@ def test_a_rollover_waits_for_an_admission_already_inside_the_arm_boundary(tmp_p
     # left behind as explicit work, and nothing ran after the rollover.
     assert _admissions(instance) == 1
     status = service_line_status(instance, line.identity.name)
-    assert status.state == "armed" and status.pending_explicit == 0
+    assert status.state == "enabled" and status.pending_explicit == 0
 
 
 def test_an_interrupted_rollover_leaves_the_arm_whole_and_the_next_pass_completes_it(
@@ -768,7 +768,7 @@ def test_an_interrupted_rollover_leaves_the_arm_whole_and_the_next_pass_complete
     monkeypatch.setattr(LineDispatchStore, "append", original_append)
 
     # Nothing landed: the old segment still stands, so the arm still matches.
-    assert service_line_status(instance, line.identity.name).state == "armed"
+    assert service_line_status(instance, line.identity.name).state == "enabled"
     _match(instance, start + timedelta(seconds=2), daemon_id="restarted")
     capture(instance, procedure, at=start + timedelta(seconds=3))
     _match(instance, start + timedelta(seconds=4), daemon_id="restarted")
@@ -779,7 +779,7 @@ def test_a_retried_lapsed_tick_never_blocks_the_arms_own_ticks(tmp_path):
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore
 
     instance, line, _procedure = _cadence_world(tmp_path)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -822,21 +822,21 @@ def test_a_retried_lapsed_tick_never_blocks_the_arms_own_ticks(tmp_path):
 
 def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tmp_path):
     from cruxible_core.service.procedures.procedure_runs import (
-        LineNeverArmed,
+        LineNeverEnabled,
         LineRunNotAccepted,
     )
 
     instance, line, _procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     name = line.identity.name
 
-    with pytest.raises(LineNeverArmed) as never:
+    with pytest.raises(LineNeverEnabled) as never:
         service_line_status(instance, name)
-    assert never.value.error_code == "cruxible.line.never_armed"
+    assert never.value.error_code == "cruxible.line.never_enabled"
     assert repr(name) in str(never.value)
-    assert never.value.repair.operation == "cruxible.line.arm"
+    assert never.value.repair.operation == "cruxible.line.enable"
 
-    with pytest.raises(LineNeverArmed):
-        service_disarm_line(instance, name, actor=_actor(instance), now=READ_TIME)
+    with pytest.raises(LineNeverEnabled):
+        service_disable_line(instance, name, actor=_actor(instance), now=READ_TIME)
 
     typo = name[:-1]
     with pytest.raises(LineRunNotAccepted) as unknown:
@@ -852,37 +852,37 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
     start = READ_TIME + timedelta(seconds=10)
 
     def arm(principal, at):  # type: ignore[no-untyped-def]
-        return service_arm_line(
+        return service_enable_line(
             instance, name, principal=principal, actor=_actor(instance), now=at, daemon_id="daemon"
         )
 
     armed = arm(LOCAL, start)
-    assert armed.outcome == "armed"
+    assert armed.outcome == "enabled"
     again = arm(LOCAL, start + timedelta(seconds=5))
-    assert again.outcome == "already_armed"
+    assert again.outcome == "already_enabled"
     # A status read carries no outcome and no evaluation coordinate.
     assert again.model_copy(update={"outcome": None, "coordinate": None}) == (
         service_line_status(instance, name)
     )
-    assert (again.arm_id, again.armed_at) == (armed.arm_id, armed.armed_at)
+    assert (again.enablement_id, again.enabled_at) == (armed.enablement_id, armed.enabled_at)
 
     # A different credential is a different setting: the arm rebinds from now.
     rebound = arm(CREDENTIAL, start + timedelta(seconds=6))
-    assert rebound.outcome == "rearmed" and rebound.arm_id != armed.arm_id
-    assert rebound.armed_by == CREDENTIAL
+    assert rebound.outcome == "reenabled" and rebound.enablement_id != armed.enablement_id
+    assert rebound.enabled_by == CREDENTIAL
 
-    disarmed = service_disarm_line(
+    disarmed = service_disable_line(
         instance, name, actor=_actor(instance), now=start + timedelta(seconds=7)
     )
     assert (disarmed.outcome, disarmed.state, disarmed.stop_reason) == (
-        "disarmed",
+        "disabled",
         "stopped",
-        "disarmed",
+        "disabled",
     )
-    repeat = service_disarm_line(
+    repeat = service_disable_line(
         instance, name, actor=_actor(instance), now=start + timedelta(seconds=8)
     )
-    assert repeat.outcome == "already_disarmed"
+    assert repeat.outcome == "already_disabled"
     stopped = disarmed.model_copy(update={"outcome": None})
     assert repeat.model_copy(update={"outcome": None}) == stopped
     assert service_line_status(instance, name) == stopped.model_copy(update={"coordinate": None})
@@ -906,7 +906,7 @@ def test_a_line_with_two_triggers_runs_each_ones_occurrences_exactly_once(tmp_pa
         ),
     )
     start = READ_TIME + timedelta(seconds=10)
-    armed = service_arm_line(
+    armed = service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -966,7 +966,7 @@ def test_a_trigger_change_while_armed_stops_the_arm_before_anything_runs(tmp_pat
         tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     start = READ_TIME + timedelta(seconds=10)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -1010,7 +1010,7 @@ def test_a_trigger_change_while_armed_stops_the_arm_before_anything_runs(tmp_pat
     assert status.pending_explicit == 1
 
     # Rearming binds the arm to the Triggers that aim at the Line now.
-    rearmed = service_arm_line(
+    rearmed = service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -1018,7 +1018,7 @@ def test_a_trigger_change_while_armed_stops_the_arm_before_anything_runs(tmp_pat
         now=start + timedelta(seconds=4),
         daemon_id="daemon",
     )
-    assert rearmed.outcome == "armed" and rearmed.state == "armed"
+    assert rearmed.outcome == "enabled" and rearmed.state == "enabled"
     assert [item.trigger for item in rearmed.triggers] == [
         item.trigger.identity.qualified
         for item in line_triggers(
@@ -1046,7 +1046,7 @@ def test_a_trigger_accepted_just_before_admission_stops_the_arm_instead_of_runni
         tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     start = READ_TIME + timedelta(seconds=10)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -1106,7 +1106,7 @@ def test_an_acceptance_during_executor_preflight_never_records_an_admission(
         tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     start = READ_TIME + timedelta(seconds=10)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -1196,7 +1196,7 @@ def test_an_armed_cron_line_ticks_on_calendar_instants_forward_only(tmp_path):
 
     # Armed at 16:02: the 16:00 instant precedes the arm and never runs.
     armed_at = READ_TIME + timedelta(minutes=2)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -1271,7 +1271,7 @@ def test_a_credential_arm_stops_and_revokes_once_its_principal_is_revoked(monkey
 
 def test_a_claimed_local_arm_stops_once_its_principal_is_no_longer_active(monkeypatch):
     monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
-    claimed = LineArmPrincipal(kind="principal_claim", label="line-operator")
+    claimed = LineEnablementPrincipal(kind="principal_claim", label="line-operator")
 
     with pytest.raises(LineArmAuthorityLost) as lost:
         arm_authority(
@@ -1308,7 +1308,7 @@ def test_automatic_dispatch_stops_when_the_arming_principal_is_not_registered(
     assert result is None
     assert _admissions(instance) == 0
     assert revoked == ["ghost"]
-    assert service_line_status(instance, line.identity.name).state != "armed"
+    assert service_line_status(instance, line.identity.name).state != "enabled"
 
 
 def test_revoking_a_registered_principal_named_operator_stops_its_claimed_arm(monkeypatch):
@@ -1365,7 +1365,7 @@ def test_arming_and_disarming_preview_on_their_own_path_and_write_nothing(tmp_pa
     start = READ_TIME + timedelta(seconds=10)
 
     def arm(dry_run):  # type: ignore[no-untyped-def]
-        return service_arm_line(
+        return service_enable_line(
             instance,
             line.identity.name,
             principal=LOCAL,
@@ -1378,16 +1378,16 @@ def test_arming_and_disarming_preview_on_their_own_path_and_write_nothing(tmp_pa
     # Never armed: the dispatch store does not even exist yet, and the preview
     # must not create it.
     preview = assert_writes_nothing([tmp_path], lambda: arm(True))
-    assert (preview.outcome, preview.state) == ("would_arm", "armed")
+    assert (preview.outcome, preview.state) == ("would_enable", "enabled")
     armed = arm(None)
-    assert armed.outcome == "armed"
-    assert assert_writes_nothing([tmp_path], lambda: arm(True)).outcome == "already_armed"
+    assert armed.outcome == "enabled"
+    assert assert_writes_nothing([tmp_path], lambda: arm(True)).outcome == "already_enabled"
 
     capture(instance, procedure, at=start + timedelta(seconds=1))
     _match(instance, start + timedelta(seconds=2))
     disarm_preview = assert_writes_nothing(
         [tmp_path],
-        lambda: service_disarm_line(
+        lambda: service_disable_line(
             instance,
             line.identity.name,
             actor=_actor(instance),
@@ -1395,8 +1395,8 @@ def test_arming_and_disarming_preview_on_their_own_path_and_write_nothing(tmp_pa
             dry_run=True,
         ),
     )
-    assert (disarm_preview.outcome, disarm_preview.state) == ("would_disarm", "stopped")
-    assert service_line_status(instance, line.identity.name).state == "armed"
+    assert (disarm_preview.outcome, disarm_preview.state) == ("would_disable", "stopped")
+    assert service_line_status(instance, line.identity.name).state == "enabled"
 
 
 def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_path):
@@ -1408,7 +1408,7 @@ def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_
     start = READ_TIME + timedelta(seconds=10)
 
     def arm(**control):  # type: ignore[no-untyped-def]
-        return service_arm_line(
+        return service_enable_line(
             instance,
             line.identity.name,
             principal=LOCAL,
@@ -1420,26 +1420,26 @@ def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_
 
     preview = arm(dry_run=True)
     head = instance.accepted_coordinate().git_oid
-    assert preview.outcome == "would_arm"
+    assert preview.outcome == "would_enable"
     assert preview.coordinate is not None and preview.coordinate.git_oid == head
     stale = ("0" if head[0] != "0" else "1") * len(head)
     with pytest.raises(ChangeRefusedError) as moved:
         arm(dry_run=False, at=stale)
     assert moved.value.error_code == "cruxible.preview.state_moved"
     armed = arm(dry_run=False, at=preview.coordinate.git_oid)
-    assert (armed.outcome, armed.coordinate) == ("armed", preview.coordinate)
+    assert (armed.outcome, armed.coordinate) == ("enabled", preview.coordinate)
     assert service_line_status(instance, line.identity.name).coordinate is None
 
-    disarm = service_disarm_line(
+    disarm = service_disable_line(
         instance,
         line.identity.name,
         actor=_actor(instance),
         now=start + timedelta(seconds=1),
         dry_run=True,
     )
-    assert (disarm.outcome, disarm.coordinate) == ("would_disarm", preview.coordinate)
+    assert (disarm.outcome, disarm.coordinate) == ("would_disable", preview.coordinate)
     with pytest.raises(ChangeRefusedError):
-        service_disarm_line(
+        service_disable_line(
             instance,
             line.identity.name,
             actor=_actor(instance),
@@ -1447,7 +1447,7 @@ def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_
             dry_run=False,
             at=stale,
         )
-    assert service_line_status(instance, line.identity.name).state == "armed"
+    assert service_line_status(instance, line.identity.name).state == "enabled"
 
 
 def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, monkeypatch):
@@ -1485,7 +1485,7 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
         )
         return found
 
-    at = service_arm_line(
+    at = service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -1496,7 +1496,7 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
     ).coordinate.git_oid
     monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", read_then_accept)
     with pytest.raises(ChangeRefusedError) as moved:
-        service_arm_line(
+        service_enable_line(
             instance,
             line.identity.name,
             principal=LOCAL,
@@ -1512,7 +1512,7 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
     )
 
     monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", original)
-    armed = service_arm_line(
+    armed = service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -1522,7 +1522,7 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
     )
     monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", read_then_accept)
     with pytest.raises(ChangeRefusedError):
-        service_disarm_line(
+        service_disable_line(
             instance,
             line.identity.name,
             actor=_actor(instance),
@@ -1531,7 +1531,7 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
             at=armed.coordinate.git_oid,
         )
     monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", original)
-    assert service_line_status(instance, line.identity.name).state == "armed"
+    assert service_line_status(instance, line.identity.name).state == "enabled"
 
 
 def service_line_status_or_none(instance, name):  # type: ignore[no-untyped-def]
@@ -1570,7 +1570,7 @@ def test_generation_line_coalesces_and_skips_accepts_before_listening_or_restart
     instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
     start = READ_TIME + timedelta(seconds=10)
     _accept_generation(instance, owner, "before-listening", start - timedelta(seconds=1))
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -1600,7 +1600,7 @@ def test_generation_line_accepts_once_then_reaches_a_fixed_point(tmp_path, monke
 
     instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
     start = READ_TIME + timedelta(seconds=10)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,
@@ -1647,7 +1647,7 @@ def test_generation_line_retains_its_cursor_without_reading_prior_admissions(tmp
 
     instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
     start = READ_TIME + timedelta(seconds=10)
-    service_arm_line(
+    service_enable_line(
         instance,
         line.identity.name,
         principal=LOCAL,

@@ -258,12 +258,12 @@ class OrientInterface(_StrictOrientModel):
     operation_contract: ProviderOperationContract | None = Field(default=None, exclude_if=_is_none)
 
 
-class OrientArms(_StrictOrientModel):
-    """The instance's armed Lines as its Line consumer reports them, no daemon scope needed.
+class OrientEnablements(_StrictOrientModel):
+    """The instance's enabled Lines as its Line consumer reports them, no daemon scope needed.
 
-    ``running`` arms are admitting their own due work; ``stalled`` ones have
+    ``running`` enablements are admitting their own due work; ``stalled`` ones have
     due work older than the stall horizon; ``stopped`` ones stopped for any
-    reason but a deliberate disarm. ``needs_attention`` names up to three
+    reason but a deliberate disable. ``needs_attention`` names up to three
     stalled or stopped Lines (``Line:<name> stopped (<reason>)``), each a
     ``get`` reference.
     """
@@ -281,8 +281,8 @@ class OrientAttention(_StrictOrientModel):
     open_proposals: int = Field(ge=0)
     top: tuple[str, ...] = ()
     notes: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
-    # Present when any Line was ever armed on this instance.
-    arms: OrientArms | None = Field(default=None, exclude_if=_is_none)
+    # Present when any Line was ever enabled on this instance.
+    enablements: OrientEnablements | None = Field(default=None, exclude_if=_is_none)
 
 
 class OrientFloor(_StrictOrientModel):
@@ -368,7 +368,7 @@ class OrientResult(_StrictOrientModel):
     policies: tuple[PolicyInForce, ...] | None = Field(default=None, exclude_if=_is_none)
     truncated: bool = False
     next_cursor: str | None = Field(default=None, exclude_if=_is_none)
-    # Present when part of the answer is operational state -- runs, Line arms and
+    # Present when part of the answer is operational state -- runs, Line enablements and
     # pending counts, prediction windows -- read live at the current head
     # (``live.as_of``) whatever ``coordinate`` the read named.
     live: LiveView | None = Field(default=None, exclude_if=_is_none)
@@ -382,7 +382,7 @@ __all__ = [
     "ORIENT_MAX_LIMIT",
     "ORIENT_SAMPLE_SUBJECTS",
     "Head",
-    "OrientArms",
+    "OrientEnablements",
     "OrientArtifactCounts",
     "OrientAttention",
     "OrientClaimCounts",

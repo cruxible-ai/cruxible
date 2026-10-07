@@ -5241,18 +5241,18 @@ def check_line(
             )
 
 
-def _echo_line_arm(result: Any) -> None:
-    state = "armed" if result.state == "armed" else f"stopped ({result.stop_reason})"
+def _echo_line_enablement(result: Any) -> None:
+    state = "enabled" if result.state == "enabled" else f"stopped ({result.stop_reason})"
     unchanged = {
-        "already_armed": "already armed",
-        "already_disarmed": "already disarmed",
-        "would_arm": "preview: would arm",
-        "would_rearm": "preview: would rearm",
-        "would_disarm": "preview: would disarm",
+        "already_enabled": "already enabled",
+        "already_disabled": "already disabled",
+        "would_enable": "preview: would enable",
+        "would_reenable": "preview: would re-enable",
+        "would_disable": "preview: would disable",
     }
     note = unchanged.get(result.outcome or "")
     click.echo(f"{result.line}: {state}" + (f" ({note}; nothing changed)" if note else ""))
-    click.echo(f"Armed by: {result.armed_by.label} at {result.armed_at.isoformat()}")
+    click.echo(f"Enabled by: {result.enabled_by.label} at {result.enabled_at.isoformat()}")
     click.echo(f"Matched through: {result.evaluated_until.isoformat()}")
     click.echo(
         f"Pending: {result.pending_automatic} automatic, "
@@ -5263,40 +5263,40 @@ def _echo_line_arm(result: Any) -> None:
     echo_preview_next(result.outcome or "", result.coordinate)
 
 
-@line_group.command("arm")
+@line_group.command("enable")
 @click.argument("line")
 @change_control_options
 @json_option
 @handle_errors
-def arm_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+def enable_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
     """Admit what this Line matches from now on, under your credential."""
 
     result = _server_call(
-        lambda client, instance_id: client.arm_line(instance_id, line, dry_run=dry_run, at=at),
-        command_name="cruxible line arm",
+        lambda client, instance_id: client.enable_line(instance_id, line, dry_run=dry_run, at=at),
+        command_name="cruxible line enable",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_line_arm(result)
+        _echo_line_enablement(result)
 
 
-@line_group.command("disarm")
+@line_group.command("disable")
 @click.argument("line")
 @change_control_options
 @json_option
 @handle_errors
-def disarm_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
     """Stop admitting work automatically; admitted runs keep going."""
 
     result = _server_call(
-        lambda client, instance_id: client.disarm_line(instance_id, line, dry_run=dry_run, at=at),
-        command_name="cruxible line disarm",
+        lambda client, instance_id: client.disable_line(instance_id, line, dry_run=dry_run, at=at),
+        command_name="cruxible line disable",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_line_arm(result)
+        _echo_line_enablement(result)
 
 
 @line_group.command("status")
@@ -5313,7 +5313,7 @@ def line_status(line: str, output_json: bool) -> None:
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_line_arm(result)
+        _echo_line_enablement(result)
 
 
 @line_group.command("evaluate")
@@ -5650,13 +5650,14 @@ def _echo_next_status(status: contracts.NextStatus) -> None:
         label = facet.replace("_", " ")
         click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
     arms = (
-        status.consumers.detail.get("line_arms")
+        status.consumers.detail.get("line_enablements")
         if isinstance(status.consumers.detail, dict)
         else None
     )
     if isinstance(arms, dict) and (arms.get("stalled") or arms.get("stopped")):
         click.echo(
-            f"Status: line arms stalled={arms.get('stalled', 0)} stopped={arms.get('stopped', 0)}"
+            f"Status: line enablements stalled={arms.get('stalled', 0)} "
+            f"stopped={arms.get('stopped', 0)}"
             "  next=cruxible orient --section lines"
         )
 
@@ -6113,13 +6114,13 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         )
         lines.extend(f"  {line}" for line in attention["top"])
         lines.extend(f"  note: {line}" for line in attention.get("notes", ()))
-        arms = attention.get("arms")
-        if arms is not None:
+        enablements = attention.get("enablements")
+        if enablements is not None:
             lines.append(
-                f"  Line arms: running={arms['running']} stalled={arms['stalled']} "
-                f"stopped={arms['stopped']}"
+                f"  Line enablements: running={enablements['running']} "
+                f"stalled={enablements['stalled']} stopped={enablements['stopped']}"
             )
-            lines.extend(f"    {line}" for line in arms.get("needs_attention", ()))
+            lines.extend(f"    {line}" for line in enablements.get("needs_attention", ()))
     if result.get("next"):
         lines.append("Next:")
         lines.extend(f"  {line}" for line in result["next"])

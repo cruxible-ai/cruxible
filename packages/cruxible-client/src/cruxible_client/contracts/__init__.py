@@ -63,18 +63,6 @@ from cruxible_client.contracts.compact_query import QueryRequest as QueryRequest
 from cruxible_client.contracts.compact_query import QueryResultRecord as QueryResultRecord
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.line_dispatch import (
-    LineArm as LineArm,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineArmOutcome as LineArmOutcome,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipal as LineArmPrincipal,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineArmStopReason as LineArmStopReason,
-)
-from cruxible_client.contracts.line_dispatch import (
     LineDispatchItem as LineDispatchItem,
 )
 from cruxible_client.contracts.line_dispatch import (
@@ -82,6 +70,18 @@ from cruxible_client.contracts.line_dispatch import (
 )
 from cruxible_client.contracts.line_dispatch import (
     LineDispatchResult as LineDispatchResult,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineEnablement as LineEnablement,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineEnablementOutcome as LineEnablementOutcome,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineEnablementPrincipal as LineEnablementPrincipal,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineEnablementStopReason as LineEnablementStopReason,
 )
 from cruxible_client.contracts.line_dispatch import (
     LineEvaluateRequest as LineEvaluateRequest,
@@ -346,7 +346,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.proposal.readmit",
     "cruxible.proposal.approve",
     "cruxible.compiler.upgrade",
-    "cruxible.line.arm",
+    "cruxible.line.enable",
     "cruxible.line.dispatch",
     "cruxible.prediction.settle",
     "hand_edit",
@@ -554,7 +554,7 @@ class ProviderLaneStatus(BaseModel):
 
 
 class ConsumerStatus(BaseModel):
-    """One daemon consumer on one instance: an armed Line, or a built-in worker."""
+    """One daemon consumer on one instance: an enabled Line, or a built-in worker."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
