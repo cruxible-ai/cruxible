@@ -210,3 +210,134 @@ def test_a_two_capture_fan_out_without_lineage_refuses_instead_of_widening() -> 
         )
 
     assert refused.value.refusal.code == "proposal_item_evidence_ambiguous"
+
+
+# --- lineage is keyed to its exact path (S3 delta review F-005) --------------
+
+
+class _State:
+    """The slice of a run state the fan-out and projection provenance read."""
+
+    def __init__(self, outputs, provenance):  # type: ignore[no-untyped-def]
+        self.input_payload = {}
+        self.outputs = outputs
+        self.provenance = provenance
+
+    def alias_tokens(self, aliases):  # type: ignore[no-untyped-def]
+        tokens = frozenset()
+        for alias in aliases:
+            found = self.provenance.get(alias)
+            if found is not None:
+                tokens |= found.whole
+        return tokens
+
+    def item_tokens(self, alias, index):  # type: ignore[no-untyped-def]
+        found = self.provenance.get(alias)
+        return frozenset() if found is None else found.item(index)
+
+
+def _two_lists():  # type: ignore[no-untyped-def]
+    """Lists `a` and `b`, each element carrying the Capture it came from."""
+
+    from cruxible_core.procedures.terminal_dependencies import (
+        AliasProvenanceV1,
+        produced_capture_token,
+    )
+
+    a, b = produced_capture_token(_FEED_A), produced_capture_token(_FEED_B)
+    outputs = {
+        "a": {"items": [_element("from-a")]},
+        "b": {"items": [_element("from-b")]},
+    }
+    provenance = {
+        "a": AliasProvenanceV1(whole=frozenset({a}), items=(frozenset({a}),)),
+        "b": AliasProvenanceV1(whole=frozenset({b}), items=(frozenset({b}),)),
+    }
+    return _State(outputs, provenance)
+
+
+def _cited(state, reference):  # type: ignore[no-untyped-def]
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.procedures.models import ProposalItemsFanOut
+    from cruxible_core.procedures.execution import _fan_out_items
+    from cruxible_core.procedures.proposal_delivery import evidence_by_item
+    from cruxible_core.procedures.terminal_dependencies import build_terminal_item_manifest
+
+    values, tokens = _fan_out_items(
+        ProposalItemsFanOut(items=reference), state=state, node_id="propose"
+    )
+    manifests = {
+        f"item-{index}": build_terminal_item_manifest(
+            closure, run_id="RUN-test", terminal_node_id="propose", item_key=f"item-{index}"
+        )
+        for index, closure in enumerate(tokens)
+    }
+    request = SimpleNamespace(
+        items=tuple(
+            SimpleNamespace(item_key=f"item-{index}", child_index=index, value=value)
+            for index, value in enumerate(values)
+        )
+    )
+    return values, evidence_by_item(request, manifests)  # type: ignore[arg-type]
+
+
+def _bundle(state):  # type: ignore[no-untyped-def]
+    """Project {"items": a.items, "other": b.items}: lineage is recorded for `items` only."""
+
+    from cruxible_core.procedures.execution import _projected_provenance
+
+    fields = {"items": "$steps.a.items", "other": "$steps.b.items"}
+    value = {"items": state.outputs["a"]["items"], "other": state.outputs["b"]["items"]}
+    state.outputs["bundle"] = value
+    state.provenance["bundle"] = _projected_provenance(
+        fields, state=state, base=state.alias_tokens({"a", "b"}), value=value
+    )
+    return state
+
+
+def test_each_projected_list_cites_only_its_own_sources_capture() -> None:
+    state = _bundle(_two_lists())
+
+    values, evidence = _cited(state, "$steps.bundle.items")
+    assert [value["statement"]["qualifier"] for value in values] == ["from-a"]
+    assert evidence == {"item-0": _FEED_A}
+
+    # `other` keeps no lineage of its own and must not borrow `items`'s: the
+    # bundle was built from both Captures, so it refuses instead of citing A.
+    from cruxible_core.procedures.execution import _RunRefusal
+
+    with pytest.raises(_RunRefusal) as refused:
+        _cited(state, "$steps.bundle.other")
+    assert refused.value.refusal.code == "proposal_item_evidence_ambiguous"
+
+    # Through its own source, B's element cites B.
+    values, evidence = _cited(state, "$steps.b.items")
+    assert [value["statement"]["qualifier"] for value in values] == ["from-b"]
+    assert evidence == {"item-0": _FEED_B}
+
+
+def test_a_nested_path_does_not_borrow_the_top_level_lineage() -> None:
+    from cruxible_core.procedures.execution import _lineage_alias, _RunRefusal
+
+    assert _lineage_alias("$steps.bundle.items") == "bundle"
+    assert _lineage_alias("$steps.bundle.items.0.items") is None
+    assert _lineage_alias("$steps.bundle.other") is None
+    state = _bundle(_two_lists())
+    state.outputs["bundle"]["items"][0]["nested"] = [_element("nested")]
+
+    with pytest.raises(_RunRefusal) as refused:
+        _cited(state, "$steps.bundle.items.0.nested")
+    assert refused.value.refusal.code == "proposal_item_evidence_ambiguous"
+
+
+def test_a_field_without_lineage_from_one_capture_cites_that_capture() -> None:
+    from cruxible_core.procedures.terminal_dependencies import AliasProvenanceV1
+
+    state = _two_lists()
+    state.outputs["only_a"] = {"other": state.outputs["a"]["items"]}
+    state.provenance["only_a"] = AliasProvenanceV1(whole=state.provenance["a"].whole)
+
+    _values, evidence = _cited(state, "$steps.only_a.other")
+
+    assert evidence == {"item-0": _FEED_A}

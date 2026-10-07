@@ -5628,6 +5628,32 @@ def _template_alias(value: object) -> str | None:
     return None
 
 
+def _lineage_alias(value: object) -> str | None:
+    """The alias whose per-element lineage a template may use, or None.
+
+    Per-element lineage is recorded for one exact path: the ``items`` list a
+    transform or projection produced (``$steps.<alias>.items``). Any other path
+    into the same alias -- a sibling field, a nested list -- has no lineage of
+    its own and must not borrow that one.
+    """
+
+    if not isinstance(value, str) or not value.startswith(_STEP_PREFIX):
+        return None
+    parts = value[len(_STEP_PREFIX) :].split(".")
+    return parts[0] if len(parts) == 2 and parts[1] == "items" else None
+
+
+def _item_closure(state: _RunState, template: object, index: int) -> frozenset[DependencyToken]:
+    """One element's closure through `template`: its own lineage, else the alias's whole."""
+
+    alias = _template_alias(template)
+    if alias is None:
+        return frozenset()
+    if _lineage_alias(template) == alias:
+        return state.item_tokens(alias, index)
+    return state.alias_tokens(frozenset({alias}))
+
+
 def _base_tokens(
     node: object,
     state: _RunState,
@@ -5654,14 +5680,12 @@ def _transform_provenance(
         if isinstance(node.spec, dict)
         else cast(BaseModel, node.spec).model_dump(mode="python", exclude={"tag"})
     )
-    slot_aliases = {slot: _template_alias(spec.get(slot)) for slot in _ITEM_SLOTS}
     items: list[frozenset[DependencyToken]] = []
     for refs in lineage:
         tokens: frozenset[DependencyToken] = frozenset()
         for slot, index in refs:
-            alias = slot_aliases.get(slot)
-            if alias is not None:
-                tokens = tokens | state.item_tokens(alias, index)
+            if slot in _ITEM_SLOTS:
+                tokens = tokens | _item_closure(state, spec.get(slot), index)
         items.append(tokens)
     return AliasProvenanceV1(whole=base, items=tuple(items))
 
@@ -5692,12 +5716,11 @@ def _projected_provenance(
     projected = value.get("items")
     if not isinstance(projected, list):
         return AliasProvenanceV1(whole=base)
-    alias = _template_alias(template)
-    if alias is None:
+    if _template_alias(template) is None:
         return AliasProvenanceV1(whole=base)
     return AliasProvenanceV1(
         whole=base,
-        items=tuple(state.item_tokens(alias, index) for index in range(len(projected))),
+        items=tuple(_item_closure(state, template, index) for index in range(len(projected))),
     )
 
 
@@ -5757,7 +5780,9 @@ def _fan_out_items(
     if provenance is None:
         whole = state.alias_tokens(_referenced_aliases(fan_out.items))
         return values, tuple(whole for _ in values)
-    lineage = provenance.items
+    # Lineage belongs to the exact path it was recorded for; a sibling or
+    # nested path has none of its own.
+    lineage = provenance.items if _lineage_alias(fan_out.items) == alias else None
     if lineage is None or len(lineage) < len(values):
         if len({token for token in provenance.whole if token.slot in _CAPTURE_SLOTS}) > 1:
             raise _RunRefusal(
@@ -5806,11 +5831,12 @@ def _terminal_items(
         values = [normalize_canonical(item) for item in nested]
     else:
         return [resolved], (state.alias_tokens(_referenced_aliases(declared)),)
-    alias = _template_alias(template)
-    if alias is None:
+    if _template_alias(template) is None:
         fallback = shared | state.alias_tokens(_referenced_aliases(template))
         return values, tuple(fallback for _ in values)
-    return values, tuple(shared | state.item_tokens(alias, index) for index in range(len(values)))
+    return values, tuple(
+        shared | _item_closure(state, template, index) for index in range(len(values))
+    )
 
 
 def _decision_digest(run_id: str, decision: AcquisitionInputDecision) -> str:
