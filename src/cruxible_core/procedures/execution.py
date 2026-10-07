@@ -5062,21 +5062,9 @@ class ProcedureExecutor:
             raise _InternalFailure(
                 outcome.code or "provider_protocol_violation", details=outcome.detail
             ) from exc
-        started = ProviderInvocationStarted(
-            invocation_id=invocation_id,
-            occurrence_path=occurrence.occurrence_path,
-            implementation_digest=occurrence.implementation_digest,
-            materialization_digest=occurrence.local_execution.materialization_digest,
-            input_digest=input_digest,
-            input_bucket=measured_bucket,
-        )
-        self._append_event(
-            admission,
-            records,
-            "provider_invocation_started",
-            started.model_dump(mode="json"),
-        )
-        state.provider_invocations_started += 1
+        # The budget refusal precedes the started event: an invocation is
+        # journaled as started only when a spawn follows, so a run out of time
+        # refuses with its budget code instead of an unmatched start.
         budget = occurrence.budget_translation
         elapsed_microseconds = max(
             0,
@@ -5096,6 +5084,21 @@ class ProcedureExecutor:
                 "No Procedure wall-clock budget remains before Provider spawn.",
                 node_id=node_id,
             )
+        started = ProviderInvocationStarted(
+            invocation_id=invocation_id,
+            occurrence_path=occurrence.occurrence_path,
+            implementation_digest=occurrence.implementation_digest,
+            materialization_digest=occurrence.local_execution.materialization_digest,
+            input_digest=input_digest,
+            input_bucket=measured_bucket,
+        )
+        self._append_event(
+            admission,
+            records,
+            "provider_invocation_started",
+            started.model_dump(mode="json"),
+        )
+        state.provider_invocations_started += 1
         context = ProviderRuntimeRunContextV1(
             protocol_version=occurrence.local_execution.protocol_version,
             run_id=admission.run_id,

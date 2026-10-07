@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import get_args
@@ -1187,6 +1188,45 @@ def test_provider_call_budget_subtracts_elapsed_run_time_at_each_spawn(tmp_path:
         0
     ].budget_translation.runtime_wall_clock_seconds
     assert invoker.wall_windows == [pytest.approx(admitted_window - 0.4)]
+
+
+def test_a_run_out_of_time_before_spawn_refuses_without_journaling_a_start(
+    tmp_path: Path,
+) -> None:
+    class _SpentClock(_ElapsedClock):
+        """No time passes anywhere except at the Provider spawn's budget check."""
+
+        def monotonic_ns(self) -> int:
+            spawning = sys._getframe(1).f_code.co_name == "_invoke_provider_v4"
+            return 10**15 if spawning else 0
+
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    invoker = _Invoker()
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=invoker,
+        provider_classifier_registry=registry,
+        clock=_SpentClock(),
+    ).execute(prepared, accepted)
+
+    # The budget refusal surfaces as itself, not as provider_completion_not_durable.
+    assert result.status == "refused"
+    assert result.refusal is not None and result.refusal.code == "budget_wall_clock"
+    assert invoker.calls == []
+    records = fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    kinds = [item.record.event_kind for item in records]
+    assert "provider_invocation_started" not in kinds
 
 
 @pytest.mark.parametrize(
