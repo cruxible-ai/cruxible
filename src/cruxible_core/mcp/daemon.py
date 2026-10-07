@@ -6,8 +6,7 @@ selects its daemon in this order and stops at the first that applies:
 1. ``environment``: ``CRUXIBLE_SERVER_URL`` or ``CRUXIBLE_SERVER_SOCKET`` in the
    adapter's own environment.
 2. ``workspace``: the transport the MCP workspace's ``.cruxible/coverage.json``
-   binds together with an instance (a binding to the default socket below is
-   that daemon, so it falls through to 3 and 4).
+   binds together with an instance, whichever socket it names.
 3. ``default_socket``: ``<state root>/run/daemon.sock`` when a daemon answers there.
 4. auto-start under the state root (``CRUXIBLE_STATE_ROOT``, else ``~/.cruxible``),
    holding ``<state root>/run/autostart.lock`` so two adapters never race two
@@ -67,9 +66,16 @@ _POLL_INTERVAL_S = 0.1
 
 
 class DaemonUnavailableError(ConfigError):
-    """No daemon answers and none could be started; the message names the repair."""
+    """No daemon answers and none could be started; the message names the repair.
+
+    The code leads the message, so it reaches an MCP caller, whose error is the
+    exception's text.
+    """
 
     error_code = "cruxible.mcp.daemon_unavailable"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"{self.error_code}: {message}")
 
 
 @dataclass(frozen=True)
@@ -143,19 +149,7 @@ def _workspace_transport(env: Mapping[str, str]) -> DaemonTarget | None:
         return None
     if resolved.transport_source != "workspace":
         return None
-    if resolved.server_socket is not None and _is_default_socket(resolved.server_socket, env):
-        # A binding to the default socket names the daemon auto-start provides:
-        # it is found or started there, not refused while it is down.
-        return None
     return DaemonTarget(resolved.server_url, resolved.server_socket, "workspace")
-
-
-def _is_default_socket(server_socket: str, env: Mapping[str, str]) -> bool:
-    try:
-        default = default_socket_path(get_server_state_root(env))
-        return Path(server_socket).expanduser().resolve() == default.resolve()
-    except (ConfigError, OSError, RuntimeError):
-        return False
 
 
 def _answers(*, server_url: str | None = None, server_socket: str | None = None) -> bool:
@@ -189,12 +183,24 @@ def _holder_target(transport: str) -> DaemonTarget:
 
 
 @contextmanager
-def _autostart_lock(state_root: Path) -> Iterator[None]:
+def _autostart_lock(state_root: Path, socket_path: Path) -> Iterator[None]:
     path = state_root / AUTOSTART_LOCK_RELATIVE
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as exc:
+        raise DaemonUnavailableError(
+            f"could not open the auto-start lock {path}: {exc}; repair: make "
+            f"{path.parent} a directory you own, or {_repair(state_root, socket_path)}"
+        ) from exc
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        except OSError as exc:
+            raise DaemonUnavailableError(
+                f"could not take the auto-start lock {path}: {exc}; repair: "
+                f"{_repair(state_root, socket_path)}"
+            ) from exc
         yield
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -219,40 +225,55 @@ def ensure_local_daemon(
     socket_path = default_socket_path(state_root)
     if _answers(server_socket=str(socket_path)):
         return DaemonTarget(None, str(socket_path), "default_socket")
-    with _autostart_lock(state_root):
-        # Another adapter may have started it while this one waited for the lock.
-        if _answers(server_socket=str(socket_path)):
-            return DaemonTarget(None, str(socket_path), "default_socket")
-        holder = read_state_lock(state_root) if state_lock_holder_is_alive(state_root) else None
-        if holder is not None:
-            target = _holder_target(holder.transport)
-            if _answers(server_url=target.server_url, server_socket=target.server_socket):
-                return target
-            raise DaemonUnavailableError(
-                f"state root {state_root} is held by daemon pid {holder.pid} on "
-                f"{holder.transport}, which does not answer; repair: wait for it to finish "
-                "starting, or stop it with `cruxible server stop` and retry"
-            )
-        service = installed_service_config(state_root)
-        if service is not None:
-            target = (
-                DaemonTarget(None, service.socket_path, "service")
-                if service.socket_path is not None
-                else DaemonTarget(f"http://{service.host}:{service.port}", None, "service")
-            )
-            try:
-                start_installed_service(service)
-            except (OSError, subprocess.CalledProcessError) as exc:
-                raise DaemonUnavailableError(
-                    f"the installed Cruxible service for {state_root} did not start: {exc}; "
-                    f"repair: {_repair(state_root, socket_path)}"
-                ) from exc
-            _wait_until_answering(target, state_root, socket_path, process=None)
+    with _autostart_lock(state_root, socket_path):
+        return _start_under_lock(state_root, socket_path, env)
+
+
+def _start_under_lock(state_root: Path, socket_path: Path, env: Mapping[str, str]) -> DaemonTarget:
+    """Reuse or start the daemon while holding the auto-start lock; never two."""
+
+    # Another adapter may have started it while this one waited for the lock.
+    if _answers(server_socket=str(socket_path)):
+        return DaemonTarget(None, str(socket_path), "default_socket")
+    holder = read_state_lock(state_root) if state_lock_holder_is_alive(state_root) else None
+    if holder is not None:
+        target = _holder_target(holder.transport)
+        if _answers(server_url=target.server_url, server_socket=target.server_socket):
             return target
-        process = _spawn_daemon(state_root, socket_path, env)
-        target = DaemonTarget(None, str(socket_path), "started")
-        _wait_until_answering(target, state_root, socket_path, process=process)
+        raise DaemonUnavailableError(
+            f"state root {state_root} is held by daemon pid {holder.pid} on "
+            f"{holder.transport}, which does not answer; repair: wait for it to finish "
+            "starting, or stop it with `cruxible server stop` and retry"
+        )
+    try:
+        service = installed_service_config(state_root)
+    except (ConfigError, OSError) as exc:
+        # A recorded service that cannot be read is refused, never bypassed by
+        # spawning a second daemon beside it.
+        raise DaemonUnavailableError(
+            f"the installed Cruxible service for {state_root} cannot be read: {exc}; "
+            "repair: rerun `cruxible server install-service --replace`, or remove "
+            f"{state_root / 'daemon' / 'service-install-v1.json'}"
+        ) from exc
+    if service is not None:
+        target = (
+            DaemonTarget(None, service.socket_path, "service")
+            if service.socket_path is not None
+            else DaemonTarget(f"http://{service.host}:{service.port}", None, "service")
+        )
+        try:
+            start_installed_service(service)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise DaemonUnavailableError(
+                f"the installed Cruxible service for {state_root} did not start: {exc}; "
+                f"repair: {_repair(state_root, socket_path)}"
+            ) from exc
+        _wait_until_answering(target, state_root, socket_path, process=None)
         return target
+    process = _spawn_daemon(state_root, socket_path, env)
+    target = DaemonTarget(None, str(socket_path), "started")
+    _wait_until_answering(target, state_root, socket_path, process=process)
+    return target
 
 
 def _cruxible_executable() -> str | None:
@@ -272,13 +293,16 @@ def _spawn_daemon(
             f"interpreter or on PATH, so none can be started; repair: "
             f"{_repair(state_root, socket_path)}"
         )
-    child_env = {
-        key: value
-        for key, value in env.items()
-        if key not in (*_TARGET_ENV, "CRUXIBLE_MODE", "CRUXIBLE_INSTANCE_ID")
-    }
+    child_env = daemon_child_environment(env)
     log_path = state_root / AUTOSTART_LOG_RELATIVE
-    with open(log_path, "ab") as log:
+    try:
+        log = open(log_path, "ab")
+    except OSError as exc:
+        raise DaemonUnavailableError(
+            f"could not open the auto-start log {log_path}: {exc}; repair: make "
+            f"{log_path.parent} writable, or {_repair(state_root, socket_path)}"
+        ) from exc
+    try:
         return subprocess.Popen(
             [
                 executable,
@@ -297,6 +321,44 @@ def _spawn_daemon(
             env=child_env,
             start_new_session=True,
         )
+    except (OSError, ValueError) as exc:
+        raise DaemonUnavailableError(
+            f"could not launch {executable} to start a daemon for {state_root}: {exc}; "
+            f"repair: {_repair(state_root, socket_path)}"
+        ) from exc
+    finally:
+        log.close()
+
+
+#: Daemon configuration an auto-started daemon inherits from the adapter. Every
+#: other ``CRUXIBLE_*`` variable stays behind: the adapter's transport, tier,
+#: instance, principal and workspace are its own, and its credentials (bearer
+#: token, bootstrap secret, principal key, registry and mirror secrets) must
+#: never configure or authenticate a shared daemon.
+DAEMON_CONFIGURATION_ENV = frozenset(
+    {
+        "CRUXIBLE_ARTIFACT_CACHE",
+        "CRUXIBLE_AUTHORING_INTENTS",
+        "CRUXIBLE_CONSUMPTION_RECEIPTS",
+        "CRUXIBLE_DEBUG",
+        "CRUXIBLE_DISABLED_CONSUMERS",
+        "CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND",
+        "CRUXIBLE_HOSTED_SERVER_PROFILE",
+        "CRUXIBLE_ORIGIN_ALLOWLIST",
+        "CRUXIBLE_PROJECTION_PROCESSING_MAX_BYTES",
+        "CRUXIBLE_SERVER_LOG_PATH",
+    }
+)
+
+
+def daemon_child_environment(env: Mapping[str, str]) -> dict[str, str]:
+    """The environment of a spawned daemon: the process basics plus daemon configuration."""
+
+    return {
+        key: value
+        for key, value in env.items()
+        if not key.startswith("CRUXIBLE_") or key in DAEMON_CONFIGURATION_ENV
+    }
 
 
 def _wait_until_answering(
@@ -329,6 +391,7 @@ __all__ = [
     "DaemonTarget",
     "DaemonUnavailableError",
     "configured_daemon_target",
+    "daemon_child_environment",
     "default_socket_path",
     "ensure_local_daemon",
     "forget_local_daemon",

@@ -53,10 +53,12 @@ serves state in its own process. It picks the daemon in this order:
    output to `<state root>/run/daemon.out`. The daemon outlives the MCP server.
 
 A transport from 1 or 2 that does not answer is refused by name; the server never
-starts a daemon in its place (a binding to the default socket is the daemon of 3
-and 4, so it is found or started). When no daemon can be started, the call fails
-with `cruxible.mcp.daemon_unavailable` naming the repair: start one with
-`cruxible server start`, install the service, or set a transport.
+starts a daemon in its place, whichever socket a workspace binding names (the
+default one included). When no daemon can be started, the call fails with
+`cruxible.mcp.daemon_unavailable` naming the failed step and the repair: start
+one with `cruxible server start`, install the service, or set a transport. A
+started daemon inherits no `CRUXIBLE_*` variable of the MCP server's beyond daemon
+configuration: never its transport, tier, instance, principal or credentials.
 
 ## Instances and the adapter environment
 

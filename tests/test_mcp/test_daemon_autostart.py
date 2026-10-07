@@ -9,6 +9,7 @@ replaced by a started daemon.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -22,6 +23,7 @@ from typing import Any
 import pytest
 
 from cruxible_client.errors import ServerUnreachableError
+from cruxible_core.errors import ConfigError
 from cruxible_core.mcp import daemon, handlers
 from cruxible_core.mcp.daemon import (
     DaemonTarget,
@@ -102,19 +104,48 @@ def test_the_workspace_binding_socket_comes_next(
     assert target == DaemonTarget(None, "/bound.sock", "workspace")
 
 
-def test_a_binding_without_an_instance_or_to_the_default_socket_is_not_configuration(
+def test_a_binding_without_an_instance_is_not_configuration(
     roots: tuple[Path, Path],
 ) -> None:
     state_root, workspace = roots
     _bind_workspace(workspace, server_socket="/bound.sock")
     assert configured_daemon_target(_env(state_root, workspace)) is None
 
-    _bind_workspace(
-        workspace,
-        server_socket=str(default_socket_path(state_root)),
-        instance_id="inst_bound",
+
+def test_a_binding_to_the_default_socket_is_configuration_too(
+    roots: tuple[Path, Path],
+) -> None:
+    """The bound daemon is the binding's, even on the socket auto-start would use (F-001)."""
+
+    state_root, workspace = roots
+    socket = str(default_socket_path(state_root))
+    _bind_workspace(workspace, server_socket=socket, instance_id="inst_bound")
+
+    assert configured_daemon_target(_env(state_root, workspace)) == DaemonTarget(
+        None, socket, "workspace"
     )
-    assert configured_daemon_target(_env(state_root, workspace)) is None
+
+
+def test_an_unreachable_bound_default_socket_is_refused_not_restarted(
+    roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_root, workspace = roots
+    socket = default_socket_path(state_root)
+    _bind_workspace(workspace, server_socket=str(socket), instance_id="inst_bound")
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setattr(
+        daemon, "ensure_local_daemon", lambda *_a, **_k: pytest.fail("never started")
+    )
+    handlers.reset_client_cache()
+    try:
+        with pytest.raises(ServerUnreachableError) as refused:
+            handlers.handle_server_info()
+    finally:
+        handlers.reset_client_cache()
+
+    assert str(socket) in str(refused.value)
+    assert "configured by workspace, so none is started in its place" in str(refused.value)
 
 
 def test_the_default_socket_is_reused_when_a_daemon_answers_there(
@@ -213,11 +244,22 @@ def test_with_nothing_to_reuse_it_spawns_the_daemon_on_the_default_socket(
 
     monkeypatch.setattr(daemon, "_answers", answers)
     monkeypatch.setattr(daemon.subprocess, "Popen", popen)
+    secrets = {
+        "CRUXIBLE_SERVER_BEARER_TOKEN": "bearer-secret-value",
+        "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET": "bootstrap-secret-value",
+        "CRUXIBLE_PRINCIPAL_KEY": "principal-key-value",
+        "CRUXIBLE_REGISTRY_PASSWORD": "registry-password-value",
+        "CRUXIBLE_MIRROR_TOKEN": "mirror-token-value",
+    }
     env = _env(
         state_root,
         workspace,
         CRUXIBLE_MODE="read_only",
         CRUXIBLE_INSTANCE_ID="inst_x",
+        CRUXIBLE_PRINCIPAL_ID="agent",
+        CRUXIBLE_SERVER_AUTH="true",
+        CRUXIBLE_SERVER_LOG_PATH=str(state_root / "daemon.log"),
+        **secrets,
     )
 
     target = real_ensure_local_daemon(state_root, environ=env)
@@ -236,8 +278,14 @@ def test_with_nothing_to_reuse_it_spawns_the_daemon_on_the_default_socket(
         "admin",
     ]
     assert call["start_new_session"] is True
-    # The adapter's own tier and instance never configure the shared daemon.
-    assert "CRUXIBLE_MODE" not in call["env"] and "CRUXIBLE_INSTANCE_ID" not in call["env"]
+    # The adapter's tier, instance, principal and credentials never configure or
+    # authenticate the shared daemon; its daemon configuration does (F-002).
+    child = call["env"]
+    assert {key for key in child if key.startswith("CRUXIBLE_")} == {"CRUXIBLE_SERVER_LOG_PATH"}
+    assert child["PATH"] == env["PATH"] and child["HOME"] == env["HOME"]
+    for value in secrets.values():
+        assert value not in argv
+        assert value not in child.values()
     assert (state_root / "run").stat().st_mode & 0o077 == 0
 
 
@@ -255,6 +303,80 @@ def test_a_start_that_fails_is_a_typed_refusal_naming_the_repair(
     assert "exited with status 1" in message
     assert str(state_root / "run" / "daemon.out") in message
     assert "cruxible server start" in message and "cruxible server install-service" in message
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [OSError(8, "Exec format error"), PermissionError(13, "Permission denied")],
+    ids=["enoexec", "denied"],
+)
+def test_a_launch_that_raises_is_a_typed_refusal(
+    roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch, failure: OSError
+) -> None:
+    """F-004: an exec failure names the launch and the repair, and starts nothing else."""
+
+    state_root, workspace = roots
+
+    def popen(*_args: object, **_kwargs: object) -> _Process:
+        raise failure
+
+    monkeypatch.setattr(daemon, "_answers", _Answers())
+    monkeypatch.setattr(daemon.subprocess, "Popen", popen)
+
+    with pytest.raises(DaemonUnavailableError) as refused:
+        real_ensure_local_daemon(state_root, environ=_env(state_root, workspace))
+
+    message = str(refused.value)
+    assert message.startswith("cruxible.mcp.daemon_unavailable: could not launch")
+    assert failure.strerror in message
+    assert "cruxible server start" in message
+
+
+def test_an_unreadable_log_or_service_record_is_a_typed_refusal(
+    roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_root, workspace = roots
+    monkeypatch.setattr(daemon, "_answers", _Answers())
+    monkeypatch.setattr(daemon.subprocess, "Popen", lambda *_a, **_k: pytest.fail("no launch"))
+    (state_root / "run").mkdir(parents=True, mode=0o700)
+    (state_root / "run" / "daemon.out").mkdir()  # cannot be opened for append
+
+    with pytest.raises(DaemonUnavailableError, match="could not open the auto-start log"):
+        real_ensure_local_daemon(state_root, environ=_env(state_root, workspace))
+
+    def broken(_root: Path) -> None:
+        raise ConfigError("recorded service settings cannot be read")
+
+    monkeypatch.setattr(daemon, "installed_service_config", broken)
+    monkeypatch.setattr(daemon, "_spawn_daemon", lambda *_a: pytest.fail("never bypassed"))
+    with pytest.raises(DaemonUnavailableError, match="service .* cannot be read"):
+        real_ensure_local_daemon(state_root, environ=_env(state_root, workspace))
+
+
+def test_the_mcp_caller_reads_the_daemon_unavailable_code(
+    roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-003: with no executable to start, the tool error carries the code end to end."""
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from cruxible_core.mcp.server import create_server
+
+    state_root, workspace = roots
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setattr(daemon, "ensure_local_daemon", real_ensure_local_daemon)
+    monkeypatch.setattr(daemon, "_answers", _Answers())
+    monkeypatch.setattr(daemon, "_cruxible_executable", lambda: None)
+    handlers.reset_client_cache()
+    try:
+        with pytest.raises(ToolError) as refused:
+            asyncio.run(create_server().call_tool("cruxible_server_info", {}))
+    finally:
+        handlers.reset_client_cache()
+
+    assert "cruxible.mcp.daemon_unavailable" in str(refused.value)
+    assert "cruxible server start" in str(refused.value)
 
 
 def test_the_state_root_lock_lets_only_one_adapter_start_a_daemon(
