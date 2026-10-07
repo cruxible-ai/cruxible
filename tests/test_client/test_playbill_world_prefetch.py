@@ -90,13 +90,6 @@ def test_full_subject_prefetch_also_caches_empty_attributes(connection, monkeypa
     assert client.claim_reads == []
 
 
-def test_typed_claim_batch_is_one_request(connection, monkeypatch):
-    pb, client = connection
-    calls = install(client, monkeypatch)
-    views = pb.claim_views(["Claim:CLM-" + "9" * 32])
-    assert len(calls) == 1 and len(views) == 1 and client.claim_reads == []
-
-
 def test_prefetch_preserves_json_suffix_in_bare_subject_id(connection, monkeypatch):
     pb, client = connection
     world = pb.world()
@@ -110,10 +103,3 @@ def test_prefetch_preserves_json_suffix_in_bare_subject_id(connection, monkeypat
     world.prefetch(subjects=["sec.package/report.json"])
     assert captured[0].subject_paths == ("subjects/sec.package/report.json.json",)
     assert ("sec.package/report.json", None) in world._claim_cache
-
-
-def test_claim_batch_refuses_returned_identity_mismatch(connection, monkeypatch):
-    pb, client = connection
-    install(client, monkeypatch)
-    with pytest.raises(ValueError, match="position"):
-        pb.claim_views(["Claim:CLM-" + "8" * 32])

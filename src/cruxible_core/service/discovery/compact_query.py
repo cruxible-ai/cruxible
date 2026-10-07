@@ -11,7 +11,7 @@ Three modes, exactly one per call:
   every live Claim.
 - **spec** -- a full ``QueryDefinitionSpec``, pinned at the coordinate.
 - **name** -- an accepted QueryDefinition with its ``params``, run exactly as
-  ``run_query`` runs it.
+  its declaration states.
 
 Lowered filters are the ones the accepted grammar states exactly: a
 one-cardinality predicate compared, matched against a set or tested for
@@ -2154,7 +2154,7 @@ def _named_answer(
     artifacts = isinstance(definition.query.entry, QueryArtifactsEntry)
     # A caller's own budgets run as given, up to the definition's maximum (the
     # engine refuses past it). A full receipt is a replay, so it runs the
-    # definition's declared budgets exactly as run_query did: its result and
+    # definition's declared budgets exactly: its result and
     # digest never depend on the compact surface's ceiling or the page size.
     # Otherwise the definition's budgets are held under that ceiling.
     if request.budgets is not None:

@@ -121,10 +121,8 @@ def test_an_exact_content_claim_view_carries_the_text_the_daemon_reads(
     assert card.value.object_kind == "exact_content"
     assert card.value.value == "The ruling, exactly as written.\n"
     assert card.value.content_digest == ruling.digest
-    # claim_view and the batch read agree with get, and with the CLI and MCP card.
-    assert pb.claim_view(ruling.claim_id) == card.value
-    (batched, marked) = pb.claim_views([ruling.claim_id, binary.claim_id])
-    assert batched == card.value
+    marked = pb.get(binary.claim_id).value
+    assert isinstance(marked, ClaimView)
     assert marked.value == ExactContentRef(
         exact_content="binary", content_digest=binary.digest, length=9
     )

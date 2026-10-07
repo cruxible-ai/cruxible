@@ -1250,7 +1250,7 @@ by the normal intent submission and approval flow. `cx.changes().query_definitio
 includes a query in a changeset. Omitted ClaimType pins resolve against the intent
 base or sibling definitions; explicit pins remain assertions. SDK `vocabulary=`
 accepts World ClaimType references and retains their stale-reference checks.
-Use `cx.run_query(name)` to read the accepted result and receipt.
+Use `cx.query(name=NAME, receipt="full")` to read the accepted result and receipt.
 
 `authoring create --example query-claims-by-type` provides a Claim query without
 placeholder digests. `--example query-ontology` and `--example query-procedures`

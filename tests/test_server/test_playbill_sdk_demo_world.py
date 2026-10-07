@@ -1009,7 +1009,8 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     assert query_proposal_id is not None
     _approve_and_activate(http, instance_id, private_key_path, query_proposal_id)
     pb.refresh()
-    queried = pb.run_query(query.identity.name)
+    queried = pb.query(name=query.identity.name, receipt="full").page.receipt.replay
+    assert queried is not None
     assert queried.result.verdict == "completed"
     assert "response-guidance" in {
         field.value

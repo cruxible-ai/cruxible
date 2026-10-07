@@ -62,9 +62,9 @@ def test_query_refs_preserve_staleness_expectations_and_allow_same_set_refs(tmp_
         )
 
 
-def test_typed_definition_listing_rejects_partial_or_misbound_results():
-    from cruxible_client.contracts import QueryRun
+def test_artifact_definition_rows_refuse_a_misbound_digest():
     from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
+    from cruxible_client.contracts.query.results import QueryArtifactDefinition
     from tests.test_authoring.test_authoring_change_set_intents import _predicate_type
 
     claim_type = _predicate_type("security.asset.owner")
@@ -74,35 +74,7 @@ def test_typed_definition_listing_rejects_partial_or_misbound_results():
         "artifact_digest": claim_type_digest(claim_type).tagged,
         "definition": claim_type.model_dump(mode="json"),
     }
-    from cruxible_client.contracts.query.results import (
-        ClaimQueryResult,
-        QueryArtifactDefinition,
-        QueryResultRow,
-        QueryTruncation,
-    )
-
-    body = ClaimQueryResult.model_construct(
-        result_shape="artifact_definition",
-        verdict="completed",
-        conflicts=(),
-        truncation=QueryTruncation(),
-        rows=(
-            QueryResultRow(
-                tag="playbill-query-result-row-v2",
-                bindings=(),
-                artifact=QueryArtifactDefinition.model_validate(artifact),
-            ),
-        ),
-    )
-    result = QueryRun.model_construct(result=body)
-    assert result.artifact_definitions[0].definition == claim_type
-    for change in (
-        {"verdict": "refused"},
-        {"truncation": QueryTruncation(clipped_budgets=("max_results",), candidate_result_count=1)},
-        {"result_shape": "subject"},
-    ):
-        with pytest.raises(ValueError):
-            QueryRun.model_construct(result=body.model_copy(update=change)).artifact_definitions
+    assert QueryArtifactDefinition.model_validate(artifact).definition == claim_type
     with pytest.raises(ValueError):
         QueryArtifactDefinition.model_validate(
             {**artifact, "artifact_digest": "sha256:" + "0" * 64}
