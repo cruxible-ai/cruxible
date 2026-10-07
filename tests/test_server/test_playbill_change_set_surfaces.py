@@ -41,7 +41,7 @@ def _created_intent(
     """Compile one tagless input; compile with no intent ID creates the intent."""
 
     compiled = transport.compile_authoring_input(instance_id, input=payload)
-    intent_id = str(compiled.certificate["intent_id"])
+    intent_id = str(compiled.certificate.intent_id)
     return dict(transport.get_authoring_intent(instance_id, intent_id).intent)
 
 

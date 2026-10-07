@@ -57,6 +57,7 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core import __version__ as DAEMON_VERSION
+from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
 from tests.test_client._read_fakes import ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
@@ -239,11 +240,7 @@ class _Client:
         self, _instance_id: str, **values: object
     ) -> api.AuthoringPreflightResult:
         self.compiled = dict(values)
-        return api.AuthoringPreflightResult(
-            verdict="passed",
-            certificate={"intent_id": "AIT-" + "1" * 32},
-            frontier={"diagnostics": []},
-        )
+        return stub_preflight_result(intent_id="AIT-" + "1" * 32)
 
     def get_authoring_intent(
         self, _instance_id: str, _intent_id: str
@@ -1348,22 +1345,17 @@ def test_refusal_diagnostic_maps_exact_payload_path_to_the_call_expression(
             self, _instance_id: str, **values: object
         ) -> api.AuthoringPreflightResult:
             self.compiled = dict(values)
-            return api.AuthoringPreflightResult(
+            return stub_preflight_result(
                 verdict="refused",
-                certificate={"intent_id": "AIT-" + "1" * 32},
-                frontier={
-                    "diagnostics": [
-                        {
-                            "code": "cruxible.test.role_refused",
-                            "stage": "admission",
-                            "offending_element": "statement.role",
-                            "message": "role is not admitted",
-                            "repairs": [],
-                            "owner": "writer",
-                            "disposition": "repairable",
-                        }
-                    ]
-                },
+                intent_id="AIT-" + "1" * 32,
+                diagnostics=(
+                    stub_diagnostic(
+                        "cruxible.test.role_refused",
+                        "role is not admitted",
+                        stage="admission",
+                        offending_element="statement.role",
+                    ),
+                ),
             )
 
     pb = Cruxible._from_client(  # type: ignore[arg-type]

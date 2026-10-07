@@ -762,7 +762,7 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
         payload=bound.model_dump(mode="json"),
     )
     assert compiled.verdict == "passed", compiled.frontier
-    intent_id = str(compiled.certificate["intent_id"])
+    intent_id = str(compiled.certificate.intent_id)
     submitted = transport.submit_authoring_intent(instance_id, intent_id)
     assert submitted.status.proposal_id is not None
     _approve_and_activate(
@@ -999,7 +999,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         ).model_dump(mode="json"),
     )
     assert query_preflight.verdict == "passed", query_preflight.frontier
-    query_intent_id = query_preflight.certificate["intent_id"]
+    query_intent_id = query_preflight.certificate.intent_id
     assert isinstance(query_intent_id, str)
     submitted_query = transport.submit_authoring_intent(
         instance_id,

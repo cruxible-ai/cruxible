@@ -44,6 +44,7 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._claim_type_support import claim_type_input_example
+from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
 
 COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
@@ -138,11 +139,7 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
         ) -> contracts.AuthoringPreflightResult:
             calls.append((instance_id, input))
             assert intent_id is None
-            return contracts.AuthoringPreflightResult(
-                verdict="refused",
-                certificate={"certificate_digest": "sha256:" + "6" * 64},
-                frontier={"diagnostics": []},
-            )
+            return stub_preflight_result(verdict="refused", diagnostics=(stub_diagnostic("x"),))
 
         def submit_authoring_intent(
             self, instance_id: str, intent_id: str
@@ -289,12 +286,10 @@ def test_cli_refused_stale_preflight_teaches_rebase(monkeypatch) -> None:  # typ
         def preflight_authoring_intent(
             self, _instance_id: str, _intent_id: str
         ) -> contracts.AuthoringPreflightResult:
-            return contracts.AuthoringPreflightResult(
+            return stub_preflight_result(
                 verdict="refused",
-                certificate={
-                    "accepted_coordinate": COORDINATE.model_dump(mode="json"),
-                },
-                frontier={"diagnostics": []},
+                diagnostics=(stub_diagnostic("x"),),
+                accepted_coordinate=COORDINATE.model_dump(mode="json"),
             )
 
         def get_authoring_intent(
@@ -927,11 +922,7 @@ def test_cli_bind_derives_observation_and_compiles(
         ) -> contracts.AuthoringPreflightResult:
             assert (instance_id, intent_id) == ("inst_authoring", None)
             calls.append(payload)
-            return contracts.AuthoringPreflightResult(
-                verdict="passed",
-                certificate={"certificate_digest": "sha256:" + "6" * 64},
-                frontier={"diagnostics": []},
-            )
+            return stub_preflight_result()
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = CliRunner().invoke(
@@ -1058,11 +1049,7 @@ def test_cli_bind_occurrence_selects_one_ambiguous_anchor(
             intent_id: str | None,
         ) -> contracts.AuthoringPreflightResult:
             calls.append(payload)
-            return contracts.AuthoringPreflightResult(
-                verdict="passed",
-                certificate={"certificate_digest": "sha256:" + "6" * 64},
-                frontier={"diagnostics": []},
-            )
+            return stub_preflight_result()
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = CliRunner().invoke(
@@ -1131,11 +1118,7 @@ def test_cli_bind_declared_block_refuses_every_role(
             intent_id: str | None,
         ) -> contracts.AuthoringPreflightResult:
             calls.append(payload)
-            return contracts.AuthoringPreflightResult(
-                verdict="passed",
-                certificate={"certificate_digest": "sha256:" + "6" * 64},
-                frontier={"diagnostics": []},
-            )
+            return stub_preflight_result()
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = CliRunner().invoke(

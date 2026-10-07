@@ -1689,10 +1689,7 @@ class Intent:
     ) -> Intent:
         """Build the handle for an intent a preflight just named. Next: ``intent.submit()``."""
 
-        intent_id = result.certificate.get("intent_id")
-        if not isinstance(intent_id, str):
-            raise ValueError("preflight certificate did not name an intent")
-        raw = cx._client.get_authoring_intent(cx._instance_id, intent_id).intent
+        raw = cx._client.get_authoring_intent(cx._instance_id, result.certificate.intent_id).intent
         return cls(cx, draft, raw, preflight=result)
 
     def __repr__(self) -> str:
@@ -1765,30 +1762,23 @@ class Intent:
 
         if self._preflight is None:
             return ()
-        raw_diagnostics = self._preflight.frontier.get("diagnostics", [])
-        if not isinstance(raw_diagnostics, list):
-            return ()
-        result: list[Diagnostic] = []
-        for raw in raw_diagnostics:
-            if not isinstance(raw, Mapping):
-                continue
-            offending = str(raw.get("offending_element", ""))
-            repairs = raw.get("repairs", [])
-            result.append(
-                Diagnostic(
-                    code=str(raw.get("code", "")),
-                    stage=str(raw.get("stage", "")),
-                    offending_element=offending,
-                    message=str(raw.get("message", "")),
-                    repair=tuple(repairs) if isinstance(repairs, list) else (),
-                    owner=cast(str | None, raw.get("owner")),
-                    disposition=cast(str | None, raw.get("disposition")),
-                    call_site=(
-                        None if self._draft is None else self._draft.source_map.locate(offending)
-                    ),
-                )
+        return tuple(
+            Diagnostic(
+                code=item.code,
+                stage=item.stage,
+                offending_element=item.offending_element,
+                message=item.message,
+                repair=tuple(repair.model_dump(mode="json") for repair in item.repairs),
+                owner=item.owner,
+                disposition=item.disposition,
+                call_site=(
+                    None
+                    if self._draft is None
+                    else self._draft.source_map.locate(item.offending_element)
+                ),
             )
-        return tuple(result)
+            for item in self._preflight.frontier.diagnostics
+        )
 
     @property
     def path_to_acceptance(self) -> tuple[dict[str, object], ...]:

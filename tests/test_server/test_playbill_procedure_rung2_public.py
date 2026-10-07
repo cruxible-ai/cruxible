@@ -491,7 +491,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             },
         )
         assert compiled.verdict == "passed", compiled.frontier
-        intent_id = str(compiled.certificate["intent_id"])
+        intent_id = str(compiled.certificate.intent_id)
         submitted = transport.submit_authoring_intent(instance_id, intent_id)
         assert submitted.status.proposal_id is not None, submitted
         _approve_and_activate(http, instance_id, reviewer_key, submitted.status.proposal_id)

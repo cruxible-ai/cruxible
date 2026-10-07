@@ -3336,11 +3336,7 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: 
         command_name="cruxible authoring preflight",
     )
     if output_brief:
-        codes = [
-            str(item.get("code"))
-            for item in (result.frontier.get("diagnostics") or [])
-            if isinstance(item, dict)
-        ]
+        codes = [item.code for item in result.frontier.diagnostics]
         _emit_brief(
             outcome=result.verdict + (f" ({', '.join(codes)})" if codes else ""),
             ids={"intent": intent_id},
@@ -3357,7 +3353,9 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: 
             lambda client, instance_id: client.get_authoring_intent(instance_id, intent_id),
             command_name="cruxible authoring preflight",
         ).intent
-        if intent.get("base_coordinate") != result.certificate.get("accepted_coordinate"):
+        if intent.get("base_coordinate") != result.certificate.accepted_coordinate.model_dump(
+            mode="json"
+        ):
             click.echo(
                 f"Hint: run cruxible authoring rebase {intent_id}; a stale intent "
                 "coordinate advances only through rebase.",

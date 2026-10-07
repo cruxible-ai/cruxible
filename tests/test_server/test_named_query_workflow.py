@@ -83,7 +83,7 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
             )
             assert compiled.verdict == "passed", compiled
             submitted = handlers.handle_playbill_authoring_submit(
-                instance_id, compiled.certificate["intent_id"]
+                instance_id, compiled.certificate.intent_id
             ).model_dump(mode="json")
         proposal = Proposal(pb, submitted["status"]["proposal_id"])
     key = load_ssh_private_key(private_key.read_bytes(), password=None)

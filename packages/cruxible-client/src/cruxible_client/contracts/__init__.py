@@ -26,6 +26,12 @@ from cruxible_client.contracts.authoring.models import (
     BlockSyncSuccessorCandidate as BlockSyncSuccessorCandidate,
 )
 from cruxible_client.contracts.authoring.models import (
+    DiagnosticFrontier as DiagnosticFrontier,
+)
+from cruxible_client.contracts.authoring.models import (
+    PreflightCertificate as PreflightCertificate,
+)
+from cruxible_client.contracts.authoring.models import (
     ProjectionCheckRequest as ProjectionCheckRequest,
 )
 from cruxible_client.contracts.authoring.models import (
@@ -1175,8 +1181,10 @@ class AuthoringPreflightResult(BaseModel):
         "playbill-authoring-preflight-result-v1"
     )
     verdict: Literal["passed", "refused"]
-    certificate: dict[str, Any]
-    frontier: dict[str, Any]
+    # The same self-digesting certificate and bounded frontier the daemon
+    # computed: a reader validates them on parse rather than probing a dict.
+    certificate: PreflightCertificate
+    frontier: DiagnosticFrontier
     lint: ClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,

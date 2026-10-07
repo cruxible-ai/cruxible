@@ -7,6 +7,7 @@ import pytest
 
 from cruxible_client import ClaimRole, Cruxible
 from cruxible_client import contracts as api
+from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
 from tests.test_client.test_playbill_sdk import _COORDINATE, _Client, _workspace
 
 
@@ -156,10 +157,13 @@ def test_mutations_clear_previous_candidate_even_on_uncertain_failure(
 def test_resume_restores_server_revision_without_repeating_work(pb, monkeypatch, state):
     preflight = None
     if state != "draft":
-        preflight = api.AuthoringPreflightResult(
+        preflight = stub_preflight_result(
             verdict="refused" if state == "preflight_refused" else "passed",
-            certificate={"intent_id": "saved-intent"},
-            frontier={"diagnostics": [{"code": "example", "message": "Recorded diagnostic"}]},
+            diagnostics=(
+                (stub_diagnostic("example", "Recorded diagnostic"),)
+                if state == "preflight_refused"
+                else ()
+            ),
         ).model_dump(mode="json")
     status = api.CandidateStatusRecord(
         state=state,

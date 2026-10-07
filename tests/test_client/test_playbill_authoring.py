@@ -16,6 +16,7 @@ from cruxible_client import AccessProfile, ClaimRef, Cruxible, CruxibleClient
 from cruxible_client.authoring.inputs import AuthoringInput, AuthoringInputError
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
 
 COORDINATE = {
     "tag": "playbill-accepted-coordinate-v1",
@@ -97,12 +98,9 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
         if request.url.path.endswith("/compile"):
             return httpx.Response(
                 200,
-                json={
-                    "tag": "playbill-authoring-preflight-result-v1",
-                    "verdict": "refused",
-                    "certificate": {"certificate_digest": "sha256:" + "6" * 64},
-                    "frontier": {"diagnostics": [{"code": "example"}]},
-                },
+                json=stub_preflight_result(
+                    verdict="refused", diagnostics=(stub_diagnostic("example"),)
+                ).model_dump(mode="json"),
             )
         return httpx.Response(
             200,
@@ -144,13 +142,9 @@ def test_client_preserves_advisory_lint_outside_the_preflight_certificate() -> N
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={
-                "tag": "playbill-authoring-preflight-result-v1",
-                "verdict": "passed",
-                "certificate": {"certificate_digest": "sha256:" + "6" * 64},
-                "frontier": {"diagnostics": []},
-                "lint": {"tag": "playbill-claim-type-proposal-lint-v1", "warnings": [warning]},
-            },
+            json=stub_preflight_result(
+                lint={"tag": "playbill-claim-type-proposal-lint-v1", "warnings": [warning]}
+            ).model_dump(mode="json"),
         )
 
     result = _client(handler).compile_authoring("inst", payload=_claim_payload())
@@ -158,8 +152,8 @@ def test_client_preserves_advisory_lint_outside_the_preflight_certificate() -> N
     assert result.verdict == "passed"
     assert result.lint is not None
     assert result.lint.warnings == [warning]
-    assert "lint" not in result.certificate
-    assert "lint" not in result.frontier
+    assert "lint" not in result.certificate.model_dump(mode="json")
+    assert "lint" not in result.frontier.model_dump(mode="json")
 
 
 def test_client_speaks_tagless_input_request_variants() -> None:
@@ -170,12 +164,9 @@ def test_client_speaks_tagless_input_request_variants() -> None:
         if request.url.path.endswith("/compile"):
             return httpx.Response(
                 200,
-                json={
-                    "tag": "playbill-authoring-preflight-result-v1",
-                    "verdict": "refused",
-                    "certificate": {"certificate_digest": "sha256:" + "6" * 64},
-                    "frontier": {"diagnostics": []},
-                },
+                json=stub_preflight_result(
+                    verdict="refused", diagnostics=(stub_diagnostic("example"),)
+                ).model_dump(mode="json"),
             )
         return httpx.Response(
             200,
@@ -352,15 +343,7 @@ def _retirement_playbill(workspace: Path) -> tuple[Cruxible, list[httpx.Request]
         if request.url.path.endswith("/compile"):
             return httpx.Response(
                 200,
-                json={
-                    "tag": "playbill-authoring-preflight-result-v1",
-                    "verdict": "passed",
-                    "certificate": {
-                        "intent_id": INTENT_ID,
-                        "certificate_digest": "sha256:" + "6" * 64,
-                    },
-                    "frontier": {"diagnostics": []},
-                },
+                json=stub_preflight_result(intent_id=INTENT_ID).model_dump(mode="json"),
             )
         return httpx.Response(
             200,

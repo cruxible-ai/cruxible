@@ -16,6 +16,7 @@ from cruxible_core.claims.claim_type_inputs import (
     lower_claim_type_input,
 )
 from tests.core_support._claim_type_support import claim_type_input_example
+from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
 
 COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
@@ -97,11 +98,7 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
     def compile_stub(selected: str, *, payload: object, intent_id: str | None = None):
         seen.append((selected, payload))
         assert intent_id is None
-        return contracts.AuthoringPreflightResult(
-            verdict="refused",
-            certificate={"certificate_digest": "sha256:" + "6" * 64},
-            frontier={"diagnostics": [{"code": "example"}]},
-        )
+        return stub_preflight_result(verdict="refused", diagnostics=(stub_diagnostic("example"),))
 
     def submit_stub(selected: str, intent_id: str):
         seen.append((selected, intent_id))
@@ -242,11 +239,7 @@ def test_http_input_variants_delegate_without_exposing_a_base(
 
     def compile_stub(selected: str, *, input: object, intent_id: str | None):
         seen.append((selected, input))
-        return contracts.AuthoringPreflightResult(
-            verdict="passed",
-            certificate={"intent_id": INTENT_ID},
-            frontier={"diagnostics": []},
-        )
+        return stub_preflight_result(intent_id=INTENT_ID)
 
     monkeypatch.setattr(
         "cruxible_core.runtime.playbill_api.playbill_authoring_compile_input",
