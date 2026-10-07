@@ -2126,8 +2126,36 @@ def _lower_blueprint_instance(
     candidate_artifacts: dict[str, tuple[str, str]],
     candidate_identities: frozenset[str],
 ) -> LoweredAuthoring:
-    """Bind one accepted Provider per Blueprint slot and lower the Procedure it yields."""
+    """Bind one accepted Provider per Blueprint slot and lower the Procedure it yields.
 
+    Retiring an instance never re-instantiates it: the retired successor is the
+    accepted definition that ran, with its origin, whatever has become of its
+    Blueprint or Providers since.
+    """
+
+    path = procedure_path(instantiation.name)
+    predecessor = parse_procedure(base_tree[path], path=path) if path in base_tree else None
+    if payload.retire:
+        if predecessor is None or predecessor.blueprint is None:
+            _refuse(
+                "cruxible.authoring.blueprint_instance_missing",
+                "definition.name",
+                f"No accepted instance of a Blueprint named {instantiation.name!r} to retire.",
+                repair_kind="replace_name",
+                repair_description="Name an accepted Procedure instantiated from a Blueprint.",
+            )
+        assert predecessor is not None
+        retired = predecessor.model_copy(
+            update={
+                "lifecycle": ArtifactLifecycle(
+                    state="retired",
+                    predecessor_digest=procedure_artifact_digest(predecessor).tagged,
+                )
+            }
+        )
+        return _procedure_lowered(
+            instance, retired, predecessor, path=path, base=base, base_tree=base_tree
+        )
     blueprint_target = blueprint_path(instantiation.blueprint)
     blueprint_content = base_tree.get(blueprint_target)
     if blueprint_content is None:
@@ -2182,8 +2210,6 @@ def _lower_blueprint_instance(
         candidates=candidate_artifacts,
         candidate_identities=candidate_identities,
     )
-    path = procedure_path(instantiation.name)
-    predecessor = parse_procedure(base_tree[path], path=path) if path in base_tree else None
     try:
         procedure = instantiate_blueprint(
             blueprint,
@@ -2193,7 +2219,6 @@ def _lower_blueprint_instance(
             activation_policy=payload.activation_policy,
             extra_pins=() if policy_pin is None else (policy_pin,),
             lifecycle=ArtifactLifecycle(
-                state="retired" if payload.retire else "live",
                 predecessor_digest=(
                     None if predecessor is None else procedure_artifact_digest(predecessor).tagged
                 ),

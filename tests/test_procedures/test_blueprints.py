@@ -19,6 +19,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     evaluate_procedure_law,
     parse_procedure,
+    procedure_artifact_digest,
     procedure_path,
     render_procedure,
 )
@@ -439,4 +440,202 @@ def test_procedure_source_declares_slots_and_builds_a_blueprint_until_each_is_bo
     world = SimpleNamespace(_playbill=SimpleNamespace(_assert_coordinate=lambda value: None))
     assert bound._at(world).bindings == {  # type: ignore[arg-type]
         "fetch": SourceProviderSelection(provider="demo-provider", interface="demo.interface")
+    }
+
+
+# --- instances after their Blueprint moves on (S3 review a F-001, F-007) ------
+
+
+def _instance_lookup_a(tmp_path, monkeypatch, *, retire: bool = False):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.authoring.inputs import (
+        BlueprintInstanceInput,
+        lower_authoring_input,
+    )
+
+    instance, owner = accept_blueprint_world(tmp_path, monkeypatch)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    payload = lower_authoring_input(
+        BlueprintInstanceInput(
+            kind="blueprint_instance",
+            name="lookup-a",
+            blueprint="provider-blueprint",
+            bindings={"lookup": "demo-provider"},
+            activation_policy="drain",
+        )
+    )
+    intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
+    lowered = lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
+    _accept_tree(
+        instance, owner, lowered.proposed_tree, timestamp=TIMESTAMP, proposal_name="instance"
+    )
+    return instance, owner, coordinator, actor
+
+
+def _succeed_blueprint(instance, owner, *, retire: bool = False):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.procedures.blueprints import (
+        blueprint_digest,
+        blueprint_path,
+        parse_blueprint,
+        render_blueprint,
+    )
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = blueprint_path("provider-blueprint")
+    current = parse_blueprint(tree[path], path=path)
+    definition = current.definition.model_copy(update={"description": "v2"})
+    successor = current.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            "lifecycle": ArtifactLifecycle(
+                state="retired" if retire else "live",
+                predecessor_digest=blueprint_digest(current).tagged,
+            ),
+        }
+    )
+    tree[path] = render_blueprint(type(current).model_validate(successor.model_dump()))
+    _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="blueprint-v2")
+
+
+def _submit_tree(instance, tree, name):  # type: ignore[no-untyped-def]
+    return instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/{name}",
+            proposed_base_oid=instance.accepted_coordinate().git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp=TIMESTAMP,
+    )
+
+
+@pytest.mark.usefixtures("contracted_demo")
+@pytest.mark.parametrize("blueprint_retired", [False, True])
+def test_an_instance_retires_by_successor_bytes_whatever_became_of_its_blueprint(
+    tmp_path, monkeypatch, blueprint_retired
+):
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+
+    instance, owner, _coordinator, _actor = _instance_lookup_a(tmp_path, monkeypatch)
+    _succeed_blueprint(instance, owner, retire=blueprint_retired)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = procedure_path("lookup-a")
+    accepted = parse_procedure(tree[path], path=path)
+    tree[path] = render_procedure(
+        accepted.model_copy(
+            update={
+                "lifecycle": ArtifactLifecycle(
+                    state="retired", predecessor_digest=procedure_artifact_digest(accepted).tagged
+                )
+            }
+        )
+    )
+
+    result = _submit_tree(instance, tree, "retire-instance")
+
+    assert result.candidate is not None, result.evaluation.diagnostics
+
+
+@pytest.mark.usefixtures("contracted_demo")
+def test_blueprint_instance_retire_keeps_the_definition_that_ran(tmp_path, monkeypatch):
+    from cruxible_client.contracts.authoring.inputs import (
+        BlueprintInstanceInput,
+        lower_authoring_input,
+    )
+
+    instance, owner, coordinator, actor = _instance_lookup_a(tmp_path, monkeypatch)
+    path = procedure_path("lookup-a")
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    before = parse_procedure(tree[path], path=path)
+    _succeed_blueprint(instance, owner, retire=True)
+    payload = lower_authoring_input(
+        BlueprintInstanceInput(
+            kind="blueprint_instance",
+            name="lookup-a",
+            blueprint="provider-blueprint",
+            bindings={"lookup": "demo-provider"},
+            activation_policy="drain",
+            retire=True,
+        )
+    )
+    intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
+
+    lowered = lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
+
+    retired = parse_procedure(lowered.proposed_tree[path], path=path)
+    assert retired.lifecycle.state == "retired"
+    assert retired.definition == before.definition and retired.blueprint == before.blueprint
+
+
+@pytest.mark.usefixtures("contracted_demo")
+def test_an_instance_changes_only_its_lifecycle_under_the_same_origin(tmp_path, monkeypatch):
+    instance, _owner, _coordinator, _actor = _instance_lookup_a(tmp_path, monkeypatch)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = procedure_path("lookup-a")
+    accepted = parse_procedure(tree[path], path=path)
+    definition = accepted.definition.model_copy(update={"description": "hand edited"})
+    tree[path] = render_procedure(
+        accepted.model_copy(
+            update={
+                "definition": definition,
+                "definition_digest": compute_procedure_definition_digest(definition).tagged,
+                "lifecycle": accepted.lifecycle.model_copy(
+                    update={"predecessor_digest": procedure_artifact_digest(accepted).tagged}
+                ),
+            }
+        )
+    )
+
+    result = _submit_tree(instance, tree, "edit-instance")
+
+    assert result.candidate is None
+    assert "cruxible.procedure.blueprint_origin_mismatch" in {
+        item.code for item in result.evaluation.diagnostics
+    }
+
+
+@pytest.mark.usefixtures("contracted_demo")
+def test_admission_refuses_a_new_instance_of_a_retired_blueprint(tmp_path, monkeypatch):
+    """Lowering refuses it; a raw tree or kit proposal is held to the same rule."""
+
+    from cruxible_client.contracts.procedures.blueprints import (
+        blueprint_digest,
+        blueprint_path,
+        instantiate_blueprint,
+        parse_blueprint,
+    )
+    from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
+
+    instance, owner, _coordinator, _actor = _instance_lookup_a(tmp_path, monkeypatch)
+    _succeed_blueprint(instance, owner, retire=True)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    retired = parse_blueprint(
+        tree[blueprint_path("provider-blueprint")], path=blueprint_path("provider-blueprint")
+    )
+    provider = parse_provider(
+        tree[provider_path("demo-provider")], path=provider_path("demo-provider")
+    )
+    # A raw tree instantiating the retired version, as a kit proposal could.
+    copy = instantiate_blueprint(
+        retired,
+        blueprint_artifact_digest=blueprint_digest(retired).tagged,
+        name="lookup-b",
+        providers={
+            "lookup": AcceptedProvider(
+                path=provider_path("demo-provider"),
+                provider=provider,
+                artifact_digest=provider_digest(provider).tagged,
+            )
+        },
+        activation_policy="drain",
+    )
+    tree[procedure_path("lookup-b")] = render_procedure(copy)
+
+    result = _submit_tree(instance, tree, "copy-instance")
+
+    assert result.candidate is None
+    assert "cruxible.procedure.blueprint_origin_mismatch" in {
+        item.code for item in result.evaluation.diagnostics
     }

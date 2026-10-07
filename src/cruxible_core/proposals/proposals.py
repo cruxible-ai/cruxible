@@ -1785,9 +1785,19 @@ def _verify_source(context: _MemberContext, procedure: Any) -> None:
 
 
 def _blueprint_origin_refusal(
-    context: _MemberContext, procedure: ProcedureArtifact
+    context: _MemberContext,
+    procedure: ProcedureArtifact,
+    previous: ProcedureArtifact | None,
 ) -> CompilerDiagnostic | None:
-    """A Procedure that names its Blueprint must be exactly that Blueprint, instantiated."""
+    """A Procedure that names its Blueprint must be exactly that Blueprint, instantiated.
+
+    The origin is checked when it is recorded -- an instantiation, or a new
+    origin on a successor -- against the live Blueprint version it names and
+    live Providers, as lowering checks them. A successor that keeps its
+    predecessor's origin may change only its lifecycle (retiring it): what has
+    become of its Blueprint or Providers since never blocks that, and nothing
+    else about an instance changes except by instantiating again.
+    """
 
     from cruxible_client.contracts.procedures.blueprints import (
         BlueprintInstantiationError,
@@ -1799,6 +1809,15 @@ def _blueprint_origin_refusal(
 
     origin = procedure.blueprint
     assert origin is not None
+    if previous is not None and previous.blueprint == origin:
+        if procedure.model_copy(update={"lifecycle": previous.lifecycle}) == previous:
+            return None
+        return _diagnostic(
+            "cruxible.procedure.blueprint_origin_mismatch",
+            "A Blueprint instance changes only its lifecycle; instantiate the Blueprint "
+            "again to change anything else.",
+            context.path,
+        )
     path = blueprint_path(origin.blueprint.target.name)
     content = context.candidate_tree.get(path)
     blueprint = None if content is None else parse_blueprint(content, path=path)
@@ -1808,14 +1827,20 @@ def _blueprint_origin_refusal(
             "The Procedure names a Blueprint version that is not the current accepted one.",
             context.path,
         )
+    if blueprint.lifecycle.state != "live":
+        return _diagnostic(
+            "cruxible.procedure.blueprint_origin_mismatch",
+            "The Procedure instantiates a retired Blueprint.",
+            context.path,
+        )
     by_digest = {item.artifact_digest: item for item in context.resolved.providers.values()}
     providers = {}
     for binding in origin.bindings:
         provider = by_digest.get(binding.artifact_pin.artifact_digest)
-        if provider is None:
+        if provider is None or provider.provider.lifecycle.state != "live":
             return _diagnostic(
                 "cruxible.procedure.blueprint_origin_mismatch",
-                f"Slot {binding.slot_name!r} binds a Provider that is not accepted.",
+                f"Slot {binding.slot_name!r} binds a Provider that is not accepted and live.",
                 context.path,
             )
         providers[binding.slot_name] = provider
@@ -1869,7 +1894,13 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
 
     _verify_source(context, procedure)
     if procedure.blueprint is not None:
-        origin_refusal = _blueprint_origin_refusal(context, procedure)
+        origin_refusal = _blueprint_origin_refusal(
+            context,
+            procedure,
+            None
+            if context.parent_content is None
+            else parse_procedure(context.parent_content, path=context.path),
+        )
         if origin_refusal is not None:
             return _MemberVerdict(diagnostics=(origin_refusal,))
     predecessor: AcceptedProcedure | None = None
