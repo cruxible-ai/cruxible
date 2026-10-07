@@ -137,8 +137,10 @@ from cruxible_core.server.playbill_request_models import (
     BlockDepublishRequest,
     CompilerUpgradeRequest,
     CurationAcceptFixedRequest,
+    CurationObserveRequest,
     CurationOverruleRequest,
     CurationSuppressRequest,
+    CurationUnsuppressRequest,
     ProposalReadmitRequest,
     ProposalWithdrawRequest,
     ProposeClaimTypeInputRequest,
@@ -360,6 +362,8 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_curation_accept_fixed": TypeAdapter(CurationAcceptFixedRequest),
     "cruxible_curation_overrule": TypeAdapter(CurationOverruleRequest),
     "cruxible_curation_suppress": TypeAdapter(CurationSuppressRequest),
+    "cruxible_curation_unsuppress": TypeAdapter(CurationUnsuppressRequest),
+    "cruxible_curation_observe": TypeAdapter(CurationObserveRequest),
     "cruxible_capture_read": TypeAdapter(CaptureReadRequest),
     "cruxible_prediction_propose": TypeAdapter(contracts.PredictRequest),
     "cruxible_procedure_bind": TypeAdapter(ProcedureBindRequest),
@@ -2053,9 +2057,7 @@ def handle_playbill_next(
 def handle_playbill_curation_list(
     instance_id: str,
     *,
-    evaluation_time: str,
     access_profile: dict[str, Any] | None,
-    workspace_observation: dict[str, Any] | None,
     limit: int = contracts.CURATION_LIST_DEFAULT_LIMIT,
     cursor: str | None = None,
 ) -> contracts.CurationListResult:
@@ -2067,23 +2069,57 @@ def handle_playbill_curation_list(
     }
     request = {
         "tag": "playbill-curation-list-request-v1",
-        "evaluation_time": evaluation_time,
         "access_profile": profile,
-        "workspace_observation": workspace_observation,
         "limit": limit,
         "cursor": cursor,
     }
     return _dispatch_remote_or_local(
         lambda client: client.list_curation(
-            instance_id,
-            evaluation_time=evaluation_time,
-            access_profile=profile,
-            workspace_observation=workspace_observation,
-            limit=limit,
-            cursor=cursor,
+            instance_id, access_profile=profile, limit=limit, cursor=cursor
         ),
         lambda: playbill_api.playbill_curation_list(instance_id, request=request),
         operation_name="cruxible_curation_list",
+    )
+
+
+def handle_playbill_curation_observe(
+    instance_id: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.CurationObserveResult:
+    """Scan the MCP workspace's declared blocks and record them for block churn."""
+
+    workspace = mcp_workspace_root()
+    observation = observe_next_workspace(workspace)
+
+    def remote(client: CruxibleClient) -> contracts.CurationObserveResult:
+        observed, _coordinate = observe_next_workspace_with_coverage(
+            client, instance_id, workspace, observation=observation
+        )
+        return client.observe_curation(
+            instance_id, workspace_observation=observed, dry_run=dry_run, at=at
+        )
+
+    def local() -> contracts.CurationObserveResult:
+        observed, _coordinate = observe_next_workspace_with_coverage(
+            _LocalCoverageClient(), instance_id, workspace, observation=observation
+        )
+        return playbill_api.playbill_curation_observe(
+            instance_id,
+            request={
+                "tag": "playbill-curation-observe-request-v1",
+                "workspace_observation": observed,
+                "dry_run": dry_run,
+                "at": at,
+            },
+        )
+
+    return _dispatch_remote_or_local(
+        remote,
+        local,
+        operation_name="cruxible_curation_observe",
+        local_payload={"workspace_observation": observation, "dry_run": dry_run, "at": at},
     )
 
 
@@ -2190,8 +2226,9 @@ def handle_playbill_curation_accept_fixed(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    accepted_proposal_id: str,
-    accepted_changeset_digest: str,
+    accepted_proposal_id: str | None,
+    accepted_changeset_digest: str | None,
+    accepted_generation: int | None,
     attribution_refs: list[str],
     dry_run: bool | None = None,
     at: str | None = None,
@@ -2204,6 +2241,7 @@ def handle_playbill_curation_accept_fixed(
             reason=reason,
             accepted_proposal_id=accepted_proposal_id,
             accepted_changeset_digest=accepted_changeset_digest,
+            accepted_generation=accepted_generation,
             attribution_refs=tuple(attribution_refs),
             dry_run=dry_run,
             at=at,
@@ -2217,6 +2255,7 @@ def handle_playbill_curation_accept_fixed(
                 "reason": reason,
                 "accepted_proposal_id": accepted_proposal_id,
                 "accepted_changeset_digest": accepted_changeset_digest,
+                "accepted_generation": accepted_generation,
                 "attribution_refs": attribution_refs,
                 "dry_run": dry_run,
                 "at": at,
@@ -2229,6 +2268,7 @@ def handle_playbill_curation_accept_fixed(
             "reason": reason,
             "accepted_proposal_id": accepted_proposal_id,
             "accepted_changeset_digest": accepted_changeset_digest,
+            "accepted_generation": accepted_generation,
             "attribution_refs": attribution_refs,
             "dry_run": dry_run,
             "at": at,
@@ -2242,7 +2282,7 @@ def handle_playbill_curation_suppress(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    scope: Literal["item", "pattern", "instance"],
+    scope: Literal["item", "lineage"],
     until_generation: int | None,
     attribution_refs: list[str],
     dry_run: bool | None = None,
@@ -2285,6 +2325,44 @@ def handle_playbill_curation_suppress(
             "dry_run": dry_run,
             "at": at,
         },
+    )
+
+
+def handle_playbill_curation_unsuppress(
+    instance_id: str,
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    suppression_event_id: str | None,
+    attribution_refs: list[str],
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.CurationActionResult:
+    request = {
+        "tag": "playbill-curation-unsuppress-request-v1",
+        "item_id": item_id,
+        "expected_latest_event_digest": expected_latest_event_digest,
+        "reason": reason,
+        "suppression_event_id": suppression_event_id,
+        "attribution_refs": attribution_refs,
+        "dry_run": dry_run,
+        "at": at,
+    }
+    return _dispatch_remote_or_local(
+        lambda client: client.unsuppress_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            suppression_event_id=suppression_event_id,
+            attribution_refs=tuple(attribution_refs),
+            dry_run=dry_run,
+            at=at,
+        ),
+        lambda: playbill_api.playbill_curation_unsuppress(instance_id, request=request),
+        operation_name="cruxible_curation_unsuppress",
+        local_payload={key: value for key, value in request.items() if key != "tag"},
     )
 
 

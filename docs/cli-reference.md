@@ -2161,26 +2161,52 @@ the row.
 ## curation
 
 ~~~text
-cruxible curation list [--workspace-root PATH] [--limit N] [--cursor CURSOR]
-  [--json]
+cruxible curation list [--access-profile FILE] [--limit N] [--cursor CURSOR] [--json]
+cruxible curation observe [--workspace-root PATH] [--dry-run|--commit] [--at DIGEST] [--json]
 cruxible curation overrule ITEM_ID
-  --expected-latest-event-digest DIGEST --reason TEXT [--json]
+  --expected-latest-event-digest DIGEST --reason TEXT [--attribution-ref REF]...
+  [--dry-run|--commit] [--at OID] [--json]
 cruxible curation accept-fixed ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT
-  --proposal-id DIGEST --changeset-digest DIGEST [--json]
+  (--proposal-id DIGEST [--changeset-digest DIGEST] | --generation N)
+  [--attribution-ref REF]... [--dry-run|--commit] [--at OID] [--json]
 cruxible curation suppress ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT
-  --scope item|pattern|instance [--until-generation N] [--json]
+  --scope item|lineage [--until-generation N] [--attribution-ref REF]... [--json]
+cruxible curation unsuppress ITEM_ID
+  --expected-latest-event-digest DIGEST --reason TEXT [--suppression EVENT_ID]
+  [--attribution-ref REF]... [--json]
 ~~~
 
-Lists the mechanical curation queue and explicitly submits the declared-block
-observation produced by the client-side workspace scanner. The daemon does not
-read workspace files. The queue is paged (default 25 items, at most 200); a cut
-page has `truncated: true` and a `next_cursor` for `--cursor`, which continues
-only while accepted state and the queue itself are unchanged; otherwise it is
-refused as `cruxible.list.cursor_stale`. The lifecycle commands append attributed
-operational events; they do not create governed proposals or mutate accepted
-knowledge.
+Detection runs on its own: the `curation.detect` internal action, fired by the
+seeded `curation-detect` Trigger on every accepted generation, runs every
+detector at the head and records what it found, evaluated at the fire's recorded
+instant. `curation list` is a pure read of that queue: it prints each item's ID,
+pattern kind, subject and `latest_event_digest` (what every ruling needs), when
+detection last ran (`current`, `behind` or `never_run`) and whether its Trigger
+is live, and the detectors that cannot run here and why (dead vocabulary needs
+`CRUXIBLE_CONSUMPTION_RECEIPTS=on`; block churn needs a recorded workspace scan).
+An instance created before the seeded Trigger needs it proposed once (`next`
+reports `curation.detect` as unscheduled).
+
+Block churn is the one detector that reads the workspace, which the daemon never
+does: `curation observe` scans the workspace's declared blocks client-side and
+records them, with the scan's accounting, for detection to read when it next
+runs.
+
+The queue is paged (default 25 items, at most 200); a cut page has
+`truncated: true` and a `next_cursor` for `--cursor`, which continues only while
+accepted state and the queue itself are unchanged; otherwise it is refused as
+`cruxible.list.cursor_stale`.
+
+The rulings append attributed operational events; they do not create governed
+proposals or mutate accepted knowledge. `overrule` closes an item permanently:
+its pattern is never raised again. `accept-fixed` links an item to the accepted
+change that fixed it, named by proposal (pinned with `--changeset-digest` if
+wanted) or by `--generation`; the change must postdate the item and touch its
+subject or evidence. `suppress` hides the item (`item`) or its whole lineage,
+the successors its pattern opens after a fix (`lineage`), until
+`--until-generation` or until `unsuppress` lifts it; detection keeps running.
 
 ## audit
 

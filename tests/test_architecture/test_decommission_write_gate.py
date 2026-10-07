@@ -131,7 +131,9 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
         {
             "service_overrule_playbill_curation",
             "service_suppress_playbill_curation",
+            "service_unsuppress_playbill_curation",
             "service_accept_fixed_playbill_curation",
+            "service_observe_playbill_curation_blocks",
         }
     ),
     "cruxible_core/service/procedures/measurements.py": frozenset(

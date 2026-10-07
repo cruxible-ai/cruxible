@@ -4209,12 +4209,32 @@ class Cruxible:
     def curation_list(
         self, *, limit: int | None = None, cursor: str | None = None
     ) -> api.CurationListResult:
-        """Read one page of the curation queue with one explicit attributed workspace scan.
+        """Read one page of the curation queue: a pure read of what detection recorded.
 
+        Detection runs on its own on accepted generations; ``result.detection`` says
+        when it last ran and ``inactive_detectors`` which detectors cannot run here.
         A truncated page carries ``next_cursor``; pass it back as ``cursor``.
 
         Next: ``cx.curation_overrule(...)``, ``cx.curation_accept_fixed(...)`` or
         ``cx.curation_suppress(...)`` on an item.
+        """
+
+        return self._client.list_curation(
+            self._instance_id,
+            access_profile=self._access_profile.model_dump(),
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def curation_observe(
+        self, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.CurationObserveResult:
+        """Record this workspace's declared blocks for block-churn detection.
+
+        Block churn is the one detector that needs the workspace, which the daemon
+        never reads; detection picks the scan up the next time it runs.
+
+        Next: ``cx.curation_list()`` after the next accepted generation.
         """
 
         access_profile = self._access_profile.model_dump()
@@ -4225,13 +4245,8 @@ class Cruxible:
             observation=observe_next_workspace(self._workspace_root),
             access_profile=access_profile,
         )
-        return self._client.list_curation(
-            self._instance_id,
-            evaluation_time=self._evaluation_time(),
-            access_profile=access_profile,
-            workspace_observation=observation,
-            limit=limit,
-            cursor=cursor,
+        return self._client.observe_curation(
+            self._instance_id, workspace_observation=observation, dry_run=dry_run, at=at
         )
 
     def audit(
@@ -4270,10 +4285,14 @@ class Cruxible:
         expected_latest_event_digest: str,
         reason: str,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> api.CurationActionResult:
-        """Record that a detector pattern is mechanically inapplicable.
+        """Record, permanently, that a detector pattern does not apply here.
 
-        Next: ``cx.curation_list()``; the item no longer asks.
+        ``dry_run`` checks the ruling and appends nothing; ``at`` pins the commit.
+
+        Next: ``cx.curation_list()``; the pattern is never raised again.
         """
 
         return self._client.overrule_curation(
@@ -4282,6 +4301,8 @@ class Cruxible:
             expected_latest_event_digest=expected_latest_event_digest,
             reason=reason,
             attribution_refs=attribution_refs,
+            dry_run=dry_run,
+            at=at,
         )
 
     def curation_accept_fixed(
@@ -4290,11 +4311,17 @@ class Cruxible:
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        accepted_proposal_id: str,
-        accepted_changeset_digest: str,
+        accepted_proposal_id: str | None = None,
+        accepted_changeset_digest: str | None = None,
+        accepted_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> api.CurationActionResult:
-        """Link an item to an exact already-accepted resolving ChangeSet.
+        """Link an item to the accepted change that fixed it.
+
+        Name the change by ``accepted_proposal_id`` (``accepted_changeset_digest``
+        pins it exactly) or by ``accepted_generation``; the daemon resolves the rest.
 
         Next: ``cx.curation_list()``; the item is resolved.
         """
@@ -4306,7 +4333,10 @@ class Cruxible:
             reason=reason,
             accepted_proposal_id=accepted_proposal_id,
             accepted_changeset_digest=accepted_changeset_digest,
+            accepted_generation=accepted_generation,
             attribution_refs=attribution_refs,
+            dry_run=dry_run,
+            at=at,
         )
 
     def curation_suppress(
@@ -4315,13 +4345,17 @@ class Cruxible:
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        scope: Literal["item", "pattern", "instance"],
+        scope: Literal["item", "lineage"],
         until_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> api.CurationActionResult:
-        """Hide matching open work without resolving or stopping detection.
+        """Hide an item (``item``) or its whole lineage (``lineage``) without resolving it.
 
-        Next: ``cx.curation_list()``; matching work is hidden until it lapses.
+        Detection keeps running; ``until_generation`` lets the suppression lapse.
+
+        Next: ``cx.curation_unsuppress(...)`` to lift it.
         """
 
         return self._client.suppress_curation(
@@ -4332,6 +4366,35 @@ class Cruxible:
             scope=scope,
             until_generation=until_generation,
             attribution_refs=attribution_refs,
+            dry_run=dry_run,
+            at=at,
+        )
+
+    def curation_unsuppress(
+        self,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        suppression_event_id: str | None = None,
+        attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> api.CurationActionResult:
+        """Lift a suppression on an item; name it when the item carries more than one.
+
+        Next: ``cx.curation_list()``; what it hid is listed again.
+        """
+
+        return self._client.unsuppress_curation(
+            self._instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            suppression_event_id=suppression_event_id,
+            attribution_refs=attribution_refs,
+            dry_run=dry_run,
+            at=at,
         )
 
     def _assert_coordinate(self, coordinate: AcceptedCoordinate) -> None:

@@ -10,7 +10,7 @@ import pytest
 from cruxible_client import CruxibleClient
 
 
-def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
+def test_client_curation_list_sends_no_clock_and_no_scan() -> None:
     captured: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -27,17 +27,22 @@ def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
                     "compiler_digest": "sha256:" + "4" * 64,
                 },
                 "generation": 7,
-                "evaluation_time": "2026-08-26T16:00:00+00:00",
                 "operational_head_digest": "sha256:" + "5" * 64,
                 "items": [],
-                "detector_coverage": [],
-                "observation_coverage": {
-                    "tag": "playbill-curation-observation-coverage-v1",
-                    "source_count": 0,
-                    "observed_block_count": 0,
-                    "omitted_source_count": 0,
-                    "omissions": [],
+                "detection": {
+                    "state": "behind",
+                    "trigger": "live",
+                    "detected_through_generation": 6,
+                    "detected_at": "2026-08-26T16:00:00Z",
                 },
+                "detector_coverage": [],
+                "inactive_detectors": [
+                    {
+                        "pattern_kind": "playbill.curation.dead_vocabulary.v1",
+                        "reason": "consumption_receipts_off",
+                    }
+                ],
+                "observation_coverage": None,
                 "result_digest": "sha256:" + "6" * 64,
             },
         )
@@ -48,26 +53,24 @@ def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
     )
     result = client.list_curation(
         "inst",
-        evaluation_time="2026-08-26T16:00:00+00:00",
         access_profile={
             "tag": "playbill-coverage-access-profile-v1",
             "profile_id": "test-curation",
             "permitted_access_classes": ["instance", "public"],
             "disclose_restricted_existence": True,
         },
-        workspace_observation={
-            "tag": "playbill-next-workspace-observation-v1",
-            "source_observations": [],
-        },
     )
 
     assert result.generation == 7
+    assert result.detection.state == "behind"
+    assert result.inactive_detectors[0].reason == "consumption_receipts_off"
     assert captured[0].url.path == "/api/v1/inst/curation/list"
     payload = json.loads(captured[0].content)
-    assert payload["tag"] == "playbill-curation-list-request-v1"
-    assert payload["evaluation_time"] == "2026-08-26T16:00:00+00:00"
+    assert payload == {
+        "tag": "playbill-curation-list-request-v1",
+        "access_profile": payload["access_profile"],
+    }
     assert payload["access_profile"]["profile_id"] == "test-curation"
-    assert payload["workspace_observation"]["source_observations"] == []
 
 
 @pytest.mark.parametrize(
@@ -82,17 +85,20 @@ def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
         (
             "accept_fixed_curation",
             "/api/v1/inst/curation/accept-fixed",
-            {
-                "accepted_proposal_id": "sha256:" + "3" * 64,
-                "accepted_changeset_digest": "sha256:" + "4" * 64,
-            },
+            {"accepted_generation": 4},
             "playbill-curation-accept-fixed-request-v1",
         ),
         (
             "suppress_curation",
             "/api/v1/inst/curation/suppress",
-            {"scope": "pattern", "until_generation": 12},
+            {"scope": "lineage", "until_generation": 12},
             "playbill-curation-suppress-request-v1",
+        ),
+        (
+            "unsuppress_curation",
+            "/api/v1/inst/curation/unsuppress",
+            {},
+            "playbill-curation-unsuppress-request-v1",
         ),
     ),
 )

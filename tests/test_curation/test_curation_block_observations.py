@@ -27,7 +27,6 @@ from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
     PlaybillCurationObservationOmissionReason,
     build_block_observation,
-    service_list_playbill_curation,
 )
 from cruxible_core.service.discovery.next import (
     NextSourceObservationV3,
@@ -35,6 +34,7 @@ from cruxible_core.service.discovery.next import (
 )
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._support import initialize_local
+from tests.support.curation import detect_and_list
 
 NOW = datetime(2026, 8, 26, 15, 0, tzinfo=timezone.utc)
 ACCESS = CoverageAccessProfile(profile_id="test-curation")
@@ -133,14 +133,23 @@ def test_valid_stamped_v3_observation_persists_once_and_remains_client_observed(
 ) -> None:
     instance = _instance_with_document(tmp_path)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    request = PlaybillCurationListRequestV1(
-        evaluation_time=NOW,
-        access_profile=ACCESS,
-        workspace_observation=NextWorkspaceObservation(source_observations=(_v3(coordinate),)),
-    )
+    request = PlaybillCurationListRequestV1(access_profile=ACCESS)
+    observation = NextWorkspaceObservation(source_observations=(_v3(coordinate),))
 
-    first = service_list_playbill_curation(instance, request=request, actor_context=_actor())
-    retry = service_list_playbill_curation(instance, request=request, actor_context=_actor())
+    first = detect_and_list(
+        instance,
+        request=request,
+        evaluation_time=NOW,
+        actor_context=_actor(),
+        workspace_observation=observation,
+    )
+    retry = detect_and_list(
+        instance,
+        request=request,
+        evaluation_time=NOW,
+        actor_context=_actor(),
+        workspace_observation=observation,
+    )
     events = instance.review_operational_store().events(family="block_observation")
 
     assert first.observation_coverage.observed_block_count == 1
@@ -157,20 +166,23 @@ def test_incomplete_and_unresolved_document_sources_are_coverage_omissions(
 ) -> None:
     instance = _instance_with_document(tmp_path)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    request = PlaybillCurationListRequestV1(
-        evaluation_time=NOW,
-        access_profile=ACCESS,
-        workspace_observation=NextWorkspaceObservation(
-            source_observations=(
-                _v3(coordinate, complete=False),
-                _v3(coordinate, document_id="missing").model_copy(
-                    update={"source_id": "docs.unresolved", "marker_summaries": ()}
-                ),
-            )
-        ),
+    request = PlaybillCurationListRequestV1(access_profile=ACCESS)
+    observation = NextWorkspaceObservation(
+        source_observations=(
+            _v3(coordinate, complete=False),
+            _v3(coordinate, document_id="missing").model_copy(
+                update={"source_id": "docs.unresolved", "marker_summaries": ()}
+            ),
+        )
     )
 
-    result = service_list_playbill_curation(instance, request=request, actor_context=_actor())
+    result = detect_and_list(
+        instance,
+        request=request,
+        evaluation_time=NOW,
+        actor_context=_actor(),
+        workspace_observation=observation,
+    )
 
     assert result.observation_coverage.observed_block_count == 0
     assert {item.reason: item.count for item in result.observation_coverage.omissions} == {
@@ -203,14 +215,12 @@ def test_bootstrap_and_malformed_markers_are_explicit_coverage_omissions(
         }
     )
 
-    result = service_list_playbill_curation(
+    result = detect_and_list(
         instance,
-        request=PlaybillCurationListRequestV1(
-            evaluation_time=NOW,
-            access_profile=ACCESS,
-            workspace_observation=NextWorkspaceObservation(source_observations=(source,)),
-        ),
+        request=PlaybillCurationListRequestV1(access_profile=ACCESS),
+        evaluation_time=NOW,
         actor_context=_actor(),
+        workspace_observation=NextWorkspaceObservation(source_observations=(source,)),
     )
 
     assert {item.reason: item.count for item in result.observation_coverage.omissions} == {
@@ -227,14 +237,12 @@ def test_unaccepted_marker_coordinate_is_an_explicit_coverage_omission(
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     unaccepted = coordinate.model_copy(update={"git_oid": "f" * 64})
 
-    result = service_list_playbill_curation(
+    result = detect_and_list(
         instance,
-        request=PlaybillCurationListRequestV1(
-            evaluation_time=NOW,
-            access_profile=ACCESS,
-            workspace_observation=NextWorkspaceObservation(source_observations=(_v3(unaccepted),)),
-        ),
+        request=PlaybillCurationListRequestV1(access_profile=ACCESS),
+        evaluation_time=NOW,
         actor_context=_actor(),
+        workspace_observation=NextWorkspaceObservation(source_observations=(_v3(unaccepted),)),
     )
 
     assert result.observation_coverage.observed_block_count == 0

@@ -702,16 +702,28 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
     "audit": _command("playbill", "audit", "Read ranked Claim verification work."),
     "curation": _group(
-        "Inspect mechanically detected ontology-maintenance patterns.",
+        "Review the ontology-maintenance patterns curation detection records.",
         {
             "list": _command("playbill", "curation_list", "Read the curation queue."),
-            "overrule": _command("playbill", "curation_overrule", "Overrule one detector item."),
+            "observe": _command(
+                "playbill",
+                "curation_observe",
+                "Record this workspace's declared blocks for block-churn detection.",
+            ),
+            "overrule": _command(
+                "playbill", "curation_overrule", "Close an item as not applying, permanently."
+            ),
             "accept-fixed": _command(
                 "playbill",
                 "curation_accept_fixed",
-                "Link an item to an accepted fix.",
+                "Link an item to the accepted change that fixed it.",
             ),
-            "suppress": _command("playbill", "curation_suppress", "Suppress open curation work."),
+            "suppress": _command(
+                "playbill", "curation_suppress", "Hide an item or its lineage without resolving it."
+            ),
+            "unsuppress": _command(
+                "playbill", "curation_unsuppress", "Lift a suppression on an item."
+            ),
         },
         module="playbill",
         attr="curation_group",

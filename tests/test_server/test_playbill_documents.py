@@ -204,8 +204,10 @@ def test_policy_read_is_a_real_http_behavior(
         "trigger_schedule",
         "trigger_schedule",
         "trigger_schedule",
+        "trigger_schedule",
     ]
     assert {item["declaring_artifact_identity"]: item["policy"] for item in rows[2:]} == {
+        "Trigger:curation-detect": {"kind": "generation_accepted"},
         "Trigger:evidence-sweep": {"kind": "cadence", "interval_seconds": 86400},
         "Trigger:floor-refresh": {"kind": "generation_accepted"},
         "Trigger:prediction-anchor-retry": {"kind": "cadence", "interval_seconds": 3600},

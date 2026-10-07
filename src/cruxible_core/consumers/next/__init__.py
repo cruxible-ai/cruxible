@@ -1,4 +1,4 @@
-"""One findings kind maintains next's Claim queue, evidence and prediction windows.
+"""One findings kind maintains next's Claim queue, evidence, prediction windows and curation.
 
 Parts retain independent cursors and bounded work keys under one disposable
 state namespace. The daemon gives this kind one pool; distinct part keys allow
@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any
 
-from cruxible_core.consumers.next import evidence, predictions, queue
+from cruxible_core.consumers.next import curation, evidence, predictions, queue
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
@@ -22,10 +22,17 @@ from cruxible_core.consumers.protocol import (
 from cruxible_core.consumers.state import DisposableState
 from cruxible_core.server.config import get_disabled_consumers
 
-_PARTS: dict[str, queue.ClaimQueuePart | evidence.EvidencePart | predictions.PredictionPart] = {
+_PARTS: dict[
+    str,
+    queue.ClaimQueuePart
+    | evidence.EvidencePart
+    | predictions.PredictionPart
+    | curation.CurationPart,
+] = {
     "queue": queue._PART,
     "evidence": evidence._PART,
     "prediction": predictions._PART,
+    "curation": curation._PART,
 }
 
 _CONTROL = DisposableState(

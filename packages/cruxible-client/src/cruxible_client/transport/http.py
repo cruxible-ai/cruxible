@@ -1626,20 +1626,14 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        evaluation_time: str,
         access_profile: Mapping[str, Any],
-        workspace_observation: Mapping[str, Any] | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> contracts.CurationListResult:
         """One page of the curation queue; follow ``next_cursor`` while ``truncated``."""
         body: dict[str, Any] = {
             "tag": "playbill-curation-list-request-v1",
-            "evaluation_time": evaluation_time,
             "access_profile": dict(access_profile),
-            "workspace_observation": (
-                None if workspace_observation is None else dict(workspace_observation)
-            ),
         }
         if limit is not None:
             body["limit"] = limit
@@ -1650,6 +1644,25 @@ class CruxibleClient:
             json=body,
         )
         return self._parse_model(response, contracts.CurationListResult)
+
+    def observe_curation(
+        self,
+        instance_id: str,
+        *,
+        workspace_observation: Mapping[str, Any],
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> contracts.CurationObserveResult:
+        """Record one workspace scan's declared blocks for block-churn detection."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/curation/observe",
+            json={
+                "tag": "playbill-curation-observe-request-v1",
+                "workspace_observation": dict(workspace_observation),
+                **_change_control(dry_run, at),
+            },
+        )
+        return self._parse_model(response, contracts.CurationObserveResult)
 
     def audit(
         self,
@@ -1730,12 +1743,15 @@ class CruxibleClient:
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        accepted_proposal_id: str,
-        accepted_changeset_digest: str,
+        accepted_proposal_id: str | None = None,
+        accepted_changeset_digest: str | None = None,
+        accepted_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
         dry_run: bool | None = None,
         at: str | None = None,
     ) -> contracts.CurationActionResult:
+        """Link an item to its fixing change, by proposal (optionally pinned to its
+        ChangeSet) or by accepted generation."""
         response = self._client.post(
             f"/api/v1/{instance_id}/curation/accept-fixed",
             json={
@@ -1745,6 +1761,7 @@ class CruxibleClient:
                 "reason": reason,
                 "accepted_proposal_id": accepted_proposal_id,
                 "accepted_changeset_digest": accepted_changeset_digest,
+                "accepted_generation": accepted_generation,
                 "attribution_refs": list(attribution_refs),
                 **_change_control(dry_run, at),
             },
@@ -1758,7 +1775,7 @@ class CruxibleClient:
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        scope: Literal["item", "pattern", "instance"],
+        scope: Literal["item", "lineage"],
         until_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
         dry_run: bool | None = None,
@@ -1773,6 +1790,33 @@ class CruxibleClient:
                 "reason": reason,
                 "scope": scope,
                 "until_generation": until_generation,
+                "attribution_refs": list(attribution_refs),
+                **_change_control(dry_run, at),
+            },
+        )
+        return self._parse_model(response, contracts.CurationActionResult)
+
+    def unsuppress_curation(
+        self,
+        instance_id: str,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        suppression_event_id: str | None = None,
+        attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> contracts.CurationActionResult:
+        """Lift one suppression on an item (the only one, unless named)."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/curation/unsuppress",
+            json={
+                "tag": "playbill-curation-unsuppress-request-v1",
+                "item_id": item_id,
+                "expected_latest_event_digest": expected_latest_event_digest,
+                "reason": reason,
+                "suppression_event_id": suppression_event_id,
                 "attribution_refs": list(attribution_refs),
                 **_change_control(dry_run, at),
             },

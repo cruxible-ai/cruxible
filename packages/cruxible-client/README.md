@@ -957,11 +957,26 @@ Reads a bounded ranking of visible Claim-verification work.
 curation_list(*, limit: int | None = None, cursor: str | None = None) -> api.CurationListResult
 ```
 
-Performs an attributed workspace scan and reads one page of current operational
-curation work (default 25 items). A truncated page carries `next_cursor`; pass it
-back as `cursor`.
+Reads one page of the curation queue detection recorded (default 25 items); a pure
+read. Detection runs on its own on accepted generations: `detection` says when it
+last ran and whether its Trigger is live, `inactive_detectors` which detectors
+cannot run here and why. A truncated page carries `next_cursor`; pass it back as
+`cursor`.
 
-**Conditions and effects:** Operational state stays live even through a pinned accepted-reading context.
+**Conditions and effects:** Writes nothing and reads no clock. Operational state stays live even through a pinned accepted-reading context.
+
+<a id="api-cruxible-curation-observe"></a>
+
+### `Cruxible.curation_observe`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+curation_observe(*, dry_run: bool | None = None, at: str | None = None) -> api.CurationObserveResult
+```
+
+Scans this workspace's declared blocks and records them for block-churn detection,
+the one detector that needs the workspace the daemon never reads.
 
 <a id="api-cruxible-curation-overrule"></a>
 
@@ -976,12 +991,14 @@ curation_overrule(
     expected_latest_event_digest: str,
     reason: str,
     attribution_refs: tuple[str, ...] = (),
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> api.CurationActionResult
 ```
 
-Records that the detector pattern is mechanically inapplicable.
+Records, permanently, that a detected pattern does not apply here; it is never raised again.
 
-**Conditions and effects:** Requires matching latest-event digest and attribution; does not revise accepted knowledge.
+**Conditions and effects:** Requires matching latest-event digest and attribution; does not revise accepted knowledge. `dry_run` checks and appends nothing; `at` pins the commit.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -1002,23 +1019,27 @@ curation_accept_fixed(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    accepted_proposal_id: str,
-    accepted_changeset_digest: str,
+    accepted_proposal_id: str | None = None,
+    accepted_changeset_digest: str | None = None,
+    accepted_generation: int | None = None,
     attribution_refs: tuple[str, ...] = (),
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> api.CurationActionResult
 ```
 
-Records linkage to an exact already-accepted resolving ChangeSet.
+Links an item to the accepted change that fixed it, closing it.
 
-**Conditions and effects:** Requires proposal/digest identity and matching latest-event digest; does not accept that proposal itself.
+**Conditions and effects:** Name the change by `accepted_proposal_id` (pinned with `accepted_changeset_digest` if wanted) or by `accepted_generation`; the daemon resolves the rest. The change must postdate the item and touch its subject or evidence.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `item_id` | Required | Operational curation item identity. |
 | `expected_latest_event_digest` | Required | Optimistic-concurrency assertion on the item’s latest event. |
 | `reason` | Required | Attributed reason for refusal, retirement, or operational action as specified by the API. |
-| `accepted_proposal_id` | Required | Already-accepted resolving proposal identity. |
-| `accepted_changeset_digest` | Required | Exact already-accepted resolving ChangeSet digest. |
+| `accepted_proposal_id` | `None` | The accepted proposal that fixed the item. |
+| `accepted_changeset_digest` | `None` | Pins `accepted_proposal_id` to its exact accepted ChangeSet. |
+| `accepted_generation` | `None` | The accepted generation that fixed the item, instead of a proposal. |
 | `attribution_refs` | `()` | Retained references supporting attribution/reason for this operational action. |
 
 <a id="api-cruxible-curation-suppress"></a>
@@ -1033,24 +1054,47 @@ curation_suppress(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    scope: Literal['item', 'pattern', 'instance'],
+    scope: Literal['item', 'lineage'],
     until_generation: int | None = None,
     attribution_refs: tuple[str, ...] = (),
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> api.CurationActionResult
 ```
 
-Records operational suppression of matching open work for the requested scope and optional generation boundary.
+Hides an item (`item`) or its whole lineage, the successors its pattern opens after a fix (`lineage`), until `until_generation` or until lifted.
 
-**Conditions and effects:** Does not resolve the item, stop detection, or make its underlying Claims correct.
+**Conditions and effects:** Does not resolve the item, stop detection, or make its underlying Claims correct. `curation_unsuppress` lifts it.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `item_id` | Required | Operational curation item identity. |
 | `expected_latest_event_digest` | Required | Optimistic-concurrency assertion on the item’s latest event. |
 | `reason` | Required | Attributed reason for refusal, retirement, or operational action as specified by the API. |
-| `scope` | Required | Suppression scope: item, pattern, or instance. |
+| `scope` | Required | Suppression scope: item or lineage. |
 | `until_generation` | `None` | Optional suppression generation boundary. |
 | `attribution_refs` | `()` | Retained references supporting attribution/reason for this operational action. |
+
+<a id="api-cruxible-curation-unsuppress"></a>
+
+### `Cruxible.curation_unsuppress`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+curation_unsuppress(
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    suppression_event_id: str | None = None,
+    attribution_refs: tuple[str, ...] = (),
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> api.CurationActionResult
+```
+
+Lifts a suppression on an item, so what it hid is listed again; name it when the item carries more than one.
 
 ## Procedure entry points
 
@@ -5901,13 +5945,31 @@ HTTP: `POST f'/api/v1/{instance_id}/since'`.
 list_curation(
     instance_id: str,
     *,
-    evaluation_time: str,
     access_profile: Mapping[str, Any],
-    workspace_observation: Mapping[str, Any] | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
 ) -> contracts.CurationListResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/curation/list'`.
+
+<a id="api-cruxibleclient-observe-curation"></a>
+
+### `CruxibleClient.observe_curation`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+observe_curation(
+    instance_id: str,
+    *,
+    workspace_observation: Mapping[str, Any],
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.CurationObserveResult
+```
+
+HTTP: `POST f'/api/v1/{instance_id}/curation/observe'`.
 
 <a id="api-cruxibleclient-audit"></a>
 
@@ -5964,8 +6026,9 @@ accept_fixed_curation(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    accepted_proposal_id: str,
-    accepted_changeset_digest: str,
+    accepted_proposal_id: str | None = None,
+    accepted_changeset_digest: str | None = None,
+    accepted_generation: int | None = None,
     attribution_refs: tuple[str, ...] = (),
 ) -> contracts.CurationActionResult
 ```
@@ -5985,13 +6048,33 @@ suppress_curation(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    scope: Literal['item', 'pattern', 'instance'],
+    scope: Literal['item', 'lineage'],
     until_generation: int | None = None,
     attribution_refs: tuple[str, ...] = (),
 ) -> contracts.CurationActionResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/curation/suppress'`.
+
+<a id="api-cruxibleclient-unsuppress-curation"></a>
+
+### `CruxibleClient.unsuppress_curation`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+unsuppress_curation(
+    instance_id: str,
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    suppression_event_id: str | None = None,
+    attribution_refs: tuple[str, ...] = (),
+) -> contracts.CurationActionResult
+```
+
+HTTP: `POST f'/api/v1/{instance_id}/curation/unsuppress'`.
 
 <a id="api-cruxibleclient-resolve-coverage"></a>
 

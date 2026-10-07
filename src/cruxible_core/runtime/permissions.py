@@ -109,6 +109,8 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_curation_overrule": PermissionMode.GOVERNED_WRITE,
     "cruxible_curation_accept_fixed": PermissionMode.GOVERNED_WRITE,
     "cruxible_curation_suppress": PermissionMode.GOVERNED_WRITE,
+    "cruxible_curation_unsuppress": PermissionMode.GOVERNED_WRITE,
+    "cruxible_curation_observe": PermissionMode.GOVERNED_WRITE,
     "cruxible_floor_export": PermissionMode.READ_ONLY,
     "cruxible_coverage_resolve": PermissionMode.READ_ONLY,
     "cruxible_sources_compile": PermissionMode.READ_ONLY,

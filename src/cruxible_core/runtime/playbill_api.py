@@ -203,13 +203,18 @@ from cruxible_core.service.discovery.curation import (
     CurationError,
     PlaybillCurationAcceptFixedRequestV1,
     PlaybillCurationListRequestV1,
+    PlaybillCurationObserveRequestV1,
     PlaybillCurationOverruleRequestV1,
     PlaybillCurationSuppressRequestV1,
+    PlaybillCurationUnsuppressRequestV1,
     service_accept_fixed_playbill_curation,
     service_list_playbill_curation,
+    service_observe_playbill_curation_blocks,
     service_overrule_playbill_curation,
     service_suppress_playbill_curation,
+    service_unsuppress_playbill_curation,
     validate_playbill_curation_list_request,
+    validate_playbill_curation_observe_request,
 )
 from cruxible_core.service.discovery.next import (
     NextRequestV1,
@@ -2192,16 +2197,25 @@ def playbill_curation_list(
     request: PlaybillCurationListRequestV1 | Mapping[str, object],
 ) -> contracts.CurationListResult:
     check_permission("cruxible_curation_list", instance_id=instance_id)
-    actor = _actor_context()
-    if actor is None:
-        raise AuthenticationError("Cruxible curation reads require an attributed actor")
     parsed = validate_playbill_curation_list_request(request)
-    result = service_list_playbill_curation(
-        get_playbill_manager().get(instance_id),
-        request=parsed,
-        actor_context=actor,
-    )
+    result = service_list_playbill_curation(get_playbill_manager().get(instance_id), request=parsed)
     return contracts.CurationListResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_curation_observe(
+    instance_id: str,
+    *,
+    request: PlaybillCurationObserveRequestV1 | Mapping[str, object],
+) -> contracts.CurationObserveResult:
+    check_permission("cruxible_curation_observe", instance_id=instance_id)
+    parsed = validate_playbill_curation_observe_request(request)
+    with change_entry(parsed.dry_run, "direct"):
+        result = service_observe_playbill_curation_blocks(
+            get_playbill_manager().get(instance_id),
+            request=parsed,
+            actor_context=_curation_actor(instance_id),
+        )
+    return contracts.CurationObserveResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_audit(
@@ -2288,6 +2302,28 @@ def playbill_curation_suppress(
     )
     with change_entry(parsed.dry_run, "direct"):
         result = service_suppress_playbill_curation(
+            get_playbill_manager().get(instance_id),
+            request=parsed,
+            actor_context=_curation_actor(instance_id),
+        )
+    return contracts.CurationActionResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_curation_unsuppress(
+    instance_id: str,
+    *,
+    request: PlaybillCurationUnsuppressRequestV1 | Mapping[str, object],
+) -> contracts.CurationActionResult:
+    check_permission("cruxible_curation_unsuppress", instance_id=instance_id)
+    parsed = _curation_validation_boundary(
+        lambda: (
+            request
+            if isinstance(request, PlaybillCurationUnsuppressRequestV1)
+            else PlaybillCurationUnsuppressRequestV1.model_validate(request)
+        )
+    )
+    with change_entry(parsed.dry_run, "direct"):
+        result = service_unsuppress_playbill_curation(
             get_playbill_manager().get(instance_id),
             request=parsed,
             actor_context=_curation_actor(instance_id),

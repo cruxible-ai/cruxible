@@ -35,11 +35,11 @@ from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
     _accepted_retirements_for_items,
     service_accept_fixed_playbill_curation,
-    service_list_playbill_curation,
 )
 from tests.core_support._candidate_support import submit_subject_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal, subject_shell
 from tests.core_support._support import initialize_local
+from tests.support.curation import detect_and_list
 from tests.support.store_snapshot import assert_writes_nothing
 
 NOW = datetime(2026, 8, 26, 18, tzinfo=UTC)
@@ -177,6 +177,78 @@ def test_accept_fixed_verifies_proposal_changeset_generation_and_member_intersec
     assert instance.accepted_coordinate() == accepted_before_action
 
 
+@pytest.mark.parametrize("named_by", ["proposal", "generation"])
+def test_accept_fixed_resolves_the_change_from_a_proposal_id_or_a_generation(
+    tmp_path: Path, named_by: str
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    first_body = instance.store_document_body(b"status: ready\n")
+    initial = _document_shell(first_body.digest)
+    first = service_propose_playbill_document(
+        instance,
+        shell=initial,
+        actor_id="owner",
+        proposal_name="runbook-initial",
+        timestamp="2026-08-26T18:00:00.000000Z",
+    )
+    accept_proposal(instance, owner, first)
+    observation, event = _append_document_item(instance)
+    second_body = instance.store_document_body(b"status: reviewed\n")
+    successor = initial.model_copy(
+        update={
+            "body_digest": second_body.digest,
+            "predecessor_digest": document_digest(initial).tagged,
+            "lifecycle": DocumentLifecycle(revision=2),
+        }
+    )
+    second = service_propose_playbill_document(
+        instance,
+        shell=successor,
+        actor_id="owner",
+        proposal_name="runbook-successor",
+        timestamp="2026-08-26T18:01:00.000000Z",
+    )
+    accept_proposal(instance, owner, second)
+    record = instance.accepted_history()[-1].record
+    assert record is not None
+
+    result = service_accept_fixed_playbill_curation(
+        instance,
+        request=PlaybillCurationAcceptFixedRequestV1(
+            item_id=observation.item_id,
+            expected_latest_event_digest=event.event_digest,
+            reason="the accepted runbook revision fixed it",
+            **(
+                {"accepted_proposal_id": second.proposal.admission.proposal_id}
+                if named_by == "proposal"
+                else {"accepted_generation": 2}
+            ),
+        ),
+        actor_context=_actor(),
+    )
+
+    assert result.item.status == "accepted_fixed"
+    assert result.item.accepted_proposal_id == second.proposal.admission.proposal_id
+    assert result.item.accepted_changeset_digest == record.changeset_digest
+
+
+def test_accept_fixed_names_exactly_one_change() -> None:
+    digest = "sha256:" + "1" * 64
+    for fields in ({}, {"accepted_proposal_id": digest, "accepted_generation": 2}):
+        with pytest.raises(ValueError, match="accepted_proposal_id or accepted_generation"):
+            PlaybillCurationAcceptFixedRequestV1(
+                item_id=digest, expected_latest_event_digest=digest, reason="x", **fields
+            )
+    with pytest.raises(ValueError, match="pins an accepted_proposal_id"):
+        PlaybillCurationAcceptFixedRequestV1(
+            item_id=digest,
+            expected_latest_event_digest=digest,
+            reason="x",
+            accepted_generation=2,
+            accepted_changeset_digest=digest,
+        )
+
+
 def test_accept_fixed_refuses_an_unrelated_accepted_changeset(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     first_body = instance.store_document_body(b"status: ready\n")
@@ -289,13 +361,12 @@ def test_dead_vocabulary_auto_resolves_to_the_accepted_retirement_changeset(
     record = instance.accepted_history()[-1].record
     assert record is not None
 
-    listed = service_list_playbill_curation(
+    listed = detect_and_list(
         instance,
         request=PlaybillCurationListRequestV1(
-            evaluation_time=NOW,
             access_profile=CoverageAccessProfile(profile_id="test-curation"),
         ),
-        actor_context=_actor(),
+        evaluation_time=NOW,
     )
 
     assert observation.item_id not in {item.item_id for item in listed.items}

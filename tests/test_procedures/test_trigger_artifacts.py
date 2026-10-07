@@ -438,6 +438,7 @@ def test_new_instances_start_with_the_default_internal_triggers(tmp_path):
         path: parse_trigger(tree[path], path=path) for path in tree if path.startswith("triggers/")
     }
     assert {path: (item.action, item.schedule) for path, item in defaults.items()} == {
+        "triggers/curation-detect.json": ("curation.detect", GenerationAcceptedSchedule()),
         "triggers/evidence-sweep.json": (
             "evidence.sweep",
             CadenceSchedule(interval_seconds=86400),
@@ -450,6 +451,7 @@ def test_new_instances_start_with_the_default_internal_triggers(tmp_path):
     }
     assert all(item.lifecycle.state == "live" for item in defaults.values())
     assert [(item.action, item.schedule) for item in internal_triggers(instance)] == [
+        ("curation.detect", GenerationAcceptedSchedule()),
         ("evidence.sweep", CadenceSchedule(interval_seconds=86400)),
         ("floor.refresh", GenerationAcceptedSchedule()),
         ("prediction.anchor_retry", CadenceSchedule(interval_seconds=3600)),

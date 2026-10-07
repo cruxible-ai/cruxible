@@ -15,7 +15,6 @@ from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmiss
 from cruxible_core.service.claims.policies import service_playbill_policies_in_force
 from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
-    service_list_playbill_curation,
 )
 from cruxible_core.service.list_pages import (
     ListCursorMismatch,
@@ -29,6 +28,7 @@ from cruxible_core.service.proposals.proposals import (
 )
 from tests.core_support._claim_authoring_support import service_propose_playbill_claim
 from tests.core_support._knowledge_loop_support import TIMESTAMP, activate, authoring, seed_claims
+from tests.support.curation import detect_and_list
 
 NOW = datetime(2026, 9, 1, 12, tzinfo=UTC)
 
@@ -144,12 +144,10 @@ _PROFILE = CoverageAccessProfile(profile_id="paging-test")
 
 
 def _curation(instance, *, limit: int, cursor: str | None = None):  # type: ignore[no-untyped-def]
-    return service_list_playbill_curation(
+    return detect_and_list(
         instance,
-        request=PlaybillCurationListRequestV1(
-            evaluation_time=NOW, access_profile=_PROFILE, limit=limit, cursor=cursor
-        ),
-        actor_context=_ACTOR,
+        request=PlaybillCurationListRequestV1(access_profile=_PROFILE, limit=limit, cursor=cursor),
+        evaluation_time=NOW,
     )
 
 

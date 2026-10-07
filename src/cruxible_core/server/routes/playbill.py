@@ -75,8 +75,10 @@ from cruxible_core.server.playbill_request_models import (
     CompilerUpgradeRequest,
     CurationAcceptFixedRequest,
     CurationListRequest,
+    CurationObserveRequest,
     CurationOverruleRequest,
     CurationSuppressRequest,
+    CurationUnsuppressRequest,
     FloorDeltaRequest,
     FloorExportRequest,
     InitRequest,
@@ -1222,6 +1224,34 @@ def curation_suppress(
     req: CurationSuppressRequest,
 ) -> contracts.CurationActionResult:
     return playbill_api.playbill_curation_suppress(
+        resolve_server_instance_id(instance_id),
+        request=req.model_dump(mode="json"),
+    )
+
+
+@router.post(
+    "/{instance_id}/curation/unsuppress",
+    response_model=contracts.CurationActionResult,
+)
+def curation_unsuppress(
+    instance_id: str,
+    req: CurationUnsuppressRequest,
+) -> contracts.CurationActionResult:
+    return playbill_api.playbill_curation_unsuppress(
+        resolve_server_instance_id(instance_id),
+        request=req.model_dump(mode="json"),
+    )
+
+
+@router.post(
+    "/{instance_id}/curation/observe",
+    response_model=contracts.CurationObserveResult,
+)
+def curation_observe(
+    instance_id: str,
+    req: CurationObserveRequest,
+) -> contracts.CurationObserveResult:
+    return playbill_api.playbill_curation_observe(
         resolve_server_instance_id(instance_id),
         request=req.model_dump(mode="json"),
     )

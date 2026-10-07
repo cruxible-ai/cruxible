@@ -5848,23 +5848,52 @@ def _echo_next_status(status: contracts.NextStatus) -> None:
 
 @playbill_group.group("curation")
 def curation_group() -> None:
-    """Inspect mechanically detected ontology-maintenance patterns."""
+    """Review the ontology-maintenance patterns curation detection records."""
+
+
+def _curation_ruling_options(function: Callable[..., Any]) -> Callable[..., Any]:
+    function = click.option(
+        "--attribution-ref",
+        "attribution_refs",
+        multiple=True,
+        help="A reference recorded with the ruling, such as a ticket or Claim ID (repeatable).",
+    )(function)
+    function = click.option("--reason", required=True, help="Why, recorded with the ruling.")(
+        function
+    )
+    return click.option(
+        "--expected-latest-event-digest",
+        required=True,
+        help="The item's latest_event_digest from curation list; refuses if it moved.",
+    )(function)
+
+
+def _echo_curation_action(result: contracts.CurationActionResult, done: str) -> None:
+    if result.status == "would_record":
+        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
+        echo_preview_next(result.status, result.coordinate)
+        return
+    click.echo(f"Curation item {result.item['item_id']}: {done}")
+
+
+def _curation_item_line(item: Mapping[str, Any]) -> str:
+    kind = str(item.get("pattern_kind", "")).removeprefix("playbill.curation.")
+    subject = item.get("subject") or {}
+    summary = f"{subject.get('kind', '')}:{subject.get('name', '')}"
+    status = "" if item.get("status") == "open" else f" [{item.get('status')}]"
+    return (
+        f"{item.get('item_id')}  {kind}  {summary}{status}  "
+        f"latest={item.get('latest_event_digest')}"
+    )
 
 
 @curation_group.command("list")
-@click.option(
-    "--workspace-root",
-    default=".",
-    show_default=True,
-    type=click.Path(file_okay=False),
-    help="Workspace scanned explicitly for declared-block observations.",
-)
 @click.option(
     "--access-profile",
     "access_profile_path",
     default=None,
     type=PayloadFile(),
-    help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
+    help="CoverageAccessProfile JSON/YAML (- for stdin); defaults to public and instance access.",
 )
 @click.option(
     "--limit",
@@ -5877,13 +5906,18 @@ def curation_group() -> None:
 @json_option
 @handle_errors
 def curation_list(
-    workspace_root: str,
     access_profile_path: str | None,
     limit: int,
     cursor: str | None,
     output_json: bool,
 ) -> None:
-    observation = observe_next_workspace(Path(workspace_root))
+    """List the open curation items detection recorded; a pure read.
+
+    Detection runs on its own on every accepted generation (the curation.detect
+    Trigger). Each line is the item ID, its pattern kind, its subject and the
+    latest_event_digest the rulings (overrule, accept-fixed, suppress) need.
+    """
+
     profile = (
         CoverageAccessProfile(
             profile_id="cli-curation",
@@ -5892,44 +5926,78 @@ def curation_list(
         if access_profile_path is None
         else _read_model(access_profile_path, CoverageAccessProfile).model_dump(mode="json")
     )
-
-    def _curation_at_scanned_coordinate(
-        client: CruxibleClient, instance_id: str
-    ) -> contracts.CurationListResult:
-        observed, _coordinate = observe_next_workspace_with_coverage(
-            client,
-            instance_id,
-            Path(workspace_root),
-            observation=observation,
-            access_profile=profile,
-        )
-        return client.list_curation(
-            instance_id,
-            evaluation_time=datetime.now(UTC).isoformat(),
-            access_profile=profile,
-            workspace_observation=observed,
-            limit=limit,
-            cursor=cursor,
-        )
-
     result = _server_call(
-        _curation_at_scanned_coordinate,
+        lambda client, instance_id: client.list_curation(
+            instance_id, access_profile=profile, limit=limit, cursor=cursor
+        ),
         command_name="cruxible curation list",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
+    detection = result.detection
+    ran = (
+        "never run"
+        if detection.detected_through_generation is None
+        else f"through generation {detection.detected_through_generation} "
+        f"at {detection.detected_at}"
+    )
     click.echo(
         f"Curation queue at generation {result.generation}: {len(result.items)} item(s); "
-        f"observed {result.observation_coverage['observed_block_count']} declared block(s)."
+        f"detection {detection.state} ({ran}), trigger {detection.trigger}."
     )
+    for item in result.items:
+        click.echo(f"  {_curation_item_line(item)}")
+    for inactive in result.inactive_detectors:
+        click.echo(f"Inactive: {inactive.pattern_kind} ({inactive.reason})")
     _echo_list_continuation(result.next_cursor)
+
+
+@curation_group.command("observe")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="The workspace whose declared blocks are scanned.",
+)
+@change_control_options
+@json_option
+@handle_errors
+def curation_observe(
+    workspace_root: str, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
+    """Record this workspace's declared blocks for block-churn detection.
+
+    Block churn is the one detector that needs the workspace, which the daemon
+    never reads; detection picks the recorded scan up when it next runs.
+    """
+
+    observation = observe_next_workspace(Path(workspace_root))
+
+    def call(client: CruxibleClient, instance_id: str) -> contracts.CurationObserveResult:
+        observed, _coordinate = observe_next_workspace_with_coverage(
+            client, instance_id, Path(workspace_root), observation=observation
+        )
+        return client.observe_curation(
+            instance_id, workspace_observation=observed, dry_run=dry_run, at=at
+        )
+
+    result = _server_call(call, command_name="cruxible curation observe")
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    verb = "Would record" if result.status == "would_record" else "Recorded"
+    click.echo(
+        f"{verb} {result.observation_coverage['observed_block_count']} declared block(s) "
+        f"at generation {result.generation}."
+    )
+    echo_preview_next(result.status, result.coordinate)
 
 
 @curation_group.command("overrule")
 @click.argument("item_id")
-@click.option("--expected-latest-event-digest", required=True)
-@click.option("--reason", required=True)
+@_curation_ruling_options
 @change_control_options
 @json_option
 @handle_errors
@@ -5937,16 +6005,20 @@ def curation_overrule(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
+    attribution_refs: tuple[str, ...],
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
 ) -> None:
+    """Close an item as not applying here, permanently: its pattern is never raised again."""
+
     result = _server_call(
         lambda client, instance_id: client.overrule_curation(
             instance_id,
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
             reason=reason,
+            attribution_refs=attribution_refs,
             dry_run=dry_run,
             at=at,
         ),
@@ -5955,19 +6027,24 @@ def curation_overrule(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if result.status == "would_record":
-        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
-        echo_preview_next(result.status, result.coordinate)
-        return
-    click.echo(f"Curation item {result.item['item_id']}: {result.item['status']}")
+    _echo_curation_action(result, str(result.item["status"]))
 
 
 @curation_group.command("accept-fixed")
 @click.argument("item_id")
-@click.option("--expected-latest-event-digest", required=True)
-@click.option("--reason", required=True)
-@click.option("--proposal-id", required=True)
-@click.option("--changeset-digest", required=True)
+@_curation_ruling_options
+@click.option("--proposal-id", default=None, help="The accepted proposal that fixed the item.")
+@click.option(
+    "--changeset-digest",
+    default=None,
+    help="Pins --proposal-id to its exact accepted ChangeSet (optional).",
+)
+@click.option(
+    "--generation",
+    type=click.IntRange(min=1),
+    default=None,
+    help="The accepted generation that fixed the item, instead of --proposal-id.",
+)
 @change_control_options
 @json_option
 @handle_errors
@@ -5975,12 +6052,22 @@ def curation_accept_fixed(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    proposal_id: str,
-    changeset_digest: str,
+    attribution_refs: tuple[str, ...],
+    proposal_id: str | None,
+    changeset_digest: str | None,
+    generation: int | None,
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
 ) -> None:
+    """Link an item to the accepted change that fixed it, closing it.
+
+    Name the change by --proposal-id or --generation; the daemon resolves the
+    rest. The change must postdate the item and touch its subject or evidence.
+    """
+
+    if (proposal_id is None) == (generation is None):
+        raise click.UsageError("name the fixing change with --proposal-id or --generation")
     result = _server_call(
         lambda client, instance_id: client.accept_fixed_curation(
             instance_id,
@@ -5989,6 +6076,8 @@ def curation_accept_fixed(
             reason=reason,
             accepted_proposal_id=proposal_id,
             accepted_changeset_digest=changeset_digest,
+            accepted_generation=generation,
+            attribution_refs=attribution_refs,
             dry_run=dry_run,
             at=at,
         ),
@@ -5997,19 +6086,23 @@ def curation_accept_fixed(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if result.status == "would_record":
-        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
-        echo_preview_next(result.status, result.coordinate)
-        return
-    click.echo(f"Curation item {result.item['item_id']}: {result.item['status']}")
+    _echo_curation_action(result, str(result.item["status"]))
 
 
 @curation_group.command("suppress")
 @click.argument("item_id")
-@click.option("--expected-latest-event-digest", required=True)
-@click.option("--reason", required=True)
-@click.option("--scope", type=click.Choice(("item", "pattern", "instance")), required=True)
-@click.option("--until-generation", type=click.IntRange(min=0))
+@_curation_ruling_options
+@click.option(
+    "--scope",
+    type=click.Choice(("item", "lineage")),
+    required=True,
+    help="item: hide this item; lineage: also hide every successor its pattern opens.",
+)
+@click.option(
+    "--until-generation",
+    type=click.IntRange(min=0),
+    help="The last generation the suppression hides through (default: until lifted).",
+)
 @change_control_options
 @json_option
 @handle_errors
@@ -6017,12 +6110,15 @@ def curation_suppress(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
+    attribution_refs: tuple[str, ...],
     scope: str,
     until_generation: int | None,
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
 ) -> None:
+    """Hide an item, or its lineage, without resolving it; detection keeps running."""
+
     result = _server_call(
         lambda client, instance_id: client.suppress_curation(
             instance_id,
@@ -6031,6 +6127,7 @@ def curation_suppress(
             reason=reason,
             scope=cast(Any, scope),
             until_generation=until_generation,
+            attribution_refs=attribution_refs,
             dry_run=dry_run,
             at=at,
         ),
@@ -6039,11 +6136,50 @@ def curation_suppress(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if result.status == "would_record":
-        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
-        echo_preview_next(result.status, result.coordinate)
+    _echo_curation_action(result, f"suppressed ({scope})")
+
+
+@curation_group.command("unsuppress")
+@click.argument("item_id")
+@_curation_ruling_options
+@click.option(
+    "--suppression",
+    "suppression_event_id",
+    default=None,
+    help="The suppression's event ID; needed only when the item carries more than one.",
+)
+@change_control_options
+@json_option
+@handle_errors
+def curation_unsuppress(
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    attribution_refs: tuple[str, ...],
+    suppression_event_id: str | None,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
+) -> None:
+    """Lift a suppression recorded on an item, so what it hid is listed again."""
+
+    result = _server_call(
+        lambda client, instance_id: client.unsuppress_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            suppression_event_id=suppression_event_id,
+            attribution_refs=attribution_refs,
+            dry_run=dry_run,
+            at=at,
+        ),
+        command_name="cruxible curation unsuppress",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(f"Curation item {result.item['item_id']}: suppressed ({scope})")
+    _echo_curation_action(result, "unsuppressed")
 
 
 @playbill_group.command("audit")

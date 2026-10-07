@@ -89,7 +89,6 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
 from cruxible_core.mcp.target import MCP_INSTANCE_ENV, require_instance_id
 from cruxible_core.mcp.tool_prompts import tool_description
-from cruxible_core.service.discovery.next import NextWorkspaceObservation
 from cruxible_core.service.procedures.procedure_runs import ProcedureSlotBindingRequest
 
 
@@ -1443,25 +1442,33 @@ def register_tools(
     def cruxible_curation_list(
         instance_id: InstanceId = None,
         *,
-        evaluation_time: str,
         access_profile: CoverageAccessProfile | None = None,
-        workspace_observation: NextWorkspaceObservation | None = None,
         limit: Annotated[
             int, Field(ge=1, le=contracts.CURATION_LIST_MAX_LIMIT)
         ] = contracts.CURATION_LIST_DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> contracts.CurationListResult:
-        """List one page of curation patterns and ingest block observations.
+        """List one page of the curation queue detection recorded; a pure read.
 
         Pass next_cursor back while the result is truncated.
         """
         return handlers.handle_playbill_curation_list(
             require_instance_id(instance_id),
-            evaluation_time=evaluation_time,
             access_profile=_dump(access_profile),
-            workspace_observation=_dump(workspace_observation),
             limit=limit,
             cursor=cursor,
+        )
+
+    @_tool
+    def cruxible_curation_observe(
+        instance_id: InstanceId = None,
+        *,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
+    ) -> contracts.CurationObserveResult:
+        """Record this workspace's declared blocks for block-churn detection."""
+        return handlers.handle_playbill_curation_observe(
+            require_instance_id(instance_id), dry_run=dry_run, at=at
         )
 
     @_tool
@@ -1523,13 +1530,20 @@ def register_tools(
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        accepted_proposal_id: str,
-        accepted_changeset_digest: str,
+        accepted_proposal_id: Annotated[
+            str | None, Field(description="The fixing proposal; or give accepted_generation.")
+        ] = None,
+        accepted_changeset_digest: Annotated[
+            str | None, Field(description="Pins accepted_proposal_id to its ChangeSet.")
+        ] = None,
+        accepted_generation: Annotated[
+            int | None, Field(ge=1, description="The fixing accepted generation.")
+        ] = None,
         attribution_refs: list[str] | None = None,
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> contracts.CurationActionResult:
-        """Link one curation item to its exact accepted resolving ChangeSet."""
+        """Link one curation item to the accepted change that fixed it."""
         return handlers.handle_playbill_curation_accept_fixed(
             require_instance_id(instance_id),
             item_id=item_id,
@@ -1537,6 +1551,7 @@ def register_tools(
             reason=reason,
             accepted_proposal_id=accepted_proposal_id,
             accepted_changeset_digest=accepted_changeset_digest,
+            accepted_generation=accepted_generation,
             attribution_refs=attribution_refs or [],
             dry_run=dry_run,
             at=at,
@@ -1549,13 +1564,16 @@ def register_tools(
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        scope: Literal["item", "pattern", "instance"],
+        scope: Annotated[
+            Literal["item", "lineage"],
+            Field(description="item: this item; lineage: also its pattern's successors."),
+        ],
         until_generation: int | None = None,
         attribution_refs: list[str] | None = None,
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> contracts.CurationActionResult:
-        """Hide curation work temporarily without resolving its detector facts."""
+        """Hide an item or its lineage without resolving it."""
         return handlers.handle_playbill_curation_suppress(
             require_instance_id(instance_id),
             item_id=item_id,
@@ -1563,6 +1581,32 @@ def register_tools(
             reason=reason,
             scope=scope,
             until_generation=until_generation,
+            attribution_refs=attribution_refs or [],
+            dry_run=dry_run,
+            at=at,
+        )
+
+    @_tool
+    def cruxible_curation_unsuppress(
+        instance_id: InstanceId = None,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        suppression_event_id: Annotated[
+            str | None, Field(description="Needed only when the item carries several.")
+        ] = None,
+        attribution_refs: list[str] | None = None,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
+    ) -> contracts.CurationActionResult:
+        """Lift a suppression on an item, so what it hid is listed again."""
+        return handlers.handle_playbill_curation_unsuppress(
+            require_instance_id(instance_id),
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            suppression_event_id=suppression_event_id,
             attribution_refs=attribution_refs or [],
             dry_run=dry_run,
             at=at,
