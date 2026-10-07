@@ -21,7 +21,7 @@ from cruxible_client.contracts.primitives import canonical_json
 
 AUTHORING_WIRE_CATALOG_VERSION = 1
 AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST = (
-    "sha256:eff34496ba3698780862ad2b9a20642e2cd0e212257aff293b8336a4dc24348e"
+    "sha256:9f5d57571bd401bd7ab6908e69fe19eb9aaba6d603b16e0fb955b00f4c4a24ba"
 )
 
 AUTHORING_WIRE_MODEL_NAMES = (

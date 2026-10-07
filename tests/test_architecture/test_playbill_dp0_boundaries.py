@@ -438,6 +438,8 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "overrule_curation",
         "accept_fixed_curation",
         "suppress_curation",
+        "unsuppress_curation",
+        "observe_curation",
         "since",
     }
 

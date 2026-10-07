@@ -146,9 +146,10 @@
         "cruxible.write",
         "cruxible.floor.export",
         "cruxible.block.depublish",
+        "cruxible.block.detach",
         "cruxible.block.repin",
         "cruxible.block.sync",
-        "cruxible.document.propose",
+        "cruxible.sources.propose",
         "cruxible.proposal.readmit",
         "cruxible.proposal.approve",
         "cruxible.compiler.upgrade",
@@ -7792,11 +7793,12 @@
               "action": {
                 "anyOf": [
                   {
-                    "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry.",
+                    "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry, curation.detect.",
                     "examples": [
                       "floor.refresh",
                       "evidence.sweep",
-                      "prediction.anchor_retry"
+                      "prediction.anchor_retry",
+                      "curation.detect"
                     ],
                     "maxLength": 128,
                     "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
@@ -17280,6 +17282,194 @@
         "operational_head_digest"
       ]
     },
+    "CurationDetection": {
+      "fields": {
+        "detected_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detected_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detected At"
+          }
+        },
+        "detected_through_generation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detected_through_generation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detected Through Generation"
+          }
+        },
+        "state": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": true,
+          "schema": {
+            "enum": [
+              "current",
+              "behind",
+              "never_run"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "trigger": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "trigger",
+          "required": true,
+          "schema": {
+            "enum": [
+              "live",
+              "missing"
+            ],
+            "title": "Trigger",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "When curation detection last ran and whether it has caught up with the head.\n\nDetection runs as the ``curation.detect`` internal action on accepted\ngenerations; ``trigger`` says whether a live Trigger fires it.",
+        "properties": {
+          "detected_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detected At"
+          },
+          "detected_through_generation": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detected Through Generation"
+          },
+          "state": {
+            "enum": [
+              "current",
+              "behind",
+              "never_run"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "trigger": {
+            "enum": [
+              "live",
+              "missing"
+            ],
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "trigger"
+        ],
+        "title": "CurationDetection",
+        "type": "object"
+      },
+      "required_fields": [
+        "state",
+        "trigger"
+      ]
+    },
+    "CurationInactiveDetector": {
+      "fields": {
+        "pattern_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "pattern_kind",
+          "required": true,
+          "schema": {
+            "title": "Pattern Kind",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "enum": [
+              "consumption_receipts_off",
+              "no_block_observations"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "A detector that cannot find anything on this instance, and why.",
+        "properties": {
+          "pattern_kind": {
+            "title": "Pattern Kind",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "consumption_receipts_off",
+              "no_block_observations"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern_kind",
+          "reason"
+        ],
+        "title": "CurationInactiveDetector",
+        "type": "object"
+      },
+      "required_fields": [
+        "pattern_kind",
+        "reason"
+      ]
+    },
     "CurationListResult": {
       "fields": {
         "coordinate": {
@@ -17289,6 +17479,15 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "detection": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "detection",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/CurationDetection"
           }
         },
         "detector_coverage": {
@@ -17305,16 +17504,6 @@
             "type": "array"
           }
         },
-        "evaluation_time": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "evaluation_time",
-          "required": true,
-          "schema": {
-            "title": "Evaluation Time",
-            "type": "string"
-          }
-        },
         "generation": {
           "has_default": false,
           "has_default_factory": false,
@@ -17324,6 +17513,19 @@
             "minimum": 0,
             "title": "Generation",
             "type": "integer"
+          }
+        },
+        "inactive_detectors": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "inactive_detectors",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/CurationInactiveDetector"
+            },
+            "title": "Inactive Detectors",
+            "type": "array"
           }
         },
         "items": {
@@ -17361,14 +17563,24 @@
           }
         },
         "observation_coverage": {
-          "has_default": false,
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
           "has_default_factory": false,
           "json_name": "observation_coverage",
-          "required": true,
+          "required": false,
           "schema": {
-            "additionalProperties": true,
-            "title": "Observation Coverage",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Observation Coverage"
           }
         },
         "operational_head_digest": {
@@ -17458,13 +17670,94 @@
             ],
             "title": "AcceptedCoordinate",
             "type": "object"
+          },
+          "CurationDetection": {
+            "additionalProperties": false,
+            "description": "When curation detection last ran and whether it has caught up with the head.\n\nDetection runs as the ``curation.detect`` internal action on accepted\ngenerations; ``trigger`` says whether a live Trigger fires it.",
+            "properties": {
+              "detected_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Detected At"
+              },
+              "detected_through_generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Detected Through Generation"
+              },
+              "state": {
+                "enum": [
+                  "current",
+                  "behind",
+                  "never_run"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "trigger": {
+                "enum": [
+                  "live",
+                  "missing"
+                ],
+                "title": "Trigger",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "trigger"
+            ],
+            "title": "CurationDetection",
+            "type": "object"
+          },
+          "CurationInactiveDetector": {
+            "additionalProperties": false,
+            "description": "A detector that cannot find anything on this instance, and why.",
+            "properties": {
+              "pattern_kind": {
+                "title": "Pattern Kind",
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "consumption_receipts_off",
+                  "no_block_observations"
+                ],
+                "title": "Reason",
+                "type": "string"
+              }
+            },
+            "required": [
+              "pattern_kind",
+              "reason"
+            ],
+            "title": "CurationInactiveDetector",
+            "type": "object"
           }
         },
         "additionalProperties": false,
-        "description": "G9 curation queue plus request-bound observation accounting.",
+        "description": "One page of the curation queue as detection last recorded it; a pure read.",
         "properties": {
           "coordinate": {
             "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "detection": {
+            "$ref": "#/$defs/CurationDetection"
           },
           "detector_coverage": {
             "items": {
@@ -17474,14 +17767,17 @@
             "title": "Detector Coverage",
             "type": "array"
           },
-          "evaluation_time": {
-            "title": "Evaluation Time",
-            "type": "string"
-          },
           "generation": {
             "minimum": 0,
             "title": "Generation",
             "type": "integer"
+          },
+          "inactive_detectors": {
+            "items": {
+              "$ref": "#/$defs/CurationInactiveDetector"
+            },
+            "title": "Inactive Detectors",
+            "type": "array"
           },
           "items": {
             "items": {
@@ -17504,9 +17800,17 @@
             "title": "Next Cursor"
           },
           "observation_coverage": {
-            "additionalProperties": true,
-            "title": "Observation Coverage",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Observation Coverage"
           },
           "operational_head_digest": {
             "pattern": "^sha256:[0-9a-f]{64}$",
@@ -17533,10 +17837,9 @@
         "required": [
           "coordinate",
           "generation",
-          "evaluation_time",
           "operational_head_digest",
+          "detection",
           "detector_coverage",
-          "observation_coverage",
           "result_digest"
         ],
         "title": "CurationListResult",
@@ -17544,12 +17847,161 @@
       },
       "required_fields": [
         "coordinate",
+        "detection",
         "detector_coverage",
-        "evaluation_time",
         "generation",
-        "observation_coverage",
         "operational_head_digest",
         "result_digest"
+      ]
+    },
+    "CurationObserveResult": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "observation_coverage": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observation_coverage",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Observation Coverage",
+            "type": "object"
+          }
+        },
+        "status": {
+          "default": "recorded",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "default": "recorded",
+            "enum": [
+              "recorded",
+              "would_record"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-curation-observe-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-curation-observe-result-v1",
+            "default": "playbill-curation-observe-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One workspace scan's declared blocks recorded for block-churn detection.",
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "generation": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "observation_coverage": {
+            "additionalProperties": true,
+            "title": "Observation Coverage",
+            "type": "object"
+          },
+          "status": {
+            "default": "recorded",
+            "enum": [
+              "recorded",
+              "would_record"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-curation-observe-result-v1",
+            "default": "playbill-curation-observe-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "generation",
+          "observation_coverage"
+        ],
+        "title": "CurationObserveResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "generation",
+        "observation_coverage"
       ]
     },
     "DiagnosticFrontier": {
@@ -18269,13 +18721,8 @@
                 "type": "object"
               },
               "tag": {
-                "default": "playbill-floor-export-v2",
-                "enum": [
-                  "playbill-floor-export-v1",
-                  "playbill-floor-export-v2",
-                  "playbill-floor-export-v5",
-                  "playbill-floor-export-v6"
-                ],
+                "const": "playbill-floor-export-v6",
+                "default": "playbill-floor-export-v6",
                 "title": "Tag",
                 "type": "string"
               }
@@ -18838,20 +19285,15 @@
           }
         },
         "tag": {
-          "default": "playbill-floor-export-v2",
+          "default": "playbill-floor-export-v6",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "default": "playbill-floor-export-v2",
-            "enum": [
-              "playbill-floor-export-v1",
-              "playbill-floor-export-v2",
-              "playbill-floor-export-v5",
-              "playbill-floor-export-v6"
-            ],
+            "const": "playbill-floor-export-v6",
+            "default": "playbill-floor-export-v6",
             "title": "Tag",
             "type": "string"
           }
@@ -18934,13 +19376,8 @@
             "type": "object"
           },
           "tag": {
-            "default": "playbill-floor-export-v2",
-            "enum": [
-              "playbill-floor-export-v1",
-              "playbill-floor-export-v2",
-              "playbill-floor-export-v5",
-              "playbill-floor-export-v6"
-            ],
+            "const": "playbill-floor-export-v6",
+            "default": "playbill-floor-export-v6",
             "title": "Tag",
             "type": "string"
           }
@@ -20193,6 +20630,26 @@
     },
     "HostWorkspaceRegistration": {
       "fields": {
+        "delivers_here": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "delivers_here",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Delivers Here"
+          }
+        },
         "floor_delivery": {
           "default": false,
           "default_json_serializable": true,
@@ -20269,6 +20726,18 @@
         "additionalProperties": false,
         "description": "Whether one daemon host has a daemon-local workspace registration.",
         "properties": {
+          "delivers_here": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Delivers Here"
+          },
           "floor_delivery": {
             "default": false,
             "title": "Floor Delivery",
@@ -21379,7 +21848,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Where one instance publishes its ledger, and whether that copy is current.\n\n`ledger set-mirror` binds a remote and waits boundedly for initial publication;\n`ledger clone-url` reads its status. A publish barrier is acknowledged when\npublished_sequence reaches wait_sequence, even if newer work is pending. The\nURL carries no credential -- one that could is refused before it is stored --\nso this model is safe to print, log and hand to anyone who may read the\ninstance at all.",
+        "description": "Where one instance publishes its ledger, and whether that copy is current.\n\n`ledger set-mirror` binds a remote and waits boundedly for initial publication;\n`orient` shows the URL and `next` its health. A publish barrier is acknowledged when\npublished_sequence reaches wait_sequence, even if newer work is pending. The\nURL carries no credential -- one that could is refused before it is stored --\nso this model is safe to print, log and hand to anyone who may read the\ninstance at all.",
         "properties": {
           "attempted_at": {
             "anyOf": [
@@ -21503,6 +21972,184 @@
       "required_fields": [
         "instance_id",
         "mirror_url",
+        "status"
+      ]
+    },
+    "LedgerMirrorCleared": {
+      "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "previous_mirror_url": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "previous_mirror_url",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Previous Mirror Url"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "cleared",
+              "would_clear",
+              "already_clear"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-ledger-mirror-cleared-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-ledger-mirror-cleared-v1",
+            "default": "cruxible-ledger-mirror-cleared-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The mirror an instance stopped publishing to, or would stop on a preview.\n\nClearing calls nothing back: what was already sent stays on the remote.\n``already_clear`` answers an instance that had no mirror bound.",
+        "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "previous_mirror_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Previous Mirror Url"
+          },
+          "status": {
+            "enum": [
+              "cleared",
+              "would_clear",
+              "already_clear"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-ledger-mirror-cleared-v1",
+            "default": "cruxible-ledger-mirror-cleared-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "status"
+        ],
+        "title": "LedgerMirrorCleared",
+        "type": "object"
+      },
+      "required_fields": [
+        "instance_id",
         "status"
       ]
     },
@@ -24996,9 +25643,10 @@
                   "cruxible.write",
                   "cruxible.floor.export",
                   "cruxible.block.depublish",
+                  "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.document.propose",
+                  "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.compiler.upgrade",
@@ -25063,9 +25711,10 @@
                   "cruxible.write",
                   "cruxible.floor.export",
                   "cruxible.block.depublish",
+                  "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.document.propose",
+                  "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.compiler.upgrade",
@@ -25432,9 +26081,10 @@
                   "cruxible.write",
                   "cruxible.floor.export",
                   "cruxible.block.depublish",
+                  "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.document.propose",
+                  "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.compiler.upgrade",
@@ -25499,9 +26149,10 @@
                   "cruxible.write",
                   "cruxible.floor.export",
                   "cruxible.block.depublish",
+                  "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.document.propose",
+                  "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.compiler.upgrade",
@@ -25988,9 +26639,10 @@
                   "cruxible.write",
                   "cruxible.floor.export",
                   "cruxible.block.depublish",
+                  "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.document.propose",
+                  "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.compiler.upgrade",
@@ -26055,9 +26707,10 @@
                   "cruxible.write",
                   "cruxible.floor.export",
                   "cruxible.block.depublish",
+                  "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.document.propose",
+                  "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.compiler.upgrade",
@@ -26291,9 +26944,10 @@
               "cruxible.write",
               "cruxible.floor.export",
               "cruxible.block.depublish",
+              "cruxible.block.detach",
               "cruxible.block.repin",
               "cruxible.block.sync",
-              "cruxible.document.propose",
+              "cruxible.sources.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
               "cruxible.compiler.upgrade",
@@ -26354,9 +27008,10 @@
               "cruxible.write",
               "cruxible.floor.export",
               "cruxible.block.depublish",
+              "cruxible.block.detach",
               "cruxible.block.repin",
               "cruxible.block.sync",
-              "cruxible.document.propose",
+              "cruxible.sources.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
               "cruxible.compiler.upgrade",
@@ -26444,9 +27099,10 @@
               "cruxible.write",
               "cruxible.floor.export",
               "cruxible.block.depublish",
+              "cruxible.block.detach",
               "cruxible.block.repin",
               "cruxible.block.sync",
-              "cruxible.document.propose",
+              "cruxible.sources.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
               "cruxible.compiler.upgrade",
@@ -26653,9 +27309,10 @@
               "cruxible.write",
               "cruxible.floor.export",
               "cruxible.block.depublish",
+              "cruxible.block.detach",
               "cruxible.block.repin",
               "cruxible.block.sync",
-              "cruxible.document.propose",
+              "cruxible.sources.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
               "cruxible.compiler.upgrade",
@@ -27301,9 +27958,10 @@
                   "cruxible.write",
                   "cruxible.floor.export",
                   "cruxible.block.depublish",
+                  "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.document.propose",
+                  "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.compiler.upgrade",
@@ -27368,9 +28026,10 @@
                   "cruxible.write",
                   "cruxible.floor.export",
                   "cruxible.block.depublish",
+                  "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.document.propose",
+                  "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.compiler.upgrade",
@@ -27916,9 +28575,10 @@
                   "cruxible.write",
                   "cruxible.floor.export",
                   "cruxible.block.depublish",
+                  "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.document.propose",
+                  "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.compiler.upgrade",
@@ -27983,9 +28643,10 @@
                   "cruxible.write",
                   "cruxible.floor.export",
                   "cruxible.block.depublish",
+                  "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.document.propose",
+                  "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.compiler.upgrade",
@@ -97753,11 +98414,12 @@
             "description": "Fire one internal action; the worker that owns it follows its fires.",
             "properties": {
               "action": {
-                "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry.",
+                "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry, curation.detect.",
                 "examples": [
                   "floor.refresh",
                   "evidence.sweep",
-                  "prediction.anchor_retry"
+                  "prediction.anchor_retry",
+                  "curation.detect"
                 ],
                 "maxLength": 128,
                 "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
