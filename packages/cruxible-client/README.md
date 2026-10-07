@@ -1593,10 +1593,12 @@ compilation/preflight; `submit()` compiles and submits in one request, with the
 daemon preflighting once, and a refused intent carries the same `refused` and
 `diagnostics` that `prepare()` reports; the program stamp is structured authoring provenance,
 not retained executable Python source. `ClaimTypeDraft.propose(...)` is a direct
-proposal helper and submits immediately; it is not a synonym for local staging.
+proposal helper and submits immediately; it is not a synonym for local staging. It
+returns a `ClaimTypeProposal`: the plain `Proposal` handle and the typed
+evidence-policy `lint` that `claim-type propose` serves for the same definition.
 
-`Intent` and `Proposal` are obtained from SDK factories. `from_preflight` and
-are advanced response adapters. Cached properties are not
+`Intent` and `Proposal` are obtained from SDK factories. `from_preflight` is an
+advanced response adapter. Cached properties are not
 automatic status polling. `Intent.path_to_acceptance` calls status.
 `Intent.rebase()` clears observed preflight/status; prepare again before relying
 on a new candidate. `reprepare()` requires the same owning connection.
@@ -1708,8 +1710,11 @@ predicate: str
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-propose(*, proposal_name: str) -> Proposal
+propose(*, proposal_name: str) -> ClaimTypeProposal
 ```
+
+Returns the proposal handle (`.proposal`) and its typed lint (`.lint`, an
+`api.ClaimTypeProposalLint` whose `warnings` are `ClaimTypeLintWarning`s).
 
 <a id="api-intent"></a>
 
@@ -1778,7 +1783,7 @@ lint: api.ClaimTypeProposalLint | None
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-warnings: tuple[dict[str, Any], ...]
+warnings: tuple[api.ClaimTypeLintWarning, ...]
 ```
 
 <a id="api-intent-diagnostics"></a>

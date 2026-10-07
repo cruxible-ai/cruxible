@@ -257,7 +257,7 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
     workspace.mkdir()
     _catalog(workspace)
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
-    sdk_proposal = pb.claim_type(
+    draft = pb.claim_type(
         predicate=input_value.predicate,
         subject_kinds=input_value.allowed_subject_kinds,
         object_kind=input_value.object_kind,
@@ -271,14 +271,28 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
         resolution_policy=ClaimResolutionPolicy.model_validate(input_value.resolution_policy),
         pins=(),
         evidence_freshness=None,
-    ).propose(proposal_name="empty-policy-sdk")
+    )
+    # The same definition through the HTTP envelope route the draft uses.
+    http_proposal = http.post(
+        f"/api/v1/{instance_id}/claim-types/proposals",
+        json={
+            "claim_type": draft.definition.model_dump(mode="json"),
+            "proposal_name": "empty-policy-http",
+        },
+    )
+    assert http_proposal.status_code == 200, http_proposal.text
+    sdk_proposal = draft.propose(proposal_name="empty-policy-sdk")
 
-    # get is the one proposal read; the CLI propose result carries the lint.
-    assert pb.get(sdk_proposal.proposal_id).value.verdict == "candidate"
+    # get is the one proposal read; the typed propose result carries the lint.
+    assert pb.get(sdk_proposal.proposal.proposal_id).value.verdict == "candidate"
     assert cli_proposal["lint"]["warnings"]
     assert {warning["code"] for warning in cli_proposal["lint"]["warnings"]} == {
         "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
     }
+    # Warning parity: CLI, HTTP and SDK lint the same draft identically.
+    sdk_warnings = [item.model_dump(mode="json") for item in sdk_proposal.lint.warnings]
+    assert sdk_warnings == http_proposal.json()["lint"]["warnings"]
+    assert sdk_warnings == cli_proposal["lint"]["warnings"]
 
 
 def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
@@ -451,8 +465,8 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
     assert not intent.refused
     assert intent.lint is not None
     assert intent.warnings == tuple(intent.lint.warnings)
-    assert intent.warnings[0]["code"] == ("cruxible.claim_type.anticipated_source_contract_omitted")
-    assert intent.warnings[0]["source_id"] == "corpus.vuln-response-runbook"
+    assert intent.warnings[0].code == "cruxible.claim_type.anticipated_source_contract_omitted"
+    assert intent.warnings[0].source_id == "corpus.vuln-response-runbook"
     assert intent._preflight is not None
     response = intent._preflight.model_dump(mode="json")
     response.pop("lint")

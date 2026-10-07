@@ -819,7 +819,7 @@ def test_a_successor_admitting_no_accepted_contract_lints_on_both_roads(
         result=coordinator.preflight(intent.intent_id, actor=actor),
     )
     assert served.lint is not None
-    assert served.lint.warnings == expected
+    assert [warning.model_dump(mode="json") for warning in served.lint.warnings] == expected
 
 
 def test_the_deprecated_invalidation_word_refuses_typed(tmp_path: Path) -> None:

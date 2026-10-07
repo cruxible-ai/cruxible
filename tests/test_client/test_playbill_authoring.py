@@ -151,7 +151,7 @@ def test_client_preserves_advisory_lint_outside_the_preflight_certificate() -> N
 
     assert result.verdict == "passed"
     assert result.lint is not None
-    assert result.lint.warnings == [warning]
+    assert [item.model_dump(mode="json") for item in result.lint.warnings] == [warning]
     assert "lint" not in result.certificate.model_dump(mode="json")
     assert "lint" not in result.frontier.model_dump(mode="json")
 

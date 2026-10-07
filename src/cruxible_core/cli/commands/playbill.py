@@ -2836,7 +2836,7 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
         click.echo("  none")
     else:
         for warning in result.lint.warnings:
-            click.echo(f"  {warning.get('field_path', '$')}: {warning.get('code', 'warning')}")
+            click.echo(f"  {warning.field_path}: {warning.code}")
 
 
 @claim_type_group.command("upgrade")

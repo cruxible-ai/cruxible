@@ -603,11 +603,14 @@ class ClaimTypeDraft:
 
         return self.definition.predicate
 
-    def propose(self, *, proposal_name: str) -> Proposal:
-        """Propose this ClaimType as its own proposal.
+    def propose(self, *, proposal_name: str) -> ClaimTypeProposal:
+        """Propose this ClaimType as its own proposal, with its evidence-policy lint.
 
-        Next: ``proposal.review()``, then ``proposal.approve(...)`` and
-        ``proposal.activate()``.
+        A ClaimType proposed on its own is linted the way `claim-type propose`
+        lints it; the result carries that lint beside the plain proposal handle.
+
+        Next: ``result.lint.warnings``, then ``result.proposal.review()``,
+        ``.approve(...)`` and ``.activate()``.
         """
 
         result = self._playbill._client.propose_claim_type(
@@ -620,7 +623,10 @@ class ClaimTypeDraft:
         proposal_id = admission.get("proposal_id") if isinstance(admission, Mapping) else None
         if not isinstance(proposal_id, str):
             raise ValueError("claim-type proposal omitted its proposal_id")
-        return Proposal(self._playbill, proposal_id)
+        return ClaimTypeProposal(
+            proposal=Proposal(self._playbill, proposal_id),
+            lint=result.lint or api.ClaimTypeProposalLint(warnings=()),
+        )
 
 
 @dataclass(frozen=True)
@@ -1757,7 +1763,7 @@ class Intent:
         return None if self._preflight is None else self._preflight.lint
 
     @property
-    def warnings(self) -> tuple[dict[str, Any], ...]:
+    def warnings(self) -> tuple[api.ClaimTypeLintWarning, ...]:
         """Lint warnings from the last preflight.
 
         Next: fix them, then ``intent.reprepare(draft=...)``.
@@ -1967,6 +1973,20 @@ class Proposal:
 
     def __repr__(self) -> str:
         return f"Proposal({self.proposal_id!r})"
+
+
+@dataclass(frozen=True)
+class ClaimTypeProposal:
+    """What ``ClaimTypeDraft.propose`` returns: the proposal handle and its lint.
+
+    ``lint`` is the same typed evidence-policy lint `claim-type propose` serves;
+    an empty ``warnings`` means the policy drew none.
+
+    Next: ``result.proposal.review()``.
+    """
+
+    proposal: Proposal
+    lint: api.ClaimTypeProposalLint
 
 
 def _wait_for_status(call: Any, *, timeout: Duration, poll_interval: Duration) -> Any:
@@ -4826,6 +4846,7 @@ __all__ = [
     "ChangeSetDraft",
     "ClaimDraft",
     "ClaimTypeDraft",
+    "ClaimTypeProposal",
     "Intent",
     "KnowledgeCard",
     "MeasurementBatch",

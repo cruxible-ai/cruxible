@@ -968,11 +968,33 @@ class LedgerMirror(BaseModel):
     detail: str | None = None
 
 
+ClaimTypeLintCode: TypeAlias = Literal[
+    "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+    "cruxible.claim_type.anticipated_source_contract_omitted",
+    "cruxible.claim_type.attestation_threshold_disabled",
+]
+
+
+class ClaimTypeLintWarning(BaseModel):
+    """One advisory finding about a ClaimType's evidence policy, with its fix."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: Annotated[ClaimTypeLintCode, CurrentCode]
+    field_path: str
+    source_id: str | None = None
+    # Evidence-policy warnings name the contract they concern; others name none.
+    contract_identity: str | None = None
+    contract_digest: str | None = None
+    #: The rule fragment that would resolve the warning, as authored input.
+    replacement_rule_fragment: dict[str, Any]
+
+
 class ClaimTypeProposalLint(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-claim-type-proposal-lint-v1"] = "playbill-claim-type-proposal-lint-v1"
-    warnings: list[dict[str, Any]]
+    warnings: tuple[ClaimTypeLintWarning, ...]
 
 
 class ClaimTypeInputProposalResult(BaseModel):
