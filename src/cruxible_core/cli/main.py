@@ -63,7 +63,6 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("predict",): "active",
     ("settle",): "active",
     ("claim-attestation", "recover"): "active",
-    ("authoring", "create"): "manual",
     ("authoring", "bind"): "active",
     ("authoring", "compile"): "active",
     ("authoring", "preflight"): "active",
@@ -613,7 +612,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "authoring": _group(
         "Author, preflight, submit, and resume governed writes.",
         {
-            "create": _command("playbill", "create_authoring_intent", "Create a durable intent."),
+            "example": _command(
+                "playbill",
+                "authoring_example_command",
+                "Print an authoring payload template.",
+            ),
             "get": _command("playbill", "get_authoring_intent", "Read one authoring intent."),
             "resume": _command("playbill", "resume_authoring_intent", "Resume durable authoring."),
             "list": _command(

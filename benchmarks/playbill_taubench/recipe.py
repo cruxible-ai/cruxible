@@ -276,15 +276,15 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             + "\n",
             encoding="utf-8",
         )
-        created = run_cli_json(
+        compiled = run_cli_json(
             "authoring",
-            "create",
+            "compile",
             str(authoring_path),
         )
         submitted = run_cli_json(
             "authoring",
             "submit",
-            str(created["intent"]["intent_id"]),
+            str(compiled["certificate"]["intent_id"]),
         )
         return str(submitted["status"]["proposal_id"])
 
@@ -346,8 +346,8 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             )
             intent_id = prepared["certificate"]["intent_id"]
         else:
-            created = run_cli_json("authoring", "create", str(path))
-            intent_id = created["intent"]["intent_id"]
+            compiled = run_cli_json("authoring", "compile", str(path))
+            intent_id = compiled["certificate"]["intent_id"]
         submitted = run_cli_json("authoring", "submit", str(intent_id))
         record(
             f"claim_input:{payload['subject']}#{payload['predicate']}",
@@ -367,11 +367,11 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
         )
 
     for path in sorted((bundle_dir / "procedures").glob("*.json")):
-        created = run_cli_json("authoring", "create", str(path))
+        compiled = run_cli_json("authoring", "compile", str(path))
         submitted = run_cli_json(
             "authoring",
             "submit",
-            str(created["intent"]["intent_id"]),
+            str(compiled["certificate"]["intent_id"]),
         )
         record(
             f"procedure:{path.stem}",

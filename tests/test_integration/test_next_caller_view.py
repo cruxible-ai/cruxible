@@ -35,7 +35,7 @@ def _conflict_with_uncovered_member() -> PlaybillNextItemV1:
         related_identities=(_CLAIM,),
         detail={"contender_count": 2, "predicate": "owner", "qualifier": None},
         repair=PlaybillNextRepairV1(
-            operation="cruxible.authoring.create",
+            operation="cruxible.authoring.example",
             target=_SUBJECT,
             required_change="revise_claims_into_distinct_qualifiers",
             arguments={"claim_ids": [_CLAIM]},
@@ -288,7 +288,7 @@ def _unreviewed_capture_row(subject: str) -> PlaybillNextItemV1:
         subject_identity=subject,
         detail={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "c" * 64},
         repair=PlaybillNextRepairV1(
-            operation="cruxible.authoring.create",
+            operation="cruxible.authoring.example",
             target=subject,
             required_change="adjudicate_unreviewed_evidence",
             arguments={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "c" * 64},
@@ -303,7 +303,7 @@ def _supporting_capture_row(subject: str) -> PlaybillNextItemV1:
         subject_identity=subject,
         detail={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "d" * 64},
         repair=PlaybillNextRepairV1(
-            operation="cruxible.authoring.create",
+            operation="cruxible.authoring.example",
             target=subject,
             required_change="cite_supporting_evidence",
             arguments={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "d" * 64},
@@ -374,7 +374,7 @@ _SDK_REPAIRS: tuple[tuple[str, dict[str, object]], ...] = (
     ("cruxible.line.arm", {"line": "hourly"}),
     ("cruxible.line.dispatch", {"line": "hourly", "limit": 3}),
     ("cruxible.settle", {"prediction_id": "RSC-0001"}),
-    ("cruxible.authoring.create", {"example": "procedure-mandate"}),
+    ("cruxible.authoring.example", {"example": "procedure-mandate"}),
     ("cruxible.proposal.approve", {"proposal_id": "PRP-0001", "signer_id": "reviewer"}),
     ("cruxible.claim.retire", {"claim_id": "CLM-0001"}),
     ("cruxible.block.repin", {"source_id": "SRC-1", "block_id": "b1", "claim_id": "CLM-0001"}),

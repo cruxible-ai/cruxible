@@ -331,7 +331,7 @@ NextReason: TypeAlias = Literal[
 ]
 NextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
 NextRepairOperation: TypeAlias = Literal[
-    "cruxible.authoring.create",
+    "cruxible.authoring.example",
     "cruxible.authoring.bind",
     "cruxible.claim.retire",
     "cruxible.set",
@@ -737,7 +737,7 @@ class WhoAmI(BaseModel):
     principal_registration_status: Literal["active", "revoked", "absent"] | None
     active_principal_ids: list[str]
     coordinate: AcceptedCoordinate
-    # Whether authoring create would accept this actor, and the refusal it
+    # Whether authoring compile would accept this actor, and the refusal it
     # would return otherwise: the same code, detail and repair.
     can_author: bool
     authoring_refusal: AuthoringRefusal | None

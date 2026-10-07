@@ -381,8 +381,6 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "abandon_authoring_insertion",
         "compile_authoring",
         "compile_authoring_input",
-        "create_authoring_intent",
-        "create_authoring_input",
         "get_authoring_intent",
         "list_pending_authoring_intents",
         "authoring_intent_status",

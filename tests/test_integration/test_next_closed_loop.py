@@ -160,18 +160,18 @@ EXPECTED_OPERATIONS = {
     # A marker the page has lost is repaired by releasing the registration that
     # demands it; a marker the page has mangled is repaired by restoring it.
     "projection_marker_invalid": frozenset({"cruxible.block.repin", "cruxible.block.depublish"}),
-    "claim_dependency_stale": "cruxible.authoring.create",
+    "claim_dependency_stale": "cruxible.authoring.example",
     "claim_attestation_threshold_met": "cruxible.set",
-    "claim_contradicting_evidence_available": "cruxible.authoring.create",
-    "claim_new_evidence_supporting": "cruxible.authoring.create",
-    "claim_new_evidence_unreviewed": "cruxible.authoring.create",
+    "claim_contradicting_evidence_available": "cruxible.authoring.example",
+    "claim_new_evidence_supporting": "cruxible.authoring.example",
+    "claim_new_evidence_unreviewed": "cruxible.authoring.example",
     "document_modified": "cruxible.document.propose",
     # Restoring a bound file, or fixing its catalog locator, is a workspace edit.
     "workspace_binding_missing": "hand_edit",
     "unregistered_projection_block": "cruxible.block.repin",
     "proposal_stale": "cruxible.proposal.readmit",
     "proposal_awaiting_approval": "cruxible.proposal.approve",
-    "mandate_expiring": "cruxible.authoring.create",
+    "mandate_expiring": "cruxible.authoring.example",
     # A stopped arm is resumed by rearming under authority that still holds.
     "consumer_stalled": "cruxible.line.arm",
     # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
@@ -1445,7 +1445,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     row = _row(instance, "mandate_expiring", _request(instance))
     assert row.subject_identity == "ProcedureMandate:triage"
     assert row.repair.operation == EXPECTED_OPERATIONS["mandate_expiring"]
-    assert row.repair.command == "cruxible authoring create --example procedure-mandate"
+    assert row.repair.command == "cruxible authoring example procedure-mandate"
     assert datetime.fromisoformat(row.detail["expires_at"]) == lapsing.expires_at
     hidden = NextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),

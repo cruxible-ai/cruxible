@@ -695,17 +695,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_authoring_create(
-        instance_id: InstanceId = None,
-        *,
-        payload: AuthoringInput,
-    ) -> contracts.AuthoringIntentViewRecord:
-        """Create or recover a daemon-owned authoring intent."""
-        return handlers.handle_playbill_authoring_create(
-            require_instance_id(instance_id), payload.model_dump(mode="json")
-        )
-
-    @_tool
     def cruxible_authoring_example(
         name: contracts.AuthoringExampleName,
         claim_id: str | None = None,

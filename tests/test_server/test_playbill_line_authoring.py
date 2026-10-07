@@ -110,8 +110,11 @@ def test_singleton_line_and_policy_inputs_lower_through_the_tagless_union(
     assert isinstance(policy, AcquisitionPolicyInput)
     _accept(http, instance_id, key, policy)
     line = authoring_example("line")
-    created = _transport(http).create_authoring_input(
+    compiled = _transport(http).compile_authoring_input(
         instance_id, input=line.model_dump(mode="json")
+    )
+    created = _transport(http).get_authoring_intent(
+        instance_id, str(compiled.certificate["intent_id"])
     )
     assert created.intent["semantic_identity"] == "Line:replace-me"
 

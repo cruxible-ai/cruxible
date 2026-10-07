@@ -129,7 +129,6 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_propose_source_bundle": PermissionMode.GOVERNED_WRITE,
     "cruxible_propose_claim_type": PermissionMode.GOVERNED_WRITE,
     "cruxible_procedure_bind": PermissionMode.GOVERNED_WRITE,
-    "cruxible_authoring_create": PermissionMode.GOVERNED_WRITE,
     "cruxible_authoring_compile": PermissionMode.GOVERNED_WRITE,
     "cruxible_authoring_bind": PermissionMode.GOVERNED_WRITE,
     "cruxible_authoring_preflight": PermissionMode.GOVERNED_WRITE,

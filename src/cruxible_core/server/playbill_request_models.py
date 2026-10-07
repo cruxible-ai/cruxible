@@ -20,9 +20,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
     AuthoringIntentCompileRequestV2,
-    AuthoringIntentCreateRequest,
-    AuthoringIntentCreateRequestV1,
-    AuthoringIntentCreateRequestV2,
 )
 from cruxible_client.contracts.authoring.models import (
     InsertionAbandonRequest as InsertionAbandonRequest,
@@ -62,9 +59,6 @@ class _StrictPlaybillRequest(BaseModel):
 
 # The route module retains its existing local names, but these are aliases to
 # the canonical client-owned wire models rather than parallel definitions.
-PlaybillAuthoringCreateRequest = AuthoringIntentCreateRequestV1
-PlaybillAuthoringCreateRequestV2 = AuthoringIntentCreateRequestV2
-PlaybillAuthoringCreateRequestV3 = AuthoringIntentCreateRequest
 PlaybillAuthoringCompileRequest = AuthoringIntentCompileRequestV1
 PlaybillAuthoringCompileRequestV2 = AuthoringIntentCompileRequestV2
 PlaybillAuthoringCompileRequestV3 = AuthoringIntentCompileRequest
@@ -197,13 +191,6 @@ class ProposeClaimTypeInputRequest(_StrictPlaybillRequest):
     proposal_name: str
     dry_run: DryRun = None
     at: PreviewAt = None
-
-
-class AuthoringInputCreateRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-authoring-input-create-request-v1"] = (
-        "playbill-authoring-input-create-request-v1"
-    )
-    input: AuthoringInput
 
 
 class AuthoringInputCompileRequest(_StrictPlaybillRequest):

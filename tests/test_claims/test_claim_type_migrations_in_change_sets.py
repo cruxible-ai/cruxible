@@ -1399,7 +1399,7 @@ def test_every_authoring_surface_carries_the_carry_all_flag(
     authoring = [
         name for name, tool in tools.items() if "carry_all" in json.dumps(tool.inputSchema)
     ]
-    assert "cruxible_authoring_create" in authoring
+    assert "cruxible_authoring_compile" in authoring
     assert "carry_all" in json.dumps(create_app().openapi())
     # The CLI and the SDK send the same model's JSON: the flag survives a round trip.
     member = ClaimTypeSuccessionMember.model_validate(

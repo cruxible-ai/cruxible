@@ -2478,35 +2478,12 @@ class AuthoringIntentList(_StrictAuthoringModel):
     intents: tuple[_AuthoringIntentResponse, ...]
 
 
-class AuthoringIntentCreateRequestV1(_StrictAuthoringModel):
-    tag: Literal["playbill-authoring-intent-create-request-v1"] = (
-        "playbill-authoring-intent-create-request-v1"
-    )
-    payload: AuthoringPayload
-
-
 class AuthoringIntentCompileRequestV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-compile-request-v1"] = (
         "playbill-authoring-intent-compile-request-v1"
     )
     payload: AuthoringPayload
     intent_id: str | None = None
-
-
-class AuthoringIntentCreateRequestV2(_StrictAuthoringModel):
-    tag: Literal["playbill-authoring-intent-create-request-v2"] = (
-        "playbill-authoring-intent-create-request-v2"
-    )
-    payload: AuthoringPayload
-    reference_expectations: tuple[AuthoringExpectation, ...]
-
-    @field_validator("reference_expectations")
-    @classmethod
-    def _reference_expectations(
-        cls,
-        value: tuple[AuthoringExpectation, ...],
-    ) -> tuple[AuthoringExpectation, ...]:
-        return canonical_reference_expectations(value)
 
 
 class AuthoringIntentCompileRequestV2(_StrictAuthoringModel):
@@ -2516,23 +2493,6 @@ class AuthoringIntentCompileRequestV2(_StrictAuthoringModel):
     payload: AuthoringPayload
     reference_expectations: tuple[AuthoringExpectation, ...]
     intent_id: str | None = None
-
-    @field_validator("reference_expectations")
-    @classmethod
-    def _reference_expectations(
-        cls,
-        value: tuple[AuthoringExpectation, ...],
-    ) -> tuple[AuthoringExpectation, ...]:
-        return canonical_reference_expectations(value)
-
-
-class AuthoringIntentCreateRequest(_StrictAuthoringModel):
-    tag: Literal["playbill-authoring-intent-create-request-v3"] = (
-        "playbill-authoring-intent-create-request-v3"
-    )
-    payload: AuthoringPayload
-    reference_expectations: tuple[AuthoringExpectation, ...]
-    program_stamp: AuthoringProgramStamp
 
     @field_validator("reference_expectations")
     @classmethod
@@ -3012,9 +2972,6 @@ __all__ = [
     "AuthoringIntentCompileRequestV2",
     "AuthoringIntentCompileRequest",
     "AuthoringIntentCompileRequestV1",
-    "AuthoringIntentCreateRequestV2",
-    "AuthoringIntentCreateRequest",
-    "AuthoringIntentCreateRequestV1",
     "AuthoringIntentList",
     "AuthoringIntentPreflightRequest",
     "AuthoringIntentSubmitRequest",

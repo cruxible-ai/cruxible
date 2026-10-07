@@ -121,15 +121,15 @@ def _author_and_accept(
     path: Path,
     payload: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    created = cruxible.json(
+    compiled = cruxible.json(
         "authoring",
-        "create",
+        "compile",
         _write(path, payload),
     )
     submitted = cruxible.json(
         "authoring",
         "submit",
-        str(created["intent"]["intent_id"]),
+        str(compiled["certificate"]["intent_id"]),
     )
     accepted = cruxible.accept(str(submitted["status"]["proposal_id"]))
     return submitted, accepted

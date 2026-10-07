@@ -70,7 +70,6 @@ from cruxible_core.server.playbill_request_models import (
     ApprovalRequest,
     AuditRequest,
     AuthoringInputCompileRequest,
-    AuthoringInputCreateRequest,
     AuthoringPreflightRequest,
     AuthoringRebaseRequest,
     AuthoringSubmitRequest,
@@ -93,9 +92,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringCompileRequest,
     PlaybillAuthoringCompileRequestV2,
     PlaybillAuthoringCompileRequestV3,
-    PlaybillAuthoringCreateRequest,
-    PlaybillAuthoringCreateRequestV2,
-    PlaybillAuthoringCreateRequestV3,
     ProposalReadmitRequest,
     ProposalWithdrawRequest,
     ProposeClaimTypeInputRequest,
@@ -755,42 +751,6 @@ def settle_prediction(
         resolve_server_instance_id(instance_id),
         prediction_id,
         request=req,
-    )
-
-
-@router.post(
-    "/{instance_id}/authoring/intents",
-    response_model=contracts.AuthoringIntentViewRecord,
-)
-def create_authoring_intent(
-    instance_id: str,
-    req: (
-        PlaybillAuthoringCreateRequest
-        | PlaybillAuthoringCreateRequestV2
-        | PlaybillAuthoringCreateRequestV3
-        | AuthoringInputCreateRequest
-    ),
-) -> contracts.AuthoringIntentViewRecord:
-    if isinstance(req, AuthoringInputCreateRequest):
-        return playbill_api.playbill_authoring_create_input(
-            resolve_server_instance_id(instance_id), input=req.input
-        )
-    if isinstance(req, PlaybillAuthoringCreateRequestV3):
-        return playbill_api.playbill_authoring_create(
-            resolve_server_instance_id(instance_id),
-            payload=req.payload,
-            reference_expectations=req.reference_expectations,
-            program_stamp=req.program_stamp,
-        )
-    if isinstance(req, PlaybillAuthoringCreateRequestV2):
-        return playbill_api.playbill_authoring_create(
-            resolve_server_instance_id(instance_id),
-            payload=req.payload,
-            reference_expectations=req.reference_expectations,
-        )
-    return playbill_api.playbill_authoring_create(
-        resolve_server_instance_id(instance_id),
-        payload=req.payload,
     )
 
 

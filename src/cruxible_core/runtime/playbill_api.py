@@ -1419,40 +1419,6 @@ def _authoring_coordinator(
     return AuthoringIntentCoordinator.for_instance(instance), actor
 
 
-def playbill_authoring_create(
-    instance_id: str,
-    *,
-    payload: AuthoringPayload,
-    reference_expectations: tuple[AuthoringExpectation, ...] | None = None,
-    program_stamp: AuthoringProgramStamp | None = None,
-) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_authoring_create", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.create(
-        actor=actor,
-        payload=payload,
-        canonical_timestamp=canonical_candidate_timestamp(utc_now()),
-        reference_expectations=reference_expectations,
-        program_stamp=program_stamp,
-    )
-    return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_authoring_create_input(
-    instance_id: str,
-    *,
-    input: AuthoringInput,
-) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_authoring_create", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.create_input(
-        actor=actor,
-        input=input,
-        canonical_timestamp=canonical_candidate_timestamp(utc_now()),
-    )
-    return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
-
-
 def playbill_resolution_contracts(
     instance_id: str, *, request: contracts.ResolutionContractsRequest
 ) -> contracts.ResolutionContractsResult:

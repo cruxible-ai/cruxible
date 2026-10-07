@@ -56,7 +56,6 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("predict",): "active",
     ("settle",): "active",
     ("claim-attestation", "recover"): "active",
-    ("authoring", "create"): "manual",
     ("authoring", "bind"): "active",
     ("authoring", "compile"): "active",
     ("authoring", "preflight"): "active",

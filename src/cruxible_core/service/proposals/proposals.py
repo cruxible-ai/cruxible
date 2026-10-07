@@ -147,7 +147,7 @@ class PlaybillWhoAmIV1(_StrictOperationalReadModel):
     principal_registration_status: PrincipalRegistrationStatus | None
     active_principal_ids: tuple[str, ...]
     coordinate: AcceptedCoordinate
-    # Whether authoring create would accept this actor, and the refusal it
+    # Whether authoring compile would accept this actor, and the refusal it
     # would return otherwise: the same code, detail and repair.
     can_author: bool
     authoring_refusal: AuthoringRefusal | None

@@ -14,9 +14,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
     AuthoringIntentCompileRequestV2,
-    AuthoringIntentCreateRequest,
-    AuthoringIntentCreateRequestV1,
-    AuthoringIntentCreateRequestV2,
 )
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
@@ -1091,59 +1088,6 @@ class CruxibleClient:
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, contracts.SettleResult)
-
-    def create_authoring_intent(
-        self,
-        instance_id: str,
-        *,
-        payload: Mapping[str, Any],
-        reference_expectations: Sequence[Mapping[str, Any]] | None = None,
-        program_stamp: Mapping[str, Any] | None = None,
-    ) -> contracts.AuthoringIntentViewRecord:
-        request: (
-            AuthoringIntentCreateRequestV1
-            | AuthoringIntentCreateRequestV2
-            | AuthoringIntentCreateRequest
-        )
-        if reference_expectations is None:
-            if program_stamp is not None:
-                raise ValueError("program_stamp requires reference_expectations")
-            request = AuthoringIntentCreateRequestV1.model_validate({"payload": dict(payload)})
-        elif program_stamp is None:
-            request = AuthoringIntentCreateRequestV2.model_validate(
-                {
-                    "payload": dict(payload),
-                    "reference_expectations": [dict(item) for item in reference_expectations],
-                }
-            )
-        else:
-            request = AuthoringIntentCreateRequest.model_validate(
-                {
-                    "payload": dict(payload),
-                    "reference_expectations": [dict(item) for item in reference_expectations],
-                    "program_stamp": dict(program_stamp),
-                }
-            )
-        response = self._client.post(
-            f"/api/v1/{instance_id}/authoring/intents",
-            json=request.model_dump(mode="json"),
-        )
-        return self._parse_model(response, contracts.AuthoringIntentViewRecord)
-
-    def create_authoring_input(
-        self,
-        instance_id: str,
-        *,
-        input: Mapping[str, Any],
-    ) -> contracts.AuthoringIntentViewRecord:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/authoring/intents",
-            json={
-                "tag": "playbill-authoring-input-create-request-v1",
-                "input": dict(input),
-            },
-        )
-        return self._parse_model(response, contracts.AuthoringIntentViewRecord)
 
     def get_authoring_intent(
         self,

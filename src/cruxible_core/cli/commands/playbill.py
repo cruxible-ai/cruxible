@@ -134,7 +134,6 @@ from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
     _echo_active_write_target,
-    _echo_write_target,
     _emit_brief,
     _emit_json,
     _require_instance_id,
@@ -372,8 +371,7 @@ def _read_authoring_input(path: str) -> AuthoringInput:
         return _AUTHORING_INPUT_ADAPTER.validate_python(payload)
     except ValidationError as exc:
         examples = ", ".join(
-            f"cruxible authoring create --example {name}"
-            for name in _authoring_examples_for(payload)
+            f"cruxible authoring example {name}" for name in _authoring_examples_for(payload)
         )
         errors = "; ".join(
             f"{_validation_path(tuple(item['loc']))}: {item['msg']}"
@@ -3160,36 +3158,31 @@ _EXPECTATION_ID_HELP = (
 )
 
 
-@authoring_group.command("create")
+@authoring_group.command("example")
 @click.argument(
-    "payload",
-    required=False,
-    metavar="PAYLOAD_FILE",
-    type=click.Path(exists=True, dir_okay=False),
+    "name", required=False, metavar="[NAME]", type=click.Choice(AUTHORING_EXAMPLE_NAMES)
 )
-@click.option(
-    "--example",
-    "example_name",
-    type=click.Choice(AUTHORING_EXAMPLE_NAMES),
-    help="Print one model-generated payload template and exit.",
-)
-@json_option
 @click.option(
     "--attestation-claim-id",
     help="Claim ID an attestation-door example revises (with --capture-digest).",
 )
-@click.option("--capture-digest")
+@click.option(
+    "--capture-digest",
+    help="Capture digest an attestation-door example cites (with --attestation-claim-id).",
+)
 @handle_errors
-@click.pass_context
-def create_authoring_intent(
-    ctx: click.Context,
-    payload: str | None,
-    example_name: str | None,
+def authoring_example_command(
+    name: str | None,
     attestation_claim_id: str | None,
     capture_digest: str | None,
-    output_json: bool,
 ) -> None:
-    """Create a durable authoring intent or print a schema-derived example.
+    """Print one model-generated authoring payload template, or list the names.
+
+    \b
+    With NAME, prints that example as one JSON document on stdout (any note goes
+    to stderr), ready to edit and pass to `authoring compile -` or
+    `authoring submit -`. Without NAME, lists every example name. Nothing is sent
+    to the daemon.
 
     \b
     Input kind family: claim | procedure | subject | query_definition |
@@ -3206,54 +3199,40 @@ def create_authoring_intent(
     own singleton input.
 
     \b
-    One intent is one changeset: a change_set input carries any mix of those
+    One payload is one changeset: a change_set input carries any mix of those
     member kinds, lowers once, and admits or refuses whole, typed to the member
-    index that offends. A claim_type_succession member succeeds an accepted
-    ClaimType and dispositions its whole reverse-pin closure in the same
-    generation, so a Claim member that speaks the new vocabulary lands with it.
-
-    Use --example for a model-generated starting point; --example change-set
-    prints a mixed set and --example claim-type-succession a vocabulary
-    evolution. --example procedure, line, trigger, acquisition-policy and
-    procedure-mandate are accepted together as members of one change set.
+    index that offends. `change-set` prints a mixed set and
+    `claim-type-succession` a vocabulary evolution; `procedure`, `line`,
+    `trigger`, `acquisition-policy` and `procedure-mandate` are accepted
+    together as members of one change set.
     """
 
-    if (payload is None) == (example_name is None):
-        raise click.UsageError("provide exactly one of PAYLOAD or --example")
-    if payload is not None and (attestation_claim_id is not None or capture_digest is not None):
-        raise click.UsageError("--attestation-claim-id/--capture-digest require --example")
-    if example_name is not None:
-        try:
-            example = authoring_example(
-                cast(AuthoringExampleName, example_name),
-                claim_id=attestation_claim_id,
-                capture_digest=capture_digest,
-            )
-        except ValueError as exc:
-            raise click.UsageError(str(exc)) from exc
-        click.echo(
-            json.dumps(
-                example.model_dump(mode="json"),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-        )
-        note = authoring_example_note(cast(AuthoringExampleName, example_name))
-        if note is not None:
-            # Beside the payload, never in it: stdout stays one JSON document.
-            click.echo(f"# {note}", err=True)
+    if name is None:
+        if attestation_claim_id is not None or capture_digest is not None:
+            raise click.UsageError("--attestation-claim-id/--capture-digest require NAME")
+        for example_name in AUTHORING_EXAMPLE_NAMES:
+            click.echo(example_name)
         return
-    assert payload is not None
-    parsed_input = _read_authoring_input(payload)
-    _echo_write_target("active", ctx.params)
-    result = _server_call(
-        lambda client, instance_id: client.create_authoring_input(
-            instance_id, input=parsed_input.model_dump(mode="json")
-        ),
-        command_name="cruxible authoring create",
+    try:
+        example = authoring_example(
+            cast(AuthoringExampleName, name),
+            claim_id=attestation_claim_id,
+            capture_digest=capture_digest,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    click.echo(
+        json.dumps(
+            example.model_dump(mode="json"),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
     )
-    _emit_json(result.model_dump(mode="json"))
+    note = authoring_example_note(cast(AuthoringExampleName, name))
+    if note is not None:
+        # Beside the payload, never in it: stdout stays one JSON document.
+        click.echo(f"# {note}", err=True)
 
 
 @authoring_group.command("get")
@@ -3297,10 +3276,13 @@ def list_pending_authoring_intents(output_json: bool) -> None:
 @json_option
 @handle_errors
 def compile_authoring(payload: str, intent_id: str | None, output_json: bool) -> None:
+    # Parsed before any daemon call: a malformed payload names its field path
+    # and the matching example without needing a reachable daemon.
+    parsed_input = _read_authoring_input(payload)
     result = _server_call(
         lambda client, instance_id: client.compile_authoring_input(
             instance_id,
-            input=_read_authoring_input(payload).model_dump(mode="json"),
+            input=parsed_input.model_dump(mode="json"),
             intent_id=intent_id,
         ),
         command_name="cruxible authoring compile",
@@ -3384,7 +3366,7 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: 
             next_command=(
                 f"cruxible authoring submit {intent_id}"
                 if result.verdict == "passed"
-                else f"cruxible authoring create  # repair, then preflight {intent_id}"
+                else f"cruxible authoring compile - --intent-id {intent_id}  # repaired payload"
             ),
         )
         return
@@ -4886,7 +4868,7 @@ def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
 
 #: Repair arguments a CLI leaf takes as its positional operand.
 _POSITIONAL_REPAIR_ARGUMENTS = frozenset(
-    {"line", "name", "claim_id", "proposal_id", "prediction_id", "run_id"}
+    {"line", "name", "example", "claim_id", "proposal_id", "prediction_id", "run_id"}
 )
 
 

@@ -123,7 +123,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "prediction_window_unbindable",
     }
     assert set(get_args(NextRepairOperation)) == {
-        "cruxible.authoring.create",
+        "cruxible.authoring.example",
         "cruxible.authoring.bind",
         "cruxible.claim.retire",
         # The write verbs: a row that asks for a Claim stated again, or a

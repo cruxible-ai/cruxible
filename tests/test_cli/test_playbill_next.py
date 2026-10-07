@@ -24,7 +24,7 @@ HEALTHY_STATUS = {
 }
 
 AUTHOR = {
-    "operation": "cruxible.authoring.create",
+    "operation": "cruxible.authoring.example",
     "target": "Claim:c",
     "required_change": "author_the_claim",
 }

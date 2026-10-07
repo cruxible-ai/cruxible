@@ -162,41 +162,6 @@ def test_client_preserves_advisory_lint_outside_the_preflight_certificate() -> N
     assert "lint" not in result.frontier
 
 
-def test_client_speaks_program_stamped_v3_request() -> None:
-    captured: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured.append(request)
-        return httpx.Response(
-            200,
-            json={
-                "tag": "playbill-authoring-intent-view-v1",
-                "intent": {"intent_id": INTENT_ID},
-            },
-        )
-
-    payload = _claim_payload()
-    stamp = {
-        "tag": "playbill-authoring-program-stamp-v1",
-        "program_digest": "sha256:" + "7" * 64,
-        "sdk_version": "0.4.0",
-        "sdk_contract_snapshot_digest": "sha256:" + "8" * 64,
-    }
-    _client(handler).create_authoring_intent(
-        "inst",
-        payload=payload,
-        reference_expectations=(),
-        program_stamp=stamp,
-    )
-
-    assert json.loads(captured[0].content) == {
-        "tag": "playbill-authoring-intent-create-request-v3",
-        "payload": payload,
-        "reference_expectations": [],
-        "program_stamp": stamp,
-    }
-
-
 def test_client_speaks_tagless_input_request_variants() -> None:
     captured: list[httpx.Request] = []
 
@@ -226,11 +191,9 @@ def test_client_speaks_tagless_input_request_variants() -> None:
         "predicate": "project.work_item.status",
     }
     client = _client(handler)
-    client.create_authoring_input("inst", input=input_value)
     client.compile_authoring_input("inst", input=input_value)
 
     assert [json.loads(item.content)["tag"] for item in captured] == [
-        "playbill-authoring-input-create-request-v1",
         "playbill-authoring-input-compile-request-v1",
     ]
     assert all(json.loads(item.content)["input"] == input_value for item in captured)

@@ -135,7 +135,6 @@ from cruxible_core.server.config import get_runtime_bearer_token, resolve_server
 from cruxible_core.server.playbill_request_models import (
     ApprovalRequest,
     AuthoringInputCompileRequest,
-    AuthoringInputCreateRequest,
     AuthoringPreflightRequest,
     AuthoringRebaseRequest,
     AuthoringSubmitRequest,
@@ -358,7 +357,6 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_authoring_abandon_insertion": TypeAdapter(InsertionAbandonRequest),
     "cruxible_authoring_bind": TypeAdapter(AuthoringInputCompileRequest),
     "cruxible_authoring_compile": TypeAdapter(AuthoringInputCompileRequest),
-    "cruxible_authoring_create": TypeAdapter(AuthoringInputCreateRequest),
     "cruxible_authoring_preflight": TypeAdapter(AuthoringPreflightRequest),
     "cruxible_authoring_rebase": TypeAdapter(AuthoringRebaseRequest),
     "cruxible_authoring_submit": TypeAdapter(AuthoringSubmitRequest),
@@ -1223,21 +1221,6 @@ def handle_playbill_claim_attest(
         lambda client: _handle_claim_attestation(client, instance_id, prepared),
         lambda: _handle_claim_attestation(_LocalAttestationClient(), instance_id, prepared),
         operation_name="cruxible_claim_attest",
-    )
-
-
-def handle_playbill_authoring_create(
-    instance_id: str,
-    payload: dict[str, Any],
-) -> contracts.AuthoringIntentViewRecord:
-    request = _AUTHORING_INPUT.validate_python(payload)
-    return _dispatch_remote_or_local(
-        lambda client: client.create_authoring_input(
-            instance_id, input=request.model_dump(mode="json")
-        ),
-        lambda: playbill_api.playbill_authoring_create_input(instance_id, input=request),
-        operation_name="cruxible_authoring_create",
-        local_payload={"input": request.model_dump(mode="json")},
     )
 
 

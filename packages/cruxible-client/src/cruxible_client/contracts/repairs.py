@@ -204,12 +204,12 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
 RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
     "binding_required": RepairOperation(operation="cruxible.procedure.bind"),
     "line_mandate_required": RepairOperation(
-        operation="cruxible.authoring.create",
+        operation="cruxible.authoring.example",
         arguments={"example": "procedure-mandate"},
     ),
     # Nothing renews a mandate: its successor, or its retirement, is authored.
     "mandate_expiring": RepairOperation(
-        operation="cruxible.authoring.create",
+        operation="cruxible.authoring.example",
         arguments={"example": "procedure-mandate"},
     ),
     # Nothing renders a block, so no sync converges one; what `block sync --all`
@@ -249,15 +249,15 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
     "projection_dirty": RepairOperation(operation="cruxible.block.sync", arguments={"all": True}),
     # A Source run needs an accepted SourceAcquisitionPolicy covering exactly
     # its declared source inputs; authoring one is the repair, so the runnable
-    # command is the authoring create the caller would run next.
+    # command is the authoring example the caller would start from.
     "source_acquisition_policy_required": RepairOperation(
-        operation="cruxible.authoring.create",
+        operation="cruxible.authoring.example",
         arguments={"example": "source-acquisition-policy"},
     ),
     # The policy is accepted but its rule denies a declared input. Authoring a
     # successor policy is the repair; the run itself is not retryable as-is.
     "source_acquisition_refused": RepairOperation(
-        operation="cruxible.authoring.create",
+        operation="cruxible.authoring.example",
         arguments={"example": "source-acquisition-policy"},
     ),
     # Measurement doors. A declaration, run, or subject that does not fit is

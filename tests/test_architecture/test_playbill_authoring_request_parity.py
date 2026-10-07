@@ -11,9 +11,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
     AuthoringIntentCompileRequestV2,
-    AuthoringIntentCreateRequest,
-    AuthoringIntentCreateRequestV1,
-    AuthoringIntentCreateRequestV2,
 )
 from cruxible_core.server import playbill_request_models as server_models
 
@@ -32,14 +29,11 @@ def _request_shape(model: type[BaseModel]) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("client_model", "server_model"),
     [
-        (AuthoringIntentCreateRequestV1, server_models.PlaybillAuthoringCreateRequest),
-        (AuthoringIntentCreateRequestV2, server_models.PlaybillAuthoringCreateRequestV2),
-        (AuthoringIntentCreateRequest, server_models.PlaybillAuthoringCreateRequestV3),
         (AuthoringIntentCompileRequestV1, server_models.PlaybillAuthoringCompileRequest),
         (AuthoringIntentCompileRequestV2, server_models.PlaybillAuthoringCompileRequestV2),
         (AuthoringIntentCompileRequest, server_models.PlaybillAuthoringCompileRequestV3),
     ],
-    ids=("create-v1", "create-v2", "create-v3", "compile-v1", "compile-v2", "compile-v3"),
+    ids=("compile-v1", "compile-v2", "compile-v3"),
 )
 def test_client_and_server_share_each_authoring_request_model(
     client_model: type[BaseModel],

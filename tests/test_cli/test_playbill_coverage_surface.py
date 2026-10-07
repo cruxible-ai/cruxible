@@ -128,15 +128,15 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
             body=GOVERNED_BYTES.decode("utf-8"),
         ),
     )
-    created = cruxible.json(
+    compiled = cruxible.json(
         "authoring",
-        "create",
+        "compile",
         _write(tmp_path / "claim.json", authoring.model_dump(mode="json")),
     )
     submitted = cruxible.json(
         "authoring",
         "submit",
-        str(created["intent"]["intent_id"]),
+        str(compiled["certificate"]["intent_id"]),
     )
     cruxible.accept(str(submitted["status"]["proposal_id"]))
     return f"Claim:{submitted['intent']['semantic_identity']}"

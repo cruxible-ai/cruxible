@@ -16,6 +16,7 @@ from pydantic import TypeAdapter, ValidationError
 from cruxible_client import CruxibleClient, contracts
 from cruxible_client.authoring.blocks import render_projection_opening
 from cruxible_client.authoring.examples import (
+    AUTHORING_EXAMPLE_NAMES,
     authoring_example_note,
     claim_flow_a_example,
     claim_self_source_example,
@@ -263,7 +264,8 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     claim_type_help = runner.invoke(cli, ["claim-type", "propose", "--help"])
     claim_type_example = runner.invoke(cli, ["claim-type", "propose", "--example"])
     claim_type_missing = runner.invoke(cli, ["claim-type", "propose"])
-    create_help = runner.invoke(cli, ["authoring", "create", "--help"])
+    example_help = runner.invoke(cli, ["authoring", "example", "--help"])
+    create = runner.invoke(cli, ["authoring", "create", "--help"])
 
     assert claim_type_help.exit_code == 0, claim_type_help.output
     assert "--template" in claim_type_help.output
@@ -273,8 +275,11 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     assert claim_type_missing.exit_code == 2
     assert "provide exactly one of --input or --template" in claim_type_missing.output
 
-    assert create_help.exit_code == 0, create_help.output
-    assert "PAYLOAD_FILE" in create_help.output
+    assert example_help.exit_code == 0, example_help.output
+    assert "authoring example [OPTIONS] [NAME]" in example_help.output
+    # The intent is created by compile; there is no separate create door.
+    assert create.exit_code == 2
+    assert "No such command 'create'" in create.output
 
 
 def test_cli_refused_stale_preflight_teaches_rebase_not_resume(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -604,9 +609,9 @@ def test_cli_insertion_abandon_uses_the_opaque_intent(
     ]
 
 
-def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
+def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
     runner = CliRunner()
-    help_result = runner.invoke(cli, ["authoring", "create", "--help"])
+    help_result = runner.invoke(cli, ["authoring", "example", "--help"])
     assert help_result.exit_code == 0
     assert "Input kind family: claim | procedure | subject | query_definition" in help_result.output
     # Click wraps the family list, so read it as a list rather than by substring:
@@ -647,7 +652,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         "change-set",
         "claim-type-succession",
     ):
-        result = runner.invoke(cli, ["authoring", "create", "--example", name])
+        result = runner.invoke(cli, ["authoring", "example", name])
         assert result.exit_code == 0, result.output
         # A note (cron's UTC reading) goes to stderr: stdout is one JSON document.
         payload = json.loads(result.stdout)
@@ -708,12 +713,12 @@ def _kind_family(output: str, label: str) -> tuple[str, ...]:
     )
 
 
-def test_cli_create_help_names_only_kinds_the_discriminators_admit() -> None:
-    """Every kind the `create` docstring advertises must be authorable there.
+def test_cli_example_help_names_only_kinds_the_discriminators_admit() -> None:
+    """Every kind the `example` docstring advertises must be authorable.
 
     The docstring is the only place an agent learns which `kind` a payload file
     may carry, so a kind listed there that `AuthoringInput` refuses costs a
-    whole create round trip -- and so does a member kind that parses but that
+    whole compile round trip -- and so does a member kind that parses but that
     `_lower_change_set` refuses in every set. Both families are read back off
     the rendered help and checked against the discriminated unions and against
     the lowering's own singleton-only table, never against a literal list.
@@ -721,7 +726,7 @@ def test_cli_create_help_names_only_kinds_the_discriminators_admit() -> None:
 
     top_level = TypeAdapter(AuthoringInput)
     member = TypeAdapter(AuthoringChangeSetMemberInput)
-    help_output = CliRunner().invoke(cli, ["authoring", "create", "--help"]).output
+    help_output = CliRunner().invoke(cli, ["authoring", "example", "--help"]).output
     member_kinds = _input_kinds(AuthoringChangeSetMemberInput)
     singleton_only = {item.kind for item in CHANGE_SET_SINGLETON_ONLY_MEMBERS}
     assert singleton_only and singleton_only < member_kinds
@@ -782,23 +787,20 @@ def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
 @pytest.mark.parametrize(
     "arguments",
     [
-        ["--example", "claim-cite-supporting-evidence"],
+        ["claim-cite-supporting-evidence"],
         [
-            "--example",
             "claim-cite-supporting-evidence",
             "--attestation-claim-id",
             "CLM-" + "a" * 32,
         ],
         [
-            "--example",
             "claim-cite-supporting-evidence",
             "--capture-digest",
             "sha256:" + "b" * 64,
         ],
-        ["--example", "claim-flow-a", "--attestation-claim-id", "CLM-" + "a" * 32],
-        ["--example", "claim-flow-a", "--capture-digest", "sha256:" + "b" * 64],
+        ["claim-flow-a", "--attestation-claim-id", "CLM-" + "a" * 32],
+        ["claim-flow-a", "--capture-digest", "sha256:" + "b" * 64],
         [
-            "--example",
             "claim-flow-a",
             "--attestation-claim-id",
             "CLM-" + "a" * 32,
@@ -810,7 +812,7 @@ def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
 def test_cli_attestation_door_example_options_refuse_incomplete_or_wrong_hints(
     arguments: list[str],
 ) -> None:
-    result = CliRunner().invoke(cli, ["authoring", "create", *arguments])
+    result = CliRunner().invoke(cli, ["authoring", "example", *arguments])
     assert result.exit_code == 2
 
 
@@ -819,8 +821,7 @@ def test_cli_attestation_door_example_accepts_both_hints() -> None:
         cli,
         [
             "authoring",
-            "create",
-            "--example",
+            "example",
             "claim-cite-supporting-evidence",
             "--attestation-claim-id",
             "CLM-" + "a" * 32,
@@ -835,24 +836,23 @@ def test_cli_attestation_door_example_accepts_both_hints() -> None:
 
 
 @pytest.mark.parametrize("hint", ["--attestation-claim-id", "--capture-digest"])
-def test_cli_payload_file_refuses_attestation_example_hints(
-    tmp_path: Path,
-    hint: str,
-) -> None:
-    payload = tmp_path / "payload.json"
-    payload.write_text("{}\n", encoding="utf-8")
+def test_cli_example_listing_refuses_attestation_example_hints(hint: str) -> None:
     value = "CLM-" + "a" * 32 if hint == "--attestation-claim-id" else "sha256:" + "b" * 64
 
-    result = CliRunner().invoke(
-        cli,
-        ["authoring", "create", str(payload), hint, value],
-    )
+    result = CliRunner().invoke(cli, ["authoring", "example", hint, value])
 
     assert result.exit_code == 2
-    assert "require --example" in result.output
+    assert "require NAME" in result.output
 
 
-def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
+def test_cli_example_without_a_name_lists_every_example() -> None:
+    result = CliRunner().invoke(cli, ["authoring", "example"])
+
+    assert result.exit_code == 0, result.output
+    assert tuple(result.output.split()) == AUTHORING_EXAMPLE_NAMES
+
+
+def test_cli_compile_flow_a_stub_reports_bind_refusal_from_served_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -906,7 +906,7 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
                     "--instance-id",
                     instance_id,
                     "authoring",
-                    "create",
+                    "compile",
                     str(payload),
                 ],
             )
@@ -945,14 +945,14 @@ def test_cli_validation_names_field_path_and_matching_example(tmp_path: Path) ->
             "--instance-id",
             "inst_authoring",
             "authoring",
-            "create",
+            "compile",
             str(payload),
         ],
     )
 
     assert result.exit_code == 1
     assert "$.claim.source.self_source.body" in result.output
-    assert "cruxible authoring create --example claim-self-source" in result.output
+    assert "cruxible authoring example claim-self-source" in result.output
 
 
 def test_cli_bind_derives_observation_and_compiles(

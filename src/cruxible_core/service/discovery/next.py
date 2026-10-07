@@ -873,7 +873,7 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
 
 
 _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
-    "cruxible.authoring.create": "authoring create",
+    "cruxible.authoring.example": "authoring example",
     "cruxible.authoring.bind": "authoring bind",
     "cruxible.claim.retire": "retire",
     "cruxible.set": "set",
@@ -897,7 +897,6 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
 # `PAYLOAD_FILE` left in the line is not a hint, it is an unrunnable command
 # presented as a runnable one, which is the one thing `command` must never be.
 _REPAIR_COMMAND_OPERANDS: Mapping[str, tuple[str, ...]] = {
-    "cruxible.authoring.create": ("PAYLOAD_FILE",),
     "cruxible.authoring.bind": ("--payload-file", "PAYLOAD_FILE"),
     "cruxible.document.propose": ("--envelope", "ENVELOPE_FILE"),
 }
@@ -942,7 +941,8 @@ NextCallerSurface: TypeAlias = Literal["cli", "mcp", "sdk"]
 #: every surface (MCP included): repin declares the block at the instance, and
 #: sync reads its backings.
 _REPAIR_TOOLS: Mapping[str, str | None] = {
-    "cruxible.authoring.create": "cruxible_authoring_create",
+    # The template starts the repair; compile is the door that performs it.
+    "cruxible.authoring.example": "cruxible_authoring_compile",
     "cruxible.authoring.bind": "cruxible_authoring_bind",
     "cruxible.claim.retire": "cruxible_retire",
     "cruxible.set": "cruxible_set",
@@ -1123,7 +1123,7 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         # The observation is the settler's to choose: its Claim ID is the one
         # argument left to add.
         return _mcp_call("cruxible_settle", prediction_id=text("prediction_id"))
-    if operation == "cruxible.authoring.create" and text("example") and not text("payload_file"):
+    if operation == "cruxible.authoring.example" and text("example"):
         return _mcp_call("cruxible_authoring_example", name=text("example"))
     if operation == "cruxible.proposal.readmit" and text("proposal_id"):
         return _mcp_call("cruxible_proposal_readmit", proposal_id=text("proposal_id"))
@@ -1213,7 +1213,7 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _sdk_call("cx.dispatch_line", line)
     if operation == "cruxible.settle" and (prediction := text("prediction_id")):
         return _sdk_call("cx.settle", prediction)
-    if operation == "cruxible.authoring.create" and not text("payload_file"):
+    if operation == "cruxible.authoring.example":
         example = text("example")
         return None if example is None else _sdk_call("authoring_example", example)
     if operation == "cruxible.proposal.approve" and (proposal := text("proposal_id")):
@@ -1289,12 +1289,12 @@ def _repair_command(
             parts.append("--all")
         else:
             return None
-    elif operation == "cruxible.authoring.create" and not values.get("payload_file"):
-        # With no payload in hand the runnable step is the template that
-        # starts one; a bare `authoring create` refuses as a usage error.
+    elif operation == "cruxible.authoring.example":
+        # The runnable step is the template that starts the payload; with no
+        # example named, a bare `authoring example` lists every name.
         example = values.get("example")
         if isinstance(example, str) and example:
-            parts.extend(["--example", shlex.quote(example)])
+            parts.append(shlex.quote(example))
     elif operation == "cruxible.compiler.upgrade":
         target = values.get("to")
         name = values.get("name")
@@ -1391,7 +1391,7 @@ def _item(
     command = _repair_command(repair.operation, arguments=repair.arguments, surface=surface)
     example = (
         _ATTESTATION_REPAIR_EXAMPLES.get(repair.required_change)
-        if repair.operation == "cruxible.authoring.create"
+        if repair.operation == "cruxible.authoring.example"
         else None
     )
     if example is not None and isinstance(repair.arguments, Mapping):
@@ -1411,7 +1411,7 @@ def _item(
         elif isinstance(claim_id, str) and isinstance(capture_digest, str):
             command = " ".join(
                 (
-                    "cruxible authoring create --example",
+                    "cruxible authoring example",
                     shlex.quote(example),
                     "--attestation-claim-id",
                     shlex.quote(claim_id),
@@ -2387,7 +2387,7 @@ def _claim_attestation_threshold_items(
                         )
                         if rule.stance == "contradict"
                         else _restating_repair(
-                            "cruxible.authoring.create",
+                            "cruxible.authoring.example",
                             target=claim.identity.qualified,
                             required_change="resolve_attestation_threshold",
                             arguments={
@@ -2513,7 +2513,7 @@ def _claim_items(
                     )
                     if len(identities) <= _MAX_CONTEST_OPTIONS
                     else PlaybillNextRepairV1(
-                        operation="cruxible.authoring.create",
+                        operation="cruxible.authoring.example",
                         target=subject,
                         required_change="revise_claims_into_distinct_qualifiers",
                         arguments=arguments,
@@ -3184,7 +3184,7 @@ def _claim_attestation_door_items(
                     # Each door example revises the Claim citing this Capture as
                     # evidence: the `set` of its field with capture evidence.
                     repair=_restating_repair(
-                        "cruxible.authoring.create",
+                        "cruxible.authoring.example",
                         target=statement.claim_identity.qualified,
                         required_change=required_change,
                         arguments={
@@ -3320,7 +3320,7 @@ def _claim_dependency_items(
                 related_identities=related,
                 detail={"stale_inputs": stale_inputs},
                 repair=PlaybillNextRepairV1(
-                    operation="cruxible.authoring.create",
+                    operation="cruxible.authoring.example",
                     target=identity,
                     required_change="reauthor_claim_from_current_inputs",
                     arguments={"claim_id": identity.removeprefix("Claim:")},
@@ -4116,7 +4116,7 @@ def _triggers_health(
         message="; ".join(f"no trigger schedules {action}" for action in unscheduled),
     )
     author = PlaybillNextRepairV1(
-        operation="cruxible.authoring.create",
+        operation="cruxible.authoring.example",
         target=unscheduled[0],
         required_change=(
             "author_a_trigger_aimed_at_the_unscheduled_action"
@@ -4558,7 +4558,7 @@ def _mandate_items(
                         "expires_at": format_datetime(mandate.expires_at),
                     },
                     repair=PlaybillNextRepairV1(
-                        operation="cruxible.authoring.create",
+                        operation="cruxible.authoring.example",
                         target=identity,
                         required_change="author_a_successor_mandate_or_retire_it",
                         arguments={
