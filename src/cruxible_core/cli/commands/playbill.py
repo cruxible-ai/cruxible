@@ -538,7 +538,7 @@ def _write_init_resume_marker(path: Path, payload: Mapping[str, str]) -> None:
 def _adopt_init_retry_key(
     target: ClientPrincipalKeyTarget,
     *,
-    workspace: Path | None,
+    forbidden_roots: tuple[Path, ...],
     transport: str,
     instance_id: str,
 ) -> GeneratedKeyMaterial:
@@ -553,7 +553,7 @@ def _adopt_init_retry_key(
         target.directory,
         principal_id=target.principal.principal_id,
         kind=target.principal.kind,
-        forbidden_roots=_forbidden_roots_for(workspace),
+        forbidden_roots=forbidden_roots,
     )
     expected = _init_resume_payload(
         target,
@@ -570,17 +570,17 @@ def _adopt_init_retry_key(
 
 def _prepare_init_custody(
     *,
-    workspace: Path | None,
     transport: str,
     instance_id: str,
     specifications: tuple[tuple[Path, str, PrincipalKind], ...],
+    forbidden_roots: tuple[Path, ...],
 ) -> tuple[tuple[GeneratedKeyMaterial, ...], tuple[Path, ...]]:
     targets = tuple(
         validate_client_principal_key_target(
             directory,
             principal_id=principal_id,
             kind=kind,
-            forbidden_roots=_forbidden_roots_for(workspace),
+            forbidden_roots=forbidden_roots,
         )
         for directory, principal_id, kind in specifications
     )
@@ -606,7 +606,7 @@ def _prepare_init_custody(
             prepared.append(
                 _adopt_init_retry_key(
                     target,
-                    workspace=workspace,
+                    forbidden_roots=forbidden_roots,
                     transport=transport,
                     instance_id=instance_id,
                 )
@@ -628,7 +628,7 @@ def _prepare_init_custody(
                 target.directory,
                 principal_id=target.principal.principal_id,
                 kind=target.principal.kind,
-                forbidden_roots=_forbidden_roots_for(workspace),
+                forbidden_roots=forbidden_roots,
             )
             _write_init_resume_marker(
                 marker,
@@ -1106,11 +1106,26 @@ def init_playbill(
         # credential the credential decides who acts, so no claim is sent.
         _root_ctx_obj()["principal_id"] = principal_id
     workspace = git_workspace
+    custody_roots = _init_custody_roots(workspace)
+    # Every explicit custody directory is checked before a host is allocated or
+    # a key generated; the default one as soon as the host names it.
+    for role, flag, explicit in (
+        ("owner", "--key-dir", key_dir),
+        ("reviewer", "--reviewer-key-dir", reviewer_key_dir),
+        ("recovery", "--recovery-key-dir", recovery_key_dir),
+    ):
+        if explicit is not None:
+            _refuse_custody_inside(role, Path(explicit), custody_roots, flag=flag)
     selected = str(selected_instance) if selected_instance else _create_host_for_init(transport)
     owner_key_dir = (
         Path(key_dir).expanduser()
         if key_dir is not None
-        else _default_owner_key_dir(selected, principal_id, workspace)
+        else _refuse_custody_inside(
+            "owner",
+            default_key_dir(selected, principal_id),
+            custody_roots,
+            flag="--key-dir",
+        )
     )
     specifications: list[tuple[Path, str, PrincipalKind]] = [
         (owner_key_dir, principal_id, "ordinary")
@@ -1122,10 +1137,10 @@ def init_playbill(
             (Path(recovery_key_dir).expanduser(), recovery_principal_id, "recovery")
         )
     materials, markers = _prepare_init_custody(
-        workspace=workspace,
         transport=transport,
         instance_id=selected,
         specifications=tuple(specifications),
+        forbidden_roots=custody_roots,
     )
     owner = materials[0]
     reviewer = materials[1] if reviewer_key_dir is not None else None
@@ -1230,22 +1245,40 @@ def _create_host_for_init(transport: str) -> str:
     return created.instance_id
 
 
-def _default_owner_key_dir(instance_id: str, principal_id: str, workspace: Path | None) -> Path:
-    """The per-user key directory a bare init uses, refused inside a workspace or state root."""
+def _init_custody_roots(workspace: Path | None) -> tuple[Path, ...]:
+    """Where init never puts a key: the workspace and the local daemon state root."""
 
-    directory = default_key_dir(instance_id, principal_id)
-    roots = [] if workspace is None else [workspace.resolve()]
+    roots = [] if workspace is None else [workspace]
     try:
-        roots.append(get_server_state_root().resolve())
+        roots.append(get_server_state_root())
     except CoreError:  # pragma: no cover - no resolvable local state root
         pass
+    return tuple(root.expanduser().resolve() for root in roots)
+
+
+def _within_real_name(candidate: Path, root: Path) -> bool:
+    """Containment on resolved names, case-insensitively (macOS volumes ignore case)."""
+
+    inner = tuple(part.casefold() for part in candidate.parts)
+    outer = tuple(part.casefold() for part in root.parts)
+    return inner[: len(outer)] == outer
+
+
+def _refuse_custody_inside(
+    role: str, directory: Path, roots: tuple[Path, ...], *, flag: str
+) -> Path:
+    """``directory`` (symlinks resolved) if it is outside every root; else a refusal."""
+
+    resolved = directory.expanduser().resolve()
     for root in roots:
-        if directory == root or root in directory.parents:
+        if _within_real_name(resolved, root):
             raise click.UsageError(
-                f"the default key directory {directory} lies inside {root}; keys stay outside "
-                "every workspace and the daemon state root. Repair: `cruxible init --key-dir DIR`"
+                f"the {role} key directory lies inside {root}; keys stay outside every "
+                f"workspace and the daemon state root (custody path={str(resolved)!r}, "
+                f"forbidden root={str(root)!r}). Repair: `cruxible init {flag} DIR` with DIR "
+                "outside both"
             )
-    return directory
+    return resolved
 
 
 def _mint_owner_credential(owner: GeneratedKeyMaterial, *, principal_id: str) -> str | None:

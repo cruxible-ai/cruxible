@@ -297,3 +297,56 @@ def test_a_settings_file_naming_another_daemon_is_not_loaded(
     result = CliRunner().invoke(cli, ["whoami"])
     assert remembered == [{"url": URL, "token": None, "principal": None}]
     assert "acting as no principal" in result.stderr
+
+
+# -- F-002: no init custody directory lands in a workspace or the state root -----
+
+
+@pytest.mark.parametrize("flag", ["--key-dir", "--reviewer-key-dir", "--recovery-key-dir"])
+@pytest.mark.parametrize("spelling", ["direct", "symlink", "cased"])
+def test_every_init_custody_directory_is_refused_inside_the_state_root(
+    daemon: Path, flag: str, spelling: str
+) -> None:
+    state_root = daemon / "server-state"
+    state_root.mkdir(exist_ok=True)
+    target = state_root / "keys"
+    if spelling == "symlink":
+        link = daemon / "innocent-looking"
+        link.symlink_to(state_root, target_is_directory=True)
+        target = link / "keys"
+    elif spelling == "cased":
+        target = daemon / "SERVER-STATE" / "keys"
+    args = ["init", "--principal-id", "owner", flag, str(target)]
+
+    result = _run(*args)
+
+    assert result.exit_code == 2, result.output
+    assert "keys stay outside every workspace and the daemon state root" in result.output
+    assert f"cruxible init {flag} DIR" in result.output
+    # Refused before a host is allocated or any key is generated.
+    assert load_cli_context().instance_id is None
+    assert not list(state_root.rglob("*.ed25519"))
+
+
+def test_an_init_custody_directory_is_refused_inside_the_workspace(
+    daemon: Path,
+) -> None:
+    import subprocess
+
+    project = daemon / "project"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+
+    result = _run(
+        "init",
+        "--principal-id",
+        "owner",
+        "--workspace",
+        str(project),
+        "--recovery-key-dir",
+        str(project / "recovery-keys"),
+    )
+
+    assert result.exit_code == 2, result.output
+    assert f"lies inside {project.resolve()}" in result.output
+    assert not list(project.rglob("*.ed25519"))

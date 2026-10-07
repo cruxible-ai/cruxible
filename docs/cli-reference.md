@@ -647,8 +647,11 @@ host. Makes you the owner under `--principal-id` (default: the configured
 flag, else your OS username lowercased; a username that is no principal ID is
 refused with the `--principal-id` repair). `--key-dir` defaults to
 `$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/PRINCIPAL` (`~/.config` when unset): a
-per-user path outside the workspace and the daemon state root, refused if it
-would fall inside either. On an auth-off daemon the init request claims that
+per-user path outside the workspace and the daemon state root. Every custody
+directory (owner, reviewer and recovery, default or explicit, with symlinks
+resolved and case ignored) is refused inside either before any host is
+allocated or key generated; a refused default is reported after the new host
+is selected, so the retry initializes that host. On an auth-off daemon the init request claims that
 principal, so no bootstrap secret is needed. Init writes the owner's settings
 file (`DIR/cruxible.env`) and remembers it in the CLI context, so later commands
 act as the owner without sourcing anything (see [context](#context)). An init
