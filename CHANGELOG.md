@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The MCP server ships in the base install: `mcp` (`>=1.0,<2`) is a base
+  dependency, so `uvx cruxible mcp` and `cruxible-mcp` work on a plain
+  `pip install cruxible`. The `mcp` extra is gone; `cruxible[mcp]` still
+  installs, with an installer warning about the unknown extra. The unused
+  `python-multipart` dependency is dropped.
+
 - **The public name is Cruxible.** Every public surface drops the development
   name: the CLI is one flat group (`cruxible get`, `cruxible query`,
   `cruxible workspace attach`, `cruxible stub`), MCP tools are `cruxible_*`,

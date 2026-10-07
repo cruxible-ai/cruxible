@@ -33,21 +33,19 @@ dependencies = [
     "cryptography>=46.0",
     "httpx>=0.24",
     "fastapi>=0.100",
-    "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.20",
+    # The MCP server (`cruxible mcp`, `cruxible-mcp`) ships in the base install,
+    # so `uvx cruxible mcp` works without an extra. <2: mcp 2.0.0 removed the
+    # bundled mcp.server.fastmcp the tools are built on; the SDK-2.0 migration
+    # is tracked separately (wi-mcp-sdk-2-migration).
+    "mcp>=1.0,<2",
 ]
 
 [project.optional-dependencies]
-# <2: mcp 2.0.0 removed the bundled mcp.server.fastmcp the tools are built
-# on; the SDK-2.0 migration is tracked separately (wi-mcp-sdk-2-migration).
-mcp = ["mcp>=1.0,<2"]
-# There is deliberately no `server` extra: fastapi/uvicorn are base
-# dependencies, so the daemon ships in the default install. Whether that stack
-# should move back out of base deps is a 0.4 packaging question, not something
-# an empty extra can express.
+# There are deliberately no `server` or `mcp` extras: the daemon and the MCP
+# server are base dependencies and ship in the default install.
 dev = [
     "pytest>=8.0",
-    "pytest-cov",
     "pytest-xdist>=3.5",
     "ruff==0.15.0",
     "mypy>=1.10",
