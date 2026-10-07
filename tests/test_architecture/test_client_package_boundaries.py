@@ -14,7 +14,9 @@ CORE_ROOT = ROOT / "src" / "cruxible_core"
 # These modules run on the caller side despite sharing the daemon distribution.
 # G7 may rebuild them over the public SDK. They are deliberately excluded from
 # the daemon half of D2; the closed list prevents that exception from spreading.
-CLIENT_ADAPTER_PREFIXES = ("cli/", "client/", "mcp/")
+# `adapters/` holds caller-side code the CLI and MCP surfaces share (it
+# belongs to neither surface alone).
+CLIENT_ADAPTER_PREFIXES = ("adapters/", "cli/", "client/", "mcp/")
 LEGACY_CLIENT_SIGNING_BRIDGES = {"ledger/signing.py"}
 # This workspace-output consumer reuses the floor writer; it imports neither
 # transport nor signing. Keep the exception to this one module and import.

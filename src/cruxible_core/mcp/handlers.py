@@ -98,11 +98,11 @@ from cruxible_client.errors import ServerUnreachableError
 from cruxible_client.kits import KIT_ARTIFACT, check_kit_updates, fetch_kit_image
 from cruxible_client.transport.http import configured_principal_id
 from cruxible_core import __version__
+from cruxible_core.adapters.block_detach import detach_projection_pages
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputRecord,
 )
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
-from cruxible_core.cli.block_detach import detach_projection_pages
 from cruxible_core.coverage.adapter import WorkingSourceObservation
 from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageCardBudget
 from cruxible_core.coverage.indexes import CoverageScanBudget

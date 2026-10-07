@@ -126,9 +126,9 @@ from cruxible_client.kits import (
     resolve_kit,
     write_kit_directory,
 )
+from cruxible_core.adapters.block_detach import detach_projection_pages
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, claim_type_input_template
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
-from cruxible_core.cli.block_detach import detach_projection_pages
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,

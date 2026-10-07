@@ -1,4 +1,4 @@
-"""Detach retired projection blocks from workspace pages: one road for the CLI and MCP adapters.
+"""Detach retired projection blocks from workspace pages: one road for the CLI and MCP.
 
 Detaching strips a retired block's marker pair from its page and keeps the body.
 It edits workspace pages only, never governed state, and it runs in the adapter
