@@ -49,6 +49,18 @@ refused, typed, unless it names a positive number of seconds. A timeout never
 means the request failed: the daemon may still be running it, so verify state
 before retrying.
 
+Every argument that takes a one-off payload also accepts `-` to read it from
+stdin, so a heredoc or a pipe works and nothing lands on disk: `write -`,
+`authoring compile -`, `authoring bind --payload-file -`, `claim-type propose
+--input -`, `claim-type migrate -`, `predict -`, `settle --request -`,
+`resolution-contracts --request -`, `query --spec -`, `coverage resolve
+--grep-results -`, the Procedure and Line request, input, `--at`,
+`--resolution-contract` and `--trigger-event` files, access profiles and
+cursors, and `body store -`. One command reads stdin for one argument; a second
+`-` is refused. Real artifacts stay files: Procedure source, signed source
+bundles, kit and provider lock files, key directories, cited workspace files
+and block pages.
+
 ## context
 
 Manage remembered daemon and instance context. `context show` reports the

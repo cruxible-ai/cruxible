@@ -122,8 +122,15 @@ def test_workspace_coverage_derives_observations_from_decision_bearing_selection
         bindings={"docs/decision.md": "external:workspace.decision"},
         ranges=("docs/decision.md:2-2",),
     )
+    # The same selection as inline grep output: no saved file, no path.
+    handlers.handle_playbill_coverage(
+        "inst_test",
+        bindings={"docs/decision.md": "external:workspace.decision"},
+        grep_results="docs/decision.md:2:status: ready\n",
+    )
 
-    assert len(captured) == 1
+    assert len(captured) == 2
+    assert captured[1]["selections"] == captured[0]["selections"]
     assert captured[0]["source"] == {
         "tag": "playbill-logical-source-identity-v1",
         "plane": "external",

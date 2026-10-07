@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar, cast, get_args
 
 import click
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from cruxible_client import (
@@ -151,6 +150,16 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.cli.payloads import (
+    PayloadFile,
+    payload_label,
+    read_payload_bytes,
+    read_payload_document,
+    read_payload_text,
+)
+from cruxible_core.cli.payloads import model_field_errors as _model_field_errors
+from cruxible_core.cli.payloads import read_mapping as _read_mapping
+from cruxible_core.cli.payloads import read_model as _read_model
 from cruxible_core.cli.principal_settings import (
     PRINCIPAL_KEY_ENV,
     PRINCIPAL_SETTINGS_FILE,
@@ -276,41 +285,6 @@ def _server_call(
     return cast(ResultT, result)
 
 
-def _model_field_errors(exc: ValidationError) -> list[str]:
-    """Render one pydantic failure per line as ``field.path: message``."""
-    rendered: list[str] = []
-    for error in exc.errors(include_url=False):
-        location = ".".join(str(part) for part in error.get("loc", ()))
-        message = str(error.get("msg", "invalid"))
-        rendered.append(f"{location}: {message}" if location else message)
-    return rendered
-
-
-def _read_model(path: str, model: type[ResultT]) -> ResultT:
-    source = Path(path).expanduser()
-    try:
-        payload = yaml.safe_load(source.read_text())
-    except (OSError, yaml.YAMLError) as exc:
-        raise click.ClickException(f"Could not read {source}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise click.ClickException(f"{source} must contain one mapping")
-    validator = getattr(model, "model_validate")
-    try:
-        return cast(ResultT, validator(payload))
-    except ValidationError as exc:
-        # A malformed request file is the caller's mistake, not a crash: without
-        # this the raw pydantic ValidationError escapes `handle_errors` (which
-        # catches only the client CoreError family) and prints a Python
-        # traceback, unlike every other refusal on this CLI. Carry the field
-        # paths so the caller can repair the file from the message alone.
-        # DataValidationError renders `summary: <errors>` itself, so the summary
-        # must not repeat the field list.
-        raise DataValidationError(
-            f"{source} is not a valid {model.__name__}",
-            errors=_model_field_errors(exc),
-        ) from exc
-
-
 def _read_since_access_profile(path: str) -> dict[str, Any]:
     """Read a CoverageAccessProfile file for since, filling model defaults.
 
@@ -327,17 +301,6 @@ def _read_since_access_profile(path: str) -> dict[str, Any]:
                 for err in exc.errors(include_url=False)
             ]
         ) from exc
-
-
-def _read_mapping(path: str) -> dict[str, Any]:
-    source = Path(path).expanduser()
-    try:
-        payload = yaml.safe_load(source.read_text())
-    except (OSError, yaml.YAMLError) as exc:
-        raise click.ClickException(f"Could not read {source}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise click.ClickException(f"{source} must contain one mapping")
-    return cast(dict[str, Any], payload)
 
 
 _AUTHORING_INPUT_ADAPTER: TypeAdapter[AuthoringInput] = TypeAdapter(AuthoringInput)
@@ -1327,11 +1290,11 @@ def body_group() -> None:
 
 
 @body_group.command("store")
-@click.argument("path", type=click.Path(exists=True, dir_okay=False))
+@click.argument("path", type=PayloadFile())
 @json_option
 @handle_errors
 def store_body(path: str, output_json: bool) -> None:
-    content = Path(path).read_bytes()
+    content = read_payload_bytes(path)
     result = _server_call(
         lambda client, instance_id: client.store_body(instance_id, content),
         command_name="cruxible body store",
@@ -1789,7 +1752,7 @@ def document_group() -> None:
 
 
 @document_group.command("propose")
-@click.option("--envelope", type=click.Path(exists=True, dir_okay=False))
+@click.option("--envelope", type=PayloadFile())
 @click.option("--example", type=click.Choice(["document"]))
 @click.option("--name", "proposal_name")
 @change_control_options
@@ -2762,8 +2725,8 @@ def claim_type_group() -> None:
 
 
 @claim_type_group.command("propose")
-@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False))
-@click.option("--envelope", type=click.Path(exists=True, dir_okay=False), hidden=True)
+@click.option("--input", "input_path", type=PayloadFile())
+@click.option("--envelope", type=PayloadFile(), hidden=True)
 @click.option(
     "--template",
     is_flag=True,
@@ -2833,7 +2796,7 @@ def propose_claim_type(
 
 
 @claim_type_group.command("migrate")
-@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("request_file", type=PayloadFile())
 @json_option
 @handle_errors
 def migrate_claim_type(request_file: str, output_json: bool) -> None:
@@ -3016,7 +2979,7 @@ def claim_group() -> None:
 @click.option(
     "--request",
     "request_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Advanced: a ResolutionContractsRequest file with an exact hypothesis reference.",
 )
 @json_option
@@ -3052,7 +3015,7 @@ def resolution_contracts(claim_id: str | None, request_file: str | None, output_
 
 
 @playbill_group.command("predict")
-@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("request_file", type=PayloadFile())
 @json_option
 @handle_errors
 def predict(request_file: str, output_json: bool) -> None:
@@ -3085,7 +3048,7 @@ def predict(request_file: str, output_json: bool) -> None:
 @click.option(
     "--request",
     "request_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help=(
         "Advanced: a SettleRequest file (exact contract reference, anchor event, "
         "or terminal evidence)."
@@ -3241,7 +3204,7 @@ _EXPECTATION_ID_HELP = (
     "payload",
     required=False,
     metavar="PAYLOAD_FILE",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
 )
 @click.option(
     "--example",
@@ -3368,7 +3331,7 @@ def list_pending_authoring_intents(output_json: bool) -> None:
 
 
 @authoring_group.command("compile")
-@click.argument("payload", type=click.Path(exists=True, dir_okay=False))
+@click.argument("payload", type=PayloadFile())
 @click.option("--intent-id", default=None)
 @json_option
 @handle_errors
@@ -3397,7 +3360,7 @@ def compile_authoring(payload: str, intent_id: str | None, output_json: bool) ->
 @click.option(
     "--payload-file",
     required=True,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Claim stub whose source contains only the working tag and logical source_id.",
 )
 @json_option
@@ -4036,7 +3999,7 @@ def retire(
 
 
 @playbill_group.command("write")
-@click.argument("file", required=False, type=click.Path(exists=True, dir_okay=False))
+@click.argument("file", required=False, type=PayloadFile())
 @click.option("--because", default=None, help="Why; overrides the file's because.")
 @click.option("--schema", is_flag=True, help="Print the JSON schema FILE is validated against.")
 @click.option(
@@ -4060,10 +4023,11 @@ def write_changes(
 ) -> None:
     """Apply FILE's set, add and retire changes as one change set.
 
-    FILE (YAML or JSON) holds {"because": ..., "changes": [...]}, or a bare list
-    of changes with --because. Each change is {"op": "set" | "add", "subject",
-    "field", "value"} or {"op": "retire", "target"}; a top-level "subject" is
-    the Subject of every change that names none. --schema prints the schema.
+    FILE (YAML or JSON; - reads stdin) holds {"because": ..., "changes": [...]},
+    or a bare list of changes with --because. Each change is {"op": "set" |
+    "add", "subject", "field", "value"} or {"op": "retire", "target"}; a
+    top-level "subject" is the Subject of every change that names none.
+    --schema prints the schema.
     """
 
     if schema:
@@ -4071,11 +4035,8 @@ def write_changes(
         return
     if file is None:
         raise click.UsageError("pass FILE, or --schema to see what FILE holds")
-    source = Path(file).expanduser()
-    try:
-        payload = yaml.safe_load(source.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise click.ClickException(f"Could not read {source}: {exc}") from exc
+    source = payload_label(file)
+    payload = read_payload_document(file)
     if isinstance(payload, list):
         payload = {"changes": payload}
     try:
@@ -4758,7 +4719,7 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
 @click.option(
     "--spec",
     "spec_path",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     default=None,
     help="A QueryDefinitionSpec file (JSON or YAML).",
 )
@@ -4944,7 +4905,7 @@ def procedure_readiness(name: str, evaluation_time: str, output_json: bool) -> N
 
 @procedure_group.command("bind")
 @click.argument("name")
-@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("request_file", type=PayloadFile())
 @json_option
 @handle_errors
 def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
@@ -5070,25 +5031,25 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
 
 @procedure_group.command("run")
 @click.argument("name")
-@click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("input_file", type=PayloadFile())
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @click.option(
     "--at",
     "at_file",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="AcceptedCoordinate JSON/YAML file; its presence selects replay lane.",
 )
 @click.option(
     "--resolution-contract",
     "contract_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Exact accepted ResolutionContract reference JSON/YAML.",
 )
 @click.option(
     "--trigger-event",
     "event_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Exact retained Capture event reference JSON/YAML.",
 )
 @json_option
@@ -5158,7 +5119,7 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
     "--at",
     "at_file",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="AcceptedCoordinate JSON/YAML file naming the OBSERVATION coordinate.",
 )
 @json_option
@@ -5450,13 +5411,13 @@ def dispatch_line(
 @click.option(
     "--resolution-contract",
     "contract_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Exact accepted ResolutionContract reference JSON/YAML.",
 )
 @click.option(
     "--trigger-event",
     "event_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Exact retained Capture event reference JSON/YAML.",
 )
 @json_option
@@ -5515,7 +5476,7 @@ def run_line(
     "--access-profile",
     "access_profile_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
 )
 @click.option(
@@ -5730,7 +5691,7 @@ def curation_group() -> None:
     "--access-profile",
     "access_profile_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
 )
 @click.option(
@@ -5932,14 +5893,14 @@ def curation_suppress(
     "--access-profile",
     "access_profile_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
 )
 @click.option(
     "--cursor",
     "cursor_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="AuditCursor JSON/YAML returned by a prior page.",
 )
 @json_option
@@ -6002,14 +5963,14 @@ def audit(
     "--access-profile",
     "access_profile_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
 )
 @click.option(
     "--cursor",
     "cursor_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="SinceCursor JSON/YAML returned by a prior page.",
 )
 @json_option
@@ -6372,7 +6333,7 @@ def _coverage_options(function: Callable[..., Any]) -> Callable[..., Any]:
         "--bindings",
         "bindings_path",
         default=None,
-        type=click.Path(exists=True, dir_okay=False),
+        type=PayloadFile(),
         help="A mapping of working path to PLANE:IDENTITY.",
     )(function)
     function = click.option(
@@ -6423,9 +6384,7 @@ def _coverage_observations(
     visible without the caller having to guess which window moved.
     """
 
-    grep_text = (
-        None if grep_path is None else Path(grep_path).expanduser().read_text(encoding="utf-8")
-    )
+    grep_text = None if grep_path is None else read_payload_text(grep_path)
     return observe_workspace(
         bindings,
         root=root,
@@ -6476,7 +6435,7 @@ def _resolved_coverage(
     "--grep-results",
     "grep_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="A `grep -n` result batch to resolve as one operation.",
 )
 @click.option("--all", "whole_working_set", is_flag=True, help="Resolve the whole declared scope.")

@@ -1626,13 +1626,21 @@ def register_tools(
             Field(
                 description=(
                     "Path/source_id bindings; the adapter reads the selected workspace "
-                    "files (files, ranges, grep_results_path, or whole_working_set)."
+                    "files (files, ranges, grep_results, or whole_working_set)."
                 )
             ),
         ] = None,
         files: list[str] | None = None,
         ranges: list[str] | None = None,
-        grep_results_path: str | None = None,
+        grep_results: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "With bindings, grep output (path:line:text lines) selecting the "
+                    "ranges to cover, passed inline."
+                )
+            ),
+        ] = None,
         whole_working_set: Annotated[
             bool, Field(description="With bindings, cover every declared workspace file.")
         ] = False,
@@ -1650,7 +1658,7 @@ def register_tools(
             bindings=_source_bindings(bindings),
             files=tuple(files or ()),
             ranges=tuple(ranges or ()),
-            grep_results_path=grep_results_path,
+            grep_results=grep_results,
             whole_working_set=whole_working_set,
             budget=_dump(budget),
             scan_budget=_dump(scan_budget),

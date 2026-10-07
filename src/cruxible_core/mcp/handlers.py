@@ -2410,7 +2410,7 @@ def handle_playbill_coverage(
     bindings: Mapping[str, str] | None = None,
     files: tuple[str, ...] = (),
     ranges: tuple[str, ...] = (),
-    grep_results_path: str | None = None,
+    grep_results: str | None = None,
     whole_working_set: bool = False,
     budget: dict[str, Any] | None = None,
     scan_budget: dict[str, Any] | None = None,
@@ -2426,12 +2426,12 @@ def handle_playbill_coverage(
             bindings,
             files=files,
             ranges=ranges,
-            grep_results_path=grep_results_path,
+            grep_results=grep_results,
             whole_working_set=whole_working_set,
         )
-    elif files or ranges or grep_results_path is not None or whole_working_set:
+    elif files or ranges or grep_results is not None or whole_working_set:
         raise DataValidationError(
-            "files, ranges, grep_results_path, and whole_working_set apply only with bindings"
+            "files, ranges, grep_results, and whole_working_set apply only with bindings"
         )
     else:
         observed = tuple(
@@ -2506,28 +2506,19 @@ def _workspace_observations(
     *,
     files: tuple[str, ...],
     ranges: tuple[str, ...],
-    grep_results_path: str | None,
+    grep_results: str | None,
     whole_working_set: bool,
 ) -> tuple[WorkingSourceObservation, ...]:
     """Read selected workspace bytes and lower them to existing coverage wire."""
 
     workspace = mcp_workspace_root()
-    grep_text = (
-        None
-        if grep_results_path is None
-        else resolve_workspace_path(
-            grep_results_path,
-            root=workspace,
-            kind="file",
-        ).read_text(encoding="utf-8")
-    )
     return tuple(
         observe_workspace(
             bindings_from_mapping(bindings),
             root=workspace,
             files=files,
             ranges=ranges,
-            grep_text=grep_text,
+            grep_text=grep_results,
             whole_working_set=whole_working_set,
         )
     )
