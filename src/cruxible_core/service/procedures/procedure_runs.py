@@ -4913,7 +4913,9 @@ def service_recover_provider_invocations(
     ``close_in_process_starts`` also closes every unmatched start of a core
     built-in (an admitted occurrence fenced ``in_process``): it holds no process
     lease, so no lease recovery names it, and the daemon calls this once at
-    startup, before it serves, when no in-process invocation can be live.
+    startup, before it serves, when no in-process invocation can be live. That
+    holds only while this daemon is the instance's single owner; see
+    ``PlaybillInstanceManager.recover_in_process_provider_invocations``.
     """
 
     failures = {} if recovery_failure_codes is None else dict(recovery_failure_codes)
@@ -5118,6 +5120,10 @@ def service_recover_provider_invocations(
                 completed[invocation_id] = completion
                 recovered.append(invocation_id)
                 handled.add(invocation_id)
+            interrupted_in_process = all(
+                occurrence.local_execution.fence_scope == "in_process"
+                for _invocation_id, _started, occurrence in resolved_occurrences
+            )
             ordered_completions = tuple(completed[item] for item in starts if item in completed)
             provider_calls = len(ordered_completions)
             invocation_receipt_digests = tuple(item.receipt_digest for item in ordered_completions)
@@ -5142,10 +5148,20 @@ def service_recover_provider_invocations(
                     "status": "failed",
                     "output": None,
                     "refusal": None,
-                    "failure": "Provider invocation was terminated during daemon recovery.",
+                    # A partition whose closed starts were all core built-ins
+                    # was interrupted in-process, not terminated as a child.
+                    "failure": (
+                        "Built-in Provider invocation was interrupted and closed at daemon startup."
+                        if interrupted_in_process
+                        else "Provider invocation was terminated during daemon recovery."
+                    ),
                     "failure_code": "provider_completion_not_durable",
                     "failure_details": {
-                        "provider_refusal_code": "provider_process_group_survived_recovery"
+                        "provider_refusal_code": (
+                            "provider_in_process_interrupted"
+                            if interrupted_in_process
+                            else "provider_process_group_survived_recovery"
+                        )
                     },
                     "halt": None,
                     "semantic_result_digest": None,

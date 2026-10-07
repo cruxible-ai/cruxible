@@ -424,6 +424,16 @@ class PlaybillInstanceManager:
         can be live: every unmatched built-in start is closed as interrupted and
         its attempt finalized failed, so no run stays recovery-required. Logs
         and continues per instance; it never keeps the daemon from starting.
+
+        Single-owner assumption: this daemon is the only one serving each
+        instance it enumerates. The state-root lock (``server/state_lock.py``)
+        makes that true for one state root; two state roots whose registries
+        name the same instance directory are not a supported arrangement, and
+        under one a live built-in invocation of the other daemon could be
+        closed here. The lease-recovery fold and
+        proposal-egress recovery assume the same single owner. A per-instance
+        lock spanning journal start to completion would lift it, but that span
+        lives in the Procedure executor and was judged disproportionate for v1.
         """
 
         from cruxible_core.service.procedures.procedure_runs import (

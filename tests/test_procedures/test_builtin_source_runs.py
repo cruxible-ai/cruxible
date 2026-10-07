@@ -232,7 +232,14 @@ def test_startup_closes_a_built_in_start_a_crash_left_open(tmp_path: Path) -> No
     assert receipt["fence_scope"] == "in_process"
     assert receipt["egress"]["observer_backend"] == "core.in-process"
     assert receipt["outcome"]["code"] == "provider_in_process_interrupted"
-    assert [kind for kind, _payload in events()][-1] == "attempt_finalized"
+    kind, finalized = events()[-1]
+    assert kind == "attempt_finalized"
+    assert finalized["failure"] == (
+        "Built-in Provider invocation was interrupted and closed at daemon startup."
+    )
+    assert finalized["failure_details"] == {
+        "provider_refusal_code": "provider_in_process_interrupted"
+    }
     # A second scan finds nothing left to close.
     assert (
         service_recover_provider_invocations(
