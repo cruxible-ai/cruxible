@@ -4953,11 +4953,25 @@ class ProcedureExecutor:
                 "No local Provider runtime invoker is installed.",
                 node_id=node_id,
             )
+        # The run's deadline, in this executor's clock, goes with every child
+        # spawned for this occurrence: a package classifier's probe now, the
+        # Provider itself later. Each spawner refuses or clips against it
+        # immediately before its child exists.
+        deadline = ProviderSpawnDeadline(
+            deadline_ns=state.run_started_monotonic_ns
+            + admission.budget.wall_clock.microseconds * 1000,
+            monotonic_ns=self.clock.monotonic_ns,
+        )
         try:
             classifier = self.provider_classifier_registry.require(occurrence.classifier_digest)
-            measured_bucket = classifier.classify(payload)
+            measured_bucket = classifier.classify(payload, deadline=deadline)
         except ProviderClassifierInstallationRefused as exc:
             raise _RunRefusal(exc.code, str(exc), node_id=node_id) from exc
+        except ProviderLocalRuntimeRefused as exc:
+            # Nothing is journaled yet: the run itself refuses on its budget.
+            if exc.code != "budget_wall_clock":
+                raise
+            raise _RunRefusal("budget_wall_clock", str(exc), node_id=node_id) from exc
         if not self._bucket_is_accepted(measured_bucket, occurrence.accepted_bucket_selectors):
             raise _ProviderNodeRefusal(
                 map_provider_refusal(
@@ -5108,11 +5122,6 @@ class ProcedureExecutor:
         # spent, the Provider never spawns and the durable start is closed by a
         # matching completion carrying the budget_wall_clock refusal.
         wall_clock_seconds = effective_wall_clock_seconds()
-        deadline = ProviderSpawnDeadline(
-            deadline_ns=state.run_started_monotonic_ns
-            + admission.budget.wall_clock.microseconds * 1000,
-            monotonic_ns=self.clock.monotonic_ns,
-        )
         driver_result: ProviderDriverOutcomeV1 | None = None
         try:
             if wall_clock_seconds <= 0:

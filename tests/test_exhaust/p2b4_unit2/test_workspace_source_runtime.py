@@ -56,7 +56,7 @@ from tests.test_procedures.test_procedure_execution import _Authority, _Contract
 
 
 class _WorkspaceClassifier:
-    def classify(self, canonical_input: CanonicalValue) -> str:
+    def classify(self, canonical_input: CanonicalValue, *, deadline: object) -> str:
         assert isinstance(canonical_input, dict)
         return "content_kind=text;byte_size=tiny"
 

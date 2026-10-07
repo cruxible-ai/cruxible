@@ -1433,6 +1433,171 @@ def test_time_spent_on_the_way_to_spawn_shrinks_the_child_window(
     assert context_windows == [pytest.approx(2.0 if crossing == "spawner" else 0.5)]
 
 
+def _package_classifier_run(
+    tmp_path: Path, *, crossing: str, spent: float
+) -> tuple[Any, list[str], list[float]]:
+    """Run a Procedure whose interface measures buckets with a package classifier.
+
+    The classifier's probe goes through the real package probe and child
+    spawner with Popen intercepted. ``spent`` of the run budget passes at
+    ``crossing``: while the classifier is looked up (before the probe is built)
+    or inside the spawner while the probe's control path is prepared. Returns
+    the run, the journal event kinds, and the window each Popen attempt held
+    the probe child to.
+    """
+
+    import shutil
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import cruxible_core.providers.package_classifier as package
+    import cruxible_core.providers.provider_local_runtime as runtime
+    from cruxible_client.contracts.provider_interfaces import (
+        provider_interface_digest,
+        provider_interface_path,
+    )
+    from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
+    from tests.support.short_temporary_root import short_temporary_directory
+    from tests.test_providers.test_provider_package_contracts import package_interface
+
+    registration = package_interface()
+    interface = AcceptedProviderInterfaceRegistration(
+        path=provider_interface_path(registration.interface_id),
+        registration=registration,
+        artifact_digest=provider_interface_digest(registration).tagged,
+    )
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path, interface=interface)
+    run_budget_ns = prepared.admission.budget.wall_clock.microseconds * 1000
+    clock = _SteppedClock()
+
+    def spend() -> None:
+        clock.elapsed_ns += round(run_budget_ns * spent)
+
+    control = short_temporary_directory("classifier-control-")
+    leases = ProviderProcessLeaseStore(tmp_path / "leases", control_root=control)
+    # The probe process boundary is real; the verified installation is a double.
+    deployment = SimpleNamespace(
+        installation_verification=object(), interpreter_path=Path(sys.executable)
+    )
+    classifier = package.PackageBucketClassifier(
+        registration,
+        deployment,  # type: ignore[arg-type]
+        leases,
+    )
+    registry = ProviderBucketClassifierRegistry()
+    with patch.object(package, "run_package_probe", return_value={"bucket": "size=small"}):
+        registry.install(interface, classifier)
+    real_require = registry.require
+    real_prepare = leases.prepare_control_path
+    popen_windows: list[float] = []
+
+    def require(digest: str):  # type: ignore[no-untyped-def]
+        if crossing == "lookup":
+            spend()
+        return real_require(digest)
+
+    def prepare_control_path(invocation_id: str) -> Path:
+        if crossing == "spawner":
+            spend()
+        return real_prepare(invocation_id)
+
+    def popen(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        popen_windows.append(sys._getframe(1).f_locals["budgets"].wall_clock_seconds)
+        raise runtime.ProviderLocalRuntimeRefused("provider_crashed", "Popen intercepted")
+
+    try:
+        with (
+            patch.object(registry, "require", require),
+            patch.object(leases, "prepare_control_path", prepare_control_path),
+            patch.object(runtime.subprocess, "Popen", popen),
+        ):
+            result = ProcedureExecutor(
+                journal=fixture.journal,
+                bodies=fixture.bodies,
+                run_index=fixture.run_index,
+                fencing_token="writer",
+                activation_authority=_Authority(accepted.artifact_digest),
+                contract_validator=_Contracts(),
+                provider_runtime_invoker=_Invoker(),
+                provider_classifier_registry=registry,
+                clock=clock,
+            ).execute(prepared, accepted)
+    finally:
+        leases.close()
+        shutil.rmtree(control, ignore_errors=True)
+    return result, _event_kinds(prepared, fixture), popen_windows
+
+
+@pytest.mark.parametrize("crossing", ["lookup", "spawner"])
+def test_a_package_classifier_probe_past_the_run_deadline_never_spawns(
+    tmp_path: Path, crossing: str
+) -> None:
+    result, kinds, popen_windows = _package_classifier_run(
+        tmp_path, crossing=crossing, spent=1.0005
+    )
+
+    assert popen_windows == []
+    assert result.status == "refused"
+    assert result.refusal is not None and result.refusal.code == "budget_wall_clock"
+    # Classification precedes the Provider's durable start: nothing to close.
+    assert "provider_invocation_started" not in kinds
+
+
+@pytest.mark.parametrize("crossing", ["lookup", "spawner"])
+def test_a_package_classifier_probe_is_held_to_the_run_time_left(
+    tmp_path: Path, crossing: str
+) -> None:
+    _, kinds, popen_windows = _package_classifier_run(tmp_path, crossing=crossing, spent=0.75)
+
+    # A 2 s run with 1.5 s spent: the probe gets the 0.5 s left, not its own 30 s.
+    assert popen_windows == [pytest.approx(0.5)]
+    assert "provider_invocation_started" not in kinds
+
+
+def test_an_installation_probe_outside_a_run_keeps_its_own_window(tmp_path: Path) -> None:
+    import shutil
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import cruxible_core.providers.package_classifier as package
+    import cruxible_core.providers.provider_local_runtime as runtime
+    from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
+    from tests.support.short_temporary_root import short_temporary_directory
+
+    control = short_temporary_directory("install-probe-control-")
+    leases = ProviderProcessLeaseStore(tmp_path / "leases", control_root=control)
+    deployment = SimpleNamespace(
+        installation_verification=object(), interpreter_path=Path(sys.executable)
+    )
+    popen_windows: list[float] = []
+
+    def popen(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        popen_windows.append(sys._getframe(1).f_locals["budgets"].wall_clock_seconds)
+        raise runtime.ProviderLocalRuntimeRefused("provider_crashed", "Popen intercepted")
+
+    try:
+        with (
+            patch.object(runtime.subprocess, "Popen", popen),
+            pytest.raises(runtime.ProviderLocalRuntimeRefused, match="Popen intercepted"),
+        ):
+            package.run_package_probe(
+                deployment,  # type: ignore[arg-type]
+                leases,
+                kind="resource",
+                digest="sha256:" + "b" * 64,
+                value={"entrypoint": "demo.resource:probe"},
+                deadline=None,
+            )
+    finally:
+        leases.close()
+        shutil.rmtree(control, ignore_errors=True)
+    # No run deadline: the probe reaches the spawn with its own 30 s window.
+    assert popen_windows == [30.0]
+
+
 @pytest.mark.parametrize(
     "backend",
     ["child-self-report", "sandbox", "cloud.netns-proxy", "cloud.proxy-v2"],

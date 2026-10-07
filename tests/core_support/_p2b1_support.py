@@ -133,7 +133,7 @@ class DemoSizeClassifier:
     def classifier_digest(self) -> str:
         return interface_registration().classifier_digest
 
-    def classify(self, canonical_input: CanonicalValue) -> str:
+    def classify(self, canonical_input: CanonicalValue, *, deadline: object) -> str:
         if not isinstance(canonical_input, dict):
             raise ValueError("test input must be an object")
         size = canonical_input.get("size")

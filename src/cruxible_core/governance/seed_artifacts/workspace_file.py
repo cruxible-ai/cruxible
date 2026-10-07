@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
@@ -34,6 +34,9 @@ from cruxible_client.contracts.providers import (
     provider_manifest_digest,
 )
 from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_DIGEST
+
+if TYPE_CHECKING:
+    from cruxible_core.providers.provider_local_runtime import ProviderSpawnDeadline
 
 WORKSPACE_FILE_INTERFACE_ID = "workspace.file"
 WORKSPACE_FILE_PROVIDER_ID = "cruxible-provider-workspace"
@@ -258,7 +261,9 @@ class WorkspaceFileBucketClassifier:
     classifier_version = WORKSPACE_FILE_CLASSIFIER_VERSION
     classifier_digest = WORKSPACE_FILE_CLASSIFIER_DIGEST
 
-    def classify(self, canonical_input: CanonicalValue) -> str:
+    def classify(
+        self, canonical_input: CanonicalValue, *, deadline: ProviderSpawnDeadline | None
+    ) -> str:
         if not isinstance(canonical_input, dict):
             raise ValueError("workspace.file classifier input must be an object")
         if canonical_input.get("content_encoding") != "base64":

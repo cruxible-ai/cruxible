@@ -7,7 +7,7 @@ A deployment still accepts its own exact implementation and runtime closure.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
@@ -22,6 +22,9 @@ from cruxible_client.contracts.provider_interfaces import (
     provider_bucket_vocabulary_digest,
     provider_external_interface_definition_digest,
 )
+
+if TYPE_CHECKING:
+    from cruxible_core.providers.provider_local_runtime import ProviderSpawnDeadline
 
 WEB_FETCH_INTERFACE_PREIMAGE = {
     "contracts": {
@@ -295,7 +298,9 @@ class WebFetchBucketClassifier:
     def classifier_digest(self) -> str:
         return web_fetch_interface_registration().classifier_digest
 
-    def classify(self, canonical_input: CanonicalValue) -> str:
+    def classify(
+        self, canonical_input: CanonicalValue, *, deadline: ProviderSpawnDeadline | None
+    ) -> str:
         if not isinstance(canonical_input, dict):
             raise ValueError("web.fetch input must be an object")
         classified = classify_web_fetch(canonical_input)
