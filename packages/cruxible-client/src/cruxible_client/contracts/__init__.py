@@ -338,7 +338,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.block.detach",
     "cruxible.block.repin",
     "cruxible.block.sync",
-    "cruxible.document.propose",
+    "cruxible.sources.propose",
     "cruxible.proposal.readmit",
     "cruxible.proposal.approve",
     "cruxible.compiler.upgrade",

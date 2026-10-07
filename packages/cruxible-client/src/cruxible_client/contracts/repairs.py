@@ -274,7 +274,7 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
     "occurrence_id_mismatch": RepairOperation(operation="cruxible.line.run"),
     "evaluation_instant_skewed": RepairOperation(operation="cruxible.line.run"),
     "line_identity_mismatch": RepairOperation(operation="cruxible.line.run"),
-    "document_modified": RepairOperation(operation="cruxible.document.propose"),
+    "document_modified": RepairOperation(operation="cruxible.sources.propose"),
     # A next page cursor names the whole queue it continues; once that queue
     # moves, the repair is to read page one again.
     "cruxible.next.cursor_mismatch": RepairOperation(operation="cruxible.next"),

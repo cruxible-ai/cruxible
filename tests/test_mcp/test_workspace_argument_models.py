@@ -21,7 +21,7 @@ def test_workspace_mapping_records_reach_the_adapter_and_reject_duplicates(
         assert instance_id == "inst_test"
         calls.append(kwargs)
 
-    monkeypatch.setattr(handlers, "handle_playbill_source_check", check)
+    monkeypatch.setattr(handlers, "handle_playbill_sources_check", check)
     monkeypatch.setattr(handlers, "handle_playbill_coverage", check)
     server = FastMCP("workspace arguments")
     register_tools(server)
@@ -29,8 +29,8 @@ def test_workspace_mapping_records_reach_the_adapter_and_reject_duplicates(
 
     async def exercise() -> None:
         # Invoke the registered functions through their actual MCP argument parser.
-        source = manager.get_tool("cruxible_source_check")
-        coverage = manager.get_tool("cruxible_coverage")
+        source = manager.get_tool("cruxible_sources_check")
+        coverage = manager.get_tool("cruxible_coverage_resolve")
         assert source is not None and coverage is not None
         await source.run(
             {"instance_id": "inst_test", "root_aliases": [{"alias": "repo", "path": "."}]}
@@ -39,13 +39,13 @@ def test_workspace_mapping_records_reach_the_adapter_and_reject_duplicates(
         await coverage.run(
             {
                 "instance_id": "inst_test",
-                "bindings": [{"path": "notes.md", "source_id": "repo.notes"}],
+                "bindings": [{"path": "notes.md", "source": "external:repo.notes"}],
             }
         )
-        assert calls[-1]["bindings"] == {"notes.md": "repo.notes"}
+        assert calls[-1]["bindings"] == {"notes.md": "external:repo.notes"}
         for tool, field, record in (
             (source, "root_aliases", {"alias": "repo", "path": "."}),
-            (coverage, "bindings", {"path": "notes.md", "source_id": "repo.notes"}),
+            (coverage, "bindings", {"path": "notes.md", "source": "external:repo.notes"}),
         ):
             before = len(calls)
             with pytest.raises(ToolError, match="more than once"):

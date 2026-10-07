@@ -1164,7 +1164,7 @@ cruxible authoring example claim-cite-supporting-evidence
   --attestation-claim-id CLAIM_ID --capture-digest DIGEST
 cruxible authoring compile PAYLOAD [--intent-id INTENT_ID]
 cruxible authoring bind --file PATH --anchor TEXT [--occurrence N]
-  [--window-lines N]
+  [--window-lines N] [--workspace-root DIR]
   --payload-file CLAIM_STUB
 cruxible authoring preflight INTENT_ID
 cruxible authoring rebase INTENT_ID
@@ -1183,6 +1183,12 @@ to the accepted head, and `submit --intent-id ID` submits it. `get` and `list`
 find staged work again after the context that started it is gone.
 `authoring example` prints a model-generated template for NAME, or lists the
 names without one.
+
+`authoring bind` reads `--file` through the workspace's source catalog (the
+current worktree's, or `--workspace-root`'s): the stub's `source_id` must be the
+name the catalog gives that file, so a mistyped name is refused instead of
+minting a citation `next` and coverage never match. An evidence-only catalog
+entry (`name` and `locator`) is enough.
 
 A Claim input names the Claim it revises with `revises`, a Claim ID; omit it
 to state a new Claim. `authoring example claim-revision` prints one. The three
@@ -2584,16 +2590,18 @@ byte-identical.
 cruxible coverage resolve
   [--bind PATH=PLANE:IDENTITY]... [--bindings FILE] [--root DIR]
   [--file PATH]... [--range PATH:START-END]...
-  [--grep-results FILE] [--all]
-cruxible coverage status
-  [--bind PATH=PLANE:IDENTITY]... [--bindings FILE] [--root DIR]
+  [--grep-results FILE] [--all] [--view cards|manifest] [--brief] [--json]
 ~~~
 
 resolve answers what the working files you just read or changed have to do with
-accepted state. Every working path is bound to a logical source by an explicit
-declaration -- coverage never infers a binding from a filename, because
-identical bytes in another file are precisely not the same source. The CLI reads
-and hashes the bytes locally; the daemon reads no client filesystem.
+accepted state. Every working path is bound to a logical source by a
+declaration, never inferred from a filename, because identical bytes in another
+file are precisely not the same source. The declaration is the workspace's
+source catalog (`.cruxible/sources.yaml`): each catalogued file binds to
+`external:<name>`, the identity file evidence is cited under. `--bind` and
+`--bindings` (a mapping, `-` for stdin) override it path by path, for example to
+bind a file to a ledger path. The CLI reads and hashes the bytes locally; the
+daemon reads no client filesystem.
 
 Governed spans are annotated inline in card order. Ungoverned results are
 summarized once per operation, never one line per result:
@@ -2608,55 +2616,18 @@ A `none` is factual only inside a complete boundary, so a span whose health is
 `partial`, `stale`, `denied`, or `unavailable` prints that health and its reason
 codes rather than reading as an absence.
 
-status renders the coverage manifest over the whole declared scope: epoch,
-health, completeness, and the sources a `none` would have been factual inside.
+`--all --view manifest` renders the coverage manifest over every bound file:
+epoch, health, completeness, and the sources a `none` would have been factual
+inside.
 
-Resolving coverage changes no accepted state and appends no receipt.
+Resolving coverage changes no accepted state. It writes the local coverage
+manifest cache, and appends a consumption receipt when the daemon runs with
+`CRUXIBLE_CONSUMPTION_RECEIPTS=on`.
 
-## hook
-
-~~~text
-cruxible hook post-tool-use [--root DIR]
-~~~
-
-Reads one Claude Code PostToolUse payload on stdin and writes the hook response
-on stdout, binding working paths through `.cruxible/coverage.json` at the
-workspace root. Wire it with the settings fragment in
-`integrations/claude-code/`.
-
-This vendor-specific hook is deprecated and parked: it remains compatible, but
-new harnesses should use the client coverage middleware rather than extend it.
-
-Grep content-mode results are annotated in place: the cards are appended to the
-result's own text and every other field is passed through unchanged. Read, Edit,
-and Write are observed only -- their paths are resolved, which refreshes the
-local freshness manifest so the next Grep answers against a current snapshot --
-and their output is returned unmodified, because those tools' result shapes
-carry no field that can hold an annotation without fabricating file content.
-`additionalContext` is never used: it would arrive as a system reminder, which
-is the instruction channel rather than the data channel.
-
-The command always exits 0 and always emits one JSON object. A coverage failure
-degrades to the original output plus, where a channel exists, one
-`Cruxible coverage: unavailable` line; it never breaks the agent's tool call.
-The parked hook writes one actionable code to stderr only when its own adapter
-input is malformed:
-
-- `cruxible.coverage_hook.instance_id_missing`: add `instance_id` to
-  `.cruxible/coverage.json`, or select one with the CLI context/environment.
-- `cruxible.coverage_hook.rule_tag_invalid`: use the exact-path or path-prefix
-  rule tags shown in the integration README.
-- `cruxible.coverage_hook.tool_response_invalid`: the Grep hook must receive its
-  structured response object; fix the harness envelope rather than parsing text.
-
-The workspace config's `instance_id` is the hook's selected instance. General
-CLI and SDK target selection also reads `server_url` or `server_socket` from an
-attached workspace after explicit flags and environment and before remembered
-global context.
-
-For a harness that owns its tool executor, the vendor-neutral middleware in
-`cruxible_core.coverage.middleware` is the full-fidelity path and
-covers all four tool kinds, including same-turn edit drift.
+`.cruxible/coverage.json` holds the workspace's instance, transport and floor
+profile only; it carries no path rules (the Claude Code hook that read them is
+gone). A harness that owns its tool executor embeds the vendor-neutral
+middleware in `cruxible_core.coverage.middleware` and passes its own rules.
 
 ## proposal
 
@@ -2824,13 +2795,29 @@ trusted and could load another principal's settings. See the
 ## sources
 
 ~~~text
-cruxible sources check ...
-cruxible sources compile ...
-cruxible sources propose ...
+cruxible sources check [--catalog FILE] [--local-catalog FILE] [--root DIR]
+  [--root-alias NAME=PATH]... [--json]
+cruxible sources compile --output FILE [--catalog FILE] [--local-catalog FILE]
+  [--root DIR] [--root-alias NAME=PATH]... [--json]
+cruxible sources propose --source NAME --name NAME [--bundle FILE]
+  [--catalog FILE] [--root DIR] [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
-Compilation reads declared local files client-side and emits a path-free bundle.
-The daemon never reads a submitted client path.
+The source catalog (`.cruxible/sources.yaml` or `sources.yaml`, plus an optional
+`.cruxible/sources.local.yaml` overlay) is the one mapping from workspace files to
+logical sources. Every command discovers it the same way; `--catalog` names
+another. An entry needs only `name` and `locator` to be cited as evidence
+(`set --evidence-file`, `cx.file`), covered (`coverage resolve`) and watched by
+`next`; adding `document_id`, `document_kind`, `title`, `media_type` and
+`governance_scope` (all five together) makes it a Document that compiles and
+can be proposed.
+
+`sources compile` reads the catalogued Documents' bytes client-side and writes a
+path-free bundle; `sources check` reports each one's alignment (aligned,
+modified, ahead, pending, behind, diverged, untracked); `sources propose` proposes
+one source as its Document's next revision, compiling the catalog first unless
+`--bundle` names a frozen one. This is the repair `next` names for a
+`document_modified` row. The daemon never reads a submitted client path.
 
 Governance and provenance explanations are `get` details:
 `cruxible get Document:NAME --detail why`, `get KIND/ID --detail why`,

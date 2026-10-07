@@ -3987,18 +3987,25 @@ class Cruxible:
         return result
 
     def _source_card(self, ref: SourceRef) -> KnowledgeCard:
-        self._read_at(ref.coordinate)
-        context = self._client.source_context(self._instance_id)
-        if _coordinate(context.accepted_coordinate) != ref.coordinate:
-            raise ValueError("source context no longer matches the explicit reference coordinate")
-        matches = [item for item in context.documents if item.get("source_id") == ref.address]
-        if len(matches) != 1:
-            raise ValueError(f"source {ref.address!r} did not resolve uniquely")
+        """A catalog source: its Document's card, or the catalog entry when it has none.
+
+        The catalog name lives only in the workspace's source catalog, so the
+        name resolves there; an entry that declares a Document reads that
+        Document at the ref's coordinate, and an evidence-only entry answers
+        the entry itself.
+        """
+
+        entry = self._sources.entry_for_source(ref.address)
+        if entry.document_id is not None:
+            result = self._get(f"Document:{entry.document_id}", "summary", None, ref.coordinate)
+            return KnowledgeCard(
+                RefKind.SOURCE,
+                ref.address,
+                _get_coordinate(result),
+                result.card if result.card is not None else result.proof,
+            )
         return KnowledgeCard(
-            RefKind.SOURCE,
-            ref.address,
-            _coordinate(context.accepted_coordinate),
-            matches[0],
+            RefKind.SOURCE, ref.address, ref.coordinate, entry.model_dump(mode="json")
         )
 
     def orient(

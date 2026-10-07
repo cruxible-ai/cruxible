@@ -370,9 +370,9 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
     way every other read does.
     """
 
-    for path in (("coverage", "resolve"), ("coverage", "status")):
-        assert path not in MUTATING_COMMAND_TARGETS
-        assert _command_at_path(path).callback is not None
+    path = ("coverage", "resolve")
+    assert path not in MUTATING_COMMAND_TARGETS
+    assert _command_at_path(path).callback is not None
 
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
     working = tmp_path / "workspace"

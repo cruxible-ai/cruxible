@@ -168,7 +168,7 @@ class WorkspaceSources:
             raise SourceSelectionError(f"source catalog is invalid: {exc}") from exc
 
     @property
-    def document_entries(self) -> tuple[SourceCatalogEntry, ...]:
+    def source_entries(self) -> tuple[SourceCatalogEntry, ...]:
         return tuple(
             entry for entry in self.catalog.entries if isinstance(entry, SourceCatalogEntry)
         )
@@ -202,7 +202,7 @@ class WorkspaceSources:
         path = Path(requested)
         resolved = (path if path.is_absolute() else self.workspace / path).expanduser().resolve()
         matches = tuple(
-            entry for entry in self.document_entries if self._resolved_path(entry) == resolved
+            entry for entry in self.source_entries if self._resolved_path(entry) == resolved
         )
         if len(matches) != 1:
             raise SourceSelectionError(
@@ -214,13 +214,37 @@ class WorkspaceSources:
             raise SourceSelectionError(f"could not read {requested!s}: {exc}") from exc
         return FileSelector(path=resolved, source_id=matches[0].name, content=content)
 
-    def path_for_source(self, source_id: str) -> Path:
-        matches = tuple(entry for entry in self.document_entries if entry.name == source_id)
+    def entry_for_source(self, source_id: str) -> SourceCatalogEntry:
+        """The one catalog entry named ``source_id``, or a refusal naming the known ones."""
+
+        matches = tuple(entry for entry in self.source_entries if entry.name == source_id)
         if len(matches) != 1:
+            known = ", ".join(entry.name for entry in self.source_entries) or "none"
             raise SourceSelectionError(
-                f"logical source {source_id!r} maps to {len(matches)} local files"
+                f"logical source {source_id!r} maps to {len(matches)} local files "
+                f"(catalogued sources: {known})"
             )
-        return self._resolved_path(matches[0])
+        return matches[0]
+
+    def path_for_source(self, source_id: str) -> Path:
+        return self._resolved_path(self.entry_for_source(source_id))
+
+    def coverage_bindings(self) -> dict[str, str]:
+        """Each catalogued workspace file, relative to the workspace, to its source.
+
+        The catalog is the one path-to-source mapping, so coverage reads it as its
+        bindings (``external:<name>``, the identity file evidence is cited under).
+        Entries outside the workspace or with a root alias are not workspace
+        files and bind nothing.
+        """
+
+        bindings: dict[str, str] = {}
+        for entry in self.source_entries:
+            if entry.root_alias is not None or Path(entry.locator).is_absolute():
+                continue
+            path = self._resolved_path(entry)
+            bindings[path.relative_to(self.workspace).as_posix()] = f"external:{entry.name}"
+        return bindings
 
     def path_for_procedure(self, procedure_identity: str) -> Path:
         matches = tuple(

@@ -755,22 +755,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "resolve": _command(
                 "playbill", "resolve_coverage", "Resolve coverage for working sources."
             ),
-            "status": _command("playbill", "coverage_status", "Render the coverage manifest."),
         },
         module="playbill",
         attr="coverage_group",
-    ),
-    "hook": _group(
-        "Deliver coverage into a harness's own tool results.",
-        {
-            "post-tool-use": _command(
-                "playbill",
-                "post_tool_use_hook",
-                "Annotate a Claude Code tool result with coverage.",
-            ),
-        },
-        module="playbill",
-        attr="hook_group",
     ),
     "sources": _group(
         "Compile declared local files into exact-byte bundles.",

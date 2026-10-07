@@ -3137,7 +3137,7 @@ Import: `cruxible_client.authoring.selectors.WorkspaceSources`. [Source](src/cru
 
 <a id="api-workspacesources-document-entries"></a>
 
-### `WorkspaceSources.document_entries`
+### `WorkspaceSources.source_entries`
 
 [Source](src/cruxible_client/authoring/selectors.py)
 

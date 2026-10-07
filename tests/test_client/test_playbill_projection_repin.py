@@ -624,3 +624,44 @@ def test_sdk_block_depublish_releases_the_registration_through_the_daemon(tmp_pa
     ]
     with pytest.raises(ValueError, match="at least one page"):
         playbill.block.detach()
+
+
+def test_sdk_get_source_ref_reads_its_document_or_its_evidence_only_entry(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.authoring.sdk_types import RefKind, SourceRef
+    from cruxible_client.contracts.get_reads import GetCoordinate, GetResult
+
+    _workspace(tmp_path)
+    catalog = tmp_path / ".cruxible" / "sources.yaml"
+    catalog.write_text(
+        catalog.read_text() + "  - name: corpus.notes\n    locator: notes.md\n", encoding="utf-8"
+    )
+    client = _RepinClient()
+    read: list[str] = []
+
+    def get(_instance_id: str, *, request: Any) -> GetResult:
+        read.append(request.ref)
+        return GetResult(
+            ref=request.ref,
+            kind="document",
+            detail="summary",
+            proof={"document_id": "runbook"},
+            coordinate=GetCoordinate(git_oid=COORDINATE.git_oid[:12], generation=7),
+            accepted_coordinate=COORDINATE,
+            evaluation_time=NOW,
+        )
+
+    client.get = get  # type: ignore[method-assign]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client, instance_id="inst_projection", workspace=tmp_path, clock=lambda: NOW
+    )
+
+    document = playbill.get(SourceRef("corpus.runbook", COORDINATE))
+    entry = playbill.get(SourceRef("corpus.notes", COORDINATE))
+
+    assert read == ["Document:runbook"]
+    assert (document.kind, document.identity) == (RefKind.SOURCE, "corpus.runbook")
+    assert document.value == {"document_id": "runbook"}
+    assert entry.value["locator"] == "notes.md"
+    assert entry.value["document_id"] is None

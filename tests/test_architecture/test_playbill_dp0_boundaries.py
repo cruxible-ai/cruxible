@@ -592,7 +592,6 @@ def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
     assert modules == [
         "__init__",
         "adapter",
-        "claude_code",
         "contracts",
         "indexes",
         "manifest",

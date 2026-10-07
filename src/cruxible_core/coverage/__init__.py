@@ -21,8 +21,6 @@ line, because "coverage adds no authority" is the whole contract.
   callable by injection so that embedding it never requires reaching the
   service layer, and returning the original tool output and the appended
   coverage text as two separate strings so the caller does the splice.
-* :mod:`.claude_code` -- the one Claude Code PostToolUse translation table,
-  pinned to a named envelope version and carrying that vendor's limits.
 """
 
 from __future__ import annotations

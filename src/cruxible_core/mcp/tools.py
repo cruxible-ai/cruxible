@@ -110,11 +110,14 @@ class McpRootAlias(BaseModel):
 
 
 class McpSourceBinding(BaseModel):
-    """One workspace path bound to a declared logical source."""
+    """One workspace path bound to a logical source, overriding the catalog."""
 
     model_config = ConfigDict(extra="forbid")
     path: str = Field(min_length=1)
-    source_id: str = Field(min_length=1)
+    source: str = Field(
+        min_length=1,
+        description="The source as PLANE:IDENTITY: external:NAME or ledger:PATH.",
+    )
 
 
 def _root_aliases(rows: list[McpRootAlias] | None) -> dict[str, str] | None:
@@ -129,7 +132,7 @@ def _root_aliases(rows: list[McpRootAlias] | None) -> dict[str, str] | None:
 def _source_bindings(rows: list[McpSourceBinding] | None) -> dict[str, str] | None:
     if rows is None:
         return None
-    result = {row.path: row.source_id for row in rows}
+    result = {row.path: row.source for row in rows}
     if len(result) != len(rows):
         raise ValueError("bindings names a path more than once")
     return result
@@ -479,30 +482,23 @@ def register_tools(
         return handlers.handle_playbill_read_capture(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_source_context(
-        instance_id: InstanceId = None,
-    ) -> contracts.SourceContext:
-        """Fetch path-free inputs for local source compilation."""
-        return handlers.handle_playbill_source_context(require_instance_id(instance_id))
-
-    @_tool
-    def cruxible_source_check(
+    def cruxible_sources_check(
         instance_id: InstanceId = None,
         *,
         bundle: Annotated[
             SourceCompilationBundle | None,
-            Field(description="A compiled source bundle; omit when passing catalog_path."),
+            Field(description="A compiled bundle to check as given; omit to compile the catalog."),
         ] = None,
         catalog_path: Annotated[
             str | None,
-            Field(description="Workspace source catalog to compile first; omit with bundle."),
+            Field(description="The portable catalog; omitted, the workspace's is discovered."),
         ] = None,
         repository_root: str = ".",
         local_catalog_path: str | None = None,
         root_aliases: list[McpRootAlias] | None = None,
     ) -> contracts.SourceCheckResult:
-        """Compare a compiled bundle or catalog-declared workspace sources with accepted state."""
-        return handlers.handle_playbill_source_check(
+        """Compare catalogued workspace sources (or a bundle) with accepted state."""
+        return handlers.handle_playbill_sources_check(
             require_instance_id(instance_id),
             bundle=None if bundle is None else bundle.model_dump(mode="json"),
             catalog_path=catalog_path,
@@ -512,21 +508,30 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_propose_source_bundle(
+    def cruxible_sources_propose(
         instance_id: InstanceId = None,
         *,
-        bundle: SourceCompilationBundle,
-        source_name: str,
+        source_name: Annotated[str, Field(description="The catalog source to propose.")],
         proposal_name: str,
+        catalog_path: Annotated[
+            str | None,
+            Field(description="The portable catalog; omitted, the workspace's is discovered."),
+        ] = None,
+        repository_root: str = ".",
+        local_catalog_path: str | None = None,
+        root_aliases: list[McpRootAlias] | None = None,
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> contracts.ProposalInspection:
-        """Propose frozen source bytes without a client path."""
-        return handlers.handle_playbill_propose_source_bundle(
+        """Propose one catalogued source as its Document; the adapter reads the file."""
+        return handlers.handle_playbill_sources_propose(
             require_instance_id(instance_id),
-            bundle.model_dump(mode="json"),
             source_name=source_name,
             proposal_name=proposal_name,
+            catalog_path=catalog_path,
+            repository_root=repository_root,
+            local_catalog_path=local_catalog_path,
+            root_aliases=_root_aliases(root_aliases),
             dry_run=dry_run,
             at=at,
         )
@@ -693,6 +698,10 @@ def register_tools(
         anchor: str,
         payload: ClaimInput,
         window_lines: int | None = None,
+        occurrence: Annotated[
+            int | None,
+            Field(ge=1, description="The 1-based anchor occurrence when it is not unique."),
+        ] = None,
     ) -> contracts.AuthoringPreflightResult:
         """Bind one exact workspace anchor and compile the derived Flow-A observation."""
         return handlers.handle_playbill_authoring_bind(
@@ -701,6 +710,7 @@ def register_tools(
             anchor=anchor,
             payload=payload,
             window_lines=window_lines,
+            occurrence=occurrence,
         )
 
     @_tool
@@ -1559,19 +1569,20 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_coverage(
+    def cruxible_coverage_resolve(
         instance_id: InstanceId = None,
         *,
         observations: Annotated[
             list[WorkingSourceObservation] | None,
-            Field(description="Working-source observations you built; omit with bindings."),
+            Field(description="Working-source observations you built; omit to select files."),
         ] = None,
         bindings: Annotated[
             list[McpSourceBinding] | None,
             Field(
                 description=(
-                    "Path/source_id bindings; the adapter reads the selected workspace "
-                    "files (files, ranges, grep_results, or whole_working_set)."
+                    "Bindings overriding the source catalog, path by path; the adapter reads "
+                    "the selected workspace files (files, ranges, grep_results, or "
+                    "whole_working_set)."
                 )
             ),
         ] = None,
@@ -1581,13 +1592,13 @@ def register_tools(
             str | None,
             Field(
                 description=(
-                    "With bindings, grep output (path:line:text lines) selecting the "
-                    "ranges to cover, passed inline."
+                    "Grep output (path:line:text lines) selecting the ranges to cover, "
+                    "passed inline."
                 )
             ),
         ] = None,
         whole_working_set: Annotated[
-            bool, Field(description="With bindings, cover every declared workspace file.")
+            bool, Field(description="Cover every bound workspace file.")
         ] = False,
         budget: CoverageCardBudget | None = None,
         scan_budget: CoverageScanBudget | None = None,
@@ -1610,16 +1621,19 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_workspace_source_compile(
+    def cruxible_sources_compile(
         instance_id: InstanceId = None,
         *,
-        catalog_path: str,
+        catalog_path: Annotated[
+            str | None,
+            Field(description="The portable catalog; omitted, the workspace's is discovered."),
+        ] = None,
         repository_root: str = ".",
         local_catalog_path: str | None = None,
         root_aliases: list[McpRootAlias] | None = None,
     ) -> SourceCompilationBundle:
-        """Compile declared workspace sources against accepted daemon context."""
-        return handlers.handle_playbill_workspace_source_compile(
+        """Compile catalogued workspace sources against accepted daemon context."""
+        return handlers.handle_playbill_sources_compile(
             require_instance_id(instance_id),
             catalog_path=catalog_path,
             repository_root=repository_root,

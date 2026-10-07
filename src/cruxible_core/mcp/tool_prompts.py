@@ -91,15 +91,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Requires body-read permission; max_bytes bounds returned material. "
         "Never refetches sources."
     ),
-    "cruxible_source_context": (
-        "Use when a local client needs path-free accepted inputs before compiling sources."
+    "cruxible_sources_check": (
+        "Use when you need to check the workspace's catalogued sources (or a compiled "
+        "bundle) against accepted state: aligned, modified, pending, behind and the rest."
     ),
-    "cruxible_source_check": (
-        "Use when you need to check sources against accepted state: a compiled bundle, "
-        "or catalog-declared workspace files."
-    ),
-    "cruxible_propose_source_bundle": (
-        "Use when you need to propose frozen source bytes without sending a local path."
+    "cruxible_sources_propose": (
+        "Use when a catalogued workspace file should become its Document's next revision: "
+        "name the catalog source; this adapter reads and compiles the file and proposes it."
     ),
     "cruxible_compiler_upgrade": (
         "Use to propose an explicit compiler upgrade bound to the exact accepted base. "
@@ -306,13 +304,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need the accepted floor as greppable files: return the bytes, write "
         "them to the workspace, or check that copy's status."
     ),
-    "cruxible_coverage": (
+    "cruxible_coverage_resolve": (
         "Use when you have read or changed working files and need what they have to do with "
-        "accepted state."
+        "accepted state; the source catalog binds files to their sources."
     ),
-    "cruxible_workspace_source_compile": (
-        "Use to compile catalog-declared files under this MCP client's workspace without "
-        "constructing source digests or compilation wire."
+    "cruxible_sources_compile": (
+        "Use to compile the workspace's catalogued files without constructing source "
+        "digests or compilation wire."
     ),
 }
 

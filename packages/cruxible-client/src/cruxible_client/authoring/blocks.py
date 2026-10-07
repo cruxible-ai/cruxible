@@ -782,7 +782,7 @@ def sync_projection_blocks(
         selected, items = _discover_workspace_sources(root)
     elif all_sources:
         assert sources is not None
-        for entry in sources.document_entries:
+        for entry in sources.source_entries:
             try:
                 selected[sources.path_for_source(entry.name)] = entry.name
             except (ValueError, CruxibleError) as exc:

@@ -117,12 +117,12 @@ _WORKSPACE_CONFIG_FIELDS = frozenset(
         "server_url",
         "server_socket",
         "root",
-        "rules",
-        "scan_budget",
-        "max_observed_paths",
         "floor_output",
     }
 )
+# The cut Claude Code hook read path rules from coverage.json; the source catalog
+# is now the one path-to-source mapping.
+_CUT_HOOK_FIELDS = frozenset({"rules", "scan_budget", "max_observed_paths"})
 _SECRET_FIELD_FRAGMENTS = ("bearer", "credential", "password", "secret", "token")
 
 
@@ -271,7 +271,14 @@ def _read_workspace_config(path: Path) -> dict[str, Any] | None:
         )
     unknown = sorted(set(payload).difference(_WORKSPACE_CONFIG_FIELDS))
     if unknown:
-        raise WorkspaceError(f"coverage config contains unsupported field(s): {', '.join(unknown)}")
+        hint = (
+            "; path rules are gone: delete them and catalog the files in .cruxible/sources.yaml"
+            if _CUT_HOOK_FIELDS & set(unknown)
+            else ""
+        )
+        raise WorkspaceError(
+            f"coverage config contains unsupported field(s): {', '.join(unknown)}{hint}"
+        )
     return payload
 
 
@@ -867,7 +874,7 @@ def _workspace_locators(root: Path, sources: WorkspaceSources | None) -> dict[st
     """
 
     found: dict[str, str] = {}
-    for entry in () if sources is None else sources.document_entries:
+    for entry in () if sources is None else sources.source_entries:
         try:
             path = sources.path_for_source(entry.name) if sources is not None else None
         except (OSError, ValueError, CruxibleError):
@@ -880,7 +887,8 @@ def _workspace_locators(root: Path, sources: WorkspaceSources | None) -> dict[st
             missing = not path.is_file()
         located = f"{shown} (missing)" if missing else shown
         found.setdefault(entry.name, located)
-        found.setdefault(f"Document:{entry.document_id}", located)
+        if entry.document_id is not None:
+            found.setdefault(f"Document:{entry.document_id}", located)
     return found
 
 
@@ -1018,7 +1026,7 @@ def write_projection_index(workspace: str | Path) -> int | None:
         "".join(f"{line}\n" for line in (sources_header, *("\t".join(row) for row in joined))),
     )
     rows: list[tuple[str, str, str, str]] = []
-    for entry in () if sources is None else sources.document_entries:
+    for entry in () if sources is None else sources.source_entries:
         try:
             path = sources.path_for_source(entry.name) if sources is not None else None
         except (OSError, ValueError, CruxibleError):
@@ -1026,8 +1034,8 @@ def write_projection_index(workspace: str | Path) -> int | None:
         if path is None or not path.is_file() or not path.is_relative_to(root):
             continue
         relative = path.relative_to(root).as_posix()
-        document = f"Document:{entry.document_id}"
-        if document in generations:
+        document = None if entry.document_id is None else f"Document:{entry.document_id}"
+        if document is not None and document in generations:
             rows.append((relative, "document-body", document, generations[document]))
         if entry.name in generations:
             rows.append((relative, "evidence-source", entry.name, generations[entry.name]))
@@ -1406,11 +1414,11 @@ def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
     _observe_presentation_policy(
         observation,
         root,
-        known_source_ids=tuple(entry.name for entry in sources.document_entries),
+        known_source_ids=tuple(entry.name for entry in sources.source_entries),
     )
     source_observations: list[dict[str, str]] = []
     missing: list[dict[str, str | None]] = []
-    for entry in sources.document_entries:
+    for entry in sources.source_entries:
         try:
             path = sources.path_for_source(entry.name)
         except (OSError, ValueError, CruxibleError):
@@ -1434,7 +1442,8 @@ def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
         source_observations.append(
             {
                 "source_id": entry.name,
-                "document_id": entry.document_id,
+                # An evidence-only entry names no Document.
+                **({} if entry.document_id is None else {"document_id": entry.document_id}),
                 "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
             }
         )
@@ -1525,7 +1534,7 @@ def observe_projection_coverage(
     claim_bindings: list[ProjectionCoverageBinding] = []
     claims_complete = True
     scanned_bytes = 0
-    for document_entry in sources.document_entries:
+    for document_entry in sources.source_entries:
         try:
             content = read_projection_source(sources.path_for_source(document_entry.name))
         except (OSError, ValueError, CruxibleError):

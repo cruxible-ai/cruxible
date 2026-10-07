@@ -21,6 +21,7 @@ from tests.core_support._knowledge_loop_support import accept_proposal, subject_
 from tests.core_support._support import initialize_local
 from tests.test_ledger.test_activation import _sign
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
+from tests.test_service.test_playbill_source_catalog import service_compile_playbill_sources
 
 
 def _orphan(instance, proposal_id: str) -> None:  # type: ignore[no-untyped-def]
@@ -61,9 +62,7 @@ def test_pending_documents_require_an_unsettled_admission(
             ),
         ),
     )
-    bundle = source_catalog.service_compile_playbill_sources(
-        instance, catalog=catalog, repository_root=repository
-    )
+    bundle = service_compile_playbill_sources(instance, catalog=catalog, repository_root=repository)
     proposed = source_catalog.service_propose_playbill_source_bundle(
         instance,
         bundle=bundle,

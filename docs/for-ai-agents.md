@@ -375,10 +375,14 @@ underneath.
 
 ## Source alignment
 
-Local files do not enter the event stream automatically. A catalog declares
-which files are indexed. sources check validates current alignment without
+Local files do not enter the event stream automatically. The source catalog
+(`.cruxible/sources.yaml`) declares which files are indexed and the one name
+each goes by, for evidence, coverage and `next` alike; a `name` and `locator`
+suffice to cite a file. sources check validates current alignment without
 writing. sources compile emits a frozen path-free bundle. sources propose
-submits that exact bundle.
+proposes one catalogued Document's file as its next revision (compiling first
+unless given a bundle), and is the repair `next` names when a Document's file
+was modified.
 
 CI may run check/compile as a lint, but acceptance still requires an explicit
 proposal and activation, plus any candidate-committed approval requirements.

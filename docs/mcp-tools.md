@@ -170,15 +170,16 @@ names the whole body's `body_digest`.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_source_context` | Return source alignment context | `READ_ONLY` |
-| `cruxible_source_check` | Check a compiled `bundle`, or the sources a workspace `catalog_path` declares, against accepted state | `READ_ONLY` |
-| `cruxible_propose_source_bundle` | Propose a frozen compiled bundle | `GOVERNED_WRITE` |
-| `cruxible_workspace_source_compile` | Read catalog-declared workspace bytes and derive a source bundle | `READ_ONLY` |
+| `cruxible_sources_compile` | Read the workspace's catalogued files and derive a source bundle | `READ_ONLY` |
+| `cruxible_sources_check` | Check the catalogued sources (or a compiled `bundle`) against accepted state | `READ_ONLY` |
+| `cruxible_sources_propose` | Compile the catalog and propose one source (`source_name`) as its Document; the adapter reads the file | `GOVERNED_WRITE` |
 
-`cruxible_source_check` takes exactly one of `bundle` (for programmatic
-clients that compiled one) or `catalog_path`. With a catalog path the adapter
-owns local path traversal and digest construction, so an agent supplies catalog
-paths and root aliases, not compilation wire.
+The catalog is discovered as every other command finds it
+(`.cruxible/sources.yaml` or `sources.yaml`, plus `.cruxible/sources.local.yaml`);
+`catalog_path` names another. The adapter owns local path traversal and digest
+construction, so an agent supplies a source name, not compilation wire or file
+bytes. A catalog entry with only `name` and `locator` is evidence-only: it can be
+cited and covered but not proposed.
 
 ## Principals
 
@@ -213,7 +214,7 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_authoring_get` | Read one authoring intent | `READ_ONLY` |
 | `cruxible_authoring_list` | List the caller's in-progress intents | `READ_ONLY` |
 | `cruxible_authoring_compile` | Stage a payload as an intent (new, or revising `intent_id`) and run every check | `GOVERNED_WRITE` |
-| `cruxible_authoring_bind` | Read an anchored workspace selection, derive commitments, and compile | `GOVERNED_WRITE` |
+| `cruxible_authoring_bind` | Read an anchored selection of a catalogued workspace file (the stub's `source_id` must be its catalog name; `occurrence` picks one of several anchor matches), derive commitments, and compile | `GOVERNED_WRITE` |
 | `cruxible_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
 | `cruxible_authoring_rebase` | Rebase a stale intent onto the current accepted coordinate | `GOVERNED_WRITE` |
 | `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
@@ -346,7 +347,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
 | `cruxible_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
 | `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so the daemon's delivery exports the same parts (a daemon that delivers this workspace's floor is its only writer: over its socket it delivers now, over TCP `write` refuses); `mode=status` reports whether that floor is current, stale, or absent. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref and coordinate), `current/<kind>/INDEX`, readable `documents/` and `provenance/`; digests stay in `provenance/` and the manifest. `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
-| `cruxible_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, inline `grep_results` text, or `whole_working_set`) | `READ_ONLY` |
+| `cruxible_coverage_resolve` | Resolve working sources against accepted state, from `observations` you built or from a workspace file selection (`files`, `ranges`, inline `grep_results` text, or `whole_working_set`) bound by the source catalog; `bindings` (`path`, `source` as `external:NAME` or `ledger:PATH`) override it path by path | `READ_ONLY` |
 
 `cruxible_next` renders each repair's `command` as the MCP tool call
 that performs it (for example `cruxible_prediction_settle(prediction_id="RSC-...")`,

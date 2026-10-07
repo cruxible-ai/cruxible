@@ -8,7 +8,6 @@ import os
 import re
 import shlex
 import subprocess
-import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -35,7 +34,7 @@ from cruxible_client.authoring.attestations import (
     local_attestation_signer_from_environment,
     principal_records,
 )
-from cruxible_client.authoring.bind import bind_working_selection_input
+from cruxible_client.authoring.bind import bind_catalogued_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.authoring.compact_query import (
     WHERE_SYNTAX,
@@ -51,6 +50,8 @@ from cruxible_client.authoring.examples import (
     document_example,
 )
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
+from cruxible_client.authoring.sdk_types import SourceSelectionError
+from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.authoring.signing import sign_runtime_credential_mint
 from cruxible_client.authoring.sources import (
     compile_client_source_context,
@@ -169,23 +170,7 @@ from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingSourceObservation,
 )
-from cruxible_core.coverage.claude_code import (
-    PostToolUseResponseError,
-    annotated_tool_output,
-    post_tool_use_response,
-    read_post_tool_use_event,
-)
 from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageResultV3
-from cruxible_core.coverage.indexes import CoverageScanBudget
-from cruxible_core.coverage.middleware import (
-    CoverageRuleTagError,
-    CoverageWorkspaceConfig,
-    FloorGenerationPairV1,
-    ResolveCoverage,
-    ResolveFloorGenerations,
-    coverage_middleware,
-    load_coverage_config,
-)
 from cruxible_core.coverage.render import (
     render_coverage_manifest,
     render_coverage_result,
@@ -2171,36 +2156,84 @@ def whoami(output_json: bool) -> None:
 
 @playbill_group.group("sources")
 def sources_group() -> None:
-    """Compile declared local files into path-free exact-byte bundles."""
+    """Compile catalogued workspace files into exact-byte Document proposals."""
 
 
 def _source_options(function: Callable[..., Any]) -> Callable[..., Any]:
-    function = click.option("--root", "repository_root", required=True)(function)
-    function = click.option("--local-catalog", default=None)(function)
-    function = click.option("--root-alias", multiple=True, help="Repeat NAME=PATH.")(function)
-    return click.option("--catalog", "portable_catalog", required=True)(function)
+    function = click.option(
+        "--root",
+        "repository_root",
+        default=None,
+        help="Workspace root the catalog's locators resolve against (default: this worktree).",
+    )(function)
+    function = click.option(
+        "--local-catalog",
+        default=None,
+        help="A local overlay catalog (default: .cruxible/sources.local.yaml when present).",
+    )(function)
+    function = click.option(
+        "--root-alias",
+        multiple=True,
+        help="NAME=PATH for a local catalog entry's root_alias (repeatable).",
+    )(function)
+    return click.option(
+        "--catalog",
+        "portable_catalog",
+        default=None,
+        help="The portable catalog (default: the workspace's .cruxible/sources.yaml).",
+    )(function)
+
+
+def _source_catalog_and_root(
+    portable_catalog: str | None, local_catalog: str | None, repository_root: str | None
+) -> tuple[SourceCatalog, Path]:
+    """The catalog the other commands use, discovered the same way unless named."""
+
+    if repository_root is not None:
+        root = Path(repository_root).expanduser().resolve()
+    else:
+        resolution = _local_git_workspace_root()
+        _emit_git_workspace_note(resolution)
+        root = resolution.workspace_root or Path.cwd().resolve()
+    if portable_catalog is not None:
+        return _catalog(portable_catalog, local_catalog), root
+    if local_catalog is not None:
+        raise click.UsageError("--local-catalog needs --catalog; omit both to discover them")
+    return WorkspaceSources(root).catalog, root
 
 
 @sources_group.command("compile")
 @_source_options
-@click.option("--output", required=True, type=click.Path(dir_okay=False))
+@click.option(
+    "--output",
+    required=True,
+    type=click.Path(dir_okay=False),
+    help="Where to write the bundle (refuses an existing file).",
+)
 @json_option
 @handle_errors
 def compile_sources(
-    portable_catalog: str,
+    portable_catalog: str | None,
     local_catalog: str | None,
     root_alias: tuple[str, ...],
-    repository_root: str,
+    repository_root: str | None,
     output: str,
     output_json: bool,
 ) -> None:
-    catalog = _catalog(portable_catalog, local_catalog)
+    """Freeze every catalogued Document's exact bytes into a bundle for sources propose.
+
+    Each entry that declares a Document compiles to its next revision against
+    the accepted head; evidence-only entries compile to nothing. Writes only
+    the local bundle file.
+    """
+
+    catalog, root = _source_catalog_and_root(portable_catalog, local_catalog, repository_root)
     bundle = _server_call(
         lambda client, instance_id: _compile_remote_context(
             client,
             instance_id,
             catalog=catalog,
-            repository_root=Path(repository_root),
+            repository_root=root,
             aliases=_root_aliases(root_alias),
         ),
         command_name="cruxible sources compile",
@@ -2217,58 +2250,122 @@ def compile_sources(
 @json_option
 @handle_errors
 def check_sources(
-    portable_catalog: str,
+    portable_catalog: str | None,
     local_catalog: str | None,
     root_alias: tuple[str, ...],
-    repository_root: str,
+    repository_root: str | None,
     output_json: bool,
 ) -> None:
-    catalog = _catalog(portable_catalog, local_catalog)
+    """Compare each catalogued Document's file with accepted and pending state; writes nothing.
+
+    Each source reads aligned, modified, ahead, pending, behind, diverged or
+    untracked.
+    """
+
+    catalog, root = _source_catalog_and_root(portable_catalog, local_catalog, repository_root)
 
     def call(client: CruxibleClient, instance_id: str) -> contracts.SourceCheckResult:
         bundle = _compile_remote_context(
             client,
             instance_id,
             catalog=catalog,
-            repository_root=Path(repository_root),
+            repository_root=root,
             aliases=_root_aliases(root_alias),
         )
         return client.check_source_bundle(instance_id, bundle=bundle.model_dump(mode="json"))
 
     result = _server_call(call, command_name="cruxible sources check")
-    _emit_json(result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for alignment in result.alignments:
+        click.echo(f"{alignment.get('name')}: {alignment.get('state')}")
+    if not result.alignments:
+        click.echo("No catalogued Documents to check.")
 
 
 @sources_group.command("propose")
 @click.option(
-    "--bundle", "bundle_path", required=True, type=click.Path(exists=True, dir_okay=False)
+    "--bundle",
+    "bundle_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="A bundle sources compile wrote (default: compile the workspace catalog now).",
 )
-@click.option("--source", "source_name", required=True)
-@click.option("--name", "proposal_name", required=True)
+@click.option("--source", "source_name", required=True, help="The catalog source to propose.")
+@click.option("--name", "proposal_name", required=True, help="The proposal's name.")
+@_source_options
 @change_control_options
 @json_option
 @handle_errors
 def propose_sources(
-    bundle_path: str,
+    bundle_path: str | None,
     source_name: str,
     proposal_name: str,
+    portable_catalog: str | None,
+    local_catalog: str | None,
+    root_alias: tuple[str, ...],
+    repository_root: str | None,
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
 ) -> None:
-    bundle = _read_model(bundle_path, SourceCompilationBundle)
-    result = _server_call(
-        lambda client, instance_id: client.propose_source_bundle(
+    """Propose one catalogued source as its Document's next revision.
+
+    Without --bundle the workspace catalog is compiled first, exactly as
+    sources compile does; with it, the frozen bundle is proposed as written.
+    An ordinary Document proposal, reviewed, approved and activated as usual;
+    the compilation it came from is recorded with it.
+    """
+
+    if bundle_path is not None and (
+        portable_catalog or local_catalog or root_alias or repository_root
+    ):
+        raise click.UsageError("a --bundle is proposed as written; it takes no catalog options")
+    frozen = None if bundle_path is None else _read_model(bundle_path, SourceCompilationBundle)
+    catalog_and_root = (
+        None
+        if frozen is not None
+        else _source_catalog_and_root(portable_catalog, local_catalog, repository_root)
+    )
+
+    def call(client: CruxibleClient, instance_id: str) -> contracts.ProposalInspection:
+        bundle = frozen
+        if bundle is None:
+            assert catalog_and_root is not None
+            catalog, root = catalog_and_root
+            bundle = _compile_remote_context(
+                client,
+                instance_id,
+                catalog=catalog,
+                repository_root=root,
+                aliases=_root_aliases(root_alias),
+            )
+        if source_name not in {item.source.name for item in bundle.documents}:
+            raise click.ClickException(
+                f"source {source_name!r} compiles to no Document: it is not catalogued, or its "
+                "entry is evidence-only (give it document_id, document_kind, title, "
+                "media_type and governance_scope to propose it)"
+            )
+        return client.propose_source_bundle(
             instance_id,
             bundle=bundle.model_dump(mode="json"),
             source_name=source_name,
             proposal_name=proposal_name,
             dry_run=dry_run,
             at=at,
-        ),
-        command_name="cruxible sources propose",
-    )
-    _emit_json(result.model_dump(mode="json"))
+        )
+
+    result = _server_call(call, command_name="cruxible sources propose")
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    admission = result.proposal.get("admission")
+    proposal_id = admission.get("proposal_id") if isinstance(admission, dict) else None
+    click.echo(f"{source_name}: {result.status}")
+    if proposal_id:
+        click.echo(f"Proposal: {proposal_id}")
+    echo_preview_next(result.status, result.accepted_coordinate)
 
 
 @playbill_group.group("principal")
@@ -3312,7 +3409,13 @@ def compile_authoring(payload: str, intent_id: str | None, output_json: bool) ->
     "--payload-file",
     required=True,
     type=PayloadFile(),
-    help="Claim stub whose source contains only the working tag and logical source_id.",
+    help="Claim stub whose source holds only the working tag and the catalog source_id.",
+)
+@click.option(
+    "--workspace-root",
+    default=None,
+    type=click.Path(file_okay=False),
+    help="The workspace whose source catalog names --file (default: this worktree).",
 )
 @json_option
 @handle_errors
@@ -3322,27 +3425,31 @@ def bind_authoring_selection(
     window_lines: int | None,
     occurrence: int | None,
     payload_file: str,
+    workspace_root: str | None,
     output_json: bool,
 ) -> None:
     """Bind a Claim to one exact anchor in a local file, then compile it.
 
     The payload file is a Claim stub whose source names only the working tag and
-    a logical source_id; bind reads --file, finds --anchor (--occurrence picks
-    one of several matches, --window-lines widens the cited window), derives the
-    exact observation and compiles the Claim as a new staged intent.
+    a logical source_id, which must be the name the workspace's source catalog
+    gives --file. Bind reads --file, finds --anchor (--occurrence picks one of
+    several matches, --window-lines widens the cited window), derives the exact
+    observation and compiles the Claim as a new staged intent.
     """
 
-    source = Path(source_path).expanduser()
-    try:
-        content = source.read_bytes()
-    except OSError as exc:
-        raise click.ClickException(f"Could not read {source}: {exc}") from exc
+    if workspace_root is not None:
+        workspace = Path(workspace_root).expanduser().resolve()
+    else:
+        resolution = _local_git_workspace_root()
+        _emit_git_workspace_note(resolution)
+        workspace = resolution.workspace_root or Path.cwd().resolve()
     parsed_input = _read_authoring_input(payload_file)
     if not isinstance(parsed_input, ClaimInput):
         raise click.ClickException("authoring bind accepts only a claim input")
-    payload = bind_working_selection_input(
+    payload = bind_catalogued_selection_input(
         parsed_input,
-        content=content,
+        workspace=workspace,
+        path=Path(source_path).expanduser().resolve(),
         anchor=anchor,
         window_lines=window_lines,
         occurrence=occurrence,
@@ -6424,32 +6531,40 @@ def _coverage_options(function: Callable[..., Any]) -> Callable[..., Any]:
         "--bind",
         "bind_values",
         multiple=True,
-        help="Declare one binding as PATH=PLANE:IDENTITY. Repeat per working file.",
+        help="Override the catalog for one path as PATH=PLANE:IDENTITY (repeatable).",
     )(function)
     function = click.option(
         "--bindings",
         "bindings_path",
         default=None,
         type=PayloadFile(),
-        help="A mapping of working path to PLANE:IDENTITY.",
+        help="A mapping of working path to PLANE:IDENTITY overriding the catalog (- for stdin).",
     )(function)
     function = click.option(
         "--root",
-        default=".",
-        show_default=True,
+        default=None,
         type=click.Path(file_okay=False),
-        help="Working root every bound path is read under.",
+        help="Working root every bound path is read under (default: this worktree).",
     )(function)
     return function
 
 
 def _coverage_bindings(
+    root: Path,
     bind_values: tuple[str, ...],
     bindings_path: str | None,
 ) -> WorkingPathBindingsV1:
-    """Collect the declared path bindings; coverage never infers one."""
+    """The source catalog's bindings, overridden path by path by declared ones.
 
-    declared: dict[str, str] = {}
+    The catalog is the one path-to-source mapping; coverage never infers one.
+    """
+
+    try:
+        declared: dict[str, str] = WorkspaceSources(root).coverage_bindings()
+    except SourceSelectionError:
+        if not (bind_values or bindings_path):
+            raise
+        declared = {}
     if bindings_path is not None:
         for path, value in _read_mapping(bindings_path).items():
             if not isinstance(value, str):
@@ -6496,31 +6611,14 @@ def _resolved_coverage(
     observations: tuple[WorkingSourceObservation, ...],
     *,
     command_name: str,
-    scan_budget: CoverageScanBudget | None = None,
-    instance_id: str | None = None,
 ) -> CoverageResultV3:
-    def resolve(
-        client: CruxibleClient,
-        selected_instance_id: str,
-    ) -> contracts.CoverageResult:
-        return client.resolve_coverage(
-            selected_instance_id,
+    result = _server_call(
+        lambda client, instance_id: client.resolve_coverage(
+            instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
-            scan_budget=None if scan_budget is None else scan_budget.model_dump(mode="json"),
-        )
-
-    if instance_id is None:
-        result = _server_call(resolve, command_name=command_name)
-    else:
-        dispatched = _dispatch_cli(
-            lambda client: resolve(client, instance_id),
-            lambda: None,
-            allow_local=False,
-            command_name=command_name,
-        )
-        if dispatched is None:
-            raise click.ClickException("coverage resolver returned no result")
-        result = dispatched
+        ),
+        command_name=command_name,
+    )
     return CoverageResultV3.model_validate(result.result)
 
 
@@ -6533,33 +6631,54 @@ def _resolved_coverage(
     "grep_path",
     default=None,
     type=PayloadFile(),
-    help="A `grep -n` result batch to resolve as one operation.",
+    help="A `grep -n` result batch to resolve as one operation (- for stdin).",
 )
-@click.option("--all", "whole_working_set", is_flag=True, help="Resolve the whole declared scope.")
+@click.option("--all", "whole_working_set", is_flag=True, help="Resolve every bound file.")
+@click.option(
+    "--view",
+    type=click.Choice(["cards", "manifest"]),
+    default="cards",
+    show_default=True,
+    help=(
+        "cards: the governed spans and a summary; manifest: the coverage manifest "
+        "(epoch, health, completeness, scope)."
+    ),
+)
 @brief_option
 @json_option
 @handle_errors
 def resolve_coverage(
     bind_values: tuple[str, ...],
     bindings_path: str | None,
-    root: str,
+    root: str | None,
     files: tuple[str, ...],
     ranges: tuple[str, ...],
     grep_path: str | None,
     whole_working_set: bool,
+    view: str,
     output_brief: bool,
     output_json: bool,
 ) -> None:
     """Resolve what the working files you just read or changed are governed by.
 
-    Governed spans are annotated inline; the ungoverned majority is summarized
-    once. Resolving coverage changes no accepted state and appends no receipt.
+    Files are bound to their sources by the workspace's source catalog;
+    --bind and --bindings override it path by path. Governed spans are
+    annotated inline and the ungoverned majority is summarized once;
+    --all --view manifest renders the coverage manifest over every bound file.
+    Changes no accepted state. It writes the coverage manifest cache, and a
+    consumption receipt when the daemon runs with CRUXIBLE_CONSUMPTION_RECEIPTS=on.
     """
 
-    bindings = _coverage_bindings(bind_values, bindings_path)
+    if root is not None:
+        working_root = Path(root).expanduser().resolve()
+    else:
+        resolution = _local_git_workspace_root()
+        _emit_git_workspace_note(resolution)
+        working_root = resolution.workspace_root or Path.cwd().resolve()
+    bindings = _coverage_bindings(working_root, bind_values, bindings_path)
     observations = _coverage_observations(
         bindings,
-        root=Path(root).expanduser(),
+        root=working_root,
         files=files,
         ranges=ranges,
         grep_path=grep_path,
@@ -6582,148 +6701,11 @@ def resolve_coverage(
             ),
         )
         return
-    for line in render_coverage_result(result):
-        click.echo(line)
-
-
-@coverage_group.command("status")
-@_coverage_options
-@json_option
-@handle_errors
-def coverage_status(
-    bind_values: tuple[str, ...],
-    bindings_path: str | None,
-    root: str,
-    output_json: bool,
-) -> None:
-    """Render the coverage manifest: epoch, health, completeness, and scope."""
-
-    bindings = _coverage_bindings(bind_values, bindings_path)
-    observations = _coverage_observations(
-        bindings,
-        root=Path(root).expanduser(),
-        files=(),
-        ranges=(),
-        grep_path=None,
-        whole_working_set=True,
+    rendered = (
+        render_coverage_manifest(result) if view == "manifest" else render_coverage_result(result)
     )
-    result = _resolved_coverage(observations, command_name="cruxible coverage status")
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    for line in render_coverage_manifest(result):
+    for line in rendered:
         click.echo(line)
-
-
-@playbill_group.group("hook")
-def hook_group() -> None:
-    """Deprecated/parked harness adapter retained for compatibility."""
-
-    # PC-DEL3 parks this shipped Claude Code adapter. It remains registered and
-    # behavior-compatible, but new integrations should consume coverage through
-    # the client middleware rather than extending this vendor-specific surface.
-
-
-def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
-    """Resolve through the served operation, as every other coverage caller does.
-
-    The workspace's declared scan budget rides along here rather than inside the
-    middleware, because bounding how many bytes are hashed looking for relocated
-    content is a property of the operation, not of the adapter that calls it.
-    """
-
-    def resolve(observations: Sequence[WorkingSourceObservation]) -> CoverageResultV3:
-        return _resolved_coverage(
-            tuple(observations),
-            command_name="cruxible hook post-tool-use",
-            scan_budget=config.scan_budget,
-            instance_id=config.instance_id,
-        )
-
-    return resolve
-
-
-def _hook_floor_generation_resolver() -> ResolveFloorGenerations:
-    """Resolve old and current generations through the head read."""
-
-    def orientation(at: AcceptedCoordinate | None) -> int:
-        result = _server_call(
-            lambda client, instance_id: client.head(
-                instance_id, at=None if at is None else at.model_dump(mode="json")
-            ),
-            command_name="cruxible hook floor freshness",
-        )
-        return result.generation
-
-    def resolve(coordinate: AcceptedCoordinate) -> FloorGenerationPairV1:
-        floor_generation = orientation(coordinate)
-        current_generation = orientation(None)
-        return FloorGenerationPairV1(
-            floor_generation=floor_generation,
-            current_generation=current_generation,
-        )
-
-    return resolve
-
-
-@hook_group.command("post-tool-use")
-@click.option(
-    "--root",
-    default=".",
-    show_default=True,
-    type=click.Path(file_okay=False),
-    help="Workspace root holding .cruxible/coverage.json.",
-)
-def post_tool_use_hook(root: str) -> None:
-    """Annotate a Claude Code tool result with coverage, reading the hook JSON on stdin.
-
-    Wire this as a PostToolUse hook for Read, Grep, Edit, and Write; the
-    settings fragment is in `integrations/claude-code/`. Grep content-mode
-    results are annotated in place. Read, Edit, and Write are observed -- which
-    refreshes the local freshness manifest so the next Grep answers against a
-    current snapshot -- and their output is returned unchanged, because those
-    tools' result shapes cannot carry an annotation without fabricating file
-    content. The middleware API is the full-fidelity path for a harness that
-    owns its tool executor.
-
-    Always exits 0 and always emits one JSON object: a coverage failure may
-    never break the agent's tool call.
-    """
-
-    payload: Any = None
-    text = ""
-    diagnostic: str | None = None
-    try:
-        payload = json.loads(sys.stdin.read() or "null")
-        workspace = Path(root).expanduser()
-        event = read_post_tool_use_event(payload, workspace_root=workspace)
-        if event is not None:
-            config = load_coverage_config(workspace)
-            middleware = coverage_middleware(
-                root=workspace,
-                config=config,
-                resolve=_hook_resolver(config),
-                resolve_floor_generations=_hook_floor_generation_resolver(),
-            )
-            delivery = middleware.after_tool(event)
-            text = delivery.appended_coverage_text
-            if delivery.failure_code == "coverage_operation_unavailable":
-                if config.instance_id is None:
-                    try:
-                        _require_instance_id()
-                    except click.UsageError:
-                        diagnostic = "cruxible.coverage_hook.instance_id_missing"
-    except CoverageRuleTagError:
-        diagnostic = "cruxible.coverage_hook.rule_tag_invalid"
-        text = ""
-    except PostToolUseResponseError:
-        diagnostic = "cruxible.coverage_hook.tool_response_invalid"
-        text = ""
-    except Exception:  # noqa: BLE001 - fail open; a broken hook is not the agent's problem
-        text = ""
-    if diagnostic is not None:
-        click.echo(diagnostic, err=True)
-    _emit_json(post_tool_use_response(annotated_tool_output(payload, text)))
 
 
 __all__ = ["playbill_group"]

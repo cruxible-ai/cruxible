@@ -178,7 +178,7 @@ def test_workspace_config_writer_adds_machine_local_git_exclusion(tmp_path: Path
 
 
 @pytest.mark.parametrize("existing_floor", [None, "playbill-floor-export-v2"])
-def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(
+def test_floor_output_writer_upgrades_the_config_and_keeps_its_root(
     tmp_path: Path, existing_floor: str | None
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -190,7 +190,7 @@ def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(
                 "tag": "playbill-coverage-workspace-config-v1",
                 "server_url": "https://playbill.example.test",
                 "instance_id": "inst_floor",
-                "rules": [],
+                "root": "docs",
                 **(
                     {"floor_output": {"tag": "playbill-floor-output-v1", "format": existing_floor}}
                     if existing_floor is not None
@@ -209,7 +209,7 @@ def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(
 
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["tag"] == "playbill-coverage-workspace-config-v2"
-    assert payload["rules"] == []
+    assert payload["root"] == "docs"
     assert payload["floor_output"] == {
         "tag": "playbill-floor-output-v1",
         "format": "playbill-floor-export-v6",
@@ -220,22 +220,7 @@ def test_replace_upgrades_v1_config_without_dropping_coverage_fields(tmp_path: P
     workspace = tmp_path / "workspace"
     config_path = workspace / ".cruxible" / "coverage.json"
     config_path.parent.mkdir(parents=True)
-    preserved = {
-        "root": "docs",
-        "scan_budget": {"max_scanned_bytes": 4096},
-        "max_observed_paths": 128,
-        "rules": [
-            {
-                "tag": "coverage-path-prefix-rule-v1",
-                "path_prefix": "docs/",
-                "source": {
-                    "tag": "logical-source-identity-v1",
-                    "source_id": "docs",
-                    "revision": 1,
-                },
-            }
-        ],
-    }
+    preserved = {"root": "docs"}
     config_path.write_text(
         json.dumps(
             {
@@ -261,6 +246,19 @@ def test_replace_upgrades_v1_config_without_dropping_coverage_fields(tmp_path: P
     assert payload["server_socket"] == str(tmp_path / "daemon.sock")
     assert "server_url" not in payload
     assert {key: payload[key] for key in preserved} == preserved
+
+
+def test_a_config_carrying_cut_hook_rules_is_refused_with_the_repair(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    config_path = workspace / ".cruxible" / "coverage.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps({"tag": "playbill-coverage-workspace-config-v2", "rules": []}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WorkspaceError, match="catalog the files in .cruxible/sources.yaml"):
+        record_floor_output(workspace, instance_id="inst_floor", server_url="https://x.test")
 
 
 def test_materialization_exactly_replaces_and_reports_current(tmp_path: Path) -> None:
