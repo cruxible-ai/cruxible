@@ -101,6 +101,7 @@ def _remove_retired_claim_type_fields(payload: dict[str, object]) -> dict[str, o
 
 def _query_claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimType:
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=("project.work_item",),

@@ -99,7 +99,7 @@ def _result(item_ids: tuple[str, ...], *, digest_hex: str = "9"):  # type: ignor
             related_identities=(),
             detail={},
             repair=PlaybillNextRepairV1(
-                operation="cruxible.authoring.create",
+                operation="cruxible.authoring.example",
                 target=f"Claim:{item_id}",
                 required_change="restate",
                 arguments={},
@@ -311,7 +311,7 @@ def test_v2_removed_item_ids_are_presentation_only_and_shape_checked() -> None:
     ("operation", "arguments", "forbidden"),
     [
         ("cruxible.claim.retire", {"claim_id": "CLM-" + "1" * 32}, "REQUEST_FILE"),
-        ("cruxible.authoring.create", {}, "PAYLOAD_FILE"),
+        ("cruxible.authoring.example", {}, "PAYLOAD_FILE"),
         ("cruxible.authoring.bind", {}, "PAYLOAD_FILE"),
         ("cruxible.document.propose", {}, "ENVELOPE_FILE"),
     ],

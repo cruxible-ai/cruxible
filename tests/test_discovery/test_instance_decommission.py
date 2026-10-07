@@ -283,17 +283,8 @@ def _write_doors() -> tuple[tuple[str, object], ...]:
             "block_depublish",
             lambda instance: service_depublish_playbill_block(
                 instance,
-                coordinator=AuthoringIntentCoordinator.for_instance(instance),
-                actor=none,  # type: ignore[arg-type]
                 source_id="corpus.runbook",
                 block_id="status",
-            ),
-        ),
-        (
-            "authoring_abandon_insertion",
-            lambda instance: AuthoringIntentCoordinator.for_instance(instance).abandon_insertion(
-                "AIT-decommission-probe",
-                actor=none,  # type: ignore[arg-type]
             ),
         ),
         (

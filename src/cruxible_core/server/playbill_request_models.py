@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts import (
     CURATION_LIST_DEFAULT_LIMIT,
@@ -20,12 +20,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
     AuthoringIntentCompileRequestV2,
-    AuthoringIntentCreateRequest,
-    AuthoringIntentCreateRequestV1,
-    AuthoringIntentCreateRequestV2,
-)
-from cruxible_client.contracts.authoring.models import (
-    InsertionAbandonRequest as InsertionAbandonRequest,
 )
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.claim_types import ClaimType
@@ -62,9 +56,6 @@ class _StrictPlaybillRequest(BaseModel):
 
 # The route module retains its existing local names, but these are aliases to
 # the canonical client-owned wire models rather than parallel definitions.
-PlaybillAuthoringCreateRequest = AuthoringIntentCreateRequestV1
-PlaybillAuthoringCreateRequestV2 = AuthoringIntentCreateRequestV2
-PlaybillAuthoringCreateRequestV3 = AuthoringIntentCreateRequest
 PlaybillAuthoringCompileRequest = AuthoringIntentCompileRequestV1
 PlaybillAuthoringCompileRequestV2 = AuthoringIntentCompileRequestV2
 PlaybillAuthoringCompileRequestV3 = AuthoringIntentCompileRequest
@@ -199,19 +190,34 @@ class ProposeClaimTypeInputRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class AuthoringInputCreateRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-authoring-input-create-request-v1"] = (
-        "playbill-authoring-input-create-request-v1"
-    )
-    input: AuthoringInput
-
-
 class AuthoringInputCompileRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-input-compile-request-v1"] = (
         "playbill-authoring-input-compile-request-v1"
     )
     input: AuthoringInput
     intent_id: str | None = None
+
+
+class AuthoringInputSubmitRequest(_StrictPlaybillRequest):
+    """Compile one tagless input and submit it, or preview it with ``dry_run``.
+
+    With ``intent_id`` the input replaces that staged intent's payload before
+    the submit. ``dry_run`` previews a new input: it returns the preflight the
+    submit would run and saves no intent, so it takes no ``intent_id``.
+    """
+
+    tag: Literal["playbill-authoring-input-submit-request-v1"] = (
+        "playbill-authoring-input-submit-request-v1"
+    )
+    input: AuthoringInput
+    intent_id: str | None = None
+    dry_run: bool = False
+
+    @model_validator(mode="after")
+    def _dry_run_takes_no_intent(self) -> "AuthoringInputSubmitRequest":
+        if self.dry_run and self.intent_id is not None:
+            raise ValueError("a dry run previews a new input and takes no intent_id")
+        return self
 
 
 class AuthoringPreflightRequest(_StrictPlaybillRequest):

@@ -432,7 +432,7 @@ class LineMandateRequired(ProcedureSurfaceError):
         super().__init__(
             f"{self.code}: Line {line!r} can propose or settle, and Procedure {procedure!r} "
             "has no current accepted ProcedureMandate, so every run would refuse; author "
-            "and accept one (`cruxible authoring create --example procedure-mandate`) "
+            "and accept one (`cruxible authoring example procedure-mandate`) "
             "before arming"
         )
         self.repair = RUNNABLE_REFUSAL_REPAIRS["line_mandate_required"]

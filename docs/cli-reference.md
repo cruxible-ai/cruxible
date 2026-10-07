@@ -109,8 +109,8 @@ a page's block markers), a state digest of exactly the records it changes,
 which exists before `init` too.
 
 - A change the server derives across several artifacts previews unless asked
-  to commit: `kit add`, `kit remove`, `claim-type upgrade` and
-  `claim-type upgrade-evidence-rules`. Commit with `--commit`.
+  to commit: `kit add`, `kit remove` and `claim-type upgrade`. Commit with
+  `--commit`.
 - A change that cannot be undone previews unless asked to commit, and commits
   only with the preview's coordinate: `instance decommission`,
   `credential revoke`, `credential rotate` and `ledger set-mirror`. Commit with
@@ -141,7 +141,7 @@ exempt. By that principle these are exempt:
   refused attestation writes nothing;
 - `body store`: an inert content-addressed put whose effect is its input;
 - `proposal approve`: records the caller's signed approval of an evaluation
-  already shown by `proposal inspect`;
+  already shown by `get PROPOSAL_ID`;
 - `proposal activate`: its preview is the proposal's evaluation, already
   shown; the commit-time `at` check covers the head moving under it;
 - `workspace floor-delivery on|off`: its effect is its input;
@@ -151,7 +151,7 @@ exempt. By that principle these are exempt:
 
 Exempt in v1 as well, by the maintainer's earlier scope ruling:
 
-- the exhaust paths -- `settle`, `predict`, `procedure run` and
+- the exhaust paths -- `prediction settle`, `prediction propose`, `procedure run` and
   `procedure measure`, and `line evaluate`, `line dispatch` and `line run` --
   append observations to the instance's exhaust and need a separate
   dry-run-execution feature;
@@ -1010,7 +1010,6 @@ section nothing answers "what touches this package" from the object side.
 cruxible claim-type propose --template
 cruxible claim-type propose --input FILE --name NAME [--dry-run|--commit] [--at OID]
 cruxible claim-type migrate REQUEST_FILE
-cruxible claim-type upgrade-evidence-rules [--dry-run|--commit] [--at OID]
 cruxible claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate]
   [--dry-run|--commit] [--at OID]
 ~~~
@@ -1052,15 +1051,24 @@ vocabulary and adds one disposition the operator form has no use for --
 roads build their candidate with the same function, so neither can drift from
 the other's law.
 
-`upgrade-evidence-rules` proposes one change set moving every live ClaimType
-whose rules still name contracts by exact digest to identity rules, carrying
-their Claims. A rule converts only when it keeps its meaning: every version of a
-named contract must be compatible with its predecessor, and two rules that did
-not overlap may not start matching the same evidence. It lists, per ClaimType,
-the accepted contract versions a converted rule newly admits, and leaves the
-rest unchanged with the reason. The change set carries every dependent Claim, so
-both upgrades preview by default (see [Previews](#previews)); commit the preview
-with `--commit --at OID`, then approve and activate the proposal as usual.
+Every ClaimType authoring path writes ClaimType v7 with identity evidence rules:
+`propose --input`, the SDK draft, the authoring examples and change-set members.
+A rule that names an exact contract digest no accepted contract version carries
+is refused, never authored as an exact-digest rule. On an instance whose
+accepted compiler predates revision 31 (which admits neither v7 nor identity
+rules), authoring refuses `cruxible.claim_type.compiler_upgrade_required`, whose
+repair is `cruxible compiler upgrade --to <current compiler>`.
+
+`upgrade` is the one move for an older ClaimType. A v1-v5 ClaimType whose rules
+still name contracts by exact digest first takes the identity-rule conversion,
+then the v7 move, in the same change set, carrying its Claims. A rule converts
+only when it keeps its meaning: every version of a named contract must be
+compatible with its predecessor, and two rules that did not overlap may not start
+matching the same evidence. It lists, per ClaimType, the accepted contract
+versions a converted rule newly admits, and leaves the rest unchanged with the
+reason. The change set carries every dependent Claim, so it previews by default
+(see [Previews](#previews)); commit the preview with `--commit --at OID`, then
+approve and activate the proposal as usual.
 
 ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
 `default_role` a write takes when it names none, an `evidence_requirement`
@@ -1112,7 +1120,7 @@ source handles it was computed from, `--detail history` its revisions, and
 under `artifacts.claims`.
 
 Claims are written through `cruxible set`, `add`, `retire` and `write`, or authored
-through `cruxible authoring create`/`compile`; the retired direct v1 proposal
+through `cruxible authoring submit`/`compile`; the retired direct v1 proposal
 commands are not a second writer. `cruxible retire` retires a Claim with its
 complete dependent Claim closure in one change set. When a Claim shares anything
 with a retired Claim, `get CLM-... --detail why` also carries a
@@ -1140,26 +1148,35 @@ event forward and refuses rather than choosing between ambiguous histories.
 ## authoring
 
 ~~~text
-cruxible authoring create PAYLOAD
-cruxible authoring create --example claim-flow-a|claim-self-source|claim-subject-relation|claim-revision|procedure|change-set|claim-type-succession
-cruxible authoring create --example claim-cite-supporting-evidence
+cruxible authoring submit PAYLOAD [--dry-run] [--and-activate]
+cruxible authoring submit --intent-id INTENT_ID [PAYLOAD] [--and-activate]
+cruxible authoring example [NAME]
+cruxible authoring example claim-cite-supporting-evidence
   --attestation-claim-id CLAIM_ID --capture-digest DIGEST
-cruxible authoring get INTENT_ID
-cruxible authoring resume INTENT_ID
-cruxible authoring list
 cruxible authoring compile PAYLOAD [--intent-id INTENT_ID]
 cruxible authoring bind --file PATH --anchor TEXT [--occurrence N]
   [--window-lines N]
   --payload-file CLAIM_STUB
 cruxible authoring preflight INTENT_ID
 cruxible authoring rebase INTENT_ID
-cruxible authoring submit INTENT_ID
 cruxible authoring status INTENT_ID
-cruxible authoring abandon-insertion INTENT_ID [--expectation-id ID]
+cruxible authoring get INTENT_ID
+cruxible authoring list
 ~~~
 
+PAYLOAD is a tagless authoring input file, or `-` for stdin. `authoring submit
+PAYLOAD` compiles, checks and submits in one call; `--dry-run` returns the
+preflight the submit would run, with every refusal, and saves no intent. Durable
+intents are optional, for staged work on large definitions: `compile PAYLOAD`
+creates one (its ID is `certificate.intent_id`), `compile PAYLOAD --intent-id ID`
+revises it (the daemon keeps every revision), `rebase ID` advances a refused one
+to the accepted head, and `submit --intent-id ID` submits it. `get` and `list`
+find staged work again after the context that started it is gone.
+`authoring example` prints a model-generated template for NAME, or lists the
+names without one.
+
 A Claim input names the Claim it revises with `revises`, a Claim ID; omit it
-to state a new Claim. `--example claim-revision` prints one. The three
+to state a new Claim. `authoring example claim-revision` prints one. The three
 attestation-door examples (`claim-cite-supporting-evidence`,
 `claim-adjudicate-contradicting-evidence`, `claim-adjudicate-unreviewed-evidence`)
 revise the Claim named by `--attestation-claim-id` to cite the Capture named by
@@ -1196,9 +1213,9 @@ may retire a Claim the set does not otherwise touch. Two sibling Claims contendi
 one cardinality-one slot are un-authorable in a single set by construction, not
 merely unrepaired: dispositioning one needs the other's Claim ID, which the
 daemon mints only at create from the already-frozen payload, so that refusal's
-repair is to merge the two decisions or split the set. `--example change-set`
-prints a mixed set to start from, and `--example claim-type-succession` prints a
-vocabulary evolution.
+repair is to merge the two decisions or split the set. `authoring example change-set`
+prints a mixed set to start from, and `authoring example claim-type-succession`
+prints a vocabulary evolution.
 
 A `claim_type_succession` member succeeds an accepted ClaimType and settles its
 whole reverse-pin closure in the same generation. Members lower in dependency
@@ -1227,14 +1244,6 @@ changed members one daemon will receive in a single submission is the operator's
 set additionally requires it to fit under the advertised change-set record
 ceiling described there, which preflight checks before lowering anything.
 
-No intent publishes a Claim into a page any more, and none mints a publication
-expectation. `abandon-insertion` releases one an instance already holds, and
-because a change set that published several Claims owns one expectation per
-publishing member it takes an `expectation_id` naming the one it is about; a
-singular Claim intent owns exactly one and may omit it. `cruxible block
-depublish SOURCE_ID BLOCK_ID` is the same release addressed the way a page names
-it, and is the verb to reach for.
-
 The authoring coordinator owns stable identities, timestamps, bases, and proposal
 references. `compile` creates or updates an intent and performs a binding preflight;
 `rebase` advances an unsubmitted refused intent to the current accepted coordinate;
@@ -1244,7 +1253,7 @@ approval or activation conditions without impersonating the actors who own them.
 selects the 1-based `N`th match. The resulting selector records the total number
 observed while its start/end bytes name the selected occurrence; multiple matches
 are therefore truthful input metadata, not an unresolved selection.
-Use `--example claim-subject-relation` for a subject-valued Claim such as
+Use `authoring example claim-subject-relation` for a subject-valued Claim such as
 `sec.vulnerability/<cve> → sec.vuln.affects_package → sec.package/<package>`.
 Both endpoint Subjects must already be accepted and admitted by the ClaimType.
 A projection block's marker grammar is a page-level shape rather than an
@@ -1314,8 +1323,8 @@ base or sibling definitions; explicit pins remain assertions. SDK `vocabulary=`
 accepts World ClaimType references and retains their stale-reference checks.
 Use `cx.query(name=NAME, receipt="full")` to read the accepted result and receipt.
 
-`authoring create --example query-claims-by-type` provides a Claim query without
-placeholder digests. `--example query-ontology` and `--example query-procedures`
+`authoring example query-claims-by-type` provides a Claim query without
+placeholder digests. `authoring example query-ontology` and `authoring example query-procedures`
 provide artifact queries; MCP's authoring-example and authoring-compile tools use
 these same typed inputs. Both are `query_definition` inputs.
 
@@ -1506,8 +1515,8 @@ change-set member) names its Procedure and `parameters` -- the Procedure's
 input record, which lowering checks against the Procedure's input contract,
 refusing `cruxible.authoring.line_parameters_refused` with the expected
 fields. It names an `acquisition_policy` (an `acquisition_policy` input) only
-when the Procedure has Source nodes. `authoring create --example line` prints a
-Line over the `--example procedure` Procedure, and `--example
+when the Procedure has Source nodes. `authoring example line` prints a
+Line over the `authoring example procedure` Procedure, and `authoring example
 acquisition-policy` a policy for a Source Procedure's Line.
 
 When a Line runs is not the Line's own: a `trigger` input authors a Trigger
@@ -1527,8 +1536,8 @@ reason. The Trigger law refuses an expression outside this grammar
 have several Triggers; one with none runs only when run explicitly, and `run`
 of a Line with Triggers names the Trigger it fires on (`--trigger`). Retiring
 a Line with live Triggers aimed at it refuses unless they are retired or
-retargeted in the same change set. `authoring create --example trigger` prints
-an hourly cron Trigger for the `--example line` Line, and `get Trigger:NAME` reads
+retargeted in the same change set. `authoring example trigger` prints
+an hourly cron Trigger for the `authoring example line` Line, and `get Trigger:NAME` reads
 one. A Trigger never fires retroactively: it matches only Captures recorded
 strictly after its version was accepted and fixed windows that close strictly
 after it, and admission refuses an earlier one supplied or queued anyway
@@ -1637,12 +1646,12 @@ protects, and refuses the run if that file exists but cannot be read as one.
 A Line whose runs can propose or settle needs a current accepted
 ProcedureMandate over its exact Procedure; without one each run refuses
 `line_mandate_required`, and `arm` refuses up front with
-`cruxible.line.mandate_required`, both naming `authoring create --example
+`cruxible.line.mandate_required`, both naming `authoring example
 procedure-mandate`. An observe-only Line -- one whose Procedure's terminals, or
 whose `max_authority`, stop at observe -- needs no mandate. A mandate whose
 `resource_ceiling` exceeds the Procedure's hard caps is refused naming each
-widened cap with both values; `--example procedure-mandate` uses the
-`--example procedure` caps.
+widened cap with both values; `authoring example procedure-mandate` uses the
+`authoring example procedure` caps.
 
 A Line whose Procedure ends in a `propose_change_set` terminal produces a
 proposal. Each resolved candidate template must be one Claim proposal item --
@@ -1656,7 +1665,7 @@ against the paths lowering actually changed, and the proposal door is called
 once. The run reports, per terminal, the proposal id, the exact candidate
 digest, the operation key, the mandate bound, and the Claim path each item
 lowered into; `--json` carries them in `terminal_egress`. Producing the
-proposal activates nothing: retrieve it with `cruxible proposal show`, review
+proposal activates nothing: retrieve it with `cruxible get PROPOSAL_ID`, review
 it in the ledger, and activate it with the existing proposal verbs.
 
 The proposal ref is keyed on the admitted operation. A retry of the same
@@ -1714,29 +1723,33 @@ same proposal and refuses the same way. Withdraw it with `cruxible proposal
 withdraw`; the Line's next due occurrence settles against the current head
 under a new operation key.
 
-## predict, settle and resolution-contracts
+## prediction
 
 ~~~text
-cruxible resolution-contracts CLAIM_ID [--json]
-cruxible resolution-contracts --request REQUEST_FILE [--json]
-cruxible predict REQUEST_FILE [--json]
-cruxible settle PREDICTION_ID --observation CLAIM_ID [--json]
-cruxible settle PREDICTION_ID --request REQUEST_FILE [--json]
+cruxible prediction propose REQUEST_FILE [--json]
+cruxible prediction settle PREDICTION_ID --observation CLAIM_ID [--json]
+cruxible prediction settle PREDICTION_ID --request REQUEST_FILE [--json]
+cruxible prediction list CLAIM [--json]
 ~~~
+
+A prediction is stored as a resolution contract: `get ResolutionContract:NAME`
+reads one, with its bound windows and their state.
 
 Every Claim version these commands need is named by Claim ID (`CLM-...` or
 `Claim:CLM-...`); the daemon resolves its artifact and statement digests and the
 coordinate that accepted it. The exact `ClaimVersionReference` object is still
 accepted, as the advanced form, anywhere a Claim ID is.
 
-`predict` submits a governed ResolutionContract whose `hypothesis` is an already
-accepted Claim (by ID) and returns the proposal ID and authoring intent. The
-contract pins the exact version the ID resolved to, and must be accepted before
-it can bind an investigation or settlement. `resolution-contracts CLAIM_ID`
-finds accepted contracts testing that Claim's current version and says so when
-there are none; `--request` takes an exact hypothesis reference.
+`prediction propose` submits a governed ResolutionContract whose `hypothesis` is
+an already accepted Claim (by ID) and returns the proposal ID and authoring
+intent. The contract pins the exact version the ID resolved to, and must be
+accepted before it can bind an investigation or settlement. `prediction list
+CLAIM` returns the accepted contracts testing that exact Claim version (retired
+ones included) and says so when there are none; contracts testing an earlier
+version of the Claim are not listed, and pending predictions and settlement
+outcomes are read with `get` and `next`.
 
-`settle` names the prediction by its contract name, or one of its bound windows
+`prediction settle` names the prediction by its contract name, or one of its bound windows
 by its bound contract ID (`RSC-...`), and the settling observation by Claim ID.
 The daemon resolves the exact live contract reference and, for a bound window,
 its anchor event; a window the worker does not hold, or whose contract version
@@ -1751,11 +1764,11 @@ the activation and resolution in operational exhaust; it does not create or
 mutate Claims. A failed attempt or an unevaluable
 observation does not settle the hypothesis as false. Effectful terminal nodes
 remain disabled in the public Procedure runner. The `prediction_settleable` row
-in `cruxible next` renders `cruxible settle RSC-...`; add
+in `cruxible next` renders `cruxible prediction settle RSC-...`; add
 `--observation CLAIM_ID`.
 
 A window that closed with no accepted observation inside it cannot settle:
-`settle` refuses with `prediction_deadline_passed`, and the
+`prediction settle` refuses with `prediction_deadline_passed`, and the
 `prediction_settleable` row stays until the contract is retired. Cruxible does
 not assign a meaning to a window that closed unobserved (a lapse, or a
 resolution where the contract declares absence decisive); retire the contract
@@ -1996,9 +2009,9 @@ last check:
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
   `bound_contract_id`. An event window has one row per
-  anchor. The repair is `cruxible settle RSC-...`; add
+  anchor. The repair is `cruxible prediction settle RSC-...`; add
   `--observation CLAIM_ID` naming an accepted observation inside the window. The worker does not check that such an observation exists; if
-  none does, see the note under `cruxible settle`.
+  none does, see the note under `cruxible prediction settle`.
   The worker clears the row when the settlement lands, and restores it if that
   answer is overturned.
 - `prediction_window_unbindable` names a ResolutionContract with a matching
@@ -2113,7 +2126,7 @@ needs activation, not more approval.
 A `mandate_expiring` row is a live, unsuspended ProcedureMandate whose
 `expires_at` falls after the evaluation time and within `--expiring-within`.
 Nothing renews a mandate, so its repair starts a successor from
-`cruxible authoring create --example procedure-mandate`; a successor
+`cruxible authoring example procedure-mandate`; a successor
 whose window reaches past the lead time, or the mandate's retirement, closes
 the row.
 
@@ -2314,7 +2327,7 @@ reason, for any caller of the instance, without daemon scope; it also notes
 when armed Lines have no consumer loop running here and when the provider lane
 is unavailable. When any live ClaimType still names
 CaptureContracts by digest, attention says so and suggests
-`cruxible claim-type upgrade-evidence-rules`.
+`cruxible claim-type upgrade`.
 
 `--kind` reads one kind in full: every predicate with its roles, freshness
 horizon and live Claim count, the predicates of other kinds that point at it
@@ -2618,19 +2631,22 @@ covers all four tool kinds, including same-turn edit drift.
 ## proposal
 
 ~~~text
-cruxible proposal inspect PROPOSAL_ID
 cruxible proposal list [--status open|settled|incomplete] [--limit N]
   [--cursor CURSOR]
 cruxible proposal readmit PROPOSAL_ID
 cruxible proposal withdraw PROPOSAL_ID --reason TEXT
-cruxible proposal refusal PROPOSAL_ID
 cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
   [--workspace-root DIR]
 cruxible proposal approve PROPOSAL_ID
   --signer-id ID --key FILE [--yes]
-cruxible proposal activate PROPOSAL_ID [--workspace-root DIR]
-  [--no-sync]
+cruxible proposal activate PROPOSAL_ID
+cruxible get PROPOSAL_ID [--detail proof]
 ~~~
+
+`get` is the one proposal read. Its card names the status, verdict, actor,
+rationale and changes; a refused proposal's card carries every refusal
+diagnostic with its code, message and repair, and `--detail proof` adds the
+admission, evaluation and candidate records.
 
 `cruxible whoami` names the actor and where its ID came from (the
 credential's principal, the configured principal ID, or the local operator),
@@ -2641,7 +2657,7 @@ if not, why: `can_author` and `authoring_refusal` carry exactly the code, detail
 and repair authoring would return (`cruxible.identity.principal_unconfigured`,
 `principal_absent`, `principal_revoked`, `credential_unbound`,
 `permission_insufficient`, or `cruxible.instance.decommissioned`). Authoring
-refuses such an actor at `authoring create`, before any payload is compiled or
+refuses such an actor at `authoring compile` and `submit`, before any payload is compiled or
 preflighted, rather than at proposal evaluation
 (`cruxible.proposal.creator_principal_invalid`).
 `proposal list` prints a labeled `COORDINATE_TIME` column and deterministically
@@ -2675,16 +2691,11 @@ rather than rewriting its reason, and a settled proposal refuses, because its
 outcome is not an intention to overwrite.
 
 approve signs locally. The private-key path is not sent to the daemon.
-When `.cruxible/coverage.json` at `--workspace-root` declares `floor_output`,
-activate refreshes floor-v2 as a verified exact directory replacement. An
-accepted activation followed by a failed local refresh reports both truths and
-exits nonzero; the daemon never receives the workspace path.
-
-After an accepted activation, the client runs block sync last unless
-`--no-sync` is explicit. An unattached workspace retains a typed `skipped`
-`workspace_not_attached` row and exits zero; a sync refusal in an attached
-workspace reports the already-accepted truth, names `cruxible block sync
---all`, and exits nonzero.
+Activation is a daemon act and writes nothing locally; it returns the
+activation receipt. A workspace the local daemon serves gets its floor from the
+daemon's floor-refresh trigger; other setups pull it with `cruxible floor
+export`. Read exactly what was accepted with `get` or `query` at the receipt's
+coordinate; `next` reports any projection block the change left stale.
 
 ### Reviewing a proposal
 

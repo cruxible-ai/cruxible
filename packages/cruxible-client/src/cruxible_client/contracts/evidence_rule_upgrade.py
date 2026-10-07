@@ -1,27 +1,12 @@
-"""Result of proposing the move to identity evidence rules (ClaimType v6)."""
+"""What the identity-rule conversion inside `claim-type upgrade` reports per ClaimType."""
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict
-
-from cruxible_client.contracts.change_control import DryRun, PreviewAt
-from cruxible_client.contracts.get_reads import GetCoordinate
 
 
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
-
-
-class EvidenceRuleUpgradeRequest(_Model):
-    """Previews by default: the change set carries every dependent Claim."""
-
-    tag: Literal["playbill-evidence-rule-upgrade-request-v1"] = (
-        "playbill-evidence-rule-upgrade-request-v1"
-    )
-    dry_run: DryRun = None
-    at: PreviewAt = None
 
 
 class EvidenceRuleConversion(_Model):
@@ -35,25 +20,7 @@ class EvidenceRuleRefusal(_Model):
     reason: str
 
 
-class EvidenceRuleUpgradeResult(_Model):
-    tag: Literal["playbill-evidence-rule-upgrade-result-v1"] = (
-        "playbill-evidence-rule-upgrade-result-v1"
-    )
-    #: ``would_propose``/``would_block`` answer a preview, which writes nothing.
-    status: Literal["unchanged", "proposed", "blocked", "would_propose", "would_block"]
-    proposal_id: str | None = None
-    converted: tuple[EvidenceRuleConversion, ...] = ()
-    refused: tuple[EvidenceRuleRefusal, ...] = ()
-    carried_claims: int = 0
-    detail: str | None = None
-    #: The accepted coordinate the change set was evaluated at; pass it as ``at``
-    #: to commit exactly this preview.
-    coordinate: GetCoordinate | None = None
-
-
 __all__ = [
     "EvidenceRuleConversion",
     "EvidenceRuleRefusal",
-    "EvidenceRuleUpgradeRequest",
-    "EvidenceRuleUpgradeResult",
 ]

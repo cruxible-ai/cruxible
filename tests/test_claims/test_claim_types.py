@@ -52,6 +52,7 @@ from tests.core_support._support import initialize_local
 
 def literal_claim_type() -> ClaimType:
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
         predicate="project.work_item.status",
         allowed_subject_kinds=("project.work_item",),
@@ -367,12 +368,14 @@ def test_claim_type_v3_horizon_proposal_uses_the_frozen_refusal_code(tmp_path: P
 
 
 def test_compact_ordinary_profile_and_expert_input_expand_to_identical_bytes() -> None:
-    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
 
     direct = literal_claim_type().model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v5",
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2(),
+            "artifact_format": "playbill-claim-type-v7",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(),
+            "evidence_requirement": "self",
+            "revision_evidence": "replace",
         }
     )
     profile = next(
@@ -486,14 +489,17 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
             update={"permitted_roles": ("derivation",)}
         ),
         parameters={
-            "capture_contract_digest": "sha256:" + "aa" * 32,
+            "capture_contract": "repo.replace-me",
             "evidence_kind": "source.observation",
         },
     )
     expanded = expand_claim_type_profile(request)
-    assert expanded.claim_type.artifact_format == "playbill-claim-type-v5"
+    assert expanded.claim_type.artifact_format == "playbill-claim-type-v7"
     rule = expanded.claim_type.evidence_admission_policy.rules[0]
     assert "allowed_reducer_digests" not in rule.model_dump()
+    assert [item.target.qualified for item in rule.capture_contracts] == [
+        "CaptureContract:repo.replace-me"
+    ]
     with pytest.raises(AuthoringProfileError, match="closed schema"):
         expand_claim_type_profile(
             request.model_copy(
@@ -509,11 +515,14 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
                 rules=(
                     ClaimEvidenceAdmissionRuleV1(
-                        **rule.model_dump(exclude={"tag"}),
+                        **rule.model_dump(exclude={"tag", "capture_contracts"}),
+                        capture_contract_digests=("sha256:" + "aa" * 32,),
                         allowed_reducer_digests=("sha256:" + "bb" * 32,),
                     ),
                 )
             ),
+            "evidence_requirement": None,
+            "revision_evidence": None,
         }
     )
     # These coordinates were produced by the pre-change profile expander.
@@ -536,12 +545,14 @@ def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
     tmp_path: Path,
 ) -> None:
     instance, _owner = initialize_local(tmp_path)
-    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
 
     direct = literal_claim_type().model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v5",
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2(),
+            "artifact_format": "playbill-claim-type-v7",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(),
+            "evidence_requirement": "self",
+            "revision_evidence": "replace",
         }
     )
     profile = next(

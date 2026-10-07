@@ -67,8 +67,8 @@ def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation()
 
 def test_prediction_tools_expose_the_same_typed_requests_as_http_and_sdk() -> None:
     schemas = _schemas()
-    predict = schemas["cruxible_predict"].inputSchema
-    settle = schemas["cruxible_settle"].inputSchema
+    predict = schemas["cruxible_prediction_propose"].inputSchema
+    settle = schemas["cruxible_prediction_settle"].inputSchema
 
     assert set(predict["properties"]) == {"instance_id", "request"}
     assert set(predict["required"]) == {"request"}
@@ -114,23 +114,12 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
     schemas = _schemas()
     compile_schema = schemas["cruxible_authoring_compile"].inputSchema
     submit_schema = schemas["cruxible_authoring_submit"].inputSchema
-    abandon_schema = schemas["cruxible_authoring_abandon_insertion"].inputSchema
 
     assert set(compile_schema["properties"]) == {"instance_id", "payload", "intent_id"}
-    assert set(submit_schema["properties"]) == {"instance_id", "intent_id"}
-    # An intent that published several Claims owns one expectation per
-    # publishing member, so the call that releases one names the one it is
-    # about; a singular Claim intent may omit it. That is the only plumbing
-    # this tool exposes.
-    assert set(abandon_schema["properties"]) == {
-        "instance_id",
-        "intent_id",
-        "expectation_id",
-    }
+    assert set(submit_schema["properties"]) == {"instance_id", "payload", "intent_id"}
     forbidden = {"base", "claim_id", "candidate_digest", "predecessor_digest"}
     assert forbidden.isdisjoint(compile_schema["properties"])
     assert forbidden.isdisjoint(submit_schema["properties"])
-    assert forbidden.isdisjoint(abandon_schema["properties"])
 
     example_schema = schemas["cruxible_authoring_example"].inputSchema
     assert example_schema["properties"]["name"]["enum"] == [

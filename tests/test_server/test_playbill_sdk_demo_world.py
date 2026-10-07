@@ -257,7 +257,7 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
     workspace.mkdir()
     _catalog(workspace)
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
-    sdk_proposal = pb.claim_type(
+    draft = pb.claim_type(
         predicate=input_value.predicate,
         subject_kinds=input_value.allowed_subject_kinds,
         object_kind=input_value.object_kind,
@@ -271,14 +271,28 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
         resolution_policy=ClaimResolutionPolicy.model_validate(input_value.resolution_policy),
         pins=(),
         evidence_freshness=None,
-    ).propose(proposal_name="empty-policy-sdk")
+    )
+    # The same definition through the HTTP envelope route the draft uses.
+    http_proposal = http.post(
+        f"/api/v1/{instance_id}/claim-types/proposals",
+        json={
+            "claim_type": draft.definition.model_dump(mode="json"),
+            "proposal_name": "empty-policy-http",
+        },
+    )
+    assert http_proposal.status_code == 200, http_proposal.text
+    sdk_proposal = draft.propose(proposal_name="empty-policy-sdk")
 
-    assert sdk_proposal.status().verdict == "candidate"
+    # get is the one proposal read; the typed propose result carries the lint.
+    assert pb.get(sdk_proposal.proposal.proposal_id).value.verdict == "candidate"
     assert cli_proposal["lint"]["warnings"]
     assert {warning["code"] for warning in cli_proposal["lint"]["warnings"]} == {
         "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
     }
-    assert list(sdk_proposal.warnings) == cli_proposal["lint"]["warnings"]
+    # Warning parity: CLI, HTTP and SDK lint the same draft identically.
+    sdk_warnings = [item.model_dump(mode="json") for item in sdk_proposal.lint.warnings]
+    assert sdk_warnings == http_proposal.json()["lint"]["warnings"]
+    assert sdk_warnings == cli_proposal["lint"]["warnings"]
 
 
 def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
@@ -287,15 +301,16 @@ def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     http, instance_id, private_key_path = playbill_http
-    accepted_contract_digest = _install_direct_capture_contract(http, instance_id, private_key_path)
+    _install_direct_capture_contract(http, instance_id, private_key_path)
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
     runner = CliRunner()
     example_payload = defaulted_claim_type_input_example().model_dump(mode="json")
-    assert (
-        accepted_contract_digest
-        in example_payload["evidence_admission_policy"]["rules"][0]["capture_contract_digests"]
+    # The rule also names the accepted direct contract, by identity.
+    rule = example_payload["evidence_admission_policy"]["rules"][0]
+    rule["capture_contracts"] = sorted(
+        [*rule["capture_contracts"], DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.qualified]
     )
     input_path = tmp_path / "claim-type-input.json"
     input_path.write_text(json.dumps(example_payload), encoding="utf-8")
@@ -450,8 +465,8 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
     assert not intent.refused
     assert intent.lint is not None
     assert intent.warnings == tuple(intent.lint.warnings)
-    assert intent.warnings[0]["code"] == ("cruxible.claim_type.anticipated_source_contract_omitted")
-    assert intent.warnings[0]["source_id"] == "corpus.vuln-response-runbook"
+    assert intent.warnings[0].code == "cruxible.claim_type.anticipated_source_contract_omitted"
+    assert intent.warnings[0].source_id == "corpus.vuln-response-runbook"
     assert intent._preflight is not None
     response = intent._preflight.model_dump(mode="json")
     response.pop("lint")
@@ -762,7 +777,7 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
         payload=bound.model_dump(mode="json"),
     )
     assert compiled.verdict == "passed", compiled.frontier
-    intent_id = str(compiled.certificate["intent_id"])
+    intent_id = str(compiled.certificate.intent_id)
     submitted = transport.submit_authoring_intent(instance_id, intent_id)
     assert submitted.status.proposal_id is not None
     _approve_and_activate(
@@ -999,7 +1014,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         ).model_dump(mode="json"),
     )
     assert query_preflight.verdict == "passed", query_preflight.frontier
-    query_intent_id = query_preflight.certificate["intent_id"]
+    query_intent_id = query_preflight.certificate.intent_id
     assert isinstance(query_intent_id, str)
     submitted_query = transport.submit_authoring_intent(
         instance_id,

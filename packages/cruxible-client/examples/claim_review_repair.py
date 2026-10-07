@@ -88,7 +88,7 @@ def run(
         proposal.approve(signer=signer, reviewed=reviewed)
         if not accept_decision(proposal_id):
             raise RuntimeError(f"Left approved proposal {proposal_id} pending acceptance")
-        receipt = cx.accept(proposal_id)
+        receipt = cx.activate(proposal_id)
         if receipt.status != "accepted":
             raise RuntimeError(f"Acceptance did not win: {receipt.status}")
         world = cx.world()

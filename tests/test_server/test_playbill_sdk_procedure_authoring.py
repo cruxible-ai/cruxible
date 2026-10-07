@@ -75,7 +75,7 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
             ),
         )
         assert compiled.verdict == "passed", compiled.frontier
-        intent_id = compiled.certificate["intent_id"]
+        intent_id = compiled.certificate.intent_id
         assert isinstance(intent_id, str)
         submitted = transport.submit_authoring_intent(instance_id, intent_id)
         proposal_id = submitted.status.proposal_id

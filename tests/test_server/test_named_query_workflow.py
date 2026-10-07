@@ -76,14 +76,16 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
             payload_file.write_text(input.model_dump_json())
             compiled = invoke("authoring", "compile", str(payload_file))
             assert compiled["verdict"] == "passed", compiled
-            submitted = invoke("authoring", "submit", compiled["certificate"]["intent_id"])
+            submitted = invoke(
+                "authoring", "submit", "--intent-id", compiled["certificate"]["intent_id"]
+            )
         else:
             compiled = handlers.handle_playbill_authoring_compile(
                 instance_id, input.model_dump(mode="json"), intent_id=None
             )
             assert compiled.verdict == "passed", compiled
             submitted = handlers.handle_playbill_authoring_submit(
-                instance_id, compiled.certificate["intent_id"]
+                instance_id, intent_id=compiled.certificate.intent_id
             ).model_dump(mode="json")
         proposal = Proposal(pb, submitted["status"]["proposal_id"])
     key = load_ssh_private_key(private_key.read_bytes(), password=None)
@@ -94,7 +96,7 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
     )
     reviewed = proposal.review()
     proposal.approve(signer=signer, reviewed=reviewed)
-    assert pb.accept(proposal.proposal_id).status == "accepted"
+    assert pb.activate(proposal.proposal_id).status == "accepted"
     name = definition.query_definition.identity.name
     if surface == "cli":
         page = api.QueryResultRecord.model_validate(

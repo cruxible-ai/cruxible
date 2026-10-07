@@ -39,6 +39,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV2,
     WorkingSelectionObservation,
 )
+from cruxible_client.contracts.captures import foreign_source_capture_contract
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicy,
     ClaimAttestationConsequenceRule,
@@ -57,6 +58,7 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core import __version__ as DAEMON_VERSION
+from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
 from tests.test_client._read_fakes import ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
@@ -239,11 +241,7 @@ class _Client:
         self, _instance_id: str, **values: object
     ) -> api.AuthoringPreflightResult:
         self.compiled = dict(values)
-        return api.AuthoringPreflightResult(
-            verdict="passed",
-            certificate={"intent_id": "AIT-" + "1" * 32},
-            frontier={"diagnostics": []},
-        )
+        return stub_preflight_result(intent_id="AIT-" + "1" * 32)
 
     def get_authoring_intent(
         self, _instance_id: str, _intent_id: str
@@ -938,7 +936,7 @@ def test_an_unknown_claim_type_object_kind_falls_back_to_the_literal_shape(
     assert draft.payload.statement.object == LiteralClaimObject(value="docs/readme")
 
 
-def test_claim_type_builder_preserves_attestation_consequences_in_v5(tmp_path: Path) -> None:
+def test_claim_type_builder_writes_v7_with_identity_rules(tmp_path: Path) -> None:
     _workspace(tmp_path)
     pb = Cruxible._from_client(  # type: ignore[arg-type]
         _Client(),
@@ -977,8 +975,14 @@ def test_claim_type_builder_preserves_attestation_consequences_in_v5(tmp_path: P
         attestation_consequence_policy=policy,
     )
 
-    assert draft.definition.artifact_format == "playbill-claim-type-v5"
+    assert draft.definition.artifact_format == "playbill-claim-type-v7"
     assert draft.definition.attestation_consequence_policy == policy
+    assert draft.definition.evidence_requirement == "self"
+    assert draft.definition.revision_evidence == "replace"
+    (rule,) = draft.definition.evidence_admission_policy.rules
+    assert [item.target.qualified for item in rule.capture_contracts] == [
+        foreign_source_capture_contract("corpus.runbook").identity.qualified
+    ]
 
 
 def test_claim_requires_exactly_one_explicit_source_role(tmp_path: Path) -> None:
@@ -1350,22 +1354,17 @@ def test_refusal_diagnostic_maps_exact_payload_path_to_the_call_expression(
             self, _instance_id: str, **values: object
         ) -> api.AuthoringPreflightResult:
             self.compiled = dict(values)
-            return api.AuthoringPreflightResult(
+            return stub_preflight_result(
                 verdict="refused",
-                certificate={"intent_id": "AIT-" + "1" * 32},
-                frontier={
-                    "diagnostics": [
-                        {
-                            "code": "cruxible.test.role_refused",
-                            "stage": "admission",
-                            "offending_element": "statement.role",
-                            "message": "role is not admitted",
-                            "repairs": [],
-                            "owner": "writer",
-                            "disposition": "repairable",
-                        }
-                    ]
-                },
+                intent_id="AIT-" + "1" * 32,
+                diagnostics=(
+                    stub_diagnostic(
+                        "cruxible.test.role_refused",
+                        "role is not admitted",
+                        stage="admission",
+                        offending_element="statement.role",
+                    ),
+                ),
             )
 
     pb = Cruxible._from_client(  # type: ignore[arg-type]
@@ -1398,6 +1397,7 @@ def _staged_claim_type(predicate: str, *, object_kind: str) -> ClaimType:
     """One whole ClaimType a change set can define, minimal but real."""
 
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=("sec.vuln",),

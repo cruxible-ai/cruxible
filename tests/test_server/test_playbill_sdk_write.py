@@ -198,7 +198,7 @@ def test_capture_handles_and_contract_evidence_from_the_sdk(
     assert caught.value.error_code == "cruxible.write.capture_not_found"
 
 
-def test_retire_dry_run_and_proposal_accept(pb: Cruxible) -> None:
+def test_retire_dry_run_and_proposal_activate(pb: Cruxible) -> None:
     claim = pb.set(WI1, "title", "Old", because="x").changes[0].claim
     assert claim is not None
     preview = pb.retire(claim, because="Gone.", dry_run=True)
@@ -207,8 +207,13 @@ def test_retire_dry_run_and_proposal_accept(pb: Cruxible) -> None:
     assert proposed.status == "awaiting_approval" and proposed.proposal is not None
     proposal = pb.proposal(proposed.proposal.proposal_id)
     assert repr(proposal) == f"Proposal({proposed.proposal.proposal_id!r})"
-    receipt = proposal.accept()
+    listed = pb.proposals(status="open")
+    assert proposal.proposal_id in [entry.proposal_id for entry in listed.entries]
+    receipt = proposal.activate()
     assert receipt.status == "accepted"
+    assert proposal.proposal_id not in [
+        entry.proposal_id for entry in pb.proposals(status="open").entries
+    ]
 
 
 def test_world_writes_keep_references_valid_after_their_own_write(

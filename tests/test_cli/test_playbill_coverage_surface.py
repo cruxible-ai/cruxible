@@ -128,15 +128,10 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
             body=GOVERNED_BYTES.decode("utf-8"),
         ),
     )
-    created = cruxible.json(
-        "authoring",
-        "create",
-        _write(tmp_path / "claim.json", authoring.model_dump(mode="json")),
-    )
     submitted = cruxible.json(
         "authoring",
         "submit",
-        str(created["intent"]["intent_id"]),
+        _write(tmp_path / "claim.json", authoring.model_dump(mode="json")),
     )
     cruxible.accept(str(submitted["status"]["proposal_id"]))
     return f"Claim:{submitted['intent']['semantic_identity']}"
@@ -228,6 +223,7 @@ def _govern_a_foreign_span(
     submitted = cruxible.json(
         "authoring",
         "submit",
+        "--intent-id",
         str(preflight["certificate"]["intent_id"]),
     )
     cruxible.accept(str(submitted["status"]["proposal_id"]))

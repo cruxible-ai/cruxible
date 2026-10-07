@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import heapq
 import json
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import datetime
 from typing import Annotated, Literal, TypeAlias
 
@@ -788,6 +789,55 @@ def _v2_operation_digest(
     ).tagged
 
 
+def _dependency_order(
+    tree: Mapping[str, bytes],
+    by_identity: Mapping[str, ClaimTypeMigrationInventoryItemV1],
+) -> Iterator[tuple[str, ArtifactDependencyStateV1]]:
+    """Yield each closure member once, after every member it pins.
+
+    Among the members whose pinned members are all settled, the smallest
+    identity (by UTF-8 bytes) goes next, so the order is the one deterministic
+    topological order. One pass: each member is parsed once and its waiting set
+    shrinks as the members it pins settle, instead of rescanning the whole
+    remainder after every member. A member that can never be settled is a cycle.
+    """
+
+    current: dict[str, ArtifactDependencyStateV1] = {}
+    for identity, row in by_identity.items():
+        state = parse_dependency_artifact(row.path, tree[row.path])
+        if state is None:
+            raise ClaimTypeMigrationIncomplete(
+                f"{ClaimTypeMigrationIncomplete.code}: inventory member disappeared"
+            )
+        current[identity] = state
+    waiting = {
+        identity: {pin.target.qualified for pin in state.pins} & by_identity.keys()
+        for identity, state in current.items()
+    }
+    pinned_by: dict[str, list[str]] = {}
+    for identity, targets in waiting.items():
+        for target in targets:
+            pinned_by.setdefault(target, []).append(identity)
+    ready = [
+        (identity.encode("utf-8"), identity) for identity, targets in waiting.items() if not targets
+    ]
+    heapq.heapify(ready)
+    settled = 0
+    while ready:
+        _key, identity = heapq.heappop(ready)
+        yield identity, current[identity]
+        settled += 1
+        for dependent in pinned_by.get(identity, ()):
+            targets = waiting[dependent]
+            targets.discard(identity)
+            if not targets:
+                heapq.heappush(ready, (dependent.encode("utf-8"), dependent))
+    if settled != len(current):
+        raise ClaimTypeMigrationIncomplete(
+            f"{ClaimTypeMigrationIncomplete.code}: dependent closure contains a cycle"
+        )
+
+
 def _build_v2_candidate(
     *,
     tree: Mapping[str, bytes],
@@ -813,57 +863,37 @@ def _build_v2_candidate(
             parse_claim_type(tree[type_path], path=type_path)
         ).tagged: claim_type_digest(successor).tagged
     }
-    remaining = set(by_identity)
     normalized: dict[str, ClaimTypeMigrationDispositionV2] = {}
-    while remaining:
-        progressed = False
-        for identity in sorted(remaining, key=lambda item: item.encode("utf-8")):
-            row = by_identity[identity]
-            current = parse_dependency_artifact(row.path, tree[row.path])
-            if current is None:
-                raise ClaimTypeMigrationIncomplete(
-                    f"{ClaimTypeMigrationIncomplete.code}: inventory member disappeared"
-                )
-            unresolved_changed_targets = {
-                pin.target.qualified for pin in current.pins if pin.target.qualified in remaining
-            }
-            if unresolved_changed_targets:
-                continue
-            entry = supplied[identity]
-            disposition: MigrationResultDisposition = (
-                "retire" if entry.disposition == "invalidation" else entry.disposition
+    for identity, current in _dependency_order(tree, by_identity):
+        row = by_identity[identity]
+        entry = supplied[identity]
+        disposition: MigrationResultDisposition = (
+            "retire" if entry.disposition == "invalidation" else entry.disposition
+        )
+        if disposition not in row.permitted_dispositions:
+            raise ClaimTypeMigrationDependentInvalid(
+                f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
+                f"{disposition}"
             )
-            if disposition not in row.permitted_dispositions:
-                raise ClaimTypeMigrationDependentInvalid(
-                    f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
-                    f"{disposition}"
-                )
-            content = _canonical_successor_bytes(
-                current=current,
-                content=tree[row.path],
-                disposition=disposition,
-                replacements=replacements,
-                supplied=entry.successor,
-                successor_type=successor,
-            )
-            candidate_tree[row.path] = content
-            successor_state = parse_dependency_artifact(row.path, content)
-            if successor_state is None:
-                raise ClaimTypeMigrationIncomplete(
-                    f"{ClaimTypeMigrationIncomplete.code}: successor did not parse"
-                )
-            replacements[current.artifact_digest] = successor_state.artifact_digest
-            normalized[identity] = ClaimTypeMigrationDispositionV2(
-                identity=current.identity,
-                disposition=disposition,
-            )
-            remaining.remove(identity)
-            progressed = True
-            break
-        if not progressed:
+        content = _canonical_successor_bytes(
+            current=current,
+            content=tree[row.path],
+            disposition=disposition,
+            replacements=replacements,
+            supplied=entry.successor,
+            successor_type=successor,
+        )
+        candidate_tree[row.path] = content
+        successor_state = parse_dependency_artifact(row.path, content)
+        if successor_state is None:
             raise ClaimTypeMigrationIncomplete(
-                f"{ClaimTypeMigrationIncomplete.code}: dependent closure contains a cycle"
+                f"{ClaimTypeMigrationIncomplete.code}: successor did not parse"
             )
+        replacements[current.artifact_digest] = successor_state.artifact_digest
+        normalized[identity] = ClaimTypeMigrationDispositionV2(
+            identity=current.identity,
+            disposition=disposition,
+        )
     return candidate_tree, tuple(
         normalized[identity]
         for identity in sorted(normalized, key=lambda item: item.encode("utf-8"))
@@ -941,59 +971,42 @@ def build_claim_type_migration_candidate(
             claim_type_digest(successor).tagged
         )
     }
-    remaining = set(by_identity)
     normalized: dict[str, ClaimTypeMigrationDispositionV3] = {}
-    while remaining:
-        progressed = False
-        for identity in sorted(remaining, key=lambda item: item.encode("utf-8")):
-            row = by_identity[identity]
-            current = parse_dependency_artifact(row.path, tree[row.path])
-            if current is None:
-                raise ClaimTypeMigrationIncomplete(
-                    f"{ClaimTypeMigrationIncomplete.code}: inventory member disappeared"
-                )
-            if {pin.target.qualified for pin in current.pins}.intersection(remaining):
-                continue
-            entry = supplied[identity]
-            disposition: MigrationResultDisposition = (
-                "retire" if entry.disposition == "invalidation" else entry.disposition
+    for identity, current in _dependency_order(tree, by_identity):
+        row = by_identity[identity]
+        entry = supplied[identity]
+        disposition: MigrationResultDisposition = (
+            "retire" if entry.disposition == "invalidation" else entry.disposition
+        )
+        if disposition not in row.permitted_dispositions:
+            raise ClaimTypeMigrationDependentInvalid(
+                f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
+                f"{disposition}"
             )
-            if disposition not in row.permitted_dispositions:
-                raise ClaimTypeMigrationDependentInvalid(
-                    f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
-                    f"{disposition}"
-                )
-            content = _canonical_successor_bytes(
-                current=current,
-                content=tree[row.path],
-                disposition=disposition,
-                replacements=replacements,
-                supplied=entry.successor,
-                supplied_content=authored.pop(identity, None),
-                successor_type=successor,
-                claim_retirement_reason=entry.claim_retirement_reason,
-                claim_effective_until=entry.claim_effective_until,
-            )
-            candidate_tree[row.path] = content
-            successor_state = parse_dependency_artifact(row.path, content)
-            if successor_state is None:
-                raise ClaimTypeMigrationIncomplete(
-                    f"{ClaimTypeMigrationIncomplete.code}: successor did not parse"
-                )
-            replacements[current.artifact_digest] = successor_state.artifact_digest
-            normalized[identity] = ClaimTypeMigrationDispositionV3(
-                identity=current.identity,
-                disposition=disposition,
-                claim_retirement_reason=entry.claim_retirement_reason,
-                claim_effective_until=entry.claim_effective_until,
-            )
-            remaining.remove(identity)
-            progressed = True
-            break
-        if not progressed:
+        content = _canonical_successor_bytes(
+            current=current,
+            content=tree[row.path],
+            disposition=disposition,
+            replacements=replacements,
+            supplied=entry.successor,
+            supplied_content=authored.pop(identity, None),
+            successor_type=successor,
+            claim_retirement_reason=entry.claim_retirement_reason,
+            claim_effective_until=entry.claim_effective_until,
+        )
+        candidate_tree[row.path] = content
+        successor_state = parse_dependency_artifact(row.path, content)
+        if successor_state is None:
             raise ClaimTypeMigrationIncomplete(
-                f"{ClaimTypeMigrationIncomplete.code}: dependent closure contains a cycle"
+                f"{ClaimTypeMigrationIncomplete.code}: successor did not parse"
             )
+        replacements[current.artifact_digest] = successor_state.artifact_digest
+        normalized[identity] = ClaimTypeMigrationDispositionV3(
+            identity=current.identity,
+            disposition=disposition,
+            claim_retirement_reason=entry.claim_retirement_reason,
+            claim_effective_until=entry.claim_effective_until,
+        )
     return (
         candidate_tree,
         tuple(
@@ -1061,64 +1074,51 @@ def build_dependent_closure_candidate(
             replacements[current.artifact_digest] = after.artifact_digest
     writes: dict[str, bytes] = {}
     normalized: dict[str, ClaimTypeMigrationDispositionV3] = {}
-    remaining = set(by_identity)
-    while remaining:
-        progressed = False
-        for identity in sorted(remaining, key=lambda item: item.encode("utf-8")):
-            row = by_identity[identity]
-            current = parse_dependency_artifact(row.path, tree[row.path])
-            if current is None:
-                raise ClaimTypeMigrationIncomplete(
-                    f"{ClaimTypeMigrationIncomplete.code}: inventory member disappeared"
-                )
-            if {pin.target.qualified for pin in current.pins}.intersection(remaining):
-                continue
-            entry = supplied[identity]
-            disposition: MigrationResultDisposition = (
-                "retire" if entry.disposition == "invalidation" else entry.disposition
+    # The definitions this set writes, overlaid by each settled dependent in
+    # turn: maintained as it grows rather than merged again per dependent.
+    overlay = dict(changed)
+    for identity, current in _dependency_order(tree, by_identity):
+        row = by_identity[identity]
+        entry = supplied[identity]
+        disposition: MigrationResultDisposition = (
+            "retire" if entry.disposition == "invalidation" else entry.disposition
+        )
+        if disposition not in row.permitted_dispositions:
+            raise ClaimTypeMigrationDependentInvalid(
+                f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
+                f"{disposition}"
             )
-            if disposition not in row.permitted_dispositions:
-                raise ClaimTypeMigrationDependentInvalid(
-                    f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
-                    f"{disposition}"
-                )
-            if reference_fields(row.path) is None:
-                raise ClaimTypeMigrationDependentInvalid(
-                    f"{ClaimTypeMigrationDependentInvalid.code}: {identity} cannot be re-pinned "
-                    "automatically; settle it through its own change first"
-                )
-            successor_type = _final_claim_type(tree, {**changed, **writes}, row.path, current)
-            content = _canonical_successor_bytes(
-                current=current,
-                content=tree[row.path],
-                disposition=disposition,
-                replacements=replacements,
-                supplied=entry.successor,
-                successor_type=successor_type,
-                claim_retirement_reason=entry.claim_retirement_reason,
-                claim_effective_until=entry.claim_effective_until,
-                typed_references=True,
+        if reference_fields(row.path) is None:
+            raise ClaimTypeMigrationDependentInvalid(
+                f"{ClaimTypeMigrationDependentInvalid.code}: {identity} cannot be re-pinned "
+                "automatically; settle it through its own change first"
             )
-            writes[row.path] = content
-            successor_state = parse_dependency_artifact(row.path, content)
-            if successor_state is None:
-                raise ClaimTypeMigrationIncomplete(
-                    f"{ClaimTypeMigrationIncomplete.code}: successor did not parse"
-                )
-            replacements[current.artifact_digest] = successor_state.artifact_digest
-            normalized[identity] = ClaimTypeMigrationDispositionV3(
-                identity=current.identity,
-                disposition=disposition,
-                claim_retirement_reason=entry.claim_retirement_reason,
-                claim_effective_until=entry.claim_effective_until,
-            )
-            remaining.remove(identity)
-            progressed = True
-            break
-        if not progressed:
+        successor_type = _final_claim_type(tree, overlay, row.path, current)
+        content = _canonical_successor_bytes(
+            current=current,
+            content=tree[row.path],
+            disposition=disposition,
+            replacements=replacements,
+            supplied=entry.successor,
+            successor_type=successor_type,
+            claim_retirement_reason=entry.claim_retirement_reason,
+            claim_effective_until=entry.claim_effective_until,
+            typed_references=True,
+        )
+        writes[row.path] = content
+        overlay[row.path] = content
+        successor_state = parse_dependency_artifact(row.path, content)
+        if successor_state is None:
             raise ClaimTypeMigrationIncomplete(
-                f"{ClaimTypeMigrationIncomplete.code}: dependent closure contains a cycle"
+                f"{ClaimTypeMigrationIncomplete.code}: successor did not parse"
             )
+        replacements[current.artifact_digest] = successor_state.artifact_digest
+        normalized[identity] = ClaimTypeMigrationDispositionV3(
+            identity=current.identity,
+            disposition=disposition,
+            claim_retirement_reason=entry.claim_retirement_reason,
+            claim_effective_until=entry.claim_effective_until,
+        )
     return writes, tuple(
         normalized[identity]
         for identity in sorted(normalized, key=lambda item: item.encode("utf-8"))

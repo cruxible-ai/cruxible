@@ -28,9 +28,9 @@ _DEFAULT_PROFILE = {
     "cruxible_retire",
     "cruxible_write",
     "cruxible_proposal_list",
-    "cruxible_review",
-    "cruxible_approve",
-    "cruxible_activate",
+    "cruxible_proposal_review",
+    "cruxible_proposal_approve",
+    "cruxible_proposal_activate",
     "cruxible_orient",
     "cruxible_whoami",
     "cruxible_server_info",
@@ -98,9 +98,9 @@ def test_permission_checks_fail_closed_for_unknown_and_higher_tier_operations(
 ) -> None:
     monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
     reset_permissions()
-    check_permission("cruxible_store_body")
+    check_permission("cruxible_body_store")
     with pytest.raises(PermissionDeniedError):
-        check_permission("cruxible_submit_approval")
+        check_permission("cruxible_proposal_approve_submit")
     with pytest.raises(PermissionDeniedError):
         check_permission("cruxible_init")
     with pytest.raises(ConfigError):
@@ -116,7 +116,7 @@ def test_a_permission_denial_names_what_the_required_tier_allows(
     monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
     reset_permissions()
     with pytest.raises(PermissionDeniedError) as caught:
-        check_permission("cruxible_submit_approval")
+        check_permission("cruxible_proposal_approve_submit")
 
     message = str(caught.value)
     assert "requires GRAPH_WRITE mode" in message

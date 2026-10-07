@@ -38,6 +38,7 @@ _SOURCE = foreign_source_capture_contract("repo.work-items")
 
 def _base(**update: object) -> ClaimType:
     base = ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=_PREDICATE),
         predicate=_PREDICATE,
         allowed_subject_kinds=("project.work_item",),

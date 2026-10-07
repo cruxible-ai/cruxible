@@ -1,6 +1,5 @@
 """Nested intent versions retain and validate their own response fields."""
 
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -12,14 +11,8 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentV1,
     AuthoringIntentView,
     AuthoringSubmitResult,
-    InsertionAbandonResult,
-    InsertionConfirmResult,
-    InsertionExpectation,
-    InsertionPrepareResult,
-    insertion_expectation_v2_digest,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from tests.test_authoring.test_authoring_insertions_v2 import _target
 from tests.test_authoring.test_authoring_intents import TIMESTAMP, _coordinator, _payload
 from tests.test_authoring.test_authoring_reference_expectations import _expectation
 
@@ -37,28 +30,10 @@ def test_all_response_wrappers_round_trip_the_selected_intent_version(
         canonical_timestamp=TIMESTAMP,
         reference_expectations=references,
     ).intent
-    # A valid retained publication expectation exercises the legacy wrappers too.
-    draft = InsertionExpectation.model_construct(
-        expectation_id="sha256:" + "1" * 64,
-        state="awaiting_claim_acceptance",
-        claim_identity=intent.semantic_identity,
-        original_claim_artifact_digest="sha256:" + "2" * 64,
-        claim_statement_digest="sha256:" + "3" * 64,
-        target=_target(),
-        expires_at=datetime(2026, 9, 1, tzinfo=UTC),
-        expectation_digest="sha256:" + "0" * 64,
-    )
-    expectation = InsertionExpectation.model_validate(
-        draft.model_dump(mode="json")
-        | {"expectation_digest": insertion_expectation_v2_digest(draft)}
-    )
     wrappers = (
         AuthoringIntentView(intent=intent),
         AuthoringIntentList(intents=(intent,)),
         AuthoringSubmitResult(intent=intent, status=intent.candidate_status),
-        InsertionPrepareResult(intent=intent, expectation=expectation, outcome="expired"),
-        InsertionConfirmResult(intent=intent, expectation=expectation, outcome="expired"),
-        InsertionAbandonResult(intent=intent, expectation=expectation),
     )
     for response in wrappers:
         wire = response.model_dump(mode="json")

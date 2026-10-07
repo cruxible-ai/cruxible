@@ -551,7 +551,7 @@ Approval signs locally and sends only the public attestation:
 - submit_approval sends only the public attestation.
 
 The CLI command cruxible proposal approve and the MCP tool
-cruxible_approve perform those steps in one call without exposing the
+cruxible_proposal_approve perform those steps in one call without exposing the
 key to the daemon; the MCP tool signs with a key from the server's
 CRUXIBLE_MCP_KEY_DIR. prepare_approval and submit_approval stay in the full
 MCP profile for a signer outside the MCP process.

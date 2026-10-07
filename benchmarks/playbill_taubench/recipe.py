@@ -205,13 +205,7 @@ def approve_and_activate(proposal_id: str, *, key_dir: Path) -> dict[str, Any]:
         "--yes",
         "--json",
     )
-    activated = run_cli_json(
-        "proposal",
-        "activate",
-        proposal_id,
-        "--workspace-root",
-        str(key_dir.parent),
-    )
+    activated = run_cli_json("proposal", "activate", proposal_id)
     if activated["status"] != "accepted":  # pragma: no cover - a refusal raises earlier
         raise RuntimeError(f"proposal {proposal_id} did not settle: {activated}")
     return dict(activated)
@@ -276,16 +270,7 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             + "\n",
             encoding="utf-8",
         )
-        created = run_cli_json(
-            "authoring",
-            "create",
-            str(authoring_path),
-        )
-        submitted = run_cli_json(
-            "authoring",
-            "submit",
-            str(created["intent"]["intent_id"]),
-        )
+        submitted = run_cli_json("authoring", "submit", str(authoring_path))
         return str(submitted["status"]["proposal_id"])
 
     for path in sorted((bundle_dir / "claim-types").glob("*.json")):
@@ -345,10 +330,9 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
                 str(path),
             )
             intent_id = prepared["certificate"]["intent_id"]
+            submitted = run_cli_json("authoring", "submit", "--intent-id", str(intent_id))
         else:
-            created = run_cli_json("authoring", "create", str(path))
-            intent_id = created["intent"]["intent_id"]
-        submitted = run_cli_json("authoring", "submit", str(intent_id))
+            submitted = run_cli_json("authoring", "submit", str(path))
         record(
             f"claim_input:{payload['subject']}#{payload['predicate']}",
             "playbill_authoring_submit",
@@ -367,12 +351,7 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
         )
 
     for path in sorted((bundle_dir / "procedures").glob("*.json")):
-        created = run_cli_json("authoring", "create", str(path))
-        submitted = run_cli_json(
-            "authoring",
-            "submit",
-            str(created["intent"]["intent_id"]),
-        )
+        submitted = run_cli_json("authoring", "submit", str(path))
         record(
             f"procedure:{path.stem}",
             "playbill_authoring_submit",

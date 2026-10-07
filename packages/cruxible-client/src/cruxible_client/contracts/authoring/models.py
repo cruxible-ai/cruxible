@@ -47,11 +47,9 @@ from cruxible_client.contracts.claims import (
     SubjectClaimObject,
     claim_path,
 )
-from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBacking,
     ProjectionBlockStampAny,
-    ProjectionMarkerSummary,
 )
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedure_runtime_policy import (
@@ -102,21 +100,14 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:d1ab0450d2cf70ef2a564fcf4bdbf54e2cb0cd901dc3a2012c6c5eb795c8b8b3"
+    "sha256:43da85a1efd0be3fff9bbafb1e60fe885dd81c1ec2fdc0748eb0a979d8810395"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
-INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
 INSERTION_TARGET_V2_DIGEST_DOMAIN = "playbill-insertion-target-v2"
 INSERTION_EXPECTATION_V2_DIGEST_DOMAIN = "playbill-insertion-expectation-v2"
 INSERTION_PREPARATION_V2_DIGEST_DOMAIN = "playbill-publication-preparation-v2"
 INSERTION_SOURCE_OBSERVATION_V2_DIGEST_DOMAIN = "playbill-publication-source-observation-v2"
-INSERTION_CONFIRMATION_OBSERVATION_V2_DIGEST_DOMAIN = (
-    "playbill-insertion-confirmation-observation-v2"
-)
 INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN = "playbill-insertion-terminal-tombstone-v2"
-INSERTION_PREPARE_OPERATION_V2_DOMAIN = "playbill-insertion-prepare-operation-v2"
-_INSERTION_PREPARE_TERMINAL_OPERATION_V2_DOMAIN = "playbill-insertion-prepare-terminal-operation-v2"
-INSERTION_CONFIRM_OPERATION_V2_DOMAIN = "playbill-insertion-confirm-operation-v2"
 PUBLICATION_BLOCK_ID_DOMAIN = "playbill-publication-block-id-v1"
 
 MAX_DIAGNOSTICS = 128
@@ -1743,25 +1734,6 @@ class CandidateStatus(_StrictAuthoringModel):
         return self
 
 
-def insertion_result_key(
-    *,
-    instance_id: str,
-    actor_id: str,
-    intent_id: str,
-    expectation_id: str,
-) -> str:
-    return typed_digest(
-        Sha256Value,
-        INSERTION_RESULT_KEY_DOMAIN,
-        {
-            "instance_id": instance_id,
-            "actor_id": actor_id,
-            "intent_id": intent_id,
-            "expectation_id": expectation_id,
-        },
-    ).tagged
-
-
 InsertionExpectationState: TypeAlias = Literal[
     "awaiting_claim_acceptance",
     "pending",
@@ -1862,53 +1834,6 @@ def publication_preparation_v2_digest(value: PublicationPreparation) -> str:
     return typed_digest(Sha256Value, INSERTION_PREPARATION_V2_DIGEST_DOMAIN, payload).tagged
 
 
-def build_publication_preparation_v2(**values: object) -> PublicationPreparation:
-    provisional = PublicationPreparation.model_construct(
-        **cast(dict[str, Any], values),
-        preparation_digest="sha256:" + "0" * 64,
-    )
-    return PublicationPreparation.model_validate(
-        {
-            **values,
-            "preparation_digest": publication_preparation_v2_digest(provisional),
-        }
-    )
-
-
-class InsertionConfirmationObservation(_StrictAuthoringModel):
-    tag: Literal["playbill-insertion-confirmation-observation-v2"] = (
-        "playbill-insertion-confirmation-observation-v2"
-    )
-    intent_id: str
-    expectation_id: str
-    preparation_digest: str
-    source_id: str
-    marker_summary: ProjectionMarkerSummary
-    observed_occurrence_count: int = Field(ge=0)
-
-    @field_validator("expectation_id", "preparation_digest")
-    @classmethod
-    def _digests(cls, value: str) -> str:
-        return _sha256(value, label="publication confirmation digest")
-
-    @field_validator("source_id")
-    @classmethod
-    def _source_id(cls, value: str) -> str:
-        return _insertion_source_id(value)
-
-
-def insertion_confirmation_observation_v2_digest(
-    value: InsertionConfirmationObservation,
-) -> str:
-    payload = value.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(
-        Sha256Value,
-        INSERTION_CONFIRMATION_OBSERVATION_V2_DIGEST_DOMAIN,
-        payload,
-    ).tagged
-
-
 class InsertionTerminalTombstone(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-terminal-tombstone-v2"] = (
         "playbill-insertion-terminal-tombstone-v2"
@@ -1980,19 +1905,6 @@ def insertion_terminal_tombstone_v2_digest(value: InsertionTerminalTombstone) ->
         INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN,
         payload,
     ).tagged
-
-
-def build_insertion_terminal_tombstone_v2(**values: object) -> InsertionTerminalTombstone:
-    provisional = InsertionTerminalTombstone.model_construct(
-        **cast(dict[str, Any], values),
-        tombstone_digest="sha256:" + "0" * 64,
-    )
-    return InsertionTerminalTombstone.model_validate(
-        {
-            **values,
-            "tombstone_digest": insertion_terminal_tombstone_v2_digest(provisional),
-        }
-    )
 
 
 class InsertionExpectation(_StrictAuthoringModel):
@@ -2082,35 +1994,6 @@ def build_insertion_expectation_v2(**values: object) -> InsertionExpectation:
     return InsertionExpectation.model_validate(
         {**values, "expectation_digest": insertion_expectation_v2_digest(provisional)}
     )
-
-
-def update_insertion_expectation_v2(
-    expectation: InsertionExpectation,
-    **changes: object,
-) -> InsertionExpectation:
-    values = {
-        name: getattr(expectation, name)
-        for name in type(expectation).model_fields
-        if name not in {"tag", "expectation_digest"}
-    }
-    values.update(changes)
-    return build_insertion_expectation_v2(**values)
-
-
-def insertion_prepare_terminal_operation_v2_key(
-    expectation_id: str,
-    observation: PublicationSourceObservation,
-) -> str:
-    """Key one terminal prepare attempt independently of the state it terminalizes."""
-
-    return typed_digest(
-        Sha256Value,
-        _INSERTION_PREPARE_TERMINAL_OPERATION_V2_DOMAIN,
-        {
-            "expectation_id": expectation_id,
-            "observation_digest": publication_source_observation_v2_digest(observation),
-        },
-    ).tagged
 
 
 class PreflightCertificate(_StrictAuthoringModel):
@@ -2478,35 +2361,12 @@ class AuthoringIntentList(_StrictAuthoringModel):
     intents: tuple[_AuthoringIntentResponse, ...]
 
 
-class AuthoringIntentCreateRequestV1(_StrictAuthoringModel):
-    tag: Literal["playbill-authoring-intent-create-request-v1"] = (
-        "playbill-authoring-intent-create-request-v1"
-    )
-    payload: AuthoringPayload
-
-
 class AuthoringIntentCompileRequestV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-compile-request-v1"] = (
         "playbill-authoring-intent-compile-request-v1"
     )
     payload: AuthoringPayload
     intent_id: str | None = None
-
-
-class AuthoringIntentCreateRequestV2(_StrictAuthoringModel):
-    tag: Literal["playbill-authoring-intent-create-request-v2"] = (
-        "playbill-authoring-intent-create-request-v2"
-    )
-    payload: AuthoringPayload
-    reference_expectations: tuple[AuthoringExpectation, ...]
-
-    @field_validator("reference_expectations")
-    @classmethod
-    def _reference_expectations(
-        cls,
-        value: tuple[AuthoringExpectation, ...],
-    ) -> tuple[AuthoringExpectation, ...]:
-        return canonical_reference_expectations(value)
 
 
 class AuthoringIntentCompileRequestV2(_StrictAuthoringModel):
@@ -2516,23 +2376,6 @@ class AuthoringIntentCompileRequestV2(_StrictAuthoringModel):
     payload: AuthoringPayload
     reference_expectations: tuple[AuthoringExpectation, ...]
     intent_id: str | None = None
-
-    @field_validator("reference_expectations")
-    @classmethod
-    def _reference_expectations(
-        cls,
-        value: tuple[AuthoringExpectation, ...],
-    ) -> tuple[AuthoringExpectation, ...]:
-        return canonical_reference_expectations(value)
-
-
-class AuthoringIntentCreateRequest(_StrictAuthoringModel):
-    tag: Literal["playbill-authoring-intent-create-request-v3"] = (
-        "playbill-authoring-intent-create-request-v3"
-    )
-    payload: AuthoringPayload
-    reference_expectations: tuple[AuthoringExpectation, ...]
-    program_stamp: AuthoringProgramStamp
 
     @field_validator("reference_expectations")
     @classmethod
@@ -2609,122 +2452,6 @@ class AuthoringSubmitResult(_StrictAuthoringModel):
         if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
             raise ValueError("submit result members must be identity-sorted and unique")
         return value
-
-
-class InsertionPrepareRequest(_StrictAuthoringModel):
-    tag: Literal["playbill-insertion-prepare-request-v2"] = "playbill-insertion-prepare-request-v2"
-    observation: PublicationSourceObservation
-    # Omitted, the intent's sole expectation is meant; a change set that
-    # publishes several Claims has no sole expectation and must name one.
-    expectation_id: str | None = None
-
-
-class PublicationPrepareWarning(_StrictAuthoringModel):
-    tag: Literal["playbill-publication-prepare-warning-v1"] = (
-        "playbill-publication-prepare-warning-v1"
-    )
-    code: Annotated[
-        Literal["cruxible.authoring.publication_citation_anchor_collision"], CurrentCode
-    ] = "cruxible.authoring.publication_citation_anchor_collision"
-    source_id: str
-    citation_ids: tuple[str, ...] = Field(min_length=1)
-
-    @field_validator("source_id")
-    @classmethod
-    def _source_id(cls, value: str) -> str:
-        return _insertion_source_id(value)
-
-    @field_validator("citation_ids")
-    @classmethod
-    def _citation_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-            raise ValueError("publication warning citation IDs must be sorted and unique")
-        for item in value:
-            Sha256Value.from_tagged(item)
-        return value
-
-
-class InsertionPrepareResult(_StrictAuthoringModel):
-    tag: Literal["playbill-insertion-prepare-result-v2"] = "playbill-insertion-prepare-result-v2"
-    outcome: Literal[
-        "prepared",
-        "already_prepared",
-        "bound",
-        "expired",
-        "claim_currency_changed",
-    ]
-    intent: _AuthoringIntentResponse
-    expectation: InsertionExpectation
-    preparation: PublicationPreparation | None = None
-    inserted_block_base64: str | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-    warnings: tuple[PublicationPrepareWarning, ...] = ()
-
-    @model_validator(mode="after")
-    def _preparation_shape(self) -> "InsertionPrepareResult":
-        if self.outcome in {"prepared", "already_prepared", "bound"} and (self.preparation is None):
-            raise ValueError("successful publication preparation requires exact preparation")
-        if self.preparation is None:
-            if self.inserted_block_base64 is not None:
-                raise ValueError("rendered publication bytes require an exact preparation")
-            return self
-        if self.inserted_block_base64 is None:
-            raise ValueError("an exact preparation requires its rendered publication bytes")
-        rendered = _canonical_base64(
-            self.inserted_block_base64,
-            label="rendered publication block",
-        )
-        if (
-            len(rendered) != self.preparation.inserted_block_byte_length
-            or "sha256:" + hashlib.sha256(rendered).hexdigest()
-            != self.preparation.inserted_block_digest
-        ):
-            raise ValueError("rendered publication bytes differ from their preparation")
-        return self
-
-    @field_validator("warnings")
-    @classmethod
-    def _warnings(
-        cls, value: tuple[PublicationPrepareWarning, ...]
-    ) -> tuple[PublicationPrepareWarning, ...]:
-        if value != tuple(
-            sorted(
-                set(value),
-                key=lambda item: (
-                    item.code.encode("ascii"),
-                    item.source_id.encode("utf-8"),
-                    item.citation_ids,
-                ),
-            )
-        ):
-            raise ValueError("publication prepare warnings must be sorted and unique")
-        return value
-
-
-class InsertionConfirmRequest(_StrictAuthoringModel):
-    tag: Literal["playbill-insertion-confirm-request-v2"] = "playbill-insertion-confirm-request-v2"
-    observation: InsertionConfirmationObservation
-    expectation_id: str | None = None
-
-
-class InsertionConfirmResult(_StrictAuthoringModel):
-    tag: Literal["playbill-insertion-confirm-result-v2"] = "playbill-insertion-confirm-result-v2"
-    outcome: Literal["bound", "already_bound", "expired", "claim_currency_changed"]
-    intent: _AuthoringIntentResponse
-    expectation: InsertionExpectation
-
-
-class InsertionAbandonRequest(_StrictAuthoringModel):
-    tag: Literal["playbill-insertion-abandon-request-v1"] = "playbill-insertion-abandon-request-v1"
-    expectation_id: str | None = None
-
-
-class InsertionAbandonResult(_StrictAuthoringModel):
-    tag: Literal["playbill-insertion-abandon-result-v1"] = "playbill-insertion-abandon-result-v1"
-    intent: _AuthoringIntentResponse
-    expectation: InsertionExpectation
 
 
 BlockSyncReadStatus: TypeAlias = Literal[
@@ -2992,12 +2719,8 @@ __all__ = [
     "AUTHORING_SDK_VERSION",
     "AUTHORING_RESOLVED_DIGEST_DOMAIN",
     "INSERTION_EXPECTATION_ID_DOMAIN",
-    "INSERTION_RESULT_KEY_DOMAIN",
-    "INSERTION_CONFIRMATION_OBSERVATION_V2_DIGEST_DOMAIN",
-    "INSERTION_CONFIRM_OPERATION_V2_DOMAIN",
     "INSERTION_EXPECTATION_V2_DIGEST_DOMAIN",
     "INSERTION_PREPARATION_V2_DIGEST_DOMAIN",
-    "INSERTION_PREPARE_OPERATION_V2_DOMAIN",
     "INSERTION_SOURCE_OBSERVATION_V2_DIGEST_DOMAIN",
     "INSERTION_TARGET_V2_DIGEST_DOMAIN",
     "INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN",
@@ -3012,9 +2735,6 @@ __all__ = [
     "AuthoringIntentCompileRequestV2",
     "AuthoringIntentCompileRequest",
     "AuthoringIntentCompileRequestV1",
-    "AuthoringIntentCreateRequestV2",
-    "AuthoringIntentCreateRequest",
-    "AuthoringIntentCreateRequestV1",
     "AuthoringIntentList",
     "AuthoringIntentPreflightRequest",
     "AuthoringIntentSubmitRequest",
@@ -3048,21 +2768,13 @@ __all__ = [
     "ClaimDependencyDrafts",
     "DiagnosticFrontierLimits",
     "DiagnosticFrontier",
-    "InsertionAbandonRequest",
-    "InsertionAbandonResult",
     "InsertionAnchorWindow",
-    "InsertionConfirmationObservation",
-    "InsertionConfirmRequest",
-    "InsertionConfirmResult",
     "InsertionExpectationState",
     "InsertionExpectation",
     "InsertionOperation",
     "InsertionTarget",
     "InsertionTerminalTombstone",
-    "InsertionPrepareRequest",
-    "InsertionPrepareResult",
     "PublicationPreparation",
-    "PublicationPrepareWarning",
     "PublicationSourceObservation",
     "BlockSyncItem",
     "BlockSyncOutcome",
@@ -3106,20 +2818,14 @@ __all__ = [
     "authoring_program_stamp_operation_key",
     "canonical_reference_expectations",
     "build_insertion_expectation_v2",
-    "build_insertion_terminal_tombstone_v2",
-    "build_publication_preparation_v2",
     "build_preflight_certificate",
-    "insertion_confirmation_observation_v2_digest",
     "insertion_expectation_id",
     "insertion_expectation_v2_digest",
-    "insertion_result_key",
     "insertion_target_v2_digest",
     "insertion_terminal_tombstone_v2_digest",
-    "insertion_prepare_terminal_operation_v2_key",
     "publication_block_id",
     "publication_preparation_v2_digest",
     "publication_source_observation_v2_digest",
     "preflight_certificate_digest",
     "reference_expectations_digest",
-    "update_insertion_expectation_v2",
 ]

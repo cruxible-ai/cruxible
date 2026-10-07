@@ -44,7 +44,7 @@ from cruxible_client.contracts.cron import CRON_UTC_HINT
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
@@ -107,6 +107,7 @@ def change_set_example() -> ChangeSetInput:
             ClaimTypeInput(
                 kind="claim_type",
                 claim_type=ClaimType(
+                    artifact_format="playbill-claim-type-v7",
                     identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
                     predicate="project.work_item.owner",
                     allowed_subject_kinds=("project.work_item",),
@@ -114,13 +115,15 @@ def change_set_example() -> ChangeSetInput:
                     literal_schema={"type": "string"},
                     cardinality="one",
                     permitted_roles=("normative", "observation"),
-                    evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+                    evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
                     admission_policy=ClaimAdmissionPolicy(),
                     resolution_policy=ClaimResolutionPolicy(
                         cardinality="one",
                         eligible_verdicts=("supported",),
                         selector="only_contender",
                     ),
+                    evidence_requirement="self",
+                    revision_evidence="replace",
                 ),
             ),
             claim_self_source_example(),
@@ -158,6 +161,7 @@ def claim_type_succession_example() -> ChangeSetInput:
             ClaimTypeSuccessionInput(
                 kind="claim_type_succession",
                 successor=ClaimType(
+                    artifact_format="playbill-claim-type-v7",
                     identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
                     predicate="project.work_item.owner",
                     allowed_subject_kinds=("project.work_item",),
@@ -165,7 +169,7 @@ def claim_type_succession_example() -> ChangeSetInput:
                     literal_schema={"type": "string", "enum": ["replace-me"]},
                     cardinality="one",
                     permitted_roles=("normative", "observation"),
-                    evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+                    evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
                     admission_policy=ClaimAdmissionPolicy(),
                     resolution_policy=ClaimResolutionPolicy(
                         cardinality="one",
@@ -173,6 +177,8 @@ def claim_type_succession_example() -> ChangeSetInput:
                         selector="only_contender",
                     ),
                     lifecycle=_ArtifactLifecycle(predecessor_digest="sha256:" + "0" * 64),
+                    evidence_requirement="self",
+                    revision_evidence="replace",
                 ),
                 dependents=(
                     ClaimTypeSuccessionDependent(

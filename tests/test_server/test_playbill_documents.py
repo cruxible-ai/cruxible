@@ -223,9 +223,9 @@ def test_friendly_change_set_duplicate_is_a_typed_http_400(
     query = query_claims_by_type_example().model_dump(mode="json")
 
     response = client.post(
-        f"/api/v1/{instance_id}/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-input-create-request-v1",
+            "tag": "playbill-authoring-input-compile-request-v1",
             "input": {"kind": "change_set", "members": [query, query]},
         },
     )
@@ -351,19 +351,18 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
         "sha256:" + "0" * 64,  # well formed, but no such proposal
     ),
 )
-def test_http_inspect_and_review_refuse_an_unknown_proposal_id_as_typed_404(
+def test_http_review_refuses_an_unknown_proposal_id_as_typed_404(
     playbill_http: tuple[TestClient, str, Path],
     selector: str,
 ) -> None:
     client, instance_id, _ = playbill_http
 
-    inspected = client.get(f"/api/v1/{instance_id}/proposals/{selector}")
     reviewed = client.post(
         f"/api/v1/{instance_id}/proposals/{selector}/review",
         json={"include_body": False},
     )
 
-    for response in (inspected, reviewed):
+    for response in (reviewed,):
         assert response.status_code == 404, response.text
         body = response.json()
         assert body["error_code"] == "cruxible.proposal_not_found"
@@ -371,12 +370,11 @@ def test_http_inspect_and_review_refuse_an_unknown_proposal_id_as_typed_404(
         assert body["repair"]["operation"] == "cruxible.proposal.list"
 
 
-def test_sdk_proposal_status_reads_one_proposal_by_id_without_paging_the_list(
+def test_sdk_get_reads_one_proposal_by_id_without_paging_the_list(
     playbill_http: tuple[TestClient, str, Path],
     tmp_path: Path,
 ) -> None:
     from cruxible_client import Cruxible, CruxibleClient
-    from cruxible_client.authoring.sdk import Proposal
 
     client, instance_id, _ = playbill_http
     stored = client.post(
@@ -404,17 +402,17 @@ def test_sdk_proposal_status_reads_one_proposal_by_id_without_paging_the_list(
     transport._client = client  # type: ignore[assignment]
 
     def no_listing(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("Proposal.status paged the proposal list")
+        raise AssertionError("get paged the proposal list")
 
     transport.list_proposals = no_listing  # type: ignore[method-assign]
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
 
-    status = Proposal(pb, proposal_id).status()
+    card = pb.get(proposal_id).value
 
-    assert status.proposal_id == proposal_id
-    assert status.status == "open"
-    assert status.verdict == "candidate"
+    assert card.proposal == proposal_id  # type: ignore[union-attr]
+    assert card.status == "open"  # type: ignore[union-attr]
+    assert card.verdict == "candidate"  # type: ignore[union-attr]
 
-    missing = client.get(f"/api/v1/{instance_id}/proposals/sha256:{'0' * 64}/status")
-    assert missing.status_code == 404, missing.text
-    assert missing.json()["error_code"] == "cruxible.proposal_not_found"
+    # The by-ID status route is cut: get is the one proposal read.
+    gone = client.get(f"/api/v1/{instance_id}/proposals/{proposal_id}/status")
+    assert gone.status_code in {404, 405}, gone.text

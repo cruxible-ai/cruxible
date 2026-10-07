@@ -2261,7 +2261,7 @@ def _render_line_member(
                 repair_kind="set_acquisition_policy_name",
                 repair_description=(
                     "Name an accepted or same-ChangeSet SourceAcquisitionPolicy "
-                    "(authoring create --example acquisition-policy)."
+                    "(cruxible authoring example acquisition-policy)."
                 ),
             )
     else:

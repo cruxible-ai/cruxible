@@ -1,10 +1,8 @@
-"""Move accepted ClaimTypes to identity evidence rules, one reviewed change set.
+"""The identity-rule conversion `claim-type upgrade` applies to v1-v5 ClaimTypes.
 
-Compiler revision 31 admits ClaimType v6, whose evidence rules name
-CaptureContracts by identity. This builds the ordinary change set that moves
-every live ClaimType whose evidence rules name contracts by exact digest (the
-v1 through v5 formats) to v6 and carries its Claims, and proposes it; nothing
-is activated here.
+ClaimType v6 and later name CaptureContracts by identity in their evidence
+rules. `claim-type upgrade` moves every older live ClaimType to v7 in one
+reviewed change set, and the first half of that move is the conversion here.
 
 A converted rule admits evidence captured under every accepted version of the
 contracts it names. That must never widen admission silently, so each rule is
@@ -21,7 +19,6 @@ out and reported for an explicit decision:
 from __future__ import annotations
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactRef
-from cruxible_client.contracts.canonical import canonical_digest
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     capture_contract_successor_break,
@@ -29,15 +26,9 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
-    parse_claim_type,
-    render_claim_type,
 )
-from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.evidence_rule_upgrade import (
     EvidenceRuleConversion,
-    EvidenceRuleRefusal,
-    EvidenceRuleUpgradeRequest,
-    EvidenceRuleUpgradeResult,
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
@@ -46,18 +37,8 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
     ClaimEvidenceAdmissionRuleV2,
 )
-from cruxible_core.claims.claim_type_inputs import identity_rules_supported
-from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDisposition,
-    ClaimTypeMigrationError,
-    build_dependent_closure_candidate,
-    dependent_closure_inventory,
-)
-from cruxible_core.errors import DataValidationError
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
 
 
 class _Refused(Exception):
@@ -204,128 +185,4 @@ def _convert(
     )
 
 
-def service_upgrade_evidence_rules(
-    instance: PlaybillInstance,
-    *,
-    request: EvidenceRuleUpgradeRequest,
-    actor_id: str,
-    timestamp: str,
-) -> EvidenceRuleUpgradeResult:
-    """Propose (or preview) the change set moving every convertible exact-rule ClaimType to v6.
-
-    The change set carries every dependent Claim, so it previews unless
-    ``dry_run`` is false; the preview evaluates it on the proposal service's own
-    admission path, under the same receive limits a submission meets, and
-    answers with counts and per-ClaimType entries rather than the Claims.
-    """
-
-    with change_scope(
-        instance,
-        dry_run=request.dry_run,
-        at=request.at,
-        kind="derived",
-        operation="cruxible.claim-type.upgrade-evidence-rules",
-        describe="the evidence-rule upgrade",
-    ) as mode:
-        return _upgrade(instance, mode, actor_id=actor_id, timestamp=timestamp)
-
-
-def _upgrade(
-    instance: PlaybillInstance, mode: ChangeMode, *, actor_id: str, timestamp: str
-) -> EvidenceRuleUpgradeResult:
-    assert mode.head is not None
-    base = mode.head
-    if not identity_rules_supported(base.compiler):
-        raise DataValidationError(
-            "identity evidence rules need compiler revision 31 or later; upgrade the compiler first"
-        )
-    tree = instance.immutable_tree_at(base.git_oid)
-    lineages = _Lineages(instance, AcceptedCoordinate.from_internal(base))
-    changed: dict[str, bytes] = {}
-    converted: list[EvidenceRuleConversion] = []
-    refused: list[EvidenceRuleRefusal] = []
-    for path in sorted(item for item in tree if item.startswith("claim-types/")):
-        claim_type = parse_claim_type(tree[path], path=path)
-        if claim_type.artifact_format in {"playbill-claim-type-v6", "playbill-claim-type-v7"}:
-            continue
-        if claim_type.lifecycle.state != "live":
-            continue
-        try:
-            successor, conversion = _convert(claim_type, lineages)
-        except (_Refused, FormatError, ValueError) as error:
-            refused.append(
-                EvidenceRuleRefusal(claim_type=claim_type.identity.qualified, reason=str(error))
-            )
-            continue
-        changed[path] = render_claim_type(successor)
-        converted.append(conversion)
-    if not changed:
-        return EvidenceRuleUpgradeResult(
-            status="unchanged",
-            refused=tuple(refused),
-            detail="No ClaimType to convert.",
-            coordinate=mode.coordinate,
-        )
-    roots = tuple(parse_claim_type(tree[path], path=path).identity for path in sorted(changed))
-    try:
-        inventory = dependent_closure_inventory(tree, roots=roots, fixed_paths=frozenset(changed))
-        settled, _normalized = build_dependent_closure_candidate(
-            tree=tree,
-            changed=changed,
-            inventory=inventory,
-            dispositions=tuple(
-                ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
-                for item in inventory
-            ),
-        )
-    except ClaimTypeMigrationError as error:
-        return EvidenceRuleUpgradeResult(
-            status="would_block" if mode.previewing else "blocked",
-            converted=tuple(converted),
-            refused=tuple(refused),
-            detail=str(error),
-            coordinate=mode.coordinate,
-        )
-    candidate = tree.fork()
-    for path, content in {**settled, **changed}.items():
-        candidate[path] = content
-    suffix = canonical_digest(
-        "playbill-evidence-rule-upgrade-target-v1",
-        {"base": base.semantic_root, "members": sorted(changed)},
-    )
-    admitted = admit_change_set(
-        instance,
-        mode,
-        actor_id=actor_id,
-        request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/evidence-rules-{suffix[:32]}",
-            proposed_base_oid=base.git_oid,
-        ),
-        candidate_tree=candidate,
-        timestamp=timestamp,
-    )
-    if not admitted.admitted:
-        return EvidenceRuleUpgradeResult(
-            status=admitted.status,
-            proposal_id=admitted.proposal_id,
-            converted=tuple(converted),
-            refused=tuple(refused),
-            detail=admitted.refusal_detail(),
-            coordinate=mode.coordinate,
-        )
-    return EvidenceRuleUpgradeResult(
-        status=admitted.status,
-        proposal_id=admitted.proposal_id,
-        converted=tuple(converted),
-        refused=tuple(refused),
-        carried_claims=sum(1 for item in inventory if item.path.startswith("claims/")),
-        detail=(
-            "Each converted rule now admits evidence under every compatible version of the "
-            "contracts it names, including future successors; widened_versions lists the "
-            "accepted versions it admits that it did not before."
-        ),
-        coordinate=mode.coordinate,
-    )
-
-
-__all__ = ["service_upgrade_evidence_rules"]
+__all__: list[str] = []

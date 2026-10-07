@@ -13,6 +13,7 @@ from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.tool_prompts import tool_description
 from tests.core_support._claim_type_support import claim_type_input_example
+from tests.support.preflight_results import stub_preflight_result
 
 
 def _coordinate() -> contracts.AcceptedCoordinate:
@@ -47,7 +48,7 @@ def test_public_example_vocabulary_exactly_matches_authoring_input_examples() ->
 def test_claim_type_uses_typed_proposal_input_not_a_coordinator_example() -> None:
     assert "claim-type" not in get_args(contracts.AuthoringExampleName)
     assert "ClaimType" not in tool_description("cruxible_authoring_example")
-    description = tool_description("cruxible_propose_claim_type")
+    description = tool_description("cruxible_claim_type_propose")
     assert "ClaimTypeInputRecord" in description
     assert "cruxible claim-type propose --template" in description
 
@@ -105,11 +106,7 @@ def test_flow_a_bind_reads_workspace_and_sends_only_the_lowered_payload(
             intent_id: str | None,
         ) -> contracts.AuthoringPreflightResult:
             captured.update(payload)
-            return contracts.AuthoringPreflightResult(
-                verdict="passed",
-                certificate={},
-                frontier={},
-            )
+            return stub_preflight_result()
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
     payload = ClaimInput.model_validate(authoring_example("claim-flow-a").model_dump(mode="json"))

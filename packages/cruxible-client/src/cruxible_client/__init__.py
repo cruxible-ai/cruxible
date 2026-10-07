@@ -54,7 +54,6 @@ if TYPE_CHECKING:
     from cruxible_client.authoring.signing import ApprovalSigner, LocalEd25519ApprovalSigner
     from cruxible_client.authoring.workspace import (
         WorkspaceError,
-        activate_with_workspace_refresh,
         inspect_workspace_floor,
         materialize_floor,
         observe_next_workspace,
@@ -142,7 +141,6 @@ __all__ = [
     "PredictionSettlement",
     "InsertionApplyError",
     "WorkspaceError",
-    "activate_with_workspace_refresh",
     "inspect_workspace_floor",
     "observe_next_workspace",
     "materialize_floor",
@@ -300,7 +298,6 @@ def __getattr__(name: str) -> Any:
         return getattr(insertions, name)
     if name in {
         "WorkspaceError",
-        "activate_with_workspace_refresh",
         "inspect_workspace_floor",
         "observe_next_workspace",
         "materialize_floor",

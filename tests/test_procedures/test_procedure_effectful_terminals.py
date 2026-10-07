@@ -355,7 +355,7 @@ def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> No
     assert caught.value.required_rung == 2
     assert caught.value.target_namespace == (path,)
     assert caught.value.repair_kind == "create_mandate"
-    assert caught.value.repair.operation == "cruxible.authoring.create"
+    assert caught.value.repair.operation == "cruxible.authoring.example"
     assert caught.value.repair.arguments == {"example": "procedure-mandate"}
     assert instance.proposal_service().transport.read_proposal_ref(target_ref) is None
 
@@ -544,7 +544,7 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
     assert caught.value.required_rung == 3
     assert caught.value.target_namespace == (target_path,)
     assert caught.value.repair_kind == "author_successor"
-    assert caught.value.repair.operation == "cruxible.authoring.create"
+    assert caught.value.repair.operation == "cruxible.authoring.example"
     assert caught.value.repair.arguments == {"example": "procedure-mandate"}
 
 

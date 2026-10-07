@@ -29,6 +29,7 @@ from cruxible_client.contracts.operational_reads import (
     GetResolutionContractCard,
     LiveView,
 )
+from cruxible_client.contracts.repairs import ServedRepair
 
 GetDetail = Literal["summary", "evidence", "why", "history", "proof", "body"]
 GetRefKind = Literal[
@@ -378,6 +379,14 @@ class GetProposalChange(_StrictGetModel):
     change: str
 
 
+class GetProposalRefusal(_StrictGetModel):
+    """One refusal diagnostic of a refused proposal, with its served repair."""
+
+    code: str
+    message: str
+    repair: ServedRepair
+
+
 class GetProposalCard(_StrictGetModel):
     proposal: str
     status: str
@@ -389,6 +398,8 @@ class GetProposalCard(_StrictGetModel):
     admitted_at: str | None = Field(default=None, exclude_if=_omit_none)
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
     changes: tuple[GetProposalChange, ...] = ()
+    #: Why a refused proposal was refused: every stored diagnostic, in order.
+    refusal: tuple[GetProposalRefusal, ...] = Field(default=(), exclude_if=lambda value: not value)
     next: tuple[str, ...] = ()
 
 
@@ -642,6 +653,7 @@ __all__ = [
     "GetProviderInterfaceCard",
     "GetProviderInterfaceProvider",
     "GetProposalCard",
+    "GetProposalRefusal",
     "GetProposalChange",
     "GetQueryCard",
     "GetQueryParameter",

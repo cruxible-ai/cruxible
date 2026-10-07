@@ -37,6 +37,7 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.coverage.adapter import WorkingSourceObservation
 from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageCardBudget
 from cruxible_core.coverage.indexes import CoverageScanBudget
@@ -59,21 +60,16 @@ from cruxible_core.service.discovery.next import (
     service_playbill_next,
 )
 from cruxible_core.service.proposals.publications import service_declare_playbill_block
+from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_insertions_v2 import (
     _activate,
-    _registered_publication,
-    _submitted_publication,
     _successor_payload,
 )
-from tests.test_authoring.test_authoring_preflight import _self_source_payload
-
-
-@pytest.fixture(autouse=True)
-def _durable_intents(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Publication registrations live in retained intent streams; this legacy
-    # road registers them on accepted intents, so it needs durable retention.
-    monkeypatch.setenv("CRUXIBLE_AUTHORING_INTENTS", "durable")
-
+from tests.test_authoring.test_authoring_preflight import (
+    TIMESTAMP,
+    _seed_claim_surface,
+    _self_source_payload,
+)
 
 ACCESS_PROFILE = CoverageAccessProfile(
     profile_id="block-sync-service-test",
@@ -297,6 +293,61 @@ def _claim_backing(instance: PlaybillInstance, name: str) -> ProjectionClaimBack
     )
 
 
+# The body the declared block holds: the accepted Claim's own self-source body.
+DECLARED_BODY = b"status: ready\n"
+
+
+def _declared_claim_block(root: Path):  # type: ignore[no-untyped-def]
+    """Accept one self-source Claim and declare a page block that holds it.
+
+    Returns the instance, its owner, the coordinator and actor that authored the
+    Claim, the intent ID, the block's stamp, and the page bytes carrying it.
+    """
+
+    instance, owner = initialize_local(root)
+    _seed_claim_surface(instance, owner)
+    coordinator = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentStore(
+            instance.root / instance.descriptor.storage.exhaust,
+            token_factory=lambda: "1" * 32,
+        ),
+        claim_id_factory=lambda: "CLM-" + "2" * 32,
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor,
+        payload=_self_source_payload(),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    _activate(
+        instance,
+        owner,
+        proposal_id=submitted.status.proposal_id,
+        candidate_digest=submitted.status.candidate_digest,
+    )
+    claim_id = coordinator.store.get(intent.intent_id, actor_id=actor.actor_id).semantic_identity
+    stamp = ProjectionBlockStampV1(
+        source_id="repo.work-items",
+        block_id="work-item-status",
+        declared_generation=instance.accepted_history()[-1].sequence,
+        declared_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        backing=(_claim_backing(instance, claim_id),),
+        body_digest="sha256:" + hashlib.sha256(DECLARED_BODY).hexdigest(),
+    )
+    service_declare_playbill_block(
+        instance,
+        actor_id="owner",
+        stamp=stamp,
+        declared_at="2026-09-10T12:00:00.000000Z",
+    )
+    landed = b"# work item\n" + frame_projection_block(stamp=stamp, body=DECLARED_BODY)
+    return instance, owner, coordinator, actor, intent.intent_id, stamp, landed
+
+
 def test_body_only_successor_is_current_in_both_sync_and_next(
     tmp_path: Path,
 ) -> None:
@@ -319,12 +370,9 @@ def test_body_only_successor_is_current_in_both_sync_and_next(
     workspace_root = tmp_path / "writer"
     daemon_root.mkdir()
     workspace_root.mkdir()
-    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+    instance, owner, coordinator, actor, intent_id, stamp, landed = _declared_claim_block(
         daemon_root
     )
-    bound, landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
-    assert bound.preparation is not None
-    stamp = bound.preparation.stamp
     source = _workspace(
         workspace_root,
         instance_id=instance.descriptor.instance_id,
@@ -413,12 +461,10 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
     workspace_root = tmp_path / "writer-one"
     daemon_root.mkdir()
     workspace_root.mkdir()
-    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+    instance, owner, coordinator, actor, intent_id, stamp, landed = _declared_claim_block(
         daemon_root
     )
-    bound, landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
-    assert bound.preparation is not None
-    original_stamp = bound.preparation.stamp
+    original_stamp = stamp
     source = _workspace(
         workspace_root,
         instance_id=instance.descriptor.instance_id,
@@ -612,12 +658,10 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
     workspace_root = tmp_path / "writer"
     daemon_root.mkdir()
     workspace_root.mkdir()
-    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+    instance, owner, coordinator, actor, intent_id, stamp, _landed = _declared_claim_block(
         daemon_root
     )
-    bound, _landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
-    assert bound.preparation is not None
-    published = bound.preparation.stamp.backing[0].identity.name
+    published = stamp.backing[0].identity.name
     held = [published]
     for index, value in enumerate(("blocked", "done")):
         held.append(
@@ -768,12 +812,9 @@ def test_a_hand_edited_body_is_reported_without_mutating_it(tmp_path: Path) -> N
     workspace_root = tmp_path / "writer"
     daemon_root.mkdir()
     workspace_root.mkdir()
-    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+    instance, _owner, coordinator, actor, intent_id, stamp, landed = _declared_claim_block(
         daemon_root
     )
-    bound, landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
-    assert bound.preparation is not None
-    stamp = bound.preparation.stamp
     source = _workspace(
         workspace_root,
         instance_id=instance.descriptor.instance_id,

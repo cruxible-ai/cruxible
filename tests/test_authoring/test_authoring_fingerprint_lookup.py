@@ -3,18 +3,11 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from cruxible_client.contracts.authoring.models import (
-    authoring_create_fingerprint,
-    authoring_payload_digest,
-    build_insertion_expectation_v2,
-    insertion_expectation_id,
-)
 from cruxible_core.authoring import store as store_module
 from cruxible_core.authoring.store import (
     AuthoringIntentStore,
@@ -28,7 +21,6 @@ from tests.test_authoring.test_authoring_history_reuse import (
     _operation,
     _write_change_set_history,
 )
-from tests.test_authoring.test_authoring_insertions_v2 import _target
 
 
 @pytest.fixture(autouse=True)
@@ -112,8 +104,7 @@ def test_duplicate_active_fingerprints_still_refuse_after_warming(tmp_path):
             _find(store, events[-1].intent)
 
 
-@pytest.mark.parametrize("pending_insertion", (False, True))
-def test_accepted_intent_remains_pending_only_for_live_insertion(tmp_path, pending_insertion):
+def test_an_accepted_intent_is_never_pending(tmp_path):
     exhaust = tmp_path / "exhaust"
     exhaust.mkdir()
     store = AuthoringIntentStore(exhaust)
@@ -125,33 +116,9 @@ def test_accepted_intent_remains_pending_only_for_live_insertion(tmp_path, pendi
             )
         }
     )
-    if pending_insertion:
-        payload = intent.payload.model_copy(update={"insertion_target": _target()})
-        expectation = build_insertion_expectation_v2(
-            expectation_id=insertion_expectation_id(
-                instance_id=intent.instance_id, intent_id=intent.intent_id, intent_revision=0
-            ),
-            state="awaiting_claim_acceptance",
-            claim_identity=intent.semantic_identity,
-            original_claim_artifact_digest=_operation(20),
-            claim_statement_digest=_operation(21),
-            target=payload.insertion_target,
-            expires_at=datetime(2026, 8, 25, tzinfo=UTC),
-        )
-        intent = intent.model_copy(
-            update={
-                "payload": payload,
-                "payload_digest": authoring_payload_digest(payload),
-                "create_fingerprint": authoring_create_fingerprint(
-                    instance_id=intent.instance_id, actor_id=intent.actor_id, payload=payload
-                ),
-                "insertion_expectation": expectation,
-                "insertion_expectations": (expectation,),
-            }
-        )
     store.create(intent, operation_key=_operation(0))
     for _ in range(2):
-        assert _find(store, intent) == (intent if pending_insertion else None)
+        assert _find(store, intent) is None
 
 
 def test_first_refusal_matches_cold_when_old_bytes_and_later_path_both_change(tmp_path):

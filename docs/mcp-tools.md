@@ -16,8 +16,8 @@ everyday agent loop:
   the live value), `cruxible_retire` (end one live Claim), and
   `cruxible_write` (set, add and retire changes as one change set);
 - proposals through activation: `cruxible_proposal_list`,
-  `cruxible_review`, `cruxible_approve`, and
-  `cruxible_activate`;
+  `cruxible_proposal_review`, `cruxible_proposal_approve`, and
+  `cruxible_proposal_activate`;
 - identity and versions: `cruxible_whoami` and `cruxible_server_info`.
 
 To find something by name, grep the floor (`.cruxible/floor/`, which
@@ -29,7 +29,7 @@ and `get` the ref a hit names; an agent without a shell searches values with
 intent tools, `cruxible_query_spec`, `cruxible_since`,
 curation, coverage, the floor, sources, blocks, kits, Procedures, Lines, and the
 split approval pair
-`cruxible_prepare_approval` and `cruxible_submit_approval` for
+`cruxible_proposal_approve_prepare` and `cruxible_proposal_approve_submit` for
 a signer outside the MCP process. Curation changes
 discoverability only; permission tiers still gate every call. There is no
 separate version tool: `cruxible_whoami` and `cruxible_server_info`
@@ -61,14 +61,14 @@ daemon receives bytes and typed observations, never a client filesystem path.
 Floor operations always target the containing Git worktree's canonical
 `.cruxible/floor`. With no explicit workspace root, the adapter discovers that
 worktree from its working directory. An explicit `CRUXIBLE_MCP_WORKSPACE_ROOT`
-must equal the worktree root for floor export, status, and activation refresh;
-a nested explicit root is refused rather than allowing a write above its
-configured filesystem boundary. When the root is in no Git worktree at all,
-`cruxible_activate` still activates and reports
-`floor_refresh.status: not_configured` with the reason.
+must equal the worktree root for floor export and status; a nested explicit
+root is refused rather than allowing a write above its configured filesystem
+boundary. `cruxible_proposal_activate` is a daemon act and writes nothing
+locally: the daemon's floor-refresh trigger delivers the floor to a workspace it
+serves, and `cruxible_floor_export mode=write` pulls it elsewhere.
 
 `CRUXIBLE_MCP_KEY_DIR` names the directory of local approval keys that
-`cruxible_approve` signs with: an absolute path outside the workspace
+`cruxible_proposal_approve` signs with: an absolute path outside the workspace
 holding `<signer_id>.ed25519`, the layout `cruxible principal add
 --key-dir` and `cruxible init --key-dir` write. Set it in the MCP
 server's environment; no tool argument can name a key path. The tool signs as
@@ -132,22 +132,19 @@ approval stay the ordinary steps.
 | `cruxible_kit_status` | List installed kits and the kit paths edited since install | `READ_ONLY` |
 | `cruxible_kit_add` | Propose installing or upgrading a kit as one change set | `GOVERNED_WRITE` |
 | `cruxible_kit_remove` | Propose retiring every artifact a kit installed | `GOVERNED_WRITE` |
-| `cruxible_evidence_rules_upgrade` | Propose moving ClaimTypes to identity evidence rules | `GOVERNED_WRITE` |
-| `cruxible_claim_type_upgrade` | Propose moving ClaimTypes to v7, stating their revision evidence | `GOVERNED_WRITE` |
+| `cruxible_claim_type_upgrade` | Propose moving older ClaimTypes to v7 (identity evidence rules included), stating their revision evidence | `GOVERNED_WRITE` |
 
 ## Documents and proposals
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_store_body` | Store inert body bytes in CAS | `GOVERNED_WRITE` |
-| `cruxible_propose_document` | Propose a canonical Document envelope | `GOVERNED_WRITE` |
-| `cruxible_inspect_proposal` | Inspect a frozen candidate | `READ_ONLY` |
-| `cruxible_inspect_refusal` | Inspect deterministic refusal evidence | `READ_ONLY` |
-| `cruxible_review` | Render review material | `READ_ONLY` |
-| `cruxible_prepare_approval` | Return the exact approval challenge | `READ_ONLY` |
-| `cruxible_submit_approval` | Submit a public signed attestation | `GRAPH_WRITE` |
-| `cruxible_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call | `GRAPH_WRITE` |
-| `cruxible_activate` | Activate by compare-and-set and refresh any configured workspace floor | `GRAPH_WRITE` |
+| `cruxible_body_store` | Store inert body bytes in CAS | `GOVERNED_WRITE` |
+| `cruxible_document_propose` | Propose a canonical Document envelope | `GOVERNED_WRITE` |
+| `cruxible_proposal_review` | Render review material | `READ_ONLY` |
+| `cruxible_proposal_approve_prepare` | Return the exact approval challenge | `READ_ONLY` |
+| `cruxible_proposal_approve_submit` | Submit a public signed attestation | `GRAPH_WRITE` |
+| `cruxible_proposal_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call | `GRAPH_WRITE` |
+| `cruxible_proposal_activate` | Activate by compare-and-set; returns the activation receipt (the daemon delivers the floor) | `GRAPH_WRITE` |
 | `cruxible_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
 | `cruxible_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
@@ -197,7 +194,7 @@ The principal registry is `orient(section="principals")`; one record is
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_propose_claim_type` | Propose a governed predicate interface | `GOVERNED_WRITE` |
+| `cruxible_claim_type_propose` | Propose a governed predicate interface | `GOVERNED_WRITE` |
 | `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
 | `cruxible_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
@@ -212,27 +209,29 @@ from accepted law evidence, never carried forward from acceptance.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_authoring_create` | Create or recover a durable authoring intent | `GOVERNED_WRITE` |
 | `cruxible_authoring_example` | Return a model-generated ClaimType/Claim/Procedure input | `READ_ONLY` |
 | `cruxible_authoring_get` | Read one authoring intent | `READ_ONLY` |
-| `cruxible_authoring_resume` | Return an intent's durable continuation | `READ_ONLY` |
-| `cruxible_authoring_list_pending` | List the caller's pending intents | `READ_ONLY` |
-| `cruxible_authoring_compile` | Create or update an intent and preflight it | `GOVERNED_WRITE` |
+| `cruxible_authoring_list` | List the caller's in-progress intents | `READ_ONLY` |
+| `cruxible_authoring_compile` | Stage a payload as an intent (new, or revising `intent_id`) and run every check | `GOVERNED_WRITE` |
 | `cruxible_authoring_bind` | Read an anchored workspace selection, derive commitments, and compile | `GOVERNED_WRITE` |
 | `cruxible_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
 | `cruxible_authoring_rebase` | Rebase a stale intent onto the current accepted coordinate | `GOVERNED_WRITE` |
-| `cruxible_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
+| `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
 | `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
-| `cruxible_authoring_abandon_insertion` | Release a publication expectation an instance already holds | `GOVERNED_WRITE` |
 | `cruxible_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp and registers the block | `GOVERNED_WRITE` |
 | `cruxible_block_sync` | Check each projection block's backings; edits no page | `READ_ONLY` |
 | `cruxible_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes | `GOVERNED_WRITE` |
-| `cruxible_block_depublish` | Release the registration that demands one page block, whichever road declared it | `GOVERNED_WRITE` |
+| `cruxible_block_depublish` | Release the declaration that registers one page block | `GOVERNED_WRITE` |
 
 The coordinator mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.
 
-`cruxible_authoring_create` takes one tagless input, and the
+The flow is `compile` (or `bind`), then `rebase` or `preflight` as needed, then
+`submit` and `status`, with `get` and `list` to find work again; a one-shot write
+is `cruxible_authoring_submit` with a `payload`. `cruxible_authoring_example`
+prints a template for any input kind.
+
+Every payload is one tagless input, and the
 `change_set` kind carries any mix of members -- `claim`, `claim_type`,
 `claim_retirement`, `subject`, `query_definition`, `procedure`,
 `procedure_mandate`, `acquisition_policy`, `line` -- as one intent that admits
@@ -286,9 +285,9 @@ themselves a governed track record; promotion remains a separate governed act.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_resolution_contracts` | Find governed tests of a Claim, by `claim_id` | `READ_ONLY` |
-| `cruxible_predict` | Propose a governed resolution contract whose hypothesis is a Claim ID | `GOVERNED_WRITE` |
-| `cruxible_settle` | Settle one prediction (`prediction_id`) from the Claim ID of an accepted observation (`observation`) | `GOVERNED_WRITE` |
+| `cruxible_prediction_list` | Find governed tests of a Claim, by `claim_id` | `READ_ONLY` |
+| `cruxible_prediction_propose` | Propose a governed resolution contract whose hypothesis is a Claim ID | `GOVERNED_WRITE` |
+| `cruxible_prediction_settle` | Settle one prediction (`prediction_id`) from the Claim ID of an accepted observation (`observation`) | `GOVERNED_WRITE` |
 
 Every Claim version these tools need can be a plain Claim ID (`CLM-...` or
 `Claim:CLM-...`); the daemon resolves its digests and accepting coordinate. The
@@ -346,11 +345,11 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_curation_overrule` | Close an inapplicable detector-version item with attribution | `GOVERNED_WRITE` |
 | `cruxible_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
 | `cruxible_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
-| `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so an activation refresh exports the same parts; `mode=status` reports whether that floor is current, stale, or absent. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref and coordinate), `current/<kind>/INDEX`, readable `documents/` and `provenance/`; digests stay in `provenance/` and the manifest. `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
+| `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so the daemon's delivery exports the same parts; `mode=status` reports whether that floor is current, stale, or absent. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref and coordinate), `current/<kind>/INDEX`, readable `documents/` and `provenance/`; digests stay in `provenance/` and the manifest. `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
 | `cruxible_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, inline `grep_results` text, or `whole_working_set`) | `READ_ONLY` |
 
 `cruxible_next` renders each repair's `command` as the MCP tool call
-that performs it (for example `cruxible_settle(prediction_id="RSC-...")`,
+that performs it (for example `cruxible_prediction_settle(prediction_id="RSC-...")`,
 adding the observation's Claim ID), or none when its operands are local files.
 A row or nested finding whose repair the session cannot perform -- its profile
 does not advertise the tool that performs it, or its tier is too low -- stays in
@@ -359,7 +358,7 @@ profile?}` naming what running it needs, so `orient` attention and the queue
 count it for every caller. A status facet keeps its
 state either way, but drops a repair the session cannot perform and says
 `repair_hidden: true` with the same `repair_requires`. The `default` profile
-advertises neither `cruxible_settle` nor the Line tools, for example:
+advertises neither `cruxible_prediction_settle` nor the Line tools, for example:
 a stopped Line arm still shows as `consumer_stalled`, its repair withheld with
 `because: ["profile"]`. A session that cannot author on the instance at all (an
 unbound credential, or a principal that is not configured, registered or

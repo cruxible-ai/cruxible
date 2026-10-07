@@ -2,23 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from cruxible_client import contracts
-from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.declared_blocks import (
-    ProjectionBlockStamp,
-    ProjectionClaimBacking,
-    frame_projection_block,
-)
 from cruxible_client.contracts.floor import FloorDelta
-from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.workspace import resolve_workspace_path
@@ -97,177 +88,22 @@ def _workspace(tmp_path: Path) -> Path:
     return root
 
 
-def test_activate_refreshes_the_operator_configured_workspace(
-    monkeypatch,  # type: ignore[no-untyped-def]
+def test_activate_is_a_daemon_act_that_writes_nothing_locally(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """The daemon's trigger delivers the floor; MCP activate returns the receipt alone."""
+
     workspace = _workspace(tmp_path)
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
     monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+    before = sorted(path.relative_to(workspace) for path in workspace.rglob("*"))
 
     result = handlers.handle_playbill_activate("inst_test", "proposal-1")
 
+    assert isinstance(result, contracts.ActivationReceipt)
     assert result.status == "accepted"
-    assert result.floor_refresh.status == "refreshed"
-    assert (workspace / ".cruxible/floor/cards/fresh.json").is_file()
-
-
-def test_activate_from_nested_cwd_refreshes_the_containing_git_worktree(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    workspace = _workspace(tmp_path)
-    nested = workspace / "a/b/sub"
-    nested.mkdir(parents=True)
-    monkeypatch.chdir(nested)
-    monkeypatch.delenv("CRUXIBLE_MCP_WORKSPACE_ROOT", raising=False)
-    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
-
-    result = handlers.handle_playbill_activate("inst_test", "proposal-1")
-
-    assert result.status == "accepted"
-    assert result.floor_refresh.status == "refreshed"
-    assert (workspace / ".cruxible/floor/cards/fresh.json").is_file()
-    assert not (nested / ".cruxible/floor").exists()
-
-
-def test_activate_outside_a_git_worktree_skips_the_floor_refresh_and_says_so(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    plain = tmp_path / "not-a-worktree"
-    plain.mkdir()
-    monkeypatch.chdir(plain)
-    monkeypatch.delenv("CRUXIBLE_MCP_WORKSPACE_ROOT", raising=False)
-    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
-
-    result = handlers.handle_playbill_activate("inst_test", "proposal-1")
-
-    assert result.status == "accepted"
-    assert result.floor_refresh.status == "not_configured"
-    assert result.floor_refresh.message is not None
-    assert "Git worktree" in result.floor_refresh.message
-    assert result.block_sync is None
-    assert not (plain / ".cruxible").exists()
-
-
-def test_library_mode_activate_checks_an_attached_workspace(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    workspace = _workspace(tmp_path)
-    (workspace / ".cruxible/coverage.json").write_text(
-        json.dumps(
-            {
-                "tag": "playbill-coverage-workspace-config-v2",
-                "instance_id": "inst_test",
-                "server_socket": str(tmp_path / "daemon.sock"),
-                "floor_output": {
-                    "tag": "playbill-floor-output-v1",
-                    "format": "playbill-floor-export-v2",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    old_body = b"status: old\n"
-    # The page declares it must stay current, so drift under it gates the sweep.
-    stamp = ProjectionBlockStamp(
-        source_id="corpus.runbook",
-        block_id="pub-mcp",
-        declared_generation=1,
-        declared_coordinate=AcceptedCoordinate.model_validate(_coordinate().model_dump()),
-        backing=(
-            ProjectionClaimBacking(
-                identity=ArtifactIdentity(kind="Claim", name="CLM-" + "a" * 32),
-                statement_digest="sha256:" + "7" * 64,
-            ),
-        ),
-        body_digest="sha256:" + hashlib.sha256(old_body).hexdigest(),
-        currency_policy="require_current",
-    )
-    source = workspace / "runbook.md"
-    source.write_bytes(frame_projection_block(stamp=stamp, body=old_body))
-    before = source.read_bytes()
-    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
-    monkeypatch.setattr(
-        handlers.playbill_api,
-        "playbill_activate",
-        lambda instance_id, proposal_id: contracts.ActivationReceipt(
-            proposal_id=proposal_id,
-            activated_by="owner",
-            status="accepted",
-            accepted_coordinate=_coordinate(),
-            workspace_advertisement={"status": "updated", "workspace_path": str(workspace)},
-        ),
-    )
-    monkeypatch.setattr(handlers.playbill_api, "playbill_export_floor", lambda _instance: _export())
-    monkeypatch.setattr(
-        handlers.playbill_api,
-        "playbill_floor_delta",
-        lambda _instance, **_kwargs: delta_from_export(_export()),
-    )
-
-    checked: list[contracts.ProjectionCheckRequest] = []
-
-    def check_blocks(
-        instance_id: str,
-        *,
-        request: contracts.ProjectionCheckRequest,
-    ) -> contracts.ProjectionCheckResult:
-        # Block sync asks the daemon for every stamp's currency in one batch.
-        assert instance_id == "inst_test"
-        checked.append(request)
-        coordinate = AcceptedCoordinate.model_validate(_coordinate().model_dump())
-        results = []
-        for held in request.stamps:
-            moved = ProjectionClaimBacking(
-                identity=held.backing[0].identity,
-                statement_digest="sha256:" + "a" * 64,
-            )
-            results.append(
-                contracts.BlockSyncReadResult(
-                    status="successor",
-                    original_artifact_digest="sha256:" + "8" * 64,
-                    artifact_digest="sha256:" + "9" * 64,
-                    coordinate=coordinate,
-                    generation=2,
-                    backing=moved,
-                    moved_backings=(moved,),
-                )
-            )
-        return contracts.ProjectionCheckResult(
-            coordinate=coordinate,
-            evaluation_time=datetime(2026, 9, 16, tzinfo=UTC),
-            results=tuple(results),
-        )
-
-    monkeypatch.setattr(
-        handlers.playbill_api,
-        "playbill_check_projection_blocks",
-        check_blocks,
-    )
-
-    result = handlers.handle_playbill_activate("inst_test", "proposal-1")
-
-    # The closing sweep an activation runs REPORTS: nothing renders a block, so
-    # a block whose held backing moved is named `stale` and the page is left
-    # exactly as the author wrote it. Under the page's `require_current` policy
-    # it counts as a refusal, so the sweep does not answer clean over a page that
-    # has drifted from the state it declares.
-    assert result.status == "accepted"
-    assert result.block_sync is not None
-    assert [(item.outcome, item.reason) for item in result.block_sync.items] == [
-        ("stale", "block_backing_changed")
-    ], result.block_sync.items
-    assert result.block_sync.items[0].reason == "block_backing_changed"
-    assert result.block_sync.items[0].currency_policy == "require_current"
-    assert result.block_sync.items[0].repair is not None
-    assert result.block_sync.items[0].repair.operation == "cruxible.block.repin"
-    assert [request.stamps for request in checked] == [(stamp,)]
-    assert result.block_sync.has_refusals is True
-    assert result.block_sync.changed_file_count == 0
-    assert source.read_bytes() == before
+    assert sorted(path.relative_to(workspace) for path in workspace.rglob("*")) == before
 
 
 def test_workspace_status_compares_the_installed_floor(
@@ -283,25 +119,6 @@ def test_workspace_status_compares_the_installed_floor(
 
     assert status.status == "current"
     assert status.installed_coordinate == _coordinate()
-
-
-def test_floor_write_after_an_activation_refresh_is_a_no_op_success(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    workspace = _workspace(tmp_path)
-    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
-    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
-    activated = handlers.handle_playbill_activate("inst_test", "proposal-1")
-    assert activated.floor_refresh.status == "refreshed"
-    card = workspace / ".cruxible/floor/cards/fresh.json"
-    before = card.stat().st_mtime_ns
-
-    again = handlers.handle_playbill_floor_export("inst_test", mode="write")
-
-    assert again.status == "unchanged"
-    assert again.floor_digest == activated.floor_refresh.floor_digest
-    assert card.stat().st_mtime_ns == before
 
 
 def test_floor_write_still_refuses_a_directory_holding_something_else(
@@ -416,7 +233,7 @@ class _PartsClient(_StubClient):
         return delta_from_export(_export_files({"current/k/a.yaml": b"# k/a  kind=k\n"}))
 
 
-def test_an_mcp_write_with_discovery_survives_an_activation_refresh(
+def test_an_mcp_write_with_discovery_records_the_floor_output_part(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -438,15 +255,3 @@ def test_an_mcp_write_with_discovery_survives_an_activation_refresh(
         "format": "playbill-floor-export-v6",
         "include": ["discovery"],
     }
-
-    activated = handlers.handle_playbill_activate("inst_test", "proposal-1")
-
-    assert activated.floor_refresh.status == "refreshed"
-    assert client.includes == [("discovery",), ("discovery",)]
-    assert profile.is_file()
-
-    # Writing without the part records that too, and the next refresh follows it.
-    handlers.handle_playbill_floor_export("inst_test", mode="write", force=True)
-    handlers.handle_playbill_activate("inst_test", "proposal-2")
-    assert client.includes[-2:] == [(), ()]
-    assert not profile.exists()

@@ -26,6 +26,12 @@ from cruxible_client.contracts.authoring.models import (
     BlockSyncSuccessorCandidate as BlockSyncSuccessorCandidate,
 )
 from cruxible_client.contracts.authoring.models import (
+    DiagnosticFrontier as DiagnosticFrontier,
+)
+from cruxible_client.contracts.authoring.models import (
+    PreflightCertificate as PreflightCertificate,
+)
+from cruxible_client.contracts.authoring.models import (
     ProjectionCheckRequest as ProjectionCheckRequest,
 )
 from cruxible_client.contracts.authoring.models import (
@@ -322,7 +328,7 @@ NextReason: TypeAlias = Literal[
 ]
 NextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
 NextRepairOperation: TypeAlias = Literal[
-    "cruxible.authoring.create",
+    "cruxible.authoring.example",
     "cruxible.authoring.bind",
     "cruxible.claim.retire",
     "cruxible.set",
@@ -337,7 +343,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.compiler.upgrade",
     "cruxible.line.arm",
     "cruxible.line.dispatch",
-    "cruxible.settle",
+    "cruxible.prediction.settle",
     "hand_edit",
 ]
 # The next queue's own refusals that carry a declared repair. A page cursor
@@ -728,19 +734,10 @@ class WhoAmI(BaseModel):
     principal_registration_status: Literal["active", "revoked", "absent"] | None
     active_principal_ids: list[str]
     coordinate: AcceptedCoordinate
-    # Whether authoring create would accept this actor, and the refusal it
+    # Whether authoring compile would accept this actor, and the refusal it
     # would return otherwise: the same code, detail and repair.
     can_author: bool
     authoring_refusal: AuthoringRefusal | None
-
-
-class RefusalInspection(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-refusal-v1"] = "playbill-refusal-v1"
-    proposal_id: str
-    verdict: Literal["candidate", "refused"]
-    diagnostics: list[dict[str, Any]]
 
 
 class SemanticFieldValue(BaseModel):
@@ -905,13 +902,6 @@ class FloorRefreshResult(BaseModel):
     message: str | None = None
 
 
-class WorkspaceActivationResult(ActivationReceipt):
-    """Activation receipt plus the independent client-workspace refresh outcome."""
-
-    floor_refresh: FloorRefreshResult
-    block_sync: BlockSyncResult | None = None
-
-
 class SourceContext(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -978,11 +968,33 @@ class LedgerMirror(BaseModel):
     detail: str | None = None
 
 
+ClaimTypeLintCode: TypeAlias = Literal[
+    "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+    "cruxible.claim_type.anticipated_source_contract_omitted",
+    "cruxible.claim_type.attestation_threshold_disabled",
+]
+
+
+class ClaimTypeLintWarning(BaseModel):
+    """One advisory finding about a ClaimType's evidence policy, with its fix."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: Annotated[ClaimTypeLintCode, CurrentCode]
+    field_path: str
+    source_id: str | None = None
+    # Evidence-policy warnings name the contract they concern; others name none.
+    contract_identity: str | None = None
+    contract_digest: str | None = None
+    #: The rule fragment that would resolve the warning, as authored input.
+    replacement_rule_fragment: dict[str, Any]
+
+
 class ClaimTypeProposalLint(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-claim-type-proposal-lint-v1"] = "playbill-claim-type-proposal-lint-v1"
-    warnings: list[dict[str, Any]]
+    warnings: tuple[ClaimTypeLintWarning, ...]
 
 
 class ClaimTypeInputProposalResult(BaseModel):
@@ -1166,8 +1178,10 @@ class AuthoringPreflightResult(BaseModel):
         "playbill-authoring-preflight-result-v1"
     )
     verdict: Literal["passed", "refused"]
-    certificate: dict[str, Any]
-    frontier: dict[str, Any]
+    # The same self-digesting certificate and bounded frontier the daemon
+    # computed: a reader validates them on parse rather than probing a dict.
+    certificate: PreflightCertificate
+    frontier: DiagnosticFrontier
     lint: ClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -1195,14 +1209,6 @@ class AuthoringSubmitResultRecord(BaseModel):
     )
 
 
-class InsertionAbandonResultRecord(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-insertion-abandon-result-v1"] = "playbill-insertion-abandon-result-v1"
-    intent: dict[str, Any]
-    expectation: dict[str, Any]
-
-
 class BlockDeclareResult(BaseModel):
     """One projection block registered with the instance that governs its page.
 
@@ -1225,13 +1231,11 @@ class BlockDeclareResult(BaseModel):
 
 
 class BlockDepublishResult(BaseModel):
-    """One published block released from the registration that demanded it.
+    """One declared block released from the registration that demanded it.
 
-    A publication registration was terminal at `bound`: publish once, and that
-    page carried that block, with that id, forever. `next` demanded the frame
-    back for a block a later ruling had deleted, and the repair it named was to
-    restore it. This is the transition out, addressed the way the page names it
-    -- a source and a block -- rather than by the intent id nobody keeps.
+    A registration nothing released kept `next` demanding the frame back for a
+    block a later ruling had deleted, with the repair "restore it". This is the
+    transition out, addressed the way the page names it: a source and a block.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1239,26 +1243,9 @@ class BlockDepublishResult(BaseModel):
     tag: Literal["playbill-block-depublish-result-v1"] = "playbill-block-depublish-result-v1"
     source_id: str
     block_id: str
-    # A block declared with `block repin` has no intent, no expectation and no
-    # publishing Claim -- it is prose held to a list. Those three fields name a
-    # publication and are absent for a declaration, which `origin` says.
-    origin: Literal["publication", "declaration"] = "publication"
-    intent_id: str | None = None
-    expectation_id: str | None = None
     #: ``would_depublish`` answers a preview, which released nothing.
     outcome: Literal["depublished", "already_depublished", "would_depublish"]
-    claim_identity: str | None = None
     coordinate: AcceptedCoordinate
-
-    @model_validator(mode="after")
-    def _origin_shape(self) -> "BlockDepublishResult":
-        publication = (self.intent_id, self.expectation_id, self.claim_identity)
-        if self.origin == "publication":
-            if any(value is None for value in publication):
-                raise ValueError("a released publication names its intent, expectation and Claim")
-        elif any(value is not None for value in publication):
-            raise ValueError("a released declaration names no intent, expectation or Claim")
-        return self
 
 
 class ProcedureReadiness(BaseModel):

@@ -418,8 +418,8 @@ prediction path instead:
    calibration input. A deadline or evidence mismatch is a typed refusal whose
    repair is another `predict` or `settle` call.
 
-The CLI equivalents are `cruxible predict REQUEST_FILE` followed by
-`cruxible settle PREDICTION_ID REQUEST_FILE`.
+The CLI equivalents are `cruxible prediction propose REQUEST_FILE` followed by
+`cruxible prediction settle PREDICTION_ID --request REQUEST_FILE`.
 
 ## Write Step D: Add feedback and outcome structure
 

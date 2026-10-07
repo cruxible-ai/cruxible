@@ -54,10 +54,6 @@ from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     BootstrapError,
 )
-from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequest,
-    EvidenceRuleUpgradeResult,
-)
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.get_reads import (
     GetBatchRequest,
@@ -174,8 +170,6 @@ from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.registry import get_registry
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
-    service_inspect_playbill_proposal,
-    service_inspect_playbill_refusal,
     service_propose_playbill_document,
     service_propose_playbill_principal_change,
     service_store_playbill_body,
@@ -195,7 +189,6 @@ from cruxible_core.service.claims.claim_types import (
     service_propose_playbill_claim_type,
     service_propose_playbill_claim_type_input,
 )
-from cruxible_core.service.claims.evidence_rule_upgrade import service_upgrade_evidence_rules
 from cruxible_core.service.discovery.audit import (
     PlaybillAuditRequestV1,
     service_playbill_audit,
@@ -276,7 +269,6 @@ from cruxible_core.service.proposals.proposals import (
     ProposalInventoryStatus,
     WhoAmIActorIdSource,
     service_list_playbill_proposals,
-    service_playbill_proposal_status,
     service_playbill_whoami,
     service_readmit_playbill_proposal,
     service_resolve_playbill_proposal_selector,
@@ -803,22 +795,6 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
         )
 
 
-def playbill_evidence_rules_upgrade(
-    instance_id: str, request: EvidenceRuleUpgradeRequest
-) -> EvidenceRuleUpgradeResult:
-    check_permission("cruxible_evidence_rules_upgrade", instance_id=instance_id)
-    with change_entry(request.dry_run, "derived"):
-        return _proposal_validation_boundary(
-            "evidence rule upgrade",
-            lambda: service_upgrade_evidence_rules(
-                get_playbill_manager().get(instance_id),
-                request=request,
-                actor_id=_actor_id(instance_id),
-                timestamp=canonical_candidate_timestamp(utc_now()),
-            ),
-        )
-
-
 def playbill_claim_type_upgrade(
     instance_id: str, request: ClaimTypeUpgradeRequest
 ) -> ClaimTypeUpgradeResult:
@@ -850,7 +826,7 @@ def playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChang
 
 
 def playbill_store_body(instance_id: str, *, content_base64: str) -> contracts.CasObjectResult:
-    check_permission("cruxible_store_body", instance_id=instance_id)
+    check_permission("cruxible_body_store", instance_id=instance_id)
     _require_writer(instance_id)
     try:
         content = base64.b64decode(content_base64, validate=True)
@@ -945,23 +921,6 @@ def playbill_propose_principal_change(
         return contracts.ProposalInspection.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_inspect_proposal(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.ProposalInspection:
-    check_permission("cruxible_inspect", instance_id=instance_id)
-    instance = get_playbill_manager().get(instance_id)
-    result = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
-    return contracts.ProposalInspection.model_validate(
-        {
-            **result.model_dump(mode="json"),
-            "workspace_advertisement": instance.settled_workspace_advertisement().model_dump(
-                mode="json"
-            ),
-        }
-    )
-
-
 def playbill_list_proposals(
     instance_id: str,
     *,
@@ -977,17 +936,6 @@ def playbill_list_proposals(
         cursor=cursor,
     )
     return contracts.ProposalList.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_proposal_status(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.ProposalListEntry:
-    check_permission("cruxible_read", instance_id=instance_id)
-    result = service_playbill_proposal_status(
-        get_playbill_manager().get(instance_id), proposal_id=proposal_id
-    )
-    return contracts.ProposalListEntry.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_resolve_proposal_selector(
@@ -1142,17 +1090,6 @@ def playbill_orient(
     )
 
 
-def playbill_inspect_refusal(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.RefusalInspection:
-    check_permission("cruxible_inspect", instance_id=instance_id)
-    result = service_inspect_playbill_refusal(
-        get_playbill_manager().get(instance_id), proposal_id=proposal_id
-    )
-    return contracts.RefusalInspection.model_validate(result.model_dump(mode="json"))
-
-
 def playbill_review_proposal(
     instance_id: str,
     proposal_id: str,
@@ -1160,7 +1097,7 @@ def playbill_review_proposal(
     include_body: bool = False,
     workspace_observation: Mapping[str, object] | None = None,
 ) -> contracts.ProposalReview:
-    check_permission("cruxible_review", instance_id=instance_id)
+    check_permission("cruxible_proposal_review", instance_id=instance_id)
     result = service_review_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
@@ -1177,7 +1114,7 @@ def playbill_prepare_approval(
     signer_id: str,
     include_body: bool = False,
 ) -> contracts.ApprovalChallenge:
-    check_permission("cruxible_review", instance_id=instance_id)
+    check_permission("cruxible_proposal_review", instance_id=instance_id)
     result = service_prepare_playbill_approval(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
@@ -1193,7 +1130,7 @@ def playbill_submit_approval(
     *,
     attestation: ApprovalAttestation,
 ) -> contracts.ApprovalReceipt:
-    check_permission("cruxible_submit_approval", instance_id=instance_id)
+    check_permission("cruxible_proposal_approve_submit", instance_id=instance_id)
     result = service_submit_playbill_approval(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
@@ -1207,7 +1144,7 @@ def playbill_activate(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.ActivationReceipt:
-    check_permission("cruxible_activate", instance_id=instance_id)
+    check_permission("cruxible_proposal_activate", instance_id=instance_id)
     activated_by = _actor_id(instance_id)
     result = service_activate_playbill_proposal(
         get_playbill_manager().get(instance_id),
@@ -1362,7 +1299,7 @@ def _write_outcome(instance_id: str, request: WriteRequest) -> WriteOutcome:
     with change_entry(request.dry_run, "direct"):
         caller = WriteCaller(
             actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
-            may_activate=_permits("cruxible_activate", instance_id=instance_id),
+            may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
         )
         return service_playbill_write(
             get_playbill_manager().get(instance_id), request=request, caller=caller
@@ -1419,46 +1356,12 @@ def _authoring_coordinator(
     return AuthoringIntentCoordinator.for_instance(instance), actor
 
 
-def playbill_authoring_create(
-    instance_id: str,
-    *,
-    payload: AuthoringPayload,
-    reference_expectations: tuple[AuthoringExpectation, ...] | None = None,
-    program_stamp: AuthoringProgramStamp | None = None,
-) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_authoring_create", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.create(
-        actor=actor,
-        payload=payload,
-        canonical_timestamp=canonical_candidate_timestamp(utc_now()),
-        reference_expectations=reference_expectations,
-        program_stamp=program_stamp,
-    )
-    return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_authoring_create_input(
-    instance_id: str,
-    *,
-    input: AuthoringInput,
-) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_authoring_create", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.create_input(
-        actor=actor,
-        input=input,
-        canonical_timestamp=canonical_candidate_timestamp(utc_now()),
-    )
-    return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_resolution_contracts(
+def playbill_prediction_list(
     instance_id: str, *, request: contracts.ResolutionContractsRequest
 ) -> contracts.ResolutionContractsResult:
     from cruxible_core.service.procedures.resolution_contracts import service_resolution_contracts
 
-    check_permission("cruxible_resolution_contracts", instance_id=instance_id)
+    check_permission("cruxible_prediction_list", instance_id=instance_id)
     return service_resolution_contracts(get_playbill_manager().get(instance_id), request)
 
 
@@ -1469,7 +1372,7 @@ def playbill_predict(
 ) -> PredictResult:
     """Submit a governed test of an already accepted hypothesis."""
 
-    check_permission("cruxible_predict", instance_id=instance_id)
+    check_permission("cruxible_prediction_propose", instance_id=instance_id)
     actor_context = _write_actor_context(instance_id)
     if actor_context is None:
         raise AuthenticationError("Prediction authoring requires an authenticated actor identity")
@@ -1489,7 +1392,7 @@ def playbill_settle_prediction(
 ) -> SettleResult:
     """Settle one prediction through admission or retained terminal authority."""
 
-    check_permission("cruxible_settle", instance_id=instance_id)
+    check_permission("cruxible_prediction_settle", instance_id=instance_id)
     actor_context = _write_actor_context(instance_id)
     if actor_context is None:
         raise AuthenticationError("Prediction settlement requires an authenticated actor identity")
@@ -1512,20 +1415,10 @@ def playbill_authoring_get(
     return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_authoring_resume(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_authoring_resume", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.resume(intent_id, actor=actor)
-    return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_authoring_list_pending(
+def playbill_authoring_list(
     instance_id: str,
 ) -> contracts.AuthoringIntentListRecord:
-    check_permission("cruxible_authoring_list_pending", instance_id=instance_id)
+    check_permission("cruxible_authoring_list", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.list_pending(actor=actor)
     return contracts.AuthoringIntentListRecord.model_validate(result.model_dump(mode="json"))
@@ -1536,12 +1429,16 @@ def _authoring_preflight_result(
     *,
     actor: AuthenticatedActor,
     result: PreflightResult,
+    payload: AuthoringPayload | None = None,
 ) -> contracts.AuthoringPreflightResult:
+    """Serve one preflight with its advisory lint; ``payload`` when nothing was stored."""
+
     values = result.model_dump(mode="json")
-    payload = coordinator.store.get(
-        result.certificate.intent_id,
-        actor_id=actor.actor_id,
-    ).payload
+    if payload is None:
+        payload = coordinator.store.get(
+            result.certificate.intent_id,
+            actor_id=actor.actor_id,
+        ).payload
 
     def _at() -> AcceptedProjectionCoordinate:
         at = result.certificate.accepted_coordinate
@@ -1638,6 +1535,58 @@ def playbill_authoring_compile_and_submit(
     )
 
 
+def playbill_authoring_submit_input(
+    instance_id: str,
+    *,
+    input: AuthoringInput,
+    intent_id: str | None = None,
+) -> contracts.AuthoringSubmitResultRecord:
+    """Compile one tagless input and submit it; the preflight it ran rides along."""
+
+    check_permission("cruxible_authoring_compile", instance_id=instance_id)
+    check_permission("cruxible_authoring_submit", instance_id=instance_id)
+    coordinator, actor = _authoring_coordinator(instance_id)
+    result = coordinator.submit_input(
+        actor=actor,
+        input=input,
+        canonical_timestamp=canonical_candidate_timestamp(utc_now()),
+        intent_id=intent_id,
+    )
+    submitted = contracts.AuthoringSubmitResultRecord.model_validate(result.model_dump(mode="json"))
+    preflight = result.intent.last_preflight
+    if preflight is None:
+        return submitted
+    return submitted.model_copy(
+        update={
+            "preflight": _authoring_preflight_result(coordinator, actor=actor, result=preflight)
+        }
+    )
+
+
+def playbill_authoring_preview_input(
+    instance_id: str,
+    *,
+    input: AuthoringInput,
+) -> contracts.AuthoringPreflightResult:
+    """Preflight one tagless input exactly as a submit would, and save no intent.
+
+    Every refusal the submit would return comes back in the frontier; nothing is
+    stored, so the certificate names an intent that does not exist.
+    """
+
+    check_permission("cruxible_authoring_compile", instance_id=instance_id)
+    with change_entry(True, "direct"):
+        coordinator, actor = _authoring_coordinator(instance_id)
+        intent, computed = coordinator.preview_input(
+            actor=actor,
+            input=input,
+            canonical_timestamp=canonical_candidate_timestamp(utc_now()),
+        )
+        return _authoring_preflight_result(
+            coordinator, actor=actor, result=computed.result, payload=intent.payload
+        )
+
+
 def playbill_authoring_compile_input(
     instance_id: str,
     *,
@@ -1695,18 +1644,6 @@ def playbill_authoring_status(
     return contracts.CandidateStatusRecord.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_authoring_abandon_insertion(
-    instance_id: str,
-    intent_id: str,
-    *,
-    expectation_id: str | None = None,
-) -> contracts.InsertionAbandonResultRecord:
-    check_permission("cruxible_authoring_abandon_insertion", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.abandon_insertion(intent_id, actor=actor, expectation_id=expectation_id)
-    return contracts.InsertionAbandonResultRecord.model_validate(result.model_dump(mode="json"))
-
-
 def playbill_block_declare(
     instance_id: str,
     stamp: ProjectionBlockStampAny,
@@ -1732,16 +1669,14 @@ def playbill_block_depublish(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.BlockDepublishResult:
-    """Release one bound publication registration, addressed as the page names it."""
+    """Release one declared block registration, addressed as the page names it."""
 
     check_permission("cruxible_block_depublish", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
+        _require_writer(instance_id)
         instance = get_playbill_manager().get(instance_id)
-        coordinator, actor = _authoring_coordinator(instance_id)
         return service_depublish_playbill_block(
             instance,
-            coordinator=coordinator,
-            actor=actor,
             source_id=source_id,
             block_id=block_id,
             dry_run=dry_run,

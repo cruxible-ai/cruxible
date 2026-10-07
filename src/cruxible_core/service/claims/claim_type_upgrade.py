@@ -9,8 +9,8 @@ The move is mechanical and keeps meaning, with one disclosed exception:
 
 - a v6 ClaimType becomes v7 with ``evidence_requirement="self"`` (its meaning),
   no default role and no descriptions;
-- a v1-v5 ClaimType first takes the identity-rule conversion of
-  ``upgrade-evidence-rules`` (and its disclosed ``widened_versions``);
+- a v1-v5 ClaimType first takes the identity-rule conversion (with its
+  disclosed ``widened_versions``), in the same change set;
 - ``revision_evidence`` is the one meaning that may change: every ClaimType
   before v7 accumulates, and the upgrade states ``replace`` unless asked for
   ``accumulate``. The result lists that flip per ClaimType.

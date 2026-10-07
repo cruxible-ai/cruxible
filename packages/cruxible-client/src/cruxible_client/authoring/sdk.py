@@ -83,7 +83,6 @@ from cruxible_client.authoring.source_map import (
     entries_for_keywords,
 )
 from cruxible_client.authoring.workspace import (
-    activate_with_workspace_refresh,
     observe_next_workspace,
     observe_next_workspace_with_coverage,
     refresh_workspace_floor,
@@ -97,6 +96,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
+    ArtifactRef,
 )
 from cruxible_client.contracts.authoring.inputs import (
     ProcedureInput,
@@ -147,7 +147,6 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import (
     CaptureContract,
-    capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
 )
@@ -167,6 +166,10 @@ from cruxible_client.contracts.claim_types import (
     ClaimEvidenceFreshness,
     ClaimFreshnessDuration,
     ClaimType,
+    EvidenceRequirement,
+    RevisionEvidence,
+    effective_evidence_requirement,
+    effective_revision_evidence,
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
@@ -207,9 +210,10 @@ from cruxible_client.contracts.line_dispatch import (
     LineTriggerCheckResult,
 )
 from cruxible_client.contracts.policies import (
+    CAPTURE_CONTRACT_REF_ROLE,
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionRuleV2,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.predictions import (
@@ -599,11 +603,14 @@ class ClaimTypeDraft:
 
         return self.definition.predicate
 
-    def propose(self, *, proposal_name: str) -> Proposal:
-        """Propose this ClaimType as its own proposal.
+    def propose(self, *, proposal_name: str) -> ClaimTypeProposal:
+        """Propose this ClaimType as its own proposal, with its evidence-policy lint.
 
-        Next: ``proposal.review()``, then ``proposal.approve(...)`` and
-        ``proposal.accept()``.
+        A ClaimType proposed on its own is linted the way `claim-type propose`
+        lints it; the result carries that lint beside the plain proposal handle.
+
+        Next: ``result.lint.warnings``, then ``result.proposal.review()``,
+        ``.approve(...)`` and ``.activate()``.
         """
 
         result = self._playbill._client.propose_claim_type(
@@ -612,7 +619,14 @@ class ClaimTypeDraft:
             proposal_name=proposal_name,
             base=_api_coordinate(self._playbill.coordinate),
         )
-        return Proposal.from_inspection(self._playbill, result)
+        admission = result.proposal.get("admission")
+        proposal_id = admission.get("proposal_id") if isinstance(admission, Mapping) else None
+        if not isinstance(proposal_id, str):
+            raise ValueError("claim-type proposal omitted its proposal_id")
+        return ClaimTypeProposal(
+            proposal=Proposal(self._playbill, proposal_id),
+            lint=result.lint or api.ClaimTypeProposalLint(warnings=()),
+        )
 
 
 @dataclass(frozen=True)
@@ -715,7 +729,7 @@ class Prediction:
     def proposal(self) -> Proposal:
         """The proposal that carries this prediction's ResolutionContract.
 
-        Next: ``prediction.proposal.review()``, then approve and ``accept()``.
+        Next: ``prediction.proposal.review()``, then approve and ``activate()``.
         """
 
         return Proposal(self._playbill, self.proposal_id)
@@ -1694,10 +1708,7 @@ class Intent:
     ) -> Intent:
         """Build the handle for an intent a preflight just named. Next: ``intent.submit()``."""
 
-        intent_id = result.certificate.get("intent_id")
-        if not isinstance(intent_id, str):
-            raise ValueError("preflight certificate did not name an intent")
-        raw = cx._client.get_authoring_intent(cx._instance_id, intent_id).intent
+        raw = cx._client.get_authoring_intent(cx._instance_id, result.certificate.intent_id).intent
         return cls(cx, draft, raw, preflight=result)
 
     def __repr__(self) -> str:
@@ -1752,7 +1763,7 @@ class Intent:
         return None if self._preflight is None else self._preflight.lint
 
     @property
-    def warnings(self) -> tuple[dict[str, Any], ...]:
+    def warnings(self) -> tuple[api.ClaimTypeLintWarning, ...]:
         """Lint warnings from the last preflight.
 
         Next: fix them, then ``intent.reprepare(draft=...)``.
@@ -1770,30 +1781,23 @@ class Intent:
 
         if self._preflight is None:
             return ()
-        raw_diagnostics = self._preflight.frontier.get("diagnostics", [])
-        if not isinstance(raw_diagnostics, list):
-            return ()
-        result: list[Diagnostic] = []
-        for raw in raw_diagnostics:
-            if not isinstance(raw, Mapping):
-                continue
-            offending = str(raw.get("offending_element", ""))
-            repairs = raw.get("repairs", [])
-            result.append(
-                Diagnostic(
-                    code=str(raw.get("code", "")),
-                    stage=str(raw.get("stage", "")),
-                    offending_element=offending,
-                    message=str(raw.get("message", "")),
-                    repair=tuple(repairs) if isinstance(repairs, list) else (),
-                    owner=cast(str | None, raw.get("owner")),
-                    disposition=cast(str | None, raw.get("disposition")),
-                    call_site=(
-                        None if self._draft is None else self._draft.source_map.locate(offending)
-                    ),
-                )
+        return tuple(
+            Diagnostic(
+                code=item.code,
+                stage=item.stage,
+                offending_element=item.offending_element,
+                message=item.message,
+                repair=tuple(repair.model_dump(mode="json") for repair in item.repairs),
+                owner=item.owner,
+                disposition=item.disposition,
+                call_site=(
+                    None
+                    if self._draft is None
+                    else self._draft.source_map.locate(item.offending_element)
+                ),
             )
-        return tuple(result)
+            for item in self._preflight.frontier.diagnostics
+        )
 
     @property
     def path_to_acceptance(self) -> tuple[dict[str, object], ...]:
@@ -1820,43 +1824,6 @@ class Intent:
         if status is None or status.proposal_id is None:
             return None
         return self._playbill.proposal(status.proposal_id)
-
-    @property
-    def publication(self) -> Publication | None:
-        """The one publication a singular Claim intent owns, if it has one.
-
-        Next: ``publication.status()``, or ``publication.abandon()``.
-        """
-
-        expectation = self._raw.get("insertion_expectation")
-        if not isinstance(expectation, Mapping):
-            self._refresh_raw()
-            expectation = self._raw.get("insertion_expectation")
-        if not isinstance(expectation, Mapping):
-            return None
-        return Publication(self, dict(expectation))
-
-    @property
-    def publications(self) -> tuple[Publication, ...]:
-        """Every publication this intent owns, one per publishing Claim member.
-
-        Next: ``publication.status()`` on each.
-        """
-
-        expectations = self._raw.get("insertion_expectations")
-        if not isinstance(expectations, list) or not expectations:
-            self._refresh_raw()
-            expectations = self._raw.get("insertion_expectations")
-        if not isinstance(expectations, list):
-            return ()
-        return tuple(
-            Publication(self, dict(item)) for item in expectations if isinstance(item, Mapping)
-        )
-
-    def _refresh_raw(self) -> None:
-        self._raw = self._playbill._client.get_authoring_intent(
-            self._playbill._instance_id, self.intent_id
-        ).intent
 
     def prepare(self) -> Intent:
         """Preflight this intent again at current head, without changing its draft.
@@ -1902,7 +1869,7 @@ class Intent:
     def submit(self) -> Intent:
         """Submit this intent: the daemon admits it as a proposal.
 
-        Next: ``intent.proposal.review()``, then approve and ``accept()``;
+        Next: ``intent.proposal.review()``, then approve and ``activate()``;
         ``intent.status()`` for its state.
         """
 
@@ -1961,31 +1928,14 @@ class Intent:
 class Proposal:
     """A handle on one admitted proposal, by ID; nothing is read until asked.
 
-    Next: ``proposal.review()``, then ``proposal.approve(signer=..., reviewed=...)`` and
-    ``proposal.accept()``.
+    Read it with ``cx.get(proposal_id)``: status, verdict, changes, and for a refused
+    proposal every refusal with its repair. Next: ``proposal.review()``, then
+    ``proposal.approve(signer=..., reviewed=...)`` and ``proposal.activate()``.
     """
 
-    def __init__(
-        self,
-        cx: Cruxible,
-        proposal_id: str,
-        *,
-        lint: api.ClaimTypeProposalLint | None = None,
-    ) -> None:
+    def __init__(self, cx: Cruxible, proposal_id: str) -> None:
         self._playbill = cx
         self.proposal_id = proposal_id
-        self.lint = lint
-
-    @classmethod
-    def from_inspection(cls, cx: Cruxible, inspection: api.ProposalInspection) -> Proposal:
-        """The handle for a proposal an inspection names. Next: ``proposal.review()``."""
-
-        proposal_id = inspection.proposal.get("admission", {}).get("proposal_id")
-        if not isinstance(proposal_id, str):
-            proposal_id = inspection.proposal.get("proposal_id")
-        if not isinstance(proposal_id, str):
-            raise ValueError("proposal inspection omitted proposal_id")
-        return cls(cx, proposal_id, lint=inspection.lint)
 
     def review(self) -> ReviewedProposal:
         """Fetch an immutable full review; inspect its details before approving.
@@ -1994,113 +1944,49 @@ class Proposal:
         """
         return review_proposal(self._playbill, self.proposal_id)
 
-    def accept(self) -> api.ActivationReceipt:
-        """Accept this proposal once its approvals are in: ``Cruxible.accept`` by handle.
-
-        Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
-        """
-        return self._playbill.accept(self.proposal_id)
-
-    def __repr__(self) -> str:
-        warnings = "" if not self.warnings else f", warnings={len(self.warnings)}"
-        return f"Proposal({self.proposal_id!r}{warnings})"
-
     def approve(self, *, signer: ApprovalSigner, reviewed: ReviewedProposal) -> api.ApprovalReceipt:
         """Sign this exact review with caller-configured custody; never activate.
 
-        Next: ``proposal.accept()`` once enough approvals are in.
+        Next: ``proposal.activate()`` once enough approvals are in.
         """
         return approve_reviewed(self._playbill, self.proposal_id, signer=signer, reviewed=reviewed)
 
-    @property
-    def warnings(self) -> tuple[dict[str, Any], ...]:
-        """Lint warnings the proposal was admitted with. Next: ``proposal.review()``."""
+    def activate(self) -> api.ActivationReceipt:
+        """Activate this proposal once its approvals are in: ``Cruxible.activate`` by handle.
 
-        return () if self.lint is None else tuple(self.lint.warnings)
-
-    def status(self) -> api.ProposalListEntry:
-        """This proposal's current status, read by ID.
-
-        Next: ``proposal.accept()`` while open, or ``cx.next(...)`` if it went stale.
+        Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
         """
-        return self._playbill._client.proposal_status(self._playbill._instance_id, self.proposal_id)
+        return self._playbill.activate(self.proposal_id)
 
-    def wait_for_acceptance(
-        self,
-        *,
-        timeout: Duration,
-        poll_interval: Duration,
-    ) -> api.ProposalListEntry:
-        """Poll ``status()`` until the proposal settles, or until ``timeout``.
+    def readmit(
+        self, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.ProposalReadmitResult:
+        """Re-admit this stale proposal at the current head, under a new proposal ID.
 
-        Next: ``cx.get(ref)`` to read what was accepted.
+        Approvals are signed over the exact evaluation, so a stale proposal is
+        readmitted explicitly and reviewed again. Next: ``cx.proposal(result's new
+        proposal ID).review()``.
         """
+        return self._playbill._client.readmit_proposal(
+            self._playbill._instance_id, self.proposal_id, dry_run=dry_run, at=at
+        )
 
-        deadline = time.monotonic_ns() + timeout.value * 1_000
-        while True:
-            status = self.status()
-            if status.terminal_reason is not None:
-                return status
-            if time.monotonic_ns() >= deadline:
-                return status
-            time.sleep(poll_interval.value / 1_000_000)
+    def __repr__(self) -> str:
+        return f"Proposal({self.proposal_id!r})"
 
 
-class Publication:
-    """One publication expectation an EXISTING intent owns.
+@dataclass(frozen=True)
+class ClaimTypeProposal:
+    """What ``ClaimTypeDraft.propose`` returns: the proposal handle and its lint.
 
-    Nothing mints a new one: the `publish_to` road is gone, and a projection
-    block is declared with `block repin` over accepted Claims instead. What
-    remains is the exit an instance that already published needs -- read the
-    state, and abandon (depublish) the expectation.
+    ``lint`` is the same typed evidence-policy lint `claim-type propose` serves;
+    an empty ``warnings`` means the policy drew none.
 
-    Next: ``publication.status()``, then ``publication.abandon()``.
+    Next: ``result.proposal.review()``.
     """
 
-    def __init__(self, intent: Intent, expectation: dict[str, object]) -> None:
-        self._intent = intent
-        self._expectation = expectation
-
-    @property
-    def state(self) -> str:
-        """The expectation's state as last read. Next: ``publication.status()`` to read it
-        fresh.
-        """
-
-        return str(self._expectation.get("state", "terminal"))
-
-    @property
-    def expectation_id(self) -> str:
-        """The expectation's ID. Next: ``publication.abandon()``."""
-
-        value = self._expectation.get("expectation_id")
-        if not isinstance(value, str):
-            raise ValueError("insertion expectation omitted its ID")
-        return value
-
-    def status(self) -> str:
-        """Read the expectation's state fresh. Next: ``publication.abandon()`` to depublish it."""
-
-        self._intent._refresh_raw()
-        expectations = self._intent._raw.get("insertion_expectations")
-        if isinstance(expectations, list):
-            for item in expectations:
-                if isinstance(item, Mapping) and item.get("expectation_id") == self.expectation_id:
-                    self._expectation = dict(item)
-                    break
-        return self.state
-
-    def abandon(self) -> Publication:
-        """Abandon (depublish) this expectation. Next: ``publication.status()``."""
-
-        result = self._intent._playbill._client.abandon_authoring_insertion(
-            self._intent._playbill._instance_id,
-            self._intent.intent_id,
-            expectation_id=self.expectation_id,
-        )
-        self._intent._raw = result.intent
-        self._expectation = result.expectation
-        return self
+    proposal: Proposal
+    lint: api.ClaimTypeProposalLint
 
 
 def _wait_for_status(call: Any, *, timeout: Duration, poll_interval: Duration) -> Any:
@@ -2490,19 +2376,18 @@ class Cruxible:
         )
         return CaptureView(result=result)
 
-    def resolution_contracts(
-        self, hypothesis: str | ClaimVersionReference
-    ) -> api.ResolutionContractsResult:
-        """Find accepted tests of a Claim, including retired tests.
+    def predictions(self, claim: str | ClaimVersionReference) -> api.ResolutionContractsResult:
+        """List the accepted predictions that test one Claim version, retired ones included.
 
-        ``hypothesis`` is a Claim ID (``CLM-...``); the daemon resolves its
-        accepted version. An exact ``ClaimVersionReference`` is the advanced form.
+        ``claim`` is a Claim ID (``CLM-...``); the daemon resolves its version at
+        this connection's coordinate. An exact ``ClaimVersionReference`` names one
+        version directly. A prediction is stored as a resolution contract.
 
         Next: ``cx.settle(contract, observation=...)`` once an observation is accepted.
         """
-        return self._client.resolution_contracts(
+        return self._client.list_predictions(
             self._instance_id,
-            request=api.ResolutionContractsRequest(hypothesis=hypothesis, at=self.coordinate),
+            request=api.ResolutionContractsRequest(hypothesis=claim, at=self.coordinate),
         )
 
     def predict(self, contract: ResolutionContract | ResolutionContractInput) -> Prediction:
@@ -2511,7 +2396,7 @@ class Cruxible:
         The contract's ``hypothesis`` may be a Claim ID (``ResolutionContractInput``);
         the daemon pins the exact accepted version it resolves to.
 
-        Next: ``prediction.proposal.review()``, then approve and ``accept()`` it.
+        Next: ``prediction.proposal.review()``, then approve and ``activate()`` it.
         """
         result = self._client.predict(self._instance_id, request=PredictRequest(contract=contract))
         view = AuthoringIntentView.model_validate(result.intent)
@@ -2575,11 +2460,11 @@ class Cruxible:
 
         Restores the daemon's latest revision, preflight and observed proposal.
         Python call-site locations are process-local and are not reconstructed.
-        Review, approval, acceptance and workspace refresh remain explicit.
+        Review, approval and activation remain explicit.
 
         Next: ``intent.status()``, then ``intent.submit()`` if it was never submitted.
         """
-        raw = self._client.resume_authoring_intent(self._instance_id, intent_id).intent
+        raw = self._client.get_authoring_intent(self._instance_id, intent_id).intent
         preflight = raw.get("last_preflight")
         return Intent(
             self,
@@ -2597,27 +2482,9 @@ class Cruxible:
         """Return a handle for an existing proposal without creating or approving it.
 
         Next: ``proposal.review()``, then ``proposal.approve(...)`` and
-        ``proposal.accept()``.
+        ``proposal.activate()``.
         """
         return Proposal(self, proposal_id)
-
-    def accept(self, proposal_id: str) -> api.ActivationReceipt:
-        """Request durable acceptance without refreshing local reading surfaces.
-
-        The daemon's publication, recovery and workspace-advertisement protocol
-        is unchanged. This call performs no client floor export or block check.
-        The receipt's coordinate becomes this live connection's last observation.
-        Subsequent live reads select current head; use at(receipt.accepted_coordinate)
-        for exact readback. Explicitly pinned contexts and World snapshots stay fixed.
-
-        Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted, or
-        ``cx.refresh_workspace(at=...)`` to export the floor there.
-        """
-
-        receipt = self._client.activate_proposal(self._instance_id, proposal_id)
-        if receipt.status == "accepted" and receipt.accepted_coordinate is not None:
-            self._observe_read(_coordinate(receipt.accepted_coordinate), expected=None)
-        return receipt
 
     def refresh_workspace(
         self,
@@ -2638,34 +2505,38 @@ class Cruxible:
             self._client, self._instance_id, workspace=self._workspace_root, at=coordinate
         )
 
-    def activate(
-        self,
-        proposal_id: str,
-        *,
-        no_sync: bool = False,
-    ) -> api.WorkspaceActivationResult:
-        """Activate one proposal and refresh this workspace's configured floor.
+    def activate(self, proposal_id: str) -> api.ActivationReceipt:
+        """Activate one proposal: the daemon settles it, nothing local is written.
 
-        Convenience path: accepts, exports the floor at the accepted coordinate,
-        then checks blocks against the server's current head unless no_sync is
-        set. Use accept() and refresh_workspace() to schedule maintenance
-        separately. A live connection remembers the acceptance coordinate; pinned
-        contexts and existing World snapshots stay fixed.
+        The daemon's floor-refresh trigger delivers the floor to a local
+        workspace it serves; elsewhere ``cx.refresh_workspace(at=...)`` pulls it.
+        The receipt's coordinate becomes this live connection's last observation.
+        Subsequent live reads select current head; use at(receipt.accepted_coordinate)
+        for exact readback. Explicitly pinned contexts and World snapshots stay fixed.
 
-        Next: grep ``.cruxible/floor/current/``, or ``cx.get(ref)`` to read the accepted
-        change.
+        Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
         """
 
-        result = activate_with_workspace_refresh(
-            self._client,
-            self._instance_id,
-            proposal_id,
-            workspace=self._workspace_root,
-            sync=not no_sync,
+        receipt = self._client.activate_proposal(self._instance_id, proposal_id)
+        if receipt.status == "accepted" and receipt.accepted_coordinate is not None:
+            self._observe_read(_coordinate(receipt.accepted_coordinate), expected=None)
+        return receipt
+
+    def proposals(
+        self,
+        *,
+        status: Literal["open", "settled", "incomplete"] | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> api.ProposalList:
+        """One page of proposals, newest first; follow ``next_cursor`` while truncated.
+
+        Next: ``cx.get(entry.proposal_id)`` to read one, or ``cx.proposal(id).review()``.
+        """
+
+        return self._client.list_proposals(
+            self._instance_id, status=status, limit=limit, cursor=cursor
         )
-        if result.status == "accepted" and result.accepted_coordinate is not None:
-            self._observe_read(_coordinate(result.accepted_coordinate), expected=None)
-        return result
 
     def upgrade_claim_types(
         self,
@@ -2799,11 +2670,14 @@ class Cruxible:
             ("direct", tuple(sorted({r for r in role_values if r != "derivation"}))),
         )
         rules = tuple(
-            ClaimEvidenceAdmissionRuleV2(
+            ClaimEvidenceAdmissionRule(
                 rule_id=f"source-{source_id}-{admission}",
                 claim_roles=rule_roles,
-                capture_contract_digests=(
-                    capture_contract_digest(foreign_source_capture_contract(source_id)).tagged,
+                capture_contracts=(
+                    ArtifactRef(
+                        role=CAPTURE_CONTRACT_REF_ROLE,
+                        target=foreign_source_capture_contract(source_id).identity,
+                    ),
                 ),
                 evidence_kinds=("self_asserted",),
                 admission=admission,
@@ -2814,14 +2688,23 @@ class Cruxible:
             if rule_roles
         )
         lifecycle = ArtifactLifecycle()
+        # A new ClaimType replaces evidence on revision; a successor keeps what
+        # its predecessor means, exactly as the daemon's lowering does.
+        evidence_requirement: EvidenceRequirement = "self"
+        revision_evidence: RevisionEvidence = "replace"
         if isinstance(predicate, ClaimTypeRef):
             predecessor = self._get(f"ClaimType:{name}", "proof", None, predicate.coordinate)
             assert predecessor.proof is not None
             lifecycle = ArtifactLifecycle(
                 predecessor_digest=str(predecessor.proof["artifact_digest"])
             )
+            envelope = predecessor.proof.get("envelope")
+            if isinstance(envelope, Mapping):
+                accepted = ClaimType.model_validate(envelope)
+                evidence_requirement = effective_evidence_requirement(accepted)
+                revision_evidence = effective_revision_evidence(accepted)
         definition = ClaimType(
-            artifact_format="playbill-claim-type-v5",
+            artifact_format="playbill-claim-type-v7",
             identity=ArtifactIdentity(kind="ClaimType", name=name),
             predicate=name,
             allowed_subject_kinds=tuple(subject_kinds),
@@ -2831,7 +2714,7 @@ class Cruxible:
             cardinality=arity.value,
             permitted_roles=tuple(role.value for role in roles),
             referent_sensitivity=sensitivity.value,
-            evidence_admission_policy=ClaimEvidenceAdmissionPolicyV2(rules=rules),
+            evidence_admission_policy=ClaimEvidenceAdmissionPolicy(rules=rules),
             admission_policy=admission_policy,
             resolution_policy=resolution_policy,
             pins=tuple(pins),
@@ -2844,6 +2727,8 @@ class Cruxible:
                 )
             ),
             attestation_consequence_policy=attestation_consequence_policy,
+            evidence_requirement=evidence_requirement,
+            revision_evidence=revision_evidence,
         )
         return ClaimTypeDraft(self, definition)
 
@@ -4961,6 +4846,7 @@ __all__ = [
     "ChangeSetDraft",
     "ClaimDraft",
     "ClaimTypeDraft",
+    "ClaimTypeProposal",
     "Intent",
     "KnowledgeCard",
     "MeasurementBatch",
@@ -4974,7 +4860,6 @@ __all__ = [
     "ProcedureRun",
     "Proposal",
     "QueryDraft",
-    "Publication",
     "SDK_CONTRACT_SNAPSHOT_DIGEST",
     "SubjectDraft",
     "carry",

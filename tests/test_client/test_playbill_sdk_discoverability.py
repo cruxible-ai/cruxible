@@ -35,7 +35,6 @@ _SDK_CLASSES: tuple[type, ...] = (
     sdk.Cruxible,
     sdk.Intent,
     sdk.Proposal,
-    sdk.Publication,
     sdk.WriteBatch,
     sdk.ChangeSetDraft,
     sdk.ClaimDraft,

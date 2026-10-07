@@ -63,7 +63,6 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("document", "propose"): "active",
     ("claim-type", "propose"): "active",
     ("claim-type", "migrate"): "active",
-    ("claim-type", "upgrade-evidence-rules"): "active",
     ("claim-type", "upgrade"): "active",
     ("block", "depublish"): "active",
     ("set",): "active",
@@ -71,10 +70,9 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("retire",): "active",
     ("write",): "active",
     ("claim", "attest"): "active",
-    ("predict",): "active",
-    ("settle",): "active",
+    ("prediction", "propose"): "active",
+    ("prediction", "settle"): "active",
     ("claim", "recover-attestation"): "active",
-    ("authoring", "create"): "manual",
     ("authoring", "bind"): "active",
     ("authoring", "compile"): "active",
     ("authoring", "preflight"): "active",
@@ -544,12 +542,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "withdraw_proposal",
                 "Retire an open proposal that will never activate.",
             ),
-            "inspect": _command(
-                "playbill", "inspect_proposal", "Inspect immutable proposal evidence."
-            ),
-            "refusal": _command(
-                "playbill", "inspect_refusal", "Inspect typed refusal diagnostics."
-            ),
             "review": _command(
                 "playbill", "review_proposal", "Render structured candidate review."
             ),
@@ -569,11 +561,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill",
                 "migrate_claim_type",
                 "Atomically succeed a ClaimType and dispose dependents.",
-            ),
-            "upgrade-evidence-rules": _command(
-                "playbill",
-                "upgrade_evidence_rules",
-                "Propose moving ClaimTypes to identity evidence rules.",
             ),
             "upgrade": _command(
                 "playbill",
@@ -601,25 +588,33 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         module="playbill",
         attr="claim_group",
     ),
-    "resolution-contracts": _command(
-        "playbill", "resolution_contracts", "Find accepted tests of an exact Claim version."
-    ),
-    "predict": _command(
-        "playbill",
-        "predict",
-        "Propose a governed resolution contract.",
-    ),
-    "settle": _command(
-        "playbill",
-        "settle",
-        "Settle a prediction from accepted evidence.",
+    "prediction": _group(
+        "Propose, settle and list predictions.",
+        {
+            "propose": _command(
+                "playbill", "propose_prediction", "Propose a prediction about a Claim."
+            ),
+            "settle": _command(
+                "playbill", "settle_prediction", "Settle a prediction from a later observation."
+            ),
+            "list": _command(
+                "playbill",
+                "list_predictions",
+                "List the accepted predictions that test one Claim.",
+            ),
+        },
+        module="playbill",
+        attr="prediction_group",
     ),
     "authoring": _group(
         "Author, preflight, submit, and resume governed writes.",
         {
-            "create": _command("playbill", "create_authoring_intent", "Create a durable intent."),
+            "example": _command(
+                "playbill",
+                "authoring_example_command",
+                "Print an authoring payload template.",
+            ),
             "get": _command("playbill", "get_authoring_intent", "Read one authoring intent."),
-            "resume": _command("playbill", "resume_authoring_intent", "Resume durable authoring."),
             "list": _command(
                 "playbill",
                 "list_pending_authoring_intents",
@@ -646,11 +641,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill",
                 "authoring_intent_status",
                 "Read the path to acceptance.",
-            ),
-            "abandon-insertion": _command(
-                "playbill",
-                "abandon_authoring_insertion",
-                "Abandon a pending publication copy.",
             ),
         },
         module="playbill",

@@ -736,7 +736,7 @@ class TerminalAuthorityRefusal(TerminalEgressError):
 
 
 PROCEDURE_MANDATE_REPAIR = RepairOperation(
-    operation="cruxible.authoring.create",
+    operation="cruxible.authoring.example",
     arguments={"example": "procedure-mandate"},
 )
 PROCEDURE_ADMISSION_REPAIR = HandEditRepair(

@@ -10,6 +10,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
+    ArtifactRef,
 )
 from cruxible_client.contracts.canonical import (
     Sha256Value,
@@ -20,10 +21,11 @@ from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import (
+    CAPTURE_CONTRACT_REF_ROLE,
     AttestationRequirement,
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionRuleV2,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
 
@@ -116,19 +118,19 @@ def _profile(
 CLAIM_TYPE_AUTHORING_PROFILES: tuple[ClaimTypeProfileDefinition, ...] = (
     _profile(
         "append-only-source-observation-v1",
-        required=("capture_contract_digest", "evidence_kind"),
+        required=("capture_contract", "evidence_kind"),
         optional=("attestation_requirement",),
     ),
     _profile("ordinary-project-fact-v1"),
     _profile("policy-owner-normative-claim-v1"),
     _profile(
         "replay-verifiable-derivation-v2",
-        required=("capture_contract_digest", "evidence_kind"),
+        required=("capture_contract", "evidence_kind"),
         optional=("attestation_requirement",),
     ),
     _profile(
         "source-backed-scientific-result-v1",
-        required=("capture_contract_digest", "evidence_kind"),
+        required=("capture_contract", "evidence_kind"),
         optional=("attestation_requirement",),
     ),
 )
@@ -218,15 +220,20 @@ def _definitions() -> dict[str, ClaimTypeProfileDefinition]:
     return {item.profile_id: item for item in CLAIM_TYPE_AUTHORING_PROFILES}
 
 
-def _require_digest(parameters: dict[str, object], key: str) -> str:
+def _contract_ref(parameters: dict[str, object], key: str) -> ArtifactRef:
+    """The CaptureContract a profile rule names, by identity: any accepted version."""
+
     value = parameters[key]
-    if not isinstance(value, str):
-        raise AuthoringProfileError(f"profile parameter {key!r} must be a digest")
+    if not isinstance(value, str) or not value:
+        raise AuthoringProfileError(f"profile parameter {key!r} must name a CaptureContract")
+    name = value.removeprefix("CaptureContract:")
     try:
-        Sha256Value.from_tagged(value)
+        target = ArtifactIdentity(kind="CaptureContract", name=name)
     except ValueError as exc:
-        raise AuthoringProfileError(f"profile parameter {key!r} must be a digest") from exc
-    return value
+        raise AuthoringProfileError(
+            f"profile parameter {key!r} must name a CaptureContract"
+        ) from exc
+    return ArtifactRef(role=CAPTURE_CONTRACT_REF_ROLE, target=target)
 
 
 def _attestation(parameters: dict[str, object]) -> AttestationRequirement:
@@ -241,8 +248,8 @@ def _profile_policies(
     structure: ClaimTypeStructure,
     parameters: dict[str, object],
     overrides: dict[str, object],
-) -> tuple[ClaimEvidenceAdmissionPolicyV2, ClaimAdmissionPolicy, ClaimResolutionPolicy]:
-    evidence = ClaimEvidenceAdmissionPolicyV2()
+) -> tuple[ClaimEvidenceAdmissionPolicy, ClaimAdmissionPolicy, ClaimResolutionPolicy]:
+    evidence = ClaimEvidenceAdmissionPolicy()
     admission = ClaimAdmissionPolicy()
     if profile_id in {
         "append-only-source-observation-v1",
@@ -250,14 +257,12 @@ def _profile_policies(
     }:
         if structure.cardinality != "many":
             raise AuthoringProfileError("observation profiles require cardinality='many'")
-        evidence = ClaimEvidenceAdmissionPolicyV2(
+        evidence = ClaimEvidenceAdmissionPolicy(
             rules=(
-                ClaimEvidenceAdmissionRuleV2(
+                ClaimEvidenceAdmissionRule(
                     rule_id="source-observation",
                     claim_roles=("observation",),
-                    capture_contract_digests=(
-                        _require_digest(parameters, "capture_contract_digest"),
-                    ),
+                    capture_contracts=(_contract_ref(parameters, "capture_contract"),),
                     evidence_kinds=(str(parameters["evidence_kind"]),),
                     admission="direct",
                     subject_binding="contract_source_mapping",
@@ -266,14 +271,12 @@ def _profile_policies(
             )
         )
     elif profile_id == "replay-verifiable-derivation-v2":
-        evidence = ClaimEvidenceAdmissionPolicyV2(
+        evidence = ClaimEvidenceAdmissionPolicy(
             rules=(
-                ClaimEvidenceAdmissionRuleV2(
+                ClaimEvidenceAdmissionRule(
                     rule_id="replay-verifiable-derivation",
                     claim_roles=("derivation",),
-                    capture_contract_digests=(
-                        _require_digest(parameters, "capture_contract_digest"),
-                    ),
+                    capture_contracts=(_contract_ref(parameters, "capture_contract"),),
                     evidence_kinds=(str(parameters["evidence_kind"]),),
                     admission="derivational",
                     subject_binding="contract_source_mapping",
@@ -320,7 +323,7 @@ def expand_claim_type_profile(request: ClaimTypeProfileInput) -> ClaimTypeExpans
     )
     structure = request.structure
     claim_type = ClaimType(
-        artifact_format="playbill-claim-type-v5",
+        artifact_format="playbill-claim-type-v7",
         identity=ArtifactIdentity(kind="ClaimType", name=structure.predicate),
         predicate=structure.predicate,
         allowed_subject_kinds=structure.allowed_subject_kinds,
@@ -335,6 +338,8 @@ def expand_claim_type_profile(request: ClaimTypeProfileInput) -> ClaimTypeExpans
         resolution_policy=resolution,
         pins=request.pins,
         lifecycle=ArtifactLifecycle(),
+        evidence_requirement="self",
+        revision_evidence="replace",
     )
     rendered = render_claim_type(claim_type)
     return ClaimTypeExpansionResult(

@@ -16,6 +16,7 @@ from cruxible_core.claims.claim_type_inputs import (
     lower_claim_type_input,
 )
 from tests.core_support._claim_type_support import claim_type_input_example
+from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
 
 COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
@@ -58,14 +59,14 @@ def test_http_raw_intent_cannot_assert_procedure_execution(playbill_http):
         ),
     )
     response = client.post(
-        f"/api/v1/{instance_id}/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-intent-create-request-v1",
+            "tag": "playbill-authoring-intent-compile-request-v1",
             "payload": payload.model_dump(mode="json"),
         },
     )
     assert response.status_code == 200, response.text
-    intent_id = response.json()["intent"]["intent_id"]
+    intent_id = response.json()["certificate"]["intent_id"]
     compiled = client.post(
         f"/api/v1/{instance_id}/authoring/compile",
         json={
@@ -97,11 +98,7 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
     def compile_stub(selected: str, *, payload: object, intent_id: str | None = None):
         seen.append((selected, payload))
         assert intent_id is None
-        return contracts.AuthoringPreflightResult(
-            verdict="refused",
-            certificate={"certificate_digest": "sha256:" + "6" * 64},
-            frontier={"diagnostics": [{"code": "example"}]},
-        )
+        return stub_preflight_result(verdict="refused", diagnostics=(stub_diagnostic("example"),))
 
     def submit_stub(selected: str, intent_id: str):
         seen.append((selected, intent_id))
@@ -240,18 +237,18 @@ def test_http_input_variants_delegate_without_exposing_a_base(
     }
     seen: list[object] = []
 
-    def create_stub(selected: str, *, input: object):
+    def compile_stub(selected: str, *, input: object, intent_id: str | None):
         seen.append((selected, input))
-        return contracts.AuthoringIntentViewRecord(intent={"intent_id": INTENT_ID})
+        return stub_preflight_result(intent_id=INTENT_ID)
 
     monkeypatch.setattr(
-        "cruxible_core.runtime.playbill_api.playbill_authoring_create_input",
-        create_stub,
+        "cruxible_core.runtime.playbill_api.playbill_authoring_compile_input",
+        compile_stub,
     )
     response = client.post(
-        f"/api/v1/{instance_id}/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-input-create-request-v1",
+            "tag": "playbill-authoring-input-compile-request-v1",
             "input": input_value,
         },
     )
@@ -260,15 +257,15 @@ def test_http_input_variants_delegate_without_exposing_a_base(
     assert seen and seen[0][0] == instance_id
 
 
-def test_http_create_flow_a_stub_surfaces_the_bind_refusal(
+def test_http_compile_flow_a_stub_surfaces_the_bind_refusal(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
     client, instance_id, _private_key = playbill_http
 
     response = client.post(
-        f"/api/v1/{instance_id}/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-input-create-request-v1",
+            "tag": "playbill-authoring-input-compile-request-v1",
             "input": claim_flow_a_example().model_dump(mode="json"),
         },
     )
@@ -276,7 +273,7 @@ def test_http_create_flow_a_stub_surfaces_the_bind_refusal(
     assert response.status_code == 400
     assert response.json()["message"] == (
         "cruxible.authoring.working_selection_requires_bind at input.source: "
-        "create and compile cannot observe local working-source bytes. "
+        "compile and submit cannot observe local working-source bytes. "
         "Repair: Run cruxible authoring bind with this input and the selected local file."
     )
 
@@ -299,15 +296,15 @@ def test_http_unused_procedure_contract_is_a_typed_preflight_refusal(
     ).model_dump(mode="json")
 
     created = client.post(
-        f"/api/v1/{instance_id}/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-input-create-request-v1",
+            "tag": "playbill-authoring-input-compile-request-v1",
             "input": invalid,
         },
     )
 
     assert created.status_code == 200, created.text
-    intent_id = created.json()["intent"]["intent_id"]
+    intent_id = created.json()["certificate"]["intent_id"]
     preflight = client.post(
         f"/api/v1/{instance_id}/authoring/intents/{intent_id}/preflight",
         json={"tag": "playbill-authoring-intent-preflight-request-v1"},
@@ -379,7 +376,7 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
     client, instance_id, _private_key = playbill_http
     schemas = client.app.openapi()["components"]["schemas"]
 
-    for name in ("AuthoringInputCreateRequest", "AuthoringInputCompileRequest"):
+    for name in ("AuthoringInputCompileRequest",):
         mapping = schemas[name]["properties"]["input"]["discriminator"]["mapping"]
         assert set(mapping) == {
             "approval_policy",
@@ -406,9 +403,9 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
     ]
 
     response = client.post(
-        f"/api/v1/{instance_id}/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-input-create-request-v1",
+            "tag": "playbill-authoring-input-compile-request-v1",
             "input": {"kind": "brief"},
         },
     )
@@ -480,7 +477,7 @@ def test_http_claim_type_lowering_returns_typed_nested_validation_refusal(
             {
                 "rule_id": "obsolete-producer-allowlist",
                 "claim_roles": ["observation"],
-                "capture_contract_digests": ["sha256:" + "a" * 64],
+                "capture_contracts": ["repo.replace-me"],
                 "evidence_kinds": ["self_asserted"],
                 "admission": "derivational",
                 "subject_binding": "exact_claim_subject",
@@ -584,9 +581,9 @@ def test_http_claim_type_routes_preserve_optional_lint_payload(
         )
         path = f"/api/v1/{instance_id}/claim-types/proposals"
         request = {
-            "claim_type": lower_claim_type_input(claim_type_input_example(), tree={}).model_dump(
-                mode="json"
-            ),
+            "claim_type": lower_claim_type_input(
+                claim_type_input_example(), tree={}, identity_rules=True
+            ).model_dump(mode="json"),
             "proposal_name": "warn",
         }
     else:
@@ -618,9 +615,9 @@ def test_http_refuses_digest_and_base_smuggling_in_request_models(
 ) -> None:
     client, instance_id, _private_key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/authoring/intents",
+        f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-intent-create-request-v1",
+            "tag": "playbill-authoring-intent-compile-request-v1",
             "payload": {
                 "tag": "playbill-claim-authoring-payload-v1",
                 "claim_id": "CLM-" + "0" * 32,
@@ -737,42 +734,6 @@ def test_http_proposal_selector_resolves_against_a_live_instance(
         "selector": admission.target_ref,
         "proposal_id": admission.proposal_id,
     }
-
-
-def test_http_insertion_abandon_is_typed(
-    playbill_http: tuple[TestClient, str, Path],
-    monkeypatch,
-) -> None:  # type: ignore[no-untyped-def]
-    """The one insertion route left is typed end to end.
-
-    Prepare and confirm are gone with the road that minted the expectation they
-    acted on. Abandoning one an instance already holds is the exit `block
-    depublish` performs, and it still speaks a typed request and a typed result.
-    """
-
-    client, instance_id, _private_key = playbill_http
-    seen: list[str] = []
-
-    def abandon_stub(selected: str, intent_id: str, *, expectation_id: str | None = None):
-        assert (selected, intent_id) == (instance_id, INTENT_ID)
-        seen.append("abandon")
-        return contracts.InsertionAbandonResultRecord(
-            intent={"intent_id": intent_id},
-            expectation={"state": "abandoned"},
-        )
-
-    monkeypatch.setattr(
-        "cruxible_core.runtime.playbill_api.playbill_authoring_abandon_insertion",
-        abandon_stub,
-    )
-    abandoned = client.post(
-        f"/api/v1/{instance_id}/authoring/intents/{INTENT_ID}/insertion/abandon",
-        json={"tag": "playbill-insertion-abandon-request-v1"},
-    )
-
-    assert abandoned.status_code == 200, abandoned.text
-    assert abandoned.json()["expectation"]["state"] == "abandoned"
-    assert seen == ["abandon"]
 
 
 def test_http_list_routes_bound_their_page_size(

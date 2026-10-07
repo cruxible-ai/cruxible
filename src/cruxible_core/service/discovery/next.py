@@ -873,7 +873,7 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
 
 
 _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
-    "cruxible.authoring.create": "authoring create",
+    "cruxible.authoring.example": "authoring example",
     "cruxible.authoring.bind": "authoring bind",
     "cruxible.claim.retire": "retire",
     "cruxible.set": "set",
@@ -888,7 +888,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.compiler.upgrade": "compiler upgrade",
     "cruxible.line.arm": "line arm",
     "cruxible.line.dispatch": "line dispatch",
-    "cruxible.settle": "settle",
+    "cruxible.prediction.settle": "prediction settle",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -897,7 +897,6 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
 # `PAYLOAD_FILE` left in the line is not a hint, it is an unrunnable command
 # presented as a runnable one, which is the one thing `command` must never be.
 _REPAIR_COMMAND_OPERANDS: Mapping[str, tuple[str, ...]] = {
-    "cruxible.authoring.create": ("PAYLOAD_FILE",),
     "cruxible.authoring.bind": ("--payload-file", "PAYLOAD_FILE"),
     "cruxible.document.propose": ("--envelope", "ENVELOPE_FILE"),
 }
@@ -942,7 +941,8 @@ NextCallerSurface: TypeAlias = Literal["cli", "mcp", "sdk"]
 #: every surface (MCP included): repin declares the block at the instance, and
 #: sync reads its backings.
 _REPAIR_TOOLS: Mapping[str, str | None] = {
-    "cruxible.authoring.create": "cruxible_authoring_create",
+    # The template starts the repair; compile is the door that performs it.
+    "cruxible.authoring.example": "cruxible_authoring_compile",
     "cruxible.authoring.bind": "cruxible_authoring_bind",
     "cruxible.claim.retire": "cruxible_retire",
     "cruxible.set": "cruxible_set",
@@ -951,13 +951,13 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.block.depublish": "cruxible_block_depublish",
     "cruxible.block.repin": "cruxible_block_repin",
     "cruxible.block.sync": "cruxible_block_sync",
-    "cruxible.document.propose": "cruxible_propose_document",
+    "cruxible.document.propose": "cruxible_document_propose",
     "cruxible.proposal.readmit": "cruxible_proposal_readmit",
-    "cruxible.proposal.approve": "cruxible_approve",
+    "cruxible.proposal.approve": "cruxible_proposal_approve",
     "cruxible.compiler.upgrade": "cruxible_compiler_upgrade",
     "cruxible.line.arm": "cruxible_line_arm",
     "cruxible.line.dispatch": "cruxible_line_dispatch",
-    "cruxible.settle": "cruxible_settle",
+    "cruxible.prediction.settle": "cruxible_prediction_settle",
     "hand_edit": None,
 }
 _GOVERNED_WRITE_RUNG = 1
@@ -1119,17 +1119,17 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         limit = values.get("limit")
         request = {"limit": limit} if isinstance(limit, int) and limit > 1 else {}
         return _mcp_call("cruxible_line_dispatch", line=text("line"), request=request)
-    if operation == "cruxible.settle" and text("prediction_id"):
+    if operation == "cruxible.prediction.settle" and text("prediction_id"):
         # The observation is the settler's to choose: its Claim ID is the one
         # argument left to add.
-        return _mcp_call("cruxible_settle", prediction_id=text("prediction_id"))
-    if operation == "cruxible.authoring.create" and text("example") and not text("payload_file"):
+        return _mcp_call("cruxible_prediction_settle", prediction_id=text("prediction_id"))
+    if operation == "cruxible.authoring.example" and text("example"):
         return _mcp_call("cruxible_authoring_example", name=text("example"))
     if operation == "cruxible.proposal.readmit" and text("proposal_id"):
         return _mcp_call("cruxible_proposal_readmit", proposal_id=text("proposal_id"))
     if operation == "cruxible.proposal.approve" and text("proposal_id") and text("signer_id"):
         return _mcp_call(
-            "cruxible_approve",
+            "cruxible_proposal_approve",
             proposal_id=text("proposal_id"),
             signer_id=text("signer_id"),
         )
@@ -1211,9 +1211,9 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         if isinstance(limit, int) and limit > 1:
             return _sdk_call("cx.dispatch_line", line, limit=limit)
         return _sdk_call("cx.dispatch_line", line)
-    if operation == "cruxible.settle" and (prediction := text("prediction_id")):
+    if operation == "cruxible.prediction.settle" and (prediction := text("prediction_id")):
         return _sdk_call("cx.settle", prediction)
-    if operation == "cruxible.authoring.create" and not text("payload_file"):
+    if operation == "cruxible.authoring.example":
         example = text("example")
         return None if example is None else _sdk_call("authoring_example", example)
     if operation == "cruxible.proposal.approve" and (proposal := text("proposal_id")):
@@ -1289,12 +1289,12 @@ def _repair_command(
             parts.append("--all")
         else:
             return None
-    elif operation == "cruxible.authoring.create" and not values.get("payload_file"):
-        # With no payload in hand the runnable step is the template that
-        # starts one; a bare `authoring create` refuses as a usage error.
+    elif operation == "cruxible.authoring.example":
+        # The runnable step is the template that starts the payload; with no
+        # example named, a bare `authoring example` lists every name.
         example = values.get("example")
         if isinstance(example, str) and example:
-            parts.extend(["--example", shlex.quote(example)])
+            parts.append(shlex.quote(example))
     elif operation == "cruxible.compiler.upgrade":
         target = values.get("to")
         name = values.get("name")
@@ -1309,7 +1309,7 @@ def _repair_command(
         parts.append(shlex.quote(line))
         if operation == "cruxible.line.dispatch" and isinstance(limit, int) and limit > 1:
             parts.extend(["--limit", str(limit)])
-    elif operation == "cruxible.settle":
+    elif operation == "cruxible.prediction.settle":
         # The daemon resolves the exact contract and window from the bound
         # window id; the observation is the settler's to choose, so its Claim
         # ID is the one operand left to add (`--observation CLM-...`).
@@ -1391,7 +1391,7 @@ def _item(
     command = _repair_command(repair.operation, arguments=repair.arguments, surface=surface)
     example = (
         _ATTESTATION_REPAIR_EXAMPLES.get(repair.required_change)
-        if repair.operation == "cruxible.authoring.create"
+        if repair.operation == "cruxible.authoring.example"
         else None
     )
     if example is not None and isinstance(repair.arguments, Mapping):
@@ -1411,7 +1411,7 @@ def _item(
         elif isinstance(claim_id, str) and isinstance(capture_digest, str):
             command = " ".join(
                 (
-                    "cruxible authoring create --example",
+                    "cruxible authoring example",
                     shlex.quote(example),
                     "--attestation-claim-id",
                     shlex.quote(claim_id),
@@ -2387,7 +2387,7 @@ def _claim_attestation_threshold_items(
                         )
                         if rule.stance == "contradict"
                         else _restating_repair(
-                            "cruxible.authoring.create",
+                            "cruxible.authoring.example",
                             target=claim.identity.qualified,
                             required_change="resolve_attestation_threshold",
                             arguments={
@@ -2513,7 +2513,7 @@ def _claim_items(
                     )
                     if len(identities) <= _MAX_CONTEST_OPTIONS
                     else PlaybillNextRepairV1(
-                        operation="cruxible.authoring.create",
+                        operation="cruxible.authoring.example",
                         target=subject,
                         required_change="revise_claims_into_distinct_qualifiers",
                         arguments=arguments,
@@ -3184,7 +3184,7 @@ def _claim_attestation_door_items(
                     # Each door example revises the Claim citing this Capture as
                     # evidence: the `set` of its field with capture evidence.
                     repair=_restating_repair(
-                        "cruxible.authoring.create",
+                        "cruxible.authoring.example",
                         target=statement.claim_identity.qualified,
                         required_change=required_change,
                         arguments={
@@ -3320,7 +3320,7 @@ def _claim_dependency_items(
                 related_identities=related,
                 detail={"stale_inputs": stale_inputs},
                 repair=PlaybillNextRepairV1(
-                    operation="cruxible.authoring.create",
+                    operation="cruxible.authoring.example",
                     target=identity,
                     required_change="reauthor_claim_from_current_inputs",
                     arguments={"claim_id": identity.removeprefix("Claim:")},
@@ -3862,7 +3862,7 @@ def _prediction_items(
                     "anchor_event": event,
                 },
                 repair=PlaybillNextRepairV1(
-                    operation="cruxible.settle",
+                    operation="cruxible.prediction.settle",
                     target=subject,
                     required_change=(
                         "settle_with_the_claim_id_of_an_accepted_observation_in_its_window"
@@ -4116,7 +4116,7 @@ def _triggers_health(
         message="; ".join(f"no trigger schedules {action}" for action in unscheduled),
     )
     author = PlaybillNextRepairV1(
-        operation="cruxible.authoring.create",
+        operation="cruxible.authoring.example",
         target=unscheduled[0],
         required_change=(
             "author_a_trigger_aimed_at_the_unscheduled_action"
@@ -4558,7 +4558,7 @@ def _mandate_items(
                         "expires_at": format_datetime(mandate.expires_at),
                     },
                     repair=PlaybillNextRepairV1(
-                        operation="cruxible.authoring.create",
+                        operation="cruxible.authoring.example",
                         target=identity,
                         required_change="author_a_successor_mandate_or_retire_it",
                         arguments={
@@ -4571,52 +4571,12 @@ def _mandate_items(
     return tuple(items)
 
 
-def _registered_publication_blocks(
+def _registered_blocks(
     instance: PlaybillInstance,
 ) -> dict[tuple[str, str], ProjectionBlockRegistration] | None:
-    """Fold every block this instance registers, whichever road declared it.
-
-    Both roads, one identity: the pair the page itself names. Before this the
-    question "is this marker sanctioned?" was asked only of block ids beginning
-    `pub-`, which is a spelling the retired publication road minted, so a block
-    an agent declared with `block repin` was never checked against anything.
-    """
+    """Fold every block this instance registers, keyed on the pair the page names."""
 
     return registered_projection_blocks(instance)
-
-
-def _registrations_released_by_retirement(
-    registrations: Mapping[tuple[str, str], ProjectionBlockRegistration],
-    *,
-    tree: Mapping[str, bytes],
-) -> frozenset[tuple[str, str]]:
-    """The registered blocks whose backing Claim has been retired.
-
-    The fold reads protocol state and never opens the Claim tree, so a ruling
-    that retired a block's backing Claim left its registration standing and
-    `next` went on demanding the frame -- for a block that same ruling had told
-    the author to delete, with the repair "restore it". A registration whose
-    Claim is retired registers nothing: the world has moved past that page.
-
-    Only a publication registration has a backing Claim to retire. A block an
-    agent declared holds a LIST, and a retirement inside that list is reported
-    as a stale backing on the block, not as the block ceasing to exist.
-
-    It takes the already-folded registrations rather than folding again: the
-    fold walks every durable intent event, and one `next` used to reach it from
-    three places plus once per block.
-    """
-
-    released: set[tuple[str, str]] = set()
-    for key, registration in registrations.items():
-        publication = registration.publication
-        if publication is None:
-            continue
-        path = claim_path(publication.claim_identity)
-        raw = tree.get(path)
-        if raw is not None and parse_claim(raw, path=path).lifecycle.state == "retired":
-            released.add(key)
-    return frozenset(released)
 
 
 def _projection_marker_invalid_item(
@@ -4696,14 +4656,10 @@ def _projection_items(
     if not observed_sources:
         return ()
 
-    tree = ClaimVerdictReadContext(instance, coordinate).tree
-    # One fold per `next`. The registration fold parses every durable intent
-    # event, and the queue used to reach it from three places and once more per
-    # syncable block; the retirement release now reads the same folded result.
-    folded = _registered_publication_blocks(instance)
-    registrations: frozenset[tuple[str, str]] | None = None
-    if folded is not None:
-        registrations = frozenset(folded) - _registrations_released_by_retirement(folded, tree=tree)
+    # One fold per `next`: the queue used to reach it from three places and once
+    # more per syncable block.
+    folded = _registered_blocks(instance)
+    registrations: frozenset[tuple[str, str]] | None = None if folded is None else frozenset(folded)
     items: list[PlaybillNextItemV1] = []
     for source in observed_sources:
         observed_block_ids = {marker.stamp.block_id for marker in source.marker_summaries}

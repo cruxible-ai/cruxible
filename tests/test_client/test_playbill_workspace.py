@@ -13,7 +13,6 @@ import pytest
 from cruxible_client import contracts
 from cruxible_client.authoring.workspace import (
     WorkspaceError,
-    activate_with_workspace_refresh,
     inspect_workspace_floor,
     materialize_floor,
     observe_next_workspace,
@@ -22,7 +21,6 @@ from cruxible_client.authoring.workspace import (
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.floor import FloorDelta
-from cruxible_client.contracts.repairs import RepairOperation
 from tests.support.floor_exports import delta_from_export, floor_v5_export
 
 
@@ -342,134 +340,6 @@ def test_materialization_refuses_export_file_escape_forms(
             workspace,
             export=malicious_export,
         )
-
-
-def test_activate_reports_accepted_and_refresh_failure(tmp_path: Path) -> None:
-    workspace = _workspace(tmp_path)
-
-    class StubClient:
-        def activate_proposal(
-            self, instance_id: str, proposal_id: str
-        ) -> contracts.ActivationReceipt:
-            return contracts.ActivationReceipt(
-                proposal_id=proposal_id,
-                activated_by="owner",
-                status="accepted",
-                accepted_coordinate=_coordinate(),
-                workspace_advertisement={"status": "not_attached", "workspace_path": None},
-            )
-
-        def floor_delta(
-            self,
-            instance_id: str,
-            *,
-            at=None,  # type: ignore[no-untyped-def]
-            base_generation: int | None = None,
-            base_renderer: str | None = None,
-        ) -> FloorDelta:
-            return delta_from_export(
-                floor_v5_export({"cards/fresh.json": b"fresh"}, coordinate=_coordinate()),
-                corrupt="cards/fresh.json",
-            )
-
-    result = activate_with_workspace_refresh(
-        StubClient(),
-        "inst_test",
-        "proposal-1",
-        workspace=workspace,
-    )
-
-    assert result.status == "accepted"
-    assert result.floor_refresh.status == "failed"
-    assert "differs" in (result.floor_refresh.message or "")
-
-
-def test_accepted_activation_runs_workspace_sync_last(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = _workspace(tmp_path)
-    events: list[str] = []
-
-    class StubClient:
-        def activate_proposal(
-            self, instance_id: str, proposal_id: str
-        ) -> contracts.ActivationReceipt:
-            events.append("activate")
-            return contracts.ActivationReceipt(
-                proposal_id=proposal_id,
-                activated_by="owner",
-                status="accepted",
-                accepted_coordinate=_coordinate(),
-                workspace_advertisement={"status": "not_attached", "workspace_path": None},
-            )
-
-        def floor_delta(
-            self,
-            instance_id: str,
-            *,
-            at=None,  # type: ignore[no-untyped-def]
-            base_generation: int | None = None,
-            base_renderer: str | None = None,
-        ) -> FloorDelta:
-            events.append("floor")
-            return _delta()
-
-    def sync(*_args, **_kwargs):  # type: ignore[no-untyped-def]
-        events.append("sync")
-        return contracts.BlockSyncResult(
-            items=(), changed_file_count=0, would_change=False, has_refusals=False
-        )
-
-    monkeypatch.setattr(
-        "cruxible_client.authoring.workspace.sync_projection_blocks",
-        sync,
-    )
-
-    result = activate_with_workspace_refresh(
-        StubClient(),
-        "inst_test",
-        "proposal-1",
-        workspace=workspace,
-    )
-
-    assert events == ["activate", "floor", "sync"]
-    assert result.block_sync is not None
-    assert result.block_sync.has_refusals is False
-
-
-def test_accepted_activation_skips_sync_for_an_unattached_workspace(tmp_path: Path) -> None:
-    workspace = tmp_path / "plain-checkout"
-    workspace.mkdir()
-
-    class StubClient:
-        def activate_proposal(
-            self, instance_id: str, proposal_id: str
-        ) -> contracts.ActivationReceipt:
-            return contracts.ActivationReceipt(
-                proposal_id=proposal_id,
-                activated_by="owner",
-                status="accepted",
-                accepted_coordinate=_coordinate(),
-                workspace_advertisement={"status": "not_attached", "workspace_path": None},
-            )
-
-    result = activate_with_workspace_refresh(
-        StubClient(),  # type: ignore[arg-type]
-        "inst_test",
-        "proposal-1",
-        workspace=workspace,
-    )
-
-    assert result.status == "accepted"
-    assert result.block_sync is not None
-    assert result.block_sync.has_refusals is False
-    (item,) = result.block_sync.items
-    assert item.outcome == "skipped"
-    assert item.reason == "workspace_not_attached"
-    assert item.repair == RepairOperation(
-        operation="cruxible.host.create", arguments={"workspace": "."}
-    )
 
 
 def test_floor_refresh_reuses_verified_files_and_repairs_local_edits(tmp_path: Path) -> None:

@@ -27,7 +27,6 @@ from cruxible_client._safe_files import read_regular_file
 from cruxible_client.authoring.blocks import (
     ProjectionMarkerError,
     parse_projection_blocks,
-    sync_projection_blocks,
 )
 from cruxible_client.authoring.floor_apply import (
     _DIRECTORY,
@@ -2122,73 +2121,10 @@ def refresh_workspace_floor(
         return contracts.FloorRefreshResult(status="failed", message=str(exc))
 
 
-def activate_with_workspace_refresh(
-    client: _FloorClient,
-    instance_id: str,
-    proposal_id: str,
-    *,
-    workspace: str | Path,
-    sync: bool = True,
-) -> contracts.WorkspaceActivationResult:
-    """Activate once, refresh the floor, then independently sync local blocks."""
-
-    activation = client.activate_proposal(instance_id, proposal_id)
-    refresh = refresh_workspace_floor(
-        client,
-        instance_id,
-        workspace=workspace,
-        at=activation.accepted_coordinate,
-    )
-    block_sync = None
-    if sync and activation.status == "accepted":
-        try:
-            block_sync = sync_projection_blocks(
-                cast(Any, client),
-                instance_id,
-                workspace=workspace,
-                all_sources=True,
-            )
-            if block_sync.items and all(
-                item.reason == "workspace_not_attached" for item in block_sync.items
-            ):
-                skipped = tuple(
-                    contracts.BlockSyncItem.model_validate(
-                        {**item.model_dump(mode="json"), "outcome": "skipped"}
-                    )
-                    for item in block_sync.items
-                )
-                block_sync = contracts.BlockSyncResult(
-                    items=skipped,
-                    changed_file_count=0,
-                    would_change=False,
-                    has_refusals=False,
-                )
-        except Exception as exc:  # report activation and sync truth together
-            block_sync = contracts.BlockSyncResult(
-                items=(
-                    contracts.BlockSyncItem(
-                        path=".",
-                        outcome="refused",
-                        reason="block_sync_failed",
-                        detail={"message": str(exc)},
-                    ),
-                ),
-                changed_file_count=0,
-                would_change=False,
-                has_refusals=True,
-            )
-    return contracts.WorkspaceActivationResult(
-        **activation.model_dump(mode="json"),
-        floor_refresh=refresh,
-        block_sync=block_sync,
-    )
-
-
 __all__ = [
     "WorkspaceAttachmentError",
     "WorkspaceDirectoryConflict",
     "WorkspaceError",
-    "activate_with_workspace_refresh",
     "configured_floor_path",
     "inspect_workspace_floor",
     "observe_next_workspace",

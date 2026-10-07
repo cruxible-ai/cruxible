@@ -1,4 +1,4 @@
-"""The write verbs pass the same authoring gate as authoring create, dry run included.
+"""The write verbs pass the same authoring gate as authoring compile, dry run included.
 
 Regression for the identity x write-ext merge: ``set``/``add``/``retire``/``write``
 lower onto the authoring coordinator, but planning, the already-live shortcut and

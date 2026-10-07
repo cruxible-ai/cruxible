@@ -39,6 +39,7 @@ CLAIM_TYPE_PATH = "claim-types/project.work_item/status.json"
 
 def claim_type() -> ClaimType:
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
         predicate="project.work_item.status",
         allowed_subject_kinds=("project.work_item",),

@@ -76,6 +76,7 @@ from cruxible_client.contracts.get_reads import (
     GetProcedureTrackRecord,
     GetProposalCard,
     GetProposalChange,
+    GetProposalRefusal,
     GetProviderInterfaceCard,
     GetProviderInterfaceProvider,
     GetQueryCard,
@@ -98,7 +99,7 @@ from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.query.definitions import QueryDefinition
-from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
@@ -808,8 +809,7 @@ def _render_proposal_step(surface: ReadSurface, step: str, proposal_id: str) -> 
     if surface == "sdk":
         return f"cx.proposal({json.dumps(proposal_id)}).{step}()"
     tool = {
-        "review": "cruxible_review",
-        "refusal": "cruxible_inspect_refusal",
+        "review": "cruxible_proposal_review",
         "readmit": "cruxible_proposal_readmit",
     }[step]
     return f"{tool}(proposal_id={json.dumps(proposal_id)})"
@@ -1508,11 +1508,23 @@ def _proposal_card(
                 path="…", change=f"{len(members) - _MAX_CHANGES} more; see detail=proof"
             )
         )
+    # A refused proposal says why on the card itself; there is no further step.
+    evaluation = records["evaluation"]
+    refusal = (
+        tuple(
+            GetProposalRefusal(
+                code=item.code,
+                message=item.message,
+                repair=served_repair_for_refusal(item.code),
+            )
+            for item in evaluation.diagnostics
+        )
+        if evaluation is not None and evaluation.verdict == "refused"
+        else ()
+    )
     step: str | None = None
     if entry.status == "open" and entry.verdict == "candidate":
         step = "review"
-    elif entry.terminal_reason == "refused":
-        step = "refusal"
     elif entry.terminal_reason == "stale":
         step = "readmit"
     return GetProposalCard(
@@ -1525,6 +1537,7 @@ def _proposal_card(
         admitted_at=entry.admitted_at,
         rationale=None if admission is None else admission.rationale,
         changes=tuple(changes),
+        refusal=refusal,
         next=() if step is None else (_render_proposal_step(surface, step, resolved.identity),),
     )
 

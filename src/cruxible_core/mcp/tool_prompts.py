@@ -26,11 +26,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you want to install or upgrade a kit. It only proposes one change set; "
         "approval and activation remain the ordinary steps."
     ),
-    "cruxible_evidence_rules_upgrade": (
-        "Use once after upgrading, to move ClaimTypes whose evidence rules name contracts "
-        "by exact digest to identity rules. It only proposes; rules whose meaning would "
-        "change are left as they are and reported."
-    ),
     "cruxible_claim_type_upgrade": (
         "Use to move ClaimTypes before v7 to v7, which states revision_evidence "
         "(default replace: a statement-changing revision keeps only the evidence it cites) "
@@ -43,33 +38,27 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_server_info": (
         "Use when you need adapter and daemon versions with state, auth, and host metadata."
     ),
-    "cruxible_store_body": (
+    "cruxible_body_store": (
         "Use when you need to store exact Document bytes inertly before proposing them."
     ),
-    "cruxible_propose_document": (
+    "cruxible_document_propose": (
         "Use when you need to propose a governed Document create or supersession."
     ),
-    "cruxible_inspect_proposal": (
-        "Use when you need immutable proposal evaluation and candidate evidence."
-    ),
-    "cruxible_inspect_refusal": (
-        "Use when you need typed admission or acceptance-law diagnostics for a proposal."
-    ),
-    "cruxible_review": (
+    "cruxible_proposal_review": (
         "Use when you need a structured candidate review and permission-filtered diff."
     ),
-    "cruxible_prepare_approval": (
+    "cruxible_proposal_approve_prepare": (
         "Use when a client-held signer needs the exact immutable approval statement."
     ),
-    "cruxible_submit_approval": (
+    "cruxible_proposal_approve_submit": (
         "Use when you have a public approval attestation produced outside the daemon."
     ),
-    "cruxible_approve": (
+    "cruxible_proposal_approve": (
         "Use after review to approve a proposal with a local key from the server's "
         "CRUXIBLE_MCP_KEY_DIR; it challenges, signs and submits in one call and never "
         "activates. Pass the reviewed candidate_digest to bind it to what you read."
     ),
-    "cruxible_activate": (
+    "cruxible_proposal_activate": (
         "Use when an admitted Cruxible candidate has satisfied any committed requirements and "
         "is ready to settle."
     ),
@@ -117,7 +106,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_principal_propose": (
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
     ),
-    "cruxible_propose_claim_type": (
+    "cruxible_claim_type_propose": (
         "Use when you need a governed ClaimType before any Claim can state that predicate; "
         "pass a complete ClaimTypeInputRecord whose evidence rules match its capture contracts. "
         "Generate a lawful starting payload with "
@@ -130,9 +119,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you examined a Claim and want to sign support, contradict, or unsure on it, "
         "optionally citing new Captures you examined."
     ),
-    "cruxible_authoring_create": (
-        "Use when you need a durable machine-owned intent before iterating on a governed write."
-    ),
     "cruxible_authoring_example": (
         "Use when you need a model-constructed Claim, Procedure, Line, acquisition policy, "
         "mandate, Subject, QueryDefinition, or ApprovalPolicy authoring input template."
@@ -140,10 +126,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_authoring_get": (
         "Use when you need the current durable content and state of one authoring intent."
     ),
-    "cruxible_authoring_resume": (
-        "Use when you need to continue an authoring flow after losing conversational context."
-    ),
-    "cruxible_authoring_list_pending": (
+    "cruxible_authoring_list": (
         "Use when you need to find your incomplete authoring work without remembering handles."
     ),
     "cruxible_authoring_compile": (
@@ -184,10 +167,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_block_detach": (
         "Use to take retired blocks' markers off pages, keeping the prose: preview with "
         "dry_run, then commit with at set to the preview's coordinate digest."
-    ),
-    "cruxible_authoring_abandon_insertion": (
-        "Use to release a publication expectation an instance already holds; nothing mints "
-        "a new one."
     ),
     "cruxible_block_depublish": (
         "Use when a published page block is being taken down for good, so the registration "
@@ -288,15 +267,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Trigger one due accepted Line occurrence. Reuse a returned occurrence id only as an "
         "idempotency assertion; the daemon derives occurrence identity."
     ),
-    "cruxible_resolution_contracts": (
+    "cruxible_prediction_list": (
         "Find accepted resolution contracts testing a Claim, by Claim ID. Returns their "
         "definitions and version references, including retired contracts."
     ),
-    "cruxible_predict": (
+    "cruxible_prediction_propose": (
         "Propose a governed test of an accepted Claim: its hypothesis is a Claim ID, plus an "
         "observation selector, mechanical rule, and fixed or retained-event observation window."
     ),
-    "cruxible_settle": (
+    "cruxible_prediction_settle": (
         "Use when a predicted Claim and its matching later observation are accepted: pass the "
         "prediction id and the observation's Claim ID."
     ),

@@ -14,9 +14,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
     AuthoringIntentCompileRequestV2,
-    AuthoringIntentCreateRequest,
-    AuthoringIntentCreateRequestV1,
-    AuthoringIntentCreateRequestV2,
 )
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
@@ -35,10 +32,6 @@ from cruxible_client.contracts.claim_type_upgrade import (
 )
 from cruxible_client.contracts.errors import (
     SinceRequestInvalid,
-)
-from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequest,
-    EvidenceRuleUpgradeResult,
 )
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.get_reads import (
@@ -637,15 +630,6 @@ class CruxibleClient:
         )
         return self._parse_model(response, ClaimTypeUpgradeResult)
 
-    def upgrade_evidence_rules(
-        self, instance_id: str, request: EvidenceRuleUpgradeRequest
-    ) -> EvidenceRuleUpgradeResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/claim-types/evidence-rules/upgrade",
-            json=request.model_dump(mode="json"),
-        )
-        return self._parse_model(response, EvidenceRuleUpgradeResult)
-
     def remove_kit(self, instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/kits/remove", json=request.model_dump(mode="json")
@@ -838,19 +822,6 @@ class CruxibleClient:
             },
         )
         return self._parse_model(response, contracts.ProposalWithdrawResult)
-
-    def inspect_proposal(self, instance_id: str, proposal_id: str) -> contracts.ProposalInspection:
-        response = self._client.get(f"/api/v1/{instance_id}/proposals/{proposal_id}")
-        return self._parse_model(response, contracts.ProposalInspection)
-
-    def proposal_status(self, instance_id: str, proposal_id: str) -> contracts.ProposalListEntry:
-        """One proposal's list entry at the current accepted coordinate, read by ID."""
-        response = self._client.get(f"/api/v1/{instance_id}/proposals/{proposal_id}/status")
-        return self._parse_model(response, contracts.ProposalListEntry)
-
-    def inspect_refusal(self, instance_id: str, proposal_id: str) -> contracts.RefusalInspection:
-        response = self._client.get(f"/api/v1/{instance_id}/proposals/{proposal_id}/refusal")
-        return self._parse_model(response, contracts.RefusalInspection)
 
     def review_proposal(
         self,
@@ -1058,11 +1029,12 @@ class CruxibleClient:
         )
         self._check_error(response)
 
-    def resolution_contracts(
+    def list_predictions(
         self, instance_id: str, *, request: contracts.ResolutionContractsRequest
     ) -> contracts.ResolutionContractsResult:
+        """The accepted predictions (resolution contracts) that test one Claim version."""
         response = self._client.post(
-            f"/api/v1/{instance_id}/resolution-contracts/query",
+            f"/api/v1/{instance_id}/predictions/query",
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, contracts.ResolutionContractsResult)
@@ -1092,73 +1064,12 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.SettleResult)
 
-    def create_authoring_intent(
-        self,
-        instance_id: str,
-        *,
-        payload: Mapping[str, Any],
-        reference_expectations: Sequence[Mapping[str, Any]] | None = None,
-        program_stamp: Mapping[str, Any] | None = None,
-    ) -> contracts.AuthoringIntentViewRecord:
-        request: (
-            AuthoringIntentCreateRequestV1
-            | AuthoringIntentCreateRequestV2
-            | AuthoringIntentCreateRequest
-        )
-        if reference_expectations is None:
-            if program_stamp is not None:
-                raise ValueError("program_stamp requires reference_expectations")
-            request = AuthoringIntentCreateRequestV1.model_validate({"payload": dict(payload)})
-        elif program_stamp is None:
-            request = AuthoringIntentCreateRequestV2.model_validate(
-                {
-                    "payload": dict(payload),
-                    "reference_expectations": [dict(item) for item in reference_expectations],
-                }
-            )
-        else:
-            request = AuthoringIntentCreateRequest.model_validate(
-                {
-                    "payload": dict(payload),
-                    "reference_expectations": [dict(item) for item in reference_expectations],
-                    "program_stamp": dict(program_stamp),
-                }
-            )
-        response = self._client.post(
-            f"/api/v1/{instance_id}/authoring/intents",
-            json=request.model_dump(mode="json"),
-        )
-        return self._parse_model(response, contracts.AuthoringIntentViewRecord)
-
-    def create_authoring_input(
-        self,
-        instance_id: str,
-        *,
-        input: Mapping[str, Any],
-    ) -> contracts.AuthoringIntentViewRecord:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/authoring/intents",
-            json={
-                "tag": "playbill-authoring-input-create-request-v1",
-                "input": dict(input),
-            },
-        )
-        return self._parse_model(response, contracts.AuthoringIntentViewRecord)
-
     def get_authoring_intent(
         self,
         instance_id: str,
         intent_id: str,
     ) -> contracts.AuthoringIntentViewRecord:
         response = self._client.get(f"/api/v1/{instance_id}/authoring/intents/{intent_id}")
-        return self._parse_model(response, contracts.AuthoringIntentViewRecord)
-
-    def resume_authoring_intent(
-        self,
-        instance_id: str,
-        intent_id: str,
-    ) -> contracts.AuthoringIntentViewRecord:
-        response = self._client.get(f"/api/v1/{instance_id}/authoring/intents/{intent_id}/resume")
         return self._parse_model(response, contracts.AuthoringIntentViewRecord)
 
     def list_pending_authoring_intents(
@@ -1252,6 +1163,43 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.AuthoringPreflightResult)
 
+    def submit_authoring_input(
+        self,
+        instance_id: str,
+        *,
+        input: Mapping[str, Any],
+        intent_id: str | None = None,
+    ) -> contracts.AuthoringSubmitResultRecord:
+        """Compile one tagless input and submit it; with ``intent_id``, onto that intent."""
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/authoring/submit",
+            json={
+                "tag": "playbill-authoring-input-submit-request-v1",
+                "input": dict(input),
+                "intent_id": intent_id,
+            },
+        )
+        return self._parse_model(response, contracts.AuthoringSubmitResultRecord)
+
+    def preview_authoring_input(
+        self,
+        instance_id: str,
+        *,
+        input: Mapping[str, Any],
+    ) -> contracts.AuthoringPreflightResult:
+        """The preflight submitting this input would run, with no intent saved."""
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/authoring/submit",
+            json={
+                "tag": "playbill-authoring-input-submit-request-v1",
+                "input": dict(input),
+                "dry_run": True,
+            },
+        )
+        return self._parse_model(response, contracts.AuthoringPreflightResult)
+
     def preflight_authoring_intent(
         self,
         instance_id: str,
@@ -1292,22 +1240,6 @@ class CruxibleClient:
     ) -> contracts.CandidateStatusRecord:
         response = self._client.get(f"/api/v1/{instance_id}/authoring/intents/{intent_id}/status")
         return self._parse_model(response, contracts.CandidateStatusRecord)
-
-    def abandon_authoring_insertion(
-        self,
-        instance_id: str,
-        intent_id: str,
-        *,
-        expectation_id: str | None = None,
-    ) -> contracts.InsertionAbandonResultRecord:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/authoring/intents/{intent_id}/insertion/abandon",
-            json={
-                "tag": "playbill-insertion-abandon-request-v1",
-                "expectation_id": expectation_id,
-            },
-        )
-        return self._parse_model(response, contracts.InsertionAbandonResultRecord)
 
     def read_claim_batch(
         self,

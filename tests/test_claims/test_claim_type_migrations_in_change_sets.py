@@ -819,7 +819,7 @@ def test_a_successor_admitting_no_accepted_contract_lints_on_both_roads(
         result=coordinator.preflight(intent.intent_id, actor=actor),
     )
     assert served.lint is not None
-    assert served.lint.warnings == expected
+    assert [warning.model_dump(mode="json") for warning in served.lint.warnings] == expected
 
 
 def test_the_deprecated_invalidation_word_refuses_typed(tmp_path: Path) -> None:
@@ -1399,7 +1399,7 @@ def test_every_authoring_surface_carries_the_carry_all_flag(
     authoring = [
         name for name, tool in tools.items() if "carry_all" in json.dumps(tool.inputSchema)
     ]
-    assert "cruxible_authoring_create" in authoring
+    assert "cruxible_authoring_compile" in authoring
     assert "carry_all" in json.dumps(create_app().openapi())
     # The CLI and the SDK send the same model's JSON: the flag survives a round trip.
     member = ClaimTypeSuccessionMember.model_validate(

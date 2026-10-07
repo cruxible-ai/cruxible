@@ -21,7 +21,7 @@ from cruxible_client.contracts.primitives import canonical_json
 
 AUTHORING_WIRE_CATALOG_VERSION = 1
 AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST = (
-    "sha256:ba4014e2e30fa785fdd3dd80c33dbea44a5bd9a21b78d9dcec23c7ec20824b6f"
+    "sha256:eff34496ba3698780862ad2b9a20642e2cd0e212257aff293b8336a4dc24348e"
 )
 
 AUTHORING_WIRE_MODEL_NAMES = (
@@ -38,9 +38,6 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "AuthoringIntentCompileRequest",
     "AuthoringIntentCompileRequestV1",
     "AuthoringIntentCompileRequestV2",
-    "AuthoringIntentCreateRequest",
-    "AuthoringIntentCreateRequestV1",
-    "AuthoringIntentCreateRequestV2",
     "AuthoringIntentList",
     "AuthoringIntentPreflightRequest",
     "AuthoringIntentSubmitRequest",
@@ -76,15 +73,8 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "DiagnosticFrontier",
     "DiagnosticFrontierLimits",
     "ExistingCaptureCitationSource",
-    "InsertionAbandonRequest",
-    "InsertionAbandonResult",
     "InsertionAnchorWindow",
-    "InsertionConfirmRequest",
-    "InsertionConfirmResult",
-    "InsertionConfirmationObservation",
     "InsertionExpectation",
-    "InsertionPrepareRequest",
-    "InsertionPrepareResult",
     "InsertionTarget",
     "InsertionTerminalTombstone",
     "LineAuthoringPayload",
@@ -100,7 +90,6 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "ProjectionCheckResult",
     "ProjectionDependencyIssue",
     "PublicationPreparation",
-    "PublicationPrepareWarning",
     "PublicationSourceObservation",
     "QueryDefinitionAuthoringPayload",
     "RepairAlternative",

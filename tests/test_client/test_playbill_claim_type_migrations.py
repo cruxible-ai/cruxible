@@ -90,7 +90,7 @@ def test_client_preserves_migration_lint_without_changing_candidate_fields() -> 
     )
 
     assert result.lint is not None
-    assert result.lint.warnings == [warning]
+    assert [item.model_dump(mode="json") for item in result.lint.warnings] == [warning]
 
 
 def test_client_parses_v3_attributed_retirement_result_and_warning() -> None:
@@ -169,4 +169,4 @@ def test_client_preserves_expert_claim_type_proposal_lint() -> None:
     )
 
     assert result.lint is not None
-    assert result.lint.warnings == [warning]
+    assert [item.model_dump(mode="json") for item in result.lint.warnings] == [warning]

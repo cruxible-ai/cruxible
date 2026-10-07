@@ -26,10 +26,6 @@ from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeResult,
 )
 from cruxible_client.contracts.errors import FormatError
-from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequest,
-    EvidenceRuleUpgradeResult,
-)
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.get_reads import (
     GetBatchRequest,
@@ -70,7 +66,7 @@ from cruxible_core.server.playbill_request_models import (
     ApprovalRequest,
     AuditRequest,
     AuthoringInputCompileRequest,
-    AuthoringInputCreateRequest,
+    AuthoringInputSubmitRequest,
     AuthoringPreflightRequest,
     AuthoringRebaseRequest,
     AuthoringSubmitRequest,
@@ -84,7 +80,6 @@ from cruxible_core.server.playbill_request_models import (
     FloorDeltaRequest,
     FloorExportRequest,
     InitRequest,
-    InsertionAbandonRequest,
     InstanceDecommissionRequest,
     LedgerMirrorRequest,
     LedgerPublishRequest,
@@ -93,9 +88,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringCompileRequest,
     PlaybillAuthoringCompileRequestV2,
     PlaybillAuthoringCompileRequestV3,
-    PlaybillAuthoringCreateRequest,
-    PlaybillAuthoringCreateRequestV2,
-    PlaybillAuthoringCreateRequestV3,
     ProposalReadmitRequest,
     ProposalWithdrawRequest,
     ProposeClaimTypeInputRequest,
@@ -246,18 +238,6 @@ def kit_status(instance_id: str) -> KitStatus:
 @router.post("/{instance_id}/kits", response_model=KitChangeResult)
 def kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResult:
     return playbill_api.playbill_kit_add(resolve_server_instance_id(instance_id), request)
-
-
-@router.post(
-    "/{instance_id}/claim-types/evidence-rules/upgrade",
-    response_model=EvidenceRuleUpgradeResult,
-)
-def evidence_rules_upgrade(
-    instance_id: str, request: EvidenceRuleUpgradeRequest
-) -> EvidenceRuleUpgradeResult:
-    return playbill_api.playbill_evidence_rules_upgrade(
-        resolve_server_instance_id(instance_id), request
-    )
 
 
 @router.post(
@@ -461,19 +441,6 @@ def resolve_proposal_selector(
     )
 
 
-@router.get(
-    "/{instance_id}/proposals/{proposal_id}",
-    response_model=contracts.ProposalInspection,
-)
-def inspect_proposal(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.ProposalInspection:
-    return playbill_api.playbill_inspect_proposal(
-        resolve_server_instance_id(instance_id), proposal_id
-    )
-
-
 @router.post(
     "/{instance_id}/proposals/{proposal_id}/readmit",
     response_model=contracts.ProposalReadmitResult,
@@ -506,32 +473,6 @@ def withdraw_proposal(
         req.reason,
         dry_run=req.dry_run,
         at=req.at,
-    )
-
-
-@router.get(
-    "/{instance_id}/proposals/{proposal_id}/status",
-    response_model=contracts.ProposalListEntry,
-)
-def proposal_status(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.ProposalListEntry:
-    return playbill_api.playbill_proposal_status(
-        resolve_server_instance_id(instance_id), proposal_id
-    )
-
-
-@router.get(
-    "/{instance_id}/proposals/{proposal_id}/refusal",
-    response_model=contracts.RefusalInspection,
-)
-def inspect_refusal(
-    instance_id: str,
-    proposal_id: str,
-) -> contracts.RefusalInspection:
-    return playbill_api.playbill_inspect_refusal(
-        resolve_server_instance_id(instance_id), proposal_id
     )
 
 
@@ -717,13 +658,13 @@ def recover_claim_attestations(instance_id: str) -> Response:
 
 
 @router.post(
-    "/{instance_id}/resolution-contracts/query",
+    "/{instance_id}/predictions/query",
     response_model=contracts.ResolutionContractsResult,
 )
-def resolution_contracts(
+def list_predictions(
     instance_id: str, req: contracts.ResolutionContractsRequest
 ) -> contracts.ResolutionContractsResult:
-    return playbill_api.playbill_resolution_contracts(
+    return playbill_api.playbill_prediction_list(
         resolve_server_instance_id(instance_id), request=req
     )
 
@@ -758,42 +699,6 @@ def settle_prediction(
     )
 
 
-@router.post(
-    "/{instance_id}/authoring/intents",
-    response_model=contracts.AuthoringIntentViewRecord,
-)
-def create_authoring_intent(
-    instance_id: str,
-    req: (
-        PlaybillAuthoringCreateRequest
-        | PlaybillAuthoringCreateRequestV2
-        | PlaybillAuthoringCreateRequestV3
-        | AuthoringInputCreateRequest
-    ),
-) -> contracts.AuthoringIntentViewRecord:
-    if isinstance(req, AuthoringInputCreateRequest):
-        return playbill_api.playbill_authoring_create_input(
-            resolve_server_instance_id(instance_id), input=req.input
-        )
-    if isinstance(req, PlaybillAuthoringCreateRequestV3):
-        return playbill_api.playbill_authoring_create(
-            resolve_server_instance_id(instance_id),
-            payload=req.payload,
-            reference_expectations=req.reference_expectations,
-            program_stamp=req.program_stamp,
-        )
-    if isinstance(req, PlaybillAuthoringCreateRequestV2):
-        return playbill_api.playbill_authoring_create(
-            resolve_server_instance_id(instance_id),
-            payload=req.payload,
-            reference_expectations=req.reference_expectations,
-        )
-    return playbill_api.playbill_authoring_create(
-        resolve_server_instance_id(instance_id),
-        payload=req.payload,
-    )
-
-
 @router.get(
     "/{instance_id}/authoring/intents",
     response_model=contracts.AuthoringIntentListRecord,
@@ -801,7 +706,7 @@ def create_authoring_intent(
 def list_pending_authoring_intents(
     instance_id: str,
 ) -> contracts.AuthoringIntentListRecord:
-    return playbill_api.playbill_authoring_list_pending(resolve_server_instance_id(instance_id))
+    return playbill_api.playbill_authoring_list(resolve_server_instance_id(instance_id))
 
 
 @router.post(
@@ -856,19 +761,6 @@ def get_authoring_intent(
     return playbill_api.playbill_authoring_get(resolve_server_instance_id(instance_id), intent_id)
 
 
-@router.get(
-    "/{instance_id}/authoring/intents/{intent_id}/resume",
-    response_model=contracts.AuthoringIntentViewRecord,
-)
-def resume_authoring_intent(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord:
-    return playbill_api.playbill_authoring_resume(
-        resolve_server_instance_id(instance_id), intent_id
-    )
-
-
 @router.post(
     "/{instance_id}/authoring/intents/{intent_id}/rebase",
     response_model=contracts.AuthoringIntentViewRecord,
@@ -899,12 +791,24 @@ def preflight_authoring_intent(
 
 @router.post(
     "/{instance_id}/authoring/submit",
-    response_model=contracts.AuthoringSubmitResultRecord,
+    response_model=contracts.AuthoringSubmitResultRecord | contracts.AuthoringPreflightResult,
 )
 def compile_and_submit_authoring(
     instance_id: str,
-    req: PlaybillAuthoringCompileRequestV3,
-) -> contracts.AuthoringSubmitResultRecord:
+    req: PlaybillAuthoringCompileRequestV3 | AuthoringInputSubmitRequest,
+) -> contracts.AuthoringSubmitResultRecord | contracts.AuthoringPreflightResult:
+    """Compile and submit one payload; a dry-run input answers with its preflight."""
+
+    if isinstance(req, AuthoringInputSubmitRequest):
+        if req.dry_run:
+            return playbill_api.playbill_authoring_preview_input(
+                resolve_server_instance_id(instance_id), input=req.input
+            )
+        return playbill_api.playbill_authoring_submit_input(
+            resolve_server_instance_id(instance_id),
+            input=req.input,
+            intent_id=req.intent_id,
+        )
     return playbill_api.playbill_authoring_compile_and_submit(
         resolve_server_instance_id(instance_id),
         payload=req.payload,
@@ -938,22 +842,6 @@ def authoring_intent_status(
 ) -> contracts.CandidateStatusRecord:
     return playbill_api.playbill_authoring_status(
         resolve_server_instance_id(instance_id), intent_id
-    )
-
-
-@router.post(
-    "/{instance_id}/authoring/intents/{intent_id}/insertion/abandon",
-    response_model=contracts.InsertionAbandonResultRecord,
-)
-def abandon_authoring_insertion(
-    instance_id: str,
-    intent_id: str,
-    req: InsertionAbandonRequest,
-) -> contracts.InsertionAbandonResultRecord:
-    return playbill_api.playbill_authoring_abandon_insertion(
-        resolve_server_instance_id(instance_id),
-        intent_id,
-        expectation_id=req.expectation_id,
     )
 
 

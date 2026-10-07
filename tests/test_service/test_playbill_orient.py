@@ -33,7 +33,7 @@ from tests.core_support._knowledge_loop_support import (
 from tests.test_claims.test_claims import _claim_type
 
 OWNER = OrientCaller("owner", "admin")
-UPGRADE_NOTE = "1 ClaimType still names CaptureContracts by digest; run evidence_rules_upgrade"
+UPGRADE_NOTE = "1 ClaimType still names CaptureContracts by digest; run claim-type upgrade"
 
 
 @pytest.fixture(scope="module")
@@ -103,7 +103,7 @@ def test_attention_names_digest_named_rules_and_suggests_the_upgrade(seeded) -> 
 
     assert result.attention is not None
     assert result.attention.notes == (UPGRADE_NOTE,)
-    assert "cruxible_evidence_rules_upgrade()" in result.next
+    assert "cruxible_claim_type_upgrade()" in result.next
 
 
 def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
@@ -114,9 +114,7 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
         severity="warning",
         reason="claim_uncovered",
         subject_identity="ClaimType:project.work_item.status",
-        repair=SimpleNamespace(
-            command="cruxible claim-type upgrade-evidence-rules", required_change="x"
-        ),
+        repair=SimpleNamespace(command="cruxible claim-type upgrade", required_change="x"),
     )
     other = SimpleNamespace(
         severity="repair",

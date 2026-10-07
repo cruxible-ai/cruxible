@@ -468,7 +468,7 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
         raise AuthoringInputError(
             "cruxible.authoring.working_selection_requires_bind",
             "input.source",
-            "create and compile cannot observe local working-source bytes.",
+            "compile and submit cannot observe local working-source bytes.",
             "Run cruxible authoring bind with this input and the selected local file.",
         )
     if isinstance(value.source, ExistingCaptureInput):

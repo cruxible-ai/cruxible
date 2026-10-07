@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    capture_contract_digest,
     foreign_source_capture_contract,
 )
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
@@ -37,12 +35,9 @@ def claim_type_input_example() -> ClaimTypeInputRecord:
 def defaulted_claim_type_input_example() -> ClaimTypeInputRecord:
     example = claim_type_input_example()
     source_id = "repo.replace-me"
-    contract_digests = sorted(
-        {
-            capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged,
-            capture_contract_digest(foreign_source_capture_contract(source_id)).tagged,
-        }
-    )
+    # Rules name contracts by identity: the foreign-source contract Flow-A binding
+    # carries for this source.
+    contract = foreign_source_capture_contract(source_id).identity.qualified
     return example.model_copy(
         update={
             "predicate": "project.work_item.status",
@@ -52,7 +47,7 @@ def defaulted_claim_type_input_example() -> ClaimTypeInputRecord:
                     {
                         "rule_id": f"source-{source_id}",
                         "claim_roles": sorted(example.permitted_roles),
-                        "capture_contract_digests": contract_digests,
+                        "capture_contracts": [contract],
                         "evidence_kinds": ["self_asserted"],
                         "admission": "direct",
                         "subject_binding": "exact_claim_subject",

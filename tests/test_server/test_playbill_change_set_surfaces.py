@@ -35,6 +35,16 @@ PREDICATE = "project.work_item.parity"
 SUBJECT_NAME = "project.work_item/parity-1"
 
 
+def _created_intent(
+    transport: CruxibleClient, instance_id: str, payload: dict[str, object]
+) -> dict[str, object]:
+    """Compile one tagless input; compile with no intent ID creates the intent."""
+
+    compiled = transport.compile_authoring_input(instance_id, input=payload)
+    intent_id = str(compiled.certificate.intent_id)
+    return dict(transport.get_authoring_intent(instance_id, intent_id).intent)
+
+
 def _shell() -> SubjectShell:
     return SubjectShell(
         identity=ArtifactIdentity(kind="Subject", name=SUBJECT_NAME),
@@ -46,6 +56,7 @@ def _shell() -> SubjectShell:
 
 def _claim_type() -> ClaimType:
     return ClaimType(
+        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
         predicate=PREDICATE,
         allowed_subject_kinds=("project.work_item",),
@@ -171,15 +182,17 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
     payload_file = tmp_path / "change-set.json"
     payload_file.write_text(json.dumps(tagless.model_dump(mode="json")), encoding="utf-8")
     cli_input = ChangeSetInput.model_validate(json.loads(payload_file.read_text(encoding="utf-8")))
-    cli_intent = transport.create_authoring_input(
+    cli_intent = _created_intent(
+        transport,
         instance_id,
-        input=cli_input.model_dump(mode="json"),
-    ).intent
+        cli_input.model_dump(mode="json"),
+    )
     # An MCP caller sends the same shape as a raw dict.
-    mcp_intent = transport.create_authoring_input(
+    mcp_intent = _created_intent(
+        transport,
         instance_id,
-        input=json.loads(json.dumps(tagless.model_dump(mode="json"))),
-    ).intent
+        json.loads(json.dumps(tagless.model_dump(mode="json"))),
+    )
 
     sdk_draft = pb.changes(rationale="Define the parity Subject and its ClaimType.")
     sdk_draft.subject(_shell())
@@ -213,16 +226,18 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
         members=(*tagless.members, _claim_input()),
         rationale="Open the parity slot and state its first value.",
     )
-    cli_claim_intent = transport.create_authoring_input(
+    cli_claim_intent = _created_intent(
+        transport,
         instance_id,
-        input=ChangeSetInput.model_validate(
+        ChangeSetInput.model_validate(
             json.loads(json.dumps(with_claim.model_dump(mode="json")))
         ).model_dump(mode="json"),
-    ).intent
-    mcp_claim_intent = transport.create_authoring_input(
+    )
+    mcp_claim_intent = _created_intent(
+        transport,
         instance_id,
-        input=json.loads(json.dumps(with_claim.model_dump(mode="json"))),
-    ).intent
+        json.loads(json.dumps(with_claim.model_dump(mode="json"))),
+    )
 
     sdk_claim_draft = pb.changes(rationale="Open the parity slot and state its first value.")
     sdk_claim_draft.subject(_shell())
@@ -278,10 +293,11 @@ def test_the_shipped_change_set_example_round_trips_and_creates_one_intent(
     round_tripped = ChangeSetInput.model_validate(json.loads(example.model_dump_json()))
     assert round_tripped == example
 
-    created = transport.create_authoring_input(
+    created = _created_intent(
+        transport,
         instance_id,
-        input=round_tripped.model_dump(mode="json"),
-    ).intent
+        round_tripped.model_dump(mode="json"),
+    )
     assert created["semantic_identity"].startswith("ChangeSet:")
     assert len(created["payload"]["members"]) == len(example.members)
 
@@ -412,14 +428,16 @@ def test_one_claim_type_succession_has_one_identity_across_sdk_cli_and_mcp(
     payload_file = tmp_path / "succession.json"
     payload_file.write_text(json.dumps(tagless.model_dump(mode="json")), encoding="utf-8")
     cli_input = ChangeSetInput.model_validate(json.loads(payload_file.read_text(encoding="utf-8")))
-    cli_intent = transport.create_authoring_input(
+    cli_intent = _created_intent(
+        transport,
         instance_id,
-        input=cli_input.model_dump(mode="json"),
-    ).intent
-    mcp_intent = transport.create_authoring_input(
+        cli_input.model_dump(mode="json"),
+    )
+    mcp_intent = _created_intent(
+        transport,
         instance_id,
-        input=json.loads(json.dumps(tagless.model_dump(mode="json"))),
-    ).intent
+        json.loads(json.dumps(tagless.model_dump(mode="json"))),
+    )
 
     draft = pb.changes(rationale="Narrow the parity vocabulary and settle its closure.")
     draft.subject(_shell())
@@ -476,9 +494,10 @@ def test_the_shipped_succession_example_round_trips_and_creates_one_intent(
     round_tripped = ChangeSetInput.model_validate(json.loads(example.model_dump_json()))
     assert round_tripped == example
 
-    created = transport.create_authoring_input(
+    created = _created_intent(
+        transport,
         instance_id,
-        input=round_tripped.model_dump(mode="json"),
-    ).intent
+        round_tripped.model_dump(mode="json"),
+    )
     assert created["semantic_identity"].startswith("ChangeSet:")
     assert len(created["payload"]["members"]) == len(example.members)

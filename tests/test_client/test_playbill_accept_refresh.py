@@ -1,4 +1,4 @@
-"""Live acceptance remembers its receipt; explicit snapshots and floor targets stay pinned."""
+"""Live activation remembers its receipt; explicit snapshots and floor targets stay pinned."""
 
 from pathlib import Path
 from typing import Any, Literal
@@ -7,7 +7,6 @@ import pytest
 
 from cruxible_client import Cruxible, contracts
 from cruxible_client.authoring.workspace import (
-    activate_with_workspace_refresh,
     inspect_workspace_floor,
     materialize_floor,
     refresh_workspace_floor,
@@ -59,14 +58,14 @@ def _sdk(client: Any, workspace: Path) -> Cruxible:
 
 
 @pytest.mark.parametrize("status", ["accepted", "lost_cas"])
-def test_accept_only_calls_daemon_and_remembers_successful_receipt(
+def test_activate_only_calls_daemon_and_remembers_successful_receipt(
     tmp_path: Path, status: Literal["accepted", "lost_cas"]
 ) -> None:
     client = _Client(status)
     pb = _sdk(client, tmp_path)
     before = pb.coordinate
 
-    receipt = pb.accept("proposal-1")
+    receipt = pb.activate("proposal-1")
 
     assert receipt.status == status
     assert client.events == [("accept", "inst_test", "proposal-1")]
@@ -79,11 +78,11 @@ def test_accept_only_calls_daemon_and_remembers_successful_receipt(
     assert list(tmp_path.iterdir()) == []
 
 
-def test_accept_through_explicit_snapshot_does_not_move_it(tmp_path: Path) -> None:
+def test_activate_through_explicit_snapshot_does_not_move_it(tmp_path: Path) -> None:
     client = _Client()
     pb = _sdk(client, tmp_path)
     snapshot = pb.at(pb.coordinate)
-    receipt = snapshot.accept("proposal-1")
+    receipt = snapshot.activate("proposal-1")
     assert receipt.accepted_coordinate is not None
     assert snapshot.coordinate == pb.coordinate
     assert snapshot.coordinate.git_oid != receipt.accepted_coordinate.git_oid
@@ -128,20 +127,6 @@ def test_unconfigured_refresh_makes_no_request(tmp_path: Path) -> None:
     assert client.events == []
 
 
-def test_convenience_activation_pins_floor_to_receipt(tmp_path: Path) -> None:
-    client = _Client()
-    result = activate_with_workspace_refresh(
-        client, "inst_test", "proposal-1", workspace=_workspace(tmp_path), sync=False
-    )
-    assert result.status == "accepted"
-    assert client.events == [
-        ("accept", "inst_test", "proposal-1"),
-        ("floor", "inst_test", result.accepted_coordinate),
-    ]
-    assert result.floor_refresh.coordinate == result.accepted_coordinate
-    assert result.block_sync is None
-
-
 @pytest.mark.parametrize("field", ["semantic_root", "generation_root", "compiler_digest"])
 def test_refresh_refuses_a_head_differing_only_beyond_its_git_oid(
     tmp_path: Path, field: str
@@ -156,3 +141,24 @@ def test_refresh_refuses_a_head_differing_only_beyond_its_git_oid(
     assert result.status == "failed"
     assert "requested coordinate" in (result.message or "")
     assert not floor.exists() or not any(floor.rglob("*"))
+
+
+def test_readmit_is_one_daemon_call_by_handle(tmp_path: Path) -> None:
+    calls: list[tuple[str, str, object, object]] = []
+
+    class _ReadmitClient(_Client):
+        def readmit_proposal(
+            self,
+            instance_id: str,
+            proposal_id: str,
+            *,
+            dry_run: bool | None = None,
+            at: str | None = None,
+        ) -> object:
+            calls.append((instance_id, proposal_id, dry_run, at))
+            return "readmitted"
+
+    pb = _sdk(_ReadmitClient(), tmp_path)
+
+    assert pb.proposal("proposal-1").readmit(dry_run=True) == "readmitted"
+    assert calls == [("inst_test", "proposal-1", True, None)]

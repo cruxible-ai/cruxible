@@ -1,7 +1,7 @@
 """Whether the principal a request acts as may act on one instance, and why not.
 
 One place answers this for every door: the route guard that checks a configured
-principal ID before any read or write, ``whoami``, and authoring create. Each
+principal ID before any read or write, ``whoami``, and authoring compile. Each
 refusal carries its code, the runnable CLI command, and the same next step as a
 served repair.
 """

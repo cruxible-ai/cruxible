@@ -51,10 +51,6 @@ from cruxible_core.service.discovery.next import (
 )
 from cruxible_core.service.discovery.query import build_accepted_query_facts
 from cruxible_core.service.evidence import evidence as playbill_evidence
-from cruxible_core.service.proposals.publications import (
-    bound_publication_registrations,
-    reset_bound_publication_registration_memo,
-)
 from tests.core_support._knowledge_loop_support import seed_claims
 from tests.test_claims.test_claims import _claim as _test_claim
 from tests.test_claims.test_claims import _claim_type as _test_claim_type
@@ -312,33 +308,6 @@ def test_claim_reads_use_history_locators_without_a_retained_history_map(
     _orient(instance)
     _orient(instance)
     assert not hasattr(instance, "claim_read_history_memo")
-
-
-def test_the_publication_intent_fold_runs_once_per_durable_stream(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from cruxible_core.authoring.store import AuthoringIntentStore
-
-    instance, _owner = seed_claims(tmp_path)
-    (instance.root / instance.descriptor.storage.exhaust / "authoring-intents").mkdir(
-        mode=0o700, parents=True, exist_ok=True
-    )
-    reset_bound_publication_registration_memo()
-
-    folds = 0
-    original = AuthoringIntentStore.publication_states
-
-    def counting(self: AuthoringIntentStore) -> Any:
-        nonlocal folds
-        folds += 1
-        return original(self)
-
-    monkeypatch.setattr(AuthoringIntentStore, "publication_states", counting)
-    first = bound_publication_registrations(instance)
-    for _ in range(5):
-        assert bound_publication_registrations(instance) == first
-    assert folds == 1
 
 
 def test_one_claim_read_materializes_no_generation_and_still_receipts(

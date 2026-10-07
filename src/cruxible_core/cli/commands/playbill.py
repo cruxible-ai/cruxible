@@ -20,7 +20,6 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from cruxible_client import (
     CruxibleClient,
-    activate_with_workspace_refresh,
     contracts,
     observe_next_workspace,
 )
@@ -87,7 +86,6 @@ from cruxible_client.contracts.errors import (
     SigningKeyError,
     SinceRequestInvalid,
 )
-from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequest
 from cruxible_client.contracts.get_display import (
     GET_CLI_HISTORY_VALUE_WIDTH,
     GET_CLI_VALUE_WIDTH,
@@ -136,7 +134,6 @@ from cruxible_core.cli.commands._common import (
     _dispatch_cli,
     _echo_active_write_target,
     _echo_creation_write_target,
-    _echo_write_target,
     _emit_brief,
     _emit_json,
     _remember_principal_settings,
@@ -340,8 +337,7 @@ def _read_authoring_input(path: str) -> AuthoringInput:
         return _AUTHORING_INPUT_ADAPTER.validate_python(payload)
     except ValidationError as exc:
         examples = ", ".join(
-            f"cruxible authoring create --example {name}"
-            for name in _authoring_examples_for(payload)
+            f"cruxible authoring example {name}" for name in _authoring_examples_for(payload)
         )
         errors = "; ".join(
             f"{_validation_path(tuple(item['loc']))}: {item['msg']}"
@@ -1954,36 +1950,6 @@ def withdraw_proposal(
     echo_preview_next(result.status, result.coordinate)
 
 
-@proposal_group.command("inspect")
-@click.argument("proposal_id")
-@json_option
-@handle_errors
-def inspect_proposal(proposal_id: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.inspect_proposal(
-            instance_id,
-            client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
-        ),
-        command_name="cruxible proposal inspect",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
-@proposal_group.command("refusal")
-@click.argument("proposal_id")
-@json_option
-@handle_errors
-def inspect_refusal(proposal_id: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.inspect_refusal(
-            instance_id,
-            client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
-        ),
-        command_name="cruxible proposal refusal",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
 @proposal_group.command("review")
 @click.argument("proposal_id")
 @click.option("--include-body/--redacted", default=True)
@@ -2119,47 +2085,26 @@ def approve_proposal(
 
 @proposal_group.command("activate")
 @click.argument("proposal_id")
-@click.option(
-    "--workspace-root",
-    default=".",
-    show_default=True,
-    type=click.Path(file_okay=False),
-    help="Workspace holding .cruxible/coverage.json and its optional floor output.",
-)
-@click.option("--no-sync", is_flag=True, help="Skip the activating workspace's block sync.")
 @brief_option
 @json_option
 @handle_errors
-def activate_proposal(
-    proposal_id: str,
-    workspace_root: str,
-    no_sync: bool,
-    output_brief: bool,
-    output_json: bool,
-) -> None:
+def activate_proposal(proposal_id: str, output_brief: bool, output_json: bool) -> None:
+    """Settle an approved candidate; the daemon delivers the floor to its workspace.
+
+    Activation is a daemon act and writes nothing locally. A workspace the local
+    daemon serves gets its floor from the daemon's floor-refresh trigger; other
+    setups pull it with `cruxible floor export`. Read exactly what was accepted
+    with `cruxible get` at the receipt's coordinate; `cruxible next` reports any
+    projection block the change left stale.
+    """
+
     result = _server_call(
-        lambda client, instance_id: activate_with_workspace_refresh(
-            client,
+        lambda client, instance_id: client.activate_proposal(
             instance_id,
             client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
-            workspace=Path(workspace_root),
-            sync=not no_sync,
         ),
         command_name="cruxible proposal activate",
     )
-    payload = result.model_dump(mode="json")
-    if result.floor_refresh.status == "failed":
-        message = result.floor_refresh.message or "unknown client workspace error"
-        _emit_json(payload)
-        raise click.ClickException(
-            f"proposal activation status={result.status}; floor refresh failed: {message}"
-        )
-    if result.block_sync is not None and result.block_sync.has_refusals:
-        _emit_json(payload)
-        raise click.ClickException(
-            f"proposal activation status={result.status}; block sync reported refusals; "
-            "repair: cruxible block sync --all"
-        )
     if output_brief:
         _emit_brief(
             outcome=result.status,
@@ -2174,7 +2119,7 @@ def activate_proposal(
             next_command="cruxible next --brief",
         )
         return
-    _emit_json(payload)
+    _emit_json(result.model_dump(mode="json"))
 
 
 @playbill_group.command("whoami")
@@ -2891,7 +2836,7 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
         click.echo("  none")
     else:
         for warning in result.lint.warnings:
-            click.echo(f"  {warning.get('field_path', '$')}: {warning.get('code', 'warning')}")
+            click.echo(f"  {warning.field_path}: {warning.code}")
 
 
 @claim_type_group.command("upgrade")
@@ -2966,79 +2911,44 @@ def upgrade_claim_types(
     echo_preview_next(result.status, result.coordinate)
 
 
-@claim_type_group.command("upgrade-evidence-rules")
-@change_control_options
-@json_option
-@handle_errors
-def upgrade_evidence_rules(dry_run: bool | None, at: str | None, output_json: bool) -> None:
-    """Propose moving every live ClaimType to identity evidence rules (v6).
-
-    Needs compiler revision 31. Each rule converts only when it keeps its meaning;
-    the rest are reported for an explicit decision. It previews by default;
-    commit the preview with ``--commit --at OID``, then approve as usual.
-    """
-
-    request = EvidenceRuleUpgradeRequest(dry_run=dry_run, at=at)
-    result = _server_call(
-        lambda client, instance_id: client.upgrade_evidence_rules(instance_id, request),
-        command_name="cruxible claim-type upgrade-evidence-rules",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    click.echo(f"Evidence rule upgrade: {result.status}")
-    for item in result.converted:
-        click.echo(f"  converted {item.claim_type}")
-        for version in item.widened_versions:
-            click.echo(f"    now also admits {version}")
-    for refusal in result.refused:
-        click.echo(f"  left as is {refusal.claim_type}: {refusal.reason}")
-    if result.carried_claims:
-        click.echo(f"Claims carried: {result.carried_claims}")
-    if result.detail:
-        click.echo(result.detail)
-    if result.proposal_id:
-        click.echo(f"Next: cruxible proposal approve {result.proposal_id}")
-    echo_preview_next(result.status, result.coordinate)
-
-
 @playbill_group.group("claim")
 def claim_group() -> None:
     """Propose, read, and explain first-class governed Claims."""
 
 
-@playbill_group.command("resolution-contracts")
-@click.argument("claim_id", required=False)
-@click.option(
-    "--request",
-    "request_file",
-    type=PayloadFile(),
-    help="Advanced: a ResolutionContractsRequest file with an exact hypothesis reference.",
-)
+@playbill_group.group("prediction")
+def prediction_group() -> None:
+    """Propose, settle and list predictions: testable claims about a later observation.
+
+    A prediction is stored as a ResolutionContract (`get ResolutionContract:NAME`
+    reads one); `next` names each bound window that is ready to settle.
+    """
+
+
+@prediction_group.command("list")
+@click.argument("claim")
 @json_option
 @handle_errors
-def resolution_contracts(claim_id: str | None, request_file: str | None, output_json: bool) -> None:
-    """Find accepted tests of a Claim, by Claim ID (CLM-... or Claim:CLM-...).
+def list_predictions(claim: str, output_json: bool) -> None:
+    """List the accepted predictions that test one Claim (CLM-... or Claim:CLM-...).
 
-    The daemon resolves the Claim's accepted version; `--request FILE` takes an
-    exact ClaimVersionReference hypothesis instead.
+    The daemon resolves the Claim's current accepted version and returns the
+    accepted resolution contracts whose hypothesis is that exact version, retired
+    ones included; contracts testing an earlier version of the Claim are not
+    listed. Pending (unaccepted) predictions and settlement outcomes are read with
+    `cruxible get ResolutionContract:NAME` and `cruxible next`.
     """
-    if (claim_id is None) == (request_file is None):
-        raise click.UsageError("provide exactly one of CLAIM_ID or --request FILE")
-    request = (
-        _read_model(request_file, contracts.ResolutionContractsRequest)
-        if request_file is not None
-        else contracts.ResolutionContractsRequest(hypothesis=cast(str, claim_id))
-    )
+
+    request = contracts.ResolutionContractsRequest(hypothesis=claim)
     result = _server_call(
-        lambda client, instance_id: client.resolution_contracts(instance_id, request=request),
-        command_name="cruxible resolution-contracts",
+        lambda client, instance_id: client.list_predictions(instance_id, request=request),
+        command_name="cruxible prediction list",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
     if not result.contracts:
-        click.echo("No resolution contracts test this Claim version.")
+        click.echo("No accepted prediction tests this Claim version.")
         return
     for view in result.contracts:
         click.echo(
@@ -3047,12 +2957,17 @@ def resolution_contracts(claim_id: str | None, request_file: str | None, output_
         )
 
 
-@playbill_group.command("predict")
+@prediction_group.command("propose")
 @click.argument("request_file", type=PayloadFile())
 @json_option
 @handle_errors
-def predict(request_file: str, output_json: bool) -> None:
-    """Submit a governed resolution contract for an accepted Claim."""
+def propose_prediction(request_file: str, output_json: bool) -> None:
+    """Propose a prediction about an accepted Claim from a PredictRequest file.
+
+    The prediction becomes a governed resolution contract proposal; review,
+    approve and activate it like any other, then settle it with `prediction
+    settle` once a later observation is accepted.
+    """
 
     try:
         request = contracts.PredictRequest.model_validate(_read_mapping(request_file))
@@ -3062,7 +2977,7 @@ def predict(request_file: str, output_json: bool) -> None:
         ) from exc
     result = _server_call(
         lambda client, instance_id: client.predict(instance_id, request=request),
-        command_name="cruxible predict",
+        command_name="cruxible prediction propose",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -3071,7 +2986,7 @@ def predict(request_file: str, output_json: bool) -> None:
     click.echo(f"Proposal: {result.proposal_id}")
 
 
-@playbill_group.command("settle")
+@prediction_group.command("settle")
 @click.argument("prediction_id")
 @click.option(
     "--observation",
@@ -3089,7 +3004,7 @@ def predict(request_file: str, output_json: bool) -> None:
 )
 @json_option
 @handle_errors
-def settle(
+def settle_prediction(
     prediction_id: str,
     observation: str | None,
     request_file: str | None,
@@ -3123,7 +3038,7 @@ def settle(
             prediction_id,
             request=request,
         ),
-        command_name="cruxible settle",
+        command_name="cruxible prediction settle",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -3222,46 +3137,47 @@ def attest_claim(
 
 @playbill_group.group("authoring")
 def authoring_group() -> None:
-    """Author, preflight, submit, and resume ergonomic governed writes."""
+    """Author definitions as governed changes: a payload in, a proposal out.
+
+    \b
+    One call:    authoring submit PAYLOAD        (compile, preflight and submit)
+    Preview:     authoring submit PAYLOAD --dry-run
+    Staged work: authoring compile PAYLOAD, then compile PAYLOAD --intent-id ID
+                 as often as needed, rebase ID when the head moved, and
+                 submit --intent-id ID
+    Templates:   authoring example [NAME]
+    Find work:   authoring list, authoring get ID, authoring status ID
+
+    PAYLOAD is a tagless authoring input file, or - for stdin. Value changes
+    (set, add, retire, write) take the shorter value lane instead.
+    """
 
 
-_EXPECTATION_ID_HELP = (
-    "Which publication expectation this call is about. An intent that publishes "
-    "several Claims owns one per publishing member; a singular Claim intent owns "
-    "exactly one and may omit it."
-)
-
-
-@authoring_group.command("create")
+@authoring_group.command("example")
 @click.argument(
-    "payload",
-    required=False,
-    metavar="PAYLOAD_FILE",
-    type=PayloadFile(),
+    "name", required=False, metavar="[NAME]", type=click.Choice(AUTHORING_EXAMPLE_NAMES)
 )
-@click.option(
-    "--example",
-    "example_name",
-    type=click.Choice(AUTHORING_EXAMPLE_NAMES),
-    help="Print one model-generated payload template and exit.",
-)
-@json_option
 @click.option(
     "--attestation-claim-id",
     help="Claim ID an attestation-door example revises (with --capture-digest).",
 )
-@click.option("--capture-digest")
+@click.option(
+    "--capture-digest",
+    help="Capture digest an attestation-door example cites (with --attestation-claim-id).",
+)
 @handle_errors
-@click.pass_context
-def create_authoring_intent(
-    ctx: click.Context,
-    payload: str | None,
-    example_name: str | None,
+def authoring_example_command(
+    name: str | None,
     attestation_claim_id: str | None,
     capture_digest: str | None,
-    output_json: bool,
 ) -> None:
-    """Create a durable authoring intent or print a schema-derived example.
+    """Print one model-generated authoring payload template, or list the names.
+
+    \b
+    With NAME, prints that example as one JSON document on stdout (any note goes
+    to stderr), ready to edit and pass to `authoring compile -` or
+    `authoring submit -`. Without NAME, lists every example name. Nothing is sent
+    to the daemon.
 
     \b
     Input kind family: claim | procedure | subject | query_definition |
@@ -3278,54 +3194,40 @@ def create_authoring_intent(
     own singleton input.
 
     \b
-    One intent is one changeset: a change_set input carries any mix of those
+    One payload is one changeset: a change_set input carries any mix of those
     member kinds, lowers once, and admits or refuses whole, typed to the member
-    index that offends. A claim_type_succession member succeeds an accepted
-    ClaimType and dispositions its whole reverse-pin closure in the same
-    generation, so a Claim member that speaks the new vocabulary lands with it.
-
-    Use --example for a model-generated starting point; --example change-set
-    prints a mixed set and --example claim-type-succession a vocabulary
-    evolution. --example procedure, line, trigger, acquisition-policy and
-    procedure-mandate are accepted together as members of one change set.
+    index that offends. `change-set` prints a mixed set and
+    `claim-type-succession` a vocabulary evolution; `procedure`, `line`,
+    `trigger`, `acquisition-policy` and `procedure-mandate` are accepted
+    together as members of one change set.
     """
 
-    if (payload is None) == (example_name is None):
-        raise click.UsageError("provide exactly one of PAYLOAD or --example")
-    if payload is not None and (attestation_claim_id is not None or capture_digest is not None):
-        raise click.UsageError("--attestation-claim-id/--capture-digest require --example")
-    if example_name is not None:
-        try:
-            example = authoring_example(
-                cast(AuthoringExampleName, example_name),
-                claim_id=attestation_claim_id,
-                capture_digest=capture_digest,
-            )
-        except ValueError as exc:
-            raise click.UsageError(str(exc)) from exc
-        click.echo(
-            json.dumps(
-                example.model_dump(mode="json"),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-        )
-        note = authoring_example_note(cast(AuthoringExampleName, example_name))
-        if note is not None:
-            # Beside the payload, never in it: stdout stays one JSON document.
-            click.echo(f"# {note}", err=True)
+    if name is None:
+        if attestation_claim_id is not None or capture_digest is not None:
+            raise click.UsageError("--attestation-claim-id/--capture-digest require NAME")
+        for example_name in AUTHORING_EXAMPLE_NAMES:
+            click.echo(example_name)
         return
-    assert payload is not None
-    parsed_input = _read_authoring_input(payload)
-    _echo_write_target("active", ctx.params)
-    result = _server_call(
-        lambda client, instance_id: client.create_authoring_input(
-            instance_id, input=parsed_input.model_dump(mode="json")
-        ),
-        command_name="cruxible authoring create",
+    try:
+        example = authoring_example(
+            cast(AuthoringExampleName, name),
+            claim_id=attestation_claim_id,
+            capture_digest=capture_digest,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    click.echo(
+        json.dumps(
+            example.model_dump(mode="json"),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
     )
-    _emit_json(result.model_dump(mode="json"))
+    note = authoring_example_note(cast(AuthoringExampleName, name))
+    if note is not None:
+        # Beside the payload, never in it: stdout stays one JSON document.
+        click.echo(f"# {note}", err=True)
 
 
 @authoring_group.command("get")
@@ -3333,21 +3235,15 @@ def create_authoring_intent(
 @json_option
 @handle_errors
 def get_authoring_intent(intent_id: str, output_json: bool) -> None:
+    """Read one of your authoring intents: payload, base, last preflight and status.
+
+    With `authoring list`, this is how staged work is picked up again after the
+    conversation that started it is gone.
+    """
+
     result = _server_call(
         lambda client, instance_id: client.get_authoring_intent(instance_id, intent_id),
         command_name="cruxible authoring get",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
-@authoring_group.command("resume")
-@click.argument("intent_id")
-@json_option
-@handle_errors
-def resume_authoring_intent(intent_id: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.resume_authoring_intent(instance_id, intent_id),
-        command_name="cruxible authoring resume",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -3356,6 +3252,8 @@ def resume_authoring_intent(intent_id: str, output_json: bool) -> None:
 @json_option
 @handle_errors
 def list_pending_authoring_intents(output_json: bool) -> None:
+    """List your authoring intents that are still in progress, newest state each."""
+
     result = _server_call(
         lambda client, instance_id: client.list_pending_authoring_intents(instance_id),
         command_name="cruxible authoring list",
@@ -3365,14 +3263,32 @@ def list_pending_authoring_intents(output_json: bool) -> None:
 
 @authoring_group.command("compile")
 @click.argument("payload", type=PayloadFile())
-@click.option("--intent-id", default=None)
+@click.option(
+    "--intent-id",
+    default=None,
+    help="Revise this staged intent instead of creating one; the daemon keeps every revision.",
+)
 @json_option
 @handle_errors
 def compile_authoring(payload: str, intent_id: str | None, output_json: bool) -> None:
+    """Stage PAYLOAD as an intent and run every check on it, without submitting.
+
+    PAYLOAD is a tagless authoring input file, or - for stdin (`authoring
+    example` prints templates). Without --intent-id, compile creates a new
+    intent and reports its ID in certificate.intent_id; with --intent-id, the
+    payload replaces that intent's payload. The result is the complete
+    preflight: verdict, certificate and every diagnostic. Nothing is proposed
+    until `authoring submit --intent-id ID`; for one-shot work, `authoring
+    submit PAYLOAD` compiles and submits in one call.
+    """
+
+    # Parsed before any daemon call: a malformed payload names its field path
+    # and the matching example without needing a reachable daemon.
+    parsed_input = _read_authoring_input(payload)
     result = _server_call(
         lambda client, instance_id: client.compile_authoring_input(
             instance_id,
-            input=_read_authoring_input(payload).model_dump(mode="json"),
+            input=parsed_input.model_dump(mode="json"),
             intent_id=intent_id,
         ),
         command_name="cruxible authoring compile",
@@ -3406,7 +3322,13 @@ def bind_authoring_selection(
     payload_file: str,
     output_json: bool,
 ) -> None:
-    """Derive a Flow-A observation from one exact local source anchor, then compile."""
+    """Bind a Claim to one exact anchor in a local file, then compile it.
+
+    The payload file is a Claim stub whose source names only the working tag and
+    a logical source_id; bind reads --file, finds --anchor (--occurrence picks
+    one of several matches, --window-lines widens the cited window), derives the
+    exact observation and compiles the Claim as a new staged intent.
+    """
 
     source = Path(source_path).expanduser()
     try:
@@ -3440,23 +3362,26 @@ def bind_authoring_selection(
 @json_option
 @handle_errors
 def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: bool) -> None:
+    """Re-run every check on a staged intent against the head it is based on.
+
+    A refused intent whose base is behind the accepted head is advanced with
+    `authoring rebase`; one with a payload fault is revised with `authoring
+    compile PAYLOAD --intent-id ID`.
+    """
+
     result = _server_call(
         lambda client, instance_id: client.preflight_authoring_intent(instance_id, intent_id),
         command_name="cruxible authoring preflight",
     )
     if output_brief:
-        codes = [
-            str(item.get("code"))
-            for item in (result.frontier.get("diagnostics") or [])
-            if isinstance(item, dict)
-        ]
+        codes = [item.code for item in result.frontier.diagnostics]
         _emit_brief(
             outcome=result.verdict + (f" ({', '.join(codes)})" if codes else ""),
             ids={"intent": intent_id},
             next_command=(
-                f"cruxible authoring submit {intent_id}"
+                f"cruxible authoring submit --intent-id {intent_id}"
                 if result.verdict == "passed"
-                else f"cruxible authoring create  # repair, then preflight {intent_id}"
+                else f"cruxible authoring compile - --intent-id {intent_id}  # repaired payload"
             ),
         )
         return
@@ -3466,10 +3391,12 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: 
             lambda client, instance_id: client.get_authoring_intent(instance_id, intent_id),
             command_name="cruxible authoring preflight",
         ).intent
-        if intent.get("base_coordinate") != result.certificate.get("accepted_coordinate"):
+        if intent.get("base_coordinate") != result.certificate.accepted_coordinate.model_dump(
+            mode="json"
+        ):
             click.echo(
-                f"Hint: run cruxible authoring rebase {intent_id}; resume does not advance "
-                "a stale intent coordinate.",
+                f"Hint: run cruxible authoring rebase {intent_id}; a stale intent "
+                "coordinate advances only through rebase.",
                 err=True,
             )
 
@@ -3489,27 +3416,89 @@ def rebase_authoring_intent(intent_id: str, output_json: bool) -> None:
 
 
 @authoring_group.command("submit")
-@click.argument("intent_id")
-@and_activate_option
-@click.option(
-    "--workspace-root",
-    type=click.Path(exists=True, file_okay=False),
-    default=".",
-    show_default=True,
-    help="Workspace whose floor is refreshed when --and-activate activates.",
+@click.argument(
+    "payload",
+    required=False,
+    metavar="[PAYLOAD]",
+    type=PayloadFile(),
 )
+@click.option(
+    "--intent-id",
+    default=None,
+    help="Submit this staged intent; with PAYLOAD, revise it to PAYLOAD first.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Return the preflight submitting PAYLOAD would run, with every refusal; save nothing.",
+)
+@and_activate_option
 @brief_option
 @json_option
 @handle_errors
 def submit_authoring_intent(
-    intent_id: str,
+    payload: str | None,
+    intent_id: str | None,
+    dry_run: bool,
     and_activate: bool,
-    workspace_root: str,
     output_brief: bool,
     output_json: bool,
 ) -> None:
+    """Compile, check and submit PAYLOAD as one proposal, or submit a staged intent.
+
+    \b
+    authoring submit PAYLOAD                  compile and submit in one call
+    authoring submit PAYLOAD --dry-run        every refusal, nothing saved
+    authoring submit --intent-id ID           submit a staged intent
+    authoring submit PAYLOAD --intent-id ID   revise a staged intent, then submit
+
+    PAYLOAD is a tagless authoring input file, or - for stdin. A refused
+    preflight returns the unsubmitted intent with its diagnostics; a passing one
+    returns the proposal and what it still needs (approval or activation).
+    Submitting never approves. --and-activate activates a candidate that needs
+    nothing further and leaves any other untouched.
+    """
+
+    if payload is None and intent_id is None:
+        raise click.UsageError("provide PAYLOAD, --intent-id, or both")
+    if dry_run and (payload is None or intent_id is not None):
+        raise click.UsageError("--dry-run previews a new PAYLOAD and takes no --intent-id")
+    if dry_run and and_activate:
+        raise click.UsageError("--dry-run saves nothing, so it cannot --and-activate")
+    # Parsed before any daemon call: a malformed payload names its field path
+    # and the matching example without needing a reachable daemon.
+    parsed = None if payload is None else _read_authoring_input(payload).model_dump(mode="json")
+    if dry_run:
+        assert parsed is not None
+        preview = _server_call(
+            lambda client, instance_id: client.preview_authoring_input(instance_id, input=parsed),
+            command_name="cruxible authoring submit",
+        )
+        if output_brief:
+            codes = [item.code for item in preview.frontier.diagnostics]
+            _emit_brief(
+                outcome=f"would {'pass' if preview.verdict == 'passed' else 'refuse'}"
+                + (f" ({', '.join(codes)})" if codes else ""),
+                ids={},
+                next_command=(
+                    f"cruxible authoring submit {shlex.quote(payload or '')}"
+                    if preview.verdict == "passed" and payload != "-"
+                    else None
+                ),
+            )
+            return
+        _emit_json(preview.model_dump(mode="json"))
+        return
+
     def call(client: CruxibleClient, instance_id: str) -> tuple[Any, Any]:
-        submitted = client.submit_authoring_intent(instance_id, intent_id)
+        if parsed is None:
+            assert intent_id is not None
+            submitted = client.submit_authoring_intent(instance_id, intent_id)
+        else:
+            submitted = client.submit_authoring_input(
+                instance_id, input=parsed, intent_id=intent_id
+            )
         if not and_activate or submitted.status.state != "ready_to_activate":
             return submitted, None
         # Only a candidate that needs nothing further is activated here. Anything
@@ -3518,34 +3507,33 @@ def submit_authoring_intent(
         proposal_id = submitted.status.proposal_id
         if proposal_id is None:  # pragma: no cover - ready_to_activate carries one
             return submitted, None
-        return submitted, activate_with_workspace_refresh(
-            client, instance_id, proposal_id, workspace=workspace_root
-        )
+        return submitted, client.activate_proposal(instance_id, proposal_id)
 
     submitted, activation = _server_call(call, command_name="cruxible authoring submit")
-    payload: dict[str, Any] = {"submit": submitted.model_dump(mode="json")}
+    result: dict[str, Any] = {"submit": submitted.model_dump(mode="json")}
     if activation is not None:
-        payload["activation"] = activation.model_dump(mode="json")
+        result["activation"] = activation.model_dump(mode="json")
     elif and_activate:
-        payload["activation_note"] = _not_activated_note(submitted.status.state)
+        result["activation_note"] = _not_activated_note(submitted.status.state)
     if output_brief:
+        accepted = activation is not None and activation.accepted_coordinate is not None
         _emit_brief(
             outcome=(
-                "accepted" if activation is not None else f"submitted ({submitted.status.state})"
+                str(activation.status)
+                if activation is not None
+                else f"submitted ({submitted.status.state})"
             ),
             ids={
-                "intent": intent_id,
+                "intent": str(submitted.intent.get("intent_id")),
                 "proposal": submitted.status.proposal_id,
-                "coordinate": (
-                    activation.accepted_coordinate.git_oid if activation is not None else None
-                ),
+                "coordinate": activation.accepted_coordinate.git_oid if accepted else None,
                 "receipt": activation.tag if activation is not None else None,
             },
             reason=_submit_refusal_reason(submitted),
             next_command=_submit_next_command(submitted, activated=activation is not None),
         )
         return
-    _emit_json(payload if (and_activate or activation is not None) else payload["submit"])
+    _emit_json(result if (and_activate or activation is not None) else result["submit"])
 
 
 def _not_activated_note(state: str) -> str:
@@ -3617,30 +3605,15 @@ def _submit_next_command(submitted: Any, *, activated: bool) -> str | None:
 @json_option
 @handle_errors
 def authoring_intent_status(intent_id: str, output_json: bool) -> None:
+    """Read what still separates an intent from acceptance.
+
+    The answer names each remaining condition (a refusal to repair, an approval
+    to collect, an activation to run) without acting for the actor who owns it.
+    """
+
     result = _server_call(
         lambda client, instance_id: client.authoring_intent_status(instance_id, intent_id),
         command_name="cruxible authoring status",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
-@authoring_group.command("abandon-insertion")
-@click.argument("intent_id")
-@click.option("--expectation-id", default=None, help=_EXPECTATION_ID_HELP)
-@json_option
-@handle_errors
-def abandon_authoring_insertion(
-    intent_id: str,
-    expectation_id: str | None,
-    output_json: bool,
-) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.abandon_authoring_insertion(
-            instance_id,
-            intent_id,
-            expectation_id=expectation_id,
-        ),
-        command_name="cruxible authoring abandon-insertion",
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -4373,13 +4346,12 @@ def block_group() -> None:
 def depublish_projection(
     source_id: str, block_id: str, dry_run: bool | None, at: str | None, output_json: bool
 ) -> None:
-    """Release the publication registration that demands one page block.
+    """Release the declared registration that demands one page block.
 
     The registration is what `next` reads to decide a removed marker is a
     blocking row. Releasing it does not edit the page and does not touch the
-    Claim the block was backed by: strip the markers with `block sync --detach`
-    or by hand, retire the Claim through the ordinary retirement road, and use
-    this when the block itself is not coming back.
+    block's backings: strip the markers with `block sync --detach` or by hand,
+    and use this when the block itself is not coming back.
     """
 
     result = _server_call(
@@ -4396,7 +4368,6 @@ def depublish_projection(
         _emit_json(result.model_dump(mode="json"))
         return
     click.echo(f"{result.source_id}#{result.block_id}: {result.outcome}")
-    click.echo(f"Backing Claim: {result.claim_identity}")
     echo_preview_next(result.outcome, result.coordinate)
 
 
@@ -4959,7 +4930,7 @@ def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
 
 #: Repair arguments a CLI leaf takes as its positional operand.
 _POSITIONAL_REPAIR_ARGUMENTS = frozenset(
-    {"line", "name", "claim_id", "proposal_id", "prediction_id", "run_id"}
+    {"line", "name", "example", "claim_id", "proposal_id", "prediction_id", "run_id"}
 )
 
 

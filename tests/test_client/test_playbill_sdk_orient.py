@@ -74,7 +74,7 @@ def test_orient_transport_preserves_omitted_empty_and_nonempty_tool_profiles() -
         return httpx.Response(200, json=_OrientClient().orient("inst").model_dump(mode="json"))
 
     client = _client(handle)
-    for tools in (None, (), ("cruxible_settle",)):
+    for tools in (None, (), ("cruxible_prediction_settle",)):
         client.orient("inst", surface="mcp", caller_tools=tools)
         if tools is None:
             assert "caller_tools" not in captured[-1].url.params

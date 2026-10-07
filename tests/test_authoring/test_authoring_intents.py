@@ -142,12 +142,12 @@ def test_create_crash_before_publish_recovers_once_minted_identity(tmp_path: Pat
     assert resumed.intent.semantic_identity == "CLM-" + "8" * 32
 
 
-def test_resume_is_actor_scoped_and_payload_update_keeps_machine_identity(tmp_path: Path) -> None:
+def test_get_is_actor_scoped_and_payload_update_keeps_machine_identity(tmp_path: Path) -> None:
     coordinator, actor = _coordinator(tmp_path)
     created = coordinator.create(actor=actor, payload=_payload(), canonical_timestamp=TIMESTAMP)
 
     with pytest.raises(Exception, match="another actor"):
-        coordinator.resume(
+        coordinator.get(
             created.intent.intent_id,
             actor=AuthenticatedActor(actor_id="reviewer"),
         )
@@ -160,7 +160,7 @@ def test_resume_is_actor_scoped_and_payload_update_keeps_machine_identity(tmp_pa
     assert updated.intent.intent_revision == 1
     assert updated.intent.semantic_identity == created.intent.semantic_identity
     assert updated.intent.candidate_status.state == "draft"
-    assert coordinator.resume(created.intent.intent_id, actor=actor) == updated
+    assert coordinator.get(created.intent.intent_id, actor=actor) == updated
 
 
 def _prose_set(rationale: str) -> ChangeSetAuthoringPayload:
@@ -206,7 +206,7 @@ def test_two_rationale_only_replacements_are_two_revisions_and_not_one_replay(
 
     # The read path, not only the view the caller was handed: this is where a
     # payload shared under a colliding digest used to return the older prose.
-    resumed = coordinator.resume(intent_id, actor=actor)
+    resumed = coordinator.get(intent_id, actor=actor)
     assert resumed.intent.payload.rationale == "Third prose, corrected again."
     assert [event.intent.payload.rationale for event in coordinator.store.events()] == [
         "The first prose.",

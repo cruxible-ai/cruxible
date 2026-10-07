@@ -6,7 +6,7 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Literal, cast
+from typing import Callable, cast
 
 from cruxible_client.contracts.attestations import (
     VerifiedApproval,
@@ -36,8 +36,6 @@ from cruxible_client.contracts.authoring.models import (
     ChangeSetClaimIdentity,
     ClaimAuthoringPayloadV1,
     ExistingCaptureCitationSource,
-    InsertionAbandonResult,
-    InsertionExpectation,
     PreflightResult,
     ProcedureAuthoringPayload,
     ProcedureAuthoringPayloadV1,
@@ -53,20 +51,11 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
     claim_path,
-    claim_statement_digest,
     new_claim_id,
-    parse_claim,
 )
 from cruxible_client.contracts.errors import ApprovalIntegrityError, CruxibleError
-from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime, utc_now
-from cruxible_core.authoring.insertions import (
-    InsertionProtocolError,
-    PublicationTerminalStateRefused,
-    mark_publication_claim_accepted,
-    mark_publication_terminal,
-)
+from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.authoring.preflight import (
     ComputedPreflight,
     authoring_operation,
@@ -133,60 +122,6 @@ def _rebase_operation_key(
             "next_base_coordinate": next_coordinate.model_dump(mode="json"),
         },
     ).tagged
-
-
-def _select_expectation(
-    intent: AuthoringIntentV1,
-    expectation_id: str | None,
-) -> InsertionExpectation:
-    """Pick the expectation a publication call is about.
-
-    A singular Claim intent has exactly one, so naming it is optional. A change
-    set that publishes several Claims has no default: guessing one would apply a
-    body to whichever page sorted first.
-    """
-
-    expectations = intent.insertion_expectations
-    if not expectations:
-        raise InsertionProtocolError("AuthoringIntent has no publication v2 expectation")
-    if expectation_id is None:
-        if len(expectations) != 1:
-            raise InsertionProtocolError(
-                "this change set publishes several Claims; name one expectation_id"
-            )
-        return expectations[0]
-    for item in expectations:
-        if item.expectation_id == expectation_id:
-            return item
-    raise InsertionProtocolError("AuthoringIntent has no such publication expectation")
-
-
-def _replaced_expectation(
-    intent: AuthoringIntentV1,
-    expectation: InsertionExpectation,
-) -> dict[str, object]:
-    """Write one expectation back, keeping the singular mirror consistent."""
-
-    updated = tuple(
-        expectation if item.expectation_id == expectation.expectation_id else item
-        for item in intent.insertion_expectations
-    )
-    return {
-        "insertion_expectation": (
-            expectation if isinstance(intent.payload, ClaimAuthoringPayloadV1) else None
-        ),
-        "insertion_expectations": updated,
-    }
-
-
-def _live_expectation(
-    intent: AuthoringIntentV1,
-    expectation: InsertionExpectation,
-) -> InsertionExpectation:
-    for item in intent.insertion_expectations:
-        if item.expectation_id == expectation.expectation_id:
-            return item
-    raise InsertionProtocolError("publication expectation disappeared")
 
 
 @dataclass(frozen=True)
@@ -347,6 +282,7 @@ class AuthoringIntentCoordinator:
         actor: AuthenticatedActor,
         payload: AuthoringPayload,
         canonical_timestamp: str,
+        reference_expectations: tuple[AuthoringExpectation, ...] | None = None,
     ) -> tuple[AuthoringIntentV1, ComputedPreflight]:
         """Preflight one payload exactly as submit would, and write nothing.
 
@@ -367,10 +303,37 @@ class AuthoringIntentCoordinator:
                 payload=payload,
                 canonical_timestamp=canonical_timestamp,
                 at=AcceptedCoordinate.from_internal(self.instance.accepted_coordinate()),
-                reference_expectations=None,
+                reference_expectations=reference_expectations,
                 intent_id=f"AIT-{secrets.token_hex(16)}",
             )
             return intent, compute_preflight(self.instance, intent=intent, actor=actor)
+
+    def preview_input(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        input: AuthoringInput,
+        canonical_timestamp: str,
+    ) -> tuple[AuthoringIntentV1, ComputedPreflight]:
+        """Preflight one tagless input as ``submit_input`` would, and save no intent.
+
+        The input lowers and binds its existing-capture expectations exactly as
+        a create would, so the preview refuses everything the submit would.
+        """
+
+        # Refused at the same doors, and before lowering, exactly as create refuses.
+        self.instance.require_writable()
+        require_authoring_principal(self.instance, actor.actor_id)
+        payload = lower_authoring_input(input)
+        return self.preview(
+            actor=actor,
+            payload=payload,
+            canonical_timestamp=canonical_timestamp,
+            reference_expectations=self._existing_capture_reference_expectations(
+                payload,
+                coordinate=self.instance.accepted_coordinate(),
+            ),
+        )
 
     def create_input(
         self,
@@ -399,32 +362,18 @@ class AuthoringIntentCoordinator:
         )
 
     def get(self, intent_id: str, *, actor: AuthenticatedActor) -> AuthoringIntentView:
-        intent = self._refresh_protocol(
-            self.store.get(intent_id, actor_id=actor.actor_id),
-            actor=actor,
-        )
+        intent = self._refreshed(self.store.get(intent_id, actor_id=actor.actor_id))
         return AuthoringIntentView(intent=intent)
-
-    def resume(self, intent_id: str, *, actor: AuthenticatedActor) -> AuthoringIntentView:
-        return self.get(intent_id, actor=actor)
 
     def list_pending(self, *, actor: AuthenticatedActor) -> AuthoringIntentList:
         reduced = tuple(
-            self._refresh_protocol(intent, actor=actor)
-            for intent in self.store.list_pending(actor_id=actor.actor_id)
+            self._refreshed(intent) for intent in self.store.list_pending(actor_id=actor.actor_id)
         )
         return AuthoringIntentList(
             intents=tuple(
                 intent
                 for intent in reduced
-                if (
-                    intent.candidate_status.state not in {"accepted", "superseded", "terminal"}
-                    or (
-                        intent.insertion_expectation is not None
-                        and intent.insertion_expectation.state
-                        in {"awaiting_claim_acceptance", "pending", "prepared", "confirming"}
-                    )
-                )
+                if intent.candidate_status.state not in {"accepted", "superseded", "terminal"}
             )
         )
 
@@ -626,31 +575,70 @@ class AuthoringIntentCoordinator:
         intent_id: str | None = None,
     ) -> PreflightResult:
         self.instance.require_writable()
+        view = self._compose_input(
+            actor=actor,
+            input=input,
+            canonical_timestamp=canonical_timestamp,
+            intent_id=intent_id,
+        )
+        return self.preflight(view.intent.intent_id, actor=actor)
+
+    def submit_input(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        input: AuthoringInput,
+        canonical_timestamp: str,
+        intent_id: str | None = None,
+    ) -> AuthoringSubmitResult:
+        """Compile one tagless input and submit it in one call.
+
+        Without ``intent_id`` the input becomes a new intent; with one, it
+        replaces that staged intent's payload first. Submit computes and binds
+        its own preflight, so a refused input returns the unsubmitted intent
+        with that preflight bound, as compile would have.
+        """
+
+        self.instance.require_writable()
+        view = self._compose_input(
+            actor=actor,
+            input=input,
+            canonical_timestamp=canonical_timestamp,
+            intent_id=intent_id,
+        )
+        return self.submit(view.intent.intent_id, actor=actor)
+
+    def _compose_input(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        input: AuthoringInput,
+        canonical_timestamp: str,
+        intent_id: str | None,
+    ) -> AuthoringIntentView:
         if intent_id is None:
-            view = self.create_input(
+            return self.create_input(
                 actor=actor,
                 input=input,
                 canonical_timestamp=canonical_timestamp,
             )
-        else:
-            current = self.store.get(intent_id, actor_id=actor.actor_id)
-            payload = lower_authoring_input(input)
-            base = self.instance.resolve_accepted_coordinate(
-                git_oid=current.base_coordinate.git_oid,
-                semantic_root=current.base_coordinate.semantic_root,
-                generation_root=current.base_coordinate.generation_root,
-                compiler_digest=current.base_coordinate.compiler_digest,
-            )
-            view = self.replace_payload(
-                intent_id,
-                actor=actor,
-                payload=payload,
-                reference_expectations=self._existing_capture_reference_expectations(
-                    payload,
-                    coordinate=base,
-                ),
-            )
-        return self.preflight(view.intent.intent_id, actor=actor)
+        current = self.store.get(intent_id, actor_id=actor.actor_id)
+        payload = lower_authoring_input(input)
+        base = self.instance.resolve_accepted_coordinate(
+            git_oid=current.base_coordinate.git_oid,
+            semantic_root=current.base_coordinate.semantic_root,
+            generation_root=current.base_coordinate.generation_root,
+            compiler_digest=current.base_coordinate.compiler_digest,
+        )
+        return self.replace_payload(
+            intent_id,
+            actor=actor,
+            payload=payload,
+            reference_expectations=self._existing_capture_reference_expectations(
+                payload,
+                coordinate=base,
+            ),
+        )
 
     def _existing_capture_reference_expectations(
         self,
@@ -818,10 +806,7 @@ class AuthoringIntentCoordinator:
     ) -> AuthoringSubmitResult:
         self.instance.require_writable()
         with self.instance.prepared_evaluations.scope() as prepared:
-            current = self._refresh_protocol(
-                self.store.get(intent_id, actor_id=actor.actor_id),
-                actor=actor,
-            )
+            current = self._refreshed(self.store.get(intent_id, actor_id=actor.actor_id))
             reduced = current.candidate_status
             if reduced.state == "accepted":
                 idempotent_existing = reduced.proposal_id is None
@@ -1004,19 +989,6 @@ class AuthoringIntentCoordinator:
                 proposal_id=result.admission.proposal_id,
                 candidate_digest=result.candidate.candidate_digest,
             )
-            # Nothing mints a publication expectation any more: a Claim projected as
-            # its own page text was the mint-era overlap the two-block-kinds law
-            # refuses, and the authoring door refuses `insertion_target` outright.
-            # An intent that already carries expectations keeps them, so an instance
-            # that published before this ruling still folds, reads and depublishes
-            # its registrations.
-            insertion_expectations = preflighted.insertion_expectations
-            singular = (
-                insertion_expectations[0]
-                if insertion_expectations
-                and isinstance(preflighted.payload, ClaimAuthoringPayloadV1)
-                else None
-            )
 
             def bind_submit(intent: AuthoringIntentV1) -> AuthoringIntentV1:
                 if (
@@ -1025,13 +997,7 @@ class AuthoringIntentCoordinator:
                     != certificate.certificate_digest
                 ):
                     raise ValueError("AuthoringIntent preflight changed during submit")
-                return intent.model_copy(
-                    update={
-                        "candidate_status": submitted_status,
-                        "insertion_expectation": singular,
-                        "insertion_expectations": insertion_expectations,
-                    }
-                )
+                return intent.model_copy(update={"candidate_status": submitted_status})
 
             submitted = self.store.transition(
                 intent_id,
@@ -1050,87 +1016,8 @@ class AuthoringIntentCoordinator:
             )
 
     def status(self, intent_id: str, *, actor: AuthenticatedActor) -> CandidateStatus:
-        intent = self._refresh_protocol(
-            self.store.get(intent_id, actor_id=actor.actor_id),
-            actor=actor,
-        )
+        intent = self._refreshed(self.store.get(intent_id, actor_id=actor.actor_id))
         return intent.candidate_status
-
-    def check_abandon_insertion(
-        self,
-        intent_id: str,
-        *,
-        actor: AuthenticatedActor,
-        expectation_id: str | None = None,
-    ) -> InsertionExpectation:
-        """Every check `abandon_insertion` makes before its write, writing nothing (R12).
-
-        The intent is read as stored; the protocol refresh `abandon_insertion`
-        runs first is a write, so a preview takes the stored intent instead.
-        The caller holds the instance's write gate.
-        """
-
-        current = self.store.get(intent_id, actor_id=actor.actor_id)
-        expectation = _select_expectation(current, expectation_id)
-        if expectation.state in {"expired", "claim_currency_changed"}:
-            raise PublicationTerminalStateRefused(
-                f"{PublicationTerminalStateRefused.code}: publication is already terminal"
-            )
-        return expectation
-
-    def abandon_insertion(
-        self,
-        intent_id: str,
-        *,
-        actor: AuthenticatedActor,
-        expectation_id: str | None = None,
-    ) -> InsertionAbandonResult:
-        self.instance.require_writable()
-        current = self._refresh_protocol(
-            self.store.get(intent_id, actor_id=actor.actor_id),
-            actor=actor,
-        )
-        expectation = _select_expectation(current, expectation_id)
-        operation_key = typed_digest(
-            Sha256Value,
-            "playbill-insertion-abandon-v1",
-            {
-                "expectation_id": expectation.expectation_id,
-                "intent_id": intent_id,
-            },
-        ).tagged
-        if expectation.state == "abandoned":
-            return InsertionAbandonResult(intent=current, expectation=expectation)
-        # `bound` is deliberately absent: abandoning a bound publication is the
-        # depublication, and the only way out of a lifecycle that otherwise had
-        # no exit. The other three stay terminal.
-        if expectation.state in {"expired", "claim_currency_changed"}:
-            raise PublicationTerminalStateRefused(
-                f"{PublicationTerminalStateRefused.code}: publication is already terminal"
-            )
-
-        def abandon_publication(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-            live = _live_expectation(intent, expectation)
-            return intent.model_copy(
-                update=_replaced_expectation(
-                    intent,
-                    mark_publication_terminal(
-                        intent,
-                        live,
-                        state="abandoned",
-                        finalized_at=self.clock(),
-                    ),
-                )
-            )
-
-        updated = self.store.transition(
-            intent_id,
-            actor_id=actor.actor_id,
-            operation_key=operation_key,
-            transform=abandon_publication,
-        )
-        updated_expectation = _select_expectation(updated, expectation.expectation_id)
-        return InsertionAbandonResult(intent=updated, expectation=updated_expectation)
 
     def replace_payload(
         self,
@@ -1371,192 +1258,10 @@ class AuthoringIntentCoordinator:
             return f"ChangeSet:{digest}"
         return authoring_member_identity(payload)
 
-    def _publication_claim_current(self, expectation: InsertionExpectation) -> bool:
-        current_claim = self._current_claim_by_identity(expectation.claim_identity)
-        return (
-            current_claim is not None
-            and current_claim.lifecycle.state == "live"
-            and claim_statement_digest(current_claim.statement).tagged
-            == expectation.claim_statement_digest
-        )
+    def _refreshed(self, intent: AuthoringIntentV1) -> AuthoringIntentV1:
+        """The intent with its candidate status reduced against accepted state."""
 
-    def _current_claim_by_identity(self, claim_identity: str) -> ClaimArtifactAny | None:
-        path = claim_path(claim_identity)
-        content = self.instance.blob_at(self.instance.accepted_coordinate().git_oid, path)
-        return None if content is None else parse_claim(content, path=path)
-
-    def _transition_publication_terminal(
-        self,
-        intent: AuthoringIntentV1,
-        *,
-        expectation: InsertionExpectation,
-        actor: AuthenticatedActor,
-        state: Literal["expired", "claim_currency_changed"],
-        evaluation_time: datetime,
-        operation_key: str | None = None,
-    ) -> AuthoringIntentV1:
-        key = (
-            operation_key
-            or typed_digest(
-                Sha256Value,
-                "playbill-publication-terminal-v2",
-                {
-                    "expectation_id": expectation.expectation_id,
-                    "state": state,
-                    "evaluation_time": format_datetime(ensure_utc(evaluation_time)),
-                },
-            ).tagged
-        )
-
-        def terminalize(current: AuthoringIntentV1) -> AuthoringIntentV1:
-            live = _live_expectation(current, expectation)
-            return current.model_copy(
-                update=_replaced_expectation(
-                    current,
-                    mark_publication_terminal(
-                        current,
-                        live,
-                        state=state,
-                        finalized_at=evaluation_time,
-                    ),
-                )
-            )
-
-        return self.store.transition(
-            intent.intent_id,
-            actor_id=actor.actor_id,
-            operation_key=key,
-            transform=terminalize,
-        )
-
-    def _protocol_time(self, intent: AuthoringIntentV1) -> datetime:
-        current = self.instance.accepted_history()[-1]
-        value = (
-            intent.canonical_timestamp
-            if current.record is None
-            else current.record.candidate.timestamp
-        )
-        parsed = parse_datetime(value)
-        if parsed is None:  # pragma: no cover - accepted timestamp invariant
-            raise RuntimeError("accepted protocol timestamp did not parse")
-        return parsed
-
-    def _refresh_protocol(
-        self,
-        intent: AuthoringIntentV1,
-        *,
-        actor: AuthenticatedActor,
-    ) -> AuthoringIntentV1:
-        reduced = self._reduce_status(intent)
-        if not intent.insertion_expectations:
-            return intent.model_copy(update={"candidate_status": reduced})
-        evaluation_time = self.clock()
-        current = intent
-        # One intent is one changeset, so a change set that publishes several
-        # Claims reduces every one of their expectations on every read; folding
-        # them one at a time keeps each transition's operation key its own.
-        for expectation in intent.insertion_expectations:
-            live = next(
-                (
-                    item
-                    for item in current.insertion_expectations
-                    if item.expectation_id == expectation.expectation_id
-                ),
-                None,
-            )
-            if live is None:  # pragma: no cover - expectation set is stable
-                continue
-            current = self._refresh_publication_v2(
-                current,
-                expectation=live,
-                reduced=reduced,
-                actor=actor,
-                evaluation_time=evaluation_time,
-            )
-        return current.model_copy(update={"candidate_status": reduced})
-
-    def _refresh_publication_v2(
-        self,
-        intent: AuthoringIntentV1,
-        *,
-        expectation: InsertionExpectation,
-        reduced: CandidateStatus,
-        actor: AuthenticatedActor,
-        evaluation_time: datetime,
-    ) -> AuthoringIntentV1:
-        if expectation.state in {"bound", "expired", "abandoned", "claim_currency_changed"}:
-            return intent.model_copy(update={"candidate_status": reduced})
-        # Pin 15: a passive read may never decide whether a prepared postimage
-        # exists. Only prepare/confirm carry the observation needed to rescue or
-        # terminalize it.
-        if expectation.state == "prepared":
-            return intent.model_copy(update={"candidate_status": reduced})
-        if ensure_utc(evaluation_time) >= expectation.expires_at:
-            return self._transition_publication_terminal(
-                intent.model_copy(update={"candidate_status": reduced}),
-                expectation=expectation,
-                actor=actor,
-                state="expired",
-                evaluation_time=evaluation_time,
-            ).model_copy(update={"candidate_status": reduced})
-
-        next_expectation = expectation
-        if expectation.state == "awaiting_claim_acceptance":
-            if reduced.state != "accepted":
-                if reduced.state in {"superseded", "terminal"}:
-                    next_expectation = mark_publication_terminal(
-                        intent,
-                        expectation,
-                        state="claim_currency_changed",
-                        finalized_at=self._protocol_time(intent),
-                    )
-                else:
-                    return intent.model_copy(update={"candidate_status": reduced})
-            elif not self._publication_claim_current(expectation):
-                next_expectation = mark_publication_terminal(
-                    intent,
-                    expectation,
-                    state="claim_currency_changed",
-                    finalized_at=self._protocol_time(intent),
-                )
-            else:
-                accepted = reduced.accepted_generation
-                if accepted is None:  # pragma: no cover - accepted status invariant
-                    raise RuntimeError("accepted publication status omitted its coordinate")
-                next_expectation = mark_publication_claim_accepted(
-                    expectation,
-                    accepted_coordinate=accepted,
-                )
-        elif not self._publication_claim_current(expectation):
-            next_expectation = mark_publication_terminal(
-                intent,
-                expectation,
-                state="claim_currency_changed",
-                finalized_at=self._protocol_time(intent),
-            )
-
-        if next_expectation == expectation:
-            return intent.model_copy(update={"candidate_status": reduced})
-        operation_key = typed_digest(
-            Sha256Value,
-            "playbill-publication-refresh-v2",
-            {
-                "accepted_semantic_root": self.instance.accepted_coordinate().semantic_root,
-                "expectation_digest": next_expectation.expectation_digest,
-                "intent_id": intent.intent_id,
-            },
-        ).tagged
-        return self.store.transition(
-            intent.intent_id,
-            actor_id=actor.actor_id,
-            operation_key=operation_key,
-            transform=lambda current: current.model_copy(
-                update={
-                    "candidate_status": self._reduce_status(current),
-                    **_replaced_expectation(current, next_expectation),
-                }
-            ),
-        )
+        return intent.model_copy(update={"candidate_status": self._reduce_status(intent)})
 
     def finalize_completed(self) -> None:
         """Record acceptance on submitted intents whose candidate was accepted.

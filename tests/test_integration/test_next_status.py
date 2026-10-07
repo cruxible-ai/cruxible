@@ -586,7 +586,7 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     assert facet.repair.target == "prediction.anchor_retry"
     assert facet.repair.required_change == "author_a_trigger_aimed_at_the_unscheduled_action"
     assert (facet.repair.operation, facet.repair.arguments) == (
-        "cruxible.authoring.create",
+        "cruxible.authoring.example",
         {"example": "trigger"},
     )
     assert _attention(unscheduled) == (("triggers", facet),)

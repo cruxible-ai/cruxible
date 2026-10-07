@@ -16,6 +16,7 @@ from cruxible_client import AccessProfile, ClaimRef, Cruxible, CruxibleClient
 from cruxible_client.authoring.inputs import AuthoringInput, AuthoringInputError
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
 
 COORDINATE = {
     "tag": "playbill-accepted-coordinate-v1",
@@ -97,12 +98,9 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
         if request.url.path.endswith("/compile"):
             return httpx.Response(
                 200,
-                json={
-                    "tag": "playbill-authoring-preflight-result-v1",
-                    "verdict": "refused",
-                    "certificate": {"certificate_digest": "sha256:" + "6" * 64},
-                    "frontier": {"diagnostics": [{"code": "example"}]},
-                },
+                json=stub_preflight_result(
+                    verdict="refused", diagnostics=(stub_diagnostic("example"),)
+                ).model_dump(mode="json"),
             )
         return httpx.Response(
             200,
@@ -144,57 +142,18 @@ def test_client_preserves_advisory_lint_outside_the_preflight_certificate() -> N
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={
-                "tag": "playbill-authoring-preflight-result-v1",
-                "verdict": "passed",
-                "certificate": {"certificate_digest": "sha256:" + "6" * 64},
-                "frontier": {"diagnostics": []},
-                "lint": {"tag": "playbill-claim-type-proposal-lint-v1", "warnings": [warning]},
-            },
+            json=stub_preflight_result(
+                lint={"tag": "playbill-claim-type-proposal-lint-v1", "warnings": [warning]}
+            ).model_dump(mode="json"),
         )
 
     result = _client(handler).compile_authoring("inst", payload=_claim_payload())
 
     assert result.verdict == "passed"
     assert result.lint is not None
-    assert result.lint.warnings == [warning]
-    assert "lint" not in result.certificate
-    assert "lint" not in result.frontier
-
-
-def test_client_speaks_program_stamped_v3_request() -> None:
-    captured: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured.append(request)
-        return httpx.Response(
-            200,
-            json={
-                "tag": "playbill-authoring-intent-view-v1",
-                "intent": {"intent_id": INTENT_ID},
-            },
-        )
-
-    payload = _claim_payload()
-    stamp = {
-        "tag": "playbill-authoring-program-stamp-v1",
-        "program_digest": "sha256:" + "7" * 64,
-        "sdk_version": "0.4.0",
-        "sdk_contract_snapshot_digest": "sha256:" + "8" * 64,
-    }
-    _client(handler).create_authoring_intent(
-        "inst",
-        payload=payload,
-        reference_expectations=(),
-        program_stamp=stamp,
-    )
-
-    assert json.loads(captured[0].content) == {
-        "tag": "playbill-authoring-intent-create-request-v3",
-        "payload": payload,
-        "reference_expectations": [],
-        "program_stamp": stamp,
-    }
+    assert [item.model_dump(mode="json") for item in result.lint.warnings] == [warning]
+    assert "lint" not in result.certificate.model_dump(mode="json")
+    assert "lint" not in result.frontier.model_dump(mode="json")
 
 
 def test_client_speaks_tagless_input_request_variants() -> None:
@@ -205,12 +164,9 @@ def test_client_speaks_tagless_input_request_variants() -> None:
         if request.url.path.endswith("/compile"):
             return httpx.Response(
                 200,
-                json={
-                    "tag": "playbill-authoring-preflight-result-v1",
-                    "verdict": "refused",
-                    "certificate": {"certificate_digest": "sha256:" + "6" * 64},
-                    "frontier": {"diagnostics": []},
-                },
+                json=stub_preflight_result(
+                    verdict="refused", diagnostics=(stub_diagnostic("example"),)
+                ).model_dump(mode="json"),
             )
         return httpx.Response(
             200,
@@ -226,17 +182,15 @@ def test_client_speaks_tagless_input_request_variants() -> None:
         "predicate": "project.work_item.status",
     }
     client = _client(handler)
-    client.create_authoring_input("inst", input=input_value)
     client.compile_authoring_input("inst", input=input_value)
 
     assert [json.loads(item.content)["tag"] for item in captured] == [
-        "playbill-authoring-input-create-request-v1",
         "playbill-authoring-input-compile-request-v1",
     ]
     assert all(json.loads(item.content)["input"] == input_value for item in captured)
 
 
-def test_client_get_resume_list_and_status_are_path_only_reads() -> None:
+def test_client_get_list_and_status_are_path_only_reads() -> None:
     captured: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -258,12 +212,11 @@ def test_client_get_resume_list_and_status_are_path_only_reads() -> None:
 
     client = _client(handler)
     client.get_authoring_intent("inst", INTENT_ID)
-    client.resume_authoring_intent("inst", INTENT_ID)
     client.list_pending_authoring_intents("inst")
     status = client.authoring_intent_status("inst", INTENT_ID)
 
     assert status.state == "draft"
-    assert [item.method for item in captured] == ["GET", "GET", "GET", "GET"]
+    assert [item.method for item in captured] == ["GET", "GET", "GET"]
     assert all(not item.content for item in captured)
 
 
@@ -390,15 +343,7 @@ def _retirement_playbill(workspace: Path) -> tuple[Cruxible, list[httpx.Request]
         if request.url.path.endswith("/compile"):
             return httpx.Response(
                 200,
-                json={
-                    "tag": "playbill-authoring-preflight-result-v1",
-                    "verdict": "passed",
-                    "certificate": {
-                        "intent_id": INTENT_ID,
-                        "certificate_digest": "sha256:" + "6" * 64,
-                    },
-                    "frontier": {"diagnostics": []},
-                },
+                json=stub_preflight_result(intent_id=INTENT_ID).model_dump(mode="json"),
             )
         return httpx.Response(
             200,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from functools import wraps
-from typing import Annotated, Any, Callable, Literal, cast
+from typing import Annotated, Any, Callable, Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
@@ -34,10 +34,6 @@ from cruxible_client.contracts.compact_query import (
 )
 from cruxible_client.contracts.declared_blocks import BlockRepinResult
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequest,
-    EvidenceRuleUpgradeResult,
-)
 from cruxible_client.contracts.get_reads import (
     GET_HISTORY_MAX_LIMIT,
     ByteRange,
@@ -276,19 +272,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_evidence_rules_upgrade(
-        instance_id: InstanceId = None,
-        *,
-        dry_run: DryRun = None,
-        at: PreviewAt = None,
-    ) -> EvidenceRuleUpgradeResult:
-        """Propose moving live ClaimTypes to evidence rules that name contracts by identity."""
-        return handlers.handle_playbill_evidence_rules_upgrade(
-            require_instance_id(instance_id),
-            EvidenceRuleUpgradeRequest(dry_run=dry_run, at=at),
-        )
-
-    @_tool
     def cruxible_kit_remove(
         instance_id: InstanceId = None,
         *,
@@ -298,14 +281,14 @@ def register_tools(
         return handlers.handle_playbill_kit_remove(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_store_body(
+    def cruxible_body_store(
         instance_id: InstanceId = None, *, content_base64: str
     ) -> contracts.CasObjectResult:
         """Store inert exact body bytes."""
         return handlers.handle_playbill_store_body(require_instance_id(instance_id), content_base64)
 
     @_tool
-    def cruxible_propose_document(
+    def cruxible_document_propose(
         instance_id: InstanceId = None,
         *,
         shell: DocumentShell,
@@ -325,25 +308,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_inspect_proposal(
-        instance_id: InstanceId = None, *, proposal_id: str
-    ) -> contracts.ProposalInspection:
-        """Inspect immutable proposal evidence."""
-        return handlers.handle_playbill_inspect_proposal(
-            require_instance_id(instance_id), proposal_id
-        )
-
-    @_tool
-    def cruxible_inspect_refusal(
-        instance_id: InstanceId = None, *, proposal_id: str
-    ) -> contracts.RefusalInspection:
-        """Inspect typed admission and law diagnostics."""
-        return handlers.handle_playbill_inspect_refusal(
-            require_instance_id(instance_id), proposal_id
-        )
-
-    @_tool
-    def cruxible_review(
+    def cruxible_proposal_review(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -355,7 +320,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_prepare_approval(
+    def cruxible_proposal_approve_prepare(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -371,7 +336,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_submit_approval(
+    def cruxible_proposal_approve_submit(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -383,7 +348,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_approve(
+    def cruxible_proposal_approve(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
@@ -415,10 +380,14 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_activate(
+    def cruxible_proposal_activate(
         instance_id: InstanceId = None, *, proposal_id: str
-    ) -> contracts.WorkspaceActivationResult:
-        """Settle by compare-and-set and refresh the configured client-owned floor."""
+    ) -> contracts.ActivationReceipt:
+        """Settle an approved candidate by compare-and-set; returns the activation receipt.
+
+        The daemon delivers the floor to a workspace it serves; exact reads after
+        activation use get or query at the receipt's coordinate.
+        """
         return handlers.handle_playbill_activate(require_instance_id(instance_id), proposal_id)
 
     @_tool
@@ -601,7 +570,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_propose_claim_type(
+    def cruxible_claim_type_propose(
         instance_id: InstanceId = None,
         *,
         input: ClaimTypeInputRecord,
@@ -674,17 +643,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_authoring_create(
-        instance_id: InstanceId = None,
-        *,
-        payload: AuthoringInput,
-    ) -> contracts.AuthoringIntentViewRecord:
-        """Create or recover a daemon-owned authoring intent."""
-        return handlers.handle_playbill_authoring_create(
-            require_instance_id(instance_id), payload.model_dump(mode="json")
-        )
-
-    @_tool
     def cruxible_authoring_example(
         name: contracts.AuthoringExampleName,
         claim_id: str | None = None,
@@ -707,22 +665,11 @@ def register_tools(
         return handlers.handle_playbill_authoring_get(require_instance_id(instance_id), intent_id)
 
     @_tool
-    def cruxible_authoring_resume(
-        instance_id: InstanceId = None,
-        *,
-        intent_id: str,
-    ) -> contracts.AuthoringIntentViewRecord:
-        """Resume one durable authoring continuation."""
-        return handlers.handle_playbill_authoring_resume(
-            require_instance_id(instance_id), intent_id
-        )
-
-    @_tool
-    def cruxible_authoring_list_pending(
+    def cruxible_authoring_list(
         instance_id: InstanceId = None,
     ) -> contracts.AuthoringIntentListRecord:
         """List the authenticated writer's pending intents."""
-        return handlers.handle_playbill_authoring_list_pending(require_instance_id(instance_id))
+        return handlers.handle_playbill_authoring_list(require_instance_id(instance_id))
 
     @_tool
     def cruxible_authoring_compile(
@@ -782,11 +729,19 @@ def register_tools(
     def cruxible_authoring_submit(
         instance_id: InstanceId = None,
         *,
-        intent_id: str,
+        payload: AuthoringInput | None = None,
+        intent_id: str | None = None,
     ) -> contracts.AuthoringSubmitResultRecord:
-        """Idempotently submit one passing authoring intent."""
+        """Compile and submit a payload in one call, or submit a staged intent by ID.
+
+        With both, the payload replaces that staged intent's payload first. A
+        refused preflight returns the unsubmitted intent with its diagnostics.
+        Idempotent: resubmitting the same passing intent answers the same proposal.
+        """
         return handlers.handle_playbill_authoring_submit(
-            require_instance_id(instance_id), intent_id
+            require_instance_id(instance_id),
+            payload=None if payload is None else payload.model_dump(mode="json"),
+            intent_id=intent_id,
         )
 
     @_tool
@@ -798,20 +753,6 @@ def register_tools(
         """Read exactly what separates an intent from acceptance."""
         return handlers.handle_playbill_authoring_status(
             require_instance_id(instance_id), intent_id
-        )
-
-    @_tool
-    def cruxible_authoring_abandon_insertion(
-        instance_id: InstanceId = None,
-        *,
-        intent_id: str,
-        expectation_id: str | None = None,
-    ) -> contracts.InsertionAbandonResultRecord:
-        """Abandon a pending insertion while keeping the accepted self-source Claim."""
-        return handlers.handle_playbill_authoring_abandon_insertion(
-            require_instance_id(instance_id),
-            intent_id,
-            expectation_id,
         )
 
     @_tool
@@ -1381,26 +1322,25 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_resolution_contracts(
+    def cruxible_prediction_list(
         instance_id: InstanceId = None,
         *,
-        claim_id: str | None = None,
-        request: contracts.ResolutionContractsRequest | None = None,
+        claim: str,
     ) -> contracts.ResolutionContractsResult:
-        """Find accepted resolution contracts testing a Claim, by Claim ID.
+        """List the accepted predictions that test one Claim, by Claim ID.
 
-        The daemon resolves the Claim's accepted version. ``request`` is the
-        advanced form carrying an exact hypothesis reference; pass one or the other.
+        The daemon resolves the Claim's current accepted version and returns the
+        accepted resolution contracts whose hypothesis is that exact version.
+        Pending predictions and settlement outcomes are read with ``cruxible_get``
+        (``ResolutionContract:<name>``) and ``cruxible_next``.
         """
-        if (claim_id is None) == (request is None):
-            raise ValueError("pass exactly one of claim_id or request")
-        return handlers.handle_playbill_resolution_contracts(
+        return handlers.handle_playbill_prediction_list(
             require_instance_id(instance_id),
-            request or contracts.ResolutionContractsRequest(hypothesis=cast(str, claim_id)),
+            contracts.ResolutionContractsRequest(hypothesis=claim),
         )
 
     @_tool
-    def cruxible_predict(
+    def cruxible_prediction_propose(
         instance_id: InstanceId = None,
         *,
         request: contracts.PredictRequest,
@@ -1409,7 +1349,7 @@ def register_tools(
         return handlers.handle_playbill_predict(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_settle(
+    def cruxible_prediction_settle(
         instance_id: InstanceId = None,
         *,
         prediction_id: str,

@@ -31,18 +31,6 @@ from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     parse_capture_envelope,
 )
-from cruxible_client.contracts.claims import (
-    claim_path,
-    claim_statement_digest,
-    parse_claim,
-)
-from cruxible_client.contracts.declared_blocks import (
-    ParsedProjectionBlock,
-    ProjectionClaimBacking,
-    ProjectionMarkerError,
-    ProjectionProcessingLimitExceeded,
-    parse_projection_blocks,
-)
 from cruxible_client.contracts.errors import CasError, ProposalIntegrityError
 from cruxible_client.contracts.source_references import (
     ExternalSourceReference,
@@ -59,7 +47,6 @@ from cruxible_core.coverage.contracts import (
     CoverageAccessProfile,
     CoverageCardBudget,
     CoverageCommitmentMaterializationCorrupt,
-    CoverageLineOverlay,
     CoverageRequestV1,
     CoverageResultV3,
     LogicalSourceIdentity,
@@ -79,13 +66,11 @@ from cruxible_core.coverage.manifest import (
     write_coverage_manifest_v2,
 )
 from cruxible_core.coverage.resolver import (
-    BoundPublicationObservation,
     resolve_coverage_v3,
 )
 from cruxible_core.indexes.evidence.citation_coverage import coverage_rows
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import AcceptedCoordinate
-from cruxible_core.service.proposals.publications import bound_publication_registrations
 from cruxible_core.storage.cas import BodyAccessContext
 
 COVERAGE_ACCESS_PROFILE_ID = "cruxible.coverage.read"
@@ -406,95 +391,6 @@ def _publish_manifest_v2(
     return candidate
 
 
-def _line_overlay(content: bytes, *, start_byte: int, end_byte: int) -> CoverageLineOverlay:
-    last_byte = max(start_byte, end_byte - 1)
-    return CoverageLineOverlay(
-        start_byte=start_byte,
-        end_byte=end_byte,
-        start_line=content.count(b"\n", 0, start_byte) + 1,
-        end_line=content.count(b"\n", 0, last_byte) + 1,
-    )
-
-
-def _bound_publication_observations(
-    instance: PlaybillInstance,
-    *,
-    at: AcceptedCoordinate,
-    observations: Sequence[WorkingSourceObservation],
-) -> tuple[BoundPublicationObservation, ...]:
-    """Join confirmed publication protocol state to parsed working blocks."""
-
-    registrations = bound_publication_registrations(instance)
-    if registrations is None:
-        return ()
-    by_source = {
-        item.source.identity: item for item in observations if item.source.plane == "external"
-    }
-    parsed_by_source: dict[str, tuple[ParsedProjectionBlock, ...]] = {}
-    result: dict[tuple[bytes, bytes, bytes], BoundPublicationObservation] = {}
-    for registration in registrations:
-        preparation = registration.preparation
-        observed = by_source.get(preparation.source_id)
-        if observed is None:
-            continue
-        path = claim_path(registration.claim_identity)
-        raw_claim = instance.blob_at(at.git_oid, path)
-        if raw_claim is None:
-            continue
-        claim = parse_claim(raw_claim, path=path)
-        if (
-            claim.lifecycle.state != "live"
-            or claim_statement_digest(claim.statement).tagged != registration.claim_statement_digest
-            or preparation.body_digest != preparation.stamp.body_digest
-        ):
-            continue
-        expected_backing = ProjectionClaimBacking(
-            identity=claim.identity,
-            statement_digest=registration.claim_statement_digest,
-        )
-        if expected_backing not in preparation.stamp.backing:
-            continue
-        if preparation.source_id not in parsed_by_source:
-            try:
-                parsed_by_source[preparation.source_id] = parse_projection_blocks(
-                    observed.content,
-                    source_id=preparation.source_id,
-                    manifests=observed.manifest_bytes,
-                )
-            except ProjectionProcessingLimitExceeded:
-                raise
-            except ProjectionMarkerError:
-                parsed_by_source[preparation.source_id] = ()
-        matches = tuple(
-            block
-            for block in parsed_by_source[preparation.source_id]
-            if block.block_id == preparation.block_id and block.stamp == preparation.stamp
-        )
-        if len(matches) != 1:
-            continue
-        block = matches[0]
-        body_start = block.body_start
-        body_end = block.body_end
-        item = BoundPublicationObservation(
-            source=LogicalSourceIdentity(
-                plane="external",
-                identity=preparation.source_id,
-            ),
-            block_id=preparation.block_id,
-            claim_path=path,
-            claim_statement_digest=registration.claim_statement_digest,
-            expected_body_digest=preparation.body_digest,
-            observed_body_digest=block.body_digest,
-            line_overlay=_line_overlay(
-                observed.content,
-                start_byte=body_start,
-                end_byte=body_end,
-            ),
-        )
-        result[item.sort_key] = item
-    return tuple(result[key] for key in sorted(result))
-
-
 def service_resolve_playbill_coverage(
     instance: PlaybillInstance,
     *,
@@ -556,11 +452,6 @@ def service_resolve_playbill_coverage(
         ),
         additional_window_citation_ids=frozenset(
             citation_id for _source, citation_id, _capture in retired_associations
-        ),
-        publication_observations=_bound_publication_observations(
-            instance,
-            at=coordinate,
-            observations=observations,
         ),
     )
 

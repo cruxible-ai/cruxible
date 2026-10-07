@@ -49,15 +49,12 @@ from cruxible_client.contracts.declared_blocks import (
     render_projection_closing,
     render_projection_opening,
 )
-from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.errors import ConfigError
 from cruxible_core.evidence.claim_attestation_store import (
     STORE_DIRECTORY as CLAIM_ATTESTATION_STORE_DIRECTORY,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime import host_api
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import (
@@ -80,7 +77,6 @@ from cruxible_core.service.discovery.query import build_accepted_query_facts
 from cruxible_core.service.evidence.evidence import service_evaluate_playbill_claim_verdict
 from cruxible_core.service.proposals.publications import (
     registered_projection_blocks,
-    reset_bound_publication_registration_memo,
     service_declare_playbill_block,
     service_depublish_playbill_block,
 )
@@ -175,10 +171,8 @@ def _cold_memos() -> Iterator[None]:
     """Every law here is about a cold read or a deliberate second one."""
 
     reset_claim_resolution_memo()
-    reset_bound_publication_registration_memo()
     yield
     reset_claim_resolution_memo()
-    reset_bound_publication_registration_memo()
 
 
 def _claim_backings(instance: PlaybillInstance) -> tuple[ProjectionClaimBacking, ...]:
@@ -266,8 +260,6 @@ def _depublish(
 ) -> Any:
     return service_depublish_playbill_block(
         instance,
-        coordinator=AuthoringIntentCoordinator.for_instance(instance),
-        actor=AuthenticatedActor(actor_id="owner"),
         source_id=source_id,
         block_id=block_id,
         dry_run=dry_run,
@@ -466,10 +458,7 @@ def test_a_repin_declared_block_is_registered_under_the_authors_own_id(
     folded = registered_projection_blocks(instance)
     assert folded is not None
     registration = folded[("corpus.runbook", "held-rows")]
-    assert registration.origin == "declaration"
-    assert registration.declaration is not None
     assert registration.declaration.declared_by == "owner"
-    assert registration.publication is None
     assert _rows(instance, request, reason="unregistered_projection_block") == ()
 
 
@@ -531,21 +520,12 @@ def test_depublishing_a_declared_block_releases_it_from_the_fold(tmp_path: Path)
         lambda: _depublish(
             instance, source_id="corpus.runbook", block_id="held-rows", dry_run=True
         ),
-        # The test builds its coordinator outside the service; the served
-        # door builds it behind the preview's guards.
-        warm=lambda: AuthoringIntentCoordinator.for_instance(instance),
     )
-    assert (previewed.origin, previewed.outcome) == ("declaration", "would_depublish")
+    assert previewed.outcome == "would_depublish"
     assert ("corpus.runbook", "held-rows") in (registered_projection_blocks(instance) or {})
 
     result = _depublish(instance, source_id="corpus.runbook", block_id="held-rows")
-    assert result.origin == "declaration"
     assert result.outcome == "depublished"
-    # A declaration has no publishing Claim, no intent and no expectation, and
-    # the result must not invent any of the three.
-    assert result.intent_id is None
-    assert result.expectation_id is None
-    assert result.claim_identity is None
 
     released = registered_projection_blocks(instance)
     assert released == {}
@@ -616,11 +596,6 @@ def test_one_next_folds_the_durable_registration_stream_exactly_once(
     """
 
     instance, _owner = seed_claims(tmp_path)
-    (instance.root / instance.descriptor.storage.exhaust / "authoring-intents").mkdir(
-        mode=0o700, parents=True, exist_ok=True
-    )
-    reset_bound_publication_registration_memo()
-
     observation = _declared_projection_observation(instance)
     assert observation.source_observations is not None
     source = observation.source_observations[0]
@@ -640,24 +615,15 @@ def test_one_next_folds_the_durable_registration_stream_exactly_once(
         }
     )
 
-    folds = 0
-    original_latest = AuthoringIntentStore.publication_states
-
-    def counting_latest(self: AuthoringIntentStore) -> Any:
-        nonlocal folds
-        folds += 1
-        return original_latest(self)
-
     reads = 0
-    original_fold = next_service._registered_publication_blocks
+    original_fold = next_service._registered_blocks
 
     def counting_fold(instance_: PlaybillInstance) -> Any:
         nonlocal reads
         reads += 1
         return original_fold(instance_)
 
-    monkeypatch.setattr(AuthoringIntentStore, "publication_states", counting_latest)
-    monkeypatch.setattr(next_service, "_registered_publication_blocks", counting_fold)
+    monkeypatch.setattr(next_service, "_registered_blocks", counting_fold)
 
     service_playbill_next(
         instance,
@@ -669,10 +635,8 @@ def test_one_next_folds_the_durable_registration_stream_exactly_once(
         ),
     )
 
-    # Two observed blocks, one fold: the answer does not get re-derived per
-    # block, and the retirement release reads the folded result.
+    # Two observed blocks, one fold: the answer does not get re-derived per block.
     assert reads == 1
-    assert folds == 1
 
 
 # --------------------------------------------------------------------------
@@ -952,8 +916,6 @@ def test_a_head_accepted_before_the_release_refuses_a_pinned_depublish(
     with pytest.raises(ChangeRefusedError) as refused:
         publications.service_depublish_playbill_block(
             instance,
-            coordinator=AuthoringIntentCoordinator.for_instance(instance),
-            actor=AuthenticatedActor(actor_id="owner"),
             source_id="corpus.runbook",
             block_id="held-rows",
             dry_run=False,

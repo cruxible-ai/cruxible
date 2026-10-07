@@ -26,7 +26,7 @@ def test_a_refused_line_run_names_the_code_and_the_runnable_repair(capsys) -> No
     assert out == (
         "audit.sign-line: admission_refused\n"
         "Refused: line_mandate_required: This Line can propose or settle and has no mandate.\n"
-        "Repair: cruxible authoring create --example procedure-mandate\n"
+        "Repair: cruxible authoring example procedure-mandate\n"
         "Next: terminal\n"
     )
 

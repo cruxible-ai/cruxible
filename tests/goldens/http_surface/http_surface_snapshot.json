@@ -18,23 +18,16 @@
     "POST": "AuthoringPreflightResult"
   },
   "/api/v1/{instance_id}/authoring/intents": {
-    "GET": "AuthoringIntentListRecord",
-    "POST": "AuthoringIntentViewRecord"
+    "GET": "AuthoringIntentListRecord"
   },
   "/api/v1/{instance_id}/authoring/intents/{intent_id}": {
     "GET": "AuthoringIntentViewRecord"
-  },
-  "/api/v1/{instance_id}/authoring/intents/{intent_id}/insertion/abandon": {
-    "POST": "InsertionAbandonResultRecord"
   },
   "/api/v1/{instance_id}/authoring/intents/{intent_id}/preflight": {
     "POST": "AuthoringPreflightResult"
   },
   "/api/v1/{instance_id}/authoring/intents/{intent_id}/rebase": {
     "POST": "AuthoringIntentViewRecord"
-  },
-  "/api/v1/{instance_id}/authoring/intents/{intent_id}/resume": {
-    "GET": "AuthoringIntentViewRecord"
   },
   "/api/v1/{instance_id}/authoring/intents/{intent_id}/status": {
     "GET": "CandidateStatusRecord"
@@ -43,7 +36,7 @@
     "POST": "AuthoringSubmitResultRecord"
   },
   "/api/v1/{instance_id}/authoring/submit": {
-    "POST": "AuthoringSubmitResultRecord"
+    "POST": "AuthoringSubmitResultRecord | AuthoringPreflightResult"
   },
   "/api/v1/{instance_id}/blocks/declare": {
     "POST": "BlockDeclareResult"
@@ -62,9 +55,6 @@
   },
   "/api/v1/{instance_id}/claim-attestations/recover": {
     "POST": null
-  },
-  "/api/v1/{instance_id}/claim-types/evidence-rules/upgrade": {
-    "POST": "EvidenceRuleUpgradeResult"
   },
   "/api/v1/{instance_id}/claim-types/migrations": {
     "POST": "ClaimTypeMigrationResultV1 | ClaimTypeMigrationPreflight | ClaimTypeMigrationResultV2 | ClaimTypeMigrationResult"
@@ -174,6 +164,9 @@
   "/api/v1/{instance_id}/predictions": {
     "POST": "PredictResult"
   },
+  "/api/v1/{instance_id}/predictions/query": {
+    "POST": "ResolutionContractsResult"
+  },
   "/api/v1/{instance_id}/predictions/{prediction_id}/settlements": {
     "POST": "SettleResult"
   },
@@ -213,9 +206,6 @@
   "/api/v1/{instance_id}/proposals": {
     "GET": "ProposalList"
   },
-  "/api/v1/{instance_id}/proposals/{proposal_id}": {
-    "GET": "ProposalInspection"
-  },
   "/api/v1/{instance_id}/proposals/{proposal_id}/activate": {
     "POST": "ActivationReceipt"
   },
@@ -228,14 +218,8 @@
   "/api/v1/{instance_id}/proposals/{proposal_id}/readmit": {
     "POST": "ProposalReadmitResult"
   },
-  "/api/v1/{instance_id}/proposals/{proposal_id}/refusal": {
-    "GET": "RefusalInspection"
-  },
   "/api/v1/{instance_id}/proposals/{proposal_id}/review": {
     "POST": "ProposalReview"
-  },
-  "/api/v1/{instance_id}/proposals/{proposal_id}/status": {
-    "GET": "ProposalListEntry"
   },
   "/api/v1/{instance_id}/proposals/{proposal_id}/withdraw": {
     "POST": "ProposalWithdrawResult"
@@ -248,9 +232,6 @@
   },
   "/api/v1/{instance_id}/query": {
     "POST": "QueryResultRecord"
-  },
-  "/api/v1/{instance_id}/resolution-contracts/query": {
-    "POST": "ResolutionContractsResult"
   },
   "/api/v1/{instance_id}/retire": {
     "POST": "WriteOutcome"

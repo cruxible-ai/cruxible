@@ -38,6 +38,7 @@ from cruxible_client.contracts.captures import (
     foreign_source_capture_contract,
     render_capture_contract,
 )
+from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
@@ -46,7 +47,6 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
-from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequest
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimEvidenceAdmissionPolicy,
@@ -69,7 +69,7 @@ from cruxible_core.service.authoring.documents import (
     service_inspect_playbill_proposal,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.claims.evidence_rule_upgrade import service_upgrade_evidence_rules
+from cruxible_core.service.claims.claim_type_upgrade import service_upgrade_claim_types
 from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring.test_authoring_preflight import _self_source_payload
 from tests.test_claims.test_claims import _claim_type, _subject
@@ -457,16 +457,16 @@ def test_the_upgrade_converts_exact_rules_and_carries_the_claims(world: _World) 
     world.seed(_v5_type(_digest_rule(_digest(ORIGINAL))))
     claim_id = world.observe(b"status: ready")
 
-    result = service_upgrade_evidence_rules(
+    result = service_upgrade_claim_types(
         world.instance,
-        request=EvidenceRuleUpgradeRequest(dry_run=False),
+        request=ClaimTypeUpgradeRequest(dry_run=False, revision_evidence="accumulate"),
         actor_id="owner",
         timestamp=world.timestamp(),
     )
 
     assert result.status == "proposed", result
-    assert [item.claim_type for item in result.converted] == [f"ClaimType:{PREDICATE}"]
-    assert result.converted[0].widened_versions == ()
+    assert [item.claim_type for item in result.upgraded] == [f"ClaimType:{PREDICATE}"]
+    assert result.upgraded[0].widened_versions == ()
     assert result.carried_claims == 1
     assert result.proposal_id is not None
     type_path = claim_type_path(PREDICATE)
@@ -477,7 +477,7 @@ def test_the_upgrade_converts_exact_rules_and_carries_the_claims(world: _World) 
     world.activate_proposal(result.proposal_id)
 
     upgraded = parse_claim_type(world.tree()[type_path], path=type_path)
-    assert upgraded.artifact_format == "playbill-claim-type-v6"
+    assert upgraded.artifact_format == "playbill-claim-type-v7"
     assert upgraded.evidence_admission_policy.rules[0].names_capture_contract(
         digest=_digest(ORIGINAL), identity=IDENTITY.qualified
     )
@@ -507,9 +507,9 @@ def test_the_upgrade_refuses_rules_that_would_start_matching_the_same_evidence(
     tree[claim_type_path(PREDICATE)] = render_claim_type(split)
     world.accept(tree, name="split-rules")
 
-    result = service_upgrade_evidence_rules(
+    result = service_upgrade_claim_types(
         world.instance,
-        request=EvidenceRuleUpgradeRequest(dry_run=False),
+        request=ClaimTypeUpgradeRequest(dry_run=False, revision_evidence="accumulate"),
         actor_id="owner",
         timestamp=world.timestamp(),
     )
@@ -754,9 +754,9 @@ def test_the_upgrade_moves_original_v1_claim_types_and_their_verdicts_still_read
     world.seed(original)
     claim_id = world.observe(b"status: ready")
 
-    result = service_upgrade_evidence_rules(
+    result = service_upgrade_claim_types(
         world.instance,
-        request=EvidenceRuleUpgradeRequest(dry_run=False),
+        request=ClaimTypeUpgradeRequest(dry_run=False, revision_evidence="accumulate"),
         actor_id="owner",
         timestamp=world.timestamp(),
     )
@@ -766,7 +766,7 @@ def test_the_upgrade_moves_original_v1_claim_types_and_their_verdicts_still_read
 
     type_path = claim_type_path(PREDICATE)
     assert parse_claim_type(world.tree()[type_path], path=type_path).artifact_format == (
-        "playbill-claim-type-v6"
+        "playbill-claim-type-v7"
     )
     service_evaluate_playbill_claim_verdict(
         world.instance,
@@ -918,9 +918,9 @@ def test_the_upgrade_previews_by_default_and_commits_only_at_its_coordinate(
 
     preview = assert_writes_nothing(
         [world.instance.root.parent],
-        lambda: service_upgrade_evidence_rules(
+        lambda: service_upgrade_claim_types(
             world.instance,
-            request=EvidenceRuleUpgradeRequest(),
+            request=ClaimTypeUpgradeRequest(revision_evidence="accumulate"),
             actor_id="owner",
             timestamp=world.timestamp(),
         ),
@@ -932,9 +932,11 @@ def test_the_upgrade_previews_by_default_and_commits_only_at_its_coordinate(
     assert preview.coordinate is not None
     assert world.tree() == tree_before
     assert not service_list_playbill_proposals(world.instance, status="open").entries
-    committed = service_upgrade_evidence_rules(
+    committed = service_upgrade_claim_types(
         world.instance,
-        request=EvidenceRuleUpgradeRequest(dry_run=False, at=preview.coordinate.git_oid),
+        request=ClaimTypeUpgradeRequest(
+            dry_run=False, revision_evidence="accumulate", at=preview.coordinate.git_oid
+        ),
         actor_id="owner",
         timestamp=world.timestamp(),
     )
@@ -942,9 +944,11 @@ def test_the_upgrade_previews_by_default_and_commits_only_at_its_coordinate(
     world.activate_proposal(committed.proposal_id)
 
     with pytest.raises(ChangeRefusedError) as moved:
-        service_upgrade_evidence_rules(
+        service_upgrade_claim_types(
             world.instance,
-            request=EvidenceRuleUpgradeRequest(dry_run=False, at=preview.coordinate.git_oid),
+            request=ClaimTypeUpgradeRequest(
+                dry_run=False, revision_evidence="accumulate", at=preview.coordinate.git_oid
+            ),
             actor_id="owner",
             timestamp=world.timestamp(),
         )

@@ -107,7 +107,7 @@ _LIST = "orient"
 _NEXT_PROFILE = CoverageAccessProfile(
     profile_id="orient", permitted_access_classes=("instance", "public")
 )
-_UPGRADE_MARKERS = ("evidence_rules_upgrade", "upgrade-evidence-rules", "evidence-rules")
+_UPGRADE_MARKERS = ("claim_type_upgrade", "claim-type upgrade", "upgrade_claim_types")
 
 
 def _request_invalid(message: str) -> ReadRefusalError:
@@ -445,7 +445,7 @@ def _hoist_evidence(
 
 @dataclass(frozen=True)
 class _Call:
-    verb: Literal["orient", "query", "get", "next", "evidence_rules_upgrade"]
+    verb: Literal["orient", "query", "get", "next", "claim_type_upgrade"]
     args: tuple[tuple[str, object], ...] = ()
 
 
@@ -491,8 +491,8 @@ def render_orient_call(call: _Call, surface: OrientSurface) -> str:
         tool = f"cruxible_{call.verb}"
         return f"{tool}({', '.join(f'{key}={_py(value)}' for key, value in call.args)})"
     if surface == "sdk":
-        if call.verb == "evidence_rules_upgrade":
-            return "client.upgrade_evidence_rules(instance_id)"
+        if call.verb == "claim_type_upgrade":
+            return "cx.upgrade_claim_types()"
         if call.verb == "next":
             return "cx.next(expiring_within=Duration.days(count=7))"
         if call.verb == "get":
@@ -503,8 +503,8 @@ def render_orient_call(call: _Call, surface: OrientSurface) -> str:
             + ")"
         )
     # cli
-    if call.verb == "evidence_rules_upgrade":
-        return "cruxible claim-type upgrade-evidence-rules"
+    if call.verb == "claim_type_upgrade":
+        return "cruxible claim-type upgrade"
     if call.verb == "next":
         return "cruxible next"
     if call.verb == "get":
@@ -619,7 +619,7 @@ def _attention(
     elif state.digest_named:
         noun = "ClaimType still names" if state.digest_named == 1 else "ClaimTypes still name"
         notes.append(
-            f"{state.digest_named} {noun} CaptureContracts by digest; run evidence_rules_upgrade"
+            f"{state.digest_named} {noun} CaptureContracts by digest; run claim-type upgrade"
         )
         upgrade = True
     arms = _arms(instance, evaluation_time=evaluation_time)
@@ -943,7 +943,7 @@ def service_playbill_orient(
     if attention.next_items:
         calls.append(_Call("next"))
     if upgrade:
-        calls.append(_Call("evidence_rules_upgrade"))
+        calls.append(_Call("claim_type_upgrade"))
     if len(state.queries) > ORIENT_DEFAULT_QUERIES:
         calls.append(_Call("orient", (("section", "queries"),)))
     if state.interfaces:
