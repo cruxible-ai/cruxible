@@ -58,6 +58,10 @@ def records(tmp_path_factory):
     instance, _ = initialize_local(tmp_path_factory.mktemp("review-summary-world"))
     current = _submit(instance).candidate
     assert current is not None
+    # Submit queues the advisory review-ref refresh on a background thread, and
+    # it reads this candidate's summary through the module cache. Let it finish
+    # here, or it can land in a later test after that test cleared the cache.
+    instance.settled_workspace_advertisement()
     return (_legacy(), current)
 
 
