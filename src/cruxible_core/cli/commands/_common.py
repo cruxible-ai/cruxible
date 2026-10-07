@@ -18,6 +18,8 @@ from cruxible_core.cli.context import (
     CliContextState,
     clear_cli_context,
     load_cli_context,
+    normalized_transport,
+    principal_binding,
     save_cli_context,
 )
 from cruxible_core.server.config import get_runtime_bearer_token
@@ -155,11 +157,7 @@ def _emit_json(data: Any, *, sort_keys: bool = False) -> None:
 
 
 def _transport_target(obj: Mapping[str, Any]) -> str | None:
-    if obj.get("server_url"):
-        return str(obj["server_url"]).rstrip("/")
-    if obj.get("server_socket"):
-        return f"unix://{Path(str(obj['server_socket'])).expanduser().resolve()}"
-    return None
+    return normalized_transport(obj.get("server_url"), obj.get("server_socket"))
 
 
 def _target_source_qualifier(instance_source: str, transport_source: str) -> str:
@@ -353,9 +351,15 @@ def _remember_principal_settings(
 ) -> None:
     """Remember a principal's settings file so the CLI can load it (and act as it)."""
 
+    transport = _transport_target(_root_ctx_obj())
+    if transport is None:  # pragma: no cover - settings are written only in server mode
+        return
     save_cli_context(
         load_cli_context().remember_principal(
-            instance_id, principal_id, settings_path, activate=activate
+            principal_binding(transport, instance_id),
+            principal_id,
+            settings_path,
+            activate=activate,
         )
     )
 

@@ -12,6 +12,27 @@ from typing import Mapping
 from cruxible_core.errors import ConfigError
 
 
+def normalized_transport(server_url: str | None, server_socket: str | None) -> str | None:
+    """One daemon endpoint as the context compares it: a URL, or ``unix://<realpath>``."""
+
+    if server_url:
+        return server_url.rstrip("/")
+    if server_socket:
+        return f"unix://{Path(server_socket).expanduser().resolve()}"
+    return None
+
+
+def principal_binding(transport: str, instance_id: str) -> str:
+    """The key remembered principals live under: one instance on one daemon endpoint.
+
+    Instance IDs are not unique across daemons, so a credential remembered for
+    an instance on one daemon is never offered to a same-named instance on
+    another.
+    """
+
+    return f"{instance_id}@{transport}"
+
+
 @dataclass(frozen=True)
 class RememberedPrincipals:
     """The principal settings files the CLI knows for one instance, and which it acts as.
@@ -38,17 +59,14 @@ class CliContextState:
     server_socket: str | None = None
     instance_id: str | None = None
     instance_transport: str | None = None
-    #: Per instance ID: the principal settings files the CLI knows and loads.
+    #: Per ``principal_binding(transport, instance)``: the principal settings
+    #: files the CLI knows for that instance on that daemon, and the active one.
     principals: Mapping[str, RememberedPrincipals] = field(default_factory=dict)
 
     def bound_instance_transport(self) -> str | None:
         if self.instance_transport:
             return self.instance_transport
-        if self.server_url:
-            return self.server_url.rstrip("/")
-        if self.server_socket:
-            return f"unix://{Path(self.server_socket).expanduser().resolve()}"
-        return None
+        return normalized_transport(self.server_url, self.server_socket)
 
     def as_json(self) -> dict[str, object]:
         payload: dict[str, object] = {}
@@ -68,26 +86,26 @@ class CliContextState:
         return payload
 
     def remember_principal(
-        self, instance_id: str, principal_id: str, settings_path: Path, *, activate: bool
+        self, binding: str, principal_id: str, settings_path: Path, *, activate: bool
     ) -> CliContextState:
         """This state with one principal's settings file known (and optionally active)."""
 
-        entry = self.principals.get(instance_id, RememberedPrincipals())
+        entry = self.principals.get(binding, RememberedPrincipals())
         updated = RememberedPrincipals(
             active=principal_id if activate else entry.active,
             settings={**entry.settings, principal_id: str(settings_path)},
         )
-        return replace(self, principals={**self.principals, instance_id: updated})
+        return replace(self, principals={**self.principals, binding: updated})
 
-    def select_principal(self, instance_id: str, principal_id: str) -> CliContextState:
-        """This state acting as one already-known principal of ``instance_id``."""
+    def select_principal(self, binding: str, principal_id: str) -> CliContextState:
+        """This state acting as one already-known principal under ``binding``."""
 
-        entry = self.principals[instance_id]
+        entry = self.principals[binding]
         return replace(
             self,
             principals={
                 **self.principals,
-                instance_id: RememberedPrincipals(active=principal_id, settings=entry.settings),
+                binding: RememberedPrincipals(active=principal_id, settings=entry.settings),
             },
         )
 
@@ -140,14 +158,14 @@ def _load_principals(raw: object, path: Path) -> dict[str, RememberedPrincipals]
     if raw is None:
         return {}
     malformed = ConfigError(
-        f"CLI context field 'principals' at {path} must map instance IDs to "
+        f"CLI context field 'principals' at {path} must map INSTANCE@TRANSPORT keys to "
         "{active, settings} objects"
     )
     if not isinstance(raw, dict):
         raise malformed
     principals: dict[str, RememberedPrincipals] = {}
     for instance, entry in raw.items():
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or "@" not in str(instance):
             raise malformed
         active = entry.get("active")
         settings = entry.get("settings", {})

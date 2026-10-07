@@ -18,7 +18,12 @@ from cruxible_client.authoring.context import (
 )
 from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
-from cruxible_core.cli.context import CliContextState, load_cli_context
+from cruxible_core.cli.context import (
+    CliContextState,
+    load_cli_context,
+    normalized_transport,
+    principal_binding,
+)
 from cruxible_core.cli.principal_settings import (
     PRINCIPAL_ID_ENV,
     PRINCIPAL_KEY_ENV,
@@ -970,11 +975,19 @@ def cli(
             "workspace_attached": resolved.workspace_attached,
         }
     )
-    _load_remembered_principal(ctx, stored, resolved.instance_id)
+    _load_remembered_principal(
+        ctx,
+        stored,
+        resolved.instance_id,
+        normalized_transport(settings.server_url, settings.server_socket),
+    )
 
 
 def _load_remembered_principal(
-    ctx: click.Context, stored: CliContextState, instance_id: str | None
+    ctx: click.Context,
+    stored: CliContextState,
+    instance_id: str | None,
+    transport: str | None,
 ) -> None:
     """Act as the principal the context remembers for this instance, as if its file was sourced.
 
@@ -983,6 +996,10 @@ def _load_remembered_principal(
     process that names its own principal (--principal-id, CRUXIBLE_PRINCIPAL_ID)
     or carries its own key or credential keeps them: an agent launched with its
     own settings file is never overridden.
+
+    Settings are remembered per instance on one daemon endpoint, and the file
+    must name that same endpoint: a credential is never offered to another
+    daemon, whichever way (flag, environment or workspace) the command chose it.
     """
 
     obj = ctx.obj
@@ -992,12 +1009,25 @@ def _load_remembered_principal(
             "environment" if source is click.core.ParameterSource.ENVIRONMENT else "explicit"
         )
         return
-    if instance_id is None or any(
-        os.environ.get(name) for name in (PRINCIPAL_KEY_ENV, PRINCIPAL_TOKEN_ENV)
+    if (
+        instance_id is None
+        or transport is None
+        or any(os.environ.get(name) for name in (PRINCIPAL_KEY_ENV, PRINCIPAL_TOKEN_ENV))
     ):
         return
-    entry = stored.principals.get(instance_id)
+    entry = stored.principals.get(principal_binding(transport, instance_id))
     if entry is None or entry.active is None or entry.active not in entry.settings:
+        elsewhere = sorted(
+            key.partition("@")[2]
+            for key, item in stored.principals.items()
+            if key.partition("@")[0] == instance_id and item.active is not None
+        )
+        if elsewhere:
+            click.echo(
+                f"warning: principal settings for {instance_id} are remembered for "
+                f"{', '.join(elsewhere)}, not {transport}; acting as no principal",
+                err=True,
+            )
         return
     path = Path(entry.settings[entry.active])
     try:
@@ -1010,11 +1040,15 @@ def _load_remembered_principal(
             err=True,
         )
         return
-    if settings.instance_id != instance_id or settings.principal_id != entry.active:
+    if (
+        settings.instance_id != instance_id
+        or settings.principal_id != entry.active
+        or settings.transport != transport
+    ):
         click.echo(
             f"warning: {path} names principal {settings.principal_id} of instance "
-            f"{settings.instance_id}, not {entry.active} of {instance_id}; continuing "
-            "without a principal",
+            f"{settings.instance_id} at {settings.transport}, not {entry.active} of "
+            f"{instance_id} at {transport}; acting as no principal",
             err=True,
         )
         return

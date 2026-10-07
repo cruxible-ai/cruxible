@@ -19,6 +19,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from cruxible_core.cli.context import normalized_transport
+
 PRINCIPAL_SETTINGS_FILE = "cruxible.env"
 PRINCIPAL_KEY_ENV = "CRUXIBLE_PRINCIPAL_KEY"
 _TOKEN_ENV = "CRUXIBLE_SERVER_BEARER_TOKEN"
@@ -54,6 +56,8 @@ class PrincipalSettings:
     """What a principal's ``cruxible.env`` names: who acts, on what, with which key."""
 
     path: Path
+    #: The daemon endpoint the file was written for (``normalized_transport``).
+    transport: str | None
     instance_id: str
     principal_id: str
     private_key_path: str
@@ -92,6 +96,9 @@ def read_principal_settings(path: Path) -> PrincipalSettings:
         raise ValueError(f"principal settings {path} name no {', '.join(missing)}")
     return PrincipalSettings(
         path=path,
+        transport=normalized_transport(
+            values.get("CRUXIBLE_SERVER_URL"), values.get("CRUXIBLE_SERVER_SOCKET")
+        ),
         instance_id=values["CRUXIBLE_INSTANCE_ID"],
         principal_id=values[PRINCIPAL_ID_ENV],
         private_key_path=values[PRINCIPAL_KEY_ENV],

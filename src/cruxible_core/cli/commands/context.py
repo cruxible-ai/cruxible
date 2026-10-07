@@ -15,9 +15,18 @@ from cruxible_core.cli.commands._common import (
     _persist_cli_context,
     _root_ctx_obj,
 )
-from cruxible_core.cli.context import CliContextState, save_cli_context
+from cruxible_core.cli.context import (
+    CliContextState,
+    normalized_transport,
+    principal_binding,
+    save_cli_context,
+)
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.cli.principal_settings import default_key_dir, principal_settings_path
+from cruxible_core.cli.principal_settings import (
+    default_key_dir,
+    principal_settings_path,
+    read_principal_settings,
+)
 from cruxible_core.server.config import resolve_server_settings
 
 
@@ -225,31 +234,57 @@ def context_use(instance_id: str | None, principal_id: str | None) -> None:
             instance_id=instance_id,
             instance_transport=existing.bound_instance_transport(),
         )
+    binding: str | None = None
     if principal_id is not None:
         target = state.instance_id
-        if target is None:
+        transport = normalized_transport(state.server_url, state.server_socket)
+        if target is None or transport is None:
             raise click.UsageError(
                 "No active instance to act on; repair: `cruxible context use INSTANCE_ID "
                 f"--principal {principal_id}`"
             )
-        state = _with_principal(state, target, principal_id)
+        binding = principal_binding(transport, target)
+        state = _with_principal(state, binding, target, transport, principal_id)
     save_cli_context(state)
     if instance_id is not None:
         click.echo(f"Active instance: {instance_id}")
-    if principal_id is not None:
-        settings = state.principals[str(state.instance_id)].settings[principal_id]
+    if principal_id is not None and binding is not None:
+        settings = state.principals[binding].settings[principal_id]
         click.echo(f"Active principal: {principal_id} (settings {settings})")
 
 
-def _with_principal(state: CliContextState, instance_id: str, principal_id: str) -> CliContextState:
-    """``state`` acting as ``principal_id``: a remembered one, or one at the default key dir."""
+def _with_principal(
+    state: CliContextState,
+    binding: str,
+    instance_id: str,
+    transport: str,
+    principal_id: str,
+) -> CliContextState:
+    """``state`` acting as ``principal_id``: a remembered one, or one at the default key dir.
 
-    known = state.principals.get(instance_id)
+    A file found at the default key dir is adopted only when it was written for
+    this instance on this daemon endpoint.
+    """
+
+    known = state.principals.get(binding)
     if known is not None and principal_id in known.settings:
-        return state.select_principal(instance_id, principal_id)
+        return state.select_principal(binding, principal_id)
     default = principal_settings_path(default_key_dir(instance_id, principal_id))
     if default.is_file():
-        return state.remember_principal(instance_id, principal_id, default, activate=True)
+        try:
+            found = read_principal_settings(default)
+        except (OSError, ValueError) as exc:
+            raise click.UsageError(f"Cannot read {default}: {exc}") from exc
+        if (found.instance_id, found.principal_id, found.transport) != (
+            instance_id,
+            principal_id,
+            transport,
+        ):
+            raise click.UsageError(
+                f"{default} was written for {found.principal_id} of {found.instance_id} at "
+                f"{found.transport}, not {principal_id} of {instance_id} at {transport}"
+            )
+        return state.remember_principal(binding, principal_id, default, activate=True)
     remembered = ", ".join(sorted(known.settings)) if known is not None else ""
     raise click.UsageError(
         f"No settings are remembered for principal {principal_id} on {instance_id} "

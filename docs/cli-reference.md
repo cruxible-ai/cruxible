@@ -88,7 +88,11 @@ sourcing is needed; `context use --principal ID` switches, and `context show`
 names the principal and where it came from. A process that sets its own
 principal (`--principal-id`, `CRUXIBLE_PRINCIPAL_ID`, `CRUXIBLE_PRINCIPAL_KEY`
 or `CRUXIBLE_SERVER_BEARER_TOKEN`) keeps it, so an agent launched with its own
-`cruxible.env` works unchanged.
+`cruxible.env` works unchanged. Settings are remembered for one instance on one
+daemon endpoint (URL or socket), and the file must name that endpoint: when a
+command targets another daemon, by flag, environment or workspace config, the
+CLI loads nothing and acts as no principal, so a credential never reaches a
+daemon it was not issued by.
 
 ## Previews
 

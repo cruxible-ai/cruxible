@@ -14,14 +14,22 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient
 from cruxible_core.cli.commands import _common, playbill
-from cruxible_core.cli.context import load_cli_context
+from cruxible_core.cli.context import (
+    CliContextState,
+    RememberedPrincipals,
+    load_cli_context,
+    principal_binding,
+    save_cli_context,
+)
 from cruxible_core.cli.main import cli
+from cruxible_core.cli.principal_settings import write_principal_settings
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
@@ -97,8 +105,9 @@ def test_a_bare_init_creates_the_host_and_the_cli_acts_as_its_owner(daemon: Path
     assert (key_dir / "alice.ed25519").is_file()
     settings = key_dir / "cruxible.env"
     assert settings.is_file()
-    assert context.principals[instance_id].active == "alice"
-    assert context.principals[instance_id].settings == {"alice": str(settings.resolve())}
+    binding = principal_binding(URL, instance_id)
+    assert context.principals[binding].active == "alice"
+    assert context.principals[binding].settings == {"alice": str(settings.resolve())}
     assert "The CLI now acts as alice" in result.stdout
 
     # No flag and no environment: the CLI loads the remembered owner itself.
@@ -128,7 +137,7 @@ def test_context_use_principal_switches_and_an_explicit_principal_wins(daemon: P
     )
     assert added.exit_code == 0, added.output
     # Remembered, not acted as.
-    assert load_cli_context().principals[instance_id].active == "alice"
+    assert load_cli_context().principals[principal_binding(URL, instance_id)].active == "alice"
     assert _whoami()["actor_id"] == "alice"
 
     switched = _run("context", "use", "--principal", "agent-b")
@@ -177,3 +186,114 @@ def test_the_default_key_directory_never_lands_in_the_daemon_state_root(
     assert "Created Cruxible host" not in retried.stderr
     assert load_cli_context().instance_id == created
     assert _whoami()["actor_id"] == "owner"
+
+
+# -- F-001: a remembered credential never crosses to another daemon ------------
+
+OTHER = "http://cruxible-daemon-b"
+INSTANCE = "inst_same_name"
+
+
+@pytest.fixture
+def remembered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Alice's authenticated settings remembered for INSTANCE on URL; a recording client."""
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    for name in (
+        "CRUXIBLE_SERVER_URL",
+        "CRUXIBLE_SERVER_BEARER_TOKEN",
+        "CRUXIBLE_PRINCIPAL_ID",
+        "CRUXIBLE_PRINCIPAL_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    key_dir = tmp_path / "alice"
+    key_dir.mkdir(mode=0o700)
+    settings = write_principal_settings(
+        key_dir,
+        ctx_obj={"server_url": URL},
+        instance_id=INSTANCE,
+        principal_id="alice",
+        private_key_path=key_dir / "alice.ed25519",
+        token="synthetic-token-for-daemon-a",
+        written_by="test",
+    )
+    save_cli_context(
+        CliContextState(
+            server_url=URL,
+            instance_id=INSTANCE,
+            principals={
+                principal_binding(URL, INSTANCE): RememberedPrincipals(
+                    active="alice", settings={"alice": str(settings)}
+                )
+            },
+        )
+    )
+    seen: list[dict[str, Any]] = []
+
+    def record() -> None:
+        obj = _common._root_ctx_obj()
+        seen.append(
+            {
+                "url": obj.get("server_url"),
+                "token": get_runtime_bearer_token(),
+                "principal": obj.get("principal_id"),
+            }
+        )
+        raise click.ClickException("recorded")
+
+    monkeypatch.setattr(_common, "_get_client", record)
+    return seen
+
+
+def test_remembered_settings_load_on_their_own_daemon(remembered: list[dict[str, Any]]) -> None:
+    CliRunner().invoke(cli, ["whoami"])
+    assert remembered == [
+        {"url": URL, "token": "synthetic-token-for-daemon-a", "principal": "alice"}
+    ]
+
+
+def _not_loaded(seen: list[dict[str, Any]], result: Any) -> None:
+    assert seen == [{"url": OTHER, "token": None, "principal": None}], result.output
+    assert f"remembered for {URL}, not {OTHER}" in result.stderr
+
+
+def test_an_explicit_endpoint_never_receives_a_remembered_credential(
+    remembered: list[dict[str, Any]],
+) -> None:
+    result = CliRunner().invoke(cli, ["--server-url", OTHER, "--instance-id", INSTANCE, "whoami"])
+    _not_loaded(remembered, result)
+
+
+def test_an_environment_endpoint_never_receives_a_remembered_credential(
+    remembered: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_SERVER_URL", OTHER)
+    result = CliRunner().invoke(cli, ["--instance-id", INSTANCE, "whoami"])
+    _not_loaded(remembered, result)
+
+
+def test_a_workspace_endpoint_never_receives_a_remembered_credential(
+    remembered: list[dict[str, Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.authoring.workspace import write_workspace_config
+
+    project = tmp_path / "project"
+    project.mkdir()
+    write_workspace_config(project, instance_id=INSTANCE, server_url=OTHER)
+    monkeypatch.chdir(project)
+    shown = CliRunner().invoke(cli, ["context", "show", "--json"])
+    assert json.loads(shown.stdout)["transport_source"] == "workspace"
+    remembered.clear()  # context show may probe the host registration
+    result = CliRunner().invoke(cli, ["whoami"])
+    _not_loaded(remembered, result)
+
+
+def test_a_settings_file_naming_another_daemon_is_not_loaded(
+    remembered: list[dict[str, Any]], tmp_path: Path
+) -> None:
+    settings = tmp_path / "alice" / "cruxible.env"
+    settings.write_text(settings.read_text().replace(URL, OTHER))
+    result = CliRunner().invoke(cli, ["whoami"])
+    assert remembered == [{"url": URL, "token": None, "principal": None}]
+    assert "acting as no principal" in result.stderr
