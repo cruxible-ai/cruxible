@@ -918,7 +918,7 @@ and `POST /{instance}/providers/install`.
 
 ~~~text
 cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
-  --out KIT_DIR [--json]
+  --out KIT_DIR [--provider PACKAGE_DIR]... [--json]
 cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
   [--retire-dependents IDENTITY]... [--allow-downgrade]
   [--dry-run|--commit] [--at OID] [--json]
@@ -933,8 +933,9 @@ reference. A bare name such as `project-state:1.0.0` resolves under
 (`ghcr.io/acme/kits/foo:2`, `localhost:5000/kits/foo@sha256:...`).
 
 Distributed, a kit is an OCI artifact (`application/vnd.cruxible.kit.v1`): the
-manifest is its config blob and the artifacts are one deterministic,
-uncompressed tar layer, so rebuilding a release gives the same manifest digest.
+manifest is its config blob and the artifacts (with any bundled provider files
+under `providers/`) are one deterministic, uncompressed tar layer, so rebuilding a
+release gives the same manifest digest.
 There is no public publishing in v1: official kits are published by internal
 release tooling, which never moves an existing version tag to different content.
 `pull` fetches and verifies a kit into a kit directory (or, with `--layout`, an OCI image
@@ -951,17 +952,59 @@ never sent to another origin (such as an upload location), and nothing is sent
 over a downgraded scheme. The client does all fetching: the daemon receives only the verified
 bundle, and the receipt records the source pinned to its manifest digest.
 
-A kit is one release of definitions: ClaimTypes, CaptureContracts and
-QueryDefinitions. It never carries authority (governance, principals, mandates),
-local binding (Providers, Lines) or state (Subjects, Claims). Procedures,
-ProviderInterfaces and SourceAcquisitionPolicies join once their references can
-be moved field by field. A kit directory holds `cruxible-kit.json` and
-the artifact bytes under `artifacts/`.
+A kit is one release of definitions: ClaimTypes, CaptureContracts,
+QueryDefinitions, SourceAcquisitionPolicies, Procedures, Blueprints and the
+ProviderInterfaces they need, plus the provider packages its Procedures run on.
+It never carries authority (governance, principals, mandates), local binding
+(Provider artifacts, Lines) or state (Subjects, Claims). A kit directory holds
+`cruxible-kit.json`, the artifact bytes under `artifacts/` and the bundled
+provider files under `providers/`.
+
+A Procedure or Blueprint moves its pins through its graph (its definition digest
+is recomputed) and a SourceAcquisitionPolicy moves only its pins. A
+ProviderInterface is carried, never owned: it belongs to the provider package
+that registers it, so `remove` never retires one.
+
+Provider packages. A kit ships the provider its own Procedures run on (for
+example a domain parser) as the package's built wheel, the uv lock it was built
+with, and the wheel of each dependency that lock names by path (such as
+`cruxible-provider-runtime` while it is unpublished); registry dependencies are
+never bundled and resolve by name, pinned by the lock's hashes, from the daemon's
+provider index (PyPI unless the operator configured `provider_index_urls`). The
+kit never carries source. `--provider PACKAGE_DIR` (repeatable) names a package
+directory in the kit's source tree: its `pyproject.toml`, its `uv.lock`, and in
+`dist/` its built wheel plus the dependency wheels (`uv build --wheel --out-dir
+dist` for each). The CLI stages the files through the body store and the
+manifest records each package (provider id, package, version, interfaces) with
+the sha256 of every file. `build` refuses `cruxible.kit.provider_not_bundled` when
+a carried Procedure pins a Provider the kit does not bundle,
+`cruxible.kit.provider_build_differs` when the bundled wheel is not the build this
+instance installed, and `cruxible.kit.interface_not_bundled` or
+`cruxible.kit.interface_differs` when a carried ProviderInterface is not exactly
+what a bundled wheel registers (installing that wheel would otherwise propose a
+successor over the kit's interface). Blueprints stay for slots the consumer
+fills: their slot interfaces come from a bundled package, and the consumer
+instantiates them with any installed Provider of that interface.
+
+Authoring a kit that ships its provider:
+
+1. Write the provider package in the kit's source tree (start from the provider
+   template), `uv lock` it, and build its wheel and the wheel of each dependency
+   its lock names by path into its `dist/`.
+2. Install that wheel on the authoring instance (`cruxible provider install
+   dist/WHEEL --lock uv.lock --dependency dist/RUNTIME_WHEEL`) and author the
+   kit's Procedures against it; leave a Blueprint slot where the consumer picks
+   the provider.
+3. `cruxible kit build --id ID --version X.Y.Z --owns PREFIX. --provider
+   PACKAGE_DIR --out KIT_DIR`.
+4. Change the wheel only with a new package version: consumers holding another
+   build of a bundled provider refuse the kit until it is replaced.
 
 A release is self-contained. `build` exports every live definition whose
 identity starts with an `--owns` prefix, plus every definition those pin, as
 snapshots with no predecessor that pin only the release's own digests; a pin into
-anything a kit cannot carry refuses the build. The release content digest
+anything a kit cannot carry refuses the build (a Provider pin stays as built and
+names a bundled package). The release content digest
 therefore names the same definitions wherever the kit is installed, and any
 release can be installed on its own. The manifest records where it was built
 (the building instance, its accepted coordinate and the building principal),
@@ -1000,26 +1043,50 @@ the installed one unless `--allow-downgrade`, and the preview names the transiti
 approval, like provider install and value writes; otherwise they stop at
 proposed for the ordinary `cruxible proposal approve` and `activate` steps. `add`
 records a `kit_receipt` Document, `documents/kit-<id>.json`, with each path's
-release digest, installed digest and content digest. A kit carries definitions
-only, so it never needs a Provider installed first.
+release digest, installed digest and content digest, and the bundled packages.
+
+A kit that bundles provider packages installs them before its definitions. A
+commit stages each file in the daemon's body store (the CLI and MCP adapters do
+it; a preview stages and installs nothing and reports `would install`), then
+installs each package not yet installed through the ordinary transfer install,
+which needs the install permission (`ADMIN`) and lands when the approval policy
+requires no approval. The definitions are proposed once every bundled provider
+is installed; while an install awaits approval the result is
+`awaiting_providers` with that install's proposal, and `kit add` again after it
+is activated proposes the definitions. A package already installed from the same
+wheel and lock is unchanged. Another installed build of a bundled provider is
+refused (`blocked`) rather than replaced: replacing a Provider owes a successor
+of every live Procedure pinning it, which an install does not carry, and the
+build may serve Procedures outside the kit; replace it deliberately with
+`provider install` and add the kit again. A Provider digest names the
+environment its package materialized in (platform, machine, Python and markers),
+so a release Procedure's Provider pin moves to the build installed here; its
+implementation digests (interface, entrypoint, wheel sha256) are the same
+everywhere. A carried ProviderInterface this instance holds differently blocks
+the change.
 
 `status` lists installed kits, the kit paths edited locally, the divergences kept
-on purpose, and where each release was built. For a kit installed from a registry
+on purpose, where each release was built, and each bundled provider package with
+its install state here (`installed`, `differs` with the installed version, or
+`missing`). For a kit installed from a registry
 the client lists the repository's tags (MAJOR.MINOR.PATCH, short timeout) and
 shows the latest available version; `--offline` skips the check, and a kit from a
 directory or layout shows its local source. Installing an update stays explicit:
 `kit add REFERENCE:VERSION`. `remove` retires what a kit owns (never what it only
-carries); a path edited since install, or the dependency closure while live Claims
-depend on those definitions, blocks it. Removing a kit that is not installed
+carries, and never a bundled provider, which stays installed); a path edited
+since install, or the dependency closure while live Claims depend on those
+definitions, blocks it. Removing a kit that is not installed
 refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
-MCP: `cruxible_kit_build`, `cruxible_kit_status` (with the same update check,
+MCP: `cruxible_kit_build` (`providers` names packages staged with
+`cruxible_body_store`), `cruxible_kit_status` (with the same update check,
 `offline`), `cruxible_kit_add` (by registry `reference`, which the adapter pulls,
-or inline `bundle`) and `cruxible_kit_remove`. HTTP:
+or inline `bundle`; a commit stages its provider files) and
+`cruxible_kit_remove`. HTTP:
 `POST /{instance}/kits/build`, `GET /{instance}/kits`,
 `POST /{instance}/kits` and `POST /{instance}/kits/remove`.
-SDK: `read_kit_directory` and `write_kit_directory` in `cruxible_client.kits`,
-with the matching `CruxibleClient` methods.
+SDK: `read_kit_directory`, `write_kit_directory` and `stage_kit_providers` in
+`cruxible_client.kits`, with the matching `CruxibleClient` methods.
 
 ## document
 
