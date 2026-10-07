@@ -153,7 +153,7 @@ class _SourceInvoker:
         )
 
     def invoke_provider(  # type: ignore[no-untyped-def]
-        self, *, occurrence, context, invocation_id, bound
+        self, *, occurrence, context, invocation_id, bound, deadline
     ):
         self.spawn_calls += 1
         self.coordinates = context.coordinates
@@ -366,7 +366,7 @@ def _source_fixture(
 
 class _RefusingSourceInvoker(_SourceInvoker):
     def invoke_provider(  # type: ignore[no-untyped-def]
-        self, *, occurrence, context, invocation_id, bound
+        self, *, occurrence, context, invocation_id, bound, deadline
     ):
         self.spawn_calls += 1
         return ProviderDriverOutcomeV1(

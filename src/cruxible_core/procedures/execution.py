@@ -236,6 +236,7 @@ from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
     ProviderLocalRuntimeRefused,
+    ProviderSpawnDeadline,
 )
 from cruxible_core.providers.provider_outcomes import (
     map_provider_envelope,
@@ -1240,6 +1241,7 @@ class ProviderRuntimeInvokerProtocol(Protocol):
         context: ProviderRuntimeRunContextV1,
         invocation_id: str,
         bound: BoundLocalProviderV1,
+        deadline: ProviderSpawnDeadline,
     ) -> ProviderDriverOutcomeV1: ...
 
 
@@ -5099,10 +5101,18 @@ class ProcedureExecutor:
             started.model_dump(mode="json"),
         )
         state.provider_invocations_started += 1
-        # The durable start write takes time too: the window is measured again
-        # immediately before spawn. With nothing left the Provider never spawns,
-        # and the start is closed by a matching completion carrying the refusal.
+        # The durable start write takes time too, so the window is measured
+        # again after it. That is not the last check: the run's deadline goes
+        # with the invocation, and the spawner refuses or clips against it
+        # immediately before the child exists. Whichever check finds the time
+        # spent, the Provider never spawns and the durable start is closed by a
+        # matching completion carrying the budget_wall_clock refusal.
         wall_clock_seconds = effective_wall_clock_seconds()
+        deadline = ProviderSpawnDeadline(
+            deadline_ns=state.run_started_monotonic_ns
+            + admission.budget.wall_clock.microseconds * 1000,
+            monotonic_ns=self.clock.monotonic_ns,
+        )
         driver_result: ProviderDriverOutcomeV1 | None = None
         try:
             if wall_clock_seconds <= 0:
@@ -5134,6 +5144,7 @@ class ProcedureExecutor:
                 context=context,
                 invocation_id=invocation_id,
                 bound=bound,
+                deadline=deadline,
             )
             outcome = map_provider_envelope(driver_result.envelope)
         except ProviderLocalRuntimeRefused as exc:

@@ -104,7 +104,7 @@ class _Invoker:
         )
 
     def invoke_provider(  # type: ignore[no-untyped-def]
-        self, *, occurrence, context, invocation_id, bound
+        self, *, occurrence, context, invocation_id, bound, deadline
     ):
         self.calls.append(invocation_id)
         assert bound.binding == occurrence.local_execution
@@ -130,7 +130,7 @@ class _CrashingInvoker:
         return _Invoker().bind_provider(occurrence=occurrence)
 
     def invoke_provider(  # type: ignore[no-untyped-def]
-        self, *, occurrence, context, invocation_id, bound
+        self, *, occurrence, context, invocation_id, bound, deadline
     ):
         raise RuntimeError("daemon lost the provider result")
 
@@ -1300,6 +1300,137 @@ def test_a_start_append_that_spends_part_of_the_budget_shrinks_the_provider_wind
     ].budget_translation.runtime_wall_clock_seconds
     # Measured after the start record, not before it.
     assert windows == [pytest.approx(min(provider_cap, run_seconds * 0.25))]
+
+
+def _run_through_the_real_spawner(
+    tmp_path: Path, *, crossing: str, spent: float
+) -> tuple[Any, list[str], list[float], list[float]]:
+    """Drive the real invoker, driver and child spawner with Popen intercepted.
+
+    ``spent`` of the run budget passes at ``crossing``: while the run context is
+    built, during the spawn-time rebind, or inside the spawner after the context
+    is serialized. Returns the run, the journal event kinds, the child-context
+    windows the spawner received, and the windows it held the child to at Popen.
+    """
+
+    import json
+    import shutil
+    import sys
+    from unittest.mock import patch
+
+    import cruxible_core.procedures.execution as execution
+    import cruxible_core.providers.provider_local_runtime as runtime
+    from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
+    from tests.support.short_temporary_root import short_temporary_directory
+
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    run_budget_ns = prepared.admission.budget.wall_clock.microseconds * 1000
+    clock = _SteppedClock()
+
+    def spend() -> None:
+        clock.elapsed_ns += round(run_budget_ns * spent)
+
+    control = short_temporary_directory("budget-control-")
+    leases = ProviderProcessLeaseStore(tmp_path / "leases", control_root=control)
+    context_windows: list[float] = []
+    popen_windows: list[float] = []
+
+    class _RealSpawner(runtime.ProviderLocalRuntimeInvoker):
+        """The real invoke path; binding comes from the in-process fake deployment."""
+
+        binds = 0
+
+        def bind_provider(self, *, occurrence):  # type: ignore[no-untyped-def]
+            self.binds += 1
+            if crossing == "rebind" and self.binds == 2:
+                spend()
+            return _Invoker().bind_provider(occurrence=occurrence)
+
+    real_context = execution.ProviderRuntimeRunContextV1
+    real_prepare = leases.prepare_control_path
+    real_run_child = runtime._run_child
+
+    def context_factory(**kwargs):  # type: ignore[no-untyped-def]
+        context = real_context(**kwargs)
+        if crossing == "context":
+            spend()
+        return context
+
+    def prepare_control_path(invocation_id: str) -> Path:
+        if crossing == "spawner":
+            spend()
+        return real_prepare(invocation_id)
+
+    def run_child(*args, **kwargs):  # type: ignore[no-untyped-def]
+        context_windows.append(json.loads(kwargs["context"])["budgets"]["wall_clock_seconds"])
+        return real_run_child(*args, **kwargs)
+
+    def popen(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        popen_windows.append(sys._getframe(1).f_locals["budgets"].wall_clock_seconds)
+        raise runtime.ProviderLocalRuntimeRefused("provider_crashed", "Popen intercepted")
+
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    invoker = _RealSpawner(
+        deployments_by_digest={},
+        accepted_providers_by_digest={},
+        accepted_interfaces_by_digest={},
+        secret_resolvers=runtime.ProviderSecretResolverRegistry(()),
+        process_leases=leases,
+    )
+    try:
+        with (
+            patch.object(execution, "ProviderRuntimeRunContextV1", context_factory),
+            patch.object(leases, "prepare_control_path", prepare_control_path),
+            patch.object(runtime, "_run_child", run_child),
+            patch.object(runtime.subprocess, "Popen", popen),
+        ):
+            result = ProcedureExecutor(
+                journal=fixture.journal,
+                bodies=fixture.bodies,
+                run_index=fixture.run_index,
+                fencing_token="writer",
+                activation_authority=_Authority(accepted.artifact_digest),
+                contract_validator=_Contracts(),
+                provider_runtime_invoker=invoker,
+                provider_classifier_registry=registry,
+                clock=clock,
+            ).execute(prepared, accepted)
+    finally:
+        leases.close()
+        shutil.rmtree(control, ignore_errors=True)
+    return result, _event_kinds(prepared, fixture), context_windows, popen_windows
+
+
+@pytest.mark.parametrize("crossing", ["context", "rebind", "spawner"])
+def test_a_deadline_crossed_on_the_way_to_spawn_refuses_before_popen(
+    tmp_path: Path, crossing: str
+) -> None:
+    result, kinds, _, popen_windows = _run_through_the_real_spawner(
+        tmp_path, crossing=crossing, spent=1.0005
+    )
+
+    assert popen_windows == []
+    assert result.status == "refused"
+    assert result.refusal is not None and result.refusal.code == "budget_wall_clock"
+    assert kinds.count("provider_invocation_started") == 1
+    assert kinds.count("provider_invocation_completed") == 1
+
+
+@pytest.mark.parametrize("crossing", ["context", "rebind", "spawner"])
+def test_time_spent_on_the_way_to_spawn_shrinks_the_child_window(
+    tmp_path: Path, crossing: str
+) -> None:
+    _, _, context_windows, popen_windows = _run_through_the_real_spawner(
+        tmp_path, crossing=crossing, spent=0.75
+    )
+
+    # A 2 s run with 1.5 s spent: the child is held to the 0.5 s left at Popen.
+    assert popen_windows == [pytest.approx(0.5)]
+    # The window written into the child's context is measured after the
+    # executor's own work; only the spawner's setup comes after it.
+    assert context_windows == [pytest.approx(2.0 if crossing == "spawner" else 0.5)]
 
 
 @pytest.mark.parametrize(

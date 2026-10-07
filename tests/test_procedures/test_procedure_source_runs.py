@@ -163,7 +163,7 @@ class _WorkspaceInvoker:
         )
 
     def invoke_provider(  # type: ignore[no-untyped-def]
-        self, *, occurrence, context, invocation_id, bound
+        self, *, occurrence, context, invocation_id, bound, deadline
     ) -> ProviderDriverOutcomeV1:
         self.spawn_calls += 1
         assert isinstance(context.input, dict)
@@ -1115,7 +1115,7 @@ def test_a_policy_that_declares_another_input_refuses_before_any_journal(
 class _DecliningInvoker(_WorkspaceInvoker):
     """The governed read happens; the Provider then declines the material."""
 
-    def invoke_provider(self, *, occurrence, context, invocation_id, bound):  # type: ignore[no-untyped-def]
+    def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):  # type: ignore[no-untyped-def]
         self.spawn_calls += 1
         return ProviderDriverOutcomeV1(
             envelope=ProviderRuntimeResultEnvelopeV1(

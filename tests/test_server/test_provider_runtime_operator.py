@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
@@ -86,7 +87,10 @@ from cruxible_core.procedures.execution import (
     procedure_semantic_replay_key_digest,
 )
 from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
-from cruxible_core.providers.provider_local_runtime import LocalProviderDeploymentV1
+from cruxible_core.providers.provider_local_runtime import (
+    LocalProviderDeploymentV1,
+    ProviderSpawnDeadline,
+)
 from cruxible_core.providers.provider_process_leases import (
     ProviderLocalRuntimeRefused,
     ProviderProcessRecoveryFailureV1,
@@ -435,6 +439,9 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         context=context,
         invocation_id=_digest("daemon-invocation"),
         bound=invoker.bind_provider(occurrence=occurrence),  # type: ignore[arg-type]
+        deadline=ProviderSpawnDeadline(
+            deadline_ns=time.monotonic_ns() + 60_000_000_000, monotonic_ns=time.monotonic_ns
+        ),
     )
     assert outcome.envelope.output == {"echo": "served"}
     assert outcome.verified_binding == admitted_binding
