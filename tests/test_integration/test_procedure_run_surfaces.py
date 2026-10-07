@@ -74,13 +74,7 @@ def test_the_cli_lists_runs_and_reads_one(run_world, monkeypatch, tmp_path) -> N
 def test_the_mcp_tools_read_runs(run_world, monkeypatch) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     instance, _procedure, finished = run_world
     client = _ServiceClient(instance)
-    monkeypatch.setattr(handlers, "_get_client", lambda: None)
-    monkeypatch.setattr(handlers.playbill_api, "playbill_get", client.get)
-    monkeypatch.setattr(
-        handlers.playbill_api,
-        "playbill_orient",
-        lambda instance_id, **values: client.orient(instance_id, **values),
-    )
+    monkeypatch.setattr(handlers, "_get_client", lambda: client)
     server = create_server()
 
     async def exercise() -> tuple[str, str]:

@@ -19,8 +19,6 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 
-RUNTIME_CREDENTIAL_MINT_TAG = "cruxible-runtime-credential-mint-v1"
-
 #: How far a signed mint statement's ``issued_at`` may sit from the daemon's
 #: clock. A statement is also single-use, so this bounds only how long a
 #: captured, never-submitted statement stays usable.
@@ -90,7 +88,6 @@ def verify_runtime_credential_proof(
 
 
 __all__ = [
-    "RUNTIME_CREDENTIAL_MINT_TAG",
     "RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS",
     "RuntimeCredentialMintStatement",
     "RuntimeCredentialPermissionMode",

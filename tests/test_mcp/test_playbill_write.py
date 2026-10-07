@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -86,27 +87,35 @@ def test_write_tools_are_default_governed_write_tools_with_declared_parameters(
     assert tools[tool].outputSchema is not None
 
 
-def _capture(monkeypatch: pytest.MonkeyPatch, name: str) -> list[Any]:
+def _capture(monkeypatch: pytest.MonkeyPatch, method: str) -> list[Any]:
+    """Record the typed request the handler sends the daemon client's ``method``."""
+
     captured: list[Any] = []
 
-    def local(instance_id: str, *, request: Any) -> Any:
+    def call(instance_id: str, *, request: Any) -> Any:
         assert instance_id == "inst_write"
         captured.append(request)
         return "outcome"
 
-    monkeypatch.setattr(handlers.playbill_api, name, local)
-    monkeypatch.setattr(
-        handlers, "_dispatch_remote_or_local", lambda _remote, local, **_kw: local()
-    )
+    stub = getattr(handlers._get_client, "stub", None)
+    if stub is None:
+        stub = SimpleNamespace()
+
+        def get_client() -> Any:
+            return stub
+
+        get_client.stub = stub  # type: ignore[attr-defined]
+        monkeypatch.setattr(handlers, "_get_client", get_client)
+    setattr(stub, method, call)
     return captured
 
 
 def test_handlers_build_typed_requests_for_the_mcp_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sets = _capture(monkeypatch, "playbill_set")
-    retires = _capture(monkeypatch, "playbill_retire")
-    writes = _capture(monkeypatch, "playbill_write")
+    sets = _capture(monkeypatch, "set")
+    retires = _capture(monkeypatch, "retire")
+    writes = _capture(monkeypatch, "write")
 
     handlers.handle_playbill_set(
         "inst_write",
@@ -166,7 +175,7 @@ def test_handlers_build_typed_requests_for_the_mcp_surface(
 def test_a_malformed_write_names_the_json_path_and_an_example(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _capture(monkeypatch, "playbill_write")
+    _capture(monkeypatch, "write")
     with pytest.raises(DataValidationError) as caught:
         handlers.handle_playbill_write(
             "inst_write",
@@ -201,8 +210,8 @@ entries:
         encoding="utf-8",
     )
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
-    sets = _capture(monkeypatch, "playbill_set")
-    writes = _capture(monkeypatch, "playbill_write")
+    sets = _capture(monkeypatch, "set")
+    writes = _capture(monkeypatch, "write")
     evidence = {"kind": "file", "file": "notes.md#Status: done"}
 
     handlers.handle_playbill_set(

@@ -5,8 +5,9 @@ from __future__ import annotations
 import pytest
 
 from cruxible_client import contracts
+from cruxible_client.errors import CoreError
 from cruxible_core.mcp import handlers
-from cruxible_core.service.discovery.next import NextWorkspaceObservationInvalid
+from tests.support.mcp_daemon import bind_mcp_daemon
 
 
 def _action_result(item_id: str) -> contracts.CurationActionResult:
@@ -55,39 +56,37 @@ def test_mcp_curation_list_is_one_thin_read_delegate(monkeypatch) -> None:  # ty
             result_digest="sha256:" + "6" * 64,
         )
 
-    monkeypatch.setattr(handlers, "_get_client", lambda: None)
+    bind_mcp_daemon(monkeypatch, instances=["inst_mcp"])
     monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_curation_list", stub)
 
     result = handlers.handle_playbill_curation_list(
-        "inst",
+        "inst_mcp",
         evaluation_time="2026-08-26T16:00:00+00:00",
         access_profile=None,
         workspace_observation=observation,
     )
 
     assert result.items == []
-    assert seen == {
-        "instance_id": "inst",
-        "request": {
-            "tag": "playbill-curation-list-request-v1",
-            "evaluation_time": "2026-08-26T16:00:00+00:00",
-            "access_profile": {
-                "tag": "playbill-coverage-access-profile-v1",
-                "profile_id": "mcp-curation",
-                "permitted_access_classes": ["instance", "public"],
-                "disclose_restricted_existence": True,
-            },
-            "workspace_observation": observation,
-            "limit": contracts.CURATION_LIST_DEFAULT_LIMIT,
-            "cursor": None,
-        },
+    assert seen["instance_id"] == "inst_mcp"
+    request = seen["request"]
+    assert isinstance(request, dict)
+    assert request["tag"] == "playbill-curation-list-request-v1"
+    assert request["evaluation_time"] == "2026-08-26T16:00:00Z"
+    assert request["access_profile"] == {
+        "tag": "playbill-coverage-access-profile-v1",
+        "profile_id": "mcp-curation",
+        "permitted_access_classes": ["instance", "public"],
+        "disclose_restricted_existence": True,
     }
+    assert request["workspace_observation"] == observation
+    assert request["limit"] == contracts.CURATION_LIST_DEFAULT_LIMIT
+    assert request.get("cursor") is None
 
 
 def test_mcp_curation_list_rejects_raw_source_observation_with_typed_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(handlers, "_get_client", lambda: None)
+    bind_mcp_daemon(monkeypatch, instances=["inst_mcp"])
     raw = {
         "tag": "playbill-next-workspace-observation-v1",
         "source_observations": [
@@ -99,9 +98,9 @@ def test_mcp_curation_list_rejects_raw_source_observation_with_typed_error(
         ],
     }
 
-    with pytest.raises(NextWorkspaceObservationInvalid):
+    with pytest.raises(CoreError, match="cruxible.next.workspace_observation_invalid"):
         handlers.handle_playbill_curation_list(
-            "inst",
+            "inst_mcp",
             evaluation_time="2026-08-26T16:00:00+00:00",
             access_profile=None,
             workspace_observation=raw,
@@ -115,13 +114,13 @@ def test_mcp_curation_lifecycle_actions_are_thin_delegates(monkeypatch) -> None:
         def invoke(
             instance_id: str, *, request: dict[str, object]
         ) -> contracts.CurationActionResult:
-            assert instance_id == "inst"
+            assert instance_id == "inst_mcp"
             seen.append((operation, request))
             return _action_result(str(request["item_id"]))
 
         return invoke
 
-    monkeypatch.setattr(handlers, "_get_client", lambda: None)
+    bind_mcp_daemon(monkeypatch, instances=["inst_mcp"])
     monkeypatch.setattr(
         "cruxible_core.runtime.playbill_api.playbill_curation_overrule", stub("overrule")
     )
@@ -136,14 +135,14 @@ def test_mcp_curation_lifecycle_actions_are_thin_delegates(monkeypatch) -> None:
     latest = "sha256:" + "2" * 64
     reason = "operator-reviewed mechanical facts"
     handlers.handle_playbill_curation_overrule(
-        "inst",
+        "inst_mcp",
         item_id=item_id,
         expected_latest_event_digest=latest,
         reason=reason,
         attribution_refs=[],
     )
     handlers.handle_playbill_curation_accept_fixed(
-        "inst",
+        "inst_mcp",
         item_id=item_id,
         expected_latest_event_digest=latest,
         reason=reason,
@@ -152,7 +151,7 @@ def test_mcp_curation_lifecycle_actions_are_thin_delegates(monkeypatch) -> None:
         attribution_refs=[],
     )
     handlers.handle_playbill_curation_suppress(
-        "inst",
+        "inst_mcp",
         item_id=item_id,
         expected_latest_event_digest=latest,
         reason=reason,

@@ -274,6 +274,41 @@ def install_service(config: ServiceInstallConfigV1, *, replace: bool = False) ->
     return destination
 
 
+def installed_service_config(state_root: Path) -> ServiceInstallConfigV1 | None:
+    """The service installed for this state root on this host, or None.
+
+    Installed means both the recorded settings and the unit file are present;
+    a recorded service that no longer validates is refused, not ignored, so a
+    caller never starts a second daemon beside a broken service.
+    """
+
+    if not service_config_path(state_root).is_file():
+        return None
+    config = load_service_config(state_root)
+    if config.platform != current_service_platform():
+        return None
+    if not service_destination(config.platform).is_file():
+        return None
+    return config
+
+
+def start_installed_service(config: ServiceInstallConfigV1) -> None:
+    """Ask the user service manager to start the installed daemon now."""
+
+    if config.platform == "darwin":
+        subprocess.run(
+            ["launchctl", "kickstart", f"gui/{os.getuid()}/{SERVICE_LABEL}"],
+            check=True,
+            capture_output=True,
+        )
+    else:
+        subprocess.run(
+            ["systemctl", "--user", "start", service_destination(config.platform).name],
+            check=True,
+            capture_output=True,
+        )
+
+
 def current_service_platform() -> Literal["darwin", "linux"]:
     if sys.platform == "darwin":
         return "darwin"
@@ -289,6 +324,7 @@ __all__ = [
     "current_service_platform",
     "durable_credentials_available",
     "install_service",
+    "installed_service_config",
     "load_service_config",
     "render_launchd_service",
     "render_service",
@@ -298,4 +334,5 @@ __all__ = [
     "service_destination",
     "service_config_path",
     "service_auth_required",
+    "start_installed_service",
 ]

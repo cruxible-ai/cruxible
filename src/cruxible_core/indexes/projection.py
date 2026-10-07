@@ -3,30 +3,95 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Final, Literal, cast
 
 from pydantic import Field, PrivateAttr, field_validator, model_validator
 
+from cruxible_client.contracts.candidates import (
+    SemanticCandidate,
+    SemanticCandidateLike,
+    candidate_digest,
+)
 from cruxible_client.contracts.canonical import (
+    CandidateDigest,
     GenerationRoot,
     LogicalDigest,
     SemanticRoot,
     canonical_bytes,
     canonical_digest,
+    manifest_root,
+    semantic_projection,
 )
+from cruxible_client.contracts.errors import ProjectionCoordinateError
+from cruxible_client.contracts.merkle import merkle_manifest_root
 from cruxible_client.contracts.projection import (
     _OID_RE,
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
     CandidateGenerationProjectionCoordinate,
-    ProvisionalProjectionCoordinate,
     _absolute_path,
     _StrictProjectionModel,
     _tagged_sha256,
-    verify_provisional_tree,
 )
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core.compiler.projection_tree import TreeReadLimits
+
+
+# A proposed-state read coordinate. Internal: the provisional projection indexes
+# that read it are never-wired engine code (decision 2, post-v1), so it is no
+# client contract.
+class ProvisionalProjectionCoordinate(_StrictProjectionModel):
+    """A proposed-state read coordinate binding an accepted base to one exact candidate."""
+
+    tag: Literal["playbill-provisional-projection-coordinate-v1"] = (
+        "playbill-provisional-projection-coordinate-v1"
+    )
+    canonical: AcceptedProjectionCoordinate
+    candidate: SemanticCandidateLike
+    candidate_digest: str
+
+    @field_validator("candidate_digest")
+    @classmethod
+    def _candidate_digest(cls, value: str) -> str:
+        CandidateDigest.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _coordinate_binding(self) -> "ProvisionalProjectionCoordinate":
+        if self.candidate.parent_semantic_root != self.canonical.semantic_root:
+            raise ValueError("provisional candidate is not parented by the canonical coordinate")
+        if candidate_digest(self.candidate).tagged != self.candidate_digest:
+            raise ValueError("provisional candidate digest does not reproduce from C_s")
+        return self
+
+
+def verify_provisional_tree(
+    tree: Mapping[str, bytes],
+    *,
+    coordinate: ProvisionalProjectionCoordinate,
+) -> None:
+    """Refuse a provisional tree that is not the one the coordinate's candidate signs.
+
+    The candidate names the structure of its own commitment: a v2 candidate signs
+    a merkle manifest root and a v1 a flat one, and the two spellings are
+    disjoint. The root is therefore recomputed in the candidate's own structure
+    and compared, so a provisional read is bound to the exact tree under review
+    on either side of the succession, and the three artifact-kind readers ask the
+    question once rather than each in its own words.
+    """
+
+    projected = semantic_projection(tree)
+    actual = (
+        merkle_manifest_root(projected).tagged
+        if isinstance(coordinate.candidate, SemanticCandidate)
+        else manifest_root(projected).tagged
+    )
+    if actual != coordinate.candidate.candidate_manifest_root:
+        raise ProjectionCoordinateError(
+            "provisional tree differs from the candidate manifest coordinate"
+        )
+
 
 # The typed projection's SQLite storage format. Any schema change moves it, so
 # an existing projection of another version rebuilds from authority once.

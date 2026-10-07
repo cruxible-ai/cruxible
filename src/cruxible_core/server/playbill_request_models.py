@@ -19,7 +19,6 @@ from cruxible_client.contracts.authoring.inputs import AuthoringInput
 from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
-    AuthoringIntentCompileRequestV2,
 )
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.claim_types import ClaimType
@@ -57,7 +56,6 @@ class _StrictPlaybillRequest(BaseModel):
 # The route module retains its existing local names, but these are aliases to
 # the canonical client-owned wire models rather than parallel definitions.
 PlaybillAuthoringCompileRequest = AuthoringIntentCompileRequestV1
-PlaybillAuthoringCompileRequestV2 = AuthoringIntentCompileRequestV2
 PlaybillAuthoringCompileRequestV3 = AuthoringIntentCompileRequest
 
 

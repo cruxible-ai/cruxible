@@ -16,9 +16,10 @@ import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 from mcp.server.fastmcp.exceptions import ToolError
+from tests.support.mcp_daemon import bind_mcp_daemon
 
+from cruxible_client.errors import CoreError
 from cruxible_core.cli.main import cli
-from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
 from cruxible_core.runtime.permissions import reset_permissions
@@ -158,16 +159,17 @@ def test_mcp_tool_failures_name_paths_not_models(
     assert tool in str(refused.value)
 
 
-def test_a_library_mode_refusal_names_the_operation_and_the_path(
+def test_a_daemon_refusal_through_mcp_names_the_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(handlers, "_get_client", lambda: None)
-    with pytest.raises(DataValidationError) as refused:
+    """MCP has one door, the daemon's: its refusal reaches the agent readable."""
+
+    bind_mcp_daemon(monkeypatch)
+    with pytest.raises(CoreError) as refused:
         handlers.handle_playbill_withdraw_proposal("inst_never_reached", "PROP-1", "x" * 1_001)
     message = str(refused.value)
     _assert_readable(message)
-    assert "cruxible_proposal_withdraw" in message
-    assert "$.reason" in message
+    assert "reason" in message
 
 
 # --- HTTP --------------------------------------------------------------------------
