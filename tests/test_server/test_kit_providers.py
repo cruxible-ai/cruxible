@@ -854,3 +854,84 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
     )
     assert added.status in {"accepted", "proposed"}, added
     assert added.providers == ()
+
+
+def test_a_takeover_of_another_kits_definition_refuses_before_any_provider_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
+) -> None:
+    """Review F-006 (delta): another kit owns a different version of a definition the
+    release carries; the commit refuses as its preview does, installing nothing."""
+
+    from cruxible_client.contracts.acquisition_policies import (
+        SourceAcquisitionPolicy,
+        render_acquisition_policy,
+    )
+    from cruxible_client.contracts.kits import KitArtifact, KitArtifactBytes
+    from cruxible_core.cli.provider_wheels import stage_kit_provider_directory
+    from cruxible_core.service.kits import _artifact_state
+    from tests.test_server import test_kit_providers as helpers
+
+    opened = _worlds(tmp_path, monkeypatch)
+    publisher, consumer = next(opened)
+    try:
+        project = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
+        _install(publisher, project)
+        monkeypatch.setattr(helpers, "PROCEDURE", "feature.increment")
+        monkeypatch.setattr(helpers, "BLUEPRINT", "feature.skeleton")
+        _author(publisher)
+        release = playbill_api.playbill_kit_build(
+            publisher.instance_id,
+            KitBuildRequest(
+                kit_id="feature",
+                version="1.0.0",
+                owns=("feature.",),
+                providers=(
+                    stage_kit_provider_directory(
+                        _client(publisher.http), publisher.instance_id, project
+                    ),
+                ),
+            ),
+        ).bundle
+        policy_path = f"source-acquisition-policies/{POLICY}.json"
+        raw = json.loads(release.contents()[policy_path])
+        raw["inputs"][0]["max_age"] = {"microseconds": 1}
+        changed = render_acquisition_policy(SourceAcquisitionPolicy.model_validate(raw))
+        prior = KitBundle(
+            manifest=release.manifest.model_copy(
+                update={
+                    "kit_id": "prior",
+                    "owns": ("acme.",),
+                    "providers": (),
+                    "artifacts": (
+                        KitArtifact(
+                            path=policy_path,
+                            artifact_digest=_artifact_state(policy_path, changed).artifact_digest,
+                        ),
+                    ),
+                }
+            ),
+            artifacts=(KitArtifactBytes.of(policy_path, changed),),
+        )
+        accepted = playbill_api.playbill_kit_add(
+            consumer.instance_id, KitAddRequest(bundle=prior, dry_run=False)
+        )
+        assert accepted.status == "accepted", accepted
+        installs: list[object] = []
+        monkeypatch.setattr(
+            playbill_api, "service_install_provider", lambda *a, **k: installs.append(k)
+        )
+        instance = get_playbill_manager().get(consumer.instance_id)
+        coordinate = instance.accepted_coordinate().git_oid
+        preview = _add(consumer, release, dry_run=True)
+        assert preview.status == "would_block", preview
+        assert "owned by kit prior" in (preview.detail or "")
+
+        refused = _add(consumer, release, dry_run=False)
+
+        assert refused.status == "blocked", refused
+        assert "owned by kit prior" in (refused.detail or "")
+        assert installs == []
+        assert instance.accepted_coordinate().git_oid == coordinate
+    finally:
+        for _ in opened:
+            pass

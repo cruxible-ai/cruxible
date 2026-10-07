@@ -1444,6 +1444,20 @@ def _add_kit(
             downgrade=transition == "downgrade" and not request.allow_downgrade,
             installed_version=installed_version,
         )
+        # A definition another installed kit owns or holds, which the release
+        # would replace: the initial tree's diff decides it, with the same keep
+        # decisions and the remap of the bundled providers already installed.
+        initial, _owned_paths = _diff_release(
+            tree,
+            contents,
+            owns=manifest.owns,
+            installed={} if receipt is None else {item.path: item for item in receipt.artifacts},
+            kept={} if receipt is None else {item.path: item for item in receipt.kept},
+            keep=frozenset(request.keep),
+            keep_local_edits=request.keep_local_edits,
+            preset=_provider_remap(tree, contents, manifest, inspected),
+        )
+        early.extend(_foreign_takeovers(instance, tree, manifest.kit_id, initial))
         if early:
             return KitChangeResult(
                 kit_id=manifest.kit_id,
