@@ -133,6 +133,29 @@ def test_historical_reproducer_matches_the_recorded_law_bytes() -> None:
     assert _digests(historical_claim_type_reuse_evidence) == RECORDED
 
 
+def test_historical_refusal_codes_keep_their_recorded_spelling() -> None:
+    """The reproducer emits the retired law's ``playbill.`` codes, never today's."""
+
+    from cruxible_core.proposals.historical_reuse import historical_claim_type_reuse_evidence
+
+    codes = {
+        name: historical_claim_type_reuse_evidence(
+            claim_type=claim_type,
+            path=path,
+            lookup_tree=tree,
+            candidate_scope=scope,
+            current=COORDINATE,
+        )["refusal_code"]
+        for name, claim_type, path, tree, scope in _scenarios()
+    }
+    refused = {name: code for name, code in codes.items() if code is not None}
+    assert refused == {
+        name: "playbill.reuse.distinction_claim_missing"
+        for name, (_digest, verdict) in RECORDED.items()
+        if verdict == "refused"
+    }
+
+
 def test_only_the_retired_claim_type_revisions_run_the_reproducer() -> None:
     from cruxible_core.proposals.historical_reuse import HISTORICAL_REUSE_CLAIM_TYPE_LAWS
 

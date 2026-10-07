@@ -375,6 +375,12 @@ def _binding_digest(workspace: Path) -> str:
     )
 
 
+def _proposal_proof(transport: CruxibleClient, instance_id: str, proposal_id: str) -> Any:
+    """get is the one proposal read: its proof carries the evaluation and candidate."""
+
+    return transport.get(instance_id, request=GetRequest(ref=proposal_id, detail="proof")).proof
+
+
 def _claim_proof(
     transport: CruxibleClient,
     instance_id: str,
@@ -582,11 +588,9 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         status = submitted_claim.status()
         assert status.proposal_id is not None, status
         _approve_and_activate(http, instance_id, reviewer_key, status.proposal_id)
-        inspection = transport.inspect_proposal(instance_id, status.proposal_id)
+        proof = _proposal_proof(transport, instance_id, status.proposal_id)
         member = next(
-            item
-            for item in inspection.proposal["candidate"]["members"]
-            if item["path"].startswith("claims/")
+            item for item in proof["candidate"]["members"] if item["path"].startswith("claims/")
         )
         claim_id = member["path"].rsplit("/", 1)[1].removesuffix(".json")
         view = _claim_proof(transport, instance_id, claim_id)
@@ -611,9 +615,9 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     assert observation.source_read_receipt.relative_path == RELATIVE_PATH
 
     # 4. The manager retrieves the exact candidate, reviews it, and activates it.
-    inspection = transport.inspect_proposal(instance_id, egress.proposal_id)
-    candidate = inspection.proposal["candidate"]
-    assert candidate is not None, inspection.proposal["evaluation"]["diagnostics"]
+    proof = _proposal_proof(transport, instance_id, egress.proposal_id)
+    candidate = proof["candidate"]
+    assert candidate is not None, proof["evaluation"]["diagnostics"]
     assert candidate["candidate_digest"] == egress.candidate_digest
     member = next(item for item in candidate["members"] if item["path"] == child.path)
     assert member["candidate_artifact_digest"] == child.egress_digest

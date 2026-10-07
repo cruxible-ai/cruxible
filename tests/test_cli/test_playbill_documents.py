@@ -362,6 +362,9 @@ def test_cli_init_needs_an_owner_principal_and_claims_it_on_an_auth_off_daemon(
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    # With no principal configured the owner defaults to the OS username, which
+    # must itself be a principal ID.
+    monkeypatch.setattr("cruxible_core.cli.commands.playbill.getpass.getuser", lambda: "9 lives")
     base = ["--server-url", "https://playbill.invalid", "--instance-id", "inst_cli_init"]
 
     missing = CliRunner().invoke(cli, [*base, "init", "--key-dir", str(tmp_path / "a")])
@@ -385,7 +388,8 @@ def test_cli_init_needs_an_owner_principal_and_claims_it_on_an_auth_off_daemon(
     )
 
     assert missing.exit_code == 2
-    assert "cruxible init --principal-id ID --key-dir DIR" in missing.output
+    assert "is not a principal ID" in missing.output
+    assert "cruxible init --principal-id ID" in missing.output
     assert conflicting.exit_code == 2
     assert "disagrees with the configured principal alice" in conflicting.output
     assert made.exit_code == 0, made.output

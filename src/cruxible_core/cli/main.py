@@ -18,7 +18,18 @@ from cruxible_client.authoring.context import (
 )
 from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
-from cruxible_core.cli.context import load_cli_context
+from cruxible_core.cli.context import (
+    CliContextState,
+    load_cli_context,
+    normalized_transport,
+    principal_binding,
+)
+from cruxible_core.cli.principal_settings import (
+    PRINCIPAL_ID_ENV,
+    PRINCIPAL_KEY_ENV,
+    PRINCIPAL_TOKEN_ENV,
+    read_principal_settings,
+)
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
 
@@ -61,7 +72,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("claim", "attest"): "active",
     ("prediction", "propose"): "active",
     ("prediction", "settle"): "active",
-    ("claim-attestation", "recover"): "active",
+    ("claim", "recover-attestation"): "active",
     ("authoring", "bind"): "active",
     ("authoring", "compile"): "active",
     ("authoring", "preflight"): "active",
@@ -568,21 +579,14 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "attest_claim",
                 "Sign that this caller examined the current exact Claim.",
             ),
-        },
-        module="playbill",
-        attr="claim_group",
-    ),
-    "claim-attestation": _group(
-        "Operate the principal-authored Claim-attestation evidence ledger.",
-        {
-            "recover": _command(
+            "recover-attestation": _command(
                 "playbill",
                 "recover_claim_attestations",
                 "Roll the sole durable unpublished attestation forward.",
-            )
+            ),
         },
         module="playbill",
-        attr="claim_attestation_group",
+        attr="claim_group",
     ),
     "prediction": _group(
         "Propose, settle and list predictions.",
@@ -802,7 +806,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         {
             "show": _command("context", "context_show", "Show resolved CLI context."),
             "connect": _command("context", "context_connect", "Persist daemon context."),
-            "use": _command("context", "context_use", "Set the active instance ID."),
+            "use": _command("context", "context_use", "Set the active instance or principal."),
             "clear": _command("context", "context_clear", "Clear remembered context."),
         },
         module="context",
@@ -961,3 +965,95 @@ def cli(
             "workspace_attached": resolved.workspace_attached,
         }
     )
+    _load_remembered_principal(
+        ctx,
+        stored,
+        resolved.instance_id,
+        normalized_transport(settings.server_url, settings.server_socket),
+    )
+
+
+def _load_remembered_principal(
+    ctx: click.Context,
+    stored: CliContextState,
+    instance_id: str | None,
+    transport: str | None,
+) -> None:
+    """Act as the principal the context remembers for this instance, as if its file was sourced.
+
+    `cruxible init` and `cruxible principal add` remember the ``cruxible.env``
+    they write; `cruxible context use --principal ID` picks the active one. A
+    process that names its own principal (--principal-id, CRUXIBLE_PRINCIPAL_ID)
+    or carries its own key or credential keeps them: an agent launched with its
+    own settings file is never overridden.
+
+    Settings are remembered per instance on one daemon endpoint, and the file
+    must name that same endpoint: a credential is never offered to another
+    daemon, whichever way (flag, environment or workspace) the command chose it.
+    """
+
+    obj = ctx.obj
+    if obj.get("principal_id"):
+        source = ctx.get_parameter_source("principal_id")
+        obj["principal_source"] = (
+            "environment" if source is click.core.ParameterSource.ENVIRONMENT else "explicit"
+        )
+        return
+    if (
+        instance_id is None
+        or transport is None
+        or any(os.environ.get(name) for name in (PRINCIPAL_KEY_ENV, PRINCIPAL_TOKEN_ENV))
+    ):
+        return
+    entry = stored.principals.get(principal_binding(transport, instance_id))
+    if entry is None or entry.active is None or entry.active not in entry.settings:
+        elsewhere = sorted(
+            key.partition("@")[2]
+            for key, item in stored.principals.items()
+            if key.partition("@")[0] == instance_id and item.active is not None
+        )
+        if elsewhere:
+            click.echo(
+                f"warning: principal settings for {instance_id} are remembered for "
+                f"{', '.join(elsewhere)}, not {transport}; acting as no principal",
+                err=True,
+            )
+        return
+    path = Path(entry.settings[entry.active])
+    try:
+        settings = read_principal_settings(path)
+    except (OSError, ValueError) as exc:
+        click.echo(
+            f"warning: the remembered settings of principal {entry.active} are unreadable "
+            f"({exc}); continuing without a principal. Repair: `cruxible context use "
+            "--principal ID` for another principal",
+            err=True,
+        )
+        return
+    if (
+        settings.instance_id != instance_id
+        or settings.principal_id != entry.active
+        or settings.transport != transport
+    ):
+        click.echo(
+            f"warning: {path} names principal {settings.principal_id} of instance "
+            f"{settings.instance_id} at {settings.transport}, not {entry.active} of "
+            f"{instance_id} at {transport}; acting as no principal",
+            err=True,
+        )
+        return
+    variables = (PRINCIPAL_ID_ENV, PRINCIPAL_KEY_ENV, PRINCIPAL_TOKEN_ENV)
+    previous = {name: os.environ.get(name) for name in variables}
+
+    def restore() -> None:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    os.environ.update(settings.environment())
+    ctx.call_on_close(restore)
+    obj["principal_id"] = settings.principal_id
+    obj["principal_source"] = "remembered"
+    obj["principal_settings"] = str(settings.path)

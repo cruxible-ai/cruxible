@@ -25,7 +25,7 @@ def test_capture_read_revalidates_before_local_dispatch(monkeypatch, changes) ->
         "playbill_read_capture",
         lambda *args: pytest.fail("Invalid capture request reached the local service"),
     )
-    with pytest.raises(DataValidationError, match="cruxible_read_capture"):
+    with pytest.raises(DataValidationError, match="cruxible_capture_read"):
         handlers.handle_playbill_read_capture("inst_never_reached", request)
 
 

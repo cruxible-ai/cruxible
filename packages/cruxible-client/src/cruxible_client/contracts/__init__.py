@@ -226,15 +226,6 @@ from cruxible_client.contracts.provider_installation import (
 from cruxible_client.contracts.provider_installation import (
     ProviderWheelObject as ProviderWheelObject,
 )
-from cruxible_client.contracts.query.results import (
-    ClaimQueryResult as _ClaimQueryResultV1,
-)
-from cruxible_client.contracts.query.results import (
-    QueryArtifactDefinition as _QueryArtifactDefinitionV2,
-)
-from cruxible_client.contracts.query.results import (
-    QueryExecutionReceipt as _QueryExecutionReceiptV1,
-)
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReference as ClaimVersionReference,
 )
@@ -1233,59 +1224,6 @@ class BlockDepublishResult(BaseModel):
     #: ``would_depublish`` answers a preview, which released nothing.
     outcome: Literal["depublished", "already_depublished", "would_depublish"]
     coordinate: AcceptedCoordinate
-
-
-class QueryDefinitionView(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-query-definition-read-v1"] = "playbill-query-definition-read-v1"
-    coordinate: AcceptedCoordinate
-    path: str
-    name: str
-    identity: str
-    artifact_digest: str
-    envelope: dict[str, Any]
-
-
-class QueryRun(BaseModel):
-    """One executed query: its replayable result beside its execution receipt.
-
-    ``receipt`` carries the whole ``playbill-query-execution-receipt-v1``; its
-    ``result_digest`` is the receipt's content identity, and
-    ``journal_record_digest`` is present only when the caller owned a journal.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-query-run-v1"] = "playbill-query-run-v1"
-    coordinate: AcceptedCoordinate
-    name: str
-    definition_path: str
-    definition_digest: str
-    result: _ClaimQueryResultV1
-    receipt: _QueryExecutionReceiptV1
-    journal_record_digest: str | None = None
-
-    @property
-    def completed(self) -> bool:
-        return self.result.verdict == "completed"
-
-    @property
-    def truncated(self) -> bool:
-        return self.result.truncation.truncated
-
-    @property
-    def has_conflicts(self) -> bool:
-        return bool(self.result.conflicts or any(row.conflicts for row in self.result.rows))
-
-    @property
-    def artifact_definitions(self) -> tuple[_QueryArtifactDefinitionV2, ...]:
-        """Typed definitions; refuse to present a partial read as a complete listing."""
-        if self.result.result_shape != "artifact_definition":
-            raise ValueError("this is a Claim query, not an artifact definition query")
-        if not self.completed or self.truncated:
-            raise ValueError("definition listing is refused or truncated")
-        return tuple(row.artifact for row in self.result.rows if row.artifact is not None)
 
 
 class ProcedureReadiness(BaseModel):

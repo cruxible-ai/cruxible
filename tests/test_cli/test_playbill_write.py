@@ -416,3 +416,20 @@ entries:
         "notes.md#Title",
     )
     assert both.exit_code != 0 and "not both" in both.output
+
+
+def test_write_reads_its_changes_from_stdin(served: _ServiceClient) -> None:
+    """`write -` takes a heredoc or a pipe: no throwaway file lands on disk."""
+
+    result = CliRunner().invoke(
+        cli,
+        [*PREFIX, "write", "-"],
+        input=f"because: Triaged.\nsubject: {WI1}\nchanges:\n  - op: set\n    field: status\n"
+        "    value: ready\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "set project.work_item/wi-1 status: ready" in result.output
+
+    refused = CliRunner().invoke(cli, [*PREFIX, "write", "-"], input="because: x\nchanges: 3\n")
+    assert refused.exit_code != 0
+    assert "stdin is not a valid write file" in refused.output

@@ -121,10 +121,8 @@ def test_an_exact_content_claim_view_carries_the_text_the_daemon_reads(
     assert card.value.object_kind == "exact_content"
     assert card.value.value == "The ruling, exactly as written.\n"
     assert card.value.content_digest == ruling.digest
-    # claim_view and the batch read agree with get, and with the CLI and MCP card.
-    assert pb.claim_view(ruling.claim_id) == card.value
-    (batched, marked) = pb.claim_views([ruling.claim_id, binary.claim_id])
-    assert batched == card.value
+    marked = pb.get(binary.claim_id).value
+    assert isinstance(marked, ClaimView)
     assert marked.value == ExactContentRef(
         exact_content="binary", content_digest=binary.digest, length=9
     )
@@ -457,3 +455,30 @@ def test_world_reads_values_subjects_and_vocabulary_through_the_read_verbs(
     )
     assert [item.kind for item in batch.results] == ["claim_type", "claim"]
     assert {item.accepted_coordinate for item in batch.results} == {batch.coordinate}
+
+
+def test_sdk_get_answers_every_kind_get_resolves(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The SDK maps every get kind, so a policy, a Trigger or a principal card opens."""
+
+    from cruxible_client.authoring.sdk import _GET_REF_KINDS
+    from cruxible_client.authoring.sdk_types import ReferenceKindError
+    from cruxible_client.contracts.get_reads import GET_DETAILS_BY_KIND
+
+    assert set(_GET_REF_KINDS) == set(GET_DETAILS_BY_KIND)
+    client, instance_id, _key = owned_playbill_http
+    pb = _sdk(client, instance_id, tmp_path)
+
+    expected = {
+        "ApprovalPolicy:instance": RefKind.APPROVAL_POLICY,
+        "ProcedureRuntimePolicy:instance": RefKind.PROCEDURE_RUNTIME_POLICY,
+        "Trigger:floor-refresh": RefKind.TRIGGER,
+        "Principal:owner": RefKind.PRINCIPAL,
+    }
+    for ref, kind in expected.items():
+        card = pb.get(ref)
+        assert card.kind is kind
+        with pytest.raises(ReferenceKindError):
+            card.ref  # noqa: B018 - operational cards mint no typed ref

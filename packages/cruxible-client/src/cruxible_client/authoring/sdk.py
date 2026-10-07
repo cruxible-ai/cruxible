@@ -36,7 +36,6 @@ from cruxible_client.authoring.context import (
 )
 from cruxible_client.authoring.procedures import ProviderBinding, procedure_record_constructor
 from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
-from cruxible_client.authoring.queries import QueryBinding
 from cruxible_client.authoring.sdk_types import (
     AccessProfile,
     CallSite,
@@ -232,7 +231,7 @@ from cruxible_client.contracts.procedures.windows import (
     TriggerEventReference,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.records import Record, RecordConstructor
 from cruxible_client.contracts.resolution_contracts import (
@@ -391,6 +390,12 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "resolution_contract": RefKind.RESOLUTION_CONTRACT,
     "mandate": RefKind.MANDATE,
     "procedure_run": RefKind.PROCEDURE_RUN,
+    "trigger": RefKind.TRIGGER,
+    "principal": RefKind.PRINCIPAL,
+    "approval_policy": RefKind.APPROVAL_POLICY,
+    "procedure_runtime_policy": RefKind.PROCEDURE_RUNTIME_POLICY,
+    "source_acquisition_policy": RefKind.SOURCE_ACQUISITION_POLICY,
+    "provider_interface": RefKind.PROVIDER_INTERFACE,
 }
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {
@@ -2249,25 +2254,6 @@ class Cruxible:
 
         return ProjectionBlocks(self)
 
-    def claim_view(self, claim: str | ClaimRef) -> ClaimView:
-        """Read one accepted Claim as the few fields callers actually ask for.
-
-        The wire read returns a fact array keyed by schema id, so answering
-        "what does this Claim say, and is it believed" means walking that array
-        by hand every time. This is that walk, once.
-
-        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
-        """
-
-        identity = _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
-        proof = self._get(
-            identity, "proof", None, claim.coordinate if isinstance(claim, ClaimRef) else None
-        ).proof
-        view = api.ClaimViewRecord.model_validate(proof)
-        return self._with_exact_text(
-            self._typed_claim_view(view, identity), _coordinate(view.coordinate)
-        )
-
     def _with_exact_text(self, view: ClaimView, coordinate: AcceptedCoordinate) -> ClaimView:
         """An exact-content view with the daemon's text for its value, as get shows it.
 
@@ -2369,45 +2355,6 @@ class Cruxible:
             ),
         )
         return CaptureView(result=result)
-
-    def claim_views(self, claims: Sequence[str | ClaimRef]) -> tuple[ClaimView, ...]:
-        """Read up to 256 identities at one current or explicitly pinned coordinate.
-
-        The complete batch preserves input order and all single-view fields.
-        Use explicit batches for larger selections; no population read is implied.
-
-        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
-        """
-        from cruxible_client.contracts.claim_reads import ClaimReadBatchRequest
-
-        coordinates = [claim.coordinate for claim in claims if isinstance(claim, ClaimRef)]
-        if coordinates and any(value != coordinates[0] for value in coordinates):
-            raise ValueError("Claim references in a batch must share one coordinate")
-        requested = self._read_at(coordinates[0] if coordinates else None)
-        request = ClaimReadBatchRequest(
-            at=requested,
-            claim_ids=tuple(
-                _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
-                for claim in claims
-            ),
-            evaluation_time=datetime.fromisoformat(self._evaluation_time()),
-        )
-        result = self._client.read_claim_batch(self._instance_id, request=request)
-        result_coordinate = _coordinate(result.coordinate)
-        if result.truncated or result.cursor is not None or len(result.claims) != len(claims):
-            raise ValueError("identity batch did not return a complete Claim selection")
-        for identity, view in zip(request.claim_ids, result.claims, strict=True):
-            if _coordinate(view.coordinate) != result_coordinate:
-                raise ValueError("Claim batch mixed accepted coordinates")
-            bare = identity.removeprefix("Claim:")
-            returned = str(view.envelope.get("identity", "")).removeprefix("Claim:")
-            if not returned.startswith(bare):
-                raise ValueError("identity batch returned a Claim outside its requested position")
-        self._observe_read(result_coordinate, expected=requested)
-        return tuple(
-            self._with_exact_text(self._typed_claim_view(view), result_coordinate)
-            for view in result.claims
-        )
 
     def predictions(self, claim: str | ClaimVersionReference) -> api.ResolutionContractsResult:
         """List the accepted predictions that test one Claim version, retired ones included.
@@ -3630,77 +3577,6 @@ class Cruxible:
                     sites=sites,
                 )
             ),
-        )
-
-    def query_binding(self, query: str | QueryRef) -> QueryBinding:
-        """Read an exact query and its parameter types through accepted discovery.
-
-        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
-        """
-        name = _address(query, RefKind.QUERY)
-        proof = self._get(
-            f"query:{name}",
-            "proof",
-            None,
-            query.coordinate if isinstance(query, QueryRef) else None,
-        ).proof
-        view = api.QueryDefinitionView.model_validate(proof)
-        coordinate = _coordinate(view.coordinate)
-        return QueryBinding(
-            QueryRef(view.name, coordinate),
-            QueryDefinition.model_validate(view.envelope),
-            view.artifact_digest,
-        )
-
-    def run_query(
-        self,
-        query: str | QueryRef | QueryBinding,
-        *,
-        parameters: Mapping[str, object] | None = None,
-        budgets: QueryBudgets | None = None,
-    ) -> api.QueryRun:
-        """Run a named query at this SDK view's coordinate with a replay receipt.
-
-        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
-        """
-        if isinstance(query, QueryBinding):
-            if parameters is not None and not isinstance(parameters, Record):
-                raise TypeError("a QueryBinding requires parameters made by binding.parameters")
-            parameters = query.parameters(**({} if parameters is None else dict(parameters)))
-            query = query.ref
-        name = _address(query, RefKind.QUERY)
-        requested = self._read_at(query.coordinate if isinstance(query, QueryRef) else None)
-        # The named query's full receipt is the run: its replayable result and
-        # execution receipt; one rendered row is enough beside it.
-        page = self._client.query(
-            self._instance_id,
-            request=api.QueryRequest.model_validate(
-                {
-                    "name": name,
-                    "params": None if parameters is None else dict(parameters),
-                    "budgets": budgets,
-                    "receipt": "full",
-                    "limit": 1,
-                    "at": None if requested is None else requested.model_dump(mode="json"),
-                    "evaluation_time": self._evaluation_time(),
-                }
-            ),
-        )
-        self._observe_read(
-            _coordinate(page.receipt.coordinate.model_dump(mode="json")), expected=requested
-        )
-        replay = page.receipt.replay
-        if replay is None:  # pragma: no cover - a full receipt always carries its replay
-            raise ValueError("the named query answered no replay receipt")
-        return api.QueryRun(
-            coordinate=api.AcceptedCoordinate.model_validate(
-                page.receipt.coordinate.model_dump(mode="json")
-            ),
-            name=name,
-            definition_path=replay.definition_path,
-            definition_digest=page.receipt.spec_digest,
-            result=replay.result,
-            receipt=replay.execution,
         )
 
     def query(

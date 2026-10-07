@@ -49,6 +49,8 @@ GetRefKind = Literal[
     "procedure_run",
     "principal",
     "approval_policy",
+    "procedure_runtime_policy",
+    "source_acquisition_policy",
     "provider_interface",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
@@ -88,6 +90,8 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "procedure_run": ("summary", "proof"),
     "principal": ("summary", "proof"),
     "approval_policy": ("summary", "history", "proof"),
+    "procedure_runtime_policy": ("summary", "history", "proof"),
+    "source_acquisition_policy": ("summary", "history", "proof"),
     "provider_interface": ("summary", "history", "proof"),
 }
 
@@ -418,6 +422,35 @@ class GetApprovalPolicyCard(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class GetProcedureRuntimePolicyCard(_StrictGetModel):
+    """The instance's Procedure runtime ceilings: how much one run may produce and retry."""
+
+    policy: str
+    provider_output_bytes_cap: int
+    result_bytes_cap: int | None = Field(default=None, exclude_if=_omit_none)
+    repeat_attempts_cap: int | None = Field(default=None, exclude_if=_omit_none)
+    next: tuple[str, ...] = ()
+
+
+class GetAcquisitionInput(_StrictGetModel):
+    """How one Procedure input is acquired under a source acquisition policy."""
+
+    input: str
+    requirement: Literal["required", "optional", "conservative_default"]
+    #: The oldest acquisition admitted, as ``<seconds>s``; absent means any age.
+    max_age: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class GetSourceAcquisitionPolicyCard(_StrictGetModel):
+    """One source acquisition policy: how each input is acquired and kept coherent."""
+
+    policy: str
+    lifecycle: str
+    coherence: Literal["independent", "bounded_window", "declared_snapshot_group"]
+    inputs: tuple[GetAcquisitionInput, ...] = ()
+    next: tuple[str, ...] = ()
+
+
 class GetProviderInterfaceProvider(_StrictGetModel):
     provider: str
     implementation_digest: str
@@ -458,6 +491,8 @@ GetCard = (
     | GetProcedureRunCard
     | GetPrincipalCard
     | GetApprovalPolicyCard
+    | GetProcedureRuntimePolicyCard
+    | GetSourceAcquisitionPolicyCard
     | GetProviderInterfaceCard
 )
 
@@ -592,6 +627,7 @@ __all__ = [
     "GET_SUMMARY_TEXT_MAX_CHARS",
     "ByteRange",
     "ExactContentRef",
+    "GetAcquisitionInput",
     "GetApprovalPolicyCard",
     "GetAttestationEvidence",
     "GetBatchRequest",
@@ -612,6 +648,7 @@ __all__ = [
     "GetHistory",
     "GetPrincipalCard",
     "GetProcedureCard",
+    "GetProcedureRuntimePolicyCard",
     "GetProcedureTrackRecord",
     "GetProviderInterfaceCard",
     "GetProviderInterfaceProvider",
@@ -624,6 +661,7 @@ __all__ = [
     "GetRequest",
     "GetResult",
     "GetRevision",
+    "GetSourceAcquisitionPolicyCard",
     "GetSubjectCard",
     "GetSubjectClaim",
     "GetTruncatedText",

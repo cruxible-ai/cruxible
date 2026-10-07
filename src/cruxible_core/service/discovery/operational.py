@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
@@ -39,6 +39,7 @@ from cruxible_client.contracts.operational_reads import (
     GetLineArm,
     GetLineCard,
     GetLineOccurrence,
+    GetLineTrigger,
     GetMandateCard,
     GetPredictionWindow,
     GetResolutionContractCard,
@@ -59,13 +60,8 @@ from cruxible_client.contracts.procedure_mandates import (
     mandate_grant,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    CadenceTriggerPolicy,
-    CaptureLandingTriggerPolicy,
-    CaptureLandingTriggerPolicyV1,
     LineSpec,
     LineSpecAny,
-    WindowCloseTriggerPolicy,
-    WindowCloseTriggerPolicyV1,
     line_identity_digest,
     line_requested_rung,
 )
@@ -204,36 +200,84 @@ def uncited_capture_present(instance: PlaybillInstance, digest: str) -> bool:
 # -- Lines -----------------------------------------------------------------------------
 
 
-def trigger_summary(line: LineSpecAny, triggers: tuple[Trigger, ...]) -> tuple[str, str | None]:
-    """A Line's trigger kind, and one line saying when it fires.
+def trigger_kind(line: LineSpecAny, schedule_kinds: Sequence[str]) -> str:
+    """The kinds of schedule that set a Line off.
 
-    A v6 Line embeds no trigger: the live Triggers aimed at it say when it
-    fires (``triggers``, in identity order), and with none it runs only when
-    run explicitly. An older Line answers from the trigger it embeds.
+    A v6 Line embeds no trigger: the schedule kinds of the live Triggers aimed
+    at it say when it fires, and with none it is ``manual`` (it runs only when
+    run explicitly). An older Line answers from the trigger it embeds.
     """
 
     if isinstance(line, LineSpec):
-        if not triggers:
-            return "manual", "runs only when run explicitly"
-        kinds = sorted({item.schedule.kind for item in triggers})
-        return "+".join(kinds), "; ".join(
-            f"{item.identity.qualified} fires {schedule_summary(item.schedule)}"
-            for item in triggers
+        if not schedule_kinds:
+            return "manual"
+        return "+".join(sorted(set(schedule_kinds)))
+    return line.trigger_policy.kind
+
+
+@dataclass(frozen=True)
+class AimedTriggers:
+    """The live Triggers aimed at one Line: how many, their schedule kinds, the first few."""
+
+    total: int = 0
+    schedule_kinds: tuple[str, ...] = ()
+    #: The first identities in identity order, at most the page's limit.
+    identities: tuple[str, ...] = ()
+
+
+def aimed_trigger_page(
+    projection: Any, lines: Sequence[str], *, limit: int
+) -> dict[str, AimedTriggers]:
+    """Per Line, its live Triggers counted and listed up to ``limit``, from the index alone."""
+
+    if not lines:
+        return {}
+    marks = ",".join("?" * len(lines))
+    connection = projection.typed.connection
+    totals: dict[str, int] = {}
+    kinds: dict[str, set[str]] = {}
+    for target, kind, count in connection.execute(
+        "SELECT target, schedule_kind, count(*) FROM triggers WHERE target_kind='line' "
+        f"AND lifecycle='live' AND target IN ({marks}) GROUP BY target, schedule_kind",
+        tuple(lines),
+    ):
+        totals[str(target)] = totals.get(str(target), 0) + int(count)
+        kinds.setdefault(str(target), set()).add(str(kind))
+    named: dict[str, list[str]] = {}
+    if limit > 0:
+        for target, identity in connection.execute(
+            "SELECT target, identity FROM (SELECT target, identity, row_number() OVER "
+            "(PARTITION BY target ORDER BY identity) AS position FROM triggers "
+            f"WHERE target_kind='line' AND lifecycle='live' AND target IN ({marks})) "
+            "WHERE position <= ? ORDER BY target, identity",
+            (*lines, limit),
+        ):
+            named.setdefault(str(target), []).append(str(identity))
+    return {
+        line: AimedTriggers(
+            total=totals.get(line, 0),
+            schedule_kinds=tuple(sorted(kinds.get(line, ()))),
+            identities=tuple(named.get(line, ())),
         )
-    trigger = line.trigger_policy
-    if isinstance(trigger, CadenceTriggerPolicy):
-        return trigger.kind, f"every {trigger.interval_seconds}s"
-    if isinstance(trigger, CaptureLandingTriggerPolicy):
-        return trigger.kind, f"when {trigger.event.capture_contract_identity.qualified} lands"
-    if isinstance(trigger, CaptureLandingTriggerPolicyV1):
-        return trigger.kind, (
-            f"when a Capture of contract {_short(trigger.anchor_capture_contract_digest)} lands"
-        )
-    if isinstance(trigger, WindowCloseTriggerPolicy):
-        return trigger.kind, "when " + window_summary(trigger.window) + " closes"
-    if isinstance(trigger, WindowCloseTriggerPolicyV1):
-        return trigger.kind, f"when a {trigger.window_seconds}s window closes"
-    return trigger.kind, None
+        for line in lines
+    }
+
+
+def line_arm_states(
+    instance: PlaybillInstance, digests: Mapping[str, str], *, now: datetime
+) -> dict[str, LineArmState | None]:
+    """Each Line's latest arm state (by Line identity), from one dispatch-store session."""
+
+    if not digests or not dispatch_root(instance).exists():
+        return {identity: None for identity in digests}
+    store = LineDispatchStore(instance)
+    with store.locked() as conn:
+        return {
+            identity: _line_operations(
+                store, conn, digest, now=now, arm_limit=1, occurrence_limit=0
+            ).arm_state
+            for identity, digest in digests.items()
+        }
 
 
 def schedule_summary(schedule: TriggerSchedule) -> str:
@@ -250,24 +294,6 @@ def schedule_summary(schedule: TriggerSchedule) -> str:
     if isinstance(schedule, GenerationAcceptedSchedule):
         return "when a new generation is accepted"
     raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
-
-
-def aimed_triggers(projection: Any, lines: tuple[str, ...]) -> dict[str, tuple[Trigger, ...]]:
-    """The live Triggers aimed at each named Line in a bound projection, in identity order."""
-
-    if not lines:
-        return {}
-    marks = ",".join("?" * len(lines))
-    found: dict[str, list[Trigger]] = {}
-    for identity, target in projection.typed.connection.execute(
-        "SELECT identity,target FROM triggers WHERE target_kind='line' AND lifecycle='live' "
-        f"AND target IN ({marks}) ORDER BY identity",
-        lines,
-    ):
-        found.setdefault(str(target), []).append(
-            cast(Trigger, projection.typed.source(str(identity)))
-        )
-    return {line: tuple(items) for line, items in found.items()}
 
 
 def window_summary(window: object) -> str:
@@ -456,11 +482,22 @@ def line_card(
 ) -> GetLineCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         line = cast(LineSpecAny, projection.typed.source(identity))
-        triggers = aimed_triggers(projection, (line.identity.qualified,))
+        aimed = aimed_trigger_page(
+            projection, (line.identity.qualified,), limit=OPERATIONAL_CARD_LIST_LIMIT
+        )[line.identity.qualified]
+        triggers = tuple(
+            GetLineTrigger(
+                trigger=name,
+                version=_revision(projection, name),
+                fires=schedule_summary(cast(Trigger, projection.typed.source(name)).schedule),
+            )
+            for name in aimed.identities
+        )
     digest = line_identity_digest(line.identity)
-    trigger, detail = trigger_summary(line, triggers.get(line.identity.qualified, ()))
+    trigger = trigger_kind(line, aimed.schedule_kinds)
     procedure = line.procedure.target.qualified
     next_steps = [render(procedure, None)]
+    next_steps.extend(render(item.trigger, None) for item in triggers)
     operations = line_operations(instance, digest, now=evaluation_time, viewer=viewer)
     runs, _more = run_rows(instance, limit=LINE_CARD_RUNS, line=line.identity)
     total, _running = run_counts(instance, line=line.identity)
@@ -482,11 +519,17 @@ def line_card(
         procedure=procedure,
         authority=line_authority(line),
         trigger=trigger,
-        trigger_detail=detail,
+        triggers=triggers,
+        triggers_total=aimed.total,
         occurrence_epoch=line.occurrence_epoch,
         next=tuple(next_steps),
         **fields,
     )
+
+
+def _revision(projection: Any, identity: str) -> int:
+    row = projection.typed.envelope(identity)
+    return 1 if row is None else int(row.revision)
 
 
 def line_rows(
@@ -504,7 +547,9 @@ def line_rows(
                 "SELECT identity FROM lines ORDER BY identity"
             )
         ]
-        triggers = aimed_triggers(projection, tuple(line.identity.qualified for line in lines))
+        triggers = aimed_trigger_page(
+            projection, tuple(line.identity.qualified for line in lines), limit=0
+        )
     operations_by_line: dict[str, LineOperations] = {}
     if lines and dispatch_root(instance).exists():
         # One store session for every Line, not one replay per row.
@@ -528,7 +573,7 @@ def line_rows(
                 lifecycle="retired" if line.lifecycle.state == "retired" else "live",
                 procedure=line.procedure.target.qualified,
                 authority=line_authority(line),
-                trigger=trigger_summary(line, triggers.get(line.identity.qualified, ()))[0],
+                trigger=trigger_kind(line, triggers[line.identity.qualified].schedule_kinds),
                 arm=operations.arm_state,
                 due=operations.due,
                 waiting=operations.waiting,
@@ -926,7 +971,9 @@ __all__ = [
     "LIVE_CARD_FIELDS",
     "LineOperations",
     "OperationalViewer",
-    "aimed_triggers",
+    "AimedTriggers",
+    "aimed_trigger_page",
+    "line_arm_states",
     "capture_card",
     "capture_contract_rows",
     "capture_count",
@@ -946,7 +993,7 @@ __all__ = [
     "prediction_rows",
     "resolution_contract_card",
     "schedule_summary",
-    "trigger_summary",
+    "trigger_kind",
     "uncited_capture_present",
     "window_summary",
 ]

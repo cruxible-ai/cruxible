@@ -32,14 +32,10 @@ def test_registered_schema_catalog_matches_permission_catalog() -> None:
     assert set(_schemas()) == set(TOOL_PERMISSIONS)
 
 
-def test_init_and_get_publish_their_protocol_enums() -> None:
+def test_get_publishes_its_protocol_enums_and_setup_stays_off_mcp() -> None:
     schemas = _schemas()
-    init = schemas["cruxible_init"].inputSchema
-    assert set(init["required"]) == {"principals"}
-    assert init["properties"]["operating_profile"]["enum"] == ["local", "cloud"]
-    assert init["properties"]["require_independent_approval"]["default"] is False
-    # Bootstrap no longer installs a seed implicitly; provider setup is separate.
-    assert "seed" not in init["properties"]
+    # Setup (host creation and init) is an operator step on the CLI and HTTP.
+    assert "cruxible_init" not in schemas
 
     get = schemas["cruxible_get"].inputSchema
     assert get["properties"]["detail"]["enum"] == [

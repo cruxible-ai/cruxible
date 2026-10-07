@@ -225,7 +225,7 @@ def register_tools(
     def cruxible_provider_catalog(
         instance_id: InstanceId = None,
     ) -> ProviderCatalog:
-        """Discover provider packages available from the configured repository."""
+        """List provider packages in the configured repository: name, version, interface IDs."""
         return handlers.handle_playbill_provider_catalog(require_instance_id(instance_id))
 
     @_tool
@@ -279,27 +279,6 @@ def register_tools(
     ) -> KitChangeResult:
         """Propose retiring every artifact a kit installed; activation is separate."""
         return handlers.handle_playbill_kit_remove(require_instance_id(instance_id), request)
-
-    @_tool
-    def cruxible_init(
-        instance_id: InstanceId = None,
-        *,
-        principals: list[PrincipalRecord],
-        operating_profile: Literal["local", "cloud"] = "local",
-        require_independent_approval: bool = False,
-        git_object_format: Literal["sha1", "sha256"] | None = None,
-    ) -> contracts.InitResult:
-        """Bootstrap Cruxible from client-generated public principals.
-
-        Provider installation is a separate administrative operation.
-        """
-        return handlers.handle_playbill_init(
-            require_instance_id(instance_id),
-            [item.model_dump(mode="json") for item in principals],
-            operating_profile,
-            require_independent_approval,
-            git_object_format=git_object_format,
-        )
 
     @_tool
     def cruxible_body_store(
@@ -493,7 +472,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_read_capture(
+    def cruxible_capture_read(
         instance_id: InstanceId = None, *, request: CaptureReadRequest
     ) -> CaptureRead:
         """Read exact retained Capture evidence with a byte budget and body permission."""
@@ -573,7 +552,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_propose_principal_change(
+    def cruxible_principal_propose(
         instance_id: InstanceId = None,
         *,
         principal: PrincipalRecord,
@@ -1587,13 +1566,21 @@ def register_tools(
             Field(
                 description=(
                     "Path/source_id bindings; the adapter reads the selected workspace "
-                    "files (files, ranges, grep_results_path, or whole_working_set)."
+                    "files (files, ranges, grep_results, or whole_working_set)."
                 )
             ),
         ] = None,
         files: list[str] | None = None,
         ranges: list[str] | None = None,
-        grep_results_path: str | None = None,
+        grep_results: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "With bindings, grep output (path:line:text lines) selecting the "
+                    "ranges to cover, passed inline."
+                )
+            ),
+        ] = None,
         whole_working_set: Annotated[
             bool, Field(description="With bindings, cover every declared workspace file.")
         ] = False,
@@ -1611,7 +1598,7 @@ def register_tools(
             bindings=_source_bindings(bindings),
             files=tuple(files or ()),
             ranges=tuple(ranges or ()),
-            grep_results_path=grep_results_path,
+            grep_results=grep_results,
             whole_working_set=whole_working_set,
             budget=_dump(budget),
             scan_budget=_dump(scan_budget),

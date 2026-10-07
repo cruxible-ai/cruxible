@@ -27,7 +27,7 @@ from cruxible_client.authoring.blocks import (
     ProjectionIndependentEvidenceForbidden,
     render_projection_opening,
 )
-from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST
+from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST, ClaimView
 from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -1208,7 +1208,9 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
         workspace=tmp_path,
     )
 
-    (capture,) = pb.claim_view("Claim:CLM-typed").captures
+    view = pb.get("Claim:CLM-typed").value
+    assert isinstance(view, ClaimView)
+    (capture,) = view.captures
 
     assert capture.capture_digest == "sha256:" + "7" * 64
     assert capture.contract_address == "capture-contracts/repo.work-items.json"

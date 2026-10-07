@@ -24,6 +24,7 @@ from cruxible_client.contracts.operational_reads import (
 )
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_core.service.discovery.get import service_playbill_get
+from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.procedures.line_dispatch import (
     service_dispatch_line,
     service_evaluate_line,
@@ -88,7 +89,12 @@ def test_a_line_card_names_its_procedure_trigger_arms_and_runs(line_world) -> No
     assert card.identity_digest == line_identity_digest(line.identity)
     assert card.procedure == line.procedure.target.qualified
     assert card.trigger == "capture_landing"
-    assert card.trigger_detail is not None and "lands" in card.trigger_detail
+    # The card lists each Trigger aimed at the Line by name and version, with
+    # the get that reads it, instead of a one-line summary.
+    (aimed,) = card.triggers
+    assert aimed.trigger.startswith("Trigger:") and aimed.version >= 1
+    assert "lands" in aimed.fires
+    assert any(aimed.trigger in step for step in card.next)
     assert card.authority in {"observe", "propose", "settle"}
     (arm,) = card.arms
     assert arm.state == "stopped" and arm.stop_reason == "credential_revoked"
@@ -217,7 +223,7 @@ def test_a_capture_reads_by_handle_prefix_or_full_digest(prediction_world) -> No
     assert card.citing and card.citing_total >= len(card.citing)
     assert "project.work_item/wi-42" in card.subjects
     assert card.next[-1] == (
-        f'cruxible_read_capture(request={{"capture_digest": "{capture_digest}"}})'
+        f'cruxible_capture_read(request={{"capture_digest": "{capture_digest}"}})'
     )
 
     proof = _get(instance, "CAP-" + hex_digits[:12], detail="proof")
@@ -278,3 +284,39 @@ def test_a_stopped_arm_line_card_is_bounded(tmp_path: Path) -> None:
     assert isinstance(card, GetLineCard)
     assert card.recent_runs == () and card.runs_total == 0
     assert [arm.stop_reason for arm in card.arms] == ["permission_insufficient"]
+
+
+def test_get_reads_every_policy_orient_lists_by_its_reference(line_world) -> None:  # type: ignore[no-untyped-def]
+    """orient --section policies names SourceAcquisitionPolicy and ProcedureRuntimePolicy
+    rows; get resolves both references to typed cards, not only ApprovalPolicy."""
+
+    from cruxible_client.contracts.get_reads import (
+        GetProcedureRuntimePolicyCard,
+        GetSourceAcquisitionPolicyCard,
+    )
+
+    instance = line_world[0]
+    rows = service_playbill_orient(instance, section="policies", limit=500).policies or ()
+    declared = {row.policy_kind: row for row in rows}
+    runtime = declared["procedure_runtime_policy"]
+    acquisition = declared["source_acquisition_policy"]
+
+    card = _get(instance, runtime.declaring_artifact_identity)
+    assert card.kind == "procedure_runtime_policy"
+    assert card.ref == "ProcedureRuntimePolicy:instance"
+    assert isinstance(card.card, GetProcedureRuntimePolicyCard)
+    assert card.card.provider_output_bytes_cap == runtime.policy["provider_output_bytes_cap"]
+
+    card = _get(instance, acquisition.declaring_artifact_identity)
+    assert card.kind == "source_acquisition_policy"
+    assert card.ref == acquisition.declaring_artifact_identity
+    assert isinstance(card.card, GetSourceAcquisitionPolicyCard)
+    assert [item.input for item in card.card.inputs] == [
+        rule["input_name"] for rule in acquisition.policy["inputs"]
+    ]
+    assert card.card.coherence == acquisition.policy["coherence"]["kind"]
+    proof = _get(instance, acquisition.declaring_artifact_identity, detail="proof")
+    assert proof.proof is not None and proof.proof["envelope"] == acquisition.policy
+    with pytest.raises(ReadRefusalError) as refused:
+        _get(instance, acquisition.declaring_artifact_identity + "x")
+    assert refused.value.candidates == (acquisition.declaring_artifact_identity,)

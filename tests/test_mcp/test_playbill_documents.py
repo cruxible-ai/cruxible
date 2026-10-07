@@ -12,10 +12,13 @@ from cruxible_client import contracts
 from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
-from cruxible_core.runtime.permissions import TOOL_PERMISSIONS, PermissionMode
+from cruxible_core.runtime.permissions import (
+    RUNTIME_OPERATION_PERMISSIONS,
+    TOOL_PERMISSIONS,
+    PermissionMode,
+)
 
 PLAYBILL_DOCUMENT_TOOLS = {
-    "cruxible_init",
     "cruxible_body_store",
     "cruxible_document_propose",
     "cruxible_proposal_review",
@@ -25,7 +28,7 @@ PLAYBILL_DOCUMENT_TOOLS = {
     "cruxible_source_context",
     "cruxible_source_check",
     "cruxible_propose_source_bundle",
-    "cruxible_propose_principal_change",
+    "cruxible_principal_propose",
 }
 
 
@@ -59,7 +62,10 @@ def test_playbill_permission_tiers_separate_inert_proposal_approval_and_activati
     assert TOOL_PERMISSIONS["cruxible_proposal_approve_submit"] == PermissionMode.GRAPH_WRITE
     assert TOOL_PERMISSIONS["cruxible_proposal_activate"] == PermissionMode.GRAPH_WRITE
     assert TOOL_PERMISSIONS["cruxible_get"] == PermissionMode.READ_ONLY
-    assert TOOL_PERMISSIONS["cruxible_init"] == PermissionMode.ADMIN
+    # Setup is an operator step: init is not an MCP tool, but its HTTP and CLI
+    # route stays ADMIN-gated.
+    assert "cruxible_init" not in TOOL_PERMISSIONS
+    assert RUNTIME_OPERATION_PERMISSIONS["cruxible_init"] == PermissionMode.ADMIN
 
 
 def test_playbill_handlers_decode_bytes_and_submit_only_public_attestation(monkeypatch) -> None:

@@ -65,8 +65,13 @@ CUT_CLIENT_METHODS = (
     "search_playbill",
     "expand_playbill",
 )
+#: SDK members cut before v1: ``query(name=..., receipt="full")`` runs a named
+#: query, ``get("query:NAME")`` shows its parameters, and ``get`` on a Claim
+#: returns its ClaimView.
+CUT_SDK_METHODS = ("run_query", "query_binding", "claim_view", "claim_views")
 _TOOL = re.compile(r"\bcruxible_(?:playbill_)?(?:%s)\b" % "|".join(CUT_MCP_TOOLS))
 _METHOD = re.compile(r"\b(?:%s)\(" % "|".join(CUT_CLIENT_METHODS))
+_SDK = re.compile(r"\.(?:%s)\(" % "|".join(CUT_SDK_METHODS))
 _CLI = re.compile(
     r"\b(?:cruxible (?:playbill )?|playbill )(?:"
     r"claim (?:list|values|get|history|explain)"
@@ -95,7 +100,9 @@ def _texts() -> list[Path]:
     return [path for path in (*docs, *sources) if path.is_file()]
 
 
-@pytest.mark.parametrize("pattern", [_TOOL, _METHOD, _CLI], ids=["mcp", "client", "cli"])
+@pytest.mark.parametrize(
+    "pattern", [_TOOL, _METHOD, _SDK, _CLI], ids=["mcp", "client", "sdk", "cli"]
+)
 def test_no_doc_prompt_or_source_names_a_cut_read_surface(pattern: re.Pattern[str]) -> None:
     offenders = [
         f"{path.relative_to(ROOT)}:{number}: {line.strip()[:120]}"
@@ -114,6 +121,12 @@ def test_no_client_method_takes_a_cut_read_surface_under_its_new_name() -> None:
         for name in CUT_CLIENT_METHODS
     }
     assert sorted(name for name in renamed if hasattr(CruxibleClient, name)) == []
+
+
+def test_the_sdk_has_no_cut_read_member() -> None:
+    from cruxible_client import Cruxible
+
+    assert sorted(name for name in CUT_SDK_METHODS if hasattr(Cruxible, name)) == []
 
 
 def test_the_mcp_instructions_teach_the_three_read_verbs() -> None:

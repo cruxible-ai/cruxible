@@ -111,7 +111,7 @@ def test_environment_key_custody_refuses_unsafe_paths(
         other_root.mkdir()
         _other_instance, _other_claim, other = _accepted_claim_world(other_root)
         configured = str(other.private_key_path)
-    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY_PATH", configured)
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY", configured)
 
     with pytest.raises(
         LocalClaimAttestationKeyUnavailable,

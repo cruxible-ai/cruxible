@@ -112,10 +112,9 @@ and refuses a wrong name with the nearest names. `detail` goes deeper:
 `evidence`, `why`, `history` (newest first, paged), `proof`, or a Document
 `body` by byte range. A summary cuts a long string value to 500 characters and
 marks it `truncated`; `evidence` and `proof` read it whole.
-Use `cx.run_query(name_or_ref, parameters=...)` for a named query's replay
+Use `cx.query(name=..., params=..., receipt="full")` for a named query's replay
 receipt (the Claims each row read, paths, verdict), checking truncation before
-assuming completeness; `query(name=..., receipt="full")` carries the same
-receipt.
+assuming completeness.
 To ask any question over accepted state in one call, use `query`: MCP
 `cruxible_query`, CLI `cruxible query KIND --where 'f=v'`, SDK
 `cx.query(kind, where=[{"field": ..., "eq": ...}], select=[...])` or the typed

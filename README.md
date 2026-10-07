@@ -133,21 +133,22 @@ uv run cruxible server start \
   --state-root /tmp/cruxible-dev
 ~~~
 
-In another shell, allocate a host and make yourself its owner, with a
-client-held key outside the workspace. No bootstrap secret is needed locally:
+In another shell, create a host and make yourself its owner in one command. No
+bootstrap secret is needed locally:
 
 ~~~bash
 export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-run/daemon.sock
 
-uv run cruxible host create --instance-id inst_demo
-uv run cruxible init \
-  --key-dir /tmp/cruxible-owner \
-  --principal-id me
-export CRUXIBLE_PRINCIPAL_ID=me
+uv run cruxible init
 uv run cruxible orient
 ~~~
 
-The init command prints each generated private-key path and sends only public
+With no instance selected, `init` creates the host and selects it. You become
+the owner under your OS username (`--principal-id ID` picks another), with a
+client-held key under `~/.config/cruxible/keys/` (`--key-dir DIR` picks
+another), outside the workspace and the daemon state root. The CLI remembers
+the owner's settings and acts as the owner from then on. The init command
+prints each generated private-key path and sends only public
 principal records to the daemon. The one-key form is a complete solo setup with
 self-approval allowed. Add `--reviewer-key-dir DIR
 --require-independent-approval` to opt into a second ordinary principal and

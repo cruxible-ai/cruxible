@@ -107,7 +107,7 @@ from cruxible_client.contracts.claims import (
     evaluate_claim_law,
     parse_claim,
 )
-from cruxible_client.contracts.codes import CurrentCode
+from cruxible_client.contracts.codes import CurrentCode, normalize_code
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     AcceptedDocument,
@@ -3065,7 +3065,9 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
-                        str(reuse["refusal_code"]),
+                        # The reproducer keeps the recorded spelling; a new
+                        # diagnostic carries the current one.
+                        normalize_code(str(reuse["refusal_code"])),
                         "ClaimType vocabulary reuse disposition was refused.",
                         context.path,
                     ),

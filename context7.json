@@ -8,7 +8,7 @@
   "excludeFolders": [],
   "excludeFiles": [],
   "rules": [
-    "Hosts are created on the CLI (cruxible host create); cruxible_init then bootstraps public principals",
+    "Setup is an operator step on the CLI: cruxible init creates the host and bootstraps its first principal; MCP has no setup tools",
     "Write Claims and Procedures with cruxible_authoring_compile followed by cruxible_authoring_submit; the returned status names every remaining approval and activation step",
     "A proposal is not accepted state and an approval is not activation; read accepted coordinates as state and candidate coordinates as provisional",
     "Search for an existing Subject or Claim before minting an adjacent concept",

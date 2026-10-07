@@ -34,27 +34,23 @@ In shell two:
 export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-run/daemon.sock
 ~~~
 
-Allocate an empty daemon-owned host. The CLI remembers it as the active
-instance. When run inside a Git worktree, the local socket also lets the daemon
-attach that exact workspace before initialization:
+Create a host and make yourself its owner in one command. With no instance
+selected, `init` allocates a daemon-owned host, selects it and initializes it;
+when run inside a Git worktree, the local socket also lets the daemon attach
+that exact workspace:
 
 ~~~bash
-uv run cruxible host create --instance-id inst_demo
+uv run cruxible init
 ~~~
 
-Initialize Cruxible and make yourself the owner, with a key generated outside
-the repository. The principal ID is yours to choose:
-
-~~~bash
-uv run cruxible init \
-  --key-dir /tmp/cruxible-owner \
-  --principal-id me
-export CRUXIBLE_PRINCIPAL_ID=me
-~~~
-
-Every later command, SDK session and MCP server sends `CRUXIBLE_PRINCIPAL_ID`,
-and the daemon attributes writes to that principal after checking it is
-registered and active. With auth off this is a claim of identity, not
+You become the owner under your OS username (`--principal-id ID` picks another),
+with a key generated under `~/.config/cruxible/keys/` (`--key-dir DIR` picks
+another), outside the repository and the daemon state root. Init writes the
+owner's settings file and the CLI remembers it, so later commands act as the
+owner without any export (`cruxible context use --principal ID` switches). An
+SDK session or MCP server loads the same file (`set -a; . DIR/cruxible.env;
+set +a`) or sets `CRUXIBLE_PRINCIPAL_ID`; the daemon attributes writes to that
+principal after checking it is registered and active. With auth off this is a claim of identity, not
 authentication: every process of your OS user is equally trusted. Approvals
 are still signed with the principal's private key.
 

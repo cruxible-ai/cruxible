@@ -83,7 +83,7 @@ ordinary Python objects whose methods execute during authoring.
 | `ProcedurePreview`, `CompositionDiagnostic`, `ProcedureCompositionError` | Existing inspection/error types extended with source information. | Shared public inspection/error types; extended with source information. |
 | `Cruxible.procedure(definition=...)` | Consume a `ProcedureBlueprint` as well as the existing input forms. | Implemented overload; returns the existing `ProcedureDraft`. |
 | `Contract.value`, `bindings.<slot>.input`, `bindings.<query>.parameters` | Construct schema-defined records. | Contract-derived constructors; not executable user helpers. |
-| `Cruxible.query_binding`, typed `Procedure.input/run` | Resolve query schemas and construct host invocation values. | Typed adapters over existing definition reads and execution services. |
+| Typed `Procedure.input/run` | Construct host invocation values. | Typed adapters over existing definition reads and execution services. |
 
 Unlisted Python functions are not implicitly allowed inside source. In
 particular, ordinary SDK calls such as `cx.activate(...)` or `cx.capture(...)`
@@ -102,10 +102,9 @@ schema-checked value shapes. They do not authorize arbitrary Python classes.
 | `ClaimValue[P]` | Value admitted by the selected predicate `P`: its typed scalar/enum, structured literal record, Subject reference, or exact-content value. Predicate ownership and existing object-kind rules remain authoritative. |
 | `Record[S]` | Immutable host value constructed under exact schema `S`. Inside compiled source the corresponding constructor produces `Value[Record[S]]`. Schema identity accompanies authoring checks; wire values retain their existing canonical encoding. |
 | `QueryParameters[P]` | A record from the QueryDefinition's parameter declarations, including required/default/type rules. |
-| `QueryBinding[P, R]` | Read-only accepted query reference plus its parameter and result schema view. It does not store another query definition or execute a query. |
 | `ProviderBinding` | Existing discovery result: Provider and interface identities, exact interface/implementation digests, and declared effect class. The typed handle resolves the selected interface's input/output schemas at the same context. |
 | `QueryRef`, `ProcedureRef`, `SubjectRef`, `ClaimTypeRef`, `CaptureRef` | Existing typed references with their identity/version/coordinate assertions. |
-| `BindingValue` | `ProviderBinding \| QueryBinding \| QueryRef \| ProcedureRef`. `QueryBinding` is a schema-resolved view of a `QueryRef`. Each slot has one required reference kind determined by its use. |
+| `BindingValue` | `ProviderBinding \| QueryRef \| ProcedureRef`. Each slot has one required reference kind determined by its use. |
 | `BindingSlot[T]` | Symbolic `bindings.<name>` reference whose selected host binding must have type `T`; not an object the author constructs inside the body. |
 | `ProcedureBudget`, `ProcedureHardCaps` | Existing explicit budget/cap models. A nested invocation does not reset their effective limits. |
 | `TerminalReturn[O]` | Symbolic instruction to end this invocation, carrying a declared result and/or terminal effect. Not a successful runtime receipt by itself. |
@@ -137,7 +136,6 @@ values, actual runtime data, and canonical serialization.
 | `bindings.query_slot.parameters(**fields)` | Exact QueryDefinition parameter declarations | Typed query parameters. |
 | `provider_binding.input(**fields)` | Schema-resolved host provider handle | Same input constructor in ordinary SDK authoring code. |
 | `accepted_procedure.input(**fields)` | Selected accepted Procedure input contract | Host invocation record. |
-| `query_binding.parameters(**fields)` | Selected accepted QueryDefinition | Host query parameters. |
 | `world.claim_type(predicate).value(**fields)` | Object-valued literal schema of the accepted ClaimType | Typed structured Claim value, retaining predicate ownership. Existing scalar constructors and enum members stay available. |
 
 A constructor accepts declared keyword fields; the schema supplies optional
@@ -208,21 +206,14 @@ Procedure[I, O].run(
     trigger_event: TriggerEventReference | None = None,
 ) -> ProcedureRun[O]
 
-Cruxible.query_binding(query: str | QueryRef) -> QueryBinding[P, R]
-
-Cruxible.run_query(
-    query: QueryBinding[P, R],
-    *,
-    parameters: QueryParameters[P] | None = None,
-    budgets: QueryBudgets | None = None,
-) -> ProcedureQueryResult[R]
 ```
 
-`query_binding` reads the existing accepted QueryDefinition at the SDK context;
-it does not evaluate it. Its `ref` retains the existing `QueryRef`. Passing a
-query reference into a source blueprint is also supported: binding resolves
-the same parameter/result schemas. Parameters may be omitted only when the
-definition has no unsupplied required parameters.
+A host reads a named query with `cx.query(name=..., params=..., receipt="full")`
+(the full receipt carries the replay result) and its parameters with
+`cx.get("query:NAME")`. Passing a `QueryRef` (`cx.get("query:NAME").ref`) into a
+source blueprint binds it; binding resolves the parameter and result schemas.
+Parameters may be omitted only when the definition has no unsupplied required
+parameters.
 
 The accepted Procedure handle resolves invocation contracts before constructing
 an input record. A live head change must not silently replace those contracts:
@@ -427,7 +418,7 @@ from its uses and requires them to be consistent.
 |---|---|---|
 | `call(bindings.normalize, ...)` | `ProviderBinding` for the compatible Call interface | `cx.provider_binding(interface, provider=...)` |
 | `source(bindings.fetch, ...)` | `ProviderBinding` for a Source-compatible acquisition interface | Same accepted provider discovery operation. |
-| `query(bindings.exposures, ...)` | `QueryBinding` or `QueryRef` | `cx.query_binding(name_or_ref)` wraps the existing definition read; a supplied `QueryRef` is resolved at binding. |
+| `query(bindings.exposures, ...)` | `QueryRef` | `cx.get("query:NAME").ref`; the `QueryRef` is resolved at binding. |
 | `invoke(bindings.observer, ...)` | `ProcedureRef` | `cx.accepted_procedure(name).ref` |
 
 Provider bindings carry exact accepted interface and implementation identifiers.
@@ -592,7 +583,7 @@ specific Subject/predicate reads needed. For joins and populations, use a query.
 
 ```text
 query(
-    definition: BindingSlot[QueryBinding[P, R] | QueryRef],
+    definition: BindingSlot[QueryRef],
     *,
     parameters: Value[QueryParameters[P]] | None = None,
     budgets: QueryBudgets | None = None,
@@ -612,7 +603,7 @@ fields and incompatible values; runtime validation still checks actual data.
 
 ### `ProcedureQueryResult[R]`
 
-The host `QueryRun` exposes typed existing result/receipt models. Source
+A host query's full receipt exposes typed existing result/receipt models. Source
 query taps expose the same fields through contract-checked symbolic access.
 
 | Field | Meaning |
@@ -1402,7 +1393,7 @@ iteration, invented aggregation provider, or custom `ExposureRow` is needed.
 ```python
 # After the query is accepted:
 bound_assessment = assess_asset.bind(
-    open_exposures=cx.query_binding("security.open_exposures"),
+    open_exposures=cx.get("query:security.open_exposures").ref,
 )
 assessment_preview = bound_assessment.preview(world=cx.world())
 assessment_intent = cx.procedure(definition=bound_assessment).prepare()
