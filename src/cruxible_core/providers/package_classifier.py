@@ -6,13 +6,19 @@ from cruxible_client.contracts.canonical import CanonicalValue, canonical_digest
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.provider_interfaces import ProviderInterfaceRegistration
 from cruxible_core.providers.provider_classifiers import ProviderClassifierInstallationRefused
-from cruxible_core.providers.provider_local_runtime import LocalProviderDeploymentV1, _run_child
+from cruxible_core.providers.provider_local_runtime import (
+    LocalProviderDeploymentV1,
+    ProviderSpawnDeadline,
+    _run_child,
+)
 from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
 from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeRunContextV1,
     parse_provider_runtime_result,
 )
+
+_PROBE_WALL_CLOCK_SECONDS = 30
 
 
 class PackageBucketClassifier:
@@ -33,10 +39,13 @@ class PackageBucketClassifier:
         self.classifier_version = registration.classifier_version
         self.classifier_digest = registration.classifier_digest
 
-    def classify(self, canonical_input: CanonicalValue) -> str:
+    def classify(
+        self, canonical_input: CanonicalValue, *, deadline: ProviderSpawnDeadline | None
+    ) -> str:
         output = run_package_probe(
             self.deployment,
             self.leases,
+            deadline=deadline,
             kind="classifier",
             digest=self.classifier_digest,
             value={
@@ -61,12 +70,23 @@ def run_package_probe(
     kind: Literal["classifier", "resource"],
     digest: str,
     value: dict[str, Any],
+    deadline: ProviderSpawnDeadline | None,
 ) -> dict[str, Any]:
+    """Run one package probe child.
+
+    ``deadline`` is a Procedure run's, when the probe classifies a run's input:
+    the probe's own window is clipped to the run's time left, and the spawn
+    refuses with ``budget_wall_clock`` once it has passed. Installation probes,
+    outside any run, pass None and keep the probe window.
+    """
     if deployment.installation_verification is None:
         raise ValueError("package probes require a verified installation")
     identifier = "sha256:" + canonical_digest("provider-package-probe-v1", {"id": new_id("probe")})
     entrypoint = f"cruxible_provider_runtime.package_probe:{kind.title()}Probe"
-    budgets = ProviderRuntimeBudgetsV1(wall_clock_seconds=30, output_bytes=1_048_576)
+    window = float(_PROBE_WALL_CLOCK_SECONDS)
+    if deadline is not None:
+        window = min(window, deadline.require_remaining())
+    budgets = ProviderRuntimeBudgetsV1(wall_clock_seconds=window, output_bytes=1_048_576)
     context = ProviderRuntimeRunContextV1(
         protocol_version="1.0",
         run_id=identifier,
@@ -87,6 +107,7 @@ def run_package_probe(
         secret_fd=None,
         invocation_id=identifier,
         process_leases=leases,
+        deadline=deadline,
     )
     result = parse_provider_runtime_result(outcome.stdout)
     if result.run_id != identifier or result.status != "ok" or not isinstance(result.output, dict):

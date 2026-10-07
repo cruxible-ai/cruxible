@@ -36,6 +36,7 @@ from cruxible_client.contracts.captures import (
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.errors import BootstrapError
+from cruxible_client.contracts.floor import FLOOR_LOCAL_PATHS, FLOOR_MANIFEST_PATH
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
@@ -682,12 +683,12 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     assert manifest["coordinate"] == coordinate
     assert manifest["floor_digest"].startswith("sha256:")
 
-    # projections/INDEX and sources/INDEX are the client's joins of its own
-    # workspace bindings, outside the daemon-verified manifest.
+    # The floor's self-ignore and the client's joins of its own workspace
+    # bindings (projections/INDEX, sources/INDEX) sit outside the
+    # daemon-verified manifest.
     written = {str(path.relative_to(floor)) for path in floor.rglob("*") if path.is_file()} - {
-        "manifest.json",
-        "projections/INDEX",
-        "sources/INDEX",
+        FLOOR_MANIFEST_PATH,
+        *FLOOR_LOCAL_PATHS,
     }
     assert written == {item["path"] for item in manifest["files"]}
     # The grep-first floor: values, their provenance, no discovery cards.

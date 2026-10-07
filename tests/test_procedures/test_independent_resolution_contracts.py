@@ -650,7 +650,9 @@ print(result.model_dump_json())
                     "root": str(instance.root),
                     "trust_root": instance.trust_root.model_dump(mode="json"),
                     "request": LineRunRequest(
-                        line_identity_digest=line_id, resolution_contract=ref
+                        line_identity_digest=line_id,
+                        trigger=window_trigger.identity.name,
+                        resolution_contract=ref,
                     ).model_dump(mode="json"),
                     "actor": _actor(instance).model_dump(mode="json"),
                     "now": (end + timedelta(days=2)).isoformat(),

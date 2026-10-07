@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.errors import ExecutionError
@@ -27,6 +27,9 @@ from cruxible_core.providers.web_fetch import (
     WebFetchBucketClassifier,
 )
 
+if TYPE_CHECKING:
+    from cruxible_core.providers.provider_local_runtime import ProviderSpawnDeadline
+
 
 class ProviderBucketClassifierProtocol(Protocol):
     """Installed code whose identity must reproduce accepted registration bytes."""
@@ -40,7 +43,16 @@ class ProviderBucketClassifierProtocol(Protocol):
     @property
     def classifier_digest(self) -> str: ...
 
-    def classify(self, canonical_input: CanonicalValue) -> str: ...
+    def classify(
+        self, canonical_input: CanonicalValue, *, deadline: ProviderSpawnDeadline | None
+    ) -> str:
+        """Measure the input's bucket.
+
+        ``deadline`` is required so no caller can drop it by omission: a Procedure
+        run passes its own, so a classifier that spawns a child is held to the run's
+        time; only installation conformance, outside any run, passes None.
+        """
+        ...
 
 
 class ProviderClassifierInstallationRefused(ExecutionError):
@@ -124,7 +136,11 @@ class ProviderBucketClassifierRegistry:
                     "classifier_not_installed",
                     f"accepted fixture {proof.fixture_id!r} is unavailable at this compiler",
                 )
-            measured = classifier.classify(fixture.canonical_input)  # type: ignore[arg-type]
+            # Installation conformance runs outside any Procedure run.
+            measured = classifier.classify(
+                fixture.canonical_input,  # type: ignore[arg-type]
+                deadline=None,
+            )
             try:
                 registration.vocabulary.validate_bucket(measured)
             except ValueError as exc:

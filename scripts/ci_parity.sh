@@ -12,8 +12,16 @@ echo "== ruff format --check"
 uv run ruff format --check src packages/cruxible-client/src tests
 echo "== mypy"
 uv run mypy src packages/cruxible-client/src
-echo "== pytest (non-golden)"
-uv run pytest tests/ --ignore=tests/goldens -q -n auto --dist loadfile
+# The provider-runtime tests need a cruxible-providers checkout, as in CI
+# (tests/support/provider_checkout.py); without one they skip.
+if [ -n "${CRUXIBLE_PROVIDERS_CHECKOUT:-}" ]; then
+  echo "== provider runtime from $CRUXIBLE_PROVIDERS_CHECKOUT"
+  uv pip install "$CRUXIBLE_PROVIDERS_CHECKOUT/packages/cruxible-provider-runtime"
+else
+  echo "== CRUXIBLE_PROVIDERS_CHECKOUT unset: the provider-runtime tests will skip"
+fi
+echo "== pytest"
+uv run pytest -q -n auto --dist loadfile --tb=short
 # Release-workflow parity: publish.yml's verify-versions job runs this same
 # script with --tag. Without it the first thing that can see a version-lockstep
 # break is a pushed tag (0.3.1 tagged with cruxible-client still at 0.3.0).

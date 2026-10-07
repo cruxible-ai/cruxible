@@ -7,15 +7,16 @@ text that appears and goes away, evidence-cited Claims, a Document revised in
 place, a review rationale revised after acceptance, and one source cited at two
 external coordinate/selector types by two Claims, the first of which (in
 identity order) is then revised, so an incremental render meets them in the
-other order. For every pair of
-generations the delta applied to the base floor is byte-identical to the full
-floor at the head; a floor installed before the notes revision is repaired to
-it; the deltas are the same whether the index was cold, warm or advanced in
-one coalesced step; and applying one twice changes nothing.
+other order. For every checked pair of generations (see ``_pairs``) the delta
+applied to the base floor is byte-identical to the full floor at the head; a
+floor installed before the notes revision is repaired to it; the deltas are
+the same whether the index was cold, warm or advanced in one coalesced step;
+and applying one twice changes nothing.
 """
 
 from __future__ import annotations
 
+import random
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -254,6 +255,31 @@ def _delta(
     )
 
 
+# Mid-history spans checked beyond the structural pairs; fixed seed, so every
+# run checks the same pairs.
+_SAMPLED_PAIRS = 16
+
+
+def _pairs(head: int) -> list[tuple[int, int]]:
+    """The (base, target) generation pairs the delta law is checked on.
+
+    Every pair is quadratic in the history length. These keep each distance
+    the law has to hold over: none (base == target), one step (adjacent),
+    genesis to every head, every base to the last head, and a fixed sample of
+    the remaining mid-history spans.
+    """
+
+    chosen = {(target, target) for target in range(head + 1)}
+    chosen |= {(target - 1, target) for target in range(1, head + 1)}
+    chosen |= {(0, target) for target in range(head + 1)}
+    chosen |= {(base, head) for base in range(head + 1)}
+    rest = sorted(
+        {(base, target) for target in range(head + 1) for base in range(target + 1)} - chosen
+    )
+    chosen |= set(random.Random(0).sample(rest, min(_SAMPLED_PAIRS, len(rest))))
+    return sorted(chosen, key=lambda pair: (pair[1], pair[0]))
+
+
 def _tree(directory: Path) -> dict[str, bytes]:
     return {
         path.relative_to(directory).as_posix(): path.read_bytes()
@@ -288,16 +314,15 @@ def test_every_delta_rebuilds_the_full_floor_byte_for_byte(
         b"http-response-v1/whole-response-v1,postgres-lsn-v1/relation-primary-key-v1"
         in fulls[head]["sources/LEDGER"]
     )
-    for target in range(head + 1):
-        for base in range(target + 1):
-            directory = tmp_path / f"apply-{base}-{target}"
-            apply_floor_delta(directory, _delta(instance, base, None, None))
-            delta = _delta(instance, target, base, renderer)
-            first = apply_floor_delta(directory, delta)
-            assert first.status in {"applied", "unchanged"}, (base, target)
-            assert _tree(directory) == fulls[target], (base, target)
-            again = apply_floor_delta(directory, delta)
-            assert again.status == "unchanged" and _tree(directory) == fulls[target]
+    for base, target in _pairs(head):
+        directory = tmp_path / f"apply-{base}-{target}"
+        apply_floor_delta(directory, _delta(instance, base, None, None))
+        delta = _delta(instance, target, base, renderer)
+        first = apply_floor_delta(directory, delta)
+        assert first.status in {"applied", "unchanged"}, (base, target)
+        assert _tree(directory) == fulls[target], (base, target)
+        again = apply_floor_delta(directory, delta)
+        assert again.status == "unchanged" and _tree(directory) == fulls[target]
 
 
 def test_a_floor_installed_before_the_notes_moved_reaches_every_head(
@@ -309,25 +334,27 @@ def test_a_floor_installed_before_the_notes_moved_reaches_every_head(
 
     instance: PlaybillInstance = world["instance"]
     head = world["head"]
-    for target in range(head + 1):
-        full = tmp_path / f"full-{target}"
-        apply_floor_delta(full, _delta(instance, target, None, None))
-        for base in range(target + 1):
-            directory = tmp_path / f"sync-{base}-{target}"
-            shutil.copytree(world["installed"] / str(base), directory)
+    fulls: dict[int, dict[str, bytes]] = {}
+    for base, target in _pairs(head):
+        if target not in fulls:
+            full = tmp_path / f"full-{target}"
+            apply_floor_delta(full, _delta(instance, target, None, None))
+            fulls[target] = _tree(full)
+        directory = tmp_path / f"sync-{base}-{target}"
+        shutil.copytree(world["installed"] / str(base), directory)
 
-            def fetch(generation: int | None, renderer: str | None) -> FloorDelta:
-                return _delta(instance, target, generation, renderer)
+        def fetch(generation: int | None, renderer: str | None) -> FloorDelta:
+            return _delta(instance, target, generation, renderer)
 
-            sync_floor_directory(fetch, directory)
-            assert _tree(directory) == _tree(full), (base, target)
+        sync_floor_directory(fetch, directory)
+        assert _tree(directory) == fulls[target], (base, target)
 
 
 def test_deltas_are_the_same_cold_warm_and_coalesced(world: dict[str, Any]) -> None:
     instance: PlaybillInstance = world["instance"]
     head = world["head"]
     renderer = _delta(instance, head, None, None).renderer
-    pairs = [(base, target) for target in range(head + 1) for base in range(target + 1)]
+    pairs = _pairs(head)
 
     def every() -> list[FloorDelta]:
         return [_delta(instance, target, base, renderer) for base, target in pairs]

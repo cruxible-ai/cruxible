@@ -12,9 +12,6 @@ import pytest
 from cruxible_client.authoring.context import resolve_context
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-ALLOWED_DEVELOPER_PATHS = {
-    "tests/test_storage/test_family1_dogfood.py",
-}
 
 
 def test_committed_tests_do_not_depend_on_developer_paths_or_mutate_sys_path() -> None:
@@ -26,9 +23,6 @@ def test_committed_tests_do_not_depend_on_developer_paths_or_mutate_sys_path() -
     for path in sorted((REPOSITORY_ROOT / "tests").rglob("*.py")):
         relative = path.relative_to(REPOSITORY_ROOT).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
-        if relative in ALLOWED_DEVELOPER_PATHS:
-            assert "CRUXIBLE_RUN_PLAYBILL_DOGFOOD" in text
-            continue
         if (
             any(prefix in text for prefix in developer_prefixes)
             or system_temporary_prefix in text

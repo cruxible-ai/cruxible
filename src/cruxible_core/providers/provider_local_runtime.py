@@ -378,6 +378,35 @@ class BoundLocalProviderV1:
     interpreter_path: Path
 
 
+_NO_BUDGET_BEFORE_SPAWN = "No Procedure wall-clock budget remains before Provider spawn."
+
+
+@dataclass(frozen=True)
+class ProviderSpawnDeadline:
+    """A Procedure run's wall-clock deadline, read in the executor's own monotonic clock.
+
+    The Provider window in the run context is measured once by the executor; work
+    between that measurement and the spawn (context validation, the spawn-time
+    rebind, secret resolution, serialization) also spends the run's time. The
+    deadline travels to the spawn so the last check reads the same clock at the
+    last moment.
+    """
+
+    deadline_ns: int
+    monotonic_ns: Callable[[], int]
+
+    def remaining_seconds(self) -> float:
+        return max(0, self.deadline_ns - self.monotonic_ns()) / 1_000_000_000
+
+    def require_remaining(self) -> float:
+        """Seconds left before the deadline, or the run's budget refusal."""
+
+        remaining = self.remaining_seconds()
+        if remaining <= 0:
+            raise ProviderLocalRuntimeRefused("budget_wall_clock", _NO_BUDGET_BEFORE_SPAWN)
+        return remaining
+
+
 @dataclass(frozen=True)
 class ProviderDriverOutcomeV1:
     """Local result whose ``duration_seconds`` reads VALIDITY WINDOW."""
@@ -556,6 +585,7 @@ class ProviderLocalRuntimeInvoker:
         context: ProviderRuntimeRunContextV1,
         invocation_id: str,
         bound: BoundLocalProviderV1,
+        deadline: ProviderSpawnDeadline,
     ) -> ProviderDriverOutcomeV1:
         # Rebind immediately before every spawn. The earlier bound value is
         # journal-before-progress evidence. The remaining verify-to-exec window
@@ -574,6 +604,7 @@ class ProviderLocalRuntimeInvoker:
             secret_resolvers=self._secret_resolvers,
             invocation_id=invocation_id,
             process_leases=self._process_leases,
+            deadline=deadline,
         )
 
 
@@ -859,7 +890,9 @@ class LocalProviderExecutionDriver:
         secret_resolvers: ProviderSecretResolverRegistry,
         invocation_id: str,
         process_leases: ProviderProcessLeaseStore,
+        deadline: ProviderSpawnDeadline | None = None,
     ) -> ProviderDriverOutcomeV1:
+        """Run one child; ``deadline`` is the Procedure run's, when a run invokes it."""
         # Before any tenant secret is resolved, not merely before the spawn: a
         # run this profile will refuse must not decrypt customer secret material
         # into the daemon on its way to the refusal.
@@ -900,7 +933,15 @@ class LocalProviderExecutionDriver:
                 if secret_fd is not None
                 else None
             )
-            actual_context = context.model_copy(update={"secret_channel": channel})
+            update: dict[str, object] = {"secret_channel": channel}
+            if deadline is not None:
+                # Secret resolution spent run time too: the child is told the
+                # window that is left, never the one measured before it.
+                window = min(context.budgets.wall_clock_seconds, deadline.require_remaining())
+                update["budgets"] = context.budgets.model_copy(
+                    update={"wall_clock_seconds": window}
+                )
+            actual_context = context.model_copy(update=update)
             # The external runtime wire law permits finite floats (the wall-clock
             # budget is one), so use its exact model-order JSON spelling rather
             # than Cruxible's narrower governed-artifact canonical value law.
@@ -914,6 +955,7 @@ class LocalProviderExecutionDriver:
                 secret_fd=secret_fd,
                 invocation_id=invocation_id,
                 process_leases=process_leases,
+                deadline=deadline,
             )
         _assert_no_secret(process.stdout, secrets, where="provider stdout")
         _assert_no_secret(process.stderr, secrets, where="provider stderr")
@@ -1318,8 +1360,14 @@ def _run_child(
     secret_fd: int | None,
     invocation_id: str,
     process_leases: ProviderProcessLeaseStore,
+    deadline: ProviderSpawnDeadline | None = None,
 ) -> _ProcessOutcome:
     """Run one child; ``started``/``deadline``/elapsed duration read VALIDITY WINDOW.
+
+    A Procedure run's ``deadline`` is checked last, immediately before the
+    child exists: past it, nothing spawns and the run's budget refusal is
+    raised; before it, the window the child is held to is clipped to what is
+    left (measured from ``started``, so the clip can only end it earlier).
 
     This is the ONLY place the daemon spawns a Provider child, so the hosted
     execution policy is enforced here: a shared hosted profile with no isolated
@@ -1352,6 +1400,10 @@ def _run_child(
             entrypoint,
             str(-1 if secret_fd is None else secret_fd),
         ]
+        if deadline is not None:
+            remaining = deadline.require_remaining()
+            if remaining < budgets.wall_clock_seconds:
+                budgets = budgets.model_copy(update={"wall_clock_seconds": remaining})
         process = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
@@ -1711,6 +1763,7 @@ __all__ = [
     "ProviderMaterializationSealFileV2",
     "ProviderMaterializationSealV2",
     "ProviderSecretResolverRegistry",
+    "ProviderSpawnDeadline",
     "provider_environment_secret_key",
     "translate_provider_budget",
 ]

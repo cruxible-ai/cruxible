@@ -15,11 +15,9 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PROVIDER_ROOT = Path(
-    os.environ.get("CRUXIBLE_PROVIDERS_ROOT", "/Users/robertmalone/Git/cruxible-providers")
-).resolve()
+# The same variable the provider-runtime tests read (tests/support/provider_checkout.py).
+CHECKOUT_ENV = "CRUXIBLE_PROVIDERS_CHECKOUT"
 EXPECTED_COMMIT = "389e9f44de56c1adebae731228cf4628c6fbeca8"
-RUNTIME_SRC = PROVIDER_ROOT / "packages/cruxible-provider-runtime/src"
 
 
 def _schema(model: type[Any]) -> dict[str, Any]:
@@ -27,12 +25,18 @@ def _schema(model: type[Any]) -> dict[str, Any]:
 
 
 def main() -> None:
+    checkout = os.environ.get(CHECKOUT_ENV)
+    if not checkout:
+        raise SystemExit(
+            f"set {CHECKOUT_ENV} to a cruxible-providers checkout at {EXPECTED_COMMIT}"
+        )
+    provider_root = Path(checkout).resolve()
     commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=PROVIDER_ROOT, text=True
+        ["git", "rev-parse", "HEAD"], cwd=provider_root, text=True
     ).strip()
     if commit != EXPECTED_COMMIT:
         raise SystemExit(f"provider checkout is {commit}, expected {EXPECTED_COMMIT}")
-    sys.path.insert(0, str(RUNTIME_SRC))
+    sys.path.insert(0, str(provider_root / "packages/cruxible-provider-runtime/src"))
 
     from cruxible_provider_runtime.errors import ProviderErrorPayload, Refusal, RefusalCode
     from cruxible_provider_runtime.protocol import (
@@ -97,13 +101,13 @@ def main() -> None:
     }
     provider_golden = json.loads(
         (
-            PROVIDER_ROOT
+            provider_root
             / "packages/cruxible-provider-runtime/tests/fixtures/golden/expected-digests.json"
         ).read_text(encoding="utf-8")
     )
     implementation_cases = json.loads(
         (
-            PROVIDER_ROOT
+            provider_root
             / "packages/cruxible-provider-runtime/tests/fixtures/golden/implementation-cases.json"
         ).read_text(encoding="utf-8")
     )

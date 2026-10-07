@@ -90,10 +90,11 @@ def test_accepted_claim_builder_expands_to_complete_expert_graph_golden() -> Non
     )
 
     assert first == second
-    # Pinned at the revision-32 governed-triggers compiler; retention is by
-    # replaying each retired coordinate, never by keeping its literal here.
+    # Pinned at the revision-32 governed-triggers-generation compiler (the
+    # digest folds in its rule digest); retention is by replaying each retired
+    # coordinate, never by keeping its literal here.
     assert first.expanded_output_digest == (
-        "sha256:d8f2dd2b6302779d22e9c937c8dc597c2c161c825d022894dc8b12545122ded2"
+        "sha256:90f1bee6d64361a6dfda0d7f4c743128ad2c5ea3cec2507be32c638844ffc46e"
     )
     assert [node.kind for node in first.definition.nodes] == ["state_tap", "guard", "project"]
     assert isinstance(first.definition.nodes[0], StateTapNodeV3)

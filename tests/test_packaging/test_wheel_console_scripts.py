@@ -33,10 +33,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.wheel
 
 # Aliases that are runnable with only the base install. The ``cruxible-mcp``
-# script imports optional dependencies (the ``mcp`` extra) and starts a
-# long-lived daemon, so it is exercised at the import-resolution level rather
-# than invoked. The Cruxible daemon launches via ``cruxible server start`` (a
-# subcommand of the runnable ``cruxible`` CLI), not a console-script of its own.
+# script starts a long-lived stdio server, so it is exercised at the
+# import-resolution level rather than invoked; ``mcp`` is a base dependency, so
+# that import must resolve on the base install. The Cruxible daemon launches via
+# ``cruxible server start`` (a subcommand of the runnable ``cruxible`` CLI), not a
+# console-script of its own.
 _BASE_RUNNABLE_ALIASES = ("cruxible",)
 
 
@@ -107,7 +108,7 @@ def _script_path(venv: Path, name: str) -> Path:
 
 @pytest.fixture(scope="module")
 def installed_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build the wheels and install ``cruxible[mcp,server]`` into a fresh venv."""
+    """Build the wheels and install the base ``cruxible`` (no extras) into a fresh venv."""
     uv = _require_uv()
     work = tmp_path_factory.mktemp("wheel-install")
     wheel_dir = work / "wheels"
@@ -122,9 +123,9 @@ def installed_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
     venv = work / "venv"
     _run([uv, "venv", str(venv)], skip_on_failure=True, skip_reason="could not create venv")
 
-    # Install with all extras so the optional MCP/server entry points are
-    # importable; --find-links lets the workspace-local cruxible-client resolve
-    # offline from the wheel we just built.
+    # The base install only: every entry point, including the MCP server, must
+    # import without an extra. --find-links lets the workspace-local
+    # cruxible-client resolve offline from the wheel we just built.
     install = subprocess.run(
         [
             uv,
@@ -134,7 +135,7 @@ def installed_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
             str(_venv_bin(venv) / "python"),
             "--find-links",
             str(wheel_dir),
-            f"cruxible[mcp,server] @ {core_wheel}",
+            f"cruxible @ {core_wheel}",
         ],
         capture_output=True,
         text=True,

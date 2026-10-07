@@ -56,7 +56,7 @@ from tests.test_procedures.test_procedure_execution import _Authority, _Contract
 
 
 class _WorkspaceClassifier:
-    def classify(self, canonical_input: CanonicalValue) -> str:
+    def classify(self, canonical_input: CanonicalValue, *, deadline: object) -> str:
         assert isinstance(canonical_input, dict)
         return "content_kind=text;byte_size=tiny"
 
@@ -80,7 +80,7 @@ class _WorkspaceInvoker:
         )
 
     def invoke_provider(  # type: ignore[no-untyped-def]
-        self, *, occurrence, context, invocation_id, bound
+        self, *, occurrence, context, invocation_id, bound, deadline
     ) -> ProviderDriverOutcomeV1:
         self.spawn_calls += 1
         self.input = context.input

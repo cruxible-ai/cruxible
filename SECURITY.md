@@ -17,7 +17,7 @@ We will acknowledge your report within 48 hours and work with you to understand 
 
 ## Scope
 
-This policy applies to the `cruxible-core` Python package and its MCP server (`cruxible-mcp`). Demo data and configs are included for illustration and are not considered security-sensitive.
+This policy applies to the `cruxible` and `cruxible-client` Python packages, including the daemon (`cruxible server start`) and the MCP server (`cruxible mcp`, `cruxible-mcp`).
 
 ## Supported Versions
 

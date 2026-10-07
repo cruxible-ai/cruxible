@@ -760,6 +760,8 @@ def _install_locked(
                     kind="resource",
                     digest=implementation.interface_digest,
                     value={"entrypoint": requirement.probe_entrypoint},
+                    # Installation readiness runs outside any Procedure run.
+                    deadline=None,
                 )
                 available = output.get("available") is True
             if not available:

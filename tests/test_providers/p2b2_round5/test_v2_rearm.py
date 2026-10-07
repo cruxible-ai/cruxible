@@ -289,16 +289,19 @@ def test_one_governed_instance_without_playbill_is_skipped_as_a_non_owner(
     invocation = "sha256:" + "3" * 64
     record_path = _plant_record(operator, invocation)
 
+    state_root = short_root / "registry"
     bare = SimpleNamespace(
         instance_id="inst_bare",
         backend="governed_daemon",
-        location=str(short_root / "no-playbill-here"),
+        location=str(state_root / "instances" / "no-playbill-here"),
         workspace_root=None,
     )
     registry = SimpleNamespace(
         list_instances=lambda: (bare,),
         get=lambda instance_id: bare if instance_id == "inst_bare" else None,
-        state_root=short_root / "registry",
+        state_root=state_root,
+        # The registry resolves the served directory under its own state root.
+        instance_root=lambda record: Path(record.location),
     )
     monkeypatch.setattr("cruxible_core.runtime.playbill_manager.get_registry", lambda: registry)
     manager = PlaybillInstanceManager()  # the REAL get(), no stub

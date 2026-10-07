@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 from pydantic import ValidationError
@@ -104,7 +104,7 @@ class _Invoker:
         )
 
     def invoke_provider(  # type: ignore[no-untyped-def]
-        self, *, occurrence, context, invocation_id, bound
+        self, *, occurrence, context, invocation_id, bound, deadline
     ):
         self.calls.append(invocation_id)
         assert bound.binding == occurrence.local_execution
@@ -130,7 +130,7 @@ class _CrashingInvoker:
         return _Invoker().bind_provider(occurrence=occurrence)
 
     def invoke_provider(  # type: ignore[no-untyped-def]
-        self, *, occurrence, context, invocation_id, bound
+        self, *, occurrence, context, invocation_id, bound, deadline
     ):
         raise RuntimeError("daemon lost the provider result")
 
@@ -1187,6 +1187,415 @@ def test_provider_call_budget_subtracts_elapsed_run_time_at_each_spawn(tmp_path:
         0
     ].budget_translation.runtime_wall_clock_seconds
     assert invoker.wall_windows == [pytest.approx(admitted_window - 0.4)]
+
+
+class _SteppedClock(_ElapsedClock):
+    """Time moves only when a test advances it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.elapsed_ns = 0
+
+    def monotonic_ns(self) -> int:
+        return self.elapsed_ns
+
+
+def _run_with_time_passing(
+    tmp_path: Path, *, at_bind: float = 0.0, during_start_append: float = 0.0
+) -> tuple[Any, Any, Any, _Invoker, list[float]]:
+    """Run one Provider call, spending fractions of the run budget at two moments.
+
+    ``at_bind`` passes while the Provider is bound, before anything is journaled;
+    ``during_start_append`` passes while the durable start record is written.
+    """
+
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    run_budget_ns = prepared.admission.budget.wall_clock.microseconds * 1000
+    clock = _SteppedClock()
+    windows: list[float] = []
+
+    class _Binding(_Invoker):
+        def bind_provider(self, *, occurrence):  # type: ignore[no-untyped-def]
+            clock.elapsed_ns += round(run_budget_ns * at_bind)
+            return super().bind_provider(occurrence=occurrence)
+
+        def invoke_provider(self, **kwargs):  # type: ignore[no-untyped-def]
+            windows.append(kwargs["context"].budgets.wall_clock_seconds)
+            return super().invoke_provider(**kwargs)
+
+    class _SlowStartJournal(ProcedureExecutor):
+        def _append_event(self, admission, records, event_kind, payload):  # type: ignore[no-untyped-def]
+            appended = super()._append_event(admission, records, event_kind, payload)
+            if event_kind == "provider_invocation_started":
+                clock.elapsed_ns += round(run_budget_ns * during_start_append)
+            return appended
+
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    invoker = _Binding()
+    result = _SlowStartJournal(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=invoker,
+        provider_classifier_registry=registry,
+        clock=clock,
+    ).execute(prepared, accepted)
+    return result, prepared, fixture, invoker, windows
+
+
+def _event_kinds(prepared: Any, fixture: Any) -> list[str]:
+    records = fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    return [item.record.event_kind for item in records]
+
+
+def test_a_run_out_of_time_before_spawn_refuses_without_journaling_a_start(
+    tmp_path: Path,
+) -> None:
+    result, prepared, fixture, invoker, _ = _run_with_time_passing(tmp_path, at_bind=1.5)
+
+    # The budget refusal surfaces as itself, not as provider_completion_not_durable.
+    assert result.status == "refused"
+    assert result.refusal is not None and result.refusal.code == "budget_wall_clock"
+    assert invoker.calls == []
+    assert "provider_invocation_started" not in _event_kinds(prepared, fixture)
+
+
+def test_a_start_append_that_spends_the_budget_closes_the_start_without_spawning(
+    tmp_path: Path,
+) -> None:
+    result, prepared, fixture, invoker, _ = _run_with_time_passing(
+        tmp_path, during_start_append=1.5
+    )
+
+    # The start is durable, so it is closed by a matching completion that carries
+    # the budget refusal; the Provider never runs after the deadline.
+    assert invoker.calls == []
+    assert result.status == "refused"
+    assert result.refusal is not None and result.refusal.code == "budget_wall_clock"
+    kinds = _event_kinds(prepared, fixture)
+    assert kinds.count("provider_invocation_started") == 1
+    assert kinds.count("provider_invocation_completed") == 1
+
+
+def test_a_start_append_that_spends_part_of_the_budget_shrinks_the_provider_window(
+    tmp_path: Path,
+) -> None:
+    result, prepared, _, invoker, windows = _run_with_time_passing(
+        tmp_path, at_bind=0.25, during_start_append=0.5
+    )
+
+    assert result.status == "succeeded"
+    assert len(invoker.calls) == 1
+    run_seconds = prepared.admission.budget.wall_clock.microseconds / 1_000_000
+    provider_cap = prepared.acquisition_plan.external_occurrences[
+        0
+    ].budget_translation.runtime_wall_clock_seconds
+    # Measured after the start record, not before it.
+    assert windows == [pytest.approx(min(provider_cap, run_seconds * 0.25))]
+
+
+def _run_through_the_real_spawner(
+    tmp_path: Path, *, crossing: str, spent: float
+) -> tuple[Any, list[str], list[float], list[float]]:
+    """Drive the real invoker, driver and child spawner with Popen intercepted.
+
+    ``spent`` of the run budget passes at ``crossing``: while the run context is
+    built, during the spawn-time rebind, or inside the spawner after the context
+    is serialized. Returns the run, the journal event kinds, the child-context
+    windows the spawner received, and the windows it held the child to at Popen.
+    """
+
+    import json
+    import shutil
+    import sys
+    from unittest.mock import patch
+
+    import cruxible_core.procedures.execution as execution
+    import cruxible_core.providers.provider_local_runtime as runtime
+    from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
+    from tests.support.short_temporary_root import short_temporary_directory
+
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    run_budget_ns = prepared.admission.budget.wall_clock.microseconds * 1000
+    clock = _SteppedClock()
+
+    def spend() -> None:
+        clock.elapsed_ns += round(run_budget_ns * spent)
+
+    control = short_temporary_directory("budget-control-")
+    leases = ProviderProcessLeaseStore(tmp_path / "leases", control_root=control)
+    context_windows: list[float] = []
+    popen_windows: list[float] = []
+
+    class _RealSpawner(runtime.ProviderLocalRuntimeInvoker):
+        """The real invoke path; binding comes from the in-process fake deployment."""
+
+        binds = 0
+
+        def bind_provider(self, *, occurrence):  # type: ignore[no-untyped-def]
+            self.binds += 1
+            if crossing == "rebind" and self.binds == 2:
+                spend()
+            return _Invoker().bind_provider(occurrence=occurrence)
+
+    real_context = execution.ProviderRuntimeRunContextV1
+    real_prepare = leases.prepare_control_path
+    real_run_child = runtime._run_child
+
+    def context_factory(**kwargs):  # type: ignore[no-untyped-def]
+        context = real_context(**kwargs)
+        if crossing == "context":
+            spend()
+        return context
+
+    def prepare_control_path(invocation_id: str) -> Path:
+        if crossing == "spawner":
+            spend()
+        return real_prepare(invocation_id)
+
+    def run_child(*args, **kwargs):  # type: ignore[no-untyped-def]
+        context_windows.append(json.loads(kwargs["context"])["budgets"]["wall_clock_seconds"])
+        return real_run_child(*args, **kwargs)
+
+    def popen(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        popen_windows.append(sys._getframe(1).f_locals["budgets"].wall_clock_seconds)
+        raise runtime.ProviderLocalRuntimeRefused("provider_crashed", "Popen intercepted")
+
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    invoker = _RealSpawner(
+        deployments_by_digest={},
+        accepted_providers_by_digest={},
+        accepted_interfaces_by_digest={},
+        secret_resolvers=runtime.ProviderSecretResolverRegistry(()),
+        process_leases=leases,
+    )
+    try:
+        with (
+            patch.object(execution, "ProviderRuntimeRunContextV1", context_factory),
+            patch.object(leases, "prepare_control_path", prepare_control_path),
+            patch.object(runtime, "_run_child", run_child),
+            patch.object(runtime.subprocess, "Popen", popen),
+        ):
+            result = ProcedureExecutor(
+                journal=fixture.journal,
+                bodies=fixture.bodies,
+                run_index=fixture.run_index,
+                fencing_token="writer",
+                activation_authority=_Authority(accepted.artifact_digest),
+                contract_validator=_Contracts(),
+                provider_runtime_invoker=invoker,
+                provider_classifier_registry=registry,
+                clock=clock,
+            ).execute(prepared, accepted)
+    finally:
+        leases.close()
+        shutil.rmtree(control, ignore_errors=True)
+    return result, _event_kinds(prepared, fixture), context_windows, popen_windows
+
+
+@pytest.mark.parametrize("crossing", ["context", "rebind", "spawner"])
+def test_a_deadline_crossed_on_the_way_to_spawn_refuses_before_popen(
+    tmp_path: Path, crossing: str
+) -> None:
+    result, kinds, _, popen_windows = _run_through_the_real_spawner(
+        tmp_path, crossing=crossing, spent=1.0005
+    )
+
+    assert popen_windows == []
+    assert result.status == "refused"
+    assert result.refusal is not None and result.refusal.code == "budget_wall_clock"
+    assert kinds.count("provider_invocation_started") == 1
+    assert kinds.count("provider_invocation_completed") == 1
+
+
+@pytest.mark.parametrize("crossing", ["context", "rebind", "spawner"])
+def test_time_spent_on_the_way_to_spawn_shrinks_the_child_window(
+    tmp_path: Path, crossing: str
+) -> None:
+    _, _, context_windows, popen_windows = _run_through_the_real_spawner(
+        tmp_path, crossing=crossing, spent=0.75
+    )
+
+    # A 2 s run with 1.5 s spent: the child is held to the 0.5 s left at Popen.
+    assert popen_windows == [pytest.approx(0.5)]
+    # The window written into the child's context is measured after the
+    # executor's own work; only the spawner's setup comes after it.
+    assert context_windows == [pytest.approx(2.0 if crossing == "spawner" else 0.5)]
+
+
+def _package_classifier_run(
+    tmp_path: Path, *, crossing: str, spent: float
+) -> tuple[Any, list[str], list[float]]:
+    """Run a Procedure whose interface measures buckets with a package classifier.
+
+    The classifier's probe goes through the real package probe and child
+    spawner with Popen intercepted. ``spent`` of the run budget passes at
+    ``crossing``: while the classifier is looked up (before the probe is built)
+    or inside the spawner while the probe's control path is prepared. Returns
+    the run, the journal event kinds, and the window each Popen attempt held
+    the probe child to.
+    """
+
+    import shutil
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import cruxible_core.providers.package_classifier as package
+    import cruxible_core.providers.provider_local_runtime as runtime
+    from cruxible_client.contracts.provider_interfaces import (
+        provider_interface_digest,
+        provider_interface_path,
+    )
+    from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
+    from tests.support.short_temporary_root import short_temporary_directory
+    from tests.test_providers.test_provider_package_contracts import package_interface
+
+    registration = package_interface()
+    interface = AcceptedProviderInterfaceRegistration(
+        path=provider_interface_path(registration.interface_id),
+        registration=registration,
+        artifact_digest=provider_interface_digest(registration).tagged,
+    )
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path, interface=interface)
+    run_budget_ns = prepared.admission.budget.wall_clock.microseconds * 1000
+    clock = _SteppedClock()
+
+    def spend() -> None:
+        clock.elapsed_ns += round(run_budget_ns * spent)
+
+    control = short_temporary_directory("classifier-control-")
+    leases = ProviderProcessLeaseStore(tmp_path / "leases", control_root=control)
+    # The probe process boundary is real; the verified installation is a double.
+    deployment = SimpleNamespace(
+        installation_verification=object(), interpreter_path=Path(sys.executable)
+    )
+    classifier = package.PackageBucketClassifier(
+        registration,
+        deployment,  # type: ignore[arg-type]
+        leases,
+    )
+    registry = ProviderBucketClassifierRegistry()
+    with patch.object(package, "run_package_probe", return_value={"bucket": "size=small"}):
+        registry.install(interface, classifier)
+    real_require = registry.require
+    real_prepare = leases.prepare_control_path
+    popen_windows: list[float] = []
+
+    def require(digest: str):  # type: ignore[no-untyped-def]
+        if crossing == "lookup":
+            spend()
+        return real_require(digest)
+
+    def prepare_control_path(invocation_id: str) -> Path:
+        if crossing == "spawner":
+            spend()
+        return real_prepare(invocation_id)
+
+    def popen(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        popen_windows.append(sys._getframe(1).f_locals["budgets"].wall_clock_seconds)
+        raise runtime.ProviderLocalRuntimeRefused("provider_crashed", "Popen intercepted")
+
+    try:
+        with (
+            patch.object(registry, "require", require),
+            patch.object(leases, "prepare_control_path", prepare_control_path),
+            patch.object(runtime.subprocess, "Popen", popen),
+        ):
+            result = ProcedureExecutor(
+                journal=fixture.journal,
+                bodies=fixture.bodies,
+                run_index=fixture.run_index,
+                fencing_token="writer",
+                activation_authority=_Authority(accepted.artifact_digest),
+                contract_validator=_Contracts(),
+                provider_runtime_invoker=_Invoker(),
+                provider_classifier_registry=registry,
+                clock=clock,
+            ).execute(prepared, accepted)
+    finally:
+        leases.close()
+        shutil.rmtree(control, ignore_errors=True)
+    return result, _event_kinds(prepared, fixture), popen_windows
+
+
+@pytest.mark.parametrize("crossing", ["lookup", "spawner"])
+def test_a_package_classifier_probe_past_the_run_deadline_never_spawns(
+    tmp_path: Path, crossing: str
+) -> None:
+    result, kinds, popen_windows = _package_classifier_run(
+        tmp_path, crossing=crossing, spent=1.0005
+    )
+
+    assert popen_windows == []
+    assert result.status == "refused"
+    assert result.refusal is not None and result.refusal.code == "budget_wall_clock"
+    # Classification precedes the Provider's durable start: nothing to close.
+    assert "provider_invocation_started" not in kinds
+
+
+@pytest.mark.parametrize("crossing", ["lookup", "spawner"])
+def test_a_package_classifier_probe_is_held_to_the_run_time_left(
+    tmp_path: Path, crossing: str
+) -> None:
+    _, kinds, popen_windows = _package_classifier_run(tmp_path, crossing=crossing, spent=0.75)
+
+    # A 2 s run with 1.5 s spent: the probe gets the 0.5 s left, not its own 30 s.
+    assert popen_windows == [pytest.approx(0.5)]
+    assert "provider_invocation_started" not in kinds
+
+
+def test_an_installation_probe_outside_a_run_keeps_its_own_window(tmp_path: Path) -> None:
+    import shutil
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import cruxible_core.providers.package_classifier as package
+    import cruxible_core.providers.provider_local_runtime as runtime
+    from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
+    from tests.support.short_temporary_root import short_temporary_directory
+
+    control = short_temporary_directory("install-probe-control-")
+    leases = ProviderProcessLeaseStore(tmp_path / "leases", control_root=control)
+    deployment = SimpleNamespace(
+        installation_verification=object(), interpreter_path=Path(sys.executable)
+    )
+    popen_windows: list[float] = []
+
+    def popen(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        popen_windows.append(sys._getframe(1).f_locals["budgets"].wall_clock_seconds)
+        raise runtime.ProviderLocalRuntimeRefused("provider_crashed", "Popen intercepted")
+
+    try:
+        with (
+            patch.object(runtime.subprocess, "Popen", popen),
+            pytest.raises(runtime.ProviderLocalRuntimeRefused, match="Popen intercepted"),
+        ):
+            package.run_package_probe(
+                deployment,  # type: ignore[arg-type]
+                leases,
+                kind="resource",
+                digest="sha256:" + "b" * 64,
+                value={"entrypoint": "demo.resource:probe"},
+                deadline=None,
+            )
+    finally:
+        leases.close()
+        shutil.rmtree(control, ignore_errors=True)
+    # No run deadline: the probe reaches the spawn with its own 30 s window.
+    assert popen_windows == [30.0]
 
 
 @pytest.mark.parametrize(

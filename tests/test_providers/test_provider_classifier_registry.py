@@ -28,7 +28,7 @@ class _Classifier:
     classifier_digest: str
     result: str
 
-    def classify(self, canonical_input: CanonicalValue) -> str:
+    def classify(self, canonical_input: CanonicalValue, *, deadline: object) -> str:
         assert canonical_input == {"size": 3}
         return self.result
 
@@ -55,7 +55,10 @@ def test_classifier_install_reexecutes_every_accepted_fixture_before_publication
     assert (
         installation.results[0].fixture_digest == registration.conformance_proofs[0].fixture_digest
     )
-    assert registry.require(registration.classifier_digest).classify({"size": 3}) == "size=small"
+    assert (
+        registry.require(registration.classifier_digest).classify({"size": 3}, deadline=None)
+        == "size=small"
+    )
 
 
 @pytest.mark.parametrize("result", ["size=large", "size=unknown"])

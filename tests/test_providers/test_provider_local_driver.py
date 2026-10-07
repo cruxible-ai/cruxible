@@ -51,6 +51,7 @@ from cruxible_core.providers.provider_local_runtime import (
     ProviderLocalRuntimeInvoker,
     ProviderLocalRuntimeRefused,
     ProviderSecretResolverRegistry,
+    ProviderSpawnDeadline,
     _assert_no_secret,
     _open_secret_channel,
     _run_child,
@@ -1268,6 +1269,9 @@ def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
             context=context,
             invocation_id=_digest("bind-invocation"),
             bound=BoundLocalProviderV1(binding=binding, interpreter_path=tmp_path / "unused"),
+            deadline=ProviderSpawnDeadline(
+                deadline_ns=time.monotonic_ns() + 60_000_000_000, monotonic_ns=time.monotonic_ns
+            ),
         )
     assert caught.value.code == code
 

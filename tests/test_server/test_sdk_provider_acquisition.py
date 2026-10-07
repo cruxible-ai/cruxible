@@ -111,7 +111,7 @@ class AcquisitionInvoker(source._WorkspaceInvoker):
         super().__init__()
         self.output = output
 
-    def invoke_provider(self, *, occurrence, context, invocation_id, bound):
+    def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):
         from cruxible_client.contracts.provider_execution import ProviderEgressObservation
         from cruxible_core.providers.provider_local_runtime import ProviderDriverOutcomeV1
         from cruxible_core.providers.provider_runtime_contract import (

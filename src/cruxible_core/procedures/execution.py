@@ -236,6 +236,7 @@ from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
     ProviderLocalRuntimeRefused,
+    ProviderSpawnDeadline,
 )
 from cruxible_core.providers.provider_outcomes import (
     map_provider_envelope,
@@ -1240,6 +1241,7 @@ class ProviderRuntimeInvokerProtocol(Protocol):
         context: ProviderRuntimeRunContextV1,
         invocation_id: str,
         bound: BoundLocalProviderV1,
+        deadline: ProviderSpawnDeadline,
     ) -> ProviderDriverOutcomeV1: ...
 
 
@@ -4951,11 +4953,25 @@ class ProcedureExecutor:
                 "No local Provider runtime invoker is installed.",
                 node_id=node_id,
             )
+        # The run's deadline, in this executor's clock, goes with every child
+        # spawned for this occurrence: a package classifier's probe now, the
+        # Provider itself later. Each spawner refuses or clips against it
+        # immediately before its child exists.
+        deadline = ProviderSpawnDeadline(
+            deadline_ns=state.run_started_monotonic_ns
+            + admission.budget.wall_clock.microseconds * 1000,
+            monotonic_ns=self.clock.monotonic_ns,
+        )
         try:
             classifier = self.provider_classifier_registry.require(occurrence.classifier_digest)
-            measured_bucket = classifier.classify(payload)
+            measured_bucket = classifier.classify(payload, deadline=deadline)
         except ProviderClassifierInstallationRefused as exc:
             raise _RunRefusal(exc.code, str(exc), node_id=node_id) from exc
+        except ProviderLocalRuntimeRefused as exc:
+            # Nothing is journaled yet: the run itself refuses on its budget.
+            if exc.code != "budget_wall_clock":
+                raise
+            raise _RunRefusal("budget_wall_clock", str(exc), node_id=node_id) from exc
         if not self._bucket_is_accepted(measured_bucket, occurrence.accepted_bucket_selectors):
             raise _ProviderNodeRefusal(
                 map_provider_refusal(
@@ -5062,6 +5078,28 @@ class ProcedureExecutor:
             raise _InternalFailure(
                 outcome.code or "provider_protocol_violation", details=outcome.detail
             ) from exc
+        budget = occurrence.budget_translation
+        no_budget_message = "No Procedure wall-clock budget remains before Provider spawn."
+
+        def effective_wall_clock_seconds() -> float:
+            """The Provider's window: its own cap, clipped to what the run has left now."""
+            elapsed_microseconds = max(
+                0,
+                (self.clock.monotonic_ns() - state.run_started_monotonic_ns) // 1000,
+            )
+            remaining_run_microseconds = max(
+                0,
+                admission.budget.wall_clock.microseconds - elapsed_microseconds,
+            )
+            return min(
+                float(budget.runtime_wall_clock_seconds),
+                remaining_run_microseconds / 1_000_000,
+            )
+
+        # A run already out of time refuses before anything is journaled, so no
+        # start is recorded for an invocation that never spawns.
+        if effective_wall_clock_seconds() <= 0:
+            raise _RunRefusal("budget_wall_clock", no_budget_message, node_id=node_id)
         started = ProviderInvocationStarted(
             invocation_id=invocation_id,
             occurrence_path=occurrence.occurrence_path,
@@ -5077,54 +5115,45 @@ class ProcedureExecutor:
             started.model_dump(mode="json"),
         )
         state.provider_invocations_started += 1
-        budget = occurrence.budget_translation
-        elapsed_microseconds = max(
-            0,
-            (self.clock.monotonic_ns() - state.run_started_monotonic_ns) // 1000,
-        )
-        remaining_run_microseconds = max(
-            0,
-            admission.budget.wall_clock.microseconds - elapsed_microseconds,
-        )
-        effective_wall_clock_seconds = min(
-            float(budget.runtime_wall_clock_seconds),
-            remaining_run_microseconds / 1_000_000,
-        )
-        if effective_wall_clock_seconds <= 0:
-            raise _RunRefusal(
-                "budget_wall_clock",
-                "No Procedure wall-clock budget remains before Provider spawn.",
-                node_id=node_id,
-            )
-        context = ProviderRuntimeRunContextV1(
-            protocol_version=occurrence.local_execution.protocol_version,
-            run_id=admission.run_id,
-            interface_id=occurrence.interface_id,
-            interface_digest=occurrence.interface_digest,
-            implementation_digest=occurrence.implementation_digest,
-            entrypoint=occurrence.local_execution.entrypoint,
-            coordinates={
-                "accepted_coordinate": admission.accepted_coordinate.model_dump(mode="json"),
-                "occurrence_path": occurrence.occurrence_path,
-                "invocation_id": invocation_id,
-            },
-            input=payload,
-            input_bucket=measured_bucket,
-            capture_contract=occurrence.capture_contract_digest,
-            budgets=ProviderRuntimeBudgetsV1(
-                wall_clock_seconds=effective_wall_clock_seconds,
-                output_bytes=budget.runtime_output_bytes_cap,
-                cost_units=None,
-            ),
-            declared_endpoints=occurrence.local_execution.declared_endpoints,
-        )
+        # The durable start write takes time too, so the window is measured
+        # again after it. That is not the last check: the run's deadline goes
+        # with the invocation, and the spawner refuses or clips against it
+        # immediately before the child exists. Whichever check finds the time
+        # spent, the Provider never spawns and the durable start is closed by a
+        # matching completion carrying the budget_wall_clock refusal.
+        wall_clock_seconds = effective_wall_clock_seconds()
         driver_result: ProviderDriverOutcomeV1 | None = None
         try:
+            if wall_clock_seconds <= 0:
+                raise ProviderLocalRuntimeRefused("budget_wall_clock", no_budget_message)
+            context = ProviderRuntimeRunContextV1(
+                protocol_version=occurrence.local_execution.protocol_version,
+                run_id=admission.run_id,
+                interface_id=occurrence.interface_id,
+                interface_digest=occurrence.interface_digest,
+                implementation_digest=occurrence.implementation_digest,
+                entrypoint=occurrence.local_execution.entrypoint,
+                coordinates={
+                    "accepted_coordinate": admission.accepted_coordinate.model_dump(mode="json"),
+                    "occurrence_path": occurrence.occurrence_path,
+                    "invocation_id": invocation_id,
+                },
+                input=payload,
+                input_bucket=measured_bucket,
+                capture_contract=occurrence.capture_contract_digest,
+                budgets=ProviderRuntimeBudgetsV1(
+                    wall_clock_seconds=wall_clock_seconds,
+                    output_bytes=budget.runtime_output_bytes_cap,
+                    cost_units=None,
+                ),
+                declared_endpoints=occurrence.local_execution.declared_endpoints,
+            )
             driver_result = self.provider_runtime_invoker.invoke_provider(
                 occurrence=occurrence,
                 context=context,
                 invocation_id=invocation_id,
                 bound=bound,
+                deadline=deadline,
             )
             outcome = map_provider_envelope(driver_result.envelope)
         except ProviderLocalRuntimeRefused as exc:
