@@ -27,6 +27,7 @@ from cruxible_core.service.procedures.line_dispatch import (
 )
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
+    TriggerFire,
     _journal,
     _stream,
     service_run_playbill_line,
@@ -119,10 +120,12 @@ def run_line(instance, line, event, at=NOW + timedelta(seconds=2)):
     return service_run_playbill_line(
         instance,
         path_identity_digest=line.identity.name,
-        request=LineRunRequest(line=line.identity.name, trigger=TRIGGER, trigger_event=event),
+        request=LineRunRequest(line=line.identity.name),
         actor_context=_actor(instance),
         caller_rung=2,
         daemon_clock=_TestClock(at),
+        # The Trigger's occurrence on this event, as dispatch admits it.
+        trigger_fire=TriggerFire(trigger=TRIGGER, event=event),
         # Deliberately no Provider runtime or workspace reader: this input is retained.
     )
 
@@ -284,8 +287,6 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
         return
     else:
         # Exercise the admission budget independently of acquisition-time provider caps.
-        from cruxible_client.contracts.artifacts import ArtifactIdentity
-        from cruxible_client.contracts.procedures.windows import LineTriggerBinding
         from cruxible_core.service.procedures.procedure_runs import (
             _accepted_procedure,
         )
@@ -301,11 +302,7 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
                 instance,
                 line=line,
                 procedure=accepted,
-                binding=LineTriggerBinding(
-                    kind="capture_landing",
-                    trigger=ArtifactIdentity(kind="Trigger", name=TRIGGER),
-                    event=event,
-                ),
+                event=event,
                 contracts={capture_contract_digest(contract).tagged: contract},
                 policy=_policy(),
                 evaluation_time=now,
@@ -461,13 +458,9 @@ def test_trigger_input_reservations_release_on_failed_admission(tmp_path, monkey
 @pytest.mark.parametrize("failure", ["stale", "missing_envelope", "missing_body"])
 def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, failure):
     from cruxible_client.contracts.captures import parse_capture_envelope
-    from cruxible_client.contracts.line_dispatch import (
-        LineEvaluateRequest,
-        LineTriggerCheckRequest,
-    )
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore
     from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
-    from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 
     instance, root, line = world(tmp_path)
     actor = _actor(instance)
@@ -499,8 +492,15 @@ def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, fai
     first_id = next(
         o.occurrence_id for o in evaluated.occurrences if o.binding.event == event_from(first)
     )
+    # One at a time (dispatch drains every pending occurrence by default), so the
+    # later Capture's admission below is proven separately from the closed one.
     rejected = service_dispatch_line(
-        instance, line.identity.name, LineDispatchRequest(), actor=actor, now=now, caller_rung=2
+        instance,
+        line.identity.name,
+        LineDispatchRequest(limit=1),
+        actor=actor,
+        now=now,
+        caller_rung=2,
     ).items[0]
     assert rejected.occurrence_id == first_id
     assert rejected.status == "rejected"
@@ -526,8 +526,8 @@ def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, fai
         instance, line.identity.name, LineDispatchRequest(), actor=actor, now=now, caller_rung=2
     ).items[0]
     assert admitted.status == "admitted" and admitted.occurrence_id != first_id
-    check = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequest(), now=now
+    check = service_evaluate_line(
+        instance, line.identity.name, LineEvaluateRequest(dry_run=True), actor=None, now=now
     )
     assert (
         next(o for o in check.occurrences if o.occurrence_id == first_id).dispatch_status
@@ -578,7 +578,7 @@ def test_over_budget_occurrence_closes_then_requires_successor_for_retry(tmp_pat
     rejected = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequest(),
+        LineDispatchRequest(limit=1),
         actor=actor,
         now=now,
         caller_rung=2,

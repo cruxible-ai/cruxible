@@ -22,6 +22,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cruxible_client.contracts.line_dispatch import LineTriggerVersion
 from cruxible_client.contracts.procedures.results import (
     ProcedureTerminal,
     ProcedureTerminalEgress,
@@ -47,6 +48,9 @@ RunStatus: TypeAlias = Literal[
 ]
 #: What a Line arm's automation is doing, as the Line consumer reports it.
 LineEnablementState: TypeAlias = Literal["running", "stalled", "stopped", "disabled"]
+#: Why a Line's Triggers run nothing: a Trigger aimed at a Line that is not
+#: enabled does nothing.
+LineTriggersInactive: TypeAlias = Literal["not enabled"]
 MandateState: TypeAlias = Literal[
     "active", "expiring", "expired", "not_yet_valid", "suspended", "retired"
 ]
@@ -123,6 +127,12 @@ class GetLineEnablement(_StrictOperationalModel):
     credential: str | None = Field(default=None, exclude_if=_omit_none)
     enabled_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
     enabled_at: datetime
+    #: The Line version and the exact Trigger versions this enablement is pinned
+    #: to; any change to them stops it until the Line is enabled again.
+    line_artifact_digest: str
+    triggers: tuple[LineTriggerVersion, ...] = ()
+    #: The instant through which the daemon matched this enablement's Triggers.
+    evaluated_until: datetime
     stopped_at: datetime | None = Field(default=None, exclude_if=_omit_none)
     stop_reason: str | None = Field(default=None, exclude_if=_omit_none)
     detail: str | None = Field(default=None, exclude_if=_omit_none)
@@ -158,6 +168,8 @@ class GetLineCard(_StrictOperationalModel):
     #: ``get Trigger:<name>`` reads one, ``query Trigger --where target=...`` lists all.
     triggers: tuple[GetLineTrigger, ...] = ()
     triggers_total: int = Field(default=0, ge=0)
+    #: Set while Triggers aim at this live Line but it is not enabled.
+    triggers_inactive: LineTriggersInactive | None = Field(default=None, exclude_if=_omit_none)
     occurrence_epoch: int = Field(ge=1)
     enablements: tuple[GetLineEnablement, ...] = ()
     enablements_total: int = Field(default=0, ge=0)
@@ -314,6 +326,7 @@ class OrientLine(_StrictOperationalModel):
     authority: Literal["observe", "propose", "settle"]
     trigger: str
     enablement: LineEnablementState | None = Field(default=None, exclude_if=_omit_none)
+    triggers_inactive: LineTriggersInactive | None = Field(default=None, exclude_if=_omit_none)
     due: int = Field(default=0, ge=0)
     waiting: int = Field(default=0, ge=0)
 
@@ -371,6 +384,7 @@ __all__ = [
     "GetRunNode",
     "GetRunTrigger",
     "LineEnablementState",
+    "LineTriggersInactive",
     "LiveHead",
     "LiveView",
     "MandateState",

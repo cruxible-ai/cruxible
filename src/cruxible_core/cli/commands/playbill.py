@@ -5201,44 +5201,12 @@ def procedure_readings(
 
 @playbill_group.group("line")
 def line_group() -> None:
-    """Trigger accepted Lines."""
+    """Enable, run and recover accepted Lines.
 
-
-@line_group.command("check")
-@click.argument("line")
-@click.option("--since", default=None, help="Inclusive eligibility timestamp.")
-@click.option("--until", default=None, help="Exclusive eligibility timestamp.")
-@click.option("--limit", default=100, type=click.IntRange(1, 256))
-@click.option("--cursor", default=None)
-@json_option
-@handle_errors
-def check_line(
-    line: str,
-    since: str | None,
-    until: str | None,
-    limit: int,
-    cursor: str | None,
-    output_json: bool,
-) -> None:
-    from cruxible_client.contracts.line_dispatch import LineTriggerCheckRequest
-
-    request = LineTriggerCheckRequest.model_validate(
-        dict(since=since, until=until, limit=limit, cursor=cursor)
-    )
-    result = _server_call(
-        lambda client, instance_id: client.check_line(instance_id, line, request=request),
-        command_name="cruxible line check",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        click.echo(f"{result.line}: {result.status} ({len(result.occurrences)} occurrences)")
-        if result.detail:
-            click.echo(result.detail)
-        if result.cursor:
-            click.echo(
-                f"Next cursor: {result.cursor}; retain --until {result.checked_until.isoformat()}"
-            )
+    enable, disable and run are the normal flow; evaluate and dispatch recover
+    what automation missed, as `cruxible next` names it. `cruxible get
+    Line:NAME` reads a Line's enablement, Triggers, pending work and runs.
+    """
 
 
 def _echo_line_enablement(result: Any) -> None:
@@ -5269,7 +5237,16 @@ def _echo_line_enablement(result: Any) -> None:
 @json_option
 @handle_errors
 def enable_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
-    """Admit what this Line matches from now on, under your credential."""
+    """Enable LINE: its Triggers admit what they match from now on, under your credential.
+
+    A Trigger aimed at a Line does nothing until the Line is enabled. The
+    enablement pins the current Line version and the exact Trigger versions
+    aimed at it; any change to them stops it until you enable it again. It
+    never catches up: `cruxible next` names restart gaps and pending work for
+    `line evaluate` and `line dispatch`. Enabling needs governed write, even for
+    an observe-only Line; a Line that proposes or settles also needs a covering
+    ProcedureMandate. Read it with `cruxible get Line:LINE`.
+    """
 
     result = _server_call(
         lambda client, instance_id: client.enable_line(instance_id, line, dry_run=dry_run, at=at),
@@ -5287,7 +5264,11 @@ def enable_line(line: str, dry_run: bool | None, at: str | None, output_json: bo
 @json_option
 @handle_errors
 def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
-    """Stop admitting work automatically; admitted runs keep going."""
+    """Stop LINE admitting work on its own; runs already admitted keep going.
+
+    Disabling a Line whose enablement already stopped changes nothing. A
+    retired Line can be disabled too.
+    """
 
     result = _server_call(
         lambda client, instance_id: client.disable_line(instance_id, line, dry_run=dry_run, at=at),
@@ -5299,38 +5280,41 @@ def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: b
         _echo_line_enablement(result)
 
 
-@line_group.command("status")
-@click.argument("line")
-@json_option
-@handle_errors
-def line_status(line: str, output_json: bool) -> None:
-    """Show whether the Line is armed and why an arm stopped."""
-
-    result = _server_call(
-        lambda client, instance_id: client.line_status(instance_id, line),
-        command_name="cruxible line status",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        _echo_line_enablement(result)
-
-
 @line_group.command("evaluate")
 @click.argument("line")
-@click.option("--since", required=True)
-@click.option("--until", required=True)
-@click.option("--limit", default=100, type=click.IntRange(1, 256))
-@click.option("--cursor", default=None)
+@click.option("--since", default=None, help="Inclusive ISO-8601 start of the range.")
+@click.option(
+    "--until", default=None, help="Exclusive ISO-8601 end of the range, capped at daemon time."
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Only report what the range makes eligible; enqueue nothing (no range needed).",
+)
+@click.option("--limit", default=100, type=click.IntRange(1, 256), help="Occurrences per page.")
+@click.option("--cursor", default=None, help="Continue an incomplete page of the same range.")
 @json_option
 @handle_errors
 def evaluate_line(
-    line: str, since: str, until: str, limit: int, cursor: str | None, output_json: bool
+    line: str,
+    since: str | None,
+    until: str | None,
+    dry_run: bool,
+    limit: int,
+    cursor: str | None,
+    output_json: bool,
 ) -> None:
+    """Turn a missed range of LINE's Triggers into pending work; never runs anything.
+
+    Use it to recover what automation missed (a daemon restart leaves a gap
+    `cruxible next` names with the exact command), then `line dispatch`.
+    Without --dry-run, --since and --until are required.
+    """
+
     from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
 
     request = LineEvaluateRequest.model_validate(
-        dict(since=since, until=until, limit=limit, cursor=cursor)
+        dict(since=since, until=until, limit=limit, cursor=cursor, dry_run=dry_run)
     )
     result = _server_call(
         lambda client, instance_id: client.evaluate_line(instance_id, line, request=request),
@@ -5349,35 +5333,59 @@ def evaluate_line(
 
 
 @line_group.command("dispatch")
+@click.argument("line")
+@click.option("--occurrence-id", default=None, help="Dispatch only this pending occurrence.")
 @click.option(
     "--retry",
     is_flag=True,
     help="Explicitly retry --occurrence-id against the current Line in the same epoch.",
 )
-@click.argument("line")
-@click.option("--occurrence-id", default=None)
-@click.option("--limit", default=1, type=click.IntRange(1, 100))
+@click.option(
+    "--limit",
+    default=None,
+    type=click.IntRange(1, 100),
+    help="Dispatch at most this many; by default every pending occurrence is drained.",
+)
 @json_option
 @handle_errors
 def dispatch_line(
-    line: str, occurrence_id: str | None, limit: int, retry: bool, output_json: bool
+    line: str, occurrence_id: str | None, limit: int | None, retry: bool, output_json: bool
 ) -> None:
-    from cruxible_client.contracts.line_dispatch import LineDispatchRequest
+    """Run LINE's pending occurrences under your current authority.
 
-    result = _server_call(
-        lambda client, instance_id: client.dispatch_line(
-            instance_id,
-            line,
-            request=LineDispatchRequest(occurrence_id=occurrence_id, limit=limit, retry=retry),
-        ),
-        command_name="cruxible line dispatch",
-    )
+    An enabled Line admits only what it matched itself; work evaluated
+    explicitly, or matched before a restart, waits for this command. By
+    default it drains every pending occurrence; one that stays blocked is
+    reported once.
+    """
+
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequest, LineDispatchResult
+
+    page = 100 if limit is None else limit
+    items: list[Any] = []
+    seen: set[str] = set()
+    while True:
+        result = _server_call(
+            lambda client, instance_id: client.dispatch_line(
+                instance_id,
+                line,
+                request=LineDispatchRequest(occurrence_id=occurrence_id, limit=page, retry=retry),
+            ),
+            command_name="cruxible line dispatch",
+        )
+        fresh = [item for item in result.items if item.occurrence_id not in seen]
+        items.extend(fresh)
+        seen.update(item.occurrence_id for item in fresh)
+        # Drain until a page comes back short or holds only what stayed blocked.
+        if limit is not None or occurrence_id is not None or len(result.items) < page or not fresh:
+            break
+    drained = LineDispatchResult(items=tuple(items))
     if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    elif not result.items:
+        _emit_json(drained.model_dump(mode="json"))
+    elif not drained.items:
         click.echo("No pending occurrences for this Line epoch.")
     else:
-        for item in result.items:
+        for item in drained.items:
             click.echo(
                 f"{item.occurrence_id}: {item.status}"
                 + (f" run={item.run_id}" if item.run_id else "")
@@ -5389,57 +5397,70 @@ def dispatch_line(
 @line_group.command("run")
 @click.argument("line")
 @click.option(
-    "--trigger",
-    default=None,
-    help="The Trigger this occurrence fires on; omit for a Line no Trigger aims at.",
+    "--event",
+    "event_file",
+    type=PayloadFile(),
+    help=(
+        "Retained Capture event reference JSON/YAML (- for stdin) for a Line whose "
+        "Procedure takes an event input."
+    ),
 )
-@click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")
-@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
+@click.option(
+    "--repeat",
+    is_flag=True,
+    help="Run on an event the enabled Line already admitted, deliberately again.",
+)
 @click.option(
     "--resolution-contract",
     "contract_file",
     type=PayloadFile(),
-    help="Exact accepted ResolutionContract reference JSON/YAML.",
+    help="Exact accepted ResolutionContract reference JSON/YAML (- for stdin).",
 )
+@click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")
 @click.option(
-    "--trigger-event",
-    "event_file",
-    type=PayloadFile(),
-    help="Exact retained Capture event reference JSON/YAML.",
+    "--evaluation-time",
+    default=None,
+    help="Assert the ISO-8601 instant you expect; the daemon clock decides.",
 )
 @json_option
 @handle_errors
 def run_line(
     line: str,
-    trigger: str | None,
+    event_file: str | None,
+    repeat: bool,
+    contract_file: str | None,
     occurrence_id: str | None,
     evaluation_time: str | None,
     output_json: bool,
-    contract_file: str | None,
-    event_file: str | None,
 ) -> None:
+    """Run LINE once now: one manual occurrence under the Line's inputs, budgets and authority.
+
+    It never selects, consumes or waits on a Trigger, and runs whether or not
+    the Line is enabled; the run is recorded on the Line's history.
+    """
+
     resolution_contract = (
         None if contract_file is None else _read_model(contract_file, ResolutionContractReference)
     )
-    trigger_event = None if event_file is None else _read_model(event_file, TriggerEventReference)
+    event = None if event_file is None else _read_model(event_file, TriggerEventReference)
     request = LineRunRequest.model_validate(
         {
             "line": line,
-            "trigger": trigger,
             "occurrence_id": occurrence_id,
             "evaluation_time": evaluation_time,
             "resolution_contract": resolution_contract,
-            "trigger_event": trigger_event,
+            "event": event,
+            "repeat": repeat,
         }
     )
     result = _server_call(
         lambda client, instance_id: client.run_line(
             instance_id,
             line,
-            trigger=request.trigger,
             occurrence_id=request.occurrence_id,
             resolution_contract=resolution_contract,
-            trigger_event=trigger_event,
+            event=event,
+            repeat=repeat,
             evaluation_time=(
                 None if request.evaluation_time is None else request.evaluation_time.isoformat()
             ),

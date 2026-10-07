@@ -1,4 +1,4 @@
-"""Line trigger discovery. Checks describe evidence; they never admit work."""
+"""Line enablement, evaluation and dispatch: evaluation records work, it never admits it."""
 
 from __future__ import annotations
 
@@ -16,7 +16,14 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 
 
-class LineTriggerCheckRequest(BaseModel):
+class LineEvaluateRequest(BaseModel):
+    """Evaluate a Line's Triggers over a range: enqueue what they make eligible, or preview it.
+
+    Evaluation records pending occurrences for explicit dispatch and never runs
+    anything. ``dry_run`` only reads: it reports the occurrences without
+    enqueueing them, so it needs no range and no governed write.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
     since: datetime | None = Field(
         default=None, description="Reads VALIDITY WINDOW. inclusive eligibility bound."
@@ -27,6 +34,10 @@ class LineTriggerCheckRequest(BaseModel):
     )
     cursor: str | None = None
     limit: int = Field(default=100, ge=1, le=256)
+    dry_run: bool = Field(
+        default=False,
+        description="Report what the range makes eligible without enqueueing it (read-only).",
+    )
 
     @field_validator("since", "until")
     @classmethod
@@ -38,9 +49,14 @@ class LineTriggerCheckRequest(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _range(self) -> LineTriggerCheckRequest:
+    def _range(self) -> LineEvaluateRequest:
         if self.since is not None and self.until is not None and self.since >= self.until:
             raise ValueError("trigger range must be increasing")
+        if not self.dry_run and (self.since is None or self.until is None):
+            raise ValueError(
+                "evaluation that enqueues requires an explicit since and until; "
+                "dry_run reads without them"
+            )
         return self
 
 
@@ -64,13 +80,15 @@ class LineTriggerOccurrence(BaseModel):
     )
 
 
-class LineTriggerCheckResult(BaseModel):
+class LineEvaluateResult(BaseModel):
+    """What one evaluation found; ``pending`` marks what it enqueued (never on a dry run)."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
     line: str
     line_identity_digest: str
     line_artifact_digest: str
     occurrence_epoch: int
-    #: The live Triggers aimed at the Line that this check evaluated.
+    #: The live Triggers aimed at the Line that this evaluation read.
     triggers: tuple[LineTriggerVersion, ...] = ()
     coordinate: AcceptedCoordinate
     status: Literal["met", "not_met", "incomplete"]
@@ -81,18 +99,10 @@ class LineTriggerCheckResult(BaseModel):
     detail: str | None = None
 
 
-class LineEvaluateRequest(LineTriggerCheckRequest):
-    @model_validator(mode="after")
-    def _explicit_range(self) -> LineEvaluateRequest:
-        if self.since is None or self.until is None:
-            raise ValueError("historical evaluation requires an explicit since and until")
-        return self
-
-
 class LineDispatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     occurrence_id: str | None = None
-    limit: int = Field(default=1, ge=1, le=100)
+    limit: int = Field(default=100, ge=1, le=100)
     retry: bool = Field(
         default=False,
         description=(
@@ -104,8 +114,8 @@ class LineDispatchRequest(BaseModel):
 
     @model_validator(mode="after")
     def _retry_target(self) -> LineDispatchRequest:
-        if self.retry and (self.occurrence_id is None or self.limit != 1):
-            raise ValueError("retry requires one explicit occurrence_id and limit=1")
+        if self.retry and self.occurrence_id is None:
+            raise ValueError("retry requires one explicit occurrence_id")
         return self
 
 

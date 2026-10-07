@@ -1742,16 +1742,6 @@ def handle_playbill_procedure_readings(
     )
 
 
-def handle_playbill_line_check(
-    instance_id: str, line: str, request: contracts.LineTriggerCheckRequest
-) -> contracts.LineTriggerCheckResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.check_line(instance_id, line, request=request),
-        lambda: playbill_api.playbill_line_check(instance_id, line, request=request),
-        operation_name="cruxible_line_check",
-    )
-
-
 def handle_playbill_line_enable(
     instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
 ) -> contracts.LineEnablement:
@@ -1774,17 +1764,9 @@ def handle_playbill_line_disable(
     )
 
 
-def handle_playbill_line_status(instance_id: str, line: str) -> contracts.LineEnablement:
-    return _dispatch_remote_or_local(
-        lambda client: client.line_status(instance_id, line),
-        lambda: playbill_api.playbill_line_status(instance_id, line),
-        operation_name="cruxible_line_status",
-    )
-
-
 def handle_playbill_line_evaluate(
     instance_id: str, line: str, request: contracts.LineEvaluateRequest
-) -> contracts.LineTriggerCheckResult:
+) -> contracts.LineEvaluateResult:
     return _dispatch_remote_or_local(
         lambda client: client.evaluate_line(instance_id, line, request=request),
         lambda: playbill_api.playbill_line_evaluate(instance_id, line, request=request),
@@ -1811,15 +1793,15 @@ def handle_playbill_line_run(
     occurrence_id: str | None,
     evaluation_time: str | None = None,
     resolution_contract: contracts.ResolutionContractReference | None = None,
-    trigger_event: contracts.TriggerEventReference | None = None,
-    trigger: str | None = None,
+    event: contracts.TriggerEventReference | None = None,
+    repeat: bool = False,
 ) -> contracts.ProcedureRunState:
     request = LineRunRequest.model_validate(
         {
             "line": line,
-            "trigger": trigger,
             "resolution_contract": resolution_contract,
-            "trigger_event": trigger_event,
+            "event": event,
+            "repeat": repeat,
             "occurrence_id": occurrence_id,
             "evaluation_time": (
                 None if evaluation_time is None else parse_datetime(evaluation_time)
@@ -1830,8 +1812,8 @@ def handle_playbill_line_run(
         lambda client: client.run_line(
             instance_id,
             resolution_contract=resolution_contract,
-            trigger_event=trigger_event,
-            trigger=trigger,
+            event=event,
+            repeat=repeat,
             line=line,
             occurrence_id=request.occurrence_id,
             evaluation_time=(

@@ -1,11 +1,15 @@
-"""Line matching, arming and dispatch.
+"""Line matching, enablement and dispatch.
 
-An armed Line's daemon matches new evidence for the Triggers aimed at the Line
-forward-only and admits the occurrences it matched under the arming
-credential; nothing it did not observe while armed is ever run implicitly. The
-arm is pinned to the Line version and the exact Trigger versions it was armed
-under: a change to either stops it, never adopted implicitly. Explicit
-evaluation and dispatch are the only way to act on anything else.
+An enabled Line's daemon matches new evidence for the Triggers aimed at the
+Line forward-only and admits the occurrences it matched under the enabling
+credential; nothing it did not observe while enabled is ever run implicitly.
+A Trigger aimed at a Line that is not enabled does nothing. The enablement is
+pinned to the Line version and the exact Trigger versions it was enabled
+under: a change to either stops it, never adopted implicitly, and retiring the
+Line stops it too. Explicit evaluation and dispatch are the only way to act on
+anything else (``line_attention`` names what they owe after a restart).
+
+The dispatch store's records keep their internal ``arm`` names.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
 from types import SimpleNamespace
@@ -29,8 +34,7 @@ from cruxible_client.contracts.line_dispatch import (
     LineEnablementPrincipal,
     LineEnablementStopReason,
     LineEvaluateRequest,
-    LineTriggerCheckRequest,
-    LineTriggerCheckResult,
+    LineEvaluateResult,
     LineTriggerOccurrence,
 )
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
@@ -57,12 +61,16 @@ from cruxible_core.procedures.line_admission import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.change_preview import change_scope
-from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
+from cruxible_core.service.procedures.line_triggers import (
+    TriggerRange,
+    service_check_line_trigger,
+)
 from cruxible_core.service.procedures.procedure_runs import (
     LineNeverEnabled,
     LineRunRequest,
     LineTriggersChanged,
     LineVersionChanged,
+    TriggerFire,
     _accepted_line_by_reference,
     _journal,
     _line_admissions,
@@ -110,12 +118,12 @@ def _positions(instance: PlaybillInstance) -> dict[str, Any]:
 def _enqueue(
     store: LineDispatchStore,
     conn: Any,
-    result: LineTriggerCheckResult,
+    result: LineEvaluateResult,
     actor: GovernedActorContext,
     now: datetime,
     *,
     session_id: str | None = None,
-) -> LineTriggerCheckResult:
+) -> LineEvaluateResult:
     occurrences = []
     trigger_digests = {item.trigger: item.artifact_digest for item in result.triggers}
     for occurrence in result.occurrences:
@@ -180,14 +188,55 @@ def service_evaluate_line(
     line: str,
     request: LineEvaluateRequest,
     *,
+    actor: GovernedActorContext | None,
+    now: datetime,
+) -> LineEvaluateResult:
+    """Evaluate a Line's live Triggers over one range; never runs anything.
+
+    A dry run only reads what the range makes eligible. Otherwise every
+    occurrence found is enqueued for explicit dispatch, and a range evaluated
+    to its end is recorded, so a restart gap it covers leaves ``next``.
+    """
+
+    window = TriggerRange(
+        since=request.since, until=request.until, cursor=request.cursor, limit=request.limit
+    )
+    if request.dry_run:
+        return service_check_line_trigger(instance, line, window, now=now)
+    if actor is None:
+        raise ExecutionError("evaluation that enqueues requires an actor")
+    return service_enqueue_line_range(instance, line, window, actor=actor, now=now)
+
+
+def service_enqueue_line_range(
+    instance: PlaybillInstance,
+    line: str,
+    window: TriggerRange,
+    *,
     actor: GovernedActorContext,
     now: datetime,
-) -> LineTriggerCheckResult:
+) -> LineEvaluateResult:
+    """Enqueue what one range of a Line's Triggers makes eligible, and record the range."""
+
     instance.require_writable()
-    result = service_check_line_trigger(instance, line, request, now=now)
+    result = service_check_line_trigger(instance, line, window, now=now)
     store = LineDispatchStore(instance)
     with store.locked() as conn:
-        return _enqueue(store, conn, result, actor, now)
+        enqueued = _enqueue(store, conn, result, actor, now)
+        if result.status != "incomplete" and result.checked_since is not None:
+            store.append(
+                conn,
+                "evaluated",
+                dict(
+                    line_id=result.line_identity_digest,
+                    epoch=result.occurrence_epoch,
+                    since=format_datetime(result.checked_since),
+                    until=format_datetime(result.checked_until),
+                ),
+                actor=actor,
+                now=now,
+            )
+        return enqueued
 
 
 class LineArmAuthorityLost(ExecutionError):
@@ -559,7 +608,11 @@ def _disarm_line(
     committing: Callable[[], AbstractContextManager[None]],
 ) -> LineEnablement:
     coordinate = instance.accepted_coordinate()
-    accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
+    # A retired Line can still be disabled: its enablement may not have been
+    # stopped by the listener yet.
+    accepted = _accepted_line_by_reference(
+        instance, coordinate=coordinate, reference=line, allow_retired=True
+    )
     evaluated = AcceptedCoordinate.from_internal(coordinate)
     identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
@@ -583,26 +636,6 @@ def _disarm_line(
             store, conn, current, reason="disabled", detail="Disabled.", actor=actor, now=now
         )
         return _arm_view(store, conn, data, outcome="disabled", coordinate=evaluated)
-
-
-def service_line_status(instance: PlaybillInstance, line: str) -> LineEnablement:
-    """The Line's current arm, or the last one and why it stopped."""
-
-    accepted = _accepted_line_by_reference(
-        instance, coordinate=instance.accepted_coordinate(), reference=line
-    )
-    identity = line_identity_digest(accepted.line.identity)
-    if not dispatch_root(instance).exists():
-        raise LineNeverEnabled(accepted.line.identity.name)
-    store = LineDispatchStore(instance)
-    with store.locked() as conn:
-        row = conn.execute(
-            "SELECT payload FROM sessions WHERE line_id=? ORDER BY rowid DESC LIMIT 1",
-            (identity,),
-        ).fetchone()
-        if row is None:
-            raise LineNeverEnabled(accepted.line.identity.name)
-        return _arm_view(store, conn, json.loads(row[0]))
 
 
 def service_stop_line_arm(
@@ -723,7 +756,7 @@ def _timed(trigger: AcceptedTrigger) -> bool:
 
 def _segment_request(
     trigger: AcceptedTrigger, session: dict[str, Any], scan: dict[str, Any]
-) -> LineTriggerCheckRequest:
+) -> TriggerRange:
     """One Trigger's forward-only range: ticks and fixed windows by time, events by position.
 
     A timed Trigger resumes from the instant its own matching last covered, so a
@@ -732,7 +765,7 @@ def _segment_request(
     """
 
     name = trigger.trigger.identity.qualified
-    return LineTriggerCheckRequest(
+    return TriggerRange(
         since=(
             parse_datetime(session["starts_at"])
             if isinstance(trigger.trigger.schedule, GenerationAcceptedSchedule)
@@ -767,8 +800,11 @@ def service_match_listening_lines(
         try:
             coordinate = instance.accepted_coordinate()
             accepted = _accepted_line_by_reference(
-                instance, coordinate=coordinate, reference=session["line"]
+                instance, coordinate=coordinate, reference=session["line"], allow_retired=True
             )
+            if accepted.line.lifecycle.state == "retired":
+                _stop_retired(instance, store, session, actor=actor, now=now)
+                continue
             triggers = line_triggers(instance, accepted, coordinate=coordinate)
         except (CruxibleError, OSError, ValueError) as exc:
             # One unavailable Line cannot starve the other subscriptions. No
@@ -958,6 +994,151 @@ def service_match_listening_lines(
             store.append(conn, "coverage", session, actor=actor, now=now)
 
 
+_LINE_RETIRED = "The Line was retired; its enablement stopped and its pending work closed."
+
+
+def _stop_retired(
+    instance: PlaybillInstance,
+    store: LineDispatchStore,
+    session: dict[str, Any],
+    *,
+    actor: GovernedActorContext,
+    now: datetime,
+) -> None:
+    """Stop a retired Line's enablement and close every occurrence still pending for it."""
+
+    with line_arm_boundary(instance.root, session["line_id"]), store.locked() as conn:
+        current = _active_session(conn, session["line_id"])
+        if current is None or current["session_id"] != session["session_id"]:
+            return
+        for epoch, occurrence_id in conn.execute(
+            "SELECT epoch,occurrence_id FROM pending WHERE line_id=? AND disposition='pending'",
+            (session["line_id"],),
+        ).fetchall():
+            store.append(
+                conn,
+                "closed",
+                dict(
+                    line_id=session["line_id"],
+                    epoch=epoch,
+                    occurrence_id=occurrence_id,
+                    detail=_LINE_RETIRED,
+                    status="superseded",
+                    refusal=None,
+                ),
+                actor=actor,
+                now=now,
+            )
+        _stop(
+            store, conn, current, reason="line_retired", detail=_LINE_RETIRED, actor=actor, now=now
+        )
+
+
+@dataclass(frozen=True)
+class LineCoverageGap:
+    """A range an enabled Line's daemon never matched: it was down, and nothing evaluated it."""
+
+    line: str
+    line_id: str
+    since: datetime
+    until: datetime
+
+
+@dataclass(frozen=True)
+class LinePendingWork:
+    """Occurrences an enabled Line matched that wait for explicit dispatch, and are due."""
+
+    line: str
+    line_id: str
+    due: int
+    oldest_eligible_at: datetime
+
+
+def _instant(text: str) -> datetime:
+    value = parse_datetime(text)
+    assert value is not None
+    return value
+
+
+def _uncovered(
+    since: datetime, until: datetime, covered: list[tuple[datetime, datetime]]
+) -> list[tuple[datetime, datetime]]:
+    """The parts of [since, until) no evaluated range covers."""
+
+    remaining = [(since, until)]
+    for start, end in covered:
+        remaining = [
+            part
+            for low, high in remaining
+            for part in ((low, min(high, start)), (max(low, end), high))
+            if part[0] < part[1]
+        ]
+    return remaining
+
+
+def line_attention(
+    instance: PlaybillInstance, *, now: datetime
+) -> tuple[tuple[LineCoverageGap, ...], tuple[LinePendingWork, ...]]:
+    """What enabled Lines owe explicit work after a restart, for ``next``.
+
+    A restart rolls an enabled Line forward-only: the range between the last
+    instant its daemon matched and the restart is a coverage gap until an
+    explicit ``line evaluate`` covers it, and work it matched before the
+    restart waits for ``line dispatch``. Only Lines enabled now are read; a
+    disabled or stopped Line owes nothing automatic.
+    """
+
+    if not dispatch_root(instance).exists():
+        return (), ()
+    gaps: list[LineCoverageGap] = []
+    pending: list[LinePendingWork] = []
+    store = LineDispatchStore(instance)
+    with store.locked() as conn:
+        active = [
+            json.loads(row[0])
+            for row in conn.execute("SELECT payload FROM sessions WHERE active=1").fetchall()
+        ]
+        for session in sorted(active, key=lambda item: item["line"].encode("utf-8")):
+            segments = sorted(
+                (
+                    data
+                    for data in (
+                        json.loads(row[0])
+                        for row in conn.execute(
+                            "SELECT payload FROM sessions WHERE line_id=?", (session["line_id"],)
+                        ).fetchall()
+                    )
+                    if data["arm_id"] == session["arm_id"]
+                ),
+                key=lambda data: data["starts_at"],
+            )
+            covered = sorted(
+                (_instant(since), _instant(until))
+                for since, until in conn.execute(
+                    "SELECT since,until FROM evaluated WHERE line_id=? AND epoch=?",
+                    (session["line_id"], session["occurrence_epoch"]),
+                ).fetchall()
+            )
+            for before, after in zip(segments, segments[1:], strict=False):
+                if before["stops_at"] is None or before.get("stop_reason") is not None:
+                    continue
+                for since, until in _uncovered(
+                    _instant(before["stops_at"]), _instant(after["starts_at"]), covered
+                ):
+                    gaps.append(LineCoverageGap(session["line"], session["line_id"], since, until))
+            due, oldest = conn.execute(
+                "SELECT count(*),min(eligible_at) FROM pending WHERE line_id=? "
+                "AND disposition='pending' AND eligible_at<=? "
+                "AND (session_id IS NULL OR session_id!=?)",
+                (session["line_id"], format_datetime(now), session["session_id"]),
+            ).fetchone()
+            if due:
+                pending.append(
+                    LinePendingWork(session["line"], session["line_id"], due, _instant(oldest))
+                )
+    return tuple(gaps), tuple(pending)
+
+
 def service_dispatch_line(
     instance: PlaybillInstance,
     line: str,
@@ -1124,11 +1305,14 @@ def service_dispatch_line(
                             instance,
                             path_identity_digest=line,
                             request=LineRunRequest(
-                                line=line,
-                                trigger=None if binding is None else binding.trigger.name,
-                                occurrence_id=occurrence.occurrence_id,
-                                trigger_event=binding.event if binding else None,
-                                trigger_generation=binding.generation if binding else None,
+                                line=line, occurrence_id=occurrence.occurrence_id
+                            ),
+                            trigger_fire=None
+                            if binding is None
+                            else TriggerFire(
+                                trigger=binding.trigger.name,
+                                event=binding.event,
+                                generation=binding.generation,
                             ),
                             actor_context=run_actor,
                             caller_rung=run_rung,

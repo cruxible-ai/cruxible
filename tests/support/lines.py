@@ -87,3 +87,29 @@ def trigger_members(*triggers: Trigger) -> dict[str, bytes]:
     """Tree members for Triggers, keyed by their ledger paths."""
 
     return {trigger_path(item.identity.name): render_trigger(item) for item in triggers}
+
+
+def line_enablement(instance, line: str, *, now=None):  # type: ignore[no-untyped-def]
+    """The Line's latest enablement as ``get Line:<name>`` shows it (the folded line status).
+
+    ``now`` is the read's evaluation time (it decides ``stalled``); the default
+    is an hour after the shared fixtures' read time.
+    """
+
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.cas_contracts import BodyAccessContext
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_client.contracts.operational_reads import GetLineCard
+    from cruxible_core.service.discovery.get import service_playbill_get
+
+    card = service_playbill_get(
+        instance,
+        request=GetRequest(
+            ref=f"Line:{line.removeprefix('Line:')}",
+            evaluation_time=now or datetime(2026, 8, 24, 17, tzinfo=UTC),
+        ),
+        access=BodyAccessContext(principal_id="reader", can_read_body=True),
+    ).card
+    assert isinstance(card, GetLineCard) and card.enablements, card
+    return card.enablements[0]

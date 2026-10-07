@@ -44,6 +44,7 @@ from cruxible_client.contracts.operational_reads import (
     GetPredictionWindow,
     GetResolutionContractCard,
     LineEnablementState,
+    LineTriggersInactive,
     LiveHead,
     LiveView,
     MandateState,
@@ -117,6 +118,7 @@ def live_view(instance: PlaybillInstance, fields: tuple[str, ...]) -> LiveView:
 #: What each card reads live.
 LIVE_CARD_FIELDS: dict[str, tuple[str, ...]] = {
     "line": (
+        "triggers_inactive",
         "enablements",
         "enablements_total",
         "due",
@@ -384,6 +386,9 @@ def _arm(
         credential=view.enabled_by.credential_id if visible else None,
         enabled_by_withheld=not visible,
         enabled_at=view.enabled_at,
+        line_artifact_digest=view.line_artifact_digest,
+        triggers=view.triggers,
+        evaluated_until=view.evaluated_until,
         stopped_at=view.stopped_at,
         stop_reason=view.stop_reason,
         detail=view.detail,
@@ -525,10 +530,21 @@ def line_card(
         trigger=trigger,
         triggers=triggers,
         triggers_total=aimed.total,
+        triggers_inactive=_triggers_inactive(line, aimed.total, operations.arm_state),
         occurrence_epoch=line.occurrence_epoch,
         next=tuple(next_steps),
         **fields,
     )
+
+
+def _triggers_inactive(
+    line: LineSpec, aimed: int, state: LineEnablementState | None
+) -> LineTriggersInactive | None:
+    """Triggers aimed at a live Line that is not enabled do nothing: say so."""
+
+    if aimed and line.lifecycle.state == "live" and state not in {"running", "stalled"}:
+        return "not enabled"
+    return None
 
 
 def _revision(projection: Any, identity: str) -> int:
@@ -579,6 +595,9 @@ def line_rows(
                 authority=line_authority(line),
                 trigger=trigger_kind(triggers[line.identity.qualified].schedule_kinds),
                 enablement=operations.arm_state,
+                triggers_inactive=_triggers_inactive(
+                    line, triggers[line.identity.qualified].total, operations.arm_state
+                ),
                 due=operations.due,
                 waiting=operations.waiting,
             )

@@ -205,10 +205,6 @@ from cruxible_client.contracts.get_reads import (
     GetRequest,
     GetResult,
 )
-from cruxible_client.contracts.line_dispatch import (
-    LineTriggerCheckRequest,
-    LineTriggerCheckResult,
-)
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimAdmissionPolicy,
@@ -1127,11 +1123,13 @@ class ChangeSetDraft:
 
         Lowering resolves both names -- accepted at the base or defined earlier
         in this same set -- into the exact pins the LineSpec carries. A Line
-        runs when run explicitly, or when a Trigger aimed at it fires
-        (:meth:`trigger`), and inherits the Procedure's hard caps as its budget
-        unless one is given. ``trigger_input`` binds the triggering Capture to a
-        named Source alias; the Line then accepts only that Source's exact
-        CaptureContract event, and every Trigger aimed at it must fire on it.
+        runs when run explicitly, or, once it is enabled, when a Trigger aimed
+        at it fires (:meth:`trigger`; a Trigger does nothing until then), and
+        inherits the Procedure's hard caps as its budget unless one is given.
+        ``trigger_input`` binds the triggering Capture (or a manual run's
+        event input) to a named Source alias; the Line then accepts only that
+        Source's exact CaptureContract event, and every Trigger aimed at it
+        must fire on it.
         Missing or ineligible trigger material refuses admission, without a re-fetch.
 
         Lowering refuses a Procedure with an ``exhaust_tap`` node: no run path
@@ -1141,10 +1139,10 @@ class ChangeSetDraft:
         against the Procedure's input contract. ``max_authority`` (observe,
         propose or settle) caps this Line below its Procedure's own capability
         and defaults to it. A Line that proposes or settles also needs a live
-        ProcedureMandate covering its Procedure before it can run or be armed;
-        an observe-only Line needs none.
+        ProcedureMandate covering its Procedure before it can run or be enabled;
+        an observe-only Line needs none (enabling still needs governed write).
 
-        Next: ``.submit()``; once accepted, ``cx.enable_line(name)`` or ``cx.run_line(name)``.
+        Next: ``.submit()``; once accepted, ``cx.line(name).enable()`` or ``cx.line(name).run()``.
         """
 
         self._members.append(
@@ -1181,10 +1179,10 @@ class ChangeSetDraft:
         Name exactly one of ``line`` (an accepted Line, or one defined in this
         same set) or ``action`` (a registered internal action such as
         ``floor.refresh``), which takes cadence, cron or generation_accepted;
-        a Line takes any schedule that supplies its input. A
-        Line can have several
-        Triggers; retiring a Line needs its live Triggers retired or retargeted
-        in the same set.
+        a Line takes any schedule that supplies its input. A Trigger aimed at a
+        Line does nothing until the Line is enabled (``cx.line(name).enable()``).
+        A Line can have several Triggers; retiring a Line needs its live
+        Triggers retired or retargeted in the same set.
 
         Next: ``.submit()`` to propose the changeset for review and acceptance.
         """
@@ -3717,122 +3715,14 @@ class Cruxible:
         )
         return Procedure(self, name, None if requested is None else _coordinate(requested))
 
-    def check_line(
-        self,
-        line: str,
-        *,
-        since: datetime | None = None,
-        until: datetime | None = None,
-        limit: int = 100,
-        cursor: str | None = None,
-    ) -> LineTriggerCheckResult:
-        """Inspect trigger eligibility and retained admissions without starting work.
+    def line(self, name: str) -> Line:
+        """A handle on one accepted Line by name: enable, disable, run, evaluate, dispatch.
 
-        Next: ``cx.evaluate_line(...)`` for a missed range, or ``cx.dispatch_line(line)``
-        for pending work.
-        """
-        return self._client.check_line(
-            self._instance_id,
-            line,
-            request=LineTriggerCheckRequest(since=since, until=until, limit=limit, cursor=cursor),
-        )
-
-    def enable_line(
-        self, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> api.LineEnablement:
-        """Arm a Line forward-only: the daemon admits what it matches from now on.
-
-        Runs use this connection's credential, rechecked before each admission,
-        and the Line version current now. Work already pending stays for
-        `dispatch_line`. Arming it again unchanged returns `outcome="already_enabled"`.
-        `dry_run=True` previews it (`would_enable`) and records nothing; commit
-        exactly that with `at=` the preview's `coordinate.git_oid`.
-
-        Next: ``cx.line_status(line)``, or ``cx.get(f"Line:{line}")`` for its occurrences
-        and runs.
-        """
-        return self._client.enable_line(self._instance_id, line, dry_run=dry_run, at=at)
-
-    def disable_line(
-        self, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> api.LineEnablement:
-        """Stop a Line admitting work on its own; admitted runs are not cancelled.
-
-        A Line whose arm already stopped returns `outcome="already_disabled"`.
-        `dry_run=True` previews it (`would_disable`); `at` pins the commit.
-
-        Next: ``cx.enable_line(line)`` to resume it.
-        """
-        return self._client.disable_line(self._instance_id, line, dry_run=dry_run, at=at)
-
-    def line_status(self, line: str) -> api.LineEnablement:
-        """The Line's current arm, or its last one and why it stopped.
-
-        Next: ``cx.enable_line(line)`` if it stopped, or ``cx.get(f"Line:{line}")`` for its
-        runs.
-        """
-        return self._client.line_status(self._instance_id, line)
-
-    def evaluate_line(
-        self,
-        line: str,
-        *,
-        since: datetime,
-        until: datetime,
-        limit: int = 100,
-        cursor: str | None = None,
-    ) -> api.LineTriggerCheckResult:
-        """Explicitly turn a missed range into pending occurrences.
-
-        Next: ``cx.dispatch_line(line)`` to admit what it found.
-        """
-        return self._client.evaluate_line(
-            self._instance_id,
-            line,
-            request=api.LineEvaluateRequest(since=since, until=until, limit=limit, cursor=cursor),
-        )
-
-    def dispatch_line(
-        self, line: str, *, occurrence_id: str | None = None, limit: int = 1, retry: bool = False
-    ) -> api.LineDispatchResult:
-        """Admit pending work using this connection's current actor and authority.
-
-        Next: ``cx.get(f"ProcedureRun:{item.run_id}")`` for each admitted run.
-        """
-        return self._client.dispatch_line(
-            self._instance_id,
-            line,
-            request=api.LineDispatchRequest(occurrence_id=occurrence_id, limit=limit, retry=retry),
-        )
-
-    def run_line(
-        self,
-        line: str,
-        *,
-        trigger: str | None = None,
-        occurrence_id: str | None = None,
-        resolution_contract: ResolutionContractReference | None = None,
-        trigger_event: TriggerEventReference | None = None,
-    ) -> ProcedureRun:
-        """Trigger a named accepted Line; the daemon resolves its exact identity.
-
-        ``trigger`` names the Trigger this occurrence fires on; omit it only for
-        a Line no live Trigger aims at, which runs when run explicitly.
-
-        Next: ``run.succeeded`` and ``run.result``, or
-        ``cx.get(f"ProcedureRun:{run.run_id}")``.
+        Next: ``cx.line(name).enable()`` so its Triggers run it, ``.run()`` for one manual
+        run now, or ``cx.get(f"Line:{name}")`` for its enablement, Triggers and runs.
         """
 
-        result = self._client.run_line(
-            self._instance_id,
-            line,
-            trigger=trigger,
-            occurrence_id=occurrence_id,
-            resolution_contract=resolution_contract,
-            trigger_event=trigger_event,
-            evaluation_time=self._evaluation_time(),
-        )
-        return ProcedureRun(self, result)
+        return Line(self, name.removeprefix("Line:"))
 
     def get(
         self,
@@ -4463,6 +4353,122 @@ def _measurement_batch(raw: api.ProcedureMeasureResult) -> MeasurementBatch:
         ),
         raw=raw,
     )
+
+
+class Line:
+    """A handle on one accepted Line by name. Each call reaches the daemon.
+
+    A Trigger aimed at a Line does nothing until the Line is enabled. ``run``
+    is one manual occurrence now and never consumes a Trigger; ``evaluate``
+    and ``dispatch`` recover what automation missed (``cx.next()`` names it).
+
+    Next: ``line.enable()``, ``line.run()``, or ``cx.get(line.ref)``.
+    """
+
+    def __init__(self, cx: Cruxible, name: str) -> None:
+        self._playbill = cx
+        self.name = name
+
+    @property
+    def ref(self) -> str:
+        """The ``get`` reference for this Line's card. Next: ``cx.get(line.ref)``."""
+
+        return f"Line:{self.name}"
+
+    def enable(self, *, dry_run: bool | None = None, at: str | None = None) -> api.LineEnablement:
+        """Enable the Line forward-only: the daemon admits what its Triggers match from now on.
+
+        Runs use this connection's credential, rechecked before each admission,
+        and the Line and Trigger versions current now; a change to either stops
+        the enablement until it is enabled again. Needs governed write even for
+        an observe-only Line, and a proposing or settling Line needs a covering
+        ProcedureMandate. Enabling it again unchanged returns
+        ``outcome="already_enabled"``. ``dry_run=True`` previews it (``would_enable``);
+        commit exactly that with ``at=`` the preview's ``coordinate.git_oid``.
+
+        Next: ``cx.get(line.ref)`` for its enablement, occurrences and runs.
+        """
+        cx = self._playbill
+        return cx._client.enable_line(cx._instance_id, self.name, dry_run=dry_run, at=at)
+
+    def disable(self, *, dry_run: bool | None = None, at: str | None = None) -> api.LineEnablement:
+        """Stop the Line admitting work on its own; admitted runs are not cancelled.
+
+        A Line whose enablement already stopped returns ``outcome="already_disabled"``.
+        ``dry_run=True`` previews it (``would_disable``); ``at`` pins the commit.
+
+        Next: ``line.enable()`` to resume it.
+        """
+        cx = self._playbill
+        return cx._client.disable_line(cx._instance_id, self.name, dry_run=dry_run, at=at)
+
+    def evaluate(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        dry_run: bool = False,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> api.LineEvaluateResult:
+        """Turn a missed range into pending occurrences; never runs anything.
+
+        ``dry_run=True`` only reports what the range makes eligible (no range
+        needed); otherwise ``since`` and ``until`` are required.
+
+        Next: ``line.dispatch()`` to run what it found.
+        """
+        cx = self._playbill
+        return cx._client.evaluate_line(
+            cx._instance_id,
+            self.name,
+            request=api.LineEvaluateRequest(
+                since=since, until=until, dry_run=dry_run, limit=limit, cursor=cursor
+            ),
+        )
+
+    def dispatch(
+        self, *, occurrence_id: str | None = None, limit: int = 100, retry: bool = False
+    ) -> api.LineDispatchResult:
+        """Run pending occurrences under this connection's current actor and authority.
+
+        Next: ``cx.get(f"ProcedureRun:{item.run_id}")`` for each admitted run.
+        """
+        cx = self._playbill
+        return cx._client.dispatch_line(
+            cx._instance_id,
+            self.name,
+            request=api.LineDispatchRequest(occurrence_id=occurrence_id, limit=limit, retry=retry),
+        )
+
+    def run(
+        self,
+        *,
+        event: TriggerEventReference | None = None,
+        repeat: bool = False,
+        occurrence_id: str | None = None,
+        resolution_contract: ResolutionContractReference | None = None,
+    ) -> ProcedureRun:
+        """Run the Line once now: one manual occurrence, under the Line's own inputs,
+        budgets, authority ceiling and mandate. It never selects or consumes a Trigger.
+
+        ``event`` is the retained Capture event a Line whose Procedure takes an
+        event input runs on; an event the enabled Line already admitted refuses
+        unless ``repeat=True``.
+
+        Next: ``run.succeeded`` and ``run.result``, or ``cx.get(f"ProcedureRun:{run.run_id}")``.
+        """
+        cx = self._playbill
+        result = cx._client.run_line(
+            cx._instance_id,
+            self.name,
+            occurrence_id=occurrence_id,
+            resolution_contract=resolution_contract,
+            event=event,
+            repeat=repeat,
+            evaluation_time=cx._evaluation_time(),
+        )
+        return ProcedureRun(cx, result)
 
 
 class Procedure:

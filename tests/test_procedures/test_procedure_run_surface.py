@@ -598,14 +598,11 @@ def test_warm_line_admission_uses_selected_sources_without_tree_inventory(
     result = procedure_run_service.service_run_playbill_line(
         instance,
         path_identity_digest=digest,
-        request=LineRunRequest(
-            line=digest,
-            trigger=hourly.identity.name,
-            evaluation_time=READ_TIME,
-        ),
+        request=LineRunRequest(line=digest, evaluation_time=READ_TIME),
         actor_context=_actor(instance),
         caller_rung=3,
         daemon_clock=_DAEMON_CLOCK,
+        trigger_fire=procedure_run_service.TriggerFire(trigger=hourly.identity.name),
     )
     assert result.status == "admission_refused"
     assert result.terminal.code == "line_mandate_required"
@@ -630,14 +627,11 @@ def test_a_caller_cannot_walk_the_cadence_by_advancing_the_claimed_instant(
         procedure_run_service.service_run_playbill_line(
             instance,
             path_identity_digest=digest,
-            request=LineRunRequest(
-                line=digest,
-                trigger="hourly",
-                evaluation_time=READ_TIME + timedelta(hours=5),
-            ),
+            request=LineRunRequest(line=digest, evaluation_time=READ_TIME + timedelta(hours=5)),
             actor_context=_actor(instance),
             caller_rung=3,
             daemon_clock=_DAEMON_CLOCK,
+            trigger_fire=procedure_run_service.TriggerFire(trigger="hourly"),
         )
     assert "daemon clock skew bound" in str(caught.value)
     assert caught.value.error_code == "evaluation_instant_skewed"

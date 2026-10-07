@@ -87,10 +87,7 @@ from cruxible_client.contracts.line_dispatch import (
     LineEvaluateRequest as LineEvaluateRequest,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineTriggerCheckRequest as LineTriggerCheckRequest,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineTriggerCheckResult as LineTriggerCheckResult,
+    LineEvaluateResult as LineEvaluateResult,
 )
 from cruxible_client.contracts.line_dispatch import (
     LineTriggerOccurrence as LineTriggerOccurrence,
@@ -327,6 +324,8 @@ NextReason: TypeAlias = Literal[
     "proposal_awaiting_approval",
     "mandate_expiring",
     "consumer_stalled",
+    "line_coverage_gap",
+    "line_work_pending",
     "evidence_unavailable",
     "prediction_settleable",
     "prediction_window_unbindable",
@@ -347,6 +346,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.proposal.approve",
     "cruxible.compiler.upgrade",
     "cruxible.line.enable",
+    "cruxible.line.evaluate",
     "cruxible.line.dispatch",
     "cruxible.prediction.settle",
     "hand_edit",

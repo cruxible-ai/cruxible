@@ -62,6 +62,7 @@ ProcedureAdmissionRefusalCode: TypeAlias = Literal[
     "trigger_capture_not_yet_observed",
     "trigger_event_precedes_acceptance",
     "line_binding_superseded",
+    "line_trigger_mismatch",
 ]
 #: Codes retained runs were refused with before authority was served as verbs.
 #: A run's journal keeps the bytes it wrote; reading it serves today's code.

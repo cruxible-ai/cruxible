@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import base64
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import CruxibleError, ExecutionError
 from cruxible_client.contracts.line_dispatch import (
-    LineTriggerCheckRequest,
-    LineTriggerCheckResult,
+    LineEvaluateResult,
     LineTriggerOccurrence,
     LineTriggerVersion,
 )
@@ -52,10 +52,20 @@ from cruxible_core.service.procedures.procedure_runs import (
 from cruxible_core.service.procedures.resolution_contracts import bind_window, capture_event_time
 
 
+@dataclass(frozen=True)
+class TriggerRange:
+    """One range to evaluate a Line's Triggers over, and the page of it to read."""
+
+    since: datetime | None
+    until: datetime | None
+    cursor: str | None = None
+    limit: int = 256
+
+
 def service_check_line_trigger(
     instance: PlaybillInstance,
     line: str,
-    request: LineTriggerCheckRequest,
+    request: TriggerRange,
     *,
     now: datetime,
     after: dict[str, Any] | None = None,
@@ -65,7 +75,7 @@ def service_check_line_trigger(
     only_trigger: str | None = None,
     generation_after: int | None = None,
     generation_cursors: dict[str, Any] | None = None,
-) -> LineTriggerCheckResult:
+) -> LineEvaluateResult:
     """Every occurrence the Line's live Triggers make eligible in one range.
 
     Triggers are evaluated in identity order. A page that stops inside one
@@ -124,12 +134,12 @@ def service_check_line_trigger(
                 "trigger cursor must retain its original Line, Triggers and range"
             ) from exc
     if not triggers:
-        return LineTriggerCheckResult(
+        return LineEvaluateResult(
             **context,
             status="not_met",
             detail=(
                 "No live Trigger aims at this Line; it runs only when run explicitly. "
-                "Accept a Trigger aimed at it to run it automatically."
+                "Accept a Trigger aimed at it and enable the Line to run it automatically."
             ),
         )
 
@@ -302,7 +312,7 @@ def service_check_line_trigger(
                 )
             )
     except (CruxibleError, OSError, ValueError) as exc:
-        return LineTriggerCheckResult(**context, status="incomplete", detail=str(exc))
+        return LineEvaluateResult(**context, status="incomplete", detail=str(exc))
     if dispatch_root(instance).exists() and occurrences:
         states = LineDispatchStore(instance).occurrence_states(
             identity, tuple(item.occurrence_id for item in occurrences)
@@ -318,7 +328,7 @@ def service_check_line_trigger(
         ]
     if generation_cursors is not None:
         generation_cursors.update(generation_updates)
-    return LineTriggerCheckResult(
+    return LineEvaluateResult(
         **context,
         status="incomplete"
         if not complete or next_cursor

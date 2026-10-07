@@ -249,8 +249,9 @@ def line_example() -> LineInput:
 
     That Procedure has no Source nodes, so the Line names no acquisition
     policy, and its input contract is empty, so `parameters` is `{}`. It only
-    observes, so it runs without a ProcedureMandate. With no Trigger aimed at it
-    it runs when run explicitly; `--example trigger` schedules it.
+    observes, so it runs without a ProcedureMandate. It runs when run explicitly
+    (`line run`); `--example trigger` schedules it, and the Trigger runs it only
+    once the Line is enabled (`line enable`).
     """
 
     return LineInput(kind="line", name="replace-me", procedure_name="replace-me", parameters={})
@@ -268,8 +269,9 @@ def trigger_example() -> TriggerInput:
     `capture_landing` (an exact CaptureContract `event`), or `window_close` (a
     `window`). Actions admit timed or generation-accepted schedules; a Line that binds
     its triggering Capture needs a schedule that fires on that exact event. Nothing
-    fires before the Trigger is accepted: this one first runs at the top of the
-    hour after its acceptance.
+    fires before the Trigger is accepted, and a Trigger aimed at a Line does
+    nothing until that Line is enabled (`line enable`): this one first runs at
+    the top of the hour after both.
     """
 
     return TriggerInput(

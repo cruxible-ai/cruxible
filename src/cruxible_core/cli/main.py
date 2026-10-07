@@ -81,6 +81,10 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("procedure", "run"): "active",
     ("procedure", "measure"): "active",
     ("line", "run"): "active",
+    ("line", "enable"): "active",
+    ("line", "disable"): "active",
+    ("line", "evaluate"): "active",
+    ("line", "dispatch"): "active",
     ("proposal", "approve"): "active",
     ("proposal", "activate"): "active",
     ("proposal", "readmit"): "active",
@@ -166,6 +170,8 @@ def handle_errors(f: Any) -> Any:
                 if command_path == ("claim-type", "propose") and kwargs.get("template"):
                     target_mode = None
                 if command_path == ("write",) and kwargs.get("schema"):
+                    target_mode = None
+                if command_path == ("line", "evaluate") and kwargs.get("dry_run"):
                     target_mode = None
                 if target_mode is not None and target_mode != "manual":
                     # Runtime import avoids the main <-> commands import cycle.
@@ -679,21 +685,19 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         attr="procedure_group",
     ),
     "line": _group(
-        "Trigger accepted Lines.",
+        "Enable, run and recover accepted Lines.",
         {
-            "dispatch": _command("playbill", "dispatch_line", "Dispatch accepted Line work."),
-            "evaluate": _command("playbill", "evaluate_line", "Evaluate accepted Line work."),
-            "enable": _command("playbill", "enable_line", "Admit what a Line matches from now on."),
+            "enable": _command(
+                "playbill", "enable_line", "Enable a Line so its Triggers admit work."
+            ),
             "disable": _command(
                 "playbill", "disable_line", "Stop a Line admitting work automatically."
             ),
-            "status": _command("playbill", "line_status", "Show a Line's arm and why it stopped."),
-            "check": _command(
-                "playbill",
-                "check_line",
-                "Check trigger eligibility without running a Line.",
+            "run": _command("playbill", "run_line", "Run a Line once now (manual occurrence)."),
+            "evaluate": _command(
+                "playbill", "evaluate_line", "Turn a missed range into pending Line work."
             ),
-            "run": _command("playbill", "run_line", "Trigger one due accepted Line occurrence."),
+            "dispatch": _command("playbill", "dispatch_line", "Run a Line's pending work."),
         },
         module="playbill",
         attr="line_group",

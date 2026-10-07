@@ -30,10 +30,10 @@ from cruxible_core.service.procedures.line_dispatch import (
     service_dispatch_line,
     service_enable_line,
     service_evaluate_line,
-    service_line_status,
     service_match_listening_lines,
 )
 from cruxible_core.service.procedures.procedure_runs import _journal, _stream
+from tests.support.lines import line_enablement
 from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
@@ -68,6 +68,27 @@ def _armed_world(tmp_path, *, principal=LOCAL):  # type: ignore[no-untyped-def]
         daemon_id="daemon",
     )
     return instance, line, procedure, start
+
+
+def _status(instance, line, at):  # type: ignore[no-untyped-def]
+    """The Line's latest enablement as ``get Line:<name>`` reads it at ``at``."""
+
+    return line_enablement(instance, line.identity.name, now=at)
+
+
+def _card(instance, line, at=READ_TIME):  # type: ignore[no-untyped-def]
+    """``get Line:<name>``: the Line card, its enablements latest first."""
+
+    from cruxible_client.contracts.cas_contracts import BodyAccessContext
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+
+    name = line if isinstance(line, str) else line.identity.name
+    return service_playbill_get(
+        instance,
+        request=GetRequest(ref=f"Line:{name}", evaluation_time=at),
+        access=BodyAccessContext(principal_id="reader", can_read_body=True),
+    ).card
 
 
 def _match(instance, at, daemon_id="daemon"):  # type: ignore[no-untyped-def]
@@ -107,8 +128,8 @@ def test_an_armed_line_admits_the_occurrence_its_daemon_matched(tmp_path, monkey
 
     assert result is not None and [item.status for item in result.items] == ["admitted"]
     assert _admissions(instance) == 1
-    status = service_line_status(instance, line.identity.name)
-    assert status.state == "enabled" and status.pending_automatic == 0
+    status = _status(instance, line, start + timedelta(seconds=3))
+    assert status.state == "running" and status.pending_automatic == 0
 
 
 def test_the_daemon_listener_runs_armed_work_on_its_own(tmp_path, monkeypatch):
@@ -153,8 +174,8 @@ def test_a_restart_keeps_the_arm_forward_only_and_leaves_earlier_work_explicit(t
     capture(instance, procedure, at=start + timedelta(seconds=3))  # while the daemon is down
     _match(instance, restarted, daemon_id="restarted")
 
-    status = service_line_status(instance, line.identity.name)
-    assert status.state == "enabled"
+    status = _status(instance, line, restarted)
+    assert status.state == "running"
     # What the pre-restart segment matched is never run implicitly.
     assert status.pending_automatic == 0 and status.pending_explicit == 1
     assert armed_work(instance, now=restarted + timedelta(seconds=1)) == ()
@@ -171,7 +192,7 @@ def test_a_restart_keeps_the_arm_forward_only_and_leaves_earlier_work_explicit(t
         now=restarted + timedelta(seconds=3),
     )
     assert result is not None and [item.status for item in result.items] == ["admitted"]
-    assert service_line_status(instance, line.identity.name).pending_explicit == 1
+    assert _status(instance, line, restarted + timedelta(seconds=3)).pending_explicit == 1
 
 
 def test_arming_never_drains_a_backlog_that_explicit_evaluation_left(tmp_path):
@@ -196,7 +217,7 @@ def test_arming_never_drains_a_backlog_that_explicit_evaluation_left(tmp_path):
     _match(instance, now + timedelta(seconds=5))
 
     assert armed_work(instance, now=now + timedelta(seconds=5)) == ()
-    status = service_line_status(instance, line.identity.name)
+    status = _status(instance, line, now + timedelta(seconds=5))
     assert (status.pending_automatic, status.pending_explicit) == (0, 1)
 
 
@@ -220,7 +241,12 @@ def test_disarming_stops_admission_of_work_already_scheduled(tmp_path):
         is None
     )
     assert _admissions(instance) == 0
-    assert service_line_status(instance, line.identity.name).pending_explicit == 1
+    status = _status(instance, line, start + timedelta(seconds=4))
+    assert (status.state, status.stop_reason, status.pending_explicit) == (
+        "disabled",
+        "disabled",
+        1,
+    )
 
 
 @pytest.mark.parametrize(
@@ -256,7 +282,7 @@ def test_a_credential_that_no_longer_holds_stops_the_arm_before_admission(
     later = start + timedelta(seconds=4)
     assert dispatch_armed_line(_manager(instance), instance_id, arm, now=later) is None
     assert _admissions(instance) == 0
-    status = service_line_status(instance, line.identity.name)
+    status = _status(instance, line, later)
     assert (status.state, status.stop_reason) == ("stopped", reason)
     assert status.pending_explicit == 1  # the occurrence stays for explicit dispatch
 
@@ -300,7 +326,7 @@ def test_a_revocation_between_two_admissions_stops_the_second(tmp_path, monkeypa
     later = start + timedelta(seconds=4)
     assert dispatch_armed_line(_manager(instance), instance_id, arm, now=later) is None
     assert _admissions(instance) == 1
-    status = service_line_status(instance, line.identity.name)
+    status = _status(instance, line, later)
     assert (status.state, status.stop_reason) == ("stopped", "credential_revoked")
 
 
@@ -477,7 +503,7 @@ def test_a_disarm_that_lands_before_the_admission_record_prevents_the_run(tmp_pa
         future.result()
 
     assert _admissions(instance) == 0
-    assert service_line_status(instance, line.identity.name).pending_explicit == 1
+    assert _status(instance, line, start + timedelta(seconds=4)).pending_explicit == 1
 
 
 def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old_arm(
@@ -535,7 +561,7 @@ def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old
         )
 
     assert _admissions(instance) == 0
-    status = service_line_status(instance, line.identity.name)
+    status = _status(instance, line, READ_TIME + timedelta(seconds=3))
     assert (status.state, status.stop_reason) == ("stopped", "line_changed")
 
 
@@ -544,8 +570,6 @@ def _cadence_world(tmp_path):  # type: ignore[no-untyped-def]
 
 
 def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp_path):
-    from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
-
     instance, line, _procedure = _cadence_world(tmp_path)
     service_enable_line(
         instance,
@@ -556,15 +580,18 @@ def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp
         daemon_id="daemon",
     )
     _match(instance, READ_TIME)
-    assert service_line_status(instance, line.identity.name).pending_automatic == 1
+    assert _status(instance, line, READ_TIME).pending_automatic == 1
     lapsed_id = next(
         item.occurrence_id
-        for item in service_check_line_trigger(
+        for item in service_evaluate_line(
             instance,
             line.identity.name,
             LineEvaluateRequest(
-                since=READ_TIME - timedelta(seconds=2), until=READ_TIME + timedelta(seconds=1)
+                since=READ_TIME - timedelta(seconds=2),
+                until=READ_TIME + timedelta(seconds=1),
+                dry_run=True,
             ),
+            actor=None,
             now=READ_TIME + timedelta(seconds=1),
         ).occurrences
         if item.dispatch_status == "pending"
@@ -574,8 +601,8 @@ def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp
     for offset in (0, 60, 120):
         _match(instance, restarted + timedelta(seconds=offset), daemon_id="restarted")
 
-    status = service_line_status(instance, line.identity.name)
-    assert status.state == "enabled"
+    status = _status(instance, line, restarted + timedelta(seconds=120))
+    assert status.state == "running"
     assert status.pending_automatic == 1 and status.pending_explicit == 0
     # The lapsed tick is retained and still runnable with an explicit retry.
     retried = service_dispatch_line(
@@ -612,7 +639,7 @@ def test_an_earlier_arms_cadence_tick_never_holds_back_a_new_arms_own(tmp_path):
     )
     _match(instance, READ_TIME + timedelta(seconds=62))
 
-    status = service_line_status(instance, line.identity.name)
+    status = _status(instance, line, READ_TIME + timedelta(seconds=62))
     assert (status.pending_automatic, status.pending_explicit) == (1, 0)
 
 
@@ -633,13 +660,13 @@ def test_a_restart_after_a_real_cadence_admission_keeps_ticking(tmp_path):
     )
     assert admitted is not None and admitted.items[0].status == "admitted"
     _match(instance, READ_TIME + timedelta(seconds=60))
-    assert service_line_status(instance, line.identity.name).pending_automatic == 1
+    assert _status(instance, line, READ_TIME + timedelta(seconds=60)).pending_automatic == 1
 
     for offset in (120, 180, 240):
         _match(instance, READ_TIME + timedelta(seconds=offset), daemon_id="restarted")
 
     # The chain's overdue tick lapsed; the resumed arm ticks from its own start.
-    assert service_line_status(instance, line.identity.name).pending_automatic == 1
+    assert _status(instance, line, READ_TIME + timedelta(seconds=240)).pending_automatic == 1
 
 
 def test_explicit_evaluation_during_an_arm_never_starves_its_ticks(tmp_path):
@@ -665,7 +692,7 @@ def test_explicit_evaluation_during_an_arm_never_starves_its_ticks(tmp_path):
     for offset in (60, 120, 180):
         _match(instance, READ_TIME + timedelta(seconds=offset))
 
-    status = service_line_status(instance, line.identity.name)
+    status = _status(instance, line, READ_TIME + timedelta(seconds=180))
     assert (status.pending_automatic, status.pending_explicit) == (1, 1)
 
 
@@ -745,8 +772,8 @@ def test_a_rollover_waits_for_an_admission_already_inside_the_arm_boundary(tmp_p
     # Admitted under the segment that matched it, then rolled over: nothing is
     # left behind as explicit work, and nothing ran after the rollover.
     assert _admissions(instance) == 1
-    status = service_line_status(instance, line.identity.name)
-    assert status.state == "enabled" and status.pending_explicit == 0
+    status = _status(instance, line, start + timedelta(seconds=4))
+    assert status.state == "running" and status.pending_explicit == 0
 
 
 def test_an_interrupted_rollover_leaves_the_arm_whole_and_the_next_pass_completes_it(
@@ -768,7 +795,7 @@ def test_an_interrupted_rollover_leaves_the_arm_whole_and_the_next_pass_complete
     monkeypatch.setattr(LineDispatchStore, "append", original_append)
 
     # Nothing landed: the old segment still stands, so the arm still matches.
-    assert service_line_status(instance, line.identity.name).state == "enabled"
+    assert _status(instance, line, start + timedelta(seconds=1)).state == "running"
     _match(instance, start + timedelta(seconds=2), daemon_id="restarted")
     capture(instance, procedure, at=start + timedelta(seconds=3))
     _match(instance, start + timedelta(seconds=4), daemon_id="restarted")
@@ -792,7 +819,7 @@ def test_a_retried_lapsed_tick_never_blocks_the_arms_own_ticks(tmp_path):
         (lapsing,) = conn.execute("SELECT occurrence_id FROM pending").fetchone()
     _match(instance, READ_TIME + timedelta(seconds=120), daemon_id="restarted")
     _match(instance, READ_TIME + timedelta(seconds=180), daemon_id="restarted")
-    assert service_line_status(instance, line.identity.name).pending_automatic == 1
+    assert _status(instance, line, READ_TIME + timedelta(seconds=180)).pending_automatic == 1
     retried = service_dispatch_line(
         instance,
         line.identity.name,
@@ -820,7 +847,7 @@ def test_a_retried_lapsed_tick_never_blocks_the_arms_own_ticks(tmp_path):
     assert ticked is not None and [item.status for item in ticked.items] == ["admitted"]
 
 
-def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tmp_path):
+def test_disable_and_unknown_lines_refuse_with_codes_that_name_the_line(tmp_path):
     from cruxible_core.service.procedures.procedure_runs import (
         LineNeverEnabled,
         LineRunNotAccepted,
@@ -829,18 +856,17 @@ def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tm
     instance, line, _procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     name = line.identity.name
 
+    # A never-enabled Line's card simply has no enablement.
+    assert _card(instance, line).enablements == ()
     with pytest.raises(LineNeverEnabled) as never:
-        service_line_status(instance, name)
+        service_disable_line(instance, name, actor=_actor(instance), now=READ_TIME)
     assert never.value.error_code == "cruxible.line.never_enabled"
     assert repr(name) in str(never.value)
     assert never.value.repair.operation == "cruxible.line.enable"
 
-    with pytest.raises(LineNeverEnabled):
-        service_disable_line(instance, name, actor=_actor(instance), now=READ_TIME)
-
     typo = name[:-1]
     with pytest.raises(LineRunNotAccepted) as unknown:
-        service_line_status(instance, typo)
+        service_disable_line(instance, typo, actor=_actor(instance), now=READ_TIME)
     assert f"no live accepted Line named {typo!r}" in str(unknown.value)
     assert f"nearest: {name}" in str(unknown.value)
     assert "sha256:" not in str(unknown.value)
@@ -860,9 +886,18 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
     assert armed.outcome == "enabled"
     again = arm(LOCAL, start + timedelta(seconds=5))
     assert again.outcome == "already_enabled"
-    # A status read carries no outcome and no evaluation coordinate.
-    assert again.model_copy(update={"outcome": None, "coordinate": None}) == (
-        service_line_status(instance, name)
+    # The Line card reads the same enablement.
+    read = _status(instance, line, start + timedelta(seconds=5))
+    assert (read.enablement, read.state, read.enabled_at, read.enabled_by) == (
+        again.enablement_id,
+        "running",
+        again.enabled_at,
+        LOCAL.label,
+    )
+    assert (read.line_artifact_digest, read.triggers, read.evaluated_until) == (
+        again.line_artifact_digest,
+        again.triggers,
+        again.evaluated_until,
     )
     assert (again.enablement_id, again.enabled_at) == (armed.enablement_id, armed.enabled_at)
 
@@ -885,7 +920,13 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
     assert repeat.outcome == "already_disabled"
     stopped = disarmed.model_copy(update={"outcome": None})
     assert repeat.model_copy(update={"outcome": None}) == stopped
-    assert service_line_status(instance, name) == stopped.model_copy(update={"coordinate": None})
+    read = _status(instance, line, start + timedelta(seconds=8))
+    assert (read.enablement, read.state, read.stop_reason, read.stopped_at) == (
+        rebound.enablement_id,
+        "disabled",
+        "disabled",
+        disarmed.stopped_at,
+    )
 
 
 def test_a_line_with_two_triggers_runs_each_ones_occurrences_exactly_once(tmp_path):
@@ -1005,7 +1046,7 @@ def test_a_trigger_change_while_armed_stops_the_arm_before_anything_runs(tmp_pat
         is None
     )
     assert _admissions(instance) == 0
-    status = service_line_status(instance, line.identity.name)
+    status = _status(instance, line, start + timedelta(seconds=3))
     assert (status.state, status.stop_reason) == ("stopped", "trigger_changed")
     assert status.pending_explicit == 1
 
@@ -1081,7 +1122,7 @@ def test_a_trigger_accepted_just_before_admission_stops_the_arm_instead_of_runni
     )
 
     assert _admissions(instance) == 0
-    status = service_line_status(instance, line.identity.name)
+    status = _status(instance, line, start + timedelta(seconds=3))
     assert (status.state, status.stop_reason) == ("stopped", "trigger_changed")
     assert status.pending_explicit == 1
 
@@ -1169,7 +1210,7 @@ def test_an_acceptance_during_executor_preflight_never_records_an_admission(
 
     assert injected
     assert _admissions(instance) == 0
-    status = service_line_status(instance, line.identity.name)
+    status = _status(instance, line, start + timedelta(seconds=3))
     assert (status.state, status.stop_reason) == ("stopped", reason)
     assert status.pending_explicit == 1
 
@@ -1308,7 +1349,7 @@ def test_automatic_dispatch_stops_when_the_arming_principal_is_not_registered(
     assert result is None
     assert _admissions(instance) == 0
     assert revoked == ["ghost"]
-    assert service_line_status(instance, line.identity.name).state != "enabled"
+    assert _status(instance, line, start + timedelta(seconds=3)).state == "stopped"
 
 
 def test_revoking_a_registered_principal_named_operator_stops_its_claimed_arm(monkeypatch):
@@ -1396,7 +1437,7 @@ def test_arming_and_disarming_preview_on_their_own_path_and_write_nothing(tmp_pa
         ),
     )
     assert (disarm_preview.outcome, disarm_preview.state) == ("would_disable", "stopped")
-    assert service_line_status(instance, line.identity.name).state == "enabled"
+    assert _status(instance, line, start + timedelta(seconds=3)).state == "running"
 
 
 def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_path):
@@ -1428,7 +1469,6 @@ def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_
     assert moved.value.error_code == "cruxible.preview.state_moved"
     armed = arm(dry_run=False, at=preview.coordinate.git_oid)
     assert (armed.outcome, armed.coordinate) == ("enabled", preview.coordinate)
-    assert service_line_status(instance, line.identity.name).coordinate is None
 
     disarm = service_disable_line(
         instance,
@@ -1447,7 +1487,7 @@ def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_
             dry_run=False,
             at=stale,
         )
-    assert service_line_status(instance, line.identity.name).state == "enabled"
+    assert _status(instance, line, start + timedelta(seconds=1)).state == "running"
 
 
 def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, monkeypatch):
@@ -1507,9 +1547,7 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
             at=at,
         )
     assert moved.value.error_code == "cruxible.preview.state_moved"
-    assert not dispatch_root(instance).exists() or (
-        service_line_status_or_none(instance, line.identity.name) is None
-    )
+    assert not dispatch_root(instance).exists() or _card(instance, line, start).enablements == ()
 
     monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", original)
     armed = service_enable_line(
@@ -1531,16 +1569,7 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
             at=armed.coordinate.git_oid,
         )
     monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", original)
-    assert service_line_status(instance, line.identity.name).state == "enabled"
-
-
-def service_line_status_or_none(instance, name):  # type: ignore[no-untyped-def]
-    from cruxible_client.contracts.errors import CruxibleError
-
-    try:
-        return service_line_status(instance, name)
-    except CruxibleError:
-        return None
+    assert _status(instance, line, start + timedelta(seconds=1)).state == "running"
 
 
 def _accept_generation(instance, owner, name, instant):
@@ -1583,15 +1612,15 @@ def test_generation_line_coalesces_and_skips_accepts_before_listening_or_restart
     for offset in (1, 2, 3):
         _accept_generation(instance, owner, f"burst-{offset}", start + timedelta(seconds=offset))
     _match(instance, start + timedelta(seconds=4))
-    assert service_line_status(instance, line.identity.name).pending_automatic == 1
+    assert _status(instance, line, start + timedelta(seconds=4)).pending_automatic == 1
     _accept_generation(instance, owner, "offline", start + timedelta(seconds=5))
     _match(instance, start + timedelta(seconds=6), daemon_id="restarted")
-    status = service_line_status(instance, line.identity.name)
+    status = _status(instance, line, start + timedelta(seconds=6))
     assert (status.pending_automatic, status.pending_explicit) == (0, 1)
     assert armed_work(instance, now=start + timedelta(seconds=6)) == ()
     _accept_generation(instance, owner, "after-restart", start + timedelta(seconds=7))
     _match(instance, start + timedelta(seconds=8), daemon_id="restarted")
-    assert service_line_status(instance, line.identity.name).pending_automatic == 1
+    assert _status(instance, line, start + timedelta(seconds=8)).pending_automatic == 1
 
 
 def test_generation_line_accepts_once_then_reaches_a_fixed_point(tmp_path, monkeypatch):
@@ -1635,7 +1664,7 @@ def test_generation_line_accepts_once_then_reaches_a_fixed_point(tmp_path, monke
         )
     assert len(runs) == 2
     assert _admissions(instance) == 2
-    assert service_line_status(instance, line.identity.name).pending_automatic == 0
+    assert _status(instance, line, start + timedelta(seconds=4)).pending_automatic == 0
 
 
 def test_generation_line_retains_its_cursor_without_reading_prior_admissions(tmp_path, monkeypatch):
@@ -1684,8 +1713,190 @@ def test_generation_line_retains_its_cursor_without_reading_prior_admissions(tmp
     _accept_generation(instance, owner, "cursor-advance", start + timedelta(seconds=3))
     _match(instance, start + timedelta(seconds=4))
     assert len(calls) == 1
-    assert service_line_status(instance, line.identity.name).pending_automatic == 1
+    assert _status(instance, line, start + timedelta(seconds=4)).pending_automatic == 1
     # A fresh reader after a process restart of the service uses persisted
     # cursors; a new daemon listening segment deliberately starts over.
     _match(instance, start + timedelta(seconds=5))
     assert len(calls) == 1
+
+
+def test_a_dry_run_evaluation_reads_without_enqueueing_and_only_it_may_omit_the_range(tmp_path):
+    from pydantic import ValidationError
+
+    from cruxible_core.exhaust.line_dispatch import dispatch_root
+
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
+    capture(instance, procedure)
+    now = READ_TIME + timedelta(seconds=2)
+    previewed = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=READ_TIME, until=now, dry_run=True),
+        actor=None,
+        now=now,
+    )
+    assert previewed.status == "met"
+    (occurrence,) = previewed.occurrences
+    assert (occurrence.pending, occurrence.dispatch_status) == (False, None)
+    # Nothing was enqueued: no dispatch state exists, and dispatch finds no work.
+    assert not dispatch_root(instance).exists()
+    dispatched = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequest(),
+        actor=_actor(instance),
+        now=now,
+        caller_rung=3,
+    )
+    assert dispatched.items == () and _admissions(instance) == 0
+
+    # Enqueueing evaluation needs an explicit range; a dry run reads without one.
+    for incomplete in ({}, {"since": READ_TIME}, {"until": now}):
+        with pytest.raises(ValidationError, match="explicit since and until"):
+            LineEvaluateRequest(**incomplete)
+    assert LineEvaluateRequest(dry_run=True).since is None
+
+
+def _retire_line(instance, owner, line):  # type: ignore[no-untyped-def]
+    """Accept a retired successor of the Line, retiring the Trigger aimed at it with it.
+
+    A Line change may not strand a live Trigger aimed at it, so both retire in
+    one ChangeSet; the listener stops on the retired Line before reading Triggers.
+    """
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_spec_digest,
+        line_spec_path,
+        render_line_spec,
+    )
+    from tests.support.lines import line_trigger, successor, trigger_members
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_line_triggers import TRIGGER
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[line_spec_path(line.identity.name)] = render_line_spec(
+        line.model_copy(
+            update={
+                "lifecycle": ArtifactLifecycle(
+                    state="retired", predecessor_digest=line_spec_digest(line).tagged
+                )
+            }
+        )
+    )
+    aimed = line_trigger(
+        TRIGGER, line=line.identity.name, schedule=CaptureLandingSchedule(event=SELECTOR)
+    )
+    tree.update(trigger_members(successor(aimed, state="retired")))
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name="retire"
+    )
+
+
+def test_retiring_an_enabled_line_stops_its_enablement_and_closes_its_pending_work(tmp_path):
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+
+    instance, line, procedure, owner = line_world(
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
+    )
+    start = READ_TIME + timedelta(seconds=10)
+    service_enable_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+    )
+    capture(instance, procedure)
+    evaluated = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=READ_TIME, until=start),
+        actor=_actor(instance),
+        now=start,
+    )
+    assert [item.pending for item in evaluated.occurrences] == [True]
+    assert _status(instance, line, start).pending_explicit == 1
+
+    _retire_line(instance, owner, line)
+    _match(instance, start + timedelta(seconds=1))
+
+    status = _status(instance, line, start + timedelta(seconds=2))
+    assert (status.state, status.stop_reason) == ("stopped", "line_retired")
+    assert (status.pending_automatic, status.pending_explicit) == (0, 0)
+    card = _card(instance, line, start + timedelta(seconds=2))
+    assert card.lifecycle == "retired" and card.triggers_inactive is None
+    with LineDispatchStore(instance).locked() as conn:
+        (closed,) = conn.execute(
+            "SELECT disposition FROM pending WHERE occurrence_id=?",
+            (evaluated.occurrences[0].occurrence_id,),
+        ).fetchall()
+    assert closed[0] == "superseded"
+    assert armed_work(instance, now=start + timedelta(seconds=2)) == ()
+    assert _admissions(instance) == 0
+
+    # Disable still accepts the retired Line; its enablement already stopped.
+    disabled = service_disable_line(
+        instance, line.identity.name, actor=_actor(instance), now=start + timedelta(seconds=3)
+    )
+    assert (disabled.outcome, disabled.stop_reason) == ("already_disabled", "line_retired")
+
+
+def test_the_line_card_pins_the_enabled_line_and_trigger_versions_and_its_progress(tmp_path):
+    from cruxible_client.contracts.line_dispatch import LineTriggerVersion
+    from cruxible_core.service.procedures.procedure_runs import line_triggers
+
+    instance, line, procedure, start = _armed_world(tmp_path)
+    accepted = _accepted_line(instance, line)
+    enabled = _status(instance, line, start)
+    assert enabled.line_artifact_digest == accepted.artifact_digest
+    live = line_triggers(instance, accepted, coordinate=instance.accepted_coordinate())
+    assert live and enabled.triggers == tuple(
+        LineTriggerVersion(
+            trigger=item.trigger.identity.qualified, artifact_digest=item.artifact_digest
+        )
+        for item in live
+    )
+    assert enabled.evaluated_until == start
+
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=5))
+    matched = _status(instance, line, start + timedelta(seconds=5))
+    # Matched through the pass's instant (its exclusive bound sits just past it).
+    assert start + timedelta(seconds=5) <= matched.evaluated_until < start + timedelta(seconds=6)
+    assert (matched.line_artifact_digest, matched.triggers) == (
+        enabled.line_artifact_digest,
+        enabled.triggers,
+    )
+
+
+def test_triggers_aimed_at_a_line_read_inactive_until_it_is_enabled(tmp_path):
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
+    start = READ_TIME + timedelta(seconds=10)
+
+    def inactive(at):  # type: ignore[no-untyped-def]
+        card = _card(instance, line, at)
+        rows = service_playbill_orient(instance, section="lines", evaluation_time=at).lines
+        assert rows is not None
+        (row,) = [item for item in rows if item.line == card.line]
+        assert row.triggers_inactive == card.triggers_inactive
+        assert card.triggers_total == 1
+        return card.triggers_inactive
+
+    assert inactive(start) == "not enabled"
+    service_enable_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+    )
+    assert inactive(start + timedelta(seconds=1)) is None
+    service_disable_line(
+        instance, line.identity.name, actor=_actor(instance), now=start + timedelta(seconds=2)
+    )
+    assert inactive(start + timedelta(seconds=3)) == "not enabled"

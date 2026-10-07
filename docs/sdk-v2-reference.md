@@ -57,7 +57,7 @@ This document does not silently remove an existing operation.
 | [Evidence and operational work](../packages/cruxible-client/README.md#evidence-predictions-and-operational-work) | Same capture reads, attestations, predictions, settlement, worklists, and curation. |
 | [Source selectors](../packages/cruxible-client/README.md#source-selection) | Existing host file selectors remain; they are not arbitrary filesystem access inside a Procedure. |
 | [Procedure composition](../packages/cruxible-client/README.md#procedure-composition-and-execution) | `Sequence` and `ProcedureInput` remain valid. Source authoring is an additional frontend. |
-| [Procedure entry points](../packages/cruxible-client/README.md#procedure-entry-points) | `cx.procedure(...)` additionally accepts a source blueprint. Typed input records and run outcomes extend the accepted Procedure handle. `.run(...)` and `cx.run_line(...)` keep their existing authority boundaries. |
+| [Procedure entry points](../packages/cruxible-client/README.md#procedure-entry-points) | `cx.procedure(...)` additionally accepts a source blueprint. Typed input records and run outcomes extend the accepted Procedure handle. `.run(...)` and `cx.line(name).run(...)` keep their existing authority boundaries. |
 | [Projections and workspace](../packages/cruxible-client/README.md#projections-and-workspace) | Unchanged governed blocks, query backings, repin/sync, and portable packages. |
 | [Signing](../packages/cruxible-client/README.md#signing-capabilities) | Unchanged explicit signing capabilities. A decorated function grants no signing authority. |
 | [Lower-level client](../packages/cruxible-client/README.md#lower-level-http-client) | Existing endpoints remain. A retained Procedure can be invoked without importing its authoring module. |
@@ -244,10 +244,10 @@ A capture terminal, submitted proposal, successful no-change result, refusal,
 and accepted generation remain different records. No wrapper converts one into
 another.
 
-`cx.run_line(...)` retains its existing occurrence inputs and lane authority.
+`cx.line(name).run(...)` runs one manual occurrence under the Line's lane authority.
 Line parameters are validated against the pinned Procedure input contract when
 authored/admitted; they are not replaced by arbitrary invocation input supplied
-to `run_line`. The returned run resolves `O` from that exact admitted Procedure.
+to `run`. The returned run resolves `O` from that exact admitted Procedure.
 
 ## Lifecycle and execution boundary
 
@@ -1486,7 +1486,7 @@ observer_intent = cx.procedure(definition=bound_observer).prepare()
 ```
 
 After acceptance, standalone execution uses the accepted capture Line whose
-parameters supply the URL. Invoke it with `cx.run_line("security.observe_feed")`,
+parameters supply the URL. Invoke it with `cx.line("security.observe_feed").run()`,
 using the accepted Line’s name; the daemon resolves and retains its exact bindings.
 Direct Procedure execution does not acquire terminal permission from the
 decorator's capability.
@@ -1502,8 +1502,9 @@ parse its entries or author exposure Claims.
 Set `trigger_input="feed"` on `ChangeSetDraft.line(...)` to bind the event's
 Capture to the Procedure's Source alias `feed`. Every new Line authors as
 Line v6 under compiler revision 32, and declares the exact event that input
-accepts: the Source's CaptureContract. A Line runs on the Triggers aimed at it;
-`ChangeSetDraft.trigger(name=..., schedule=..., line=...)` defines one; its
+accepts: the Source's CaptureContract. Once enabled, a Line runs on the
+Triggers aimed at it (a Trigger aimed at a Line that is not enabled does
+nothing); `ChangeSetDraft.trigger(name=..., schedule=..., line=...)` defines one; its
 `schedule` is a `CadenceSchedule`, `CronSchedule(expression=...)`,
 `GenerationAcceptedSchedule`, `CaptureLandingSchedule` or
 `WindowCloseSchedule`. A cron expression is
@@ -1514,23 +1515,30 @@ Trigger aimed at a `trigger_input` Line must fire on that event, as a
 capture-arrival schedule or an event-relative window. Cadence, cron,
 generation-accepted and fixed-window Triggers cannot provide this input.
 
-Use `cx.check_line(name)` to inspect trigger matches and their `dispatch_status`.
-`cx.dispatch_line(name)` processes pending work; unusable exact Captures close as
+`cx.line(name)` is the handle for one accepted Line. `line.evaluate(dry_run=True)`
+inspects trigger matches and their `dispatch_status` without enqueueing;
+`line.evaluate(since=..., until=...)` records a missed range as pending work.
+`line.dispatch()` processes pending work; unusable exact Captures close as
 `rejected` and superseded Line bindings close as `superseded`, with typed refusals
 and repair hints. To explicitly retry closed work after repair, use
-`cx.dispatch_line(name, occurrence_id=occurrence_id, retry=True)`. This can bind a
+`line.dispatch(occurrence_id=occurrence_id, retry=True)`. This can bind a
 successor Line only in the same epoch and never substitutes another event or
 Capture. Historical evaluation alone does not reopen closed work.
 
-`cx.enable_line(name)` has the daemon admit what the Line's Triggers match from now
+`line.enable()` has the daemon admit what the Line's Triggers match from now
 on, under this connection's credential (rechecked before each run), the Line
 version current now and the Trigger versions aimed at it now; a change to any
-of them stops the arm until it is rearmed. It never catches up: earlier pending work and daemon
-downtime still need `evaluate_line` and `dispatch_line`. `cx.line_status(name)`
-reports whether the Line is armed, its automatic and explicit pending counts,
-and why an arm stopped; `cx.disable_line(name)` stops further admissions.
-Both calls are idempotent: repeating one returns the arm unchanged with
-`outcome` `already_enabled` or `already_disabled`.
+of them, or retiring the Line, stops the enablement until it is enabled again.
+Enabling needs governed write even for an observe-only Line, and a proposing or
+settling Line needs a covering ProcedureMandate. It never catches up: earlier
+pending work and daemon downtime still need `line.evaluate(...)` and
+`line.dispatch()`, which `cx.next()` names. `cx.get(line.ref)` reports each
+enablement's state, pinned versions, automatic and explicit pending counts,
+and why it stopped; `line.disable()` stops further admissions. Both calls are
+idempotent: repeating one returns the enablement unchanged with `outcome`
+`already_enabled` or `already_disabled`. `line.run(event=...)` runs one manual
+occurrence now on the given event, never a Trigger's; an event its Triggers
+already admitted needs `repeat=True`.
 
 Matching itself never executes a Procedure; admission does. Admission verifies
 the exact retained Capture against its producer coordinate, acquisition policy,
@@ -1625,7 +1633,7 @@ The parent has no independent Source node. Admission includes the child's
 pinned acquisition policy and effective effects/budgets; nested execution does
 not invent or bypass an acquisition policy on the parent. The accepted proposal
 Line binds `feed_id="kev"` and proposes under its applicable mandate.
-Its invocation uses the same `cx.run_line(...)` surface.
+Its invocation uses the same `cx.line(name).run(...)` surface.
 
 | Stage or condition | Expected result/state effect |
 |---|---|

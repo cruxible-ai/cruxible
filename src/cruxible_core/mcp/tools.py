@@ -1201,13 +1201,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_line_check(
-        instance_id: InstanceId = None, *, line: str, request: contracts.LineTriggerCheckRequest
-    ) -> contracts.LineTriggerCheckResult:
-        """Check a Line's trigger and admitted occurrences; never enqueue or execute."""
-        return handlers.handle_playbill_line_check(require_instance_id(instance_id), line, request)
-
-    @_tool
     def cruxible_line_enable(
         instance_id: InstanceId = None,
         *,
@@ -1234,17 +1227,13 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_line_status(
-        instance_id: InstanceId = None, *, line: str
-    ) -> contracts.LineEnablement:
-        """Read a Line's current arm, or its last one and why it stopped."""
-        return handlers.handle_playbill_line_status(require_instance_id(instance_id), line)
-
-    @_tool
     def cruxible_line_evaluate(
         instance_id: InstanceId = None, *, line: str, request: contracts.LineEvaluateRequest
-    ) -> contracts.LineTriggerCheckResult:
-        """Explicitly evaluate a historical range into pending work; never execute."""
+    ) -> contracts.LineEvaluateResult:
+        """Evaluate a Line's Triggers over a range into pending work; never execute.
+
+        ``request.dry_run`` only reports what the range makes eligible (a read).
+        """
         return handlers.handle_playbill_line_evaluate(
             require_instance_id(instance_id), line, request
         )
@@ -1263,24 +1252,25 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         line: str,
-        trigger: str | None = None,
+        event: contracts.TriggerEventReference | None = None,
+        repeat: bool = False,
         evaluation_time: str | None = None,
         occurrence_id: str | None = None,
         resolution_contract: contracts.ResolutionContractReference | None = None,
-        trigger_event: contracts.TriggerEventReference | None = None,
     ) -> contracts.ProcedureRunState:
-        """Trigger one due occurrence of an accepted Line.
+        """Run an accepted Line once now, as a manual occurrence; never a Trigger's.
 
-        Name the Trigger it fires on; omit it for a Line no Trigger aims at.
+        ``event`` is the event input for a Line whose Procedure takes one;
+        ``repeat`` runs an event its Triggers already admitted again.
         """
         return handlers.handle_playbill_line_run(
             require_instance_id(instance_id),
             line,
-            trigger=trigger,
             occurrence_id=occurrence_id,
             evaluation_time=evaluation_time,
             resolution_contract=resolution_contract,
-            trigger_event=trigger_event,
+            event=event,
+            repeat=repeat,
         )
 
     @_tool

@@ -551,20 +551,22 @@ class ProcedureRunRequest(_StrictProcedureSurfaceModel):
 
 
 class LineRunRequest(_StrictProcedureSurfaceModel):
-    """An assertion against one daemon-derived accepted Line occurrence."""
+    """One manual run of an accepted Line, now: never a Trigger's occurrence.
+
+    The run uses the Line's own inputs, budgets, authority ceiling and mandate
+    and is recorded on its history. ``event`` is the retained Capture event a
+    Line whose Procedure takes an event input runs on; one the enabled Line
+    already admitted refuses unless ``repeat`` says to run it again.
+    """
 
     tag: Literal["playbill-line-run-request-v1"] = "playbill-line-run-request-v1"
     resolution_contract: ResolutionContractReference | None = None
-    trigger_event: TriggerEventReference | None = None
-    trigger_generation: int | None = Field(default=None, ge=0)
-    line: str
-    trigger: str | None = Field(
-        default=None,
-        description=(
-            "The Trigger (name or Trigger:name) this occurrence fires on. Omit it only "
-            "for a Line no live Trigger aims at, which runs when run explicitly."
-        ),
+    event: TriggerEventReference | None = None
+    repeat: bool = Field(
+        default=False,
+        description="Run on an event the enabled Line already admitted, deliberately again.",
     )
+    line: str
     occurrence_id: str | None = None
     evaluation_time: datetime | None = Field(
         default=None,
@@ -582,13 +584,6 @@ class LineRunRequest(_StrictProcedureSurfaceModel):
             Sha256Value.from_tagged(value)
         else:
             ArtifactIdentity(kind="Line", name=value.removeprefix("Line:"))
-        return value
-
-    @field_validator("trigger")
-    @classmethod
-    def _trigger(cls, value: str | None) -> str | None:
-        if value is not None:
-            ArtifactIdentity(kind="Trigger", name=value.removeprefix("Trigger:"))
         return value
 
     @field_validator("evaluation_time")
@@ -767,12 +762,16 @@ def _accepted_line_by_reference(
     *,
     coordinate: AcceptedProjectionCoordinate,
     reference: str,
+    allow_retired: bool = False,
 ) -> AcceptedLineSpec:
+    """The accepted Line a reference names: live, or also retired where a caller reads or
+    stops one (disable, the Line card, the listener stopping a retired Line's enablement)."""
+
     identity_digest = _line_reference_digest(reference)
     with instance.bind_accepted_projection(coordinate) as projection:
         matches = projection.typed.connection.execute(
-            "SELECT identity,path,artifact_digest FROM lines "
-            "WHERE identity_digest=? AND lifecycle='live'",
+            "SELECT identity,path,artifact_digest FROM lines WHERE identity_digest=? AND "
+            + ("lifecycle IN ('live','retired')" if allow_retired else "lifecycle='live'"),
             (identity_digest,),
         ).fetchall()
         if len(matches) != 1:
@@ -783,6 +782,14 @@ def _accepted_line_by_reference(
                 ).fetchall()
             )
             shown = reference.removeprefix("Line:")
+            if projection.typed.connection.execute(
+                "SELECT 1 FROM lines WHERE identity_digest=? AND lifecycle='retired'",
+                (identity_digest,),
+            ).fetchone():
+                raise LineRunNotAccepted(
+                    f"{LineRunNotAccepted.code}: Line {shown!r} is retired; nothing runs it "
+                    "(get and disable still read it)"
+                )
             nearest = difflib.get_close_matches(shown, live, n=3, cutoff=0.6)
             listed = ", ".join(live[:20]) + (
                 f", and {len(live) - 20} more" if len(live) > 20 else ""
@@ -923,22 +930,27 @@ def _line_admission_head_gate(
     )
 
 
+@dataclass(frozen=True)
+class TriggerFire:
+    """The Trigger occurrence a dispatch admits: its Trigger and what it fired on.
+
+    Only dispatch of matched or evaluated work supplies one; ``line run`` is a
+    manual occurrence and never names a Trigger.
+    """
+
+    trigger: str
+    event: TriggerEventReference | None = None
+    generation: int | None = None
+
+
 def select_line_trigger(
     triggers: tuple[AcceptedTrigger, ...],
-    reference: str | None,
+    reference: str,
     *,
     line: ArtifactIdentity,
-) -> AcceptedTrigger | None:
-    """The live Trigger a run fires on; None only for a Line no Trigger aims at."""
+) -> AcceptedTrigger:
+    """The live Trigger aimed at this Line that a dispatched occurrence fires on."""
 
-    if reference is None:
-        if triggers:
-            raise LineTriggerMismatch(
-                f"Line {line.name!r} runs on its Triggers "
-                f"({', '.join(item.trigger.identity.name for item in triggers)}); name the "
-                "Trigger this occurrence fires on"
-            )
-        return None
     wanted = _trigger_reference(reference)
     found = next((item for item in triggers if item.trigger.identity.qualified == wanted), None)
     if found is None:
@@ -947,7 +959,7 @@ def select_line_trigger(
             + (
                 f"; its Triggers: {', '.join(item.trigger.identity.name for item in triggers)}"
                 if triggers
-                else "; no Trigger aims at it, so run it without one"
+                else "; no Trigger aims at it now"
             )
         )
     return found
@@ -1139,6 +1151,26 @@ def _trigger_admissions(
     return () if latest is None else (latest,)
 
 
+def _event_admission(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpec,
+    event: TriggerEventReference,
+) -> str | None:
+    """The run a Trigger of this Line admitted on this exact event, if any."""
+
+    journal, _root = _journal(instance)
+    stream = procedure_line_journal_stream(instance.descriptor.instance_id)
+    partition = procedure_line_partition(accepted_line.line.identity)
+    for stored in journal.select_records(
+        stream, partition_id=partition, event_kind="admission_bound", descending=True
+    ):
+        admission = _stored_line_admission(instance, stored)
+        binding = getattr(admission, "trigger_binding", None)
+        if admission is not None and binding is not None and binding.event == event:
+            return admission.run_id
+    return None
+
+
 def trigger_binding_for(
     trigger: AcceptedTrigger,
     *,
@@ -1177,10 +1209,12 @@ def _line_occurrence(
     not_before: datetime | None = None,
     exact_basis: datetime | None = None,
     accepted_at: datetime | None = None,
+    manual_event: TriggerEventReference | None = None,
 ) -> tuple[str, datetime | None]:
     """Derive one occurrence's identity and its next due instant.
 
-    With no Trigger the occurrence is an explicit run at its evaluation instant.
+    With no Trigger the occurrence is a manual run at its evaluation instant,
+    on the exact event it was given, if any (its record digest names it).
     A cadence or cron occurrence is the tick after the last one its Trigger
     fired (`prior`), and never before the tick after its Trigger version's
     acceptance (`accepted_at`): no Trigger fires retroactively. `not_before`
@@ -1194,7 +1228,11 @@ def _line_occurrence(
     next_due = None
     if trigger is None:
         kind = "manual"
-        occurrence_basis: object = format_datetime(evaluation_time)
+        occurrence_basis: object = (
+            format_datetime(evaluation_time)
+            if manual_event is None
+            else {"at": format_datetime(evaluation_time), "event": manual_event.record_digest}
+        )
     else:
         schedule = trigger.trigger.schedule
         kind = schedule.kind
@@ -3405,6 +3443,7 @@ def service_run_playbill_line(
     expected_trigger_artifact_digest: str | None = None,
     expected_trigger_pins: dict[str, str] | None = None,
     explicit_occurrence: bool = False,
+    trigger_fire: TriggerFire | None = None,
 ) -> ProcedureRunStateV2:
     instance.require_writable()
     if request.line != path_identity_digest:
@@ -3429,6 +3468,7 @@ def service_run_playbill_line(
             expected_trigger_artifact_digest=expected_trigger_artifact_digest,
             expected_trigger_pins=expected_trigger_pins,
             explicit_occurrence=explicit_occurrence,
+            trigger_fire=trigger_fire,
         )
 
 
@@ -3448,8 +3488,14 @@ def _run_playbill_line(
     expected_trigger_artifact_digest: str | None = None,
     expected_trigger_pins: dict[str, str] | None = None,
     explicit_occurrence: bool = False,
+    trigger_fire: TriggerFire | None = None,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
+
+    With ``trigger_fire`` (dispatch only) the occurrence is that Trigger's;
+    without it, the run is manual: no Trigger is selected or consumed, so a
+    Trigger's tick accounting never sees it, and ``request.event`` reaches the
+    Procedure as its event input.
 
     The occurrence's EVALUATION INSTANT is the daemon's, never the caller's: a
     schedule whose due proof is an instant the caller chooses is not a rate at
@@ -3589,10 +3635,12 @@ def _run_playbill_line(
             "the Triggers aimed at this Line changed after the enablement pinned them"
         )
     try:
-        trigger = select_line_trigger(
-            current_triggers,
-            request.trigger,
-            line=accepted_line.line.identity,
+        trigger = (
+            None
+            if trigger_fire is None
+            else select_line_trigger(
+                current_triggers, trigger_fire.trigger, line=accepted_line.line.identity
+            )
         )
     except LineTriggerMismatch as exc:
         return _line_refusal_state(
@@ -3621,6 +3669,7 @@ def _run_playbill_line(
             details={"expected_trigger_artifact_digest": expected_trigger_artifact_digest},
         )
     schedule = None if trigger is None else trigger.trigger.schedule
+    event = request.event if trigger_fire is None else trigger_fire.event
     trigger_binding = None
     # The event, or the fixed window's close, this occurrence fires on.
     anchor: datetime | None = None
@@ -3631,8 +3680,8 @@ def _run_playbill_line(
             with instance.accepted_history_reader() as history:
                 generation = (
                     history.sequence
-                    if request.trigger_generation is None
-                    else request.trigger_generation
+                    if trigger_fire is None or trigger_fire.generation is None
+                    else trigger_fire.generation
                 )
                 if (
                     generation <= trigger_generation(instance, trigger.trigger)
@@ -3655,7 +3704,7 @@ def _run_playbill_line(
         elif trigger is not None and schedule is not None and schedule_is_timed(schedule):
             trigger_binding = trigger_binding_for(trigger)
         elif trigger is not None and isinstance(schedule, CaptureLandingSchedule):
-            if request.trigger_event is None:
+            if event is None:
                 return _line_refusal_state(
                     accepted,
                     accepted_line,
@@ -3666,12 +3715,10 @@ def _run_playbill_line(
                     message="The Trigger is waiting for a matching retained capture event.",
                     details={"repair": "Supply the retained capture event when it arrives."},
                 )
-            anchor = capture_event_time(
-                instance, schedule.event, request.trigger_event, now=evaluation_time
-            )
-            trigger_binding = trigger_binding_for(trigger, event=request.trigger_event)
+            anchor = capture_event_time(instance, schedule.event, event, now=evaluation_time)
+            trigger_binding = trigger_binding_for(trigger, event=event)
         elif trigger is not None and isinstance(schedule, WindowCloseSchedule):
-            if isinstance(schedule.window, CaptureEventWindow) and request.trigger_event is None:
+            if isinstance(schedule.window, CaptureEventWindow) and event is None:
                 return _line_refusal_state(
                     accepted,
                     accepted_line,
@@ -3682,7 +3729,7 @@ def _run_playbill_line(
                     message="The observation window is waiting for its capture event anchor.",
                     details={"repair": "Supply the retained anchor event when it arrives."},
                 )
-            line_event = request.trigger_event
+            line_event = event
             if (
                 not isinstance(schedule.window, CaptureEventWindow)
                 and request.resolution_contract is not None
@@ -3695,8 +3742,14 @@ def _run_playbill_line(
                 if isinstance(schedule.window, CaptureEventWindow)
                 else window.ends_at
             )
-        elif request.trigger_event is not None and request.resolution_contract is None:
-            raise ExecutionError("this Line occurrence does not accept a capture event")
+        elif (
+            event is not None
+            and request.resolution_contract is None
+            and accepted_line.line.trigger_input is None
+        ):
+            raise ExecutionError(
+                "this Line takes no event input: its Procedure reads no triggering Capture"
+            )
         if (
             trigger is not None
             and anchor is not None
@@ -3725,7 +3778,7 @@ def _run_playbill_line(
             else bind_investigation(
                 instance,
                 request.resolution_contract,
-                event=request.trigger_event,
+                event=event,
                 now=evaluation_time,
                 trigger_binding=trigger_binding,
             )
@@ -3760,12 +3813,31 @@ def _run_playbill_line(
         if occurrence_basis_time is not None and is_timed
         else None
     )
+    if trigger is None and event is not None and not request.repeat:
+        # A manual run on an event the enabled Line's automation already ran is
+        # almost always a mistake; it runs again only when asked to.
+        admitted = _event_admission(instance, accepted_line, event)
+        if admitted is not None:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="occurrence_already_admitted",
+                message=(
+                    f"The enabled Line already admitted this event as run {admitted}; "
+                    "pass repeat to run it again deliberately."
+                ),
+                details={"run_id": admitted, "repair": "Read its run, or run with repeat."},
+            )
     occurrence_id, next_due = _line_occurrence(
         accepted_line,
         evaluation_time=cadence_basis or evaluation_time,
         prior=prior,
         trigger=trigger,
         binding=trigger_binding,
+        manual_event=event if trigger is None else None,
         # A retained tick is validated against the same calculation that queued
         # it: automatically, as the chain's next tick floored at its own due
         # instant; explicitly, as exactly the tick it names.
@@ -3887,7 +3959,7 @@ def _run_playbill_line(
                     instance,
                     line=accepted_line.line,
                     procedure=accepted,
-                    binding=trigger_binding,
+                    event=event,
                     contracts=capture_contracts,
                     policy=line_policy,
                     evaluation_time=evaluation_time,

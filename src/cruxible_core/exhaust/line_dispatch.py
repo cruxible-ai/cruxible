@@ -50,6 +50,9 @@ CREATE INDEX IF NOT EXISTS unresolved
 CREATE INDEX IF NOT EXISTS armed_work
  ON pending(session_id,eligible_at,occurrence_id) WHERE disposition='pending';
 CREATE INDEX IF NOT EXISTS pending_by_run ON pending(run_id) WHERE run_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS evaluated (
+ line_id TEXT NOT NULL, epoch INTEGER NOT NULL, since TEXT NOT NULL, until TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS evaluated_by_line ON evaluated(line_id,epoch);
 """
 
 
@@ -196,6 +199,12 @@ class LineDispatchStore:
                     data["occurrence_epoch"],
                     data["occurrence"]["occurrence_id"],
                 ),
+            )
+        elif kind == "evaluated":
+            # A range explicitly evaluated in full: it covers a restart gap.
+            conn.execute(
+                "INSERT INTO evaluated VALUES(?,?,?,?)",
+                (data["line_id"], data["epoch"], data["since"], data["until"]),
             )
         elif kind != "dispatch_refused":
             raise ValueError("unknown Line dispatch transition")

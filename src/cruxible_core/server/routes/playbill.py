@@ -999,15 +999,6 @@ def run_procedure(
     )
 
 
-@router.post("/{instance_id}/lines/{line}/check", response_model=contracts.LineTriggerCheckResult)
-def check_line_trigger(
-    instance_id: str, line: str, req: contracts.LineTriggerCheckRequest
-) -> contracts.LineTriggerCheckResult:
-    return playbill_api.playbill_line_check(
-        resolve_server_instance_id(instance_id), line, request=req
-    )
-
-
 @router.post("/{instance_id}/lines/{line}/enable", response_model=contracts.LineEnablement)
 def enable_line(
     instance_id: str, line: str, req: ChangeControlRequest | None = None
@@ -1028,18 +1019,13 @@ def disable_line(
     )
 
 
-@router.get("/{instance_id}/lines/{line}/enable", response_model=contracts.LineEnablement)
-def line_status(instance_id: str, line: str) -> contracts.LineEnablement:
-    return playbill_api.playbill_line_status(resolve_server_instance_id(instance_id), line)
-
-
 @router.post(
     "/{instance_id}/lines/{line}/evaluate",
-    response_model=contracts.LineTriggerCheckResult,
+    response_model=contracts.LineEvaluateResult,
 )
 def evaluate_line(
     instance_id: str, line: str, req: contracts.LineEvaluateRequest
-) -> contracts.LineTriggerCheckResult:
+) -> contracts.LineEvaluateResult:
     return playbill_api.playbill_line_evaluate(
         resolve_server_instance_id(instance_id), line, request=req
     )

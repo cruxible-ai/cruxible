@@ -405,7 +405,8 @@ Terminals end their path and cannot have successors. Capture emission retains
 evidence; it does not assert or accept a Claim. Proposal emission submits through
 governed authoring; it does not approve or accept the proposal. Direct readiness
 can report capture/proposal terminals as unsupported because those require the
-Line lane. Use `cx.run_line(...)` for an accepted, authorized Line occurrence.
+Line lane. Use `cx.line(name).run(...)` for one manual run of an accepted, authorized
+Line, and `cx.line(name).enable()` so its Triggers run it.
 
 Retained Python source works today: decorate a function with `@procedure` from
 `cruxible_client.authoring.source` to get a `ProcedureSource`, then

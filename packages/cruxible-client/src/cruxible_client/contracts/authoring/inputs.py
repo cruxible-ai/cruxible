@@ -344,9 +344,12 @@ class LineInput(_StrictInputModel):
     """One Line: a stable instantiation of an accepted or same-set Procedure.
 
     Lowering resolves the named Procedure and acquisition policy into exact
-    pins. A Line runs when run explicitly, or when a Trigger aimed at it fires.
-    A Line that proposes or settles also needs a live ProcedureMandate covering
-    its Procedure before it can run; an observe-only Line needs none.
+    pins. A Line runs when run explicitly (`line run`, one manual occurrence),
+    or, once it is enabled (`line enable`), when a Trigger aimed at it fires; a
+    Trigger aimed at a Line that is not enabled does nothing. Enabling needs
+    governed write even for an observe-only Line. A Line that proposes or
+    settles also needs a live ProcedureMandate covering its Procedure before it
+    can run or be enabled; an observe-only Line needs none.
     """
 
     kind: Literal["line"]
@@ -388,7 +391,10 @@ class TriggerInput(_StrictInputModel):
     name: str
     schedule: TriggerSchedule
     line_name: str | None = Field(
-        default=None, description="The Line this Trigger runs; omit when naming an action."
+        default=None,
+        description=(
+            "The Line this Trigger runs once that Line is enabled; omit when naming an action."
+        ),
     )
     action: InternalActionName | None = Field(
         default=None, description="The internal action this Trigger fires; omit for a Line."

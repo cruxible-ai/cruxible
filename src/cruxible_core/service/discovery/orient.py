@@ -1001,7 +1001,7 @@ def service_playbill_orient(
 _KEYSET = "keyset"
 #: The sections that carry live operational state, and which of their fields do.
 _LIVE_SECTIONS: dict[str, tuple[str, ...]] = {
-    "lines": ("lines.enablement", "lines.due", "lines.waiting"),
+    "lines": ("lines.enablement", "lines.triggers_inactive", "lines.due", "lines.waiting"),
     "predictions": ("predictions.open", "predictions.settleable", "predictions.resolved"),
 }
 _OPERATIONAL_SECTIONS: frozenset[str] = frozenset(

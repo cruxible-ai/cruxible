@@ -1980,22 +1980,22 @@ def playbill_line_disable(
         )
 
 
-def playbill_line_status(instance_id: str, line: str) -> contracts.LineEnablement:
-    """The Line's current enablement, or its last one and why it stopped."""
-
-    check_permission("cruxible_line_status", instance_id=instance_id)
-    from cruxible_core.service.procedures.line_dispatch import service_line_status
-
-    return service_line_status(get_playbill_manager().get(instance_id), line)
-
-
 def playbill_line_evaluate(
     instance_id: str, line: str, *, request: contracts.LineEvaluateRequest
-) -> contracts.LineTriggerCheckResult:
-    check_permission("cruxible_line_evaluate", instance_id=instance_id)
-    actor = _write_actor_context(instance_id)
-    if actor is None:
-        raise AuthenticationError("Historical evaluation requires an authenticated actor identity")
+) -> contracts.LineEvaluateResult:
+    """Evaluate a Line's Triggers over a range: a dry run reads, otherwise it enqueues.
+
+    A dry run is a read; enqueueing records dispatch state, so it needs governed write.
+    """
+
+    check_permission(
+        "cruxible_line_evaluate",
+        instance_id=instance_id,
+        required_override=None if request.dry_run else PermissionMode.GOVERNED_WRITE,
+    )
+    actor = None if request.dry_run else _write_actor_context(instance_id)
+    if actor is None and not request.dry_run:
+        raise AuthenticationError("Evaluation requires an authenticated actor identity")
     from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
 
     return service_evaluate_line(
@@ -2039,17 +2039,6 @@ def playbill_line_dispatch(
         caller_rung=get_current_mode().value - 1,
         provider_runtime_operator=manager.provider_runtime_operator(),
         workspace_file_reader=workspace_file_reader,
-    )
-
-
-def playbill_line_check(
-    instance_id: str, line: str, *, request: contracts.LineTriggerCheckRequest
-) -> contracts.LineTriggerCheckResult:
-    check_permission("cruxible_line_check", instance_id=instance_id)
-    from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
-
-    return service_check_line_trigger(
-        get_playbill_manager().get(instance_id), line, request, now=_evaluation_time(None)
     )
 
 

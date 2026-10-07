@@ -100,6 +100,41 @@ def test_the_arming_credential_or_an_admin_sees_it(credential_world, viewer) -> 
     assert not arm.enabled_by_withheld
 
 
+def test_the_pinned_versions_and_coverage_show_to_every_reader(credential_world) -> None:  # type: ignore[no-untyped-def]
+    """Only the enabling credential is withheld: the Line digest, the pinned Trigger
+    versions and evaluated-until are the enablement's facts, shown to any reader."""
+
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
+    from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+    from tests.test_procedures.test_line_triggers import TRIGGER
+
+    instance, line, _run_id, when = credential_world
+    current = service_evaluate_line(
+        instance, line.identity.name, LineEvaluateRequest(dry_run=True), actor=None, now=when
+    )
+    viewers = (
+        None,
+        OperationalViewer(credential_id="cred-someone-else", admin=False),
+        OperationalViewer(credential_id="cred-arm", admin=False),
+        OperationalViewer(credential_id=None, admin=True),
+    )
+    rows = []
+    for viewer in viewers:
+        card = _get(instance, line.identity.qualified, viewer, evaluation_time=when).card
+        assert isinstance(card, GetLineCard)
+        (row,) = card.enablements
+        rows.append(row)
+    pinned = {(row.line_artifact_digest, row.triggers, row.evaluated_until) for row in rows}
+    assert len(pinned) == 1, pinned
+    ((digest, triggers, evaluated_until),) = pinned
+    assert digest == current.line_artifact_digest
+    assert triggers == current.triggers and [t.trigger for t in triggers] == [f"Trigger:{TRIGGER}"]
+    # The daemon matched through the instant it last swept, two seconds before the read.
+    assert when - timedelta(seconds=2) < evaluated_until < when
+    withheld = [row.enabled_by_withheld for row in rows]
+    assert withheld == [True, True, False, False]
+
+
 def _resolver(credential_id: str) -> str | None:
     return {"cred-arm": "owner", "cred-unbound": None}.get(credential_id)
 

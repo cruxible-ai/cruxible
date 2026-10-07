@@ -68,7 +68,7 @@ def test_the_procedure_line_policy_and_mandate_examples_are_accepted_together(
 def test_an_observe_only_line_runs_without_a_mandate(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
-    """The example Procedure only observes, so its Line needs no mandate to run or arm."""
+    """The example Procedure only observes, so its Line needs no mandate to run or enable."""
 
     http, instance_id, key = playbill_http
     _accept(http, instance_id, key, _members("procedure", "line"))
@@ -76,8 +76,8 @@ def test_an_observe_only_line_runs_without_a_mandate(
     run = transport.run_line(instance_id, "replace-me", occurrence_id=None)
     assert run.status == "succeeded", run.terminal
     assert run.result == {"count": 1}
-    armed = transport.enable_line(instance_id, "replace-me")
-    assert armed.state == "enabled"
+    enabled = transport.enable_line(instance_id, "replace-me")
+    assert enabled.state == "enabled"
 
 
 def test_a_line_may_name_the_example_policy_even_though_it_acquires_nothing(

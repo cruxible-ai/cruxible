@@ -92,11 +92,10 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_query_spec": PermissionMode.READ_ONLY,
     "cruxible_procedure_run": PermissionMode.READ_ONLY,
     "cruxible_procedure_readings": PermissionMode.READ_ONLY,
-    "cruxible_line_check": PermissionMode.READ_ONLY,
     "cruxible_line_enable": PermissionMode.GOVERNED_WRITE,
     "cruxible_line_disable": PermissionMode.GOVERNED_WRITE,
-    "cruxible_line_status": PermissionMode.READ_ONLY,
-    "cruxible_line_evaluate": PermissionMode.GOVERNED_WRITE,
+    # Its tool tier is a read (dry run); enqueueing re-checks governed write.
+    "cruxible_line_evaluate": PermissionMode.READ_ONLY,
     # Runs that can propose or settle additionally require GOVERNED_WRITE,
     # decided per target at the served boundary and in the service.
     "cruxible_line_dispatch": PermissionMode.READ_ONLY,
