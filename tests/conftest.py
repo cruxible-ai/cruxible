@@ -14,6 +14,39 @@ from tests.support.provider_checkout import (  # noqa: F401 - shared fixtures
     provider_runtime,
 )
 
+_PROCESS_TEMPORARY_ENV = "CRUXIBLE_TEST_PROCESS_TMPDIR"
+
+
+def _quiet_process_temporary_directory() -> None:
+    """Keep this suite's own temporary-file churn out of its instance roots' ancestry.
+
+    Instances and their indexes live in pytest's temporary tree, inside the
+    system temporary directory, and acquiring an index snapshot refuses (then
+    retries, boundedly) whenever any ancestor directory of the database changes.
+    Git signature checks, allowed-signer files and SQLite spill files land in the
+    system temporary directory many times a second, more so under xdist, so
+    every acquisition raced the suite's own churn and retries could run out.
+    Pytest's tree stays where it was (PYTEST_DEBUG_TEMPROOT); every other
+    temporary file of this process and its children goes to one sibling
+    directory that no instance path sits under. Its name stays short: a
+    Provider control socket may fall back under TMPDIR within the AF_UNIX limit.
+    xdist workers inherit the redirection from the controller.
+    """
+
+    scratch = os.environ.get(_PROCESS_TEMPORARY_ENV)
+    if scratch is None:
+        system = tempfile.gettempdir()
+        os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", system)
+        scratch = os.path.join(system, "cxt")
+        os.makedirs(scratch, mode=0o700, exist_ok=True)
+        os.environ[_PROCESS_TEMPORARY_ENV] = scratch
+        os.environ["TMPDIR"] = scratch
+        os.environ["SQLITE_TMPDIR"] = scratch
+    tempfile.tempdir = scratch
+
+
+_quiet_process_temporary_directory()
+
 _DOCKER_TEST_ENV = "CRUXIBLE_RUN_DOCKER_TESTS"
 _WHEEL_TEST_ENV = "CRUXIBLE_RUN_WHEEL_TESTS"
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
