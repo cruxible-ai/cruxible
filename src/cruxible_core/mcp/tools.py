@@ -298,27 +298,6 @@ def register_tools(
         return handlers.handle_playbill_kit_remove(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_init(
-        instance_id: InstanceId = None,
-        *,
-        principals: list[PrincipalRecord],
-        operating_profile: Literal["local", "cloud"] = "local",
-        require_independent_approval: bool = False,
-        git_object_format: Literal["sha1", "sha256"] | None = None,
-    ) -> contracts.InitResult:
-        """Bootstrap Cruxible from client-generated public principals.
-
-        Provider installation is a separate administrative operation.
-        """
-        return handlers.handle_playbill_init(
-            require_instance_id(instance_id),
-            [item.model_dump(mode="json") for item in principals],
-            operating_profile,
-            require_independent_approval,
-            git_object_format=git_object_format,
-        )
-
-    @_tool
     def cruxible_store_body(
         instance_id: InstanceId = None, *, content_base64: str
     ) -> contracts.CasObjectResult:

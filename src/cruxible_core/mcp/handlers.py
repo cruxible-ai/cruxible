@@ -144,7 +144,6 @@ from cruxible_core.server.playbill_request_models import (
     CurationAcceptFixedRequest,
     CurationOverruleRequest,
     CurationSuppressRequest,
-    InitRequest,
     InsertionAbandonRequest,
     ProposalReadmitRequest,
     ProposalWithdrawRequest,
@@ -372,7 +371,6 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_curation_overrule": TypeAdapter(CurationOverruleRequest),
     "cruxible_curation_suppress": TypeAdapter(CurationSuppressRequest),
     "cruxible_capture_read": TypeAdapter(CaptureReadRequest),
-    "cruxible_init": TypeAdapter(InitRequest),
     "cruxible_predict": TypeAdapter(contracts.PredictRequest),
     "cruxible_procedure_bind": TypeAdapter(ProcedureBindRequest),
     "cruxible_proposal_readmit": TypeAdapter(ProposalReadmitRequest),
@@ -481,40 +479,6 @@ def handle_server_info() -> McpServerInfoResult:
         adapter_version=__version__,
         daemon_version=daemon.version,
         daemon=daemon,
-    )
-
-
-def handle_playbill_init(
-    instance_id: str,
-    principals: list[dict[str, Any]],
-    operating_profile: str,
-    require_independent_approval: bool = False,
-    *,
-    git_object_format: str | None = None,
-) -> contracts.InitResult:
-    records = tuple(PrincipalRecord.model_validate(item) for item in principals)
-    return _dispatch_remote_or_local(
-        lambda client: client.init(
-            instance_id,
-            principals=[item.model_dump(mode="json") for item in records],
-            operating_profile=cast(Any, operating_profile),
-            require_independent_approval=require_independent_approval,
-            git_object_format=cast(Any, git_object_format),
-        ),
-        lambda: playbill_api.playbill_init(
-            instance_id,
-            principals=records,
-            operating_profile=cast(Any, operating_profile),
-            require_independent_approval=require_independent_approval,
-            git_object_format=cast(Any, git_object_format),
-        ),
-        operation_name="cruxible_init",
-        local_payload={
-            "principals": [item.model_dump(mode="json") for item in records],
-            "operating_profile": operating_profile,
-            "require_independent_approval": require_independent_approval,
-            "git_object_format": git_object_format,
-        },
     )
 
 

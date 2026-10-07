@@ -643,8 +643,7 @@ repository, and a ledger nobody can open is not evidence anyone can read
 the attached workspace refuses with the typed
 `cruxible.init.object_format_conflict` before any state is written; instances
 already initialized keep their pinned format forever. The
-equivalent request field is `git_object_format` on the HTTP/SDK init body and on
-MCP `cruxible_init`.
+equivalent request field is `git_object_format` on the HTTP init body.
 
 `--mirror-url` binds the ledger mirror during bootstrap, before subsequent
 proposals. An instance can publish nowhere initially; `cruxible ledger set-mirror`

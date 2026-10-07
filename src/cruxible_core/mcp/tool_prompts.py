@@ -42,7 +42,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_server_info": (
         "Use when you need adapter and daemon versions with state, auth, and host metadata."
     ),
-    "cruxible_init": ("Use when you need to bootstrap Cruxible from client-generated public keys."),
     "cruxible_store_body": (
         "Use when you need to store exact Document bytes inertly before proposing them."
     ),

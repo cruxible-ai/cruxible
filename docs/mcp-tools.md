@@ -106,15 +106,15 @@ that starts reaching one more verb moves the pin.
 |---|---|---|
 | `cruxible_server_info` | Return the adapter and daemon versions with daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
 
-## Host and initialization
+## Host and providers
 
-Allocating a host (`cruxible host create`), releasing its worktree
-(`cruxible workspace detach`) and decommissioning an instance
-(`cruxible instance decommission`) are operator acts with no MCP tool.
+Setting up a host (`cruxible init`, or `cruxible host create` to allocate one
+without becoming its owner), releasing its worktree (`cruxible workspace
+detach`) and decommissioning an instance (`cruxible instance decommission`) are
+operator acts with no MCP tool.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_init` | Bootstrap a host with public principal records | `ADMIN` |
 | `cruxible_provider_catalog` | List provider packages from the configured daemon repository | `READ_ONLY` |
 | `cruxible_provider_install` | Install exact package bytes and propose its definitions, without execution grants | `ADMIN` |
 
