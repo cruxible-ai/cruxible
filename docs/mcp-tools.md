@@ -257,7 +257,6 @@ exactly one may omit it.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_procedure_run` | Execute a directly runnable Procedure (`cruxible_get` shows `runnable: direct`) -- accepted-state reads, deterministic computation, and `source`/`call` occurrences through exactly pinned Providers -- at an explicit coordinate and time | `READ_ONLY` |
-| `cruxible_procedure_run_status` | Read one finalized Procedure run and its receipt; for an armed run, the run actor and the receipt are withheld (`playbill-procedure-run-attribution-withheld-v1`, `playbill-procedure-run-receipt-withheld-v1`) unless the caller is an admin, the arming credential, or a credential bound to the same principal | `READ_ONLY` |
 | `cruxible_procedure_measure` | Evaluate due Procedure measurements from real evidence, persist the resolution, and credit one run's exact grain | `GOVERNED_WRITE` |
 | `cruxible_procedure_readings` | Inspect measurement standing and retained exact-grain readings (read-only, paginated) | `READ_ONLY` |
 | `cruxible_line_check` | Read trigger eligibility, exact matches, and admitted occurrences without queuing or running. | `READ_ONLY` |

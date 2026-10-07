@@ -1380,6 +1380,7 @@ def _procedure_card(
     return GetProcedureCard(
         procedure=_name(resolved.identity),
         description=definition.description,
+        lifecycle=readiness.artifact.lifecycle.state,
         inputs=inputs,
         runnable=readiness.runnable,
         unsupported_nodes=tuple(
@@ -1391,7 +1392,11 @@ def _procedure_card(
             for fact in sorted(promoted, key=lambda item: item.fact_key.encode("utf-8"))
         ),
         next=(
-            *_render_procedure_run(surface, _name(resolved.identity), readiness.runnable),
+            *(
+                ()
+                if readiness.artifact.lifecycle.state == "retired"
+                else _render_procedure_run(surface, _name(resolved.identity), readiness.runnable)
+            ),
             _render_get(surface, resolved.display, "proof"),
         ),
     )

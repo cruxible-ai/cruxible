@@ -1717,17 +1717,6 @@ def handle_playbill_procedure_run(
     )
 
 
-def handle_playbill_procedure_run_status(
-    instance_id: str,
-    run_id: str,
-) -> contracts.ProcedureRunState:
-    return _dispatch_remote_or_local(
-        lambda client: client.get_procedure_run(instance_id, run_id),
-        lambda: playbill_api.playbill_procedure_run_status(instance_id, run_id),
-        operation_name="cruxible_procedure_run_status",
-    )
-
-
 def handle_playbill_procedure_measure(
     instance_id: str,
     name: str,

@@ -22,6 +22,12 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cruxible_client.contracts.procedures.results import (
+    ProcedureTerminal,
+    ProcedureTerminalEgress,
+)
+from cruxible_client.contracts.procedures.windows import TriggerEventReference
+
 #: A Capture handle is ``CAP-`` plus at least this many hex digits of its digest.
 CAPTURE_HANDLE_HEX = 12
 #: Arms, occurrences, runs, windows, citing Claims and per-node rows a card lists at most.
@@ -258,6 +264,16 @@ class GetPendingInput(_StrictOperationalModel):
     waiting_since: datetime
 
 
+class GetRunOutcome(_StrictOperationalModel):
+    """One durable outcome a finished run recorded."""
+
+    sequence: int = Field(ge=1)
+    event_kind: str
+    node_id: str | None = Field(default=None, exclude_if=_omit_none)
+    payload_digest: str
+    capture_event: TriggerEventReference | None = Field(default=None, exclude_if=_omit_none)
+
+
 class GetProcedureRunCard(_StrictOperationalModel):
     run: str
     procedure: str
@@ -276,7 +292,13 @@ class GetProcedureRunCard(_StrictOperationalModel):
     triggered_by: GetRunTrigger | None = Field(default=None, exclude_if=_omit_none)
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     receipt_digest: str | None = Field(default=None, exclude_if=_omit_none)
-    terminal: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A finished run's typed result value.
+    result: Any = Field(default=None, exclude_if=_omit_none)
+    outcomes: tuple[GetRunOutcome, ...] = ()
+    #: Why a run stopped short of a result: code, message, details and repair.
+    terminal: ProcedureTerminal | None = Field(default=None, exclude_if=_omit_none)
+    #: What each terminal node did (the proposal it opened, the Capture it emitted).
+    terminal_egress: tuple[ProcedureTerminalEgress, ...] = ()
     next: tuple[str, ...] = ()
 
 

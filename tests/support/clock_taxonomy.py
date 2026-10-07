@@ -94,6 +94,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("BoundObservationWindow", "starts_at"): "VALIDITY WINDOW",
     ("BoundObservationWindow", "ends_at"): "VALIDITY WINDOW",
     ("TriggerEventReference", "sequence"): "SETTLEMENT ORDER",
+    ("GetRunOutcome", "sequence"): "SETTLEMENT ORDER",
     ("ResolutionContractActivationV3", "activated_at"): "EVALUATION INSTANT",
     ("AcceptedGenerationLocation", "sequence"): "SETTLEMENT ORDER",
     ("AcceptedGenerationLocation", "parent_sequence"): "SETTLEMENT ORDER",

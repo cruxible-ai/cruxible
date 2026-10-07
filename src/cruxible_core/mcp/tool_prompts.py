@@ -217,9 +217,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_procedure_run": (
         "Use when you need to execute an accepted Procedure with durable outcomes."
     ),
-    "cruxible_procedure_run_status": (
-        "Use when you need one Procedure run's typed outcomes and exact next operation."
-    ),
     "cruxible_procedure_measure": (
         "Use when a Procedure's declared measurements are due: evaluate them from real evidence "
         "at an explicit observation instant, persist the resolution, and credit one finalized "

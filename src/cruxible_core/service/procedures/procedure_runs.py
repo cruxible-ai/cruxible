@@ -720,6 +720,7 @@ def _accepted_procedure(
     *,
     name: str,
     coordinate: AcceptedProjectionCoordinate,
+    allow_retired: bool = False,
 ) -> AcceptedProcedure:
     path = procedure_path(name)
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -728,7 +729,7 @@ def _accepted_procedure(
             raise ProcedureNotFound(f"{ProcedureNotFound.code}: {name}")
         procedure = projection.typed.source(envelope.identity)
         assert procedure is not None
-        if procedure.lifecycle.state == "retired":
+        if procedure.lifecycle.state == "retired" and not allow_retired:
             raise ProcedureRetired(f"{ProcedureRetired.code}: {name}")
         return AcceptedProcedure(
             path=path,
@@ -1786,7 +1787,8 @@ def service_playbill_procedure_readiness(
     request: ProcedureReadinessRequestV1,
 ) -> ProcedureReadinessResultV1:
     coordinate = _resolve_coordinate(instance, request.at)
-    accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
+    # A read: a retired Procedure is still readable, though nothing runs it.
+    accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, allow_retired=True)
     return _readiness(accepted, coordinate=coordinate)
 
 

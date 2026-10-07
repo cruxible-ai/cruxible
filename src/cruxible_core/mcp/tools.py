@@ -1177,17 +1177,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_procedure_run_status(
-        instance_id: InstanceId = None,
-        *,
-        run_id: str,
-    ) -> contracts.ProcedureRunState:
-        """Read one durable Procedure run state and its exact next operation."""
-        return handlers.handle_playbill_procedure_run_status(
-            require_instance_id(instance_id), run_id
-        )
-
-    @_tool
     def cruxible_procedure_measure(
         instance_id: InstanceId = None,
         *,

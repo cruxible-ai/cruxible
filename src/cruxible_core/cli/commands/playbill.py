@@ -5002,7 +5002,10 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
     "at_file",
     default=None,
     type=PayloadFile(),
-    help="AcceptedCoordinate JSON/YAML file; its presence selects replay lane.",
+    help=(
+        "AcceptedCoordinate JSON/YAML file (- for stdin) to bind the run to; it runs only "
+        "while the Procedure is still current there."
+    ),
 )
 @click.option(
     "--resolution-contract",
@@ -5051,18 +5054,6 @@ def run_procedure(
     if result.receipt_digest is not None:
         click.echo(f"Receipt: {result.receipt_digest}")
     _echo_source_observations(result)
-
-
-@procedure_group.command("status")
-@click.argument("run_id")
-@json_option
-@handle_errors
-def procedure_run_status(run_id: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.get_procedure_run(instance_id, run_id),
-        command_name="cruxible procedure status",
-    )
-    _emit_json(result.model_dump(mode="json"))
 
 
 @procedure_group.command("measure")
@@ -5133,6 +5124,24 @@ def procedure_measure(
 @click.argument("name")
 @click.option("--run-id", default=None, help="Only readings crediting this run.")
 @click.option("--measurement", "measurements", multiple=True, help="Only these measurements.")
+@click.option(
+    "--subject-grain",
+    type=click.Choice(["procedure_unit", "node", "arm"]),
+    default=None,
+    help="Only readings at this grain.",
+)
+@click.option(
+    "--evaluation-time",
+    default=None,
+    help="Explicit ISO-8601 instant the standing is read at (default: now).",
+)
+@click.option(
+    "--at",
+    "at_file",
+    default=None,
+    type=PayloadFile(),
+    help="AcceptedCoordinate JSON/YAML file (- for stdin) to read the Procedure at.",
+)
 @click.option("--limit", default=50, show_default=True, type=click.IntRange(1, 200))
 @click.option("--cursor", default=None, help="Continue a previous page.")
 @json_option
@@ -5141,15 +5150,29 @@ def procedure_readings(
     name: str,
     run_id: str | None,
     measurements: tuple[str, ...],
+    subject_grain: str | None,
+    evaluation_time: str | None,
+    at_file: str | None,
     limit: int,
     cursor: str | None,
     output_json: bool,
 ) -> None:
-    """Inspect measurement standing and retained readings. Read-only."""
+    """Inspect measurement standing and retained readings. Read-only.
+
+    A measurement reads `pending` before its window opens, `open` while it is open
+    and unresolved (run `cruxible procedure measure`), `resolved`, or `expired`.
+    """
 
     request = contracts.ProcedureReadingsRequest(
         run_id=run_id,
         measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
+        subject_grain=subject_grain,  # type: ignore[arg-type]
+        evaluation_time=(
+            None
+            if evaluation_time is None
+            else datetime.fromisoformat(evaluation_time.replace("Z", "+00:00"))
+        ),
+        at=None if at_file is None else _read_model(at_file, AcceptedCoordinate),
         limit=limit,
         cursor=cursor,
     )

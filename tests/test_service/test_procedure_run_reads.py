@@ -109,6 +109,12 @@ def test_a_finished_run_card_carries_its_receipt_and_measured_elapsed(run_world)
     assert card.elapsed_basis == "measured_wall_clock" and card.elapsed_us is not None
     assert card.current_node is None and card.triggered_by is None
     assert card.actor == "owner" and card.started_at == READ_TIME
+    # The card is the one read: it carries the run's result, outcomes and terminal.
+    assert card.result == finished.result
+    assert [item.sequence for item in card.outcomes] == [
+        item.sequence for item in finished.outcomes
+    ]
+    assert card.terminal is None
 
 
 def test_a_running_run_names_its_current_node_and_elapsed_against_the_read(run_world) -> None:  # type: ignore[no-untyped-def]

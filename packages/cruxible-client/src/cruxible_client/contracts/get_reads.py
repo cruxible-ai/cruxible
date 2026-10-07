@@ -342,6 +342,8 @@ class GetProcedureNode(_StrictGetModel):
 class GetProcedureCard(_StrictGetModel):
     procedure: str
     description: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A retired Procedure stays readable; nothing runs or measures it.
+    lifecycle: Literal["live", "retired"] = "live"
     inputs: dict[str, Any]
     #: ``direct``: ``procedure run``; ``line``: only as a Line (its terminals act
     #: outward under the Line's authority); ``unsupported``: no run path admits it.

@@ -57,6 +57,8 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "BlockSyncResult",
     "BlockSyncSuccessorCandidate",
     "BlockedCheck",
+    "BlueprintAuthoringPayload",
+    "BlueprintInstantiation",
     "CandidateStatus",
     "CaptureContractAuthoringPayload",
     "ChangeSetAuthoringPayload",

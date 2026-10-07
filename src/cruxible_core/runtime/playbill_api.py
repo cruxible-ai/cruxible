@@ -1880,7 +1880,7 @@ def playbill_procedure_run_status(
 
     from cruxible_core.service.discovery.runs import procedure_run_status
 
-    check_permission("cruxible_procedure_run_status", instance_id=instance_id)
+    check_permission("cruxible_get", instance_id=instance_id)
     return procedure_run_status(
         get_playbill_manager().get(instance_id),
         run_id,

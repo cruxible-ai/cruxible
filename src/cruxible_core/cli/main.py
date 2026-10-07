@@ -664,7 +664,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "Run and measure accepted Procedures; read one with cruxible get Procedure:<name>.",
         {
             "run": _command("playbill", "run_procedure", "Run an accepted Procedure."),
-            "status": _command("playbill", "procedure_run_status", "Read one Procedure run state."),
             "measure": _command(
                 "playbill",
                 "procedure_measure",

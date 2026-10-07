@@ -23,6 +23,7 @@ from cruxible_client.contracts.operational_reads import (
     GetProcedureRunCard,
     GetRunCurrentNode,
     GetRunNode,
+    GetRunOutcome,
     GetRunTrigger,
     RunRow,
     RunStatus,
@@ -32,6 +33,8 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunAttribution,
     ProcedureRunAttributionWithheld,
     ProcedureRunReceiptWithheld,
+    ProcedureTerminal,
+    ProcedureTerminalEgress,
 )
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_core.exhaust import LocalJournalBackend
@@ -347,7 +350,10 @@ def procedure_run_card(
     status: RunStatus = "running"
     current: GetRunCurrentNode | None = None
     receipt_digest: str | None = None
-    terminal: str | None = None
+    terminal: ProcedureTerminal | None = None
+    result: object | None = None
+    outcomes: tuple[GetRunOutcome, ...] = ()
+    egress: tuple[ProcedureTerminalEgress, ...] = ()
     elapsed: int | None = None
     basis: Literal["read_time", "measured_wall_clock"] | None = None
     if locator.final_payload_digest is None:
@@ -366,7 +372,12 @@ def procedure_run_card(
         state = service_get_playbill_procedure_run(instance, run_id=run_id)
         status = state.status
         receipt_digest = state.receipt_digest
-        terminal = None if state.terminal is None else str(getattr(state.terminal, "code", ""))
+        terminal = state.terminal
+        result = state.result
+        outcomes = tuple(
+            GetRunOutcome.model_validate(item.model_dump(mode="json")) for item in state.outcomes
+        )
+        egress = state.terminal_egress
         final = _payload(instance, locator.final_payload_digest)
         budget = final.get("budget") if isinstance(final, Mapping) else None
         observed = budget.get("observed") if isinstance(budget, Mapping) else None
@@ -399,7 +410,10 @@ def procedure_run_card(
         triggered_by=trigger,
         actor=actor,
         receipt_digest=receipt_digest,
-        terminal=terminal or None,
+        result=result,
+        outcomes=outcomes,
+        terminal=terminal,
+        terminal_egress=egress,
         next=tuple(next_steps),
     )
 

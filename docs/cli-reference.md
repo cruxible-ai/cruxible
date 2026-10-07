@@ -1356,10 +1356,10 @@ separate from freeform prose; sync does not render Markdown or HTML.
 
 ~~~text
 cruxible procedure run NAME INPUT_FILE --evaluation-time TS
-cruxible procedure status RUN_ID
 cruxible procedure measure NAME [--run-id RUN_ID] [--measurement NAME]...
   [--evaluation-time TS] [--at FILE] [--json]
-cruxible procedure readings NAME [--run-id RUN_ID] [--measurement NAME]...
+cruxible procedure readings NAME [--run-id RUN_ID] [--measurement NAME]... [--subject-grain G]
+  [--evaluation-time TS] [--at FILE]
   [--limit N] [--cursor C] [--json]
 ~~~
 
