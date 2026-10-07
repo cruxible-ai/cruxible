@@ -130,3 +130,88 @@ entries:
     assert str(source) not in transmitted
     assert "specs/design.md" not in transmitted
     assert base64.b64decode(submitted[0]["documents"][0]["body_base64"]) == original
+
+
+def test_cli_sources_discover_the_workspace_catalog_and_propose_by_name(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """No --catalog or --bundle: the catalog is discovered and compiled in place."""
+
+    coordinate = contracts.AcceptedCoordinate(
+        git_oid="1" * 40,
+        semantic_root="sha256:" + "2" * 64,
+        generation_root="sha256:" + "3" * 64,
+        compiler_digest="sha256:" + "4" * 64,
+    )
+    workspace = tmp_path / "workspace"
+    (workspace / "specs").mkdir(parents=True)
+    (workspace / "specs" / "design.md").write_bytes(b"# Design\n")
+    (workspace / "notes.md").write_bytes(b"notes\n")
+    (workspace / ".cruxible").mkdir()
+    (workspace / ".cruxible" / "sources.yaml").write_text(
+        """\
+tag: playbill-source-catalog-v1
+catalog_kind: portable
+entries:
+  - name: design
+    locator: specs/design.md
+    document_id: design
+    document_kind: design
+    title: Design
+    media_type: text/markdown
+    governance_scope: [project:playbill]
+  - name: notes
+    locator: notes.md
+"""
+    )
+    monkeypatch.chdir(workspace)
+    proposed: list[str] = []
+
+    class StubClient:
+        def source_context(self, instance_id: str) -> contracts.SourceContext:
+            return contracts.SourceContext(accepted_coordinate=coordinate, documents=[])
+
+        def check_source_bundle(
+            self, instance_id: str, *, bundle: dict[str, Any]
+        ) -> contracts.SourceCheckResult:
+            return contracts.SourceCheckResult(
+                compilation_digest=bundle["manifest"]["compilation_digest"],
+                accepted_coordinate=coordinate,
+                alignments=[
+                    {"name": item["source"]["name"], "state": "untracked"}
+                    for item in bundle["documents"]
+                ],
+            )
+
+        def propose_source_bundle(
+            self, instance_id: str, *, source_name: str, **_: Any
+        ) -> contracts.ProposalInspection:
+            proposed.append(source_name)
+            return contracts.ProposalInspection(
+                proposal={"admission": {"proposal_id": "sha256:" + "1" * 64}},
+                accepted_coordinate=coordinate,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    base = ["--server-url", "https://playbill.invalid", "--instance-id", "inst_cli", "sources"]
+    runner = CliRunner()
+
+    checked = runner.invoke(cli, [*base, "check", "--root", str(workspace)])
+    assert checked.exit_code == 0, checked.output
+    # The evidence-only entry compiles to nothing, so only the Document is checked.
+    assert checked.stdout == "design: untracked\n"
+
+    named = runner.invoke(
+        cli, [*base, "propose", "--source", "design", "--name", "revise-design", "--root", "."]
+    )
+    assert named.exit_code == 0, named.output
+    assert proposed == ["design"]
+    assert "Proposal: sha256:" in named.stdout
+
+    evidence_only = runner.invoke(
+        cli, [*base, "propose", "--source", "notes", "--name", "revise-notes"]
+    )
+    assert evidence_only.exit_code != 0
+    assert "evidence-only" in evidence_only.output
+    assert proposed == ["design"]

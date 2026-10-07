@@ -173,14 +173,21 @@ class _Client:
         )
 
     def list_curation(self, _instance_id: str, **values: object) -> api.CurationListResult:
-        self.curation_observation = values["workspace_observation"]
+        self.curation_list_request = values
         return api.CurationListResult(
             coordinate=_COORDINATE,
             generation=4,
-            evaluation_time=str(values["evaluation_time"]),
             operational_head_digest="sha256:" + "6" * 64,
-            items=[],
+            detection=api.CurationDetection(state="never_run", trigger="live"),
             detector_coverage=[],
+            result_digest="sha256:" + "7" * 64,
+        )
+
+    def observe_curation(self, _instance_id: str, **values: object) -> api.CurationObserveResult:
+        self.curation_observation = values["workspace_observation"]
+        return api.CurationObserveResult(
+            coordinate=_COORDINATE,
+            generation=4,
             observation_coverage={
                 "tag": "playbill-curation-observation-coverage-v1",
                 "source_count": 1,
@@ -188,7 +195,6 @@ class _Client:
                 "omitted_source_count": 0,
                 "omissions": [],
             },
-            result_digest="sha256:" + "7" * 64,
         )
 
     def audit(self, _instance_id: str, **values: object) -> api.AuditResult:
@@ -299,7 +305,7 @@ def test_sdk_since_uses_its_active_orientation(tmp_path: Path) -> None:
     assert result.rows == []
 
 
-def test_sdk_curation_list_uses_the_existing_explicit_workspace_scanner(
+def test_sdk_curation_observe_uses_the_existing_explicit_workspace_scanner(
     tmp_path: Path,
 ) -> None:
     _workspace(tmp_path)
@@ -311,7 +317,11 @@ def test_sdk_curation_list_uses_the_existing_explicit_workspace_scanner(
         clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
     )
 
-    result = pb.curation_list()
+    listed = pb.curation_list()
+    assert listed.detection.state == "never_run"
+    assert set(client.curation_list_request) == {"access_profile", "limit", "cursor"}
+
+    result = pb.curation_observe()
 
     assert result.generation == 4
     assert isinstance(client.curation_observation, dict)

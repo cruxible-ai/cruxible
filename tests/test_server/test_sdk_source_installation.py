@@ -31,8 +31,8 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
-from cruxible_client.provider_installation import install_provider_package
 from cruxible_client.transport.http import CruxibleClient
+from cruxible_core.cli.provider_wheels import install_provider_wheel
 from tests.core_support._pc_c_support import capture_contract
 from tests.support.provider_checkout import checkout_predates_web_fetch_material
 from tests.test_procedures.test_procedure_proposal_delivery import _claim_type, _subject
@@ -67,7 +67,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     client._client = http
     repository = provider_checkout.repository
     wheels = provider_checkout.wheels
-    installed = install_provider_package(
+    installed = install_provider_wheel(
         client,
         instance_id,
         wheel=next(wheels.glob("cruxible_provider_web-*.whl")),

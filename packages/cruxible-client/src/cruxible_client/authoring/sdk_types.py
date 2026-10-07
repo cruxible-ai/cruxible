@@ -162,7 +162,8 @@ class QueryRef(_ShortRefRepr):
 class SourceRef(_ShortRefRepr):
     """One catalogued workspace source at the coordinate it was read at.
 
-    Next: ``cx.get(ref)`` for its catalog entry.
+    Next: ``cx.get(ref)`` for its Document's card, or its catalog entry when the
+    entry is evidence-only.
     """
 
     address: str

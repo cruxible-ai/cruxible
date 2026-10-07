@@ -152,11 +152,16 @@ def genesis_tree(
 
 
 #: The internal-action Triggers a new instance starts with.
-SEEDED_TRIGGER_NAMES = ("evidence-sweep", "floor-refresh", "prediction-anchor-retry")
+SEEDED_TRIGGER_NAMES = (
+    "curation-detect",
+    "evidence-sweep",
+    "floor-refresh",
+    "prediction-anchor-retry",
+)
 
 
 def seeded_triggers() -> tuple[Trigger, ...]:
-    """Load the checked-in sweep, floor-refresh and anchor-retry Triggers.
+    """Load the checked-in curation, sweep, floor-refresh and anchor-retry Triggers.
 
     They are ordinary governed Triggers from the first generation on: an
     instance changes or retires them through proposals like any other.

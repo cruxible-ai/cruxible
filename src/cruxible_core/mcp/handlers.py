@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -15,17 +14,18 @@ from pydantic import TypeAdapter, ValidationError
 from cruxible_client import (
     CruxibleClient,
     contracts,
-    inspect_workspace_floor,
     observe_next_workspace,
 )
+from cruxible_client.artifacts import unpack_artifact
 from cruxible_client.authoring.attestations import (
     append_prepared_claim_attestation,
     local_attestation_signer_from_environment,
 )
-from cruxible_client.authoring.bind import bind_working_selection_input
+from cruxible_client.authoring.bind import bind_catalogued_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.authoring.examples import authoring_example, authoring_example_note
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
+from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
 from cruxible_client.authoring.sources import (
@@ -36,6 +36,7 @@ from cruxible_client.authoring.sources import (
 from cruxible_client.authoring.workspace import (
     daemon_floor_delivery,
     floor_export_parts,
+    inspect_workspace_floor,
     observe_next_workspace_with_coverage,
     workspace_floor_freshness,
     write_workspace_floor,
@@ -46,9 +47,6 @@ from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockDetachResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
-from cruxible_client.contracts.change_control import (
-    StateCoordinate,
-)
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendResult,
     ClaimAttestationCaptureReference,
@@ -73,6 +71,7 @@ from cruxible_client.contracts.kits import (
     KitAddRequest,
     KitBuildRequest,
     KitBuildResult,
+    KitBundle,
     KitChangeResult,
     KitRemoveRequest,
     KitStatus,
@@ -96,8 +95,10 @@ from cruxible_client.contracts.write import (
 )
 from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
+from cruxible_client.kits import KIT_ARTIFACT, check_kit_updates, fetch_kit_image
 from cruxible_client.transport.http import configured_principal_id
 from cruxible_core import __version__
+from cruxible_core.adapters.block_detach import detach_projection_pages
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputRecord,
 )
@@ -131,7 +132,6 @@ from cruxible_core.server.config import get_runtime_bearer_token
 from cruxible_core.server.playbill_request_models import (
     CompilerUpgradeRequest,
 )
-from cruxible_core.service.change_preview import state_change_scope
 from cruxible_core.service.discovery.since import validate_playbill_since_request
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
@@ -258,7 +258,7 @@ def handle_playbill_store_body(instance_id: str, content_base64: str) -> contrac
 def handle_playbill_provider_catalog(instance_id: str) -> ProviderCatalog:
     return _daemon_call(
         lambda client: client.list_provider_packages(instance_id),
-        operation_name="cruxible_provider_catalog",
+        operation_name="cruxible_provider_list",
     )
 
 
@@ -278,15 +278,51 @@ def handle_playbill_kit_build(instance_id: str, request: KitBuildRequest) -> Kit
     )
 
 
-def handle_playbill_kit_status(instance_id: str) -> KitStatus:
-    return _daemon_call(
+def handle_playbill_kit_status(instance_id: str, *, offline: bool = False) -> KitStatus:
+    """Installed kits; this adapter looks up newer releases of registry-sourced ones."""
+
+    status = _daemon_call(
         lambda client: client.kit_status(instance_id), operation_name="cruxible_kit_status"
     )
+    return check_kit_updates(status, offline=offline)
 
 
-def handle_playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResult:
+def handle_playbill_kit_add(
+    instance_id: str,
+    request: KitAddRequest | None = None,
+    *,
+    reference: str | None = None,
+    bundle: KitBundle | None = None,
+    keep: Sequence[str] = (),
+    keep_local_edits: bool = False,
+    retire_dependents: Sequence[str] = (),
+    allow_downgrade: bool = False,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> KitChangeResult:
+    """Install a kit by registry reference (this adapter pulls and verifies it) or bundle."""
+
+    if request is None:
+        if (reference is None) == (bundle is None):
+            raise DataValidationError("kit add takes exactly one of reference or bundle")
+        source = None
+        if reference is not None:
+            image, source = fetch_kit_image(reference)
+            bundle = unpack_artifact(KIT_ARTIFACT, image)
+        assert bundle is not None
+        request = KitAddRequest(
+            bundle=bundle,
+            source=source,
+            keep=tuple(sorted(set(keep))),
+            keep_local_edits=keep_local_edits,
+            retire_dependents=tuple(sorted(set(retire_dependents))),
+            allow_downgrade=allow_downgrade,
+            dry_run=dry_run,
+            at=at,
+        )
+    added = request
     return _daemon_call(
-        lambda client: client.add_kit(instance_id, request), operation_name="cruxible_kit_add"
+        lambda client: client.add_kit(instance_id, added), operation_name="cruxible_kit_add"
     )
 
 
@@ -536,13 +572,7 @@ def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequest) 
     )
 
 
-def handle_playbill_source_context(instance_id: str) -> contracts.SourceContext:
-    return _daemon_call(
-        lambda client: client.source_context(instance_id), operation_name="cruxible_source_context"
-    )
-
-
-def handle_playbill_source_check(
+def handle_playbill_sources_check(
     instance_id: str,
     *,
     bundle: dict[str, Any] | None = None,
@@ -551,22 +581,22 @@ def handle_playbill_source_check(
     local_catalog_path: str | None = None,
     root_aliases: Mapping[str, str] | None = None,
 ) -> contracts.SourceCheckResult:
-    """Check a compiled bundle, or compile catalog-declared workspace sources first."""
+    """Check a compiled bundle, or compile the workspace's catalogued sources first."""
 
-    if (bundle is None) == (catalog_path is None):
-        raise DataValidationError(
-            "source check takes exactly one of bundle or catalog_path (workspace sources)"
-        )
     if bundle is not None and (
-        repository_root != "." or local_catalog_path is not None or root_aliases
+        catalog_path is not None
+        or repository_root != "."
+        or local_catalog_path is not None
+        or root_aliases
     ):
         raise DataValidationError(
-            "repository_root, local_catalog_path, and root_aliases apply only with catalog_path"
+            "a bundle is checked as given; catalog_path, repository_root, local_catalog_path "
+            "and root_aliases apply only when compiling the workspace catalog"
         )
     frozen = (
         SourceCompilationBundle.model_validate(bundle)
-        if catalog_path is None
-        else handle_playbill_workspace_source_compile(
+        if bundle is not None
+        else handle_playbill_sources_compile(
             instance_id,
             catalog_path=catalog_path,
             repository_root=repository_root,
@@ -578,20 +608,40 @@ def handle_playbill_source_check(
         lambda client: client.check_source_bundle(
             instance_id, bundle=frozen.model_dump(mode="json")
         ),
-        operation_name="cruxible_source_check",
+        operation_name="cruxible_sources_check",
     )
 
 
-def handle_playbill_propose_source_bundle(
+def handle_playbill_sources_propose(
     instance_id: str,
-    bundle: dict[str, Any],
     *,
     source_name: str,
     proposal_name: str,
+    catalog_path: str | None = None,
+    repository_root: str = ".",
+    local_catalog_path: str | None = None,
+    root_aliases: Mapping[str, str] | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalInspection:
-    frozen = SourceCompilationBundle.model_validate(bundle)
+    """Compile the workspace catalog here and propose one source as its Document.
+
+    The adapter reads the files, so no file bytes travel through the caller.
+    """
+
+    frozen = handle_playbill_sources_compile(
+        instance_id,
+        catalog_path=catalog_path,
+        repository_root=repository_root,
+        local_catalog_path=local_catalog_path,
+        root_aliases=root_aliases or {},
+    )
+    if source_name not in {item.source.name for item in frozen.documents}:
+        raise DataValidationError(
+            f"source {source_name!r} compiles to no Document: it is not catalogued, or its "
+            "catalog entry is evidence-only (give it document_id, document_kind, title, "
+            "media_type and governance_scope to propose it)"
+        )
     return _daemon_call(
         lambda client: client.propose_source_bundle(
             instance_id,
@@ -601,7 +651,7 @@ def handle_playbill_propose_source_bundle(
             dry_run=dry_run,
             at=at,
         ),
-        operation_name="cruxible_propose_source_bundle",
+        operation_name="cruxible_sources_propose",
     )
 
 
@@ -823,17 +873,17 @@ def handle_playbill_authoring_bind(
     anchor: str,
     payload: ClaimInput,
     window_lines: int | None,
+    occurrence: int | None = None,
 ) -> contracts.AuthoringPreflightResult:
-    path = resolve_workspace_path(source_path, kind="file")
-    try:
-        content = path.read_bytes()
-    except OSError as exc:
-        raise DataValidationError(f"could not read workspace source {source_path}: {exc}") from exc
-    bound = bind_working_selection_input(
+    root = mcp_workspace_root()
+    path = resolve_workspace_path(source_path, root=root, kind="file")
+    bound = bind_catalogued_selection_input(
         payload,
-        content=content,
+        workspace=root,
+        path=path,
         anchor=anchor,
         window_lines=window_lines,
+        occurrence=occurrence,
     )
     return _daemon_call(
         lambda client: client.compile_authoring(
@@ -913,6 +963,7 @@ def handle_playbill_block_repin(
     artifacts: Sequence[str] | None = None,
     currency_policy: Literal["warn", "require_current"] | None = None,
     backing_digest: str | None = None,
+    render: bool = False,
     dry_run: bool | None = None,
 ) -> BlockRepinResult:
     """Repin one projection block adapter-side: this process computes the stamp (Q17).
@@ -935,21 +986,25 @@ def handle_playbill_block_repin(
         ).source_id
     )
     path = sources.path_for_source(source_id)
-    stamp = repin_projection_block(
-        _get_client(),
-        instance_id,
-        workspace=root,
-        source_id=source_id,
-        block_id=block,
-        claims=claims,
-        queries=queries,
-        artifacts=None
-        if artifacts is None
-        else tuple(parse_artifact_identity(item) for item in artifacts),
-        currency_policy=currency_policy,
-        backing_digest=backing_digest,
-        evaluation_time=datetime.now(UTC),
-        dry_run=bool(dry_run),
+    stamp = _daemon_call(
+        lambda client: repin_projection_block(
+            client,
+            instance_id,
+            workspace=root,
+            source_id=source_id,
+            block_id=block,
+            claims=claims,
+            queries=queries,
+            artifacts=None
+            if artifacts is None
+            else tuple(parse_artifact_identity(item) for item in artifacts),
+            currency_policy=currency_policy,
+            backing_digest=backing_digest,
+            evaluation_time=datetime.now(UTC),
+            render=render,
+            dry_run=bool(dry_run),
+        ),
+        operation_name="cruxible_block_repin",
     )
     return BlockRepinResult(
         status="would_repin" if dry_run else "repinned",
@@ -974,32 +1029,13 @@ def handle_playbill_block_sync(
     """
 
     root = mcp_workspace_root()
-    return sync_projection_blocks(
-        _get_client(),
-        instance_id,
-        workspace=root,
-        paths=tuple(resolve_workspace_path(item, root=root, kind="file") for item in files),
-        all_sources=all_sources,
+    paths = tuple(resolve_workspace_path(item, root=root, kind="file") for item in files)
+    return _daemon_call(
+        lambda client: sync_projection_blocks(
+            client, instance_id, workspace=root, paths=paths, all_sources=all_sources
+        ),
+        operation_name="cruxible_block_sync",
     )
-
-
-def _pages_state(root: Path, preimages: Mapping[Path, bytes]) -> StateCoordinate:
-    """The state coordinate of the pages a detach edits: each one's exact bytes."""
-
-    return StateCoordinate.of(
-        "workspace_pages",
-        {
-            _workspace_relative(root, path): hashlib.sha256(content).hexdigest()
-            for path, content in sorted(preimages.items())
-        },
-    )
-
-
-def _workspace_relative(root: Path, path: Path) -> str:
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return path.as_posix()
 
 
 def handle_playbill_block_detach(
@@ -1022,30 +1058,11 @@ def handle_playbill_block_detach(
         raise DataValidationError("name at least one page to detach retired blocks from")
     root = mcp_workspace_root()
     pages = tuple(resolve_workspace_path(item, root=root, kind="file") for item in files)
-    with state_change_scope(
-        dry_run=dry_run,
-        at=at,
-        kind="direct",
-        operation="cruxible.block.detach",
-        describe="detaching retired projection blocks",
-    ) as change:
-        synced = sync_projection_blocks(
-            _get_client(),
-            instance_id,
-            workspace=root,
-            check=change.previewing,
-            detach_paths=pages,
-            observe_preimages=lambda preimages: change.observe(_pages_state(root, preimages)),
-        )
-        if change.coordinate is None:
-            # A refusal before any page was read (an unattached workspace)
-            # read no bytes, and pins (and is checked against) the empty set.
-            change.observe(_pages_state(root, {}))
-    assert change.coordinate is not None
-    return BlockDetachResult(
-        status="would_detach" if change.previewing else "detached",
-        sync=synced,
-        coordinate=change.coordinate,
+    return _daemon_call(
+        lambda client: detach_projection_pages(
+            client, instance_id, root=root, pages=pages, dry_run=dry_run, at=at
+        ),
+        operation_name="cruxible_block_detach",
     )
 
 
@@ -1498,9 +1515,7 @@ def handle_playbill_next(
 def handle_playbill_curation_list(
     instance_id: str,
     *,
-    evaluation_time: str,
     access_profile: dict[str, Any] | None,
-    workspace_observation: dict[str, Any] | None,
     limit: int = contracts.CURATION_LIST_DEFAULT_LIMIT,
     cursor: str | None = None,
 ) -> contracts.CurationListResult:
@@ -1512,15 +1527,32 @@ def handle_playbill_curation_list(
     }
     return _daemon_call(
         lambda client: client.list_curation(
-            instance_id,
-            evaluation_time=evaluation_time,
-            access_profile=profile,
-            workspace_observation=workspace_observation,
-            limit=limit,
-            cursor=cursor,
+            instance_id, access_profile=profile, limit=limit, cursor=cursor
         ),
         operation_name="cruxible_curation_list",
     )
+
+
+def handle_playbill_curation_observe(
+    instance_id: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.CurationObserveResult:
+    """Scan the MCP workspace's declared blocks and record them for block churn."""
+
+    workspace = mcp_workspace_root()
+    observation = observe_next_workspace(workspace)
+
+    def remote(client: CruxibleClient) -> contracts.CurationObserveResult:
+        observed, _coordinate = observe_next_workspace_with_coverage(
+            client, instance_id, workspace, observation=observation
+        )
+        return client.observe_curation(
+            instance_id, workspace_observation=observed, dry_run=dry_run, at=at
+        )
+
+    return _daemon_call(remote, operation_name="cruxible_curation_observe")
 
 
 def handle_playbill_audit(
@@ -1589,8 +1621,9 @@ def handle_playbill_curation_accept_fixed(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    accepted_proposal_id: str,
-    accepted_changeset_digest: str,
+    accepted_proposal_id: str | None,
+    accepted_changeset_digest: str | None,
+    accepted_generation: int | None,
     attribution_refs: list[str],
     dry_run: bool | None = None,
     at: str | None = None,
@@ -1603,6 +1636,7 @@ def handle_playbill_curation_accept_fixed(
             reason=reason,
             accepted_proposal_id=accepted_proposal_id,
             accepted_changeset_digest=accepted_changeset_digest,
+            accepted_generation=accepted_generation,
             attribution_refs=tuple(attribution_refs),
             dry_run=dry_run,
             at=at,
@@ -1617,7 +1651,7 @@ def handle_playbill_curation_suppress(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
-    scope: Literal["item", "pattern", "instance"],
+    scope: Literal["item", "lineage"],
     until_generation: int | None,
     attribution_refs: list[str],
     dry_run: bool | None = None,
@@ -1639,6 +1673,32 @@ def handle_playbill_curation_suppress(
     )
 
 
+def handle_playbill_curation_unsuppress(
+    instance_id: str,
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    suppression_event_id: str | None,
+    attribution_refs: list[str],
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.CurationActionResult:
+    return _daemon_call(
+        lambda client: client.unsuppress_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            suppression_event_id=suppression_event_id,
+            attribution_refs=tuple(attribution_refs),
+            dry_run=dry_run,
+            at=at,
+        ),
+        operation_name="cruxible_curation_unsuppress",
+    )
+
+
 def handle_playbill_coverage(
     instance_id: str,
     *,
@@ -1651,27 +1711,29 @@ def handle_playbill_coverage(
     budget: dict[str, Any] | None = None,
     scan_budget: dict[str, Any] | None = None,
 ) -> contracts.CoverageResult:
-    """Resolve caller observations, or ones the adapter derives from workspace files."""
+    """Resolve caller observations, or ones the adapter derives from workspace files.
 
-    if (observations is None) == (bindings is None):
-        raise DataValidationError(
-            "coverage takes exactly one of observations or bindings (workspace files)"
-        )
-    if bindings is not None:
+    Workspace files are bound to their sources by the source catalog; ``bindings``
+    override it path by path.
+    """
+
+    selecting = bool(files or ranges or grep_results is not None or whole_working_set)
+    if observations is not None:
+        if bindings is not None or selecting:
+            raise DataValidationError(
+                "observations are resolved as given; bindings, files, ranges, grep_results "
+                "and whole_working_set select workspace files instead"
+            )
+        observed = tuple(WorkingSourceObservation.model_validate(item) for item in observations)
+    else:
+        root = mcp_workspace_root()
+        declared = {**_catalog_coverage_bindings(root), **(bindings or {})}
         observed = _workspace_observations(
-            bindings,
+            declared,
             files=files,
             ranges=ranges,
             grep_results=grep_results,
             whole_working_set=whole_working_set,
-        )
-    elif files or ranges or grep_results is not None or whole_working_set:
-        raise DataValidationError(
-            "files, ranges, grep_results, and whole_working_set apply only with bindings"
-        )
-    else:
-        observed = tuple(
-            WorkingSourceObservation.model_validate(item) for item in observations or ()
         )
     cards = None if budget is None else CoverageCardBudget.model_validate(budget)
     scan = None if scan_budget is None else CoverageScanBudget.model_validate(scan_budget)
@@ -1682,34 +1744,46 @@ def handle_playbill_coverage(
             budget=(None if cards is None else cards.model_dump(mode="json")),
             scan_budget=(None if scan is None else scan.model_dump(mode="json")),
         ),
-        operation_name="cruxible_coverage",
+        operation_name="cruxible_coverage_resolve",
     )
 
 
-def handle_playbill_workspace_source_compile(
+def handle_playbill_sources_compile(
     instance_id: str,
     *,
-    catalog_path: str,
-    repository_root: str,
-    local_catalog_path: str | None,
-    root_aliases: Mapping[str, str],
+    catalog_path: str | None = None,
+    repository_root: str = ".",
+    local_catalog_path: str | None = None,
+    root_aliases: Mapping[str, str] | None = None,
 ) -> SourceCompilationBundle:
-    """Compile declared workspace bytes without exposing path or digest plumbing."""
+    """Compile the workspace's catalogued sources without exposing path or digest plumbing.
+
+    With no ``catalog_path`` the catalog is discovered as every other command
+    finds it (``.cruxible/sources.yaml`` or ``sources.yaml``, plus
+    ``.cruxible/sources.local.yaml``).
+    """
 
     workspace = mcp_workspace_root()
-    catalog = load_source_catalog(
-        resolve_workspace_path(catalog_path, root=workspace, kind="file"),
-        (
-            None
-            if local_catalog_path is None
-            else resolve_workspace_path(local_catalog_path, root=workspace, kind="file")
-        ),
-    )
+    if catalog_path is None:
+        if local_catalog_path is not None:
+            raise DataValidationError(
+                "local_catalog_path needs catalog_path; omit both to discover them"
+            )
+        catalog = WorkspaceSources(workspace).catalog
+    else:
+        catalog = load_source_catalog(
+            resolve_workspace_path(catalog_path, root=workspace, kind="file"),
+            (
+                None
+                if local_catalog_path is None
+                else resolve_workspace_path(local_catalog_path, root=workspace, kind="file")
+            ),
+        )
     repository = resolve_workspace_path(repository_root, root=workspace, kind="directory")
     aliases = mapped_root_aliases(
         {
             name: resolve_workspace_path(path, root=workspace, kind="directory")
-            for name, path in root_aliases.items()
+            for name, path in (root_aliases or {}).items()
         }
     )
     return _daemon_call(
@@ -1720,8 +1794,18 @@ def handle_playbill_workspace_source_compile(
             repository_root=repository,
             aliases=aliases,
         ),
-        operation_name="cruxible_workspace_source_compile",
+        operation_name="cruxible_sources_compile",
     )
+
+
+def _catalog_coverage_bindings(root: Path) -> dict[str, str]:
+    """The source catalog's bindings, or none when the workspace has no catalog."""
+
+    try:
+        sources = WorkspaceSources(root)
+    except SourceSelectionError:
+        return {}
+    return sources.coverage_bindings()
 
 
 def _workspace_observations(
@@ -1810,9 +1894,7 @@ def handle_playbill_floor_export(
             lambda generation, renderer: client.floor_delta(
                 instance_id, base_generation=generation, base_renderer=renderer
             ),
-            delivery=(lambda: daemon_floor_delivery(client, instance_id, workspace))
-            if transport.get("server_socket")
-            else None,
+            delivery=lambda: daemon_floor_delivery(client, instance_id, workspace),
             instance_id=instance_id,
             workspace=workspace,
             force=force,
@@ -1824,9 +1906,7 @@ def handle_playbill_floor_export(
     return _daemon_call(
         lambda client: write(
             lambda: client.export_floor(instance_id, **parts),
-            (lambda: daemon_floor_delivery(client, instance_id, workspace, include=tuple(include)))
-            if transport.get("server_socket")
-            else None,
+            lambda: daemon_floor_delivery(client, instance_id, workspace, include=tuple(include)),
         ),
         operation_name="cruxible_floor_export",
     )

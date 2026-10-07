@@ -339,9 +339,10 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.write",
     "cruxible.floor.export",
     "cruxible.block.depublish",
+    "cruxible.block.detach",
     "cruxible.block.repin",
     "cruxible.block.sync",
-    "cruxible.document.propose",
+    "cruxible.sources.propose",
     "cruxible.proposal.readmit",
     "cruxible.proposal.approve",
     "cruxible.compiler.upgrade",
@@ -408,6 +409,10 @@ class HostWorkspaceRegistration(BaseModel):
     status: HostWorkspaceRegistrationStatus
     workspace_path: str | None = None
     floor_delivery: bool = False
+    #: Answered only when the caller names a workspace root: whether the daemon
+    #: delivers that workspace's floor (delivery on and registered to that root).
+    #: The daemon compares paths and never echoes its own, so this works over TCP.
+    delivers_here: bool | None = None
 
 
 HostCompatibility: TypeAlias = Literal[
@@ -946,7 +951,7 @@ class LedgerMirror(BaseModel):
     """Where one instance publishes its ledger, and whether that copy is current.
 
     `ledger set-mirror` binds a remote and waits boundedly for initial publication;
-    `ledger clone-url` reads its status. A publish barrier is acknowledged when
+    `orient` shows the URL and `next` its health. A publish barrier is acknowledged when
     published_sequence reaches wait_sequence, even if newer work is pending. The
     URL carries no credential -- one that could is refused before it is stored --
     so this model is safe to print, log and hand to anyone who may read the
@@ -971,6 +976,23 @@ class LedgerMirror(BaseModel):
     published_refs: dict[str, str] = Field(default_factory=dict)
     wait_sequence: int | None = Field(default=None, ge=0)
     detail: str | None = None
+
+
+class LedgerMirrorCleared(BaseModel):
+    """The mirror an instance stopped publishing to, or would stop on a preview.
+
+    Clearing calls nothing back: what was already sent stays on the remote.
+    ``already_clear`` answers an instance that had no mirror bound.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["cruxible-ledger-mirror-cleared-v1"] = "cruxible-ledger-mirror-cleared-v1"
+    instance_id: str
+    status: Literal["cleared", "would_clear", "already_clear"]
+    previous_mirror_url: str | None = None
+    #: A preview's accepted coordinate; commit it with ``at`` set to its git oid.
+    coordinate: AcceptedCoordinate | None = None
 
 
 ClaimTypeLintCode: TypeAlias = Literal[
@@ -1519,22 +1541,63 @@ class NextResult(BaseModel):
         return self
 
 
+class CurationDetection(BaseModel):
+    """When curation detection last ran and whether it has caught up with the head.
+
+    Detection runs as the ``curation.detect`` internal action on accepted
+    generations; ``trigger`` says whether a live Trigger fires it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    state: Literal["current", "behind", "never_run"]
+    trigger: Literal["live", "missing"]
+    detected_through_generation: int | None = Field(default=None, ge=0)
+    detected_at: str | None = None
+
+
+class CurationInactiveDetector(BaseModel):
+    """A detector that cannot find anything on this instance, and why."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    pattern_kind: str
+    #: ``consumption_receipts_off``: dead vocabulary needs consumption receipts
+    #: (CRUXIBLE_CONSUMPTION_RECEIPTS=on); ``no_block_observations``: block churn
+    #: needs a recorded workspace scan (``curation observe``).
+    reason: Literal["consumption_receipts_off", "no_block_observations"]
+
+
 class CurationListResult(BaseModel):
-    """G9 curation queue plus request-bound observation accounting."""
+    """One page of the curation queue as detection last recorded it; a pure read."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-curation-list-result-v1"] = "playbill-curation-list-result-v1"
     coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
-    evaluation_time: str
     operational_head_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     items: list[dict[str, Any]] = Field(default_factory=list)
+    detection: CurationDetection
     detector_coverage: list[dict[str, Any]]
-    observation_coverage: dict[str, Any]
+    inactive_detectors: list[CurationInactiveDetector] = Field(default_factory=list)
+    observation_coverage: dict[str, Any] | None = None
     truncated: bool = False
     next_cursor: str | None = None
     result_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class CurationObserveResult(BaseModel):
+    """One workspace scan's declared blocks recorded for block-churn detection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-curation-observe-result-v1"] = "playbill-curation-observe-result-v1"
+    #: ``would_record`` answers a preview, which appended nothing.
+    status: Literal["recorded", "would_record"] = "recorded"
+    coordinate: AcceptedCoordinate
+    generation: int = Field(ge=0)
+    observation_coverage: dict[str, Any]
 
 
 class CurationActionResult(BaseModel):
@@ -1865,12 +1928,7 @@ class FloorExport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal[
-        "playbill-floor-export-v1",
-        "playbill-floor-export-v2",
-        "playbill-floor-export-v5",
-        "playbill-floor-export-v6",
-    ] = "playbill-floor-export-v2"
+    tag: Literal["playbill-floor-export-v6"] = "playbill-floor-export-v6"
     coordinate: AcceptedCoordinate
     manifest: dict[str, Any]
     files: list[FloorFile]

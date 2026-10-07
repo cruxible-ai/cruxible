@@ -80,7 +80,9 @@ from cruxible_client.contracts.workspace_layout import (
 _CONFIG_PATH = PurePosixPath(".cruxible/coverage.json")
 _CONFIG_EXCLUDE_RULE = b"/.cruxible/coverage.json\n"
 _FLOOR_DOMAIN = FLOOR_FORMAT
-_FLOOR_DOMAINS = {"playbill-floor-export-v2", _FLOOR_DOMAIN}
+# A workspace's floor_output profile names a format; live workspaces still hold
+# profiles written as v2, which refresh to the current floor unchanged.
+_FLOOR_PROFILE_FORMATS = {"playbill-floor-export-v2", _FLOOR_DOMAIN}
 _WORKSPACE_CONFIG_TAG = "playbill-coverage-workspace-config-v2"
 _FLOOR_OUTPUT = {
     "tag": "playbill-floor-output-v1",
@@ -115,12 +117,12 @@ _WORKSPACE_CONFIG_FIELDS = frozenset(
         "server_url",
         "server_socket",
         "root",
-        "rules",
-        "scan_budget",
-        "max_observed_paths",
         "floor_output",
     }
 )
+# The cut Claude Code hook read path rules from coverage.json; the source catalog
+# is now the one path-to-source mapping.
+_CUT_HOOK_FIELDS = frozenset({"rules", "scan_budget", "max_observed_paths"})
 _SECRET_FIELD_FRAGMENTS = ("bearer", "credential", "password", "secret", "token")
 
 
@@ -269,7 +271,14 @@ def _read_workspace_config(path: Path) -> dict[str, Any] | None:
         )
     unknown = sorted(set(payload).difference(_WORKSPACE_CONFIG_FIELDS))
     if unknown:
-        raise WorkspaceError(f"coverage config contains unsupported field(s): {', '.join(unknown)}")
+        hint = (
+            "; path rules are gone: delete them and catalog the files in .cruxible/sources.yaml"
+            if _CUT_HOOK_FIELDS & set(unknown)
+            else ""
+        )
+        raise WorkspaceError(
+            f"coverage config contains unsupported field(s): {', '.join(unknown)}{hint}"
+        )
     return payload
 
 
@@ -578,10 +587,10 @@ def _safe_export_path(value: object) -> str:
 
 
 def verified_floor_files(export: contracts.FloorExport) -> dict[str, bytes]:
-    """Verify the v2 envelope, manifest, inventory, and bytes."""
+    """Verify the export envelope, manifest, inventory, and bytes."""
 
-    if export.tag not in _FLOOR_DOMAINS:
-        raise WorkspaceError("configured floor refresh requires floor export v2 or v5")
+    if export.tag != _FLOOR_DOMAIN:
+        raise WorkspaceError(f"floor refresh requires floor export {_FLOOR_DOMAIN}")
     manifest = export.manifest
     if manifest.get("tag") != export.tag.replace("export", "manifest"):
         raise WorkspaceError("floor export manifest has an unsupported tag")
@@ -682,7 +691,7 @@ def configured_floor_output(
         )
     if (
         output.get("tag") != "playbill-floor-output-v1"
-        or output.get("format") not in _FLOOR_DOMAINS
+        or output.get("format") not in _FLOOR_PROFILE_FORMATS
         or set(output) - {"tag", "format", "include"}
     ):
         raise WorkspaceError(
@@ -865,7 +874,7 @@ def _workspace_locators(root: Path, sources: WorkspaceSources | None) -> dict[st
     """
 
     found: dict[str, str] = {}
-    for entry in () if sources is None else sources.document_entries:
+    for entry in () if sources is None else sources.source_entries:
         try:
             path = sources.path_for_source(entry.name) if sources is not None else None
         except (OSError, ValueError, CruxibleError):
@@ -878,7 +887,8 @@ def _workspace_locators(root: Path, sources: WorkspaceSources | None) -> dict[st
             missing = not path.is_file()
         located = f"{shown} (missing)" if missing else shown
         found.setdefault(entry.name, located)
-        found.setdefault(f"Document:{entry.document_id}", located)
+        if entry.document_id is not None:
+            found.setdefault(f"Document:{entry.document_id}", located)
     return found
 
 
@@ -1016,7 +1026,7 @@ def write_projection_index(workspace: str | Path) -> int | None:
         "".join(f"{line}\n" for line in (sources_header, *("\t".join(row) for row in joined))),
     )
     rows: list[tuple[str, str, str, str]] = []
-    for entry in () if sources is None else sources.document_entries:
+    for entry in () if sources is None else sources.source_entries:
         try:
             path = sources.path_for_source(entry.name) if sources is not None else None
         except (OSError, ValueError, CruxibleError):
@@ -1024,8 +1034,8 @@ def write_projection_index(workspace: str | Path) -> int | None:
         if path is None or not path.is_file() or not path.is_relative_to(root):
             continue
         relative = path.relative_to(root).as_posix()
-        document = f"Document:{entry.document_id}"
-        if document in generations:
+        document = None if entry.document_id is None else f"Document:{entry.document_id}"
+        if document is not None and document in generations:
             rows.append((relative, "document-body", document, generations[document]))
         if entry.name in generations:
             rows.append((relative, "evidence-source", entry.name, generations[entry.name]))
@@ -1115,7 +1125,7 @@ class _FloorDeliveryClient(Protocol):
     socket_path: str | None
 
     def host_workspace_registration(
-        self, instance_id: str
+        self, instance_id: str, *, workspace_root: str | None = None
     ) -> contracts.HostWorkspaceRegistration: ...
 
     def deliver_floor_now(
@@ -1135,16 +1145,27 @@ def daemon_floor_delivery(
     include: tuple[contracts.FloorExportPart, ...] = (),
     at: contracts.AcceptedCoordinate | None = None,
 ) -> contracts.FloorDeliveryResult | None:
-    """A local daemon opted into this exact workspace is its floor's only writer."""
+    """A daemon delivering this exact workspace's floor is its only writer.
 
-    if getattr(client, "socket_path", None) is None:
-        return None
-    registration = client.host_workspace_registration(instance_id)
+    Over the local socket the daemon writes now. Over TCP it cannot be asked
+    to, and a client write would be a second writer, so the export refuses;
+    a workspace the daemon does not deliver is written by the client.
+    """
+
+    root = _workspace_root(workspace)
+    registration = client.host_workspace_registration(instance_id, workspace_root=str(root))
     if not registration.floor_delivery:
         return None
-    if registration.workspace_path is None or Path(
-        registration.workspace_path
-    ).resolve() != _workspace_root(workspace):
+    if getattr(client, "socket_path", None) is None:
+        if registration.delivers_here:
+            raise WorkspaceError(
+                "the daemon delivers this workspace's floor and is its only writer; it "
+                "refreshes after every accepted generation. Export over the local "
+                "--server-socket to deliver now, or run cruxible floor delivery off "
+                "to write the floor from this client."
+            )
+        return None
+    if registration.workspace_path is None or Path(registration.workspace_path).resolve() != root:
         raise WorkspaceError("Daemon delivery is bound to another workspace")
     if include or at is not None:
         return client.deliver_floor_now(instance_id, include=include, at=at)
@@ -1393,11 +1414,11 @@ def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
     _observe_presentation_policy(
         observation,
         root,
-        known_source_ids=tuple(entry.name for entry in sources.document_entries),
+        known_source_ids=tuple(entry.name for entry in sources.source_entries),
     )
     source_observations: list[dict[str, str]] = []
     missing: list[dict[str, str | None]] = []
-    for entry in sources.document_entries:
+    for entry in sources.source_entries:
         try:
             path = sources.path_for_source(entry.name)
         except (OSError, ValueError, CruxibleError):
@@ -1421,7 +1442,8 @@ def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
         source_observations.append(
             {
                 "source_id": entry.name,
-                "document_id": entry.document_id,
+                # An evidence-only entry names no Document.
+                **({} if entry.document_id is None else {"document_id": entry.document_id}),
                 "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
             }
         )
@@ -1512,7 +1534,7 @@ def observe_projection_coverage(
     claim_bindings: list[ProjectionCoverageBinding] = []
     claims_complete = True
     scanned_bytes = 0
-    for document_entry in sources.document_entries:
+    for document_entry in sources.source_entries:
         try:
             content = read_projection_source(sources.path_for_source(document_entry.name))
         except (OSError, ValueError, CruxibleError):
@@ -2052,8 +2074,7 @@ def refresh_workspace_floor(
     """Refresh only the local floor and report the coordinate actually written.
 
     A pinned request refuses a mismatched export before touching local files.
-    inspect_workspace_floor reports the installed coordinate independently,
-    including after a failed refresh. No projection prose or declaration changes.
+    No projection prose or declaration changes.
     """
 
     try:
@@ -2061,7 +2082,7 @@ def refresh_workspace_floor(
         if configured is None:
             return contracts.FloorRefreshResult(status="not_configured")
         relative_path, include = configured
-        if getattr(client, "socket_path", None) is not None:
+        if hasattr(client, "host_workspace_registration"):
             delivered = daemon_floor_delivery(
                 cast(_FloorDeliveryClient, client),
                 instance_id,
@@ -2126,11 +2147,9 @@ __all__ = [
     "WorkspaceDirectoryConflict",
     "WorkspaceError",
     "configured_floor_path",
-    "inspect_workspace_floor",
     "observe_next_workspace",
     "observe_next_workspace_with_coverage",
     "observe_projection_coverage",
-    "materialize_floor",
     "configured_floor_output",
     "floor_export_parts",
     "record_floor_output",

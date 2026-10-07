@@ -46,7 +46,7 @@ def test_one_kind_one_health_and_independent_part_cursors(tmp_path: Path) -> Non
     assert [kind.name for kind in consumer_kinds()] == ["line", "next", "floor"]
     (health,) = consumer_health(instance, now=EVALUATION_TIME)
     assert (health.kind, health.consumer_id, health.state) == ("next", "consumer:next", "running")
-    assert set(health.detail) == {"queue", "evidence", "prediction"}
+    assert set(health.detail) == {"queue", "evidence", "prediction", "curation"}
     assert health.detail["prediction"]["contracts"] == 1
     before = health.detail
     # Reopening the kind uses each part's durable cursor, even with a later clock.

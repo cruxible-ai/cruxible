@@ -186,15 +186,65 @@ def _same_base_type(actual: ValueType, expected: ValueType) -> bool:
 def _assignable(actual: ValueType, expected: ValueType) -> bool:
     """A source field may widen its declared range, never silently narrow it."""
 
+    def values(schema: dict[str, Any]) -> set[bytes] | None:
+        if "enum" in schema:
+            return {canonical_bytes(v) for v in schema["enum"]}
+        if "const" in schema:
+            return {canonical_bytes(schema["const"])}
+        return None
+
+    def disjoint(a: dict[str, Any], b: dict[str, Any]) -> bool:
+        """Whether no value of `a` can satisfy `b`, proved conservatively."""
+
+        for union in ("anyOf", "oneOf"):
+            if union in a:
+                remaining = {k: v for k, v in a.items() if k != union}
+                return all(disjoint({**remaining, **variant}, b) for variant in a[union])
+            if union in b:
+                remaining = {k: v for k, v in b.items() if k != union}
+                return all(disjoint(a, {**remaining, **variant}) for variant in b[union])
+        kinds_a, kinds_b = a.get("type"), b.get("type")
+        if kinds_a is not None and kinds_b is not None:
+            left = set(kinds_a) if isinstance(kinds_a, list) else {kinds_a}
+            right = set(kinds_b) if isinstance(kinds_b, list) else {kinds_b}
+            numeric = {"integer", "number"}
+            if not left & right and not (left & numeric and right & numeric):
+                return True
+        left_values, right_values = values(a), values(b)
+        if left_values is not None and right_values is not None:
+            return not left_values & right_values
+        if a.get("type") == "object" and b.get("type") == "object":
+            ap, bp = a.get("properties", {}), b.get("properties", {})
+            present = set(a.get("required", ()))
+            if any(
+                key in present and key in bp and disjoint(ap.get(key, {}), bp[key])
+                for key in b.get("required", ())
+            ):
+                return True
+            if b.get("additionalProperties", True) is False and present - set(bp):
+                return True
+        return False
+
     def admits(a: dict[str, Any], b: dict[str, Any]) -> bool:
         if not b:
             return True
-        if "anyOf" in a:
-            remaining = {k: v for k, v in a.items() if k != "anyOf"}
-            return all(admits({**remaining, **variant}, b) for variant in a["anyOf"])
+        for union in ("anyOf", "oneOf"):
+            if union in a:
+                remaining = {k: v for k, v in a.items() if k != union}
+                return all(admits({**remaining, **variant}, b) for variant in a[union])
         if "anyOf" in b:
             remaining = {k: v for k, v in b.items() if k != "anyOf"}
             return any(admits(a, {**remaining, **variant}) for variant in b["anyOf"])
+        if "oneOf" in b:
+            # Exactly one variant: admitted by one, and provably excluded by
+            # every other. A value two variants both admit fails a oneOf, so
+            # an overlap that cannot be ruled out refuses.
+            remaining = {k: v for k, v in b.items() if k != "oneOf"}
+            variants = [{**remaining, **variant} for variant in b["oneOf"]]
+            admitted = [variant for variant in variants if admits(a, variant)]
+            return len(admitted) == 1 and all(
+                disjoint(a, variant) for variant in variants if variant is not admitted[0]
+            )
         actual_kind, expected_kind = a.get("type"), b.get("type")
         if isinstance(actual_kind, list):
             return all(admits({**a, "type": kind}, b) for kind in actual_kind)

@@ -26,6 +26,11 @@ class RecordSchemaError(ValueError):
     """A schema cannot be represented by this source-language version."""
 
 
+#: The schema unions this source language reads: anyOf matches at least one
+#: variant, oneOf exactly one.
+_UNIONS = ("anyOf", "oneOf")
+
+
 def _check_json_schema(schema: Mapping[str, object], path: str) -> None:
     supported = {
         "type",
@@ -41,6 +46,9 @@ def _check_json_schema(schema: Mapping[str, object], path: str) -> None:
         "description",
         "title",
         "anyOf",
+        "oneOf",
+        "minimum",
+        "maximum",
     }
     unknown = set(schema) - supported
     if unknown:
@@ -57,17 +65,32 @@ def _check_json_schema(schema: Mapping[str, object], path: str) -> None:
         _check_json_schema(extra, f"{path}.*")
     elif not isinstance(extra, bool):
         raise RecordSchemaError(f"{path}: additionalProperties must be a boolean or schema")
-    variants = schema.get("anyOf")
-    if variants is not None:
-        if set(schema) - {"anyOf", "description", "title"}:
-            raise RecordSchemaError(f"{path}: anyOf with additional constraints is unsupported")
+    for bound in ("minimum", "maximum"):
+        if bound in schema:
+            value = schema[bound]
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise RecordSchemaError(f"{path}: {bound} must be an integer")
+            if not set(kinds) & {"integer"}:
+                raise RecordSchemaError(f"{path}: {bound} applies only to an integer")
+    unions = [key for key in _UNIONS if key in schema]
+    if len(unions) > 1:
+        raise RecordSchemaError(f"{path}: anyOf and oneOf together are unsupported")
+    for union in unions:
+        variants = schema[union]
+        if set(schema) - {union, "type", "description", "title"}:
+            raise RecordSchemaError(f"{path}: {union} with additional constraints is unsupported")
         if (
             not isinstance(variants, list)
             or not variants
             or any(not isinstance(v, Mapping) for v in variants)
         ):
-            raise RecordSchemaError(f"{path}: anyOf must be a nonempty list of schemas")
+            raise RecordSchemaError(f"{path}: {union} must be a nonempty list of schemas")
         for variant in variants:
+            if "type" in schema and variant.get("type", schema["type"]) != schema["type"]:
+                raise RecordSchemaError(
+                    f"{path}: {union} variant type {variant.get('type')!r} disagrees with "
+                    f"its declared type {schema['type']!r}"
+                )
             _check_json_schema(variant, path)
     properties = schema.get("properties", {})
     if not isinstance(properties, Mapping):
@@ -128,10 +151,31 @@ def _matches_json_schema(value: object, schema: Mapping[str, object]) -> bool:
     variants = schema.get("anyOf")
     if isinstance(variants, list) and not any(_matches_json_schema(value, v) for v in variants):
         return False
+    variants = schema.get("oneOf")
+    if (
+        isinstance(variants, list)
+        and sum(1 for v in variants if _matches_json_schema(value, v)) != 1
+    ):
+        return False
+    if isinstance(value, int) and not isinstance(value, bool):
+        minimum, maximum = schema.get("minimum"), schema.get("maximum")
+        if isinstance(minimum, int) and value < minimum:
+            return False
+        if isinstance(maximum, int) and value > maximum:
+            return False
     leaf = {
         k: v
         for k, v in schema.items()
-        if k not in {"anyOf", "properties", "items", "additionalProperties"}
+        if k
+        not in {
+            "anyOf",
+            "oneOf",
+            "minimum",
+            "maximum",
+            "properties",
+            "items",
+            "additionalProperties",
+        }
     }
     kind = leaf.get("type")
     if isinstance(kind, list):

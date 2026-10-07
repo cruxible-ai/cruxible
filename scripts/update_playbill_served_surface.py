@@ -124,7 +124,14 @@ def _client_public_methods() -> frozenset[str]:
     )
 
 
-_JOIN_MODULE_PREFIXES = ("cruxible_core.mcp.", "cruxible_client.")
+# `cruxible_core.adapters.block_detach` is the caller-side page editor the CLI
+# and MCP share; the join follows it like the client package it hands the
+# client to.
+_JOIN_MODULE_PREFIXES = (
+    "cruxible_core.mcp.",
+    "cruxible_client.",
+    "cruxible_core.adapters.block_detach",
+)
 
 
 def _client_operations(
@@ -139,7 +146,8 @@ def _client_operations(
     `client.<op>` itself (a lambda included); it delegates to a sibling handler
     or helper that does; or it hands the client to shared client-side code
     (`repin_projection_block(client, ...)`) whose body calls it. The closure
-    follows named functions of the MCP and client packages only.
+    follows named functions of the MCP and client packages (and the shared
+    block-detach adapter) only.
     """
 
     visited = set() if seen is None else seen

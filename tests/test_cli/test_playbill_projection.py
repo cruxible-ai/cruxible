@@ -11,9 +11,11 @@ from click.testing import CliRunner
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
+    BlockDetachResult,
     BlockSyncItem,
     BlockSyncResult,
 )
+from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
     ProjectionClaimBacking,
@@ -173,47 +175,56 @@ def test_cli_sync_passes_local_edit_and_path_controls(
             "workspace": str(tmp_path),
             "paths": ("corpus/runbook.md",),
             "all_sources": False,
-            "check": False,
-            "detach_paths": (),
         }
     ]
 
 
-def test_cli_sync_check_exits_nonzero_when_safe_bytes_would_change(
-    monkeypatch: pytest.MonkeyPatch,
+def test_cli_sync_is_a_pure_check_and_detach_is_its_own_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    result = BlockSyncResult(
-        items=(
-            BlockSyncItem(
-                path="corpus/runbook.md",
-                source_id="corpus.runbook",
-                block_id="summary",
-                outcome="would_detach",
+    calls: list[dict[str, object]] = []
+
+    def detach(client, instance_id, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(kwargs)
+        return BlockDetachResult(
+            status="would_detach",
+            sync=BlockSyncResult(
+                items=(
+                    BlockSyncItem(
+                        path="corpus/runbook.md",
+                        source_id="corpus.runbook",
+                        block_id="summary",
+                        outcome="would_detach",
+                    ),
+                ),
+                changed_file_count=0,
+                would_change=True,
+                has_refusals=False,
             ),
-        ),
-        changed_file_count=0,
-        would_change=True,
-        has_refusals=False,
-    )
+            coordinate=StateCoordinate.of("workspace_pages", {}),
+        )
+
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
-    monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.sync_projection_blocks",
-        lambda *_args, **_kwargs: result,
-    )
+    monkeypatch.setattr("cruxible_core.cli.commands.playbill.detach_projection_pages", detach)
+    base = [
+        "--server-url",
+        "https://projection.example.test",
+        "--instance-id",
+        "inst_projection",
+        "block",
+    ]
+    for flag in ("--detach", "--check"):
+        refused = CliRunner().invoke(cli, [*base, "sync", "--all", flag, "x.md"])
+        assert refused.exit_code == 2, refused.output
 
     invoked = CliRunner().invoke(
         cli,
-        [
-            "--server-url",
-            "https://projection.example.test",
-            "--instance-id",
-            "inst_projection",
-            "block",
-            "sync",
-            "--all",
-            "--check",
-        ],
+        [*base, "detach", "corpus/runbook.md", "--workspace-root", str(tmp_path), "--dry-run"],
     )
 
-    assert invoked.exit_code == 1
+    assert invoked.exit_code == 0, invoked.output
     assert "would_detach" in invoked.output
+    assert "nothing was written" in invoked.output
+    (call,) = calls
+    assert call["dry_run"] is True and call["at"] is None
+    assert call["pages"] == ((Path.cwd() / "corpus/runbook.md").resolve(),)

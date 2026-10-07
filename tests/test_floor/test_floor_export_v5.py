@@ -1,4 +1,4 @@
-"""Current-state completeness, explicit review provenance, and rebuild parity."""
+"""Current-state completeness, change rationale, and rebuild parity."""
 
 from __future__ import annotations
 
@@ -48,44 +48,24 @@ def test_floor_v5_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> 
     assert not any(
         b"status: ready" in body for path, body in files.items() if not path.startswith("current/")
     )
-    # The immutable note snapshot, not a moving ref, is a rebuild input.
-    pinned = review_snapshot_oid(instance)
-    assert pinned is not None
-    instance.floor_export_memo.clear()
+    # A rebuild from cold memos reproduces the same bytes.
     instance.floor_structure_memo.clear()
-    assert service_export_playbill_floor(instance, review_notes_oid=pinned) == files
+    instance.floor_current_memo.clear()
+    assert service_export_playbill_floor(instance) == files
 
     def no_tree(*args, **kwargs):
         raise AssertionError("warm export reconstructed accepted content")
 
     monkeypatch.setattr(instance, "tree_at", no_tree)
-    assert service_export_playbill_floor(instance, review_notes_oid=pinned) == files
-    # A changed review-context snapshot must not reconstruct accepted content.
-    changed_context = service_export_playbill_floor(instance, review_notes_oid="absent")
-    assert (
-        changed_context["current/project.work_item/wi-42.yaml"]
-        == files["current/project.work_item/wi-42.yaml"]
-    )
+    assert service_export_playbill_floor(instance) == files
     # Returned maps are caller-owned; mutation must not poison cached exports.
     files.pop("README.md")
-    assert "README.md" in service_export_playbill_floor(instance, review_notes_oid=pinned)
-
-
-def test_floor_v5_absent_review_snapshot_is_replayable(tmp_path: Path) -> None:
-    instance, _ = seed_claims(tmp_path)
-    files = service_export_playbill_floor(instance, review_notes_oid="absent")
-    assert all(
-        not json.loads(body)["rationale"]
-        for path, body in files.items()
-        if path.startswith("changes/")
-    )
-    instance.floor_export_memo.clear()
-    assert service_export_playbill_floor(instance, review_notes_oid="absent") == files
+    assert "README.md" in service_export_playbill_floor(instance)
 
 
 def test_floor_changes_reverify_no_change_set_record(tmp_path: Path, monkeypatch) -> None:
     instance, _ = seed_claims(tmp_path)
-    expected = service_export_playbill_floor(instance, review_notes_oid="absent")
+    expected = service_export_playbill_floor(instance)
     instance.floor_current_memo.clear()
 
     def no_records(*args, **kwargs):
@@ -99,7 +79,7 @@ def test_floor_changes_reverify_no_change_set_record(tmp_path: Path, monkeypatch
     monkeypatch.setattr(instance, "retained_record_reader", no_records)
     monkeypatch.setattr(instance, "tree_at", no_history)
     monkeypatch.setattr(instance, "immutable_tree_at", no_history)
-    assert service_export_playbill_floor(instance, review_notes_oid="absent") == expected
+    assert service_export_playbill_floor(instance) == expected
     changes = [json.loads(body) for path, body in expected.items() if path.startswith("changes/")]
     assert changes and all(change["changed"] for change in changes)
 

@@ -21,7 +21,6 @@ def test_http_curation_list_is_read_tier_and_returns_operational_head(
         f"/api/v1/{instance_id}/curation/list",
         json={
             "tag": "playbill-curation-list-request-v1",
-            "evaluation_time": "2026-08-26T16:00:00+00:00",
             "access_profile": {
                 "tag": "playbill-coverage-access-profile-v1",
                 "profile_id": "test-curation",
@@ -35,25 +34,25 @@ def test_http_curation_list_is_read_tier_and_returns_operational_head(
     payload = response.json()
     assert payload["tag"] == "playbill-curation-list-result-v1"
     assert payload["items"] == []
-    assert payload["observation_coverage"]["source_count"] == 0
+    # A fresh instance has its seeded detection Trigger and no recorded run or scan.
+    assert payload["detection"] == {
+        "state": "never_run",
+        "trigger": "live",
+        "detected_through_generation": None,
+        "detected_at": None,
+    }
+    assert payload["observation_coverage"] is None
     assert payload["operational_head_digest"].startswith("sha256:")
 
 
-def test_http_curation_list_maps_raw_source_observation_to_typed_refusal(
+def test_http_curation_observe_maps_raw_source_observation_to_typed_refusal(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
     client, instance_id, _private_key = playbill_http
     response = client.post(
-        f"/api/v1/{instance_id}/curation/list",
+        f"/api/v1/{instance_id}/curation/observe",
         json={
-            "tag": "playbill-curation-list-request-v1",
-            "evaluation_time": "2026-08-26T16:00:00+00:00",
-            "access_profile": {
-                "tag": "playbill-coverage-access-profile-v1",
-                "profile_id": "test-curation",
-                "permitted_access_classes": ["instance", "public"],
-                "disclose_restricted_existence": True,
-            },
+            "tag": "playbill-curation-observe-request-v1",
             "workspace_observation": {
                 "tag": "playbill-next-workspace-observation-v1",
                 "source_observations": [
@@ -101,7 +100,7 @@ def test_http_curation_list_maps_raw_source_observation_to_typed_refusal(
                 "item_id": "not-a-digest",
                 "expected_latest_event_digest": "sha256:" + "2" * 64,
                 "reason": "operator-reviewed mechanical facts",
-                "scope": "instance",
+                "scope": "lineage",
             },
         ),
     ),
@@ -138,7 +137,11 @@ def test_http_curation_lifecycle_validation_is_a_typed_refusal(
         ),
         (
             "suppress",
-            {"tag": "playbill-curation-suppress-request-v1", "scope": "instance"},
+            {"tag": "playbill-curation-suppress-request-v1", "scope": "lineage"},
+        ),
+        (
+            "unsuppress",
+            {"tag": "playbill-curation-unsuppress-request-v1"},
         ),
     ),
 )
@@ -196,7 +199,6 @@ def test_http_curation_maps_both_operational_store_statuses(
         f"/api/v1/{instance_id}/curation/list",
         json={
             "tag": "playbill-curation-list-request-v1",
-            "evaluation_time": "2026-08-26T16:00:00+00:00",
             "access_profile": {
                 "tag": "playbill-coverage-access-profile-v1",
                 "profile_id": "test-curation",

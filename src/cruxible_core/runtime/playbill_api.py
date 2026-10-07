@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -203,13 +203,18 @@ from cruxible_core.service.discovery.curation import (
     CurationError,
     PlaybillCurationAcceptFixedRequestV1,
     PlaybillCurationListRequestV1,
+    PlaybillCurationObserveRequestV1,
     PlaybillCurationOverruleRequestV1,
     PlaybillCurationSuppressRequestV1,
+    PlaybillCurationUnsuppressRequestV1,
     service_accept_fixed_playbill_curation,
     service_list_playbill_curation,
+    service_observe_playbill_curation_blocks,
     service_overrule_playbill_curation,
     service_suppress_playbill_curation,
+    service_unsuppress_playbill_curation,
     validate_playbill_curation_list_request,
+    validate_playbill_curation_observe_request,
 )
 from cruxible_core.service.discovery.next import (
     NextRequestV1,
@@ -683,6 +688,43 @@ def playbill_ledger_set_mirror(
         return _mirror_receipt(instance_id, url=instance.ledger_mirror_url() or url, state=state)
 
 
+def playbill_ledger_clear_mirror(
+    instance_id: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.LedgerMirrorCleared:
+    """Unbind the mirror so nothing more is published; what was sent stays sent."""
+
+    check_permission("cruxible_ledger_set_mirror", instance_id=instance_id)
+    with change_entry(dry_run, "direct"):
+        _require_writer(instance_id)
+        instance = get_playbill_manager().get(instance_id)
+        with change_scope(
+            instance,
+            dry_run=dry_run,
+            at=at,
+            kind="direct",
+            operation="cruxible.ledger.set-mirror",
+            describe="clearing the ledger mirror",
+        ) as mode:
+            previous = instance.clear_ledger_mirror(confirm_head=mode.confirm_head)
+            if previous is None:
+                return contracts.LedgerMirrorCleared(
+                    instance_id=instance_id, status="already_clear"
+                )
+            if mode.previewing:
+                return contracts.LedgerMirrorCleared(
+                    instance_id=instance_id,
+                    status="would_clear",
+                    previous_mirror_url=previous,
+                    coordinate=full_coordinate(instance),
+                )
+        return contracts.LedgerMirrorCleared(
+            instance_id=instance_id, status="cleared", previous_mirror_url=previous
+        )
+
+
 def playbill_ledger_publish(
     instance_id: str,
     *,
@@ -725,19 +767,8 @@ def playbill_ledger_publish(
         return _mirror_receipt(instance_id, url=url, state=state)
 
 
-def playbill_ledger_clone_url(instance_id: str) -> contracts.LedgerMirror:
-    """Print the URL a reviewer clones, or refuse typed when there is none."""
-
-    check_permission("cruxible_read", instance_id=instance_id)
-    instance = get_playbill_manager().get(instance_id)
-    url = instance.ledger_mirror_url()
-    if url is None:
-        raise LedgerMirrorUnset()
-    return _mirror_receipt(instance_id, url=url, state=instance.ledger_mirror_state())
-
-
 def playbill_provider_catalog(instance_id: str) -> ProviderCatalog:
-    check_permission("cruxible_provider_catalog", instance_id=instance_id)
+    check_permission("cruxible_provider_list", instance_id=instance_id)
     manager = get_playbill_manager()
     manager.get(instance_id)
     return _proposal_validation_boundary(
@@ -767,8 +798,14 @@ def playbill_provider_install(
 
 def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
     check_permission("cruxible_kit_build", instance_id=instance_id)
+    actor = _actor_context()
     return _proposal_validation_boundary(
-        "kit build", lambda: service_build_kit(get_playbill_manager().get(instance_id), request)
+        "kit build",
+        lambda: service_build_kit(
+            get_playbill_manager().get(instance_id),
+            request,
+            principal_id=None if actor is None else actor.actor_id,
+        ),
     )
 
 
@@ -2136,16 +2173,25 @@ def playbill_curation_list(
     request: PlaybillCurationListRequestV1 | Mapping[str, object],
 ) -> contracts.CurationListResult:
     check_permission("cruxible_curation_list", instance_id=instance_id)
-    actor = _actor_context()
-    if actor is None:
-        raise AuthenticationError("Cruxible curation reads require an attributed actor")
     parsed = validate_playbill_curation_list_request(request)
-    result = service_list_playbill_curation(
-        get_playbill_manager().get(instance_id),
-        request=parsed,
-        actor_context=actor,
-    )
+    result = service_list_playbill_curation(get_playbill_manager().get(instance_id), request=parsed)
     return contracts.CurationListResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_curation_observe(
+    instance_id: str,
+    *,
+    request: PlaybillCurationObserveRequestV1 | Mapping[str, object],
+) -> contracts.CurationObserveResult:
+    check_permission("cruxible_curation_observe", instance_id=instance_id)
+    parsed = validate_playbill_curation_observe_request(request)
+    with change_entry(parsed.dry_run, "direct"):
+        result = service_observe_playbill_curation_blocks(
+            get_playbill_manager().get(instance_id),
+            request=parsed,
+            actor_context=_curation_actor(instance_id),
+        )
+    return contracts.CurationObserveResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_audit(
@@ -2239,6 +2285,28 @@ def playbill_curation_suppress(
     return contracts.CurationActionResult.model_validate(result.model_dump(mode="json"))
 
 
+def playbill_curation_unsuppress(
+    instance_id: str,
+    *,
+    request: PlaybillCurationUnsuppressRequestV1 | Mapping[str, object],
+) -> contracts.CurationActionResult:
+    check_permission("cruxible_curation_unsuppress", instance_id=instance_id)
+    parsed = _curation_validation_boundary(
+        lambda: (
+            request
+            if isinstance(request, PlaybillCurationUnsuppressRequestV1)
+            else PlaybillCurationUnsuppressRequestV1.model_validate(request)
+        )
+    )
+    with change_entry(parsed.dry_run, "direct"):
+        result = service_unsuppress_playbill_curation(
+            get_playbill_manager().get(instance_id),
+            request=parsed,
+            actor_context=_curation_actor(instance_id),
+        )
+    return contracts.CurationActionResult.model_validate(result.model_dump(mode="json"))
+
+
 def playbill_since(
     instance_id: str,
     *,
@@ -2307,9 +2375,7 @@ def playbill_export_floor(
     instance_id: str,
     *,
     at: AcceptedCoordinate | None = None,
-    format_version: Literal[2, 5] = 5,
     include: tuple[contracts.FloorExportPart, ...] = (),
-    review_notes_oid: str | None = None,
 ) -> contracts.FloorExport:
     """Return the deterministic floor as base64 bytes keyed by floor path.
 
@@ -2324,9 +2390,7 @@ def playbill_export_floor(
     files = service_export_playbill_floor(
         get_playbill_manager().get(instance_id),
         at=at,
-        format_version=format_version,
         include=include,
-        review_notes_oid=review_notes_oid,
         access=_access(instance_id, include_body=may_read_bodies),
     )
     manifest = json.loads(files[MANIFEST_PATH])

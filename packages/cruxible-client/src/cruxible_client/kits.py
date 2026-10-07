@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 from pydantic import ValidationError
 
 from cruxible_client.artifacts import (
@@ -26,7 +27,6 @@ from cruxible_client.artifacts import (
     Reference,
     RegistryClient,
     is_layout,
-    pack_artifact,
     pack_files,
     parse_reference,
     read_layout,
@@ -40,6 +40,8 @@ from cruxible_client.contracts.kits import (
     KitArtifactBytes,
     KitBundle,
     KitManifest,
+    KitStatus,
+    kit_version_key,
 )
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.errors import ConfigError
@@ -183,7 +185,65 @@ def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple
     return unpack_artifact(KIT_ARTIFACT, image), origin
 
 
-def push_kit(bundle: KitBundle, ref: Reference, *, registry: RegistryClient) -> str:
-    """Publish ``bundle`` at ``ref``; returns the manifest digest consumers pin."""
+#: How long the update check waits on a registry before reporting it unavailable.
+UPDATE_CHECK_TIMEOUT = 5.0
 
-    return registry.push(pack_artifact(KIT_ARTIFACT, bundle), ref)
+
+def registry_source(source: str | None) -> bool:
+    """Whether a recorded kit source is a registry reference (directory and layout
+    sources are a bare name)."""
+
+    return source is not None and "/" in source
+
+
+def latest_release(tags: tuple[str, ...]) -> str | None:
+    """The highest MAJOR.MINOR.PATCH tag; other tags (``latest``) are ignored."""
+
+    versions = []
+    for tag in tags:
+        try:
+            versions.append((kit_version_key(tag), tag))
+        except ValueError:
+            continue
+    return None if not versions else max(versions)[1]
+
+
+def check_kit_updates(
+    status: KitStatus,
+    *,
+    offline: bool = False,
+    registry: RegistryClient | None = None,
+) -> KitStatus:
+    """Fill each registry-sourced kit's latest available version from the registry's tags.
+
+    Client-side and best effort: a registry that cannot answer within a short
+    timeout reports ``unavailable``; ``offline`` skips the check. Kits from a
+    directory or layout have nothing to check.
+    """
+
+    client = registry
+    checked = []
+    try:
+        for kit in status.kits:
+            if not registry_source(kit.source):
+                checked.append(kit.model_copy(update={"update_check": "local_source"}))
+                continue
+            if offline:
+                checked.append(kit.model_copy(update={"update_check": "offline"}))
+                continue
+            assert kit.source is not None
+            try:
+                ref = kit_reference(kit.source.partition("@")[0])
+                if client is None:
+                    client = RegistryClient(timeout=UPDATE_CHECK_TIMEOUT)
+                latest = latest_release(client.list_tags(ref))
+            except (OSError, ValueError, ConfigError, httpx.HTTPError):
+                checked.append(kit.model_copy(update={"update_check": "unavailable"}))
+                continue
+            checked.append(
+                kit.model_copy(update={"latest_available": latest, "update_check": "checked"})
+            )
+    finally:
+        if registry is None and client is not None:
+            client.close()
+    return status.model_copy(update={"kits": tuple(checked)})

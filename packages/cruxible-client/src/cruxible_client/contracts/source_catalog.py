@@ -46,17 +46,53 @@ class _StrictCatalogModel(BaseModel):
 
 
 class SourceCatalogEntry(_StrictCatalogModel):
+    """One workspace file under a logical source name, and optionally its Document.
+
+    ``name`` and ``locator`` are all that citing the file as evidence needs. The
+    Document fields (``document_id``, ``document_kind``, ``title``,
+    ``media_type``, ``governance_scope``) come together or not at all: an entry
+    with them can be compiled and proposed as a governed Document, one without
+    them is evidence-only.
+    """
+
     name: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     locator: str = Field(min_length=1, max_length=4096)
-    document_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
-    document_kind: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
-    title: str = Field(min_length=1, max_length=1024)
-    media_type: str
+    document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
+    document_kind: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
+    title: str | None = Field(default=None, min_length=1, max_length=1024)
+    media_type: str | None = None
     compiler_profile: Literal["document-v1"] = "document-v1"
     required_tier: Literal["governed_write", "graph_write", "admin"] = "graph_write"
-    governance_scope: tuple[str, ...]
+    governance_scope: tuple[str, ...] | None = None
     public_uri: str | None = None
     root_alias: str | None = None
+
+    @property
+    def is_document(self) -> bool:
+        """Whether this entry declares the Document it compiles to."""
+
+        return self.document_id is not None
+
+    @model_validator(mode="after")
+    def _document_fields(self) -> SourceCatalogEntry:
+        declared = [
+            self.document_id,
+            self.document_kind,
+            self.title,
+            self.media_type,
+            self.governance_scope,
+        ]
+        if any(value is None for value in declared) and any(
+            value is not None for value in declared
+        ):
+            raise ValueError(
+                f"source {self.name!r} declares only some Document fields: give document_id, "
+                "document_kind, title, media_type and governance_scope together, or none for "
+                "an evidence-only entry"
+            )
+        if not self.is_document and self.public_uri is not None:
+            raise ValueError(f"evidence-only source {self.name!r} cannot declare a public_uri")
+        return self
 
     @model_validator(mode="after")
     def _locator_shape(self) -> SourceCatalogEntry:
@@ -135,7 +171,7 @@ class SourceCatalog(_StrictCatalogModel):
         )
         if len({item.name for item in documents}) != len(documents):
             raise ValueError("source catalog entries must be unique by name")
-        targets = [item.document_id for item in documents]
+        targets = [item.document_id for item in documents if item.document_id is not None]
         if len(set(targets)) != len(targets):
             raise ValueError("source catalog contains duplicate Document targets")
         procedure_targets = [item.procedure_identity.qualified for item in procedures]
@@ -216,7 +252,7 @@ class SourceCompilationBundle(_StrictCatalogModel):
     tag: Literal["playbill-source-compilation-bundle-v1"] = "playbill-source-compilation-bundle-v1"
     manifest: SourceCompilationManifest
     documents: tuple[CompiledSourceDocument, ...]
-    notes: tuple[Literal["procedure_projection_only_no_document_compilation"], ...] = ()
+    notes: tuple[Literal["no_document_entries_to_compile"], ...] = ()
 
     @model_validator(mode="after")
     def _binding(self) -> SourceCompilationBundle:
@@ -321,10 +357,16 @@ def compile_source_catalog(
     }
     inputs: list[ResolvedSourceInput] = []
     documents: list[CompiledSourceDocument] = []
+    # Evidence-only entries name a file for citation and compile to nothing.
     document_entries = tuple(
-        entry for entry in catalog.entries if isinstance(entry, SourceCatalogEntry)
+        entry
+        for entry in catalog.entries
+        if isinstance(entry, SourceCatalogEntry) and entry.is_document
     )
     for entry in document_entries:
+        assert entry.document_id is not None and entry.document_kind is not None
+        assert entry.title is not None and entry.media_type is not None
+        assert entry.governance_scope is not None
         locator = Path(entry.locator)
         if locator.is_absolute():
             candidates = tuple(
@@ -416,9 +458,7 @@ def compile_source_catalog(
     return SourceCompilationBundle(
         manifest=manifest,
         documents=document_tuple,
-        notes=(
-            ("procedure_projection_only_no_document_compilation",) if not document_entries else ()
-        ),
+        notes=(("no_document_entries_to_compile",) if not document_entries else ()),
     )
 
 

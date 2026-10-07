@@ -59,6 +59,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.query.results import QueryResultRow
 from cruxible_client.contracts.repairs import RepairOperation, ServedRepair
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.workspace_layout import ensure_workspace_directory, workspace_path
@@ -263,6 +264,66 @@ def _query_backing(
     coordinate: AcceptedCoordinate,
     evaluation_time: datetime,
 ) -> ProjectionQueryBacking:
+    return _evaluated_query_backing(
+        client,
+        instance_id,
+        name=name,
+        parameters=parameters,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+    )[0]
+
+
+def _cell(value: object) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+    return " ".join(text.split()).replace("|", "\\|")
+
+
+def render_query_block_body(rows: Sequence[QueryResultRow]) -> bytes:
+    """Render one query's rows as a block body: a Markdown table, or a list.
+
+    Deterministic in the rows alone, so a re-render at the same backing
+    reproduces the same bytes. Rows with projected fields render a table whose
+    first column is the result Subject; rows without render a bulleted list of
+    Subjects. An absent field renders empty and a conflicted one says so.
+    """
+
+    if not rows:
+        return b"_No rows._\n"
+    names: list[str] = []
+    for row in rows:
+        names.extend(field.name for field in row.fields if field.name not in names)
+    subjects = [row.result_subject_identity or "" for row in rows]
+    if not names:
+        return "".join(f"- {_cell(subject)}\n" for subject in subjects).encode("utf-8")
+    lines = [
+        "| subject | " + " | ".join(_cell(name) for name in names) + " |",
+        "|" + "---|" * (len(names) + 1),
+    ]
+    for subject, row in zip(subjects, rows, strict=True):
+        cells = []
+        for name in names:
+            field = next((item for item in row.fields if item.name == name), None)
+            cells.append(
+                ""
+                if field is None or field.state == "absent"
+                else "(conflicted)"
+                if field.state != "present"
+                else _cell(field.value)
+            )
+        lines.append("| " + " | ".join([_cell(subject), *cells]) + " |")
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _evaluated_query_backing(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    name: str,
+    parameters: Mapping[str, object],
+    coordinate: AcceptedCoordinate,
+    evaluation_time: datetime,
+) -> tuple[ProjectionQueryBacking, tuple[QueryResultRow, ...]]:
     from cruxible_client.contracts.compact_query import QueryRequest
 
     bare = name.removeprefix("QueryDefinition:")
@@ -298,7 +359,7 @@ def _query_backing(
         ProjectionResolvedParameterBinding.model_validate(item.model_dump(mode="json"))
         for item in result.parameters
     )
-    return ProjectionQueryBacking(
+    backing = ProjectionQueryBacking(
         identity=ArtifactIdentity(kind="QueryDefinition", name=bare),
         definition_digest=evaluated.receipt.spec_digest,
         resolved_parameter_bindings=bindings,
@@ -306,6 +367,7 @@ def _query_backing(
         declared_evaluation_time=evaluation_time,
         semantic_result_digest=projection_query_semantic_result_digest(result),
     )
+    return backing, tuple(result.rows)
 
 
 def _digest(content: bytes) -> str:
@@ -588,9 +650,7 @@ def _sync_item_from_read_refusal(
                 },
             )
         else:
-            repair = RepairOperation(
-                operation="cruxible.block.sync", arguments={"paths": [path], "detach": True}
-            )
+            repair = RepairOperation(operation="cruxible.block.detach", arguments={"paths": [path]})
     elif reason == "block_successor_ambiguous":
         candidates = getattr(read, "successor_candidates", ())
         values["successor_candidates"] = [
@@ -643,7 +703,7 @@ def sync_projection_blocks(
     detach_paths: Sequence[str | Path] = (),
     observe_preimages: Callable[[Mapping[Path, bytes]], None] | None = None,
 ) -> BlockSyncResult:
-    """Check all dependencies without authoring prose. Only explicit detach edits files.
+    """Check all dependencies without authoring prose. Only ``detach_paths`` edits files.
 
     ``observe_preimages``, when given, is called once with the exact bytes of
     every page this call read, after every read and before any write. Each
@@ -694,7 +754,7 @@ def sync_projection_blocks(
     if all_sources and (paths or detach_paths):
         raise ProjectionSyncError("--all cannot be combined with explicit or detached paths")
     if paths and detach_paths:
-        raise ProjectionSyncError("ordinary sync paths cannot be combined with --detach")
+        raise ProjectionSyncError("checked paths cannot be combined with detached paths")
     selected: dict[Path, str] = {}
     items: list[BlockSyncItem] = []
     requested = tuple(detach_paths or paths)
@@ -722,7 +782,7 @@ def sync_projection_blocks(
         selected, items = _discover_workspace_sources(root)
     elif all_sources:
         assert sources is not None
-        for entry in sources.document_entries:
+        for entry in sources.source_entries:
             try:
                 selected[sources.path_for_source(entry.name)] = entry.name
             except (ValueError, CruxibleError) as exc:
@@ -1075,11 +1135,14 @@ def repin_projection_block(
     coordinate: AcceptedCoordinate | None = None,
     body: bytes | None = None,
     compact: bool = True,
+    render: bool = False,
     dry_run: bool = False,
 ) -> ProjectionBlockStamp:
     """Repin one block, optionally installing explicitly supplied agent-authored body bytes.
 
-    Omitted body preserves prose. Compact markers are the default; their manifests
+    Omitted body preserves prose. ``render`` instead writes the body from the
+    block's one query backing (``render_query_block_body``), so a rendered
+    table or list needs no hand-written prose. Compact markers are the default; their manifests
     are retained before the page write. Use a reviewed exact-content package Claim
     for ledger recovery.
     The whole-file compare-and-swap preserves concurrent author edits.
@@ -1129,6 +1192,12 @@ def repin_projection_block(
         raise ProjectionRepinError("--backing cannot be combined with replacement backing refs")
     if not claim_refs and not query_refs and not artifact_refs:
         raise ProjectionRepinError("a block declaration requires at least one explicit backing")
+    if render and (body is not None or backing_digest is not None or len(query_refs) != 1):
+        raise ProjectionRepinError(
+            "--render writes the body from exactly one query backing; it takes no explicit "
+            "body or --backing"
+        )
+    rendered: bytes | None = None
 
     if backing_digest is not None:
         if block.stamp is None:
@@ -1170,8 +1239,8 @@ def repin_projection_block(
                 evaluation_time=formatted,
             )
         )
-        backing.extend(
-            _query_backing(
+        for name, parameters in query_refs:
+            query_backing, rows = _evaluated_query_backing(
                 client,
                 instance_id,
                 name=name,
@@ -1179,8 +1248,9 @@ def repin_projection_block(
                 coordinate=active,
                 evaluation_time=instant,
             )
-            for name, parameters in query_refs
-        )
+            backing.append(query_backing)
+            if render:
+                rendered = render_query_block_body(rows)
         for identity in artifact_refs:
             if identity.kind == "ClaimType":
                 type_proof = _proof(
@@ -1197,6 +1267,7 @@ def repin_projection_block(
             backing.append(
                 ProjectionArtifactBacking(identity=identity, artifact_digest=artifact_digest)
             )
+    body = rendered if rendered is not None else body
     body_content = content[block.body_start : block.body_end] if body is None else body
     if not body_content.endswith(b"\n"):
         raise ProjectionRepinError("projection body must end with LF")
@@ -1269,6 +1340,7 @@ __all__ = [
     "frame_projection_block",
     "parse_projection_blocks",
     "render_projection_opening",
+    "render_query_block_body",
     "repin_projection_block",
     "sync_projection_blocks",
 ]

@@ -1,5 +1,6 @@
-"""Local floor writes delegate to their registered daemon writer; remote writes stay local."""
+"""A floor has one writer: a delivering daemon, or else the client."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -10,7 +11,24 @@ from cruxible_client.authoring.workspace import daemon_floor_delivery, write_wor
 from tests.test_client.test_playbill_workspace import _delta
 
 
-@pytest.mark.parametrize("enabled,local", [(True, True), (False, True), (True, False)])
+def _registration(workspace, *, enabled, registered=None):
+    registered = workspace if registered is None else registered
+
+    def answer(_instance_id, workspace_root=None):
+        return contracts.HostWorkspaceRegistration(
+            instance_id="inst_floor",
+            status="registered",
+            workspace_path=str(registered),
+            floor_delivery=enabled,
+            delivers_here=None
+            if workspace_root is None
+            else enabled and Path(workspace_root) == Path(registered).resolve(),
+        )
+
+    return answer
+
+
+@pytest.mark.parametrize("enabled,local", [(True, True), (False, True), (False, False)])
 def test_floor_write_delegates_only_to_an_opted_in_local_daemon(
     tmp_path, monkeypatch, enabled, local
 ):
@@ -36,12 +54,7 @@ def test_floor_write_delegates_only_to_an_opted_in_local_daemon(
 
     client = SimpleNamespace(
         socket_path=str(tmp_path / "socket") if local else None,
-        host_workspace_registration=lambda _: contracts.HostWorkspaceRegistration(
-            instance_id="inst_floor",
-            status="registered",
-            workspace_path=str(workspace),
-            floor_delivery=enabled,
-        ),
+        host_workspace_registration=_registration(workspace, enabled=enabled),
         deliver_floor_now=deliver,
     )
     fetches = []
@@ -71,15 +84,32 @@ def test_floor_write_delegates_only_to_an_opted_in_local_daemon(
 def test_delivery_refuses_a_different_registered_workspace(tmp_path):
     client = SimpleNamespace(
         socket_path=str(tmp_path / "socket"),
-        host_workspace_registration=lambda _: contracts.HostWorkspaceRegistration(
-            instance_id="inst_floor",
-            status="registered",
-            workspace_path=str(tmp_path / "other"),
-            floor_delivery=True,
+        host_workspace_registration=_registration(
+            tmp_path, enabled=True, registered=tmp_path / "other"
         ),
     )
     with pytest.raises(authoring.WorkspaceError, match="another workspace"):
         daemon_floor_delivery(client, "inst_floor", tmp_path)
+
+
+def test_a_tcp_export_refuses_when_the_daemon_delivers_that_floor(tmp_path):
+    """Single writer: over TCP the daemon cannot deliver now, so the client must not write."""
+
+    client = SimpleNamespace(
+        socket_path=None, host_workspace_registration=_registration(tmp_path, enabled=True)
+    )
+    with pytest.raises(authoring.WorkspaceError, match="floor delivery off"):
+        daemon_floor_delivery(client, "inst_floor", tmp_path)
+
+
+def test_a_tcp_export_writes_a_floor_the_daemon_delivers_elsewhere(tmp_path):
+    client = SimpleNamespace(
+        socket_path=None,
+        host_workspace_registration=_registration(
+            tmp_path, enabled=True, registered=tmp_path / "other"
+        ),
+    )
+    assert daemon_floor_delivery(client, "inst_floor", tmp_path) is None
 
 
 def test_activation_refresh_uses_the_same_daemon_writer(tmp_path, monkeypatch):
@@ -101,12 +131,7 @@ def test_activation_refresh_uses_the_same_daemon_writer(tmp_path, monkeypatch):
     )
     client = SimpleNamespace(
         socket_path=str(tmp_path / "socket"),
-        host_workspace_registration=lambda _: contracts.HostWorkspaceRegistration(
-            instance_id="inst_floor",
-            status="registered",
-            workspace_path=str(tmp_path),
-            floor_delivery=True,
-        ),
+        host_workspace_registration=_registration(tmp_path, enabled=True),
         deliver_floor_now=lambda *_a, **_k: contracts.FloorDeliveryResult(
             delta=delta, written=written
         ),

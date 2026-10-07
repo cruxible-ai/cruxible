@@ -97,11 +97,11 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     group_claims, _ = _walk_lazy_map(CLI_COMMANDS)
     defined = _defined_click_objects()
     groups = [(obj, origin) for obj, origin in defined.values() if isinstance(obj, click.Group)]
-    # 28 includes the retained-Capture read group, the kit group and the internal
+    # 27 includes the retained-Capture read group, the kit group and the internal
     # registration group whose children are the root's; the read cut removed the
     # subject, policy and query groups (query is one command), and the stub leaf
-    # replaced the world group.
-    assert len(groups) == 28, f"expected 28 Cruxible/host groups, found {len(groups)}"
+    # replaced the world group; the Claude Code hook group is cut.
+    assert len(groups) == 27, f"expected 27 Cruxible/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
@@ -129,9 +129,11 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     """A command defined but never registered is dead or invisible, never fine."""
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
     # Includes retained evidence reads through `capture read`, `cruxible mcp` and the kit verbs.
-    # `line status` folded into `get Line:<name>`; `line check` became `line evaluate --dry-run`.
-    assert len(leaf_claims) == 99, (
-        f"expected 99 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    # S3: `procedure readiness|status` folded into `get`, `procedure bind` was cut,
+    # `line status` folded into `get Line:<name>`, `line check` became
+    # `line evaluate --dry-run`.
+    assert len(leaf_claims) == 98, (
+        f"expected 98 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

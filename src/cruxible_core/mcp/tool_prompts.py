@@ -5,26 +5,31 @@ from __future__ import annotations
 from cruxible_core.errors import ConfigError
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
-    "cruxible_provider_catalog": (
+    "cruxible_provider_list": (
         "Use when you need to discover available provider packages: each package's name, "
         "version and the provider interface IDs it implements."
     ),
     "cruxible_provider_install": (
         "Use when you want to install a provider package by name (from the configured "
-        "repository or the provider index) and register its definitions. Requires admin "
-        "permission; installation grants no execution permissions."
+        "repository or the provider index) and register its definitions. The registration "
+        "lands at once when the approval policy requires no approval, otherwise it stops at "
+        "proposed (awaiting_approval). Requires admin permission; installation grants no "
+        "execution permissions."
     ),
     "cruxible_kit_build": (
         "Use when you want to export the definitions under owned identity prefixes as a "
-        "kit release another instance can install; pass the previous release to continue "
-        "its lineage."
+        "kit release another instance can install. A release is a lineage-free snapshot; "
+        "its manifest records where it was built."
     ),
     "cruxible_kit_status": (
-        "Use when you need the installed kits and the kit paths edited since install."
+        "Use when you need the installed kits, the kit paths edited since install, what was "
+        "kept on purpose, and (for registry kits) the latest available version."
     ),
     "cruxible_kit_add": (
-        "Use when you want to install or upgrade a kit. It only proposes one change set; "
-        "approval and activation remain the ordinary steps."
+        "Use when you want to install or upgrade a kit, by registry reference or bundle. It "
+        "always proposes: a definition held differently takes the release's version unless "
+        "kept (keep, keep_local_edits); the plan says what each change does and counts "
+        "dependents. It lands at once when the approval policy requires no approval."
     ),
     "cruxible_claim_type_upgrade": (
         "Use to move ClaimTypes before v7 to v7, which states revision_evidence "
@@ -32,8 +37,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "and evidence_requirement (kept at self). It only proposes; dry_run proposes nothing."
     ),
     "cruxible_kit_remove": (
-        "Use when you want to retire what a kit installed. It only proposes; live Claims "
-        "that depend on those definitions block it."
+        "Use when you want to retire what a kit installed. It lands at once when the approval "
+        "policy requires no approval; live Claims that depend on those definitions block it."
     ),
     "cruxible_server_info": (
         "Use when you need adapter and daemon versions with state, auth, and host metadata."
@@ -89,15 +94,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Requires body-read permission; max_bytes bounds returned material. "
         "Never refetches sources."
     ),
-    "cruxible_source_context": (
-        "Use when a local client needs path-free accepted inputs before compiling sources."
+    "cruxible_sources_check": (
+        "Use when you need to check the workspace's catalogued sources (or a compiled "
+        "bundle) against accepted state: aligned, modified, pending, behind and the rest."
     ),
-    "cruxible_source_check": (
-        "Use when you need to check sources against accepted state: a compiled bundle, "
-        "or catalog-declared workspace files."
-    ),
-    "cruxible_propose_source_bundle": (
-        "Use when you need to propose frozen source bytes without sending a local path."
+    "cruxible_sources_propose": (
+        "Use when a catalogued workspace file should become its Document's next revision: "
+        "name the catalog source; this adapter reads and compiles the file and proposes it."
     ),
     "cruxible_compiler_upgrade": (
         "Use to propose an explicit compiler upgrade bound to the exact accepted base. "
@@ -262,22 +265,32 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "prediction id and the observation's Claim ID."
     ),
     "cruxible_curation_list": (
-        "List mechanically detected curation patterns. Supply an explicit workspace_observation "
-        "only when the client has scanned declared blocks; the daemon never reads workspace files. "
+        "List the curation patterns detection recorded (detection runs on its own on accepted "
+        "generations); a pure read. Each item carries the latest_event_digest the rulings "
+        "need; detection says when it last ran, inactive_detectors which detectors cannot run. "
         "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
+    ),
+    "cruxible_curation_observe": (
+        "Record this workspace's declared blocks for block-churn detection, which needs the "
+        "workspace the daemon never reads."
     ),
     "cruxible_audit": (
         "Rank visible Claim verification work by exact stake, weakness, and recency factors. "
         "This read records completed coverage but never recommends or executes a repair."
     ),
     "cruxible_curation_overrule": (
-        "Use when the exact mechanical detector pattern is inapplicable and should be closed."
+        "Use when a detected pattern does not apply here: closes the item permanently, and the "
+        "pattern is never raised again."
     ),
     "cruxible_curation_accept_fixed": (
-        "Use only after an accepted ChangeSet mechanically intersects the curation evidence."
+        "Use after an accepted change fixed an item: name it by accepted_proposal_id or "
+        "accepted_generation; it must touch the item's subject or evidence."
     ),
     "cruxible_curation_suppress": (
-        "Hide open curation work by item, pattern, or instance without resolving it."
+        "Hide an item (scope item) or its whole lineage (scope lineage) without resolving it."
+    ),
+    "cruxible_curation_unsuppress": (
+        "Lift a suppression on an item, so what it hid is listed again."
     ),
     "cruxible_since": (
         "Use when you need the exact accepted ChangeSet members after a known generation."
@@ -286,13 +299,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need the accepted floor as greppable files: return the bytes, write "
         "them to the workspace, or check that copy's status."
     ),
-    "cruxible_coverage": (
+    "cruxible_coverage_resolve": (
         "Use when you have read or changed working files and need what they have to do with "
-        "accepted state."
+        "accepted state; the source catalog binds files to their sources."
     ),
-    "cruxible_workspace_source_compile": (
-        "Use to compile catalog-declared files under this MCP client's workspace without "
-        "constructing source digests or compilation wire."
+    "cruxible_sources_compile": (
+        "Use to compile the workspace's catalogued files without constructing source "
+        "digests or compilation wire."
     ),
 }
 

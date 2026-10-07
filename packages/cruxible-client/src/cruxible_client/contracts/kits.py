@@ -18,10 +18,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
 
-from .authoring.models import ClaimTypeSuccessionDependent
 from .canonical import Sha256Value, canonical_digest
 from .change_control import DryRun, PreviewAt
 from .get_reads import GetCoordinate
+from .projection import AcceptedCoordinate
 
 KIT_MANIFEST_FILE = "cruxible-kit.json"
 KIT_ARTIFACT_DIRECTORY = "artifacts"
@@ -119,6 +119,25 @@ class KitArtifact(_Strict):
         return _digest(value)
 
 
+class KitProvenance(_Strict):
+    """Where a release was built: claimed by the builder, not proven.
+
+    Shown by kit status and the install preview; it is not part of the release
+    identity, so the same definitions built twice are the same release.
+    """
+
+    instance_id: str
+    coordinate: AcceptedCoordinate
+    principal_id: str | None = None
+
+
+def kit_version_key(version: str) -> tuple[int, int, int]:
+    """MAJOR.MINOR.PATCH as a sortable tuple."""
+
+    major, minor, patch = _version(version).split(".")
+    return int(major), int(minor), int(patch)
+
+
 class KitManifest(_Strict):
     tag: Literal["playbill-kit-manifest-v1"] = "playbill-kit-manifest-v1"
     kit_id: str
@@ -126,6 +145,7 @@ class KitManifest(_Strict):
     # Identity prefixes this kit defines, each ending in a dot (``dev.``).
     owns: tuple[str, ...]
     artifacts: tuple[KitArtifact, ...]
+    provenance: KitProvenance | None = None
 
     @field_validator("kit_id")
     @classmethod
@@ -154,7 +174,8 @@ class KitManifest(_Strict):
 
         return Sha256Value(
             canonical_digest(
-                "playbill-kit-content-v1", self.model_dump(mode="json", exclude={"tag"})
+                "playbill-kit-content-v1",
+                self.model_dump(mode="json", exclude={"tag", "provenance"}),
             )
         ).tagged
 
@@ -224,6 +245,10 @@ class KitInstalledArtifact(_Strict):
     path: str
     release_digest: str
     installed_digest: str
+    #: The installed artifact's content apart from its lineage and lifecycle
+    #: (``kit_content_digest``): an edit since install is a content change, so
+    #: reverting one is no longer an edit.
+    content_digest: str | None = None
 
     @field_validator("path")
     @classmethod
@@ -236,6 +261,46 @@ class KitInstalledArtifact(_Strict):
     @classmethod
     def _digests(cls, value: str) -> str:
         return _digest(value)
+
+    @field_validator("content_digest")
+    @classmethod
+    def _content_digest(cls, value: str | None) -> str | None:
+        return None if value is None else _digest(value)
+
+
+def kit_content_digest(payload: dict[str, object]) -> str:
+    """One artifact's content apart from its lifecycle (lineage and live/retired)."""
+
+    return Sha256Value(
+        canonical_digest(
+            "playbill-kit-artifact-content-v1",
+            {key: value for key, value in payload.items() if key != "lifecycle"},
+        )
+    ).tagged
+
+
+#: What taking a release's version of a conflicting definition does here.
+KitConsequence = Literal[
+    "overwrites_your_edit",
+    "re_adds_retired",
+    "takes_over_outside_definition",
+    "replaces_carried_definition",
+    "release_dropped",
+]
+
+
+class KitKeptDivergence(_Strict):
+    """A definition the consumer kept its own way on purpose, so upgrades do not re-ask.
+
+    ``release_digest`` is the release's version it declined (None for a definition
+    the release dropped); a later release that changes that definition again asks
+    once more.
+    """
+
+    path: str
+    identity: str
+    consequence: KitConsequence
+    release_digest: str | None = None
 
 
 class KitReceipt(_Strict):
@@ -251,6 +316,8 @@ class KitReceipt(_Strict):
     # Definitions it pins but does not own: never replaced or retired through it.
     carried: tuple[KitInstalledArtifact, ...] = ()
     source: str | None = None
+    kept: tuple[KitKeptDivergence, ...] = ()
+    provenance: KitProvenance | None = None
 
     @field_validator("kit_id")
     @classmethod
@@ -302,16 +369,38 @@ class KitBuildResult(_Strict):
 
 
 class KitAddRequest(_Strict):
+    """Install or upgrade a kit. It always proposes: a conflicting definition takes
+    the release's version unless kept, and a replaced definition's dependents are
+    carried to it."""
+
     bundle: KitBundle
     # Where the bundle came from, recorded in the receipt (a registry reference
-    # or a directory name); never interpreted.
+    # or a directory name); a registry reference lets kit status look for updates.
     source: str | None = None
-    # A changed ClaimType's live dependents are carried to the successor by
-    # default, as a succession would; name one here to retire it instead.
-    dependents: tuple[ClaimTypeSuccessionDependent, ...] = ()
+    #: Definitions (``ClaimType:acme.account.seats``) to keep as this instance has
+    #: them instead of taking the release's version; for a definition the release
+    #: dropped, keep it live.
+    keep: tuple[str, ...] = ()
+    #: Keep every definition edited here since the kit installed it.
+    keep_local_edits: bool = False
+    #: Definitions the release dropped to retire along with their live dependents.
+    #: A dropped definition with no dependents retires without being named; one
+    #: with dependents is kept unless named here.
+    retire_dependents: tuple[str, ...] = ()
+    #: Install a release older than the installed one.
+    allow_downgrade: bool = False
     #: A kit install is derived across many artifacts, so it previews by default.
     dry_run: DryRun = None
     at: PreviewAt = None
+
+    @field_validator("keep", "retire_dependents")
+    @classmethod
+    def _identities(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
+        for identity in value:
+            kind, separator, name = identity.partition(":")
+            if not separator or not kind or not name:
+                raise ValueError(f"{info.field_name} names a definition as KIND:NAME")
+        return _sorted_unique(value, label=str(info.field_name))
 
 
 class KitRemoveRequest(_Strict):
@@ -326,13 +415,25 @@ class KitRemoveRequest(_Strict):
         return _kit_id(value)
 
 
-KitPathAction = Literal["add", "unchanged", "replace", "retire", "carry", "conflict"]
+KitPathAction = Literal["add", "unchanged", "replace", "retire", "keep"]
 
 
 class KitPathPlan(_Strict):
+    """One kit definition in a change: what happens to it and what that does here."""
+
     path: str
     action: KitPathAction
+    #: The definition (``ClaimType:acme.account.seats``), for grouping by kind.
+    identity: str | None = None
+    #: What taking the release's version does here, or (``keep``) what was declined.
+    consequence: KitConsequence | None = None
+    #: Live artifacts here that pin this definition: carried to a replacement,
+    #: retired with a retirement.
+    dependent_count: int = 0
     detail: str | None = None
+
+
+KitTransition = Literal["install", "upgrade", "downgrade", "reinstall"]
 
 
 class KitChangeResult(_Strict):
@@ -341,17 +442,28 @@ class KitChangeResult(_Strict):
     tag: Literal["playbill-kit-change-result-v1"] = "playbill-kit-change-result-v1"
     kit_id: str
     version: str | None
-    # A kit change is proposed, never activated here: activation stays the
-    # ordinary tier-gated step, after any approval the instance's policy requires.
+    # A kit change lands at once (``accepted``) when the instance's approval
+    # policy requires no approval, like provider install and value writes;
+    # otherwise it stops at ``proposed`` for the ordinary review and activation.
     # A preview (the default) answers would_propose or would_block and proposes
     # nothing; commit with dry_run=false and at=<coordinate>.
-    status: Literal["unchanged", "proposed", "blocked", "would_propose", "would_block"]
+    status: Literal["unchanged", "proposed", "accepted", "blocked", "would_propose", "would_block"]
     proposal_id: str | None = None
     approval_required: bool = False
+    #: From the installed version to this release's (None for a removal).
+    transition: KitTransition | None = None
+    installed_version: str | None = None
+    provenance: KitProvenance | None = None
     plan: tuple[KitPathPlan, ...] = ()
     detail: str | None = None
     #: The accepted coordinate this change was evaluated at.
     coordinate: GetCoordinate | None = None
+
+
+#: Whether the adapter looked for a newer release of a registry-sourced kit:
+#: ``checked`` (latest_available answers), ``offline`` (skipped), ``local_source``
+#: (installed from a directory or layout: nothing to check), ``unavailable``.
+KitUpdateCheck = Literal["not_checked", "checked", "offline", "local_source", "unavailable"]
 
 
 class InstalledKit(_Strict):
@@ -359,8 +471,13 @@ class InstalledKit(_Strict):
     version: str
     content_digest: str
     source: str | None = None
-    # Kit paths whose accepted bytes no longer match the receipt: local edits.
+    # Kit paths whose accepted content no longer matches the receipt: local edits.
     drifted: tuple[str, ...] = ()
+    provenance: KitProvenance | None = None
+    kept: tuple[KitKeptDivergence, ...] = ()
+    #: Filled by the CLI and MCP adapters from the registry's tags.
+    latest_available: str | None = None
+    update_check: KitUpdateCheck = "not_checked"
 
 
 class KitStatus(_Strict):

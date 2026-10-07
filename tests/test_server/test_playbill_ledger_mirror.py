@@ -1,4 +1,4 @@
-"""The served doors onto the ledger mirror: bind it, read it back, orient on it."""
+"""The served doors onto the ledger mirror: bind it, clear it, orient on it."""
 
 from __future__ import annotations
 
@@ -17,16 +17,10 @@ def _bare(path: Path) -> Path:
     return path
 
 
-def test_clone_url_refuses_typed_before_a_mirror_is_bound(
-    playbill_http: tuple[TestClient, str, Path],
-) -> None:
-    client, instance_id, _reviewer = playbill_http
-
-    response = client.get(f"/api/v1/{instance_id}/ledger/mirror")
-
-    assert response.status_code == 400, response.text
-    assert "cruxible.ledger.mirror_unset" in response.text
-    assert "set-mirror" in response.text
+def _mirror_url(client: TestClient, instance_id: str) -> str | None:
+    response = client.get(f"/api/v1/{instance_id}/orient")
+    assert response.status_code == 200, response.text
+    return response.json().get("mirror_url")
 
 
 def _bind(client: TestClient, instance_id: str, remote: Path) -> Any:
@@ -58,9 +52,35 @@ def test_setting_a_mirror_publishes_and_reads_back(
     assert bound.status_code == 200, bound.text
     assert bound.json()["status"] == "current"
     assert bound.json()["mirror_url"] == str(remote)
-    read_back = client.get(f"/api/v1/{instance_id}/ledger/mirror")
-    assert read_back.status_code == 200, read_back.text
-    assert read_back.json()["mirror_url"] == str(remote)
+    assert _mirror_url(client, instance_id) == str(remote)
+
+
+def test_clearing_previews_then_unbinds_and_repeats_as_a_no_op(
+    tmp_path: Path,
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _reviewer = playbill_http
+    url = f"/api/v1/{instance_id}/ledger/mirror/clear"
+    nothing = client.post(url, json={})
+    assert nothing.status_code == 200, nothing.text
+    assert nothing.json()["status"] == "already_clear"
+    remote = _bare(tmp_path / "mirror.git")
+    assert _bind(client, instance_id, remote).status_code == 200
+
+    preview = client.post(url, json={"dry_run": True})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["status"] == "would_clear"
+    assert preview.json()["previous_mirror_url"] == str(remote)
+    assert _mirror_url(client, instance_id) == str(remote)
+
+    cleared = client.post(url, json={})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["status"] == "cleared"
+    assert cleared.json()["previous_mirror_url"] == str(remote)
+    assert _mirror_url(client, instance_id) is None
+    publish = client.post(f"/api/v1/{instance_id}/ledger/publish", json={"timeout": 0})
+    assert publish.status_code == 400, publish.text
+    assert "cruxible.ledger.mirror_unset" in publish.text
 
 
 def test_a_credential_bearing_url_never_reaches_the_descriptor(
@@ -75,7 +95,7 @@ def test_a_credential_bearing_url_never_reaches_the_descriptor(
 
     assert response.status_code == 400, response.text
     assert "cruxible.ledger.mirror_url_invalid" in response.text
-    assert client.get(f"/api/v1/{instance_id}/ledger/mirror").status_code == 400
+    assert _mirror_url(client, instance_id) is None
 
 
 def test_orientation_carries_the_mirror_url_without_a_second_round_trip(
@@ -118,23 +138,7 @@ def test_init_binds_the_mirror_during_bootstrap(
     )
 
     assert initialized.status_code == 200, initialized.text
-    read_back = client.get(f"/api/v1/{second.record.instance_id}/ledger/mirror")
-    assert read_back.status_code == 200, read_back.text
-    assert read_back.json() == {
-        "tag": "playbill-ledger-mirror-v1",
-        "instance_id": second.record.instance_id,
-        "mirror_url": str(remote),
-        "status": "current",
-        "attempted_at": read_back.json()["attempted_at"],
-        "published_main_oid": read_back.json()["published_main_oid"],
-        "requested_sequence": 1,
-        "attempted_sequence": 1,
-        "published_sequence": 1,
-        "wait_sequence": None,
-        "published_refs": {"refs/heads/main": read_back.json()["published_main_oid"]},
-        "coordinate": None,
-        "detail": None,
-    }
+    assert _mirror_url(client, second.record.instance_id) == str(remote)
 
 
 def test_init_refuses_a_malformed_mirror_before_any_state_exists(

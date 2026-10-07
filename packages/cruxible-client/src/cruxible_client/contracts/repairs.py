@@ -230,7 +230,7 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
         operation="cruxible.block.sync", arguments={"all": True}
     ),
     # A retired member cannot be un-retired, so the block either stops holding
-    # it or the marker leaves the page. The producer names `sync --detach PATH`
+    # it or the marker leaves the page. The producer names `block detach PATH`
     # with the path it knows; this fallback names the sweep that finds them.
     "block_backing_retired": RepairOperation(
         operation="cruxible.block.sync", arguments={"all": True}
@@ -277,7 +277,7 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
     "occurrence_id_mismatch": RepairOperation(operation="cruxible.line.run"),
     "evaluation_instant_skewed": RepairOperation(operation="cruxible.line.run"),
     "line_identity_mismatch": RepairOperation(operation="cruxible.line.run"),
-    "document_modified": RepairOperation(operation="cruxible.document.propose"),
+    "document_modified": RepairOperation(operation="cruxible.sources.propose"),
     # A next page cursor names the whole queue it continues; once that queue
     # moves, the repair is to read page one again.
     "cruxible.next.cursor_mismatch": RepairOperation(operation="cruxible.next"),

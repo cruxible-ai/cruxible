@@ -163,7 +163,9 @@ class AdoptionFixtureProfile:
             + 1  # the governed Procedure runtime-policy singleton
             + 1  # the direct self-asserted capture contract
             + 3  # the daemon, owner, and independent reviewer principal records
-            + 3  # the default evidence.sweep, floor.refresh and prediction.anchor_retry Triggers
+            # The default curation.detect, evidence.sweep, floor.refresh and
+            # prediction.anchor_retry Triggers.
+            + 4
         )
 
 

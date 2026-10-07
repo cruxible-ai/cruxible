@@ -25,7 +25,14 @@ def mirror_cli(monkeypatch, tmp_path):
     calls = []
     client = SimpleNamespace(
         publish_ledger=lambda instance_id, **kwargs: calls.append((instance_id, kwargs)) or receipt,
-        get_ledger_mirror=lambda _: receipt,
+        clear_ledger_mirror=lambda instance_id, **kwargs: (
+            calls.append((instance_id, kwargs))
+            or contracts.LedgerMirrorCleared(
+                instance_id=instance_id,
+                status="cleared",
+                previous_mirror_url="https://mirror.example.test/ledger.git",
+            )
+        ),
     )
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     args = [
@@ -58,10 +65,20 @@ def test_cli_publish_json_and_timeout_validation(mirror_cli):
     assert len(calls) == 1
 
 
-def test_cli_clone_url_keeps_stdout_pipeable_and_status_visible(mirror_cli, tmp_path):
+def test_cli_set_mirror_clear_commits_by_default_and_takes_no_url(mirror_cli):
+    args, calls = mirror_cli
+    result = CliRunner().invoke(cli, [*args, "set-mirror", "--clear"])
+    assert result.exit_code == 0, result.output
+    assert calls == [("inst_test", {"dry_run": None, "at": None})]
+    assert "Stopped publishing to https://mirror.example.test/ledger.git." in result.stdout
+    both = CliRunner().invoke(cli, [*args, "set-mirror", "--clear", "https://x.test/l.git"])
+    assert both.exit_code == 2
+    neither = CliRunner().invoke(cli, [*args, "set-mirror"])
+    assert neither.exit_code == 2
+    assert len(calls) == 1
+
+
+def test_cli_clone_url_is_cut(mirror_cli):
     args, _ = mirror_cli
     result = CliRunner().invoke(cli, [*args, "clone-url"])
-    assert result.exit_code == 0, result.output
-    assert result.stdout == f"{tmp_path / 'unused.git'}\n"
-    assert "Publication: pending" in result.stderr
-    assert "acknowledged request 2, latest requested 3" in result.stderr
+    assert result.exit_code == 2

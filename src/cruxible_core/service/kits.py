@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator, Mapping
-from typing import Any
+from typing import Any, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.claim_types import parse_claim_type
 from cruxible_client.contracts.documents import (
     DocumentLifecycle,
     DocumentShell,
@@ -40,15 +41,23 @@ from cruxible_client.contracts.kits import (
     KitBuildResult,
     KitBundle,
     KitChangeResult,
+    KitConsequence,
     KitInstalledArtifact,
+    KitKeptDivergence,
     KitManifest,
     KitPathPlan,
+    KitProvenance,
     KitReceipt,
     KitRemoveRequest,
     KitStatus,
+    KitTransition,
     kit_artifact_path_allowed,
+    kit_content_digest,
     kit_receipt_document_id,
+    kit_version_key,
 )
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+from cruxible_client.contracts.projection import AcceptedCoordinate as ServedCoordinate
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.claims.artifact_references import (
     move_references,
@@ -58,13 +67,16 @@ from cruxible_core.claims.artifact_references import (
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDisposition,
     ClaimTypeMigrationError,
+    ClaimTypeMigrationInventoryItemV1,
     build_dependent_closure_candidate,
     dependent_closure_inventory,
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
 from cruxible_core.errors import DataValidationError, RequestRefusedError
+from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 
@@ -181,14 +193,33 @@ def _dependency_order(
         yield from visit(path)
 
 
-def service_build_kit(instance: PlaybillInstance, request: KitBuildRequest) -> KitBuildResult:
-    """Export owned definitions at the accepted head as one release of ``kit_id``."""
+def service_build_kit(
+    instance: PlaybillInstance, request: KitBuildRequest, *, principal_id: str | None = None
+) -> KitBuildResult:
+    """Export owned definitions at the accepted head as one release of ``kit_id``.
 
-    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-    return KitBuildResult(bundle=build_kit(tree, request))
+    The manifest records where it was built (this instance, the accepted
+    coordinate, the building principal): claimed, not proven.
+    """
+
+    coordinate = instance.accepted_coordinate()
+    tree = instance.immutable_tree_at(coordinate.git_oid)
+    provenance = KitProvenance(
+        instance_id=instance.descriptor.instance_id,
+        coordinate=ServedCoordinate.model_validate(
+            AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+        ),
+        principal_id=principal_id,
+    )
+    return KitBuildResult(bundle=build_kit(tree, request, provenance=provenance))
 
 
-def build_kit(tree: Mapping[str, bytes], request: KitBuildRequest) -> KitBundle:
+def build_kit(
+    tree: Mapping[str, bytes],
+    request: KitBuildRequest,
+    *,
+    provenance: KitProvenance | None = None,
+) -> KitBundle:
     """Export the owned definitions of one accepted tree as a self-contained release.
 
     Owned live definitions and everything they pin become lineage-free
@@ -239,6 +270,7 @@ def build_kit(tree: Mapping[str, bytes], request: KitBuildRequest) -> KitBundle:
             )
             for path in sorted(built)
         ),
+        provenance=provenance,
     )
     return KitBundle(
         manifest=manifest,
@@ -315,6 +347,26 @@ class _Diff:
         self.writes: dict[str, bytes] = {}
         # Release digest -> the digest this instance holds (or will) for that path.
         self.installed: dict[str, str] = {}
+        # Path -> the content digest (lifecycle apart) this instance holds after.
+        self.content: dict[str, str] = {}
+        # Divergences kept on purpose, recorded in the receipt.
+        self.kept: list[KitKeptDivergence] = []
+        # Identity -> dependents counted beyond the pin closure (evidence-rule
+        # consumers of a CaptureContract, with their closures).
+        self.semantic_counts: dict[str, int] = {}
+
+
+def _installed_content(entry: KitInstalledArtifact, tree: Mapping[str, bytes]) -> str | None:
+    """The content digest a receipt recorded; receipts from before it use the bytes held."""
+
+    if entry.content_digest is not None:
+        return entry.content_digest
+    current = tree.get(entry.path)
+    if current is None:
+        return None
+    if _artifact_state(entry.path, current).artifact_digest != entry.installed_digest:
+        return None
+    return kit_content_digest(json.loads(current))
 
 
 def _diff_release(
@@ -322,9 +374,18 @@ def _diff_release(
     contents: Mapping[str, bytes],
     *,
     owns: tuple[str, ...],
-    installed: Mapping[str, str],
+    installed: Mapping[str, KitInstalledArtifact],
+    kept: Mapping[str, KitKeptDivergence],
+    keep: frozenset[str],
+    keep_local_edits: bool,
 ) -> tuple[_Diff, set[str]]:
-    """Plan every release path against the tree; returns the diff and the owned paths."""
+    """Plan every release path against the tree; returns the diff and the owned paths.
+
+    Nothing blocks: a definition this instance holds differently takes the
+    release's version as a successor of its own, named by what that does here,
+    unless ``keep`` (or ``keep_local_edits``) keeps this instance's version or an
+    earlier install kept it on purpose against this same release version.
+    """
 
     states = {path: _artifact_state(path, content) for path, content in contents.items()}
     payloads = {path: json.loads(content) for path, content in contents.items()}
@@ -332,140 +393,361 @@ def _diff_release(
     diff = _Diff()
     for path, _pinned in _dependency_order(states, payloads):
         release_digest = states[path].artifact_digest
+        identity = states[path].identity.qualified
         payload = _substitute(path, payloads[path], diff.installed)
         carried = path not in owned
-        tag = "carried" if carried else None
         current = tree.get(path)
         if current is None:
             content, digest = _render(path, payload)
-            diff.plan.append(KitPathPlan(path=path, action="add", detail=tag))
+            diff.plan.append(KitPathPlan(path=path, action="add", identity=identity))
             diff.writes[path] = content
             diff.installed[release_digest] = digest
+            diff.content[path] = kit_content_digest(payload)
             continue
         current_state = _artifact_state(path, current)
-        if current_state.lifecycle.state != "live":
-            diff.plan.append(
-                KitPathPlan(path=path, action="conflict", detail="retired in this instance")
-            )
-            continue
-        if _without_lifecycle(json.loads(current)) == _without_lifecycle(payload):
-            diff.plan.append(KitPathPlan(path=path, action="unchanged", detail=tag))
+        current_payload = json.loads(current)
+        live = current_state.lifecycle.state == "live"
+        if live and _without_lifecycle(current_payload) == _without_lifecycle(payload):
+            diff.plan.append(KitPathPlan(path=path, action="unchanged", identity=identity))
             diff.installed[release_digest] = current_state.artifact_digest
+            diff.content[path] = kit_content_digest(current_payload)
             continue
-        if carried:
-            detail = "carried; differs from the accepted one"
-        elif installed.get(path) == current_state.artifact_digest:
-            content, digest = _render(
-                path,
-                _successor_payload(
-                    payload, predecessor=current_state.artifact_digest, state="live"
-                ),
+        previously = kept.get(path)
+        if previously is not None and previously.release_digest == release_digest:
+            # Kept on purpose against this same release version: not asked again.
+            diff.plan.append(
+                KitPathPlan(
+                    path=path,
+                    action="keep",
+                    identity=identity,
+                    consequence=previously.consequence,
+                    detail="kept on purpose at an earlier install",
+                )
             )
-            diff.plan.append(KitPathPlan(path=path, action="replace"))
-            diff.writes[path] = content
-            diff.installed[release_digest] = digest
+            diff.installed[release_digest] = current_state.artifact_digest
+            diff.content[path] = kit_content_digest(current_payload)
+            diff.kept.append(previously)
             continue
-        elif path in installed:
-            detail = "edited since the kit installed it"
+        consequence: KitConsequence | None
+        if not live:
+            consequence = "re_adds_retired"
+        elif carried:
+            consequence = "replaces_carried_definition"
+        elif path not in installed:
+            consequence = "takes_over_outside_definition"
+        elif _installed_content(installed[path], tree) == kit_content_digest(current_payload):
+            consequence = None
         else:
-            detail = "already defined outside this kit"
-        diff.plan.append(KitPathPlan(path=path, action="conflict", detail=detail))
+            consequence = "overwrites_your_edit"
+        keeping = consequence is not None and (
+            identity in keep or (keep_local_edits and consequence == "overwrites_your_edit")
+        )
+        if keeping:
+            assert consequence is not None
+            diff.plan.append(
+                KitPathPlan(
+                    path=path,
+                    action="keep",
+                    identity=identity,
+                    consequence=consequence,
+                    detail="this instance's version is kept",
+                )
+            )
+            diff.installed[release_digest] = current_state.artifact_digest
+            diff.content[path] = kit_content_digest(current_payload)
+            diff.kept.append(
+                KitKeptDivergence(
+                    path=path,
+                    identity=identity,
+                    consequence=consequence,
+                    release_digest=release_digest,
+                )
+            )
+            continue
+        content, digest = _render(
+            path,
+            _successor_payload(payload, predecessor=current_state.artifact_digest, state="live"),
+        )
+        diff.plan.append(
+            KitPathPlan(path=path, action="replace", identity=identity, consequence=consequence)
+        )
+        diff.writes[path] = content
+        diff.installed[release_digest] = digest
+        diff.content[path] = kit_content_digest(payload)
     return diff, owned
 
 
-def _retire_dropped(
-    tree: Mapping[str, bytes], installed: Mapping[str, str], keep: set[str], diff: _Diff
-) -> None:
-    """Retire owned paths the kit installed that the release no longer has."""
+def _retirement(path: str, current: bytes) -> bytes:
+    state = _artifact_state(path, current)
+    content, _digest = _render(
+        path,
+        _successor_payload(json.loads(current), predecessor=state.artifact_digest, state="retired"),
+    )
+    return content
 
-    for path, installed_digest in sorted(installed.items()):
-        if path in keep:
+
+def _live_dependents(
+    tree: Mapping[str, bytes], identity: ArtifactIdentity, path: str
+) -> frozenset[str]:
+    """The paths of the live reverse-pin closure of one definition."""
+
+    try:
+        return frozenset(
+            item.path
+            for item in dependent_closure_inventory(
+                tree, roots=(identity,), fixed_paths=frozenset({path})
+            )
+        )
+    except ClaimTypeMigrationError:
+        return frozenset()
+
+
+def _evidence_rule_consumers(
+    tree: Mapping[str, bytes], contract: ArtifactDependencyStateV1
+) -> tuple[tuple[str, ArtifactIdentity], ...]:
+    """Live ClaimTypes whose evidence rules admit captures under this CaptureContract.
+
+    A semantic dependency, not a pin: an identity rule (ClaimType v6 and later)
+    names the contract by identity and a historical rule by exact digest, and
+    neither is a reverse-pin edge. Retiring the contract strands every one of
+    them, which admission refuses. Claims citing the contract are provenance and
+    never count.
+    """
+
+    found = []
+    for path in sorted(tree):
+        if not (path.startswith("claim-types/") and path.endswith(".json")):
+            continue
+        try:
+            claim_type = parse_claim_type(tree[path], path=path)
+        except ValueError:
+            continue
+        if claim_type.lifecycle.state != "live":
+            continue
+        for rule in claim_type.evidence_admission_policy.rules:
+            if isinstance(rule, ClaimEvidenceAdmissionRule):
+                names = any(ref.target == contract.identity for ref in rule.capture_contracts)
+            else:
+                names = contract.artifact_digest in getattr(rule, "capture_contract_digests", ())
+            if names:
+                found.append((path, claim_type.identity))
+                break
+    return tuple(found)
+
+
+def _settle_dropped(
+    tree: Mapping[str, bytes],
+    installed: Mapping[str, KitInstalledArtifact],
+    keep_paths: set[str],
+    diff: _Diff,
+    *,
+    keep: frozenset[str],
+    retire_dependents: frozenset[str],
+    kept: Mapping[str, KitKeptDivergence],
+) -> set[str]:
+    """Decide each definition the kit installed that the release dropped.
+
+    One decision per definition: kept live when named in ``keep``, retired with
+    its dependents when named in ``retire_dependents``, otherwise retired when
+    nothing live depends on it and kept (and reported) when something does.
+    Returns the identities retired together with their dependents.
+    """
+
+    retiring_with_dependents: set[str] = set()
+    for path in sorted(installed):
+        if path in keep_paths:
             continue
         current = tree.get(path)
         if current is None:
             continue
         state = _artifact_state(path, current)
-        if state.artifact_digest != installed_digest:
+        if state.lifecycle.state != "live":
+            continue
+        identity = state.identity.qualified
+        previously = kept.get(path)
+        dependent_paths = set(_live_dependents(tree, state.identity, path))
+        consumers = (
+            _evidence_rule_consumers(tree, state)
+            if state.identity.kind == "CaptureContract"
+            else ()
+        )
+        for consumer_path, consumer in consumers:
+            dependent_paths.add(consumer_path)
+            dependent_paths |= _live_dependents(tree, consumer, consumer_path)
+        dependent_paths.discard(path)
+        dependents = len(dependent_paths)
+        if consumers:
+            # Counted here in full; the pin-closure recount must not shrink it.
+            diff.semantic_counts[identity] = dependents
+        named_retire = identity in retire_dependents
+        if identity in keep or (
+            not named_retire
+            and (dependents or (previously is not None and previously.release_digest is None))
+        ):
             diff.plan.append(
                 KitPathPlan(
-                    path=path, action="conflict", detail="edited since the kit installed it"
+                    path=path,
+                    action="keep",
+                    identity=identity,
+                    consequence="release_dropped",
+                    dependent_count=dependents,
+                    detail=None
+                    if identity in keep
+                    else "the release dropped it and live artifacts depend on it; name it in "
+                    "retire_dependents (--retire-dependents) to retire it and them"
+                    if dependents
+                    else "the release dropped it and an earlier install kept it on purpose; "
+                    "name it in retire_dependents (--retire-dependents) to retire it",
                 )
             )
-        elif state.lifecycle.state == "live":
-            content, _digest = _render(
-                path,
-                _successor_payload(
-                    json.loads(current), predecessor=state.artifact_digest, state="retired"
-                ),
+            diff.kept.append(
+                KitKeptDivergence(path=path, identity=identity, consequence="release_dropped")
             )
-            diff.plan.append(KitPathPlan(path=path, action="retire"))
-            diff.writes[path] = content
+            continue
+        diff.plan.append(
+            KitPathPlan(
+                path=path,
+                action="retire",
+                identity=identity,
+                consequence="release_dropped",
+                dependent_count=dependents,
+            )
+        )
+        diff.writes[path] = _retirement(path, current)
+        if dependents:
+            retiring_with_dependents.add(identity)
+        for consumer_path, consumer in consumers:
+            # A ClaimType whose evidence rules need the retired contract retires
+            # with it, and its own dependents with it.
+            if consumer_path not in diff.writes:
+                diff.writes[consumer_path] = _retirement(consumer_path, tree[consumer_path])
+            retiring_with_dependents.add(consumer.qualified)
+    return retiring_with_dependents
 
 
 def _settle_dependents(
     tree: Mapping[str, bytes],
     diff: _Diff,
-    overrides: Mapping[str, ClaimTypeDependentDisposition],
+    *,
+    retire_with: set[str],
 ) -> tuple[dict[str, bytes], list[str]]:
     """Every write, plus one successor for each accepted dependent they change.
 
     A normal change set owes the closure of what it changes: every live artifact
     pinning a replaced or retired kit definition takes a successor in the same
-    generation. Each is read at its accepted bytes, carried (re-pinned) to the
-    kit's final definitions by default or retired when the request says so, and
-    settled once however many kit definitions it pins. A dependent of a retired
-    definition has nothing to be carried to, so it needs an explicit disposition.
+    generation, carried (re-pinned) to the kit's final definitions, or retired
+    with a definition the request retires together with its dependents. The plan
+    counts each definition's dependents rather than listing them.
     """
 
     changed = {path: content for path, content in diff.writes.items() if path in tree}
     if not changed:
         return dict(diff.writes), []
-    retired = {
-        _artifact_state(path, content).identity.qualified
-        for path, content in changed.items()
-        if _artifact_state(path, content).lifecycle.state == "retired"
-    }
-    roots = tuple(_artifact_state(path, tree[path]).identity for path in sorted(changed))
+    roots: dict[str, ArtifactIdentity] = {}
+    for path in sorted(changed):
+        identity = _artifact_state(path, tree[path]).identity
+        roots[identity.qualified] = identity
+    fixed = frozenset(diff.writes)
     try:
-        inventory = dependent_closure_inventory(
-            tree, roots=roots, fixed_paths=frozenset(diff.writes)
-        )
+        # Each changed definition's complete reverse closure, on its own: a
+        # dependent reached through several definitions counts for each, and
+        # belongs to the retirement closure of every one it reaches.
+        closures = {
+            name: dependent_closure_inventory(tree, roots=(identity,), fixed_paths=fixed)
+            for name, identity in roots.items()
+        }
     except ClaimTypeMigrationError as error:
         return dict(diff.writes), [str(error)]
-    if not inventory:
+    union: dict[str, ClaimTypeMigrationInventoryItemV1] = {}
+    for name in roots:
+        for item in closures[name]:
+            union.setdefault(item.path, item)
+    if not union:
         return dict(diff.writes), []
+    inventory = tuple(union[path] for path in sorted(union))
+    counts = {name: len(items) for name, items in closures.items() if items}
+    retiring = {item.path for name in retire_with for item in closures.get(name, ())}
     refused = []
     dispositions = []
     for item in inventory:
-        qualified = item.identity.qualified
-        chosen = overrides.get(qualified)
-        if chosen is None and (
-            item.triggering_identity.qualified not in retired
-            and "successor" in item.permitted_dispositions
-        ):
-            chosen = ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
-        if chosen is None:
-            refused.append(f"{qualified} needs a disposition")
-            continue
-        dispositions.append(chosen)
+        if item.path in retiring and "retire" in item.permitted_dispositions:
+            dispositions.append(
+                ClaimTypeDependentDisposition(
+                    identity=item.identity,
+                    disposition="retire",
+                    claim_retirement_reason="was-rescinded"
+                    if item.artifact_kind == "claim"
+                    else None,
+                )
+            )
+        elif "successor" in item.permitted_dispositions:
+            dispositions.append(
+                ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
+            )
+        else:
+            refused.append(
+                f"{item.identity.qualified} cannot be carried to "
+                f"{item.triggering_identity.qualified}"
+            )
     if refused:
         return dict(diff.writes), refused
     try:
-        settled, normalized = build_dependent_closure_candidate(
+        settled, _normalized = build_dependent_closure_candidate(
             tree=tree, changed=changed, inventory=inventory, dispositions=tuple(dispositions)
         )
     except ClaimTypeMigrationError as error:
         return dict(diff.writes), [str(error)]
-    paths = {item.identity.qualified: item.path for item in inventory}
-    for outcome in normalized:
-        diff.plan.append(
-            KitPathPlan(
-                path=paths[outcome.identity.qualified],
-                action="carry" if outcome.disposition == "successor" else "retire",
-                detail="depends on a changed kit definition",
-            )
-        )
+    diff.plan[:] = [
+        item.model_copy(update={"dependent_count": counts[item.identity]})
+        if item.identity in counts and item.identity not in diff.semantic_counts
+        else item
+        for item in diff.plan
+    ]
     return {**settled, **diff.writes}, []
+
+
+def _held_by_other_kits(
+    instance: PlaybillInstance, tree: Mapping[str, bytes], kit_id: str
+) -> dict[str, str]:
+    """Every definition path another installed kit holds -> that kit.
+
+    A kit holds what its receipt records, not only what its current prefixes
+    name: a definition the release dropped but the consumer kept stays that
+    kit's even when a later release narrows its prefixes past it.
+    """
+
+    return {
+        entry.path: receipt.kit_id
+        for receipt in _receipts(instance, tree)
+        if receipt.kit_id != kit_id
+        for entry in receipt.artifacts
+    }
+
+
+def _foreign_takeovers(
+    instance: PlaybillInstance, tree: Mapping[str, bytes], kit_id: str, diff: _Diff
+) -> list[str]:
+    """A release may not change a definition another installed kit owns or holds: a
+    hard block, like overlapping ownership."""
+
+    owners = [
+        (prefix, receipt.kit_id)
+        for receipt in _receipts(instance, tree)
+        if receipt.kit_id != kit_id and receipt.artifacts
+        for prefix in receipt.owns
+    ]
+    held = _held_by_other_kits(instance, tree, kit_id)
+    found: list[str] = []
+    for item in diff.plan:
+        if item.action != "replace" or item.identity is None:
+            continue
+        name = item.identity.partition(":")[2]
+        owned_by = [owner for prefix, owner in owners if name.startswith(prefix)]
+        found.extend(f"{item.identity} is owned by kit {owner}" for owner in owned_by)
+        holder = held.get(item.path)
+        if holder is not None and holder not in owned_by:
+            found.append(f"{item.identity} is held by kit {holder}")
+    return found
 
 
 def _ownership_conflicts(
@@ -479,6 +761,17 @@ def _ownership_conflicts(
             for theirs in receipt.owns:
                 if prefix.startswith(theirs) or theirs.startswith(prefix):
                     conflicts.append(f"{prefix} overlaps {theirs}, owned by kit {receipt.kit_id}")
+    # A prefix may not take in a definition another kit still holds outside
+    # its own prefixes (one it kept after its release dropped it).
+    for path, holder in sorted(_held_by_other_kits(instance, tree, manifest.kit_id).items()):
+        current = tree.get(path)
+        if current is None:
+            continue
+        identity = _artifact_state(path, current).identity
+        if any(identity.name.startswith(prefix) for prefix in manifest.owns) and not any(
+            conflict.endswith(f"owned by kit {holder}") for conflict in conflicts
+        ):
+            conflicts.append(f"{identity.qualified} is held by kit {holder}")
     return conflicts
 
 
@@ -494,9 +787,17 @@ def _submit(
     plan: tuple[KitPathPlan, ...],
     actor_id: str,
     timestamp: str,
+    transition: KitTransition | None = None,
+    installed_version: str | None = None,
+    provenance: KitProvenance | None = None,
 ) -> KitChangeResult:
     assert mode.head is not None
     base = mode.head
+    described = {
+        "transition": transition,
+        "installed_version": installed_version,
+        "provenance": provenance,
+    }
     body = instance.store_document_body(pretty_canonical_bytes(receipt.model_dump(mode="json")))
     shell = DocumentShell(
         identity=f"document:{kit_receipt_document_id(kit_id)}",
@@ -547,6 +848,7 @@ def _submit(
             approval_required=bool(evidence.approval_requirements),
             plan=plan,
             coordinate=mode.coordinate,
+            **described,  # type: ignore[arg-type]
         )
     admitted = admit_change_set(
         instance,
@@ -556,34 +858,36 @@ def _submit(
         candidate_tree=candidate,
         timestamp=timestamp,
     )
+    status: Literal[
+        "unchanged", "proposed", "accepted", "blocked", "would_propose", "would_block"
+    ] = admitted.status
+    if status == "proposed" and not admitted.approval_required:
+        # Like provider install and value writes, a kit change the approval
+        # policy lets through lands at once; otherwise it stops at proposed.
+        assert admitted.proposal_id is not None
+        activation = service_activate_playbill_proposal(
+            instance, proposal_id=admitted.proposal_id, activated_by=actor_id
+        )
+        if activation.status == "accepted":
+            status = "accepted"
     return KitChangeResult(
         kit_id=kit_id,
         version=version,
-        status=admitted.status,
+        status=status,
         proposal_id=admitted.proposal_id,
         approval_required=admitted.approval_required,
         plan=plan,
         detail=None if admitted.admitted else admitted.refusal_detail(),
         coordinate=mode.coordinate,
+        **described,  # type: ignore[arg-type]
     )
 
 
-def _overrides(request: KitAddRequest) -> dict[str, ClaimTypeDependentDisposition]:
-    chosen = {}
-    for item in request.dependents:
-        disposition = item.disposition
-        if disposition != "successor" and disposition != "retire":
-            raise DataValidationError(
-                f"{item.identity.qualified}: a kit install carries or retires a dependent; "
-                f"{disposition} needs its own change set"
-            )
-        chosen[item.identity.qualified] = ClaimTypeDependentDisposition(
-            identity=ArtifactIdentity.model_validate(item.identity.model_dump()),
-            disposition=disposition,
-            claim_retirement_reason=item.claim_retirement_reason,
-            claim_effective_until=item.claim_effective_until,
-        )
-    return chosen
+def _transition(installed: str | None, release: str) -> KitTransition:
+    if installed is None:
+        return "install"
+    before, after = kit_version_key(installed), kit_version_key(release)
+    return "upgrade" if after > before else "downgrade" if after < before else "reinstall"
 
 
 def service_add_kit(
@@ -621,19 +925,46 @@ def _add_kit(
     bundle = request.bundle
     manifest = bundle.manifest
     contents = _verify_bundle(bundle)
-    overrides = _overrides(request)
     tree = instance.immutable_tree_at(mode.head.git_oid)
     found = _read_receipt(instance, tree, manifest.kit_id)
     shell, receipt = (None, None) if found is None else found
-    installed = {} if receipt is None else receipt.digests()
+    installed_version = None if receipt is None or not receipt.artifacts else receipt.version
+    transition = _transition(installed_version, manifest.version)
+    described = {
+        "transition": transition,
+        "installed_version": installed_version,
+        "provenance": manifest.provenance,
+    }
     blocked = _ownership_conflicts(instance, tree, manifest)
-    diff, owned = _diff_release(tree, contents, owns=manifest.owns, installed=installed)
-    _retire_dropped(tree, installed, owned, diff)
-    writes, refused = _settle_dependents(tree, diff, overrides)
+    if transition == "downgrade" and not request.allow_downgrade:
+        blocked.append(
+            f"release {manifest.version} is older than installed {installed_version}; "
+            "pass allow_downgrade (--allow-downgrade) to install it"
+        )
+    installed = {} if receipt is None else {item.path: item for item in receipt.artifacts}
+    kept = {} if receipt is None else {item.path: item for item in receipt.kept}
+    keep = frozenset(request.keep)
+    diff, owned = _diff_release(
+        tree,
+        contents,
+        owns=manifest.owns,
+        installed=installed,
+        kept=kept,
+        keep=keep,
+        keep_local_edits=request.keep_local_edits,
+    )
+    retire_with = _settle_dropped(
+        tree,
+        installed,
+        owned,
+        diff,
+        keep=keep,
+        retire_dependents=frozenset(request.retire_dependents),
+        kept=kept,
+    )
+    blocked.extend(_foreign_takeovers(instance, tree, manifest.kit_id, diff))
+    writes, refused = _settle_dependents(tree, diff, retire_with=retire_with)
     blocked.extend(refused)
-    conflicts = [item.path for item in diff.plan if item.action == "conflict"]
-    if conflicts:
-        blocked.append(f"{len(conflicts)} path(s) conflict")
     plan = tuple(sorted(diff.plan, key=lambda item: item.path))
     if blocked:
         return KitChangeResult(
@@ -643,14 +974,7 @@ def _add_kit(
             plan=plan,
             detail="; ".join(blocked),
             coordinate=mode.coordinate,
-        )
-    if not writes and receipt is not None and receipt.content_digest == manifest.content_digest:
-        return KitChangeResult(
-            kit_id=manifest.kit_id,
-            version=manifest.version,
-            status="unchanged",
-            plan=plan,
-            coordinate=mode.coordinate,
+            **described,  # type: ignore[arg-type]
         )
 
     def entries(paths: set[str]) -> tuple[KitInstalledArtifact, ...]:
@@ -659,20 +983,41 @@ def _add_kit(
                 path=item.path,
                 release_digest=item.artifact_digest,
                 installed_digest=diff.installed[item.artifact_digest],
+                content_digest=diff.content[item.path],
             )
             for item in manifest.artifacts
             if item.path in paths
         )
 
+    # A definition the release dropped but this instance kept stays the kit's:
+    # its installation record carries forward, so status, removal, ownership
+    # and the next install's decisions (keep it, or retire it and its
+    # dependents) still see it.
+    retained = tuple(
+        installed[item.path]
+        for item in sorted(diff.kept, key=lambda item: item.path)
+        if item.consequence == "release_dropped" and item.path in installed
+    )
     receipt_body = KitReceipt(
         kit_id=manifest.kit_id,
         version=manifest.version,
         content_digest=manifest.content_digest,
         owns=manifest.owns,
-        artifacts=entries(owned),
+        artifacts=entries(owned) + retained,
         carried=entries(set(contents) - owned),
         source=request.source,
+        kept=tuple(sorted(diff.kept, key=lambda item: item.path)),
+        provenance=manifest.provenance,
     )
+    if not writes and receipt is not None and receipt == receipt_body:
+        return KitChangeResult(
+            kit_id=manifest.kit_id,
+            version=manifest.version,
+            status="unchanged",
+            plan=plan,
+            coordinate=mode.coordinate,
+            **described,  # type: ignore[arg-type]
+        )
     return _submit(
         instance,
         mode,
@@ -684,6 +1029,7 @@ def _add_kit(
         plan=plan,
         actor_id=actor_id,
         timestamp=timestamp,
+        **described,  # type: ignore[arg-type]
     )
 
 
@@ -733,15 +1079,30 @@ def _remove_kit(
         )
     shell, receipt = found
     diff = _Diff()
-    _retire_dropped(tree, receipt.digests(), set(), diff)
-    plan = tuple(diff.plan)
-    if any(item.action == "conflict" for item in plan):
+    edited = []
+    for entry in receipt.artifacts:
+        current = tree.get(entry.path)
+        if current is None:
+            continue
+        state = _artifact_state(entry.path, current)
+        if state.lifecycle.state != "live":
+            continue
+        if _installed_content(entry, tree) != kit_content_digest(json.loads(current)):
+            edited.append(entry.path)
+            continue
+        diff.plan.append(
+            KitPathPlan(path=entry.path, action="retire", identity=state.identity.qualified)
+        )
+        diff.writes[entry.path] = _retirement(entry.path, current)
+    plan = tuple(sorted(diff.plan, key=lambda item: item.path))
+    if edited:
         return KitChangeResult(
             kit_id=request.kit_id,
             version=receipt.version,
             status="would_block" if mode.previewing else "blocked",
             plan=plan,
-            detail="edited kit paths must be reverted or retired by their own change first",
+            detail="edited kit paths must be reverted or retired by their own change first: "
+            + ", ".join(edited),
             coordinate=mode.coordinate,
         )
     return _submit(
@@ -749,7 +1110,7 @@ def _remove_kit(
         mode,
         kit_id=request.kit_id,
         version=receipt.version,
-        receipt=receipt.model_copy(update={"artifacts": (), "carried": ()}),
+        receipt=receipt.model_copy(update={"artifacts": (), "carried": (), "kept": ()}),
         previous_receipt=shell,
         writes=diff.writes,
         plan=plan,
@@ -759,15 +1120,18 @@ def _remove_kit(
 
 
 def service_kit_status(instance: PlaybillInstance) -> KitStatus:
+    """Installed kits with the paths edited since install (by content, lineage apart)."""
+
     tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
     kits = []
     for receipt in _receipts(instance, tree):
         if not receipt.artifacts:
             continue
         drifted = tuple(
-            path
-            for path, digest in receipt.digests().items()
-            if path not in tree or _artifact_state(path, tree[path]).artifact_digest != digest
+            entry.path
+            for entry in receipt.artifacts
+            if entry.path not in tree
+            or _installed_content(entry, tree) != kit_content_digest(json.loads(tree[entry.path]))
         )
         kits.append(
             InstalledKit(
@@ -776,6 +1140,8 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
                 content_digest=receipt.content_digest,
                 source=receipt.source,
                 drifted=drifted,
+                provenance=receipt.provenance,
+                kept=receipt.kept,
             )
         )
     return KitStatus(kits=tuple(kits))

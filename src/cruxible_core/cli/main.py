@@ -51,7 +51,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("host", "create"): "create",
     ("workspace", "attach"): "manual",
     ("workspace", "detach"): "manual",
-    ("workspace", "floor-delivery"): "manual",
+    ("floor", "delivery"): "manual",
     ("init",): "active",
     ("instance", "decommission"): "active",
     ("body", "store"): "active",
@@ -407,11 +407,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "attach_workspace",
                 "Attach this Git worktree to an existing host.",
             ),
-            "floor-delivery": _command(
-                "playbill",
-                "workspace_floor_delivery",
-                "Choose the local daemon workspace floor writer.",
-            ),
             "detach": _command(
                 "playbill",
                 "detach_workspace",
@@ -452,17 +447,12 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         attr="instance_group",
     ),
     "ledger": _group(
-        "Publish this instance's ledger, and read where it publishes to.",
+        "Publish this instance's ledger to a mirror reviewers can clone.",
         {
             "set-mirror": _command(
                 "playbill",
                 "set_ledger_mirror",
-                "Bind the remote this ledger publishes to.",
-            ),
-            "clone-url": _command(
-                "playbill",
-                "ledger_clone_url",
-                "Print the ledger mirror a reviewer clones.",
+                "Bind (or --clear) the remote this ledger publishes to.",
             ),
             "publish": _command(
                 "playbill",
@@ -492,13 +482,14 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "build": _command(
                 "playbill", "build_kit", "Export owned definitions as a kit release."
             ),
-            "add": _command("playbill", "add_kit", "Propose installing or upgrading a kit."),
-            "status": _command("playbill", "kit_status", "List installed kits."),
-            "push": _command("playbill", "push_kit_cmd", "Publish a kit to a registry."),
+            "add": _command("playbill", "add_kit", "Install or upgrade a kit as one change set."),
+            "status": _command(
+                "playbill", "kit_status", "List installed kits and newer releases available."
+            ),
             "pull": _command(
                 "playbill", "pull_kit", "Fetch and verify a kit without installing it."
             ),
-            "remove": _command("playbill", "remove_kit", "Propose retiring what a kit installed."),
+            "remove": _command("playbill", "remove_kit", "Retire what a kit installed."),
         },
         module="playbill",
         attr="kit_group",
@@ -520,6 +511,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill",
                 "sync_projection",
                 "Report whether each declared block still reads as its stamp says.",
+            ),
+            "detach": _command(
+                "playbill",
+                "detach_projection",
+                "Strip retired blocks' markers from pages, keeping their prose.",
             ),
         },
         module="playbill",
@@ -705,16 +701,28 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
     "audit": _command("playbill", "audit", "Read ranked Claim verification work."),
     "curation": _group(
-        "Inspect mechanically detected ontology-maintenance patterns.",
+        "Review the ontology-maintenance patterns curation detection records.",
         {
             "list": _command("playbill", "curation_list", "Read the curation queue."),
-            "overrule": _command("playbill", "curation_overrule", "Overrule one detector item."),
+            "observe": _command(
+                "playbill",
+                "curation_observe",
+                "Record this workspace's declared blocks for block-churn detection.",
+            ),
+            "overrule": _command(
+                "playbill", "curation_overrule", "Close an item as not applying, permanently."
+            ),
             "accept-fixed": _command(
                 "playbill",
                 "curation_accept_fixed",
-                "Link an item to an accepted fix.",
+                "Link an item to the accepted change that fixed it.",
             ),
-            "suppress": _command("playbill", "curation_suppress", "Suppress open curation work."),
+            "suppress": _command(
+                "playbill", "curation_suppress", "Hide an item or its lineage without resolving it."
+            ),
+            "unsuppress": _command(
+                "playbill", "curation_unsuppress", "Lift a suppression on an item."
+            ),
         },
         module="playbill",
         attr="curation_group",
@@ -738,11 +746,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     ),
     "stub": _command("playbill", "world_stub", "Write a .pyi typing the accepted world."),
     "floor": _group(
-        "Materialize the deterministic greppable floor.",
+        "Export the greppable floor, and choose who delivers it.",
         {
             "export": _command(
                 "playbill", "export_floor", "Write the accepted floor to a directory."
-            )
+            ),
+            "delivery": _command(
+                "playbill",
+                "floor_delivery",
+                "Turn the local daemon's floor delivery on or off.",
+            ),
         },
         module="playbill",
         attr="floor_group",
@@ -753,22 +766,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "resolve": _command(
                 "playbill", "resolve_coverage", "Resolve coverage for working sources."
             ),
-            "status": _command("playbill", "coverage_status", "Render the coverage manifest."),
         },
         module="playbill",
         attr="coverage_group",
-    ),
-    "hook": _group(
-        "Deliver coverage into a harness's own tool results.",
-        {
-            "post-tool-use": _command(
-                "playbill",
-                "post_tool_use_hook",
-                "Annotate a Claude Code tool result with coverage.",
-            ),
-        },
-        module="playbill",
-        attr="hook_group",
     ),
     "sources": _group(
         "Compile declared local files into exact-byte bundles.",

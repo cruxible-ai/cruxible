@@ -83,10 +83,16 @@
   "/api/v1/{instance_id}/curation/list": {
     "POST": "CurationListResult"
   },
+  "/api/v1/{instance_id}/curation/observe": {
+    "POST": "CurationObserveResult"
+  },
   "/api/v1/{instance_id}/curation/overrule": {
     "POST": "CurationActionResult"
   },
   "/api/v1/{instance_id}/curation/suppress": {
+    "POST": "CurationActionResult"
+  },
+  "/api/v1/{instance_id}/curation/unsuppress": {
     "POST": "CurationActionResult"
   },
   "/api/v1/{instance_id}/documents/proposals": {
@@ -130,8 +136,10 @@
     "POST": "KitChangeResult"
   },
   "/api/v1/{instance_id}/ledger/mirror": {
-    "GET": "LedgerMirror",
     "POST": "LedgerMirror"
+  },
+  "/api/v1/{instance_id}/ledger/mirror/clear": {
+    "POST": "LedgerMirrorCleared"
   },
   "/api/v1/{instance_id}/ledger/publish": {
     "POST": "LedgerMirror"

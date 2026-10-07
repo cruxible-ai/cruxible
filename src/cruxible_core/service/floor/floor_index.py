@@ -742,17 +742,6 @@ def floor_render_from(
         return render_floor(instance, history, inputs, previous=render, notes=render.notes)
 
 
-def floor_render_with_notes(
-    instance: PlaybillInstance, render: FloorRender, notes: str | None
-) -> FloorRender:
-    """``render`` with its change rationale read from another notes snapshot."""
-
-    if notes == render.notes:
-        return render
-    with instance.accepted_history_reader() as history:
-        return render_floor(instance, history, render.inputs, previous=render, notes=notes)
-
-
 __all__ = [
     "FloorInputs",
     "FloorRender",
@@ -760,7 +749,6 @@ __all__ = [
     "build_floor_inputs",
     "floor_render_at",
     "floor_render_from",
-    "floor_render_with_notes",
     "patch_floor_inputs",
     "render_floor",
 ]

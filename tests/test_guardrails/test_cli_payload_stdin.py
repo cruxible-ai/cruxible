@@ -22,7 +22,7 @@ from cruxible_core.cli.payloads import PayloadFile
 ARTIFACT_FILES: dict[tuple[tuple[str, ...], str], str] = {
     (("authoring", "bind"), "source_path"): "cited workspace file",
     (("block", "sync"), "paths"): "block pages",
-    (("block", "sync"), "detach_paths"): "block pages",
+    (("block", "detach"), "paths"): "block pages",
     (("credential", "claim-bootstrap"), "secret_file"): "secret material",
     (("server", "start"), "bootstrap_secret_file"): "secret material",
     (("get",), "output_path"): "output written by the command",

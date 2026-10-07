@@ -177,14 +177,14 @@ For local or external files, author a portable catalog and optional ignored
 local overlay. Compilation is client-side:
 
 ~~~bash
-uv run cruxible sources compile \
-  --catalog sources.yaml \
-  --root . \
-  --output /tmp/source-bundle.json
+uv run cruxible sources check
+uv run cruxible sources propose --source design --name revise-design
 ~~~
 
-Use sources check for read-only alignment validation and sources propose to
-submit the frozen path-free bundle. The daemon never dereferences a client path.
+Both discover `.cruxible/sources.yaml`. Use sources check for read-only alignment
+validation and sources propose to propose one catalogued Document's file;
+`sources compile --output FILE` freezes a path-free bundle that `sources propose
+--bundle FILE` submits as written. The daemon never dereferences a client path.
 
 ## Verify the branch
 

@@ -40,9 +40,9 @@ from cruxible_client.contracts.get_reads import (
     GetResult,
 )
 from cruxible_client.contracts.kits import (
-    KitAddRequest,
     KitBuildRequest,
     KitBuildResult,
+    KitBundle,
     KitChangeResult,
     KitRemoveRequest,
     KitStatus,
@@ -89,7 +89,6 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
 from cruxible_core.mcp.target import MCP_INSTANCE_ENV, require_instance_id
 from cruxible_core.mcp.tool_prompts import tool_description
-from cruxible_core.service.discovery.next import NextWorkspaceObservation
 
 
 class McpBlockQuery(BaseModel):
@@ -109,11 +108,14 @@ class McpRootAlias(BaseModel):
 
 
 class McpSourceBinding(BaseModel):
-    """One workspace path bound to a declared logical source."""
+    """One workspace path bound to a logical source, overriding the catalog."""
 
     model_config = ConfigDict(extra="forbid")
     path: str = Field(min_length=1)
-    source_id: str = Field(min_length=1)
+    source: str = Field(
+        min_length=1,
+        description="The source as PLANE:IDENTITY: external:NAME or ledger:PATH.",
+    )
 
 
 def _root_aliases(rows: list[McpRootAlias] | None) -> dict[str, str] | None:
@@ -128,7 +130,7 @@ def _root_aliases(rows: list[McpRootAlias] | None) -> dict[str, str] | None:
 def _source_bindings(rows: list[McpSourceBinding] | None) -> dict[str, str] | None:
     if rows is None:
         return None
-    result = {row.path: row.source_id for row in rows}
+    result = {row.path: row.source for row in rows}
     if len(result) != len(rows):
         raise ValueError("bindings names a path more than once")
     return result
@@ -221,7 +223,7 @@ def register_tools(
         return handlers.handle_server_info()
 
     @_tool
-    def cruxible_provider_catalog(
+    def cruxible_provider_list(
         instance_id: InstanceId = None,
     ) -> ProviderCatalog:
         """List provider packages in the configured repository: name, version, interface IDs."""
@@ -233,7 +235,7 @@ def register_tools(
         *,
         request: ProviderInstallRequest,
     ) -> ProviderInstallResult:
-        """Install a provider package and propose its definitions; requires ADMIN."""
+        """Install a provider package and register it; lands when policy needs no approval."""
         return handlers.handle_playbill_provider_install(require_instance_id(instance_id), request)
 
     @_tool
@@ -246,18 +248,62 @@ def register_tools(
         return handlers.handle_playbill_kit_build(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_kit_status(instance_id: InstanceId = None) -> KitStatus:
-        """List installed kits and the kit paths edited since install."""
-        return handlers.handle_playbill_kit_status(require_instance_id(instance_id))
+    def cruxible_kit_status(
+        instance_id: InstanceId = None,
+        *,
+        offline: Annotated[
+            bool, Field(description="true: skip looking up newer releases in the registry.")
+        ] = False,
+    ) -> KitStatus:
+        """List installed kits, paths edited since install, and newer releases."""
+        return handlers.handle_playbill_kit_status(
+            require_instance_id(instance_id), offline=offline
+        )
 
     @_tool
     def cruxible_kit_add(
         instance_id: InstanceId = None,
         *,
-        request: KitAddRequest,
+        reference: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "A registry reference (project-state:1.0.0 or "
+                    "ghcr.io/acme/kits/foo@sha256:...); this adapter pulls and verifies it. "
+                    "Or give bundle."
+                )
+            ),
+        ] = None,
+        bundle: Annotated[
+            KitBundle | None, Field(description="An inline kit bundle; or give reference.")
+        ] = None,
+        keep: Annotated[
+            list[str] | None,
+            Field(description="Definitions (KIND:NAME) to keep as this instance has them."),
+        ] = None,
+        keep_local_edits: Annotated[
+            bool, Field(description="Keep every definition edited here since install.")
+        ] = False,
+        retire_dependents: Annotated[
+            list[str] | None,
+            Field(description="Dropped definitions to retire with their live dependents."),
+        ] = None,
+        allow_downgrade: bool = False,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> KitChangeResult:
-        """Propose installing or upgrading a kit as one change set; activation is separate."""
-        return handlers.handle_playbill_kit_add(require_instance_id(instance_id), request)
+        """Install or upgrade a kit as one change set; it always proposes."""
+        return handlers.handle_playbill_kit_add(
+            require_instance_id(instance_id),
+            reference=reference,
+            bundle=bundle,
+            keep=keep or (),
+            keep_local_edits=keep_local_edits,
+            retire_dependents=retire_dependents or (),
+            allow_downgrade=allow_downgrade,
+            dry_run=dry_run,
+            at=at,
+        )
 
     @_tool
     def cruxible_claim_type_upgrade(
@@ -478,30 +524,23 @@ def register_tools(
         return handlers.handle_playbill_read_capture(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_source_context(
-        instance_id: InstanceId = None,
-    ) -> contracts.SourceContext:
-        """Fetch path-free inputs for local source compilation."""
-        return handlers.handle_playbill_source_context(require_instance_id(instance_id))
-
-    @_tool
-    def cruxible_source_check(
+    def cruxible_sources_check(
         instance_id: InstanceId = None,
         *,
         bundle: Annotated[
             SourceCompilationBundle | None,
-            Field(description="A compiled source bundle; omit when passing catalog_path."),
+            Field(description="A compiled bundle to check as given; omit to compile the catalog."),
         ] = None,
         catalog_path: Annotated[
             str | None,
-            Field(description="Workspace source catalog to compile first; omit with bundle."),
+            Field(description="The portable catalog; omitted, the workspace's is discovered."),
         ] = None,
         repository_root: str = ".",
         local_catalog_path: str | None = None,
         root_aliases: list[McpRootAlias] | None = None,
     ) -> contracts.SourceCheckResult:
-        """Compare a compiled bundle or catalog-declared workspace sources with accepted state."""
-        return handlers.handle_playbill_source_check(
+        """Compare catalogued workspace sources (or a bundle) with accepted state."""
+        return handlers.handle_playbill_sources_check(
             require_instance_id(instance_id),
             bundle=None if bundle is None else bundle.model_dump(mode="json"),
             catalog_path=catalog_path,
@@ -511,21 +550,30 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_propose_source_bundle(
+    def cruxible_sources_propose(
         instance_id: InstanceId = None,
         *,
-        bundle: SourceCompilationBundle,
-        source_name: str,
+        source_name: Annotated[str, Field(description="The catalog source to propose.")],
         proposal_name: str,
+        catalog_path: Annotated[
+            str | None,
+            Field(description="The portable catalog; omitted, the workspace's is discovered."),
+        ] = None,
+        repository_root: str = ".",
+        local_catalog_path: str | None = None,
+        root_aliases: list[McpRootAlias] | None = None,
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> contracts.ProposalInspection:
-        """Propose frozen source bytes without a client path."""
-        return handlers.handle_playbill_propose_source_bundle(
+        """Propose one catalogued source as its Document; the adapter reads the file."""
+        return handlers.handle_playbill_sources_propose(
             require_instance_id(instance_id),
-            bundle.model_dump(mode="json"),
             source_name=source_name,
             proposal_name=proposal_name,
+            catalog_path=catalog_path,
+            repository_root=repository_root,
+            local_catalog_path=local_catalog_path,
+            root_aliases=_root_aliases(root_aliases),
             dry_run=dry_run,
             at=at,
         )
@@ -692,6 +740,10 @@ def register_tools(
         anchor: str,
         payload: ClaimInput,
         window_lines: int | None = None,
+        occurrence: Annotated[
+            int | None,
+            Field(ge=1, description="The 1-based anchor occurrence when it is not unique."),
+        ] = None,
     ) -> contracts.AuthoringPreflightResult:
         """Bind one exact workspace anchor and compile the derived Flow-A observation."""
         return handlers.handle_playbill_authoring_bind(
@@ -700,6 +752,7 @@ def register_tools(
             anchor=anchor,
             payload=payload,
             window_lines=window_lines,
+            occurrence=occurrence,
         )
 
     @_tool
@@ -781,6 +834,10 @@ def register_tools(
             str | None,
             Field(description="The successor digest an ambiguity refusal named, alone."),
         ] = None,
+        render: Annotated[
+            bool,
+            Field(description="true: write the body as a table or list from its one query."),
+        ] = False,
         dry_run: Annotated[
             bool | None, Field(description="true: compute the stamp and write nothing.")
         ] = None,
@@ -798,6 +855,7 @@ def register_tools(
             artifacts=artifacts,
             currency_policy=currency_policy,
             backing_digest=backing_digest,
+            render=render,
             dry_run=dry_run,
         )
 
@@ -1380,25 +1438,33 @@ def register_tools(
     def cruxible_curation_list(
         instance_id: InstanceId = None,
         *,
-        evaluation_time: str,
         access_profile: CoverageAccessProfile | None = None,
-        workspace_observation: NextWorkspaceObservation | None = None,
         limit: Annotated[
             int, Field(ge=1, le=contracts.CURATION_LIST_MAX_LIMIT)
         ] = contracts.CURATION_LIST_DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> contracts.CurationListResult:
-        """List one page of curation patterns and ingest block observations.
+        """List one page of the curation queue detection recorded; a pure read.
 
         Pass next_cursor back while the result is truncated.
         """
         return handlers.handle_playbill_curation_list(
             require_instance_id(instance_id),
-            evaluation_time=evaluation_time,
             access_profile=_dump(access_profile),
-            workspace_observation=_dump(workspace_observation),
             limit=limit,
             cursor=cursor,
+        )
+
+    @_tool
+    def cruxible_curation_observe(
+        instance_id: InstanceId = None,
+        *,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
+    ) -> contracts.CurationObserveResult:
+        """Record this workspace's declared blocks for block-churn detection."""
+        return handlers.handle_playbill_curation_observe(
+            require_instance_id(instance_id), dry_run=dry_run, at=at
         )
 
     @_tool
@@ -1460,13 +1526,20 @@ def register_tools(
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        accepted_proposal_id: str,
-        accepted_changeset_digest: str,
+        accepted_proposal_id: Annotated[
+            str | None, Field(description="The fixing proposal; or give accepted_generation.")
+        ] = None,
+        accepted_changeset_digest: Annotated[
+            str | None, Field(description="Pins accepted_proposal_id to its ChangeSet.")
+        ] = None,
+        accepted_generation: Annotated[
+            int | None, Field(ge=1, description="The fixing accepted generation.")
+        ] = None,
         attribution_refs: list[str] | None = None,
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> contracts.CurationActionResult:
-        """Link one curation item to its exact accepted resolving ChangeSet."""
+        """Link one curation item to the accepted change that fixed it."""
         return handlers.handle_playbill_curation_accept_fixed(
             require_instance_id(instance_id),
             item_id=item_id,
@@ -1474,6 +1547,7 @@ def register_tools(
             reason=reason,
             accepted_proposal_id=accepted_proposal_id,
             accepted_changeset_digest=accepted_changeset_digest,
+            accepted_generation=accepted_generation,
             attribution_refs=attribution_refs or [],
             dry_run=dry_run,
             at=at,
@@ -1486,13 +1560,16 @@ def register_tools(
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
-        scope: Literal["item", "pattern", "instance"],
+        scope: Annotated[
+            Literal["item", "lineage"],
+            Field(description="item: this item; lineage: also its pattern's successors."),
+        ],
         until_generation: int | None = None,
         attribution_refs: list[str] | None = None,
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> contracts.CurationActionResult:
-        """Hide curation work temporarily without resolving its detector facts."""
+        """Hide an item or its lineage without resolving it."""
         return handlers.handle_playbill_curation_suppress(
             require_instance_id(instance_id),
             item_id=item_id,
@@ -1506,19 +1583,46 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_coverage(
+    def cruxible_curation_unsuppress(
+        instance_id: InstanceId = None,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        suppression_event_id: Annotated[
+            str | None, Field(description="Needed only when the item carries several.")
+        ] = None,
+        attribution_refs: list[str] | None = None,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
+    ) -> contracts.CurationActionResult:
+        """Lift a suppression on an item, so what it hid is listed again."""
+        return handlers.handle_playbill_curation_unsuppress(
+            require_instance_id(instance_id),
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            suppression_event_id=suppression_event_id,
+            attribution_refs=attribution_refs or [],
+            dry_run=dry_run,
+            at=at,
+        )
+
+    @_tool
+    def cruxible_coverage_resolve(
         instance_id: InstanceId = None,
         *,
         observations: Annotated[
             list[WorkingSourceObservation] | None,
-            Field(description="Working-source observations you built; omit with bindings."),
+            Field(description="Working-source observations you built; omit to select files."),
         ] = None,
         bindings: Annotated[
             list[McpSourceBinding] | None,
             Field(
                 description=(
-                    "Path/source_id bindings; the adapter reads the selected workspace "
-                    "files (files, ranges, grep_results, or whole_working_set)."
+                    "Bindings overriding the source catalog, path by path; the adapter reads "
+                    "the selected workspace files (files, ranges, grep_results, or "
+                    "whole_working_set)."
                 )
             ),
         ] = None,
@@ -1528,13 +1632,13 @@ def register_tools(
             str | None,
             Field(
                 description=(
-                    "With bindings, grep output (path:line:text lines) selecting the "
-                    "ranges to cover, passed inline."
+                    "Grep output (path:line:text lines) selecting the ranges to cover, "
+                    "passed inline."
                 )
             ),
         ] = None,
         whole_working_set: Annotated[
-            bool, Field(description="With bindings, cover every declared workspace file.")
+            bool, Field(description="Cover every bound workspace file.")
         ] = False,
         budget: CoverageCardBudget | None = None,
         scan_budget: CoverageScanBudget | None = None,
@@ -1557,16 +1661,19 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_workspace_source_compile(
+    def cruxible_sources_compile(
         instance_id: InstanceId = None,
         *,
-        catalog_path: str,
+        catalog_path: Annotated[
+            str | None,
+            Field(description="The portable catalog; omitted, the workspace's is discovered."),
+        ] = None,
         repository_root: str = ".",
         local_catalog_path: str | None = None,
         root_aliases: list[McpRootAlias] | None = None,
     ) -> SourceCompilationBundle:
-        """Compile declared workspace sources against accepted daemon context."""
-        return handlers.handle_playbill_workspace_source_compile(
+        """Compile catalogued workspace sources against accepted daemon context."""
+        return handlers.handle_playbill_sources_compile(
             require_instance_id(instance_id),
             catalog_path=catalog_path,
             repository_root=repository_root,

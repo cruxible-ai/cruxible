@@ -35,7 +35,7 @@ REVIEW_OPERATIONAL_PAYLOAD_DIGEST_DOMAIN = "playbill-review-operational-payload-
 REVIEW_OPERATIONAL_STORE_DIRECTORY = "review-operational-v1"
 
 ReviewOperationalFamily: TypeAlias = Literal[
-    "curation", "audit", "consumption", "block_observation"
+    "curation", "audit", "consumption", "block_observation", "block_scan"
 ]
 REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT = 256
 _UNCHECKED_PARTITION_HEAD = object()
@@ -820,6 +820,7 @@ class ReviewOperationalStore:
                 else (
                     "audit",
                     "block_observation",
+                    "block_scan",
                     "consumption",
                     "curation",
                 )
@@ -883,7 +884,7 @@ class ReviewOperationalStore:
         self,
     ) -> tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...]:
         loaded: list[tuple[PlaybillReviewOperationalEventV1, dict[str, object]]] = []
-        for family in ("audit", "block_observation", "consumption", "curation"):
+        for family in ("audit", "block_observation", "block_scan", "consumption", "curation"):
             family_root = self.root / "partitions" / family
             if not family_root.exists():
                 continue

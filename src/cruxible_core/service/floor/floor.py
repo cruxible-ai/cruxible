@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections import defaultdict
 from collections.abc import Mapping
 from typing import Literal, get_args
@@ -40,7 +39,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
@@ -86,7 +85,6 @@ from cruxible_core.query.semantic_discovery import DiscoveryEntryV1
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     AcceptedCoordinate,
-    service_list_playbill_documents,
 )
 from cruxible_core.service.discovery.coverage import (
     COVERAGE_ACCESS_PROFILE_ID,
@@ -102,7 +100,7 @@ from cruxible_core.service.floor.floor_current import (
     bodies_unchanged,
     body_available,
 )
-from cruxible_core.service.floor.floor_index import floor_render_at, floor_render_with_notes
+from cruxible_core.service.floor.floor_index import floor_render_at
 from cruxible_core.service.floor.renderer import floor_renderer
 from cruxible_core.storage.cas import BodyAccessContext
 
@@ -116,34 +114,6 @@ RelationIndex = Mapping[bytes, tuple[SemanticRelationV1, ...]]
 
 class _StrictFloorModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class PlaybillFloorFileV1(_StrictFloorModel):
-    """One materialized floor file bound to its exact content digest."""
-
-    path: str
-    content_digest: str
-    byte_length: int
-
-
-class PlaybillFloorManifestV1(_StrictFloorModel):
-    """The root manifest binding one floor materialization to its coordinate."""
-
-    tag: Literal["playbill-floor-manifest-v1"] = "playbill-floor-manifest-v1"
-    format: Literal["playbill-floor-export-v1"] = "playbill-floor-export-v1"
-    coordinate: AcceptedCoordinate
-    files: tuple[PlaybillFloorFileV1, ...]
-    floor_digest: str
-
-
-class PlaybillFloorManifestV2(_StrictFloorModel):
-    """The pretty-byte floor manifest; every inventory digest binds rendered bytes."""
-
-    tag: Literal["playbill-floor-manifest-v2"] = "playbill-floor-manifest-v2"
-    format: Literal["playbill-floor-export-v2"] = "playbill-floor-export-v2"
-    coordinate: AcceptedCoordinate
-    files: tuple[PlaybillFloorFileV1, ...]
-    floor_digest: str
 
 
 class PlaybillFloorCoverageManifestV2(CoverageManifestProfileV2):
@@ -219,12 +189,6 @@ def _resolve_coordinate(
         generation_root=at.generation_root,
         compiler_digest=at.compiler_digest,
     )
-
-
-def render_floor_json_v1(payload: object) -> bytes:
-    """Preserve the original compact v1 spelling for historical readers/tests."""
-
-    return canonical_bytes(payload) + b"\n"
 
 
 def render_floor_json_v2(payload: object) -> bytes:
@@ -362,19 +326,6 @@ def _coverage_manifest(
             1 for citation in index.citations if citation.digest_kind == "exact_bytes"
         ),
     )
-
-
-def _documents(
-    instance: PlaybillInstance,
-    *,
-    at: AcceptedCoordinate,
-    access: BodyAccessContext,
-) -> dict[str, bytes]:
-    listing = service_list_playbill_documents(instance, access=access, at=at)
-    return {
-        f"documents/{document.envelope['path']}.json": _render(document.envelope)
-        for document in listing.documents
-    }
 
 
 def _procedure_track_records(
@@ -547,9 +498,7 @@ def service_export_playbill_floor(
     instance: PlaybillInstance,
     *,
     at: AcceptedCoordinate | None = None,
-    format_version: Literal[2, 5] = 5,
     include: tuple[FloorExportPart, ...] = (),
-    review_notes_oid: str | None = None,
     access: BodyAccessContext | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
 ) -> dict[str, bytes]:
@@ -557,15 +506,13 @@ def service_export_playbill_floor(
 
     The map is keyed by byte-sorted floor path, and its root ``manifest.json``
     names the accepted coordinate together with every file's content digest
-    and, in v5, the generation each file last changed.
+    and the generation each file last changed.
 
-    v5 is the grep-first floor: ``current/``, ``changes/`` and the README, read
+    The floor is grep-first: ``current/``, ``changes/`` and the README, read
     from the instance's floor index. ``include=("discovery",)`` adds the
     discovery cards (``subjects/``, ``claim-types/``, ``procedures/`` and
-    ``coverage-manifest.json``), stamped with the export's own generation. v2 is
-    the frozen card layout, discovery only. Cards and profiles are taken
-    without an evaluation time. ``review_notes_oid`` pins the notes commit the
-    change rationale is read from (``"absent"`` for none).
+    ``coverage-manifest.json``), stamped with the export's own generation.
+    Cards and profiles are taken without an evaluation time.
     """
 
     if at is not None and not isinstance(at, AcceptedCoordinate):
@@ -574,62 +521,12 @@ def service_export_playbill_floor(
     accepted = AcceptedCoordinate.from_internal(coordinate)
     body_access = access or BodyAccessContext(principal_id=DEFAULT_FLOOR_PRINCIPAL)
 
-    if format_version not in (2, 5):
-        raise ValueError("unsupported floor format version")
     unknown = sorted(set(include) - set(get_args(FloorExportPart)))
     if unknown:
         raise ValueError(f"unsupported floor export part(s): {', '.join(unknown)}")
     parts = tuple(sorted(set(include)))
-    if (
-        review_notes_oid is not None
-        and review_notes_oid != "absent"
-        and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", review_notes_oid)
-    ):
-        raise ProposalIntegrityError("review_notes_oid must be an immutable Git OID or 'absent'")
-
-    if format_version == 2:
-        key = (coordinate.git_oid, body_access.principal_id, body_access.can_read_body)
-        if not external_readers:
-            cached = memo_get(instance.floor_export_memo, key)
-            if isinstance(cached, dict):
-                return cached.copy()
-        legacy_files = _discovery_files(
-            instance,
-            coordinate=coordinate,
-            accepted=accepted,
-            access=body_access,
-            external_readers=external_readers,
-        )
-        legacy_files.update(_documents(instance, at=accepted, access=body_access))
-        ordered = {
-            path: legacy_files[path]
-            for path in sorted(legacy_files, key=lambda item: item.encode("utf-8"))
-        }
-        inventory = tuple(
-            PlaybillFloorFileV1(
-                path=path, content_digest=_content_digest(content), byte_length=len(content)
-            )
-            for path, content in ordered.items()
-        )
-        legacy = PlaybillFloorManifestV2(
-            coordinate=accepted,
-            files=inventory,
-            floor_digest=typed_digest(
-                Sha256Value,
-                "playbill-floor-export-v2",
-                {"files": [item.model_dump(mode="json") for item in inventory]},
-            ).tagged,
-        )
-        result = {MANIFEST_PATH: _render(legacy.model_dump(mode="json")), **ordered}
-        if not external_readers and sum(map(len, result.values())) <= 32 * 1024 * 1024:
-            memo_put(instance.floor_export_memo, key, result.copy(), capacity=2)
-        return result
 
     render = floor_render_at(instance, coordinate)
-    if review_notes_oid is not None:
-        render = floor_render_with_notes(
-            instance, render, None if review_notes_oid == "absent" else review_notes_oid
-        )
     files = dict(render.files)
     if "discovery" in parts:
         for path, content in _discovery_files(
@@ -660,16 +557,12 @@ __all__ = [
     "COVERAGE_MANIFEST_PATH",
     "MANIFEST_PATH",
     "PlaybillFloorCoverageManifestV2",
-    "PlaybillFloorFileV1",
-    "PlaybillFloorManifestV1",
-    "PlaybillFloorManifestV2",
     "FloorManifest",
     "PlaybillProcedureCapabilitiesV1",
     "PlaybillProcedureFloorCardV1",
     "PlaybillProcedureGovernanceV1",
     "PlaybillProcedureInputContractV1",
     "PlaybillProcedureTrackRecordEntryV1",
-    "render_floor_json_v1",
     "floor_renderer",
     "render_floor_json_v2",
     "service_export_playbill_floor",

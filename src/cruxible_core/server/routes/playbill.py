@@ -75,12 +75,15 @@ from cruxible_core.server.playbill_request_models import (
     CompilerUpgradeRequest,
     CurationAcceptFixedRequest,
     CurationListRequest,
+    CurationObserveRequest,
     CurationOverruleRequest,
     CurationSuppressRequest,
+    CurationUnsuppressRequest,
     FloorDeltaRequest,
     FloorExportRequest,
     InitRequest,
     InstanceDecommissionRequest,
+    LedgerMirrorClearRequest,
     LedgerMirrorRequest,
     LedgerPublishRequest,
     NextRequest,
@@ -190,6 +193,21 @@ def set_ledger_mirror(
 
 
 @router.post(
+    "/{instance_id}/ledger/mirror/clear",
+    response_model=contracts.LedgerMirrorCleared,
+)
+def clear_ledger_mirror(
+    instance_id: str,
+    req: LedgerMirrorClearRequest,
+) -> contracts.LedgerMirrorCleared:
+    return playbill_api.playbill_ledger_clear_mirror(
+        resolve_server_instance_id(instance_id),
+        dry_run=req.dry_run,
+        at=req.at,
+    )
+
+
+@router.post(
     "/{instance_id}/ledger/publish",
     response_model=contracts.LedgerMirror,
 )
@@ -203,14 +221,6 @@ def publish_ledger(
         dry_run=req.dry_run,
         at=req.at,
     )
-
-
-@router.get(
-    "/{instance_id}/ledger/mirror",
-    response_model=contracts.LedgerMirror,
-)
-def ledger_clone_url(instance_id: str) -> contracts.LedgerMirror:
-    return playbill_api.playbill_ledger_clone_url(resolve_server_instance_id(instance_id))
 
 
 @router.get("/{instance_id}/providers", response_model=ProviderCatalog)
@@ -1178,6 +1188,34 @@ def curation_suppress(
 
 
 @router.post(
+    "/{instance_id}/curation/unsuppress",
+    response_model=contracts.CurationActionResult,
+)
+def curation_unsuppress(
+    instance_id: str,
+    req: CurationUnsuppressRequest,
+) -> contracts.CurationActionResult:
+    return playbill_api.playbill_curation_unsuppress(
+        resolve_server_instance_id(instance_id),
+        request=req.model_dump(mode="json"),
+    )
+
+
+@router.post(
+    "/{instance_id}/curation/observe",
+    response_model=contracts.CurationObserveResult,
+)
+def curation_observe(
+    instance_id: str,
+    req: CurationObserveRequest,
+) -> contracts.CurationObserveResult:
+    return playbill_api.playbill_curation_observe(
+        resolve_server_instance_id(instance_id),
+        request=req.model_dump(mode="json"),
+    )
+
+
+@router.post(
     "/{instance_id}/since",
     response_model=contracts.SinceResult,
 )
@@ -1235,9 +1273,7 @@ async def export_floor(
         return playbill_api.playbill_export_floor(
             resolved,
             at=req.at,
-            format_version=req.format_version,
             include=req.include,
-            review_notes_oid=req.review_notes_oid,
         )
 
     async with FLOOR_ADMISSION.admit(resolved) as admitted:

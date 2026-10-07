@@ -82,6 +82,7 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
         "trigger_schedule",
         "trigger_schedule",
         "trigger_schedule",
+        "trigger_schedule",
     ]
     assert result.policies[0].placement == "standalone"
     assert result.policies[0].field_path == "/"
@@ -115,11 +116,13 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
         "trigger_schedule",
         "trigger_schedule",
         "trigger_schedule",
+        "trigger_schedule",
     ]
 
     assert historical.coordinate.git_oid == genesis.oid
     assert historical.coordinate.git_oid != result.coordinate.git_oid
     seeded_schedules = {
+        "Trigger:curation-detect": {"kind": "generation_accepted"},
         "Trigger:evidence-sweep": {"kind": "cadence", "interval_seconds": 86400},
         "Trigger:floor-refresh": {"kind": "generation_accepted"},
         "Trigger:prediction-anchor-retry": {"kind": "cadence", "interval_seconds": 3600},

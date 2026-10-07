@@ -312,7 +312,7 @@ class Descriptor(StrictModel):
     # digest reads it, changing it changes nothing that was already governed,
     # and an instance that publishes nowhere renders exactly the bytes it always
     # did. It never carries a credential -- a URL with userinfo is refused at
-    # every door -- because `ledger clone-url` prints this string back.
+    # every door -- because `orient` prints this string back.
     mirror_url: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("instance_id")

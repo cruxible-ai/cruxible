@@ -433,8 +433,9 @@ def test_document_modified_names_a_reproposal_that_clears_the_row(tmp_path: Path
 
     row = next(item for item in queued(changed).items if item.reason == "document_modified")
     assert row.severity == "warning"
-    assert row.repair.operation == "cruxible.document.propose"
+    assert row.repair.operation == "cruxible.sources.propose"
     assert row.repair.required_change == "repropose_modified_document"
+    assert row.repair.arguments["source_id"] == "corpus.runbook"
     assert all(item.reason != "document_modified" for item in queued(body.digest).items)
     public_only = CoverageAccessProfile(
         profile_id="public-only",

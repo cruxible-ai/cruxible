@@ -111,8 +111,13 @@ async def playbill_host_workspace_detach(
 def playbill_host_workspace_registration(
     instance_id: str,
     request: Request,
+    workspace_root: str | None = None,
 ) -> contracts.HostWorkspaceRegistration:
-    """Report daemon attachment; only local-socket callers receive its path."""
+    """Report daemon attachment; only local-socket callers receive its path.
+
+    A caller naming ``workspace_root`` learns whether the daemon delivers that
+    workspace's floor (``delivers_here``) on any transport.
+    """
 
     return host_api.playbill_host_workspace_registration(
         resolve_server_instance_id(instance_id),
@@ -120,6 +125,7 @@ def playbill_host_workspace_registration(
             request.scope.get("client") is None
             and resolve_server_settings().server_socket is not None
         ),
+        workspace_root=workspace_root,
     )
 
 
@@ -134,7 +140,7 @@ async def set_playbill_floor_delivery(
     resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
 
     def toggle() -> contracts.HostWorkspaceRegistration:
-        return host_api._set_playbill_floor_delivery_admitted(
+        return host_api.set_playbill_floor_delivery_admitted(
             resolved,
             enabled=req.enabled,
             workspace_attachment_authorized=(
@@ -156,7 +162,7 @@ async def deliver_playbill_floor_now(
     resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
 
     def deliver() -> contracts.FloorDeliveryResult:
-        return host_api._deliver_playbill_floor_now_admitted(
+        return host_api.deliver_playbill_floor_now_admitted(
             resolved,
             include=req.include,
             at=req.at,

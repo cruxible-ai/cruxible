@@ -9,7 +9,7 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCatalogEntry
-from cruxible_client.contracts.subjects import subject_digest, subject_path
+from cruxible_client.contracts.subjects import subject_digest
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
@@ -21,6 +21,7 @@ from tests.core_support._knowledge_loop_support import accept_proposal, subject_
 from tests.core_support._support import initialize_local
 from tests.test_ledger.test_activation import _sign
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
+from tests.test_service.test_playbill_source_catalog import service_compile_playbill_sources
 
 
 def _orphan(instance, proposal_id: str) -> None:  # type: ignore[no-untyped-def]
@@ -61,9 +62,7 @@ def test_pending_documents_require_an_unsettled_admission(
             ),
         ),
     )
-    bundle = source_catalog.service_compile_playbill_sources(
-        instance, catalog=catalog, repository_root=repository
-    )
+    bundle = service_compile_playbill_sources(instance, catalog=catalog, repository_root=repository)
     proposed = source_catalog.service_propose_playbill_source_bundle(
         instance,
         bundle=bundle,
@@ -155,20 +154,19 @@ def test_curation_never_names_an_orphan_evaluation_as_the_resolving_proposal(
     if not admitted:
         _orphan(instance, survivor)
 
-    path = subject_path(retired.subject_kind, retired.subject_id)
-    item = Mock(
-        item_id="item",
-        first_proposed_generation=1,
-        subject=initial.identity,
-        latest_evidence_refs=(Mock(path=path),),
+    record = instance.accepted_history()[-1].record
+    assert record is not None
+    request = playbill_curation.PlaybillCurationAcceptFixedRequestV1(
+        item_id="sha256:" + "1" * 64,
+        expected_latest_event_digest="sha256:" + "2" * 64,
+        reason="the retirement fixed it",
+        accepted_generation=instance.accepted_history()[-1].sequence,
     )
-    resolved = playbill_curation._accepted_retirements_for_items(instance, (item,))
 
     if admitted:
-        assert set(resolved) == {"item"}
-        _generation, proposal_id, record, affected = resolved["item"]
+        proposal_id, changeset_digest = playbill_curation._resolve_fixing_change(instance, request)
         assert proposal_id == survivor
-        assert record.candidate_digest in candidates
-        assert any(member.path == path and member.disposition == "retire" for member in affected)
+        assert changeset_digest == record.changeset_digest
     else:
-        assert resolved == {}
+        with pytest.raises(playbill_curation.CurationResolvingProposalInvalid):
+            playbill_curation._resolve_fixing_change(instance, request)

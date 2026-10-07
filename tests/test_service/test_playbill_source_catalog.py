@@ -21,12 +21,35 @@ from cruxible_core.service.authoring.documents import (
 )
 from cruxible_core.service.evidence.source_catalog import (
     service_check_playbill_source_bundle,
-    service_compile_playbill_sources,
     service_propose_playbill_source_bundle,
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.test_ledger.test_activation import _sign
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
+
+
+def service_compile_playbill_sources(
+    instance,  # type: ignore[no-untyped-def]
+    *,
+    catalog,
+    repository_root: Path,
+    root_aliases: dict[str, Path] | None = None,
+):
+    """Compile as the adapters do: the daemon's source context, compiled client-side."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.authoring.sources import compile_client_source_context
+    from cruxible_core.service.evidence.source_catalog import service_playbill_source_context
+
+    context = SimpleNamespace(source_context=lambda _id: service_playbill_source_context(instance))
+    return compile_client_source_context(
+        context,  # type: ignore[arg-type]
+        instance.descriptor.instance_id,
+        catalog=catalog,
+        repository_root=repository_root,
+        aliases=root_aliases or {},
+    )
 
 
 def _entry(*, locator: str = "specs/design.md", root_alias: str | None = None):
@@ -285,7 +308,7 @@ def test_procedure_only_catalog_compiles_as_a_typed_document_noop(tmp_path: Path
 
     assert bundle.documents == ()
     assert bundle.manifest.inputs == ()
-    assert bundle.notes == ("procedure_projection_only_no_document_compilation",)
+    assert bundle.notes == ("no_document_entries_to_compile",)
 
 
 def test_a_sources_proposal_previews_and_writes_neither_the_cas_nor_a_proposal(
@@ -325,3 +348,12 @@ def test_a_sources_proposal_previews_and_writes_neither_the_cas_nor_a_proposal(
     committed = propose(dry_run=False, at=preview.accepted_coordinate.git_oid)
     assert committed.status == "admitted"
     assert instance.body_store().verify(digest) is True
+
+
+def test_an_entry_declares_all_document_fields_or_none() -> None:
+    evidence_only = SourceCatalogEntry(name="notes", locator="notes.md")
+    assert evidence_only.is_document is False
+    with pytest.raises(ValueError, match="only some Document fields"):
+        SourceCatalogEntry(name="notes", locator="notes.md", document_id="notes")
+    with pytest.raises(ValueError, match="public_uri"):
+        SourceCatalogEntry(name="notes", locator="notes.md", public_uri="https://x.test/n")

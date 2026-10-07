@@ -313,7 +313,7 @@ def test_v2_removed_item_ids_are_presentation_only_and_shape_checked() -> None:
         ("cruxible.claim.retire", {"claim_id": "CLM-" + "1" * 32}, "REQUEST_FILE"),
         ("cruxible.authoring.example", {}, "PAYLOAD_FILE"),
         ("cruxible.authoring.bind", {}, "PAYLOAD_FILE"),
-        ("cruxible.document.propose", {}, "ENVELOPE_FILE"),
+        ("cruxible.sources.propose", {}, "BUNDLE_FILE"),
     ],
 )
 def test_a_repair_command_never_carries_an_unfilled_file_placeholder(
