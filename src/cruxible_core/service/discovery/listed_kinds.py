@@ -15,6 +15,8 @@ from its artifact only when the request selects, searches or orders by it. A
 Line row lists at most ``LINE_TRIGGER_NAMES_MAX`` of its Triggers beside their
 total. Without a ``lifecycle`` filter only live rows are listed. ``order_by``
 sorts by each column's type, nulls last in either direction, ties by identity.
+A Line's ``triggers`` filters and a search read every live Trigger aimed at it,
+not only the names its row shows.
 """
 
 from __future__ import annotations
@@ -55,6 +57,8 @@ _AUTHORITIES = ("observe", "propose", "settle")
 _RUNG_OF: dict[str, int] = {authority: rung for rung, authority in RUNG_AUTHORITY.items()}
 #: Rows scanned per index chunk while matching.
 _CHUNK = 500
+#: A Line row's hidden flag: one of its Triggers, shown or not, contains the search text.
+_TRIGGER_HIT = "_trigger_hit"
 
 
 @dataclass(frozen=True)
@@ -241,6 +245,12 @@ def _index_selection(
     parameters: list[object] = []
     remaining: list[_Check] = []
     for check in checks:
+        if kind == "Line" and check.field == "triggers":
+            # A row shows only the first Trigger names; a filter reads them all.
+            clause, aimed = _aimed_trigger_clause(check)
+            clauses.append(clause)
+            parameters.extend(aimed)
+            continue
         column = fields[check.field].index_column
         if column is None or check.operator not in {"eq", "in"}:
             remaining.append(check)
@@ -250,7 +260,27 @@ def _index_selection(
         parameters.extend(_index_value(kind, check.field, value) for value in values)
     if not any(check.field == "lifecycle" for check in checks):
         clauses.append("lifecycle='live'")
-    return " AND ".join(clauses), parameters, remaining
+    # Residual filters alone leave nothing for the index to select on.
+    return " AND ".join(clauses) or "1", parameters, remaining
+
+
+#: Whether any live Trigger aimed at the outer ``lines`` row satisfies a condition.
+_AIMED = (
+    "EXISTS (SELECT 1 FROM triggers t WHERE t.target_kind='line' AND t.lifecycle='live' "
+    "AND t.target=lines.identity AND {condition})"
+)
+
+
+def _aimed_trigger_clause(check: _Check) -> tuple[str, list[object]]:
+    """A Line ``triggers`` filter over every live Trigger aimed at the Line."""
+
+    if check.operator == "contains":
+        return _AIMED.format(condition="instr(lower(t.identity), lower(?)) > 0"), [check.value]
+    values = (
+        list(cast(tuple[object, ...], check.value)) if check.operator == "in" else [check.value]
+    )
+    exists = _AIMED.format(condition=f"t.identity IN ({','.join('?' * len(values))})")
+    return (f"NOT {exists}" if check.operator == "ne" else exists), values
 
 
 def _cell_values(row: Mapping[str, Any], name: str) -> list[object]:
@@ -279,7 +309,15 @@ def _matcher(checks: Sequence[_Check], contains: str | None) -> Callable[[Mappin
             if not matched:
                 return False
         if needle is not None:
-            texts = [str(entry) for name in row for entry in _cell_values(row, name)]
+            # A Line row carries whether any of its Triggers, shown or not, matched.
+            if row.get(_TRIGGER_HIT):
+                return True
+            texts = [
+                str(entry)
+                for name in row
+                if not name.startswith("_")
+                for entry in _cell_values(row, name)
+            ]
             return any(needle in text.casefold() for text in texts)
         return True
 
@@ -335,16 +373,22 @@ def _line_rows(
     parameters: Sequence[object],
     *,
     evaluation_time: datetime,
+    contains: str | None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     from cruxible_core.service.discovery.operational import (
         aimed_trigger_page,
         line_arm_states,
     )
 
+    hit = (
+        "0"
+        if contains is None
+        else _AIMED.format(condition="instr(lower(t.identity), lower(?)) > 0")
+    )
     cursor = projection.typed.connection.execute(
         "SELECT identity, revision, procedure_identity, requested_terminal_rung, lifecycle, "
-        f"identity_digest FROM lines WHERE {where} ORDER BY identity",
-        tuple(parameters),
+        f"identity_digest, {hit} FROM lines WHERE {where} ORDER BY identity",
+        (*(() if contains is None else (contains,)), *parameters),
     )
     while chunk := cursor.fetchmany(_CHUNK):
         identities = tuple(str(item[0]) for item in chunk)
@@ -353,7 +397,7 @@ def _line_rows(
         arms = line_arm_states(
             instance, {str(item[0]): str(item[5]) for item in chunk}, now=evaluation_time
         )
-        for identity, revision, procedure, rung, lifecycle, _digest in chunk:
+        for identity, revision, procedure, rung, lifecycle, _digest, trigger_hit in chunk:
             name = str(identity)
             yield (
                 name,
@@ -367,6 +411,7 @@ def _line_rows(
                     "triggers": list(aimed[name].identities),
                     "triggers_total": aimed[name].total,
                     "version": int(revision),
+                    _TRIGGER_HIT: bool(trigger_hit),
                 },
             )
 
@@ -479,7 +524,12 @@ def listed_kind_answer(
             _trigger_rows(projection, where, parameters, detail=detail)
             if kind == "Trigger"
             else _line_rows(
-                instance, projection, where, parameters, evaluation_time=evaluation_time
+                instance,
+                projection,
+                where,
+                parameters,
+                evaluation_time=evaluation_time,
+                contains=request.contains,
             )
         )
         for identity, row in rows:

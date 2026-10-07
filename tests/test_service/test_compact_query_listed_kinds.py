@@ -242,3 +242,91 @@ def test_a_line_lists_a_bounded_page_of_its_triggers_with_their_total(  # type: 
     assert [item.trigger for item in card.triggers] == ["Trigger:t-a", "Trigger:t-b"]
     assert card.triggers_total == 5
     assert card.trigger == "cadence"
+
+
+# -- F-005: residual lifecycle filters; F-006: Trigger filters read every Trigger --
+
+
+@pytest.mark.parametrize("kind", ["Trigger", "Line"])
+@pytest.mark.parametrize(("operator", "value"), [("ne", "live"), ("contains", "ret")])
+def test_a_residual_lifecycle_filter_alone_answers(  # type: ignore[no-untyped-def]
+    cadence_world, kind, operator, value
+) -> None:
+    from datetime import UTC, datetime
+
+    instance, _line = cadence_world
+    result = _query(
+        instance,
+        datetime(2026, 9, 1, tzinfo=UTC),
+        kind=kind,
+        where=[{"field": "lifecycle", operator: value}],
+    )
+    # Nothing in the world is retired; the answer is empty, not a SQL error.
+    assert result.rows == ()
+
+
+def test_residual_lifecycle_filters_combine_with_other_residual_filters(cadence_world) -> None:  # type: ignore[no-untyped-def]
+    from datetime import UTC, datetime
+
+    instance, line = cadence_world
+    when = datetime(2026, 9, 1, tzinfo=UTC)
+
+    triggers = _query(
+        instance,
+        when,
+        kind="Trigger",
+        where=[{"field": "lifecycle", "contains": "liv"}, {"field": "schedule", "ne": "cadence"}],
+    )
+    assert triggers.rows and all(row["schedule"] != "cadence" for row in triggers.rows)
+    assert "floor-refresh" in {row["name"] for row in triggers.rows}
+
+    lines = _query(
+        instance,
+        when,
+        kind="Line",
+        where=[{"field": "lifecycle", "ne": "retired"}, {"field": "enabled", "eq": False}],
+    )
+    assert [row["name"] for row in lines.rows] == [line.identity.name]
+
+
+@pytest.mark.parametrize(
+    ("where", "expected"),
+    [
+        ({"field": "triggers", "eq": "Trigger:t-e"}, 1),
+        ({"field": "triggers", "ne": "Trigger:t-e"}, 0),
+        ({"field": "triggers", "in": ["Trigger:t-e", "Trigger:nope"]}, 1),
+        ({"field": "triggers", "contains": "t-e"}, 1),
+        ({"field": "triggers", "eq": "Trigger:nope"}, 0),
+        ({"field": "triggers", "ne": "Trigger:nope"}, 1),
+    ],
+)
+def test_line_trigger_filters_read_triggers_past_the_shown_names(  # type: ignore[no-untyped-def]
+    cadence_world, monkeypatch: pytest.MonkeyPatch, where, expected
+) -> None:
+    from datetime import UTC, datetime
+
+    from cruxible_core.service.discovery import listed_kinds
+
+    instance, _line = cadence_world
+    # Rows show t-a and t-b only; t-e is aimed at the Line but not shown.
+    monkeypatch.setattr(listed_kinds, "LINE_TRIGGER_NAMES_MAX", 2)
+    result = _query(instance, datetime(2026, 9, 1, tzinfo=UTC), kind="Line", where=[where])
+    assert len(result.rows) == expected
+    for row in result.rows:
+        assert row["triggers"] == ["Trigger:t-a", "Trigger:t-b"]
+        assert row["triggers_total"] == 5
+
+
+def test_a_line_search_reads_triggers_past_the_shown_names(  # type: ignore[no-untyped-def]
+    cadence_world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime
+
+    from cruxible_core.service.discovery import listed_kinds
+
+    instance, _line = cadence_world
+    monkeypatch.setattr(listed_kinds, "LINE_TRIGGER_NAMES_MAX", 2)
+    when = datetime(2026, 9, 1, tzinfo=UTC)
+    (row,) = _query(instance, when, kind="Line", contains="t-e").rows
+    assert "_trigger_hit" not in row
+    assert _query(instance, when, kind="Line", contains="no-such-trigger").rows == ()

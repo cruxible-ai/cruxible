@@ -1273,7 +1273,9 @@ lists Triggers by `name`, `schedule` (`cadence`, `cron`, `capture_landing`,
 `target` and `lifecycle`; `--select` adds `cron`, `cadence`, `capture_contract`
 and `version`. `query Line` lists Lines with their `procedure`, `authority`,
 `lifecycle`, `enabled` (whether the Line's automation is admitting work), its
-first 25 live `triggers` and `triggers_total`. Both filter on those fields,
+first 25 live `triggers` and `triggers_total` (a `triggers` filter or a
+`--contains` search reads every live Trigger aimed at the Line, not only the
+names shown). Both filter on those fields,
 list only live rows unless a `lifecycle` filter is given, and page like any
 compact query; an answer past 2000 rows is `capped` and says so. `--order-by`
 sorts by each column's type (numbers as numbers), nulls last, ties by name. `--where` filters combine as
