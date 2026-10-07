@@ -779,6 +779,41 @@ def test_retiring_dependents_reaches_transitive_dependents(
     assert _query_state(consumer, "local.tiers") == "retired"
 
 
+def test_a_kept_dropped_definition_stays_the_kits_until_retired_later(
+    worlds: tuple[_World, _World],
+) -> None:
+    """F-002: keeping a dropped definition on one install, retiring it on the next."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    consumer.add(publisher.build("1.0.0"))
+    _author_query(consumer, _query("local.accounts", (SEATS,)))
+    release = _without(publisher.build("2.0.0"), SEATS)
+
+    kept = consumer.add(release)
+    assert any(item.path == _path(SEATS) and item.action == "keep" for item in kept.plan)
+    status = playbill_api.playbill_kit_status(consumer.instance_id).kits[0]
+    assert status.version == "2.0.0"
+    assert any(item.path == _path(SEATS) for item in status.kept)
+    # Still the kit's: removing the kit would retire it.
+    removal = playbill_api.playbill_kit_remove(
+        consumer.instance_id, KitRemoveRequest(kit_id="acme")
+    )
+    assert (_path(SEATS), "retire") in {(item.path, item.action) for item in removal.plan}
+
+    # The same release again: the retained record keeps the decision.
+    again = consumer.add(release)
+    assert again.status == "unchanged"
+
+    retired = consumer.add(release, retire_dependents=(f"ClaimType:{SEATS}",))
+
+    assert retired.status == "accepted", retired.detail
+    assert consumer.claim_type(SEATS).lifecycle.state == "retired"
+    assert _query_state(consumer, "local.accounts") == "retired"
+    status = playbill_api.playbill_kit_status(consumer.instance_id).kits[0]
+    assert not any(item.path == _path(SEATS) for item in status.kept)
+
+
 def test_overlapping_ownership_is_refused(worlds: tuple[_World, _World]) -> None:
     publisher, consumer = worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))

@@ -536,7 +536,10 @@ def _settle_dropped(
                     detail=None
                     if identity in keep
                     else "the release dropped it and live artifacts depend on it; name it in "
-                    "retire_dependents (--retire-dependents) to retire it and them",
+                    "retire_dependents (--retire-dependents) to retire it and them"
+                    if dependents
+                    else "the release dropped it and an earlier install kept it on purpose; "
+                    "name it in retire_dependents (--retire-dependents) to retire it",
                 )
             )
             diff.kept.append(
@@ -890,12 +893,21 @@ def _add_kit(
             if item.path in paths
         )
 
+    # A definition the release dropped but this instance kept stays the kit's:
+    # its installation record carries forward, so status, removal, ownership
+    # and the next install's decisions (keep it, or retire it and its
+    # dependents) still see it.
+    retained = tuple(
+        installed[item.path]
+        for item in sorted(diff.kept, key=lambda item: item.path)
+        if item.consequence == "release_dropped" and item.path in installed
+    )
     receipt_body = KitReceipt(
         kit_id=manifest.kit_id,
         version=manifest.version,
         content_digest=manifest.content_digest,
         owns=manifest.owns,
-        artifacts=entries(owned),
+        artifacts=entries(owned) + retained,
         carried=entries(set(contents) - owned),
         source=request.source,
         kept=tuple(sorted(diff.kept, key=lambda item: item.path)),
