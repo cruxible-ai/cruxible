@@ -12,6 +12,24 @@ import json
 from collections.abc import Iterator, Mapping
 from typing import Any
 
+from pydantic import BaseModel
+
+from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.procedures.artifacts import (
+    BlueprintArtifact,
+    BlueprintOrigin,
+    ProcedureArtifact,
+)
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+from cruxible_client.contracts.procedures.source_program import (
+    ProcedureSourceProgram,
+    SourceClaimType,
+    SourceProcedureBinding,
+    SourceProviderBinding,
+    SourceQueryBinding,
+    SourceSlotBinding,
+)
+
 _PIN = ("*", "artifact_digest")
 # A Claim's capture-contract pins are provenance -- the exact contract versions its
 # evidence used -- so a Claim's references skip them and they never move.
@@ -40,6 +58,12 @@ REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("admission_policy", "corroboration_requirements", "*", "query_definition_digest"),
     ),
     "query-definitions/": (("pins", *_PIN),),
+    # A ProviderInterface is carried as its package registers it; its pins are
+    # its only references (its other digests are its own content).
+    "provider-interfaces/": (("pins", *_PIN),),
+    # A policy's coherence digests name built-in capture components, and its
+    # rules' digests are values: only its pins are references.
+    "source-acquisition-policies/": (("pins", *_PIN),),
     "claims/": (
         ("statement", "claim_type_digest"),
         ("pins", *_REQUIRED_CLAIM_PIN),
@@ -84,8 +108,133 @@ def _identities_at(value: object, steps: tuple[str, ...]) -> Iterator[tuple[str,
         yield from _identities_at(value[head], rest)
 
 
+# Procedures and Blueprints hold their pins inside a graph whose digest their
+# envelope carries, and a source program holds the same pins again as version
+# strings: they move through their typed model (``_move_graph``), never a field
+# table. A Procedure's Blueprint origin is provenance and never moves.
+_GRAPH_FAMILIES = ("blueprints/", "procedures/")
+
+
+def _graph_model(path: str) -> type[ProcedureArtifact] | type[BlueprintArtifact] | None:
+    if path.startswith("procedures/"):
+        return ProcedureArtifact
+    if path.startswith("blueprints/"):
+        return BlueprintArtifact
+    return None
+
+
+def _source_versions(source: ProcedureSourceProgram | None) -> Iterator[str]:
+    if source is None:
+        return
+    for binding in source.bindings.values():
+        if isinstance(binding, SourceProviderBinding):
+            yield binding.provider_version
+            yield binding.interface_version
+        elif isinstance(binding, SourceSlotBinding):
+            yield binding.interface_version
+        else:
+            yield binding.version
+    for claim_type in source.claim_types.values():
+        yield claim_type.version
+    yield from source.capture_contracts.values()
+
+
+def _moved(value: Any, remap: Mapping[str, str]) -> Any:
+    """``value`` with every pin and source version string moved through ``remap``."""
+
+    def move(digest: str) -> str:
+        return remap.get(digest, digest)
+
+    if isinstance(value, ArtifactPin):
+        moved = move(value.artifact_digest)
+        return (
+            value
+            if moved == value.artifact_digest
+            else value.model_copy(update={"artifact_digest": moved})
+        )
+    if isinstance(value, BlueprintOrigin):
+        return value
+    updates: dict[str, Any] = {}
+    if isinstance(value, SourceProviderBinding):
+        updates = {
+            "provider_version": move(value.provider_version),
+            "interface_version": move(value.interface_version),
+        }
+    elif isinstance(value, SourceSlotBinding):
+        updates = {"interface_version": move(value.interface_version)}
+    elif isinstance(value, SourceQueryBinding | SourceProcedureBinding | SourceClaimType):
+        updates = {"version": move(value.version)}
+    elif isinstance(value, ProcedureSourceProgram):
+        updates = {
+            "capture_contracts": {
+                name: move(digest) for name, digest in value.capture_contracts.items()
+            }
+        }
+    if isinstance(value, BaseModel):
+        for name in type(value).model_fields:
+            if name in updates:
+                continue
+            item = getattr(value, name)
+            moved_item = _moved(item, remap)
+            if moved_item is not item:
+                updates[name] = moved_item
+        changed = {name: item for name, item in updates.items() if item != getattr(value, name)}
+        return value.model_copy(update=changed) if changed else value
+    if isinstance(value, tuple | list):
+        items = [_moved(item, remap) for item in value]
+        if all(new is old for new, old in zip(items, value, strict=True)):
+            return value
+        return type(value)(items)
+    if isinstance(value, dict):
+        moved_values = {key: _moved(item, remap) for key, item in value.items()}
+        if all(moved_values[key] is value[key] for key in value):
+            return value
+        return moved_values
+    return value
+
+
+def _graph_digests(path: str, payload: Mapping[str, Any]) -> Iterator[str]:
+    model = _graph_model(path)
+    assert model is not None
+    graph = model.model_validate(payload)
+    for pin in graph.pins:
+        yield pin.artifact_digest
+    yield from _source_versions(graph.definition.source)
+
+
+def _move_graph(path: str, payload: Mapping[str, Any], remap: Mapping[str, str]) -> dict[str, Any]:
+    model = _graph_model(path)
+    assert model is not None
+    graph = model.model_validate(payload)
+    definition = _moved(graph.definition, remap)
+    pins = tuple(
+        sorted(
+            (_moved(pin, remap) for pin in graph.pins),
+            key=lambda pin: (
+                pin.role.encode("utf-8"),
+                pin.target.qualified.encode("utf-8"),
+                pin.artifact_digest.encode("ascii"),
+            ),
+        )
+    )
+    moved = model.model_validate(
+        {
+            **graph.model_dump(mode="json", by_alias=True),
+            "definition": definition.model_dump(mode="json", by_alias=True),
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            "pins": [pin.model_dump(mode="json") for pin in pins],
+        }
+    )
+    result: dict[str, Any] = json.loads(json.dumps(moved.model_dump(mode="json", by_alias=True)))
+    return result
+
+
 def reference_fields(path: str) -> tuple[tuple[str, ...], ...] | None:
-    """This path's reference fields, or None when its family has no table entry."""
+    """This path's reference fields, or None when its family has no table entry.
+
+    Procedures and Blueprints have none: their references move only through
+    ``move_references`` (their typed graph), never field by field.
+    """
 
     for prefix, fields in REFERENCE_FIELDS.items():
         if path.startswith(prefix):
@@ -130,6 +279,9 @@ def _at(value: object, steps: tuple[str, ...], remap: Mapping[str, str] | None) 
 
 
 def referenced_digests(path: str, payload: Mapping[str, Any]) -> Iterator[str]:
+    if path.startswith(_GRAPH_FAMILIES):
+        yield from _graph_digests(path, payload)
+        return
     for steps in reference_fields(path) or ():
         yield from _at(payload, steps, None)
 
@@ -139,6 +291,8 @@ def move_references(
 ) -> dict[str, Any]:
     """A copy of ``payload`` with its reference fields moved through ``remap``."""
 
+    if path.startswith(_GRAPH_FAMILIES):
+        return _move_graph(path, payload, remap)
     fields = reference_fields(path)
     if fields is None:
         raise ValueError(f"{path} has no reference table; it cannot be re-pinned automatically")

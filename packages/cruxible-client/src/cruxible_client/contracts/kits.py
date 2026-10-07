@@ -29,15 +29,19 @@ KIT_RECEIPT_DOCUMENT_KIND = "kit_receipt"
 
 # The definition families a kit may carry. Authority (governance, principals,
 # mandates), local binding (providers, lines) and state (subjects, claims,
-# attestations) are never kit content. Procedures, ProviderInterfaces and
-# SourceAcquisitionPolicies are definitions too, but join only once their
-# references can be moved field by field: a Procedure's pins feed its derived
-# definition digest, and a policy's literal defaults can hold digests that are
-# values, not pins.
+# attestations) are never kit content. A Procedure or Blueprint moves its pins
+# through its typed graph (they feed its definition digest); a
+# SourceAcquisitionPolicy moves only its pins, never the digests its rules hold
+# as values. A ProviderInterface is carried only as the exact bytes its
+# provider package registers, and never owned: the kit bundles that package.
 KIT_ARTIFACT_PREFIXES: tuple[str, ...] = (
+    "blueprints/",
     "capture-contracts/",
     "claim-types/",
+    "procedures/",
+    "provider-interfaces/",
     "query-definitions/",
+    "source-acquisition-policies/",
 )
 
 _KIT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")

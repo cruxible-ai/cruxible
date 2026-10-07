@@ -121,7 +121,10 @@ def _render(path: str, payload: dict[str, Any]) -> tuple[bytes, str]:
 
 
 def _owned(state: ArtifactDependencyStateV1, owns: tuple[str, ...]) -> bool:
-    return state.identity.name.startswith(owns)
+    # A ProviderInterface belongs to the provider package that registers it: a
+    # kit carries it for its Blueprints and Procedures and never owns it, so it
+    # never replaces or retires one.
+    return state.artifact_kind != "provider-interface" and state.identity.name.startswith(owns)
 
 
 def _dependency_order(

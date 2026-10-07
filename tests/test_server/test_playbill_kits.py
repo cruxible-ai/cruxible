@@ -12,6 +12,12 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from cruxible_client import Cruxible
+from cruxible_client.authoring.examples import acquisition_policy_example, procedure_example
+from cruxible_client.contracts.acquisition_policies import (
+    SourceAcquisitionPolicy,
+    acquisition_policy_digest,
+    parse_acquisition_policy,
+)
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -19,7 +25,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactRef,
 )
 from cruxible_client.contracts.attestations import ApprovalStatement
-from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
+from cruxible_client.contracts.authoring.inputs import ProcedureInput, QueryDefinitionInput
 from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependent
 from cruxible_client.contracts.captures import (
     CaptureContract,
@@ -47,6 +53,8 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicy,
 )
+from cruxible_client.contracts.procedures.artifacts import parse_procedure
+from cruxible_client.contracts.provider_interfaces import ProviderInterfaceRegistration
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
     QueryDefinitionSpec,
@@ -1396,6 +1404,23 @@ def test_state_reference_fields_are_real_digest_fields(prefix: str, model: type[
     assert table <= _digest_fields(model)
 
 
+@pytest.mark.parametrize(
+    ("prefix", "model"),
+    [
+        ("source-acquisition-policies/", SourceAcquisitionPolicy),
+        ("provider-interfaces/", ProviderInterfaceRegistration),
+    ],
+)
+def test_policy_and_interface_references_are_their_pins_alone(
+    prefix: str, model: type[BaseModel]
+) -> None:
+    # A policy's coherence and join digests name built-in components or values,
+    # and an interface's digests are its own content: only pins are references.
+    table = {tuple(s for s in steps if not s.startswith("*")) for steps in REFERENCE_FIELDS[prefix]}
+    assert table == {("pins", "artifact_digest")}
+    assert table <= _digest_fields(model)
+
+
 def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_claims_follow(
     worlds: tuple[_World, _World],
 ) -> None:
@@ -1531,3 +1556,131 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     assert [kit.kit_id for kit in playbill_api.playbill_kit_status(consumer.instance_id).kits] == [
         "acme"
     ]
+
+
+POLICY = "acme.intake"
+POLICY_PATH = f"source-acquisition-policies/{POLICY}.json"
+PROCEDURE = "acme.count"
+PROCEDURE_PATH = f"procedures/{PROCEDURE}.json"
+
+
+def _policy(variant: int, predecessor: str | None = None) -> SourceAcquisitionPolicy:
+    policy = acquisition_policy_example().acquisition_policy
+    return policy.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="SourceAcquisitionPolicy", name=POLICY),
+            "inputs": (policy.inputs[0].model_copy(update={"input_name": f"intake{variant}"}),),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=predecessor),
+        }
+    )
+
+
+def _live_policy(world: _World) -> SourceAcquisitionPolicy:
+    return parse_acquisition_policy(world.tree()[POLICY_PATH], path=POLICY_PATH)
+
+
+def _author_policy(world: _World, variant: int) -> None:
+    current = world.tree().get(POLICY_PATH)
+    predecessor = (
+        None
+        if current is None
+        else acquisition_policy_digest(parse_acquisition_policy(current, path=POLICY_PATH)).tagged
+    )
+    draft = world.pb.changes(rationale="Say how intake inputs are acquired.")
+    draft.acquisition_policy(_policy(variant, predecessor))
+    if PROCEDURE_PATH in world.tree():
+        # The Procedure pinning the policy moves with it in the same change.
+        draft.procedure(definition=_counting_procedure())
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit()
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    world.approve(submitted._candidate_status.proposal_id)
+    world.pb.refresh()
+
+
+def _counting_procedure() -> ProcedureInput:
+    example = procedure_example()
+    return example.model_copy(
+        update={
+            "definition": {**example.definition, "name": PROCEDURE},
+            "acquisition_policy": POLICY,
+        }
+    )
+
+
+def _author_counting_procedure(world: _World) -> None:
+    draft = world.pb.changes(rationale="Count the intake.")
+    draft.procedure(definition=_counting_procedure())
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit()
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    world.approve(submitted._candidate_status.proposal_id)
+    world.pb.refresh()
+
+
+def _procedure_policy_pin(content: bytes) -> str:
+    procedure = parse_procedure(content, path=PROCEDURE_PATH)
+    (pin,) = (pin for pin in procedure.pins if pin.role == "acquisition-policy")
+    return pin.artifact_digest
+
+
+def test_a_kit_carries_procedures_and_the_policies_they_pin_moving_pins_through_the_graph(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    _author_policy(publisher, 1)
+    # History before the release: the snapshot's policy digest differs from
+    # the publisher's, so the Procedure's pin (bound into its definition
+    # digest) must move with it.
+    _author_policy(publisher, 2)
+    _author_counting_procedure(publisher)
+    local = acquisition_policy_digest(_live_policy(publisher)).tagged
+
+    release = publisher.build("1.0.0")
+
+    assert [item.path for item in release.manifest.artifacts] == [PROCEDURE_PATH, POLICY_PATH]
+    released = release.manifest.digests()[POLICY_PATH]
+    assert released != local
+    assert _procedure_policy_pin(release.contents()[PROCEDURE_PATH]) == released
+    added = consumer.add(release)
+    assert added.status == "accepted", added
+    tree = consumer.tree()
+    for path, content in release.contents().items():
+        assert tree[path] == content
+    run = consumer.pb.accepted_procedure(PROCEDURE).run()
+    assert run.status == "succeeded"
+
+    # An upgrade replaces the policy; the consumer's Procedure takes a
+    # successor pinning the consumer's new policy digest.
+    _author_policy(publisher, 3)
+    upgraded = consumer.add(publisher.build("1.1.0"))
+    assert upgraded.status == "accepted", upgraded
+    actions = {item.path: item.action for item in upgraded.plan}
+    assert actions == {POLICY_PATH: "replace", PROCEDURE_PATH: "replace"}
+    consumer_policy = acquisition_policy_digest(_live_policy(consumer)).tagged
+    assert _procedure_policy_pin(consumer.tree()[PROCEDURE_PATH]) == consumer_policy
+    assert consumer.pb.accepted_procedure(PROCEDURE).run().status == "succeeded"
+
+
+def test_keeping_a_policy_keeps_the_procedure_pinned_to_the_consumers_version(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    _author_policy(publisher, 1)
+    _author_counting_procedure(publisher)
+    consumer.add(publisher.build("1.0.0"))
+    _author_policy(consumer, 2)
+    kept = acquisition_policy_digest(_live_policy(consumer)).tagged
+
+    _author_policy(publisher, 3)
+    upgraded = consumer.add(publisher.build("1.1.0"), keep=(f"SourceAcquisitionPolicy:{POLICY}",))
+
+    plan = {item.path: item for item in upgraded.plan}
+    assert plan[POLICY_PATH].action == "keep"
+    assert plan[POLICY_PATH].consequence == "overwrites_your_edit"
+    assert acquisition_policy_digest(_live_policy(consumer)).tagged == kept
+    assert _procedure_policy_pin(consumer.tree()[PROCEDURE_PATH]) == kept
