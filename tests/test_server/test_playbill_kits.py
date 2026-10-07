@@ -698,6 +698,87 @@ def test_a_dropped_definition_retires_unless_kept_or_depended_on(
     assert query.lifecycle.state == "retired"
 
 
+def _without(bundle: KitBundle, *predicates: str) -> KitBundle:
+    dropped = {_path(predicate) for predicate in predicates}
+    return KitBundle(
+        manifest=bundle.manifest.model_copy(
+            update={
+                "artifacts": tuple(
+                    item for item in bundle.manifest.artifacts if item.path not in dropped
+                )
+            }
+        ),
+        artifacts=tuple(item for item in bundle.artifacts if item.path not in dropped),
+    )
+
+
+def _query_state(world: _World, name: str) -> str:
+    path = f"query-definitions/{name}.json"
+    return parse_query_definition(world.tree()[path], path=path).lifecycle.state
+
+
+def test_retiring_dependents_follows_the_dropped_definitions_whole_closure(
+    worlds: tuple[_World, _World],
+) -> None:
+    """F-001: a dependent also reached through a replaced definition still retires."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    consumer.add(publisher.build("1.0.0"))
+    # Discovered first through PLAN (replaced), but it also pins SEATS (dropped).
+    _author_query(consumer, _query("local.accounts", (PLAN, SEATS)))
+    publisher.succeed(PLAN, {"type": "string", "minLength": 1})
+    release = _without(publisher.build("2.0.0"), SEATS)
+
+    result = consumer.add(release, retire_dependents=(f"ClaimType:{SEATS}",))
+
+    assert result.status == "accepted", result.detail
+    by_identity = {item.identity: item for item in result.plan}
+    assert by_identity[f"ClaimType:{SEATS}"].action == "retire"
+    assert by_identity[f"ClaimType:{SEATS}"].dependent_count == 1
+    assert by_identity[f"ClaimType:{PLAN}"].dependent_count == 1
+    assert consumer.claim_type(SEATS).lifecycle.state == "retired"
+    assert _query_state(consumer, "local.accounts") == "retired"
+
+
+def test_retiring_dependents_reaches_transitive_dependents(
+    worlds: tuple[_World, _World],
+) -> None:
+    """F-001: a dependent of a dependent retires with the dropped root."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    consumer.add(publisher.build("1.0.0"))
+    # SEATS <- a local type pinning it <- a local query reading that type: the
+    # query reaches SEATS only through the type.
+    tier = _claim_type("acme.account.tier", {"type": "string"}).model_copy(
+        update={
+            "pins": (
+                ArtifactPin(
+                    role="reads",
+                    target=ArtifactIdentity(kind="ClaimType", name=SEATS),
+                    artifact_digest=claim_type_digest(consumer.claim_type(SEATS)).tagged,
+                ),
+            )
+        }
+    )
+    consumer.author(tier)
+    _author_query(consumer, _query("local.tiers", ("acme.account.tier",)))
+    release = _without(publisher.build("2.0.0"), SEATS)
+
+    preview = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=release, source="test")
+    )
+    seats = next(item for item in preview.plan if item.path == _path(SEATS))
+    assert (seats.action, seats.dependent_count) == ("keep", 2)
+
+    retired = consumer.add(release, retire_dependents=(f"ClaimType:{SEATS}",))
+
+    assert retired.status == "accepted", retired.detail
+    assert consumer.claim_type("acme.account.tier").lifecycle.state == "retired"
+    assert _query_state(consumer, "local.tiers") == "retired"
+
+
 def test_overlapping_ownership_is_refused(worlds: tuple[_World, _World]) -> None:
     publisher, consumer = worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
@@ -1066,7 +1147,11 @@ def test_a_local_definition_pinning_two_changed_types_takes_one_successor(
     upgraded = consumer.add(publisher.build("1.1.0"))
 
     assert query_path not in {item.path for item in upgraded.plan}
-    assert sum(item.dependent_count for item in upgraded.plan) == 1
+    # Each changed type counts its complete dependents; the query they share
+    # still takes one successor.
+    assert {
+        item.identity: item.dependent_count for item in upgraded.plan if item.dependent_count
+    } == {f"ClaimType:{SEATS}": 1, f"ClaimType:{PLAN}": 1}
     query = parse_query_definition(consumer.tree()[query_path], path=query_path)
     accepted = parse_query_definition(accepted_query, path=query_path)
     assert query.lifecycle.predecessor_digest == query_definition_digest(accepted).tagged

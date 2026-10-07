@@ -65,6 +65,7 @@ from cruxible_core.claims.artifact_references import (
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDisposition,
     ClaimTypeMigrationError,
+    ClaimTypeMigrationInventoryItemV1,
     build_dependent_closure_candidate,
     dependent_closure_inventory,
 )
@@ -575,22 +576,34 @@ def _settle_dependents(
     changed = {path: content for path, content in diff.writes.items() if path in tree}
     if not changed:
         return dict(diff.writes), []
-    roots = tuple(_artifact_state(path, tree[path]).identity for path in sorted(changed))
+    roots: dict[str, ArtifactIdentity] = {}
+    for path in sorted(changed):
+        identity = _artifact_state(path, tree[path]).identity
+        roots[identity.qualified] = identity
+    fixed = frozenset(diff.writes)
     try:
-        inventory = dependent_closure_inventory(
-            tree, roots=roots, fixed_paths=frozenset(diff.writes)
-        )
+        # Each changed definition's complete reverse closure, on its own: a
+        # dependent reached through several definitions counts for each, and
+        # belongs to the retirement closure of every one it reaches.
+        closures = {
+            name: dependent_closure_inventory(tree, roots=(identity,), fixed_paths=fixed)
+            for name, identity in roots.items()
+        }
     except ClaimTypeMigrationError as error:
         return dict(diff.writes), [str(error)]
-    if not inventory:
+    union: dict[str, ClaimTypeMigrationInventoryItemV1] = {}
+    for name in roots:
+        for item in closures[name]:
+            union.setdefault(item.path, item)
+    if not union:
         return dict(diff.writes), []
+    inventory = tuple(union[path] for path in sorted(union))
+    counts = {name: len(items) for name, items in closures.items() if items}
+    retiring = {item.path for name in retire_with for item in closures.get(name, ())}
     refused = []
     dispositions = []
-    counts: dict[str, int] = {}
     for item in inventory:
-        trigger = item.triggering_identity.qualified
-        counts[trigger] = counts.get(trigger, 0) + 1
-        if trigger in retire_with:
+        if item.path in retiring and "retire" in item.permitted_dispositions:
             dispositions.append(
                 ClaimTypeDependentDisposition(
                     identity=item.identity,
@@ -605,7 +618,10 @@ def _settle_dependents(
                 ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
             )
         else:
-            refused.append(f"{item.identity.qualified} cannot be carried to {trigger}")
+            refused.append(
+                f"{item.identity.qualified} cannot be carried to "
+                f"{item.triggering_identity.qualified}"
+            )
     if refused:
         return dict(diff.writes), refused
     try:
