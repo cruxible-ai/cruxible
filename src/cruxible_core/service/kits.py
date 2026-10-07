@@ -343,6 +343,10 @@ def _build_difference(
         return f"wheel other than {package.provider.wheel.filename}"
     if runtime.local_env is None or runtime.local_env.lock_sha256 != package.provider.lock.sha256:
         return "lock other than the bundled one"
+    if runtime.local_env.materialization_digests.get(package.pin_key) != package.materialization:
+        # The lock pins path dependencies by name and version only: the
+        # materialization digest is what names their exact wheels.
+        return "dependency closure other than the bundled wheels"
     return None
 
 
@@ -1082,9 +1086,15 @@ _ProviderState = Literal["installed", "differs", "missing", "retired"]
 
 
 def _provider_here(
-    tree: Mapping[str, bytes], provider: KitProvider
+    tree: Mapping[str, bytes],
+    provider: KitProvider,
+    inspected: InspectedProviderPackage | None = None,
 ) -> tuple[_ProviderState, str | None, str | None]:
-    """Whether this bundled build is the live Provider here: (state, digest, version)."""
+    """Whether this bundled build is the live Provider here: (state, digest, version).
+
+    Without ``inspected`` (the staged files, resolved for this host) only the
+    wheel and lock are compared; with it, the whole dependency closure is.
+    """
 
     path = f"providers/{provider.provider_id}.json"
     raw = tree.get(path)
@@ -1102,12 +1112,15 @@ def _provider_here(
         and runtime.distribution.sha256 == provider.wheel.sha256
         and runtime.local_env is not None
         and runtime.local_env.lock_sha256 == provider.lock.sha256
+        and (inspected is None or _build_difference(held, inspected) is None)
     )
     return ("installed" if same else "differs"), digest, runtime.distribution.version
 
 
 def _provider_steps(
-    tree: Mapping[str, bytes], manifest: KitManifest
+    tree: Mapping[str, bytes],
+    manifest: KitManifest,
+    inspected: Mapping[str, InspectedProviderPackage] | None = None,
 ) -> tuple[list[KitProviderStep], list[KitProvider]]:
     """One step per bundled provider, and the ones still to install.
 
@@ -1120,7 +1133,9 @@ def _provider_steps(
     steps = []
     missing = []
     for provider in manifest.providers:
-        state, _digest, version = _provider_here(tree, provider)
+        state, _digest, version = _provider_here(
+            tree, provider, None if inspected is None else inspected[provider.provider_id]
+        )
         named = {
             "provider_id": provider.provider_id,
             "package": provider.package,
@@ -1140,12 +1155,40 @@ def _provider_steps(
                     "kit would restore it"
                     if state == "retired"
                     else f"another build of {provider.provider_id} ({version}) is installed "
-                    f"here; the kit bundles {provider.package} {provider.version} "
-                    f"({provider.wheel.sha256[:19]}). Replace it with provider install, "
-                    "carrying the Procedures that pin it, then add the kit again",
+                    f"here (wheel, lock or dependency closure); the kit bundles "
+                    f"{provider.package} {provider.version} ({provider.wheel.sha256[:19]}). "
+                    "Replace it with provider install, carrying the Procedures that pin it, "
+                    "then add the kit again",
                 )
             )
     return steps, missing
+
+
+def _inspect_staged(
+    instance: PlaybillInstance, manifest: KitManifest
+) -> dict[str, InspectedProviderPackage]:
+    """Each bundled package read from the body store and resolved for this host.
+
+    Metadata only, through the toolchain's readers: no provider code runs.
+    """
+
+    _require_staged(instance, manifest.provider_files(), "cruxible.kit.add")
+
+    def read(name: str) -> bytes:
+        return instance.body_store().read(
+            manifest.provider_files()[name], access=_PROVIDER_FILE_ACCESS
+        )
+
+    return {
+        provider.provider_id: inspect_provider_package(
+            wheel=(provider.wheel.filename, read(provider.wheel.filename)),
+            lock=read(provider.lock.filename),
+            dependencies=tuple(
+                (item.filename, read(item.filename)) for item in provider.dependencies
+            ),
+        )
+        for provider in manifest.providers
+    }
 
 
 def _install_providers(
@@ -1158,11 +1201,7 @@ def _install_providers(
 
     if install is None:
         raise ConfigError("this daemon cannot install the kit's bundled providers")
-    _require_staged(
-        instance,
-        {item.filename: item.sha256 for provider in missing for item in provider.files()},
-        "cruxible.kit.add",
-    )
+    # The files were read from the body store already (_inspect_staged).
     by_id = {step.provider_id: index for index, step in enumerate(steps)}
     for provider in missing:
         result = install(
@@ -1197,6 +1236,7 @@ def _provider_remap(
     tree: Mapping[str, bytes],
     contents: Mapping[str, bytes],
     manifest: KitManifest,
+    inspected: Mapping[str, InspectedProviderPackage] | None = None,
 ) -> dict[str, str]:
     """Release Provider pin digest -> the digest of the bundled build installed here.
 
@@ -1208,7 +1248,9 @@ def _provider_remap(
 
     held = {}
     for provider in manifest.providers:
-        state, digest, _version = _provider_here(tree, provider)
+        state, digest, _version = _provider_here(
+            tree, provider, None if inspected is None else inspected[provider.provider_id]
+        )
         if state == "installed" and digest is not None:
             held[provider.provider_id] = digest
     remap: dict[str, str] = {}
@@ -1270,7 +1312,13 @@ def _add_kit(
     shell, receipt = (None, None) if found is None else found
     installed_version = None if receipt is None or not receipt.artifacts else receipt.version
     transition = _transition(installed_version, manifest.version)
-    steps, missing = _provider_steps(tree, manifest)
+    # A commit reads the staged provider files and resolves them for this host,
+    # so a bundled build counts as installed only with its whole dependency
+    # closure; a preview has no files and compares wheel and lock.
+    inspected = (
+        None if mode.previewing or not manifest.providers else _inspect_staged(instance, manifest)
+    )
+    steps, missing = _provider_steps(tree, manifest, inspected)
     described: dict[str, object] = {
         "transition": transition,
         "installed_version": installed_version,
@@ -1335,7 +1383,7 @@ def _add_kit(
         kept=kept,
         keep=keep,
         keep_local_edits=request.keep_local_edits,
-        preset=_provider_remap(tree, contents, manifest),
+        preset=_provider_remap(tree, contents, manifest, inspected),
     )
     retire_with = _settle_dropped(
         tree,

@@ -98,24 +98,39 @@ class ArtifactTransport:
             )
 
 
-def prepare_provider_package(
+@dataclass(frozen=True)
+class ResolvedProviderPackage:
+    """One package resolved for this host's marker environment; nothing built or run."""
+
+    pin: Any
+    document: PackageRegistrationDocumentV1
+    lock: Any
+    resolved: Any
+    #: The environment pin key and the materialization digest a Provider for this
+    #: wheel, lock and dependency wheels records on this host.
+    pin_key: str
+    materialization: str
+
+
+def resolve_provider_package(
     *,
     wheel: Path,
     lock_path: Path,
     dependency_wheels: tuple[Path, ...],
-    cache_root: Path,
-    extras: tuple[str, ...],
-    control_domain: str,
-    index_urls: tuple[str, ...],
-) -> PreparedProviderPackage:
-    enforce_customer_code_execution_supported()
+    extras: tuple[str, ...] = (),
+) -> ResolvedProviderPackage:
+    """Resolve a wheel, its lock and its transferred dependency wheels for this host.
+
+    Metadata and lock reading only: the materialization digest it computes is the
+    one an install of these exact bytes records, so comparing it with a held
+    Provider's tells whether that Provider runs this exact dependency closure.
+    """
+
     wheels = toolchain("wheels")
     resolution = toolchain("resolution")
-    backend = toolchain("backends")
     pin = wheels.wheel_pin(wheel)
     with wheels.wheel_registration(wheel) as bundle:
         document = PackageRegistrationDocumentV1.model_validate(bundle.export_document())
-    interfaces = document.interface_registrations()
     local_pins = [wheels.wheel_pin(path) for path in dependency_wheels]
     local_by_name = {item.name: item for item in local_pins}
     if len(local_by_name) != len(local_pins) or pin.name in local_by_name:
@@ -146,6 +161,34 @@ def prepare_provider_package(
     materialization = toolchain("digests").materialization_digest(
         resolved, distribution_sha256=pin.artifact_id
     )
+    return ResolvedProviderPackage(
+        pin=pin,
+        document=document,
+        lock=lock,
+        resolved=resolved,
+        pin_key=resolved.pin_key(),
+        materialization=materialization,
+    )
+
+
+def prepare_provider_package(
+    *,
+    wheel: Path,
+    lock_path: Path,
+    dependency_wheels: tuple[Path, ...],
+    cache_root: Path,
+    extras: tuple[str, ...],
+    control_domain: str,
+    index_urls: tuple[str, ...],
+) -> PreparedProviderPackage:
+    enforce_customer_code_execution_supported()
+    backend = toolchain("backends")
+    package = resolve_provider_package(
+        wheel=wheel, lock_path=lock_path, dependency_wheels=dependency_wheels, extras=extras
+    )
+    pin, document, lock, resolved = package.pin, package.document, package.lock, package.resolved
+    materialization = package.materialization
+    interfaces = document.interface_registrations()
     distribution = ProviderLocalDistributionPin(
         name=pin.name,
         version=pin.version,

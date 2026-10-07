@@ -20,7 +20,11 @@ from cruxible_client.contracts.provider_interfaces import (
 )
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.errors import RequestRefusedError
-from cruxible_core.providers.package_materialization import package_preparation_errors, toolchain
+from cruxible_core.providers.package_materialization import (
+    package_preparation_errors,
+    resolve_provider_package,
+    toolchain,
+)
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 
 _REPAIR = RepairOperation(operation="cruxible.kit.build")
@@ -33,6 +37,11 @@ class InspectedProviderPackage:
     provider: KitProvider
     #: ProviderInterface path -> the exact artifact bytes installing the wheel writes.
     interfaces: dict[str, bytes]
+    #: This host's environment pin key and the materialization digest installing
+    #: these exact bytes records there: the whole dependency closure, path
+    #: dependency wheels included, which the lock pins only by name and version.
+    pin_key: str
+    materialization: str
 
 
 def _refuse(code: str, message: str) -> RequestRefusedError:
@@ -113,6 +122,18 @@ def inspect_provider_package(
             f"lock names (unexpected: {extra or 'none'}; other version: {mismatched or 'none'})",
         )
     registrations = document.interface_registrations()
+    with tempfile.TemporaryDirectory(prefix="cruxible-kit-provider-") as temporary:
+        root = Path(temporary)
+        dependency_root = root / "dependencies"
+        dependency_root.mkdir()
+        with package_preparation_errors():
+            resolved = resolve_provider_package(
+                wheel=_write(root, wheel[0], wheel[1]),
+                lock_path=_write(root, "uv.lock", lock),
+                dependency_wheels=tuple(
+                    _write(dependency_root, name, content) for name, content in dependencies
+                ),
+            )
     provider = KitProvider(
         provider_id=document.manifest.provider_id,
         package=pin.name,
@@ -133,6 +154,8 @@ def inspect_provider_package(
             provider_interface_path(item.interface_id): render_provider_interface(item)
             for item in registrations
         },
+        pin_key=resolved.pin_key,
+        materialization=resolved.materialization,
     )
 
 

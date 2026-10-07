@@ -590,3 +590,61 @@ def test_a_bundled_provider_resolves_registry_dependencies_from_the_default_inde
                 registry_index_default=default,
             )
     assert seen == [(), DEFAULT_PROVIDER_INDEX_URLS]
+
+
+def _with_other_runtime_build(project: Path, checkout: ProviderCheckout, root: Path) -> Path:
+    """The same package with another build of its runtime dependency: same file name
+    and version, other bytes. Its lock pins the runtime by name and version only."""
+
+    source = root / "runtime-source"
+    shutil.copytree(checkout.repository / "packages/cruxible-provider-runtime", source)
+    (source / "src/cruxible_provider_runtime/another_build.py").write_text("BUILD = 'B'\n")
+    other = root / "other-build"
+    shutil.copytree(project, other)
+    for wheel in (other / "dist").glob("cruxible_provider_runtime-*.whl"):
+        wheel.unlink()
+    uv = shutil.which("uv")
+    assert uv is not None
+    subprocess.run(
+        [uv, "build", "--wheel", "--offline", "--out-dir", str(other / "dist"), str(source)],
+        check=True,
+        capture_output=True,
+    )
+    return other
+
+
+def test_a_bundled_provider_matches_only_with_its_whole_dependency_closure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
+) -> None:
+    """Review F-001: the lock pins path dependencies by name and version only, so the
+    installed build is matched by its materialization, which names their wheels."""
+
+    opened = _worlds(tmp_path, monkeypatch)
+    publisher, consumer = next(opened)
+    try:
+        project = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
+        other = _with_other_runtime_build(project, provider_checkout, tmp_path)
+        (runtime_a,) = (project / "dist").glob("cruxible_provider_runtime-*.whl")
+        (runtime_b,) = (other / "dist").glob("cruxible_provider_runtime-*.whl")
+        assert runtime_a.name == runtime_b.name
+        assert runtime_a.read_bytes() != runtime_b.read_bytes()
+        _install(publisher, project)
+        _author(publisher)
+        # Build: the bundled runtime B is not the closure installed here (A).
+        with pytest.raises(RequestRefusedError) as differs:
+            _build(publisher, other)
+        assert differs.value.error_code == "cruxible.kit.provider_build_differs"
+        assert "dependency closure" in str(differs.value)
+
+        # Add: the consumer runs kit-call over runtime B; the kit bundles A.
+        release = _build(publisher, project)
+        _install(consumer, other)
+        before = _tree(consumer)
+        refused = _add(consumer, release, dry_run=False)
+        assert refused.status == "blocked", refused
+        (step,) = refused.providers
+        assert step.action == "blocked" and "dependency closure" in (step.detail or "")
+        assert _tree(consumer) == before
+    finally:
+        for _ in opened:
+            pass
