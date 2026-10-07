@@ -144,7 +144,6 @@ def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
         "terminal_authority_capped_by_line_max_authority",
         "terminal_authority_capped_by_propagated_sensitivity",
         "terminal_authority_capped_by_mandate_grant",
-        "terminal_authority_capped_by_calibration",
         "provider_acquisition_plan_required",
         "provider_acquisition_plan_mismatch",
         "workspace_file_read_refused",

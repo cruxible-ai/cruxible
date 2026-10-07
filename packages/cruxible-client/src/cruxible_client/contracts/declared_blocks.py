@@ -970,8 +970,6 @@ __all__ = [
     "MAX_PROJECTION_CARDS_PER_SOURCE",
     "MAX_PROJECTION_COVERAGE_BINDINGS",
     "PROJECTION_MARKER_GRAMMAR",
-    "PROJECTION_QUERY_PARAMETER_DOMAIN",
-    "PROJECTION_QUERY_SEMANTIC_RESULT_DOMAIN",
     "PresentationPolicyAny",
     "PresentationPolicyV1",
     "PresentationPolicy",

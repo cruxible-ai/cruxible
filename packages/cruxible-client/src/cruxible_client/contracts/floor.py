@@ -31,7 +31,6 @@ from cruxible_client.contracts.primitives import pretty_json
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 FLOOR_FORMAT = "playbill-floor-export-v6"
-FLOOR_MANIFEST_TAG = "playbill-floor-manifest-v6"
 FLOOR_MANIFEST_PATH = "manifest.json"
 # Local metadata the workspace writer adds outside the daemon-verified manifest:
 # `.gitignore` ignores the floor itself; the indexes join workspace bindings:
@@ -396,8 +395,6 @@ __all__ = [
     "FLOOR_FORMAT",
     "FLOOR_LOCAL_PATHS",
     "FLOOR_MANIFEST_PATH",
-    "FLOOR_MANIFEST_TAG",
-    "FloorApplyResult",
     "FloorApplyResult",
     "FloorDeltaFile",
     "FloorDelta",

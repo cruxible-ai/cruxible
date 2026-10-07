@@ -3062,16 +3062,6 @@ Import: `cruxible_client.authoring.sdk_types.SourceMapEntry`. [Source](src/cruxi
 | `emitted_paths` | `tuple[str, ...]` | `Required` |
 | `call_site` | `CallSite` | `Required` |
 
-<a id="api-derivationspec"></a>
-
-## `DerivationSpec`
-
-Import: `cruxible_client.authoring.sdk_types.DerivationSpec`. [Source](src/cruxible_client/authoring/sdk_types.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `name` | `str` | `Required` |
-
 ## Source selection
 
 `cx.file(path)` selects only cataloged local sources. FileSelector retains
@@ -6030,8 +6020,6 @@ HTTP: `POST f'/api/v1/{instance_id}/floor/export'`.
 | AuthenticationError / PermissionDeniedError / typed daemon errors | Repair credentials, scope, authority, or the server’s structured refusal. |
 
 `ClaimDraft.derived_by()` always raises the unavailable derivation-carry refusal.
-`DerivationSpec` is a value type, not proof of a served
-derivation writer.
 
 Public wire models remain in `cruxible_client.contracts`; `model_fields`,
 `model_json_schema()`, and model validation expose exact types, requiredness,
@@ -7021,7 +7009,7 @@ fields are documented above; these links keep wire schema definitions singular.
 
 **`contracts.canonical`** — [ArtifactCodec](src/cruxible_client/contracts/canonical.py), [Sha256Value](src/cruxible_client/contracts/canonical.py), [BootstrapRoot](src/cruxible_client/contracts/canonical.py), [ArtifactDigest](src/cruxible_client/contracts/canonical.py), [CandidateDigest](src/cruxible_client/contracts/canonical.py), [AcceptanceLawDigest](src/cruxible_client/contracts/canonical.py), [ApprovalDigest](src/cruxible_client/contracts/canonical.py), [ProposalDigest](src/cruxible_client/contracts/canonical.py), [SemanticDiffDigest](src/cruxible_client/contracts/canonical.py), [ChangeSetDigest](src/cruxible_client/contracts/canonical.py), [SemanticManifestRoot](src/cruxible_client/contracts/canonical.py), [MerkleNodeDigest](src/cruxible_client/contracts/canonical.py), [SemanticMerkleRoot](src/cruxible_client/contracts/canonical.py), [DependencyEdgeRoot](src/cruxible_client/contracts/canonical.py), [SemanticRoot](src/cruxible_client/contracts/canonical.py), [GenerationRoot](src/cruxible_client/contracts/canonical.py), [LogicalDigest](src/cruxible_client/contracts/canonical.py), [CasDigest](src/cruxible_client/contracts/canonical.py).
 
-**`contracts.capture_journal`** — [CaptureJournalError](src/cruxible_client/contracts/capture_journal.py), [CaptureLandingEventV1](src/cruxible_client/contracts/capture_journal.py), [CaptureLandingEvent](src/cruxible_client/contracts/capture_journal.py), [CaptureCursor](src/cruxible_client/contracts/capture_journal.py), [CaptureLandingJournalProtocol](src/cruxible_client/contracts/capture_journal.py), [InMemoryCaptureLandingJournal](src/cruxible_client/contracts/capture_journal.py).
+**`contracts.capture_journal`** — [CaptureJournalError](src/cruxible_client/contracts/capture_journal.py), [CaptureLandingEventV1](src/cruxible_client/contracts/capture_journal.py), [CaptureLandingEvent](src/cruxible_client/contracts/capture_journal.py), [CaptureCursor](src/cruxible_client/contracts/capture_journal.py), [InMemoryCaptureLandingJournal](src/cruxible_client/contracts/capture_journal.py).
 
 **`contracts.capture_reads`** — [CaptureReadRequest](src/cruxible_client/contracts/capture_reads.py), [CaptureRead](src/cruxible_client/contracts/capture_reads.py).
 
@@ -7105,7 +7093,7 @@ fields are documented above; these links keep wire schema definitions singular.
 
 **`contracts.procedures.windows`** — [CaptureEventSelector](src/cruxible_client/contracts/procedures/windows.py), [TriggerEventReference](src/cruxible_client/contracts/procedures/windows.py), [FixedWindow](src/cruxible_client/contracts/procedures/windows.py), [CaptureEventWindow](src/cruxible_client/contracts/procedures/windows.py), [BoundObservationWindow](src/cruxible_client/contracts/procedures/windows.py), [LineTriggerBinding](src/cruxible_client/contracts/procedures/windows.py).
 
-**`contracts.projection`** — [AcceptedProjectionCoordinate](src/cruxible_client/contracts/projection.py), [AcceptedCoordinate](src/cruxible_client/contracts/projection.py), [CandidateGenerationProjectionCoordinate](src/cruxible_client/contracts/projection.py), [ProvisionalProjectionCoordinate](src/cruxible_client/contracts/projection.py).
+**`contracts.projection`** — [AcceptedProjectionCoordinate](src/cruxible_client/contracts/projection.py), [AcceptedCoordinate](src/cruxible_client/contracts/projection.py), [CandidateGenerationProjectionCoordinate](src/cruxible_client/contracts/projection.py).
 
 **`contracts.projection_extensions`** — [ProjectionFactDeclaration](src/cruxible_client/contracts/projection_extensions.py), [ProjectionFact](src/cruxible_client/contracts/projection_extensions.py), [ProjectionExtensionRegistry](src/cruxible_client/contracts/projection_extensions.py).
 

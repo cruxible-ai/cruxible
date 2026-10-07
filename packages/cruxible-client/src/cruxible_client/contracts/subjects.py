@@ -300,7 +300,6 @@ def evaluate_subject_law(
 __all__ = [
     "AcceptedSubject",
     "SUBJECT_DIGEST_FUNCTIONS",
-    "SUBJECT_REUSE_SIGNATURE_DOMAIN",
     "SubjectLawResult",
     "SubjectShell",
     "evaluate_subject_law",

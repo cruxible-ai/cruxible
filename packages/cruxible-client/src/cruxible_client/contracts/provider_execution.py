@@ -190,9 +190,6 @@ class ProviderBudgetTranslation(_StrictProviderExecutionModel):
         return self
 
 
-PROVIDER_BUDGET_TRANSLATION_DOMAIN = "playbill-provider-budget-translation-v1"
-
-
 _OBSERVER_BACKEND_RE = re.compile(r"^[a-z0-9]+(?:[.\-][a-z0-9]+)*$")
 
 
@@ -233,9 +230,6 @@ class ProviderEgressObservation(_StrictProviderExecutionModel):
         if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
             raise ValueError("egress observation sets must be sorted and unique")
         return value
-
-
-PROVIDER_EGRESS_OBSERVATION_DOMAIN = "playbill-provider-egress-observation-v1"
 
 
 class VerifiedProviderBinding(_StrictProviderExecutionModel):
@@ -424,9 +418,6 @@ class ProviderInvocationOutcome(_StrictProviderExecutionModel):
         elif self.outcome_class == "ok" or self.attribution == "none" or self.code is None:
             raise ValueError("non-ok Provider outcome requires class, attribution, and code")
         return self
-
-
-PROVIDER_INVOCATION_OUTCOME_DOMAIN = "playbill-provider-invocation-outcome-v1"
 
 
 class ProviderInvocationReceipt(_StrictProviderExecutionModel):
@@ -651,14 +642,6 @@ class ProviderInvocationCompleted(_StrictProviderExecutionModel):
 
 
 __all__ = [
-    "PROCEDURE_DERIVED_SOURCE_REQUEST_DOMAIN",
-    "PROVIDER_BUDGET_TRANSLATION_DOMAIN",
-    "PROVIDER_EGRESS_OBSERVATION_DOMAIN",
-    "PROVIDER_EXTERNAL_OCCURRENCE_PLAN_DOMAIN",
-    "PROVIDER_INVOCATION_OUTCOME_DOMAIN",
-    "PROVIDER_INVOCATION_OUTPUT_DOMAIN",
-    "PROVIDER_INVOCATION_RECEIPT_DOMAIN",
-    "PROVIDER_SECRET_BINDING_IDENTITY_DOMAIN",
     "ProviderBudgetTranslation",
     "ProviderEgressObservation",
     "ProviderExternalOccurrencePlan",
