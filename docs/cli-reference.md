@@ -2214,8 +2214,22 @@ two adds on one field land in one change set. A top-level `"subject"` is the
 Subject of every change that names none (a retire's target may then be
 `{"field": ...}`); a change's own subject overrides it, and a change with
 neither refuses `cruxible.write.subject_required`. `--schema` prints what FILE
-holds. A refusal prints its code, the nearest valid names and the repair, and
+holds; `write -` reads the change set from stdin, so a heredoc or a pipe needs
+no file. A refusal prints its code, the nearest valid names and the repair, and
 exits 1.
+
+Two lanes change accepted state. Value changes are these verbs: one change uses
+its verb (`set`, `add`, `retire`; MCP `cruxible_set` and `cruxible_retire`; SDK
+`cx.set` and `cx.retire`), and several changes that must land together use
+`write` (MCP `cruxible_write`; SDK `cx.changes(because=..., subject=...)` with
+`.set`, `.add` and `.retire`, then `.write()`): atomic, one proposal under a
+review policy, one generation, one `because`, one preview. Each is applied
+under the approval policy, accepting in the same call when it and your tier
+allow. Definitions go through authoring instead (`cruxible authoring compile`
+and `submit`; SDK `cx.changes(rationale=...)`): an intent you compile and
+preflight, a proposal, then review and activation. ClaimTypes keep their own
+`claim-type` group, because changing vocabulary disposes the Claims that
+depend on it.
 
 ## get
 
