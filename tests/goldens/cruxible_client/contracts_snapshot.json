@@ -32,6 +32,13 @@
         "claim-type-succession"
       ]
     },
+    "ClaimTypeLintCode": {
+      "values": [
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+        "cruxible.claim_type.anticipated_source_contract_omitted",
+        "cruxible.claim_type.attestation_threshold_disabled"
+      ]
+    },
     "FloorExportPart": {
       "values": [
         "discovery"
@@ -8379,6 +8386,73 @@
             "title": "BlockedCheck",
             "type": "object"
           },
+          "ClaimTypeLintWarning": {
+            "additionalProperties": false,
+            "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                  "cruxible.claim_type.anticipated_source_contract_omitted",
+                  "cruxible.claim_type.attestation_threshold_disabled"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "contract_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Digest"
+              },
+              "contract_identity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Identity"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "replacement_rule_fragment": {
+                "additionalProperties": true,
+                "title": "Replacement Rule Fragment",
+                "type": "object"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              }
+            },
+            "required": [
+              "code",
+              "field_path",
+              "replacement_rule_fragment"
+            ],
+            "title": "ClaimTypeLintWarning",
+            "type": "object"
+          },
           "ClaimTypeProposalLint": {
             "additionalProperties": false,
             "properties": {
@@ -8390,8 +8464,7 @@
               },
               "warnings": {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/$defs/ClaimTypeLintWarning"
                 },
                 "title": "Warnings",
                 "type": "array"
@@ -9310,6 +9383,73 @@
             "title": "CandidateStatusRecord",
             "type": "object"
           },
+          "ClaimTypeLintWarning": {
+            "additionalProperties": false,
+            "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                  "cruxible.claim_type.anticipated_source_contract_omitted",
+                  "cruxible.claim_type.attestation_threshold_disabled"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "contract_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Digest"
+              },
+              "contract_identity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Identity"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "replacement_rule_fragment": {
+                "additionalProperties": true,
+                "title": "Replacement Rule Fragment",
+                "type": "object"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              }
+            },
+            "required": [
+              "code",
+              "field_path",
+              "replacement_rule_fragment"
+            ],
+            "title": "ClaimTypeLintWarning",
+            "type": "object"
+          },
           "ClaimTypeProposalLint": {
             "additionalProperties": false,
             "properties": {
@@ -9321,8 +9461,7 @@
               },
               "warnings": {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/$defs/ClaimTypeLintWarning"
                 },
                 "title": "Warnings",
                 "type": "array"
@@ -13632,6 +13771,73 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ClaimTypeLintWarning": {
+            "additionalProperties": false,
+            "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                  "cruxible.claim_type.anticipated_source_contract_omitted",
+                  "cruxible.claim_type.attestation_threshold_disabled"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "contract_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Digest"
+              },
+              "contract_identity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Identity"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "replacement_rule_fragment": {
+                "additionalProperties": true,
+                "title": "Replacement Rule Fragment",
+                "type": "object"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              }
+            },
+            "required": [
+              "code",
+              "field_path",
+              "replacement_rule_fragment"
+            ],
+            "title": "ClaimTypeLintWarning",
+            "type": "object"
+          },
           "ClaimTypeProposalLint": {
             "additionalProperties": false,
             "properties": {
@@ -13643,8 +13849,7 @@
               },
               "warnings": {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/$defs/ClaimTypeLintWarning"
                 },
                 "title": "Warnings",
                 "type": "array"
@@ -13815,6 +14020,178 @@
         "proposal"
       ]
     },
+    "ClaimTypeLintWarning": {
+      "fields": {
+        "code": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "code",
+          "required": true,
+          "schema": {
+            "enum": [
+              "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+              "cruxible.claim_type.anticipated_source_contract_omitted",
+              "cruxible.claim_type.attestation_threshold_disabled"
+            ],
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "contract_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "contract_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contract Digest"
+          }
+        },
+        "contract_identity": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "contract_identity",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contract Identity"
+          }
+        },
+        "field_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "field_path",
+          "required": true,
+          "schema": {
+            "title": "Field Path",
+            "type": "string"
+          }
+        },
+        "replacement_rule_fragment": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "replacement_rule_fragment",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Replacement Rule Fragment",
+            "type": "object"
+          }
+        },
+        "source_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Id"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
+        "properties": {
+          "code": {
+            "enum": [
+              "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+              "cruxible.claim_type.anticipated_source_contract_omitted",
+              "cruxible.claim_type.attestation_threshold_disabled"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "contract_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contract Digest"
+          },
+          "contract_identity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contract Identity"
+          },
+          "field_path": {
+            "title": "Field Path",
+            "type": "string"
+          },
+          "replacement_rule_fragment": {
+            "additionalProperties": true,
+            "title": "Replacement Rule Fragment",
+            "type": "object"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Id"
+          }
+        },
+        "required": [
+          "code",
+          "field_path",
+          "replacement_rule_fragment"
+        ],
+        "title": "ClaimTypeLintWarning",
+        "type": "object"
+      },
+      "required_fields": [
+        "code",
+        "field_path",
+        "replacement_rule_fragment"
+      ]
+    },
     "ClaimTypeMigrationPreflight": {
       "fields": {
         "coordinate": {
@@ -13952,6 +14329,73 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ClaimTypeLintWarning": {
+            "additionalProperties": false,
+            "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                  "cruxible.claim_type.anticipated_source_contract_omitted",
+                  "cruxible.claim_type.attestation_threshold_disabled"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "contract_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Digest"
+              },
+              "contract_identity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Identity"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "replacement_rule_fragment": {
+                "additionalProperties": true,
+                "title": "Replacement Rule Fragment",
+                "type": "object"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              }
+            },
+            "required": [
+              "code",
+              "field_path",
+              "replacement_rule_fragment"
+            ],
+            "title": "ClaimTypeLintWarning",
+            "type": "object"
+          },
           "ClaimTypeProposalLint": {
             "additionalProperties": false,
             "properties": {
@@ -13963,8 +14407,7 @@
               },
               "warnings": {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/$defs/ClaimTypeLintWarning"
                 },
                 "title": "Warnings",
                 "type": "array"
@@ -14231,6 +14674,73 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ClaimTypeLintWarning": {
+            "additionalProperties": false,
+            "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                  "cruxible.claim_type.anticipated_source_contract_omitted",
+                  "cruxible.claim_type.attestation_threshold_disabled"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "contract_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Digest"
+              },
+              "contract_identity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Identity"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "replacement_rule_fragment": {
+                "additionalProperties": true,
+                "title": "Replacement Rule Fragment",
+                "type": "object"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              }
+            },
+            "required": [
+              "code",
+              "field_path",
+              "replacement_rule_fragment"
+            ],
+            "title": "ClaimTypeLintWarning",
+            "type": "object"
+          },
           "ClaimTypeProposalLint": {
             "additionalProperties": false,
             "properties": {
@@ -14242,8 +14752,7 @@
               },
               "warnings": {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/$defs/ClaimTypeLintWarning"
                 },
                 "title": "Warnings",
                 "type": "array"
@@ -14641,6 +15150,73 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ClaimTypeLintWarning": {
+            "additionalProperties": false,
+            "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                  "cruxible.claim_type.anticipated_source_contract_omitted",
+                  "cruxible.claim_type.attestation_threshold_disabled"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "contract_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Digest"
+              },
+              "contract_identity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Identity"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "replacement_rule_fragment": {
+                "additionalProperties": true,
+                "title": "Replacement Rule Fragment",
+                "type": "object"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              }
+            },
+            "required": [
+              "code",
+              "field_path",
+              "replacement_rule_fragment"
+            ],
+            "title": "ClaimTypeLintWarning",
+            "type": "object"
+          },
           "ClaimTypeProposalLint": {
             "additionalProperties": false,
             "properties": {
@@ -14652,8 +15228,7 @@
               },
               "warnings": {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/$defs/ClaimTypeLintWarning"
                 },
                 "title": "Warnings",
                 "type": "array"
@@ -15051,6 +15626,73 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ClaimTypeLintWarning": {
+            "additionalProperties": false,
+            "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                  "cruxible.claim_type.anticipated_source_contract_omitted",
+                  "cruxible.claim_type.attestation_threshold_disabled"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "contract_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Digest"
+              },
+              "contract_identity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Identity"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "replacement_rule_fragment": {
+                "additionalProperties": true,
+                "title": "Replacement Rule Fragment",
+                "type": "object"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              }
+            },
+            "required": [
+              "code",
+              "field_path",
+              "replacement_rule_fragment"
+            ],
+            "title": "ClaimTypeLintWarning",
+            "type": "object"
+          },
           "ClaimTypeProposalLint": {
             "additionalProperties": false,
             "properties": {
@@ -15062,8 +15704,7 @@
               },
               "warnings": {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/$defs/ClaimTypeLintWarning"
                 },
                 "title": "Warnings",
                 "type": "array"
@@ -15347,8 +15988,7 @@
           "required": true,
           "schema": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/ClaimTypeLintWarning"
             },
             "title": "Warnings",
             "type": "array"
@@ -15356,6 +15996,75 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "ClaimTypeLintWarning": {
+            "additionalProperties": false,
+            "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                  "cruxible.claim_type.anticipated_source_contract_omitted",
+                  "cruxible.claim_type.attestation_threshold_disabled"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "contract_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Digest"
+              },
+              "contract_identity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Identity"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "replacement_rule_fragment": {
+                "additionalProperties": true,
+                "title": "Replacement Rule Fragment",
+                "type": "object"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              }
+            },
+            "required": [
+              "code",
+              "field_path",
+              "replacement_rule_fragment"
+            ],
+            "title": "ClaimTypeLintWarning",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
           "tag": {
@@ -15366,8 +16075,7 @@
           },
           "warnings": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/ClaimTypeLintWarning"
             },
             "title": "Warnings",
             "type": "array"
@@ -66933,6 +67641,73 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ClaimTypeLintWarning": {
+            "additionalProperties": false,
+            "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                  "cruxible.claim_type.anticipated_source_contract_omitted",
+                  "cruxible.claim_type.attestation_threshold_disabled"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "contract_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Digest"
+              },
+              "contract_identity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Identity"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "replacement_rule_fragment": {
+                "additionalProperties": true,
+                "title": "Replacement Rule Fragment",
+                "type": "object"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              }
+            },
+            "required": [
+              "code",
+              "field_path",
+              "replacement_rule_fragment"
+            ],
+            "title": "ClaimTypeLintWarning",
+            "type": "object"
+          },
           "ClaimTypeProposalLint": {
             "additionalProperties": false,
             "properties": {
@@ -66944,8 +67719,7 @@
               },
               "warnings": {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/$defs/ClaimTypeLintWarning"
                 },
                 "title": "Warnings",
                 "type": "array"
@@ -67838,6 +68612,73 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ClaimTypeLintWarning": {
+            "additionalProperties": false,
+            "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                  "cruxible.claim_type.anticipated_source_contract_omitted",
+                  "cruxible.claim_type.attestation_threshold_disabled"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "contract_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Digest"
+              },
+              "contract_identity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Identity"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "replacement_rule_fragment": {
+                "additionalProperties": true,
+                "title": "Replacement Rule Fragment",
+                "type": "object"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              }
+            },
+            "required": [
+              "code",
+              "field_path",
+              "replacement_rule_fragment"
+            ],
+            "title": "ClaimTypeLintWarning",
+            "type": "object"
+          },
           "ClaimTypeProposalLint": {
             "additionalProperties": false,
             "properties": {
@@ -67849,8 +68690,7 @@
               },
               "warnings": {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/$defs/ClaimTypeLintWarning"
                 },
                 "title": "Warnings",
                 "type": "array"
