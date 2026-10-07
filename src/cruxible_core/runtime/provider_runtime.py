@@ -207,12 +207,17 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
 
 
 PROVIDER_LANE_NOT_APPLICABLE_DETAIL = (
-    "this hosted profile runs no Provider code: the lane is out of scope here, not degraded"
+    "this hosted profile runs no installed Provider code: the lane is out of scope here, "
+    "not degraded"
 )
 
 
 def _inapplicable_lane_status() -> tuple[Literal["not_applicable"], None, str] | None:
-    """The lane's answer when this deployment runs no Provider code at all."""
+    """The lane's answer when this deployment runs no installed Provider code.
+
+    Core built-ins (``providers/builtin_runtime.py``) are not installed Provider
+    code and still run here.
+    """
 
     from cruxible_core.runtime.execution_policy import provider_lane_applicable
 

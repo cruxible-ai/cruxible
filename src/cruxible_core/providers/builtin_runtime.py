@@ -20,9 +20,15 @@ Two lane rules, decided for built-ins:
   subprocess lane is degraded; only subprocess occurrences refuse.
 - Hosted profile. The shared hosted profile refuses customer code without an
   isolated executor. A built-in is core code, not customer code, so this module
-  never calls that gate. The served run boundary (``playbill_procedure_run``)
-  still refuses every Procedure run on that profile before admission; lifting
-  that for built-in-only Procedures is a separate ruling, not made here.
+  never calls that gate. The served direct-run boundary
+  (``playbill_procedure_run``) still refuses every Procedure run on that profile
+  before admission. An enabled Line does not pass that boundary: an armed Line's
+  fire (``runtime/line_arms.py`` ``dispatch_armed_line`` -> ``service_dispatch_line`` ->
+  ``service_run_playbill_line``) admits its run against the daemon's operator, so
+  on a shared hosted profile a Line whose Procedure reads a workspace Source runs
+  the built-in in-process, while any subprocess Provider node in it still
+  refuses. Lifting the direct-run refusal for built-in-only Procedures is a
+  separate ruling, not made here.
 
 A crash between a built-in's durable start and its completion leaves no process
 to fence; the daemon closes such starts at startup
@@ -32,8 +38,9 @@ to fence; the daemon closes such starts at startup
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from cruxible_client.contracts.provider_execution import (
@@ -44,11 +51,9 @@ from cruxible_client.contracts.provider_execution import (
 from cruxible_client.contracts.provider_interfaces import AcceptedProviderInterfaceRegistration
 from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
 from cruxible_core.governance.seed_artifacts.workspace_file import (
-    WORKSPACE_FILE_BUILTIN_DEPLOYMENT_DIGEST,
-    WORKSPACE_FILE_BUILTIN_ENTRYPOINT,
-    WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST,
     WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
-    WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST,
+    BuiltinProviderIdentity,
+    workspace_file_builtin_identity,
 )
 from cruxible_core.providers.builtin_workspace_file import WorkspaceFile
 from cruxible_core.providers.provider_local_runtime import (
@@ -69,14 +74,27 @@ BUILTIN_EGRESS_OBSERVER = "core.in-process"
 
 @dataclass(frozen=True)
 class BuiltinImplementation:
-    """One core-owned implementation and its constant binding identity."""
+    """One core-owned implementation revision, its constant identity and its adapter.
 
-    implementation_digest: str
-    entrypoint: str
-    deployment_digest: str
-    materialization_digest: str
-    environment_manifest_digest: str
+    ``identity.entrypoint`` is an identity string inside the implementation
+    digest, not an import path the daemon resolves: a frozen older adapter can
+    live anywhere while its revision keeps the entrypoint it was seeded with.
+    """
+
+    identity: BuiltinProviderIdentity
     adapter: Callable[[ProviderRuntimeRunContextV1], ProviderRuntimeResultEnvelopeV1]
+
+    @property
+    def implementation_digest(self) -> str:
+        return self.identity.implementation_digest
+
+    @property
+    def entrypoint(self) -> str:
+        return self.identity.entrypoint
+
+    @property
+    def materialization_digest(self) -> str:
+        return self.identity.materialization_digest
 
     def binding(
         self,
@@ -91,26 +109,37 @@ class BuiltinImplementation:
             interface_artifact_digest=interface_artifact_digest,
             interface_id=interface_id,
             interface_digest=interface_digest,
-            implementation_digest=self.implementation_digest,
-            deployment_digest=self.deployment_digest,
-            materialization_digest=self.materialization_digest,
-            environment_manifest_digest=self.environment_manifest_digest,
-            entrypoint=self.entrypoint,
+            implementation_digest=self.identity.implementation_digest,
+            deployment_digest=self.identity.deployment_digest,
+            materialization_digest=self.identity.materialization_digest,
+            environment_manifest_digest=self.identity.environment_manifest_digest,
+            entrypoint=self.identity.entrypoint,
             declared_endpoints=(),
             fence_scope="in_process",
         )
 
 
-BUILTIN_IMPLEMENTATIONS: dict[str, BuiltinImplementation] = {
-    WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST: BuiltinImplementation(
-        implementation_digest=WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
-        entrypoint=WORKSPACE_FILE_BUILTIN_ENTRYPOINT,
-        deployment_digest=WORKSPACE_FILE_BUILTIN_DEPLOYMENT_DIGEST,
-        materialization_digest=WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST,
-        environment_manifest_digest=WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST,
+#: Every built-in implementation revision any build has seeded, oldest first.
+#:
+#: Append-only: an instance pins the implementation digest its genesis seeded
+#: (or a later accepted Provider named) forever, so a revision bump appends an
+#: entry with the new adapter and leaves every older entry, and its frozen
+#: adapter, in place. A guard test pins the keys
+#: (tests/test_providers/test_builtin_workspace_file.py).
+_BUILTIN_REVISIONS: tuple[BuiltinImplementation, ...] = (
+    # Revision 1 (2026-10-07): the port of cruxible-provider-workspace db085204.
+    BuiltinImplementation(
+        identity=workspace_file_builtin_identity(
+            "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d"
+        ),
         adapter=WorkspaceFile(),
-    )
-}
+    ),
+)
+BUILTIN_IMPLEMENTATIONS: Mapping[str, BuiltinImplementation] = MappingProxyType(
+    {item.implementation_digest: item for item in _BUILTIN_REVISIONS}
+)
+if WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST not in BUILTIN_IMPLEMENTATIONS:
+    raise RuntimeError("the current built-in revision has no BUILTIN_IMPLEMENTATIONS entry")
 
 
 def builtin_provider_binding(

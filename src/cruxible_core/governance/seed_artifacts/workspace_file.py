@@ -31,6 +31,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from dataclasses import dataclass
 from importlib.resources import files
 from typing import TYPE_CHECKING, Literal
 
@@ -48,6 +49,7 @@ from cruxible_client.contracts.provider_interfaces import (
     ProviderBucketConformanceFixtureProof,
     ProviderBucketDimension,
     ProviderBucketVocabulary,
+    ProviderInterfaceRegistration,
     ProviderInterfaceRegistrationV1,
     provider_bucket_classifier_digest,
     provider_bucket_fixture_digest,
@@ -85,9 +87,15 @@ WORKSPACE_FILE_INTERFACE_DOMAIN: Literal["cruxible.interface.stub.v1"] = (
 )
 WORKSPACE_FILE_BUILTIN_PROVIDER_ID = "cruxible-builtin"
 WORKSPACE_FILE_BUILTIN_ENTRYPOINT = "cruxible_core.providers.builtin_workspace_file:WorkspaceFile"
-#: The built-in adapter's behaviour revision. Bump only on a semantic change
-#: (some input structures or refuses differently), together with the behaviour
-#: golden; never for a refactor, a version bump or a docstring.
+#: The built-in adapter's current behaviour revision. Bump only on a semantic
+#: change (some input structures or refuses differently), together with the
+#: behaviour golden; never for a refactor, a version bump or a docstring.
+#:
+#: A bump never replaces the old revision: every instance seeded under it pins
+#: its implementation digest forever. Freeze the old adapter (its own module or
+#: class), keep its entry in ``providers.builtin_runtime.BUILTIN_IMPLEMENTATIONS``
+#: (append-only, guarded by a frozen-keys test), append the new revision's entry,
+#: and append a new genesis seed set for the new Provider bytes.
 WORKSPACE_FILE_BUILTIN_REVISION = (
     "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d"
 )
@@ -256,26 +264,73 @@ class WorkspaceFileBucketClassifier:
         return f"content_kind={content_kind_class(data)};byte_size={byte_size_class(len(data))}"
 
 
-WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST = provider_implementation_digest(
-    interface_id=WORKSPACE_FILE_INTERFACE_ID,
-    interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
-    entrypoint=WORKSPACE_FILE_BUILTIN_ENTRYPOINT,
-    distribution_sha256=WORKSPACE_FILE_BUILTIN_REVISION,
+@dataclass(frozen=True)
+class BuiltinProviderIdentity:
+    """The compiler-owned digests of one built-in implementation revision.
+
+    The implementation digest is the ordinary one over the revision constant;
+    the rest are typed digests derived from it, so a revision's binding is the
+    same constant in every daemon and stays derivable after a later revision.
+    """
+
+    revision: str
+    entrypoint: str
+    implementation_digest: str
+    materialization_digest: str
+    deployment_digest: str
+    environment_manifest_digest: str
+    lock_digest: str
+
+
+def workspace_file_builtin_identity(
+    revision: str, *, entrypoint: str = WORKSPACE_FILE_BUILTIN_ENTRYPOINT
+) -> BuiltinProviderIdentity:
+    implementation_digest = provider_implementation_digest(
+        interface_id=WORKSPACE_FILE_INTERFACE_ID,
+        interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
+        entrypoint=entrypoint,
+        distribution_sha256=revision,
+    )
+
+    def derived(role: str) -> str:
+        return typed_digest(
+            Sha256Value,
+            f"cruxible-builtin-provider-{role}-v1",
+            {"implementation_digest": implementation_digest},
+        ).tagged
+
+    return BuiltinProviderIdentity(
+        revision=revision,
+        entrypoint=entrypoint,
+        implementation_digest=implementation_digest,
+        materialization_digest=derived("materialization"),
+        deployment_digest=derived("deployment"),
+        environment_manifest_digest=derived("environment-manifest"),
+        lock_digest=derived("lock"),
+    )
+
+
+WORKSPACE_FILE_BUILTIN_IDENTITY = workspace_file_builtin_identity(WORKSPACE_FILE_BUILTIN_REVISION)
+WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST = WORKSPACE_FILE_BUILTIN_IDENTITY.implementation_digest
+WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST = (
+    WORKSPACE_FILE_BUILTIN_IDENTITY.materialization_digest
 )
+WORKSPACE_FILE_BUILTIN_DEPLOYMENT_DIGEST = WORKSPACE_FILE_BUILTIN_IDENTITY.deployment_digest
+WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST = (
+    WORKSPACE_FILE_BUILTIN_IDENTITY.environment_manifest_digest
+)
+WORKSPACE_FILE_BUILTIN_LOCK_DIGEST = WORKSPACE_FILE_BUILTIN_IDENTITY.lock_digest
 
 
-def _derived(role: str) -> str:
-    return typed_digest(
-        Sha256Value,
-        f"cruxible-builtin-provider-{role}-v1",
-        {"implementation_digest": WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST},
-    ).tagged
+def is_builtin_workspace_file_registration(registration: object) -> bool:
+    """Whether an accepted interface is the compiler-owned built-in registration."""
 
-
-WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST = _derived("materialization")
-WORKSPACE_FILE_BUILTIN_DEPLOYMENT_DIGEST = _derived("deployment")
-WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST = _derived("environment-manifest")
-WORKSPACE_FILE_BUILTIN_LOCK_DIGEST = _derived("lock")
+    return (
+        isinstance(registration, ProviderInterfaceRegistrationV1)
+        and not isinstance(registration, ProviderInterfaceRegistration)
+        and registration.interface_id == WORKSPACE_FILE_INTERFACE_ID
+        and registration.classifier_digest == WORKSPACE_FILE_CLASSIFIER_DIGEST
+    )
 
 
 def workspace_file_interface_registration(
@@ -386,7 +441,9 @@ def workspace_file_accepted_registration() -> AcceptedProviderInterfaceRegistrat
 
 
 __all__ = [
+    "BuiltinProviderIdentity",
     "WORKSPACE_FILE_BUILTIN_DEPLOYMENT_DIGEST",
+    "WORKSPACE_FILE_BUILTIN_IDENTITY",
     "WORKSPACE_FILE_BUILTIN_ENTRYPOINT",
     "WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST",
     "WORKSPACE_FILE_BUILTIN_ENVIRONMENT_PIN_KEY",
@@ -400,7 +457,9 @@ __all__ = [
     "WORKSPACE_FILE_INTERFACE_DEFINITION",
     "WORKSPACE_FILE_INTERFACE_ID",
     "WorkspaceFileBucketClassifier",
+    "is_builtin_workspace_file_registration",
     "workspace_file_accepted_registration",
+    "workspace_file_builtin_identity",
     "workspace_file_builtin_provider",
     "workspace_file_interface_registration",
 ]

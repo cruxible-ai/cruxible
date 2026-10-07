@@ -46,9 +46,11 @@ from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_FIXTURES,
     WorkspaceFileBucketClassifier,
     workspace_file_accepted_registration,
+    workspace_file_builtin_identity,
     workspace_file_builtin_provider,
 )
 from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS, genesis_seed_files
+from cruxible_core.providers.builtin_runtime import BUILTIN_IMPLEMENTATIONS
 from cruxible_core.providers.builtin_workspace_file import WorkspaceFile, classify
 from cruxible_core.providers.provider_classifiers import (
     PROVIDER_BUCKET_CLASSIFIER_REGISTRY,
@@ -195,33 +197,58 @@ def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> No
     assert record.implementation_digest == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
 
 
-_FORBIDDEN_MODULES = {"os", "io", "socket", "subprocess", "pathlib", "shutil", "time", "datetime"}
+#: Every module the adapter may import, by full dotted name, and nothing else:
+#: no file, network, process or clock access is reachable from it.
+_ALLOWED_IMPORTS = {
+    "__future__",
+    "base64",
+    "collections.abc",
+    "cruxible_core.providers.provider_runtime_contract",
+    "hashlib",
+    "re",
+    "typing",
+}
 
 
 def test_the_adapter_module_is_pure() -> None:
-    """No file, network, process or clock access is even importable from the adapter."""
-
     source = Path(adapter_module.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(source)
     imported: set[str] = set()
-    for node in ast.walk(tree):
+    for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
-            imported.update(alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module is not None:
-            imported.add(node.module.split(".")[0])
-            imported.update(f"{node.module}.{alias.name}" for alias in node.names)
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.level == 0 and node.module is not None, "relative imports are not allowed"
+            imported.add(node.module)
         elif isinstance(node, ast.Name) and node.id in {"open", "__import__", "eval", "exec"}:
             raise AssertionError(f"the adapter names {node.id!r}")
-    assert not imported & _FORBIDDEN_MODULES, imported & _FORBIDDEN_MODULES
-    assert {name for name in imported if "." not in name} <= {
-        "__future__",
-        "base64",
-        "collections",
-        "cruxible_core",
-        "hashlib",
-        "re",
-        "typing",
-    }
+    assert imported == _ALLOWED_IMPORTS, imported ^ _ALLOWED_IMPORTS
+
+
+#: The frozen prefix of BUILTIN_IMPLEMENTATIONS: implementation digest and the
+#: revision it was derived from. A revision bump appends a line; an old line
+#: must never change or disappear, because seeded instances pin it forever.
+FROZEN_BUILTIN_IMPLEMENTATIONS = (
+    (
+        "sha256:67c337ac0a87cfe8ee42da30a21c4cce658a0ad6bb3944b39a81e921aaba843c",
+        "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d",
+    ),
+)
+
+
+def test_built_in_implementations_are_append_only_and_keep_their_adapters() -> None:
+    entries = [(digest, item.identity.revision) for digest, item in BUILTIN_IMPLEMENTATIONS.items()]
+    assert entries[: len(FROZEN_BUILTIN_IMPLEMENTATIONS)] == list(FROZEN_BUILTIN_IMPLEMENTATIONS)
+    assert len(entries) == len(FROZEN_BUILTIN_IMPLEMENTATIONS), (
+        "pin the new revision in FROZEN_BUILTIN_IMPLEMENTATIONS"
+    )
+    for digest, item in BUILTIN_IMPLEMENTATIONS.items():
+        assert item.identity == workspace_file_builtin_identity(
+            item.identity.revision, entrypoint=item.identity.entrypoint
+        )
+        assert digest == item.identity.implementation_digest
+        assert callable(item.adapter)
+    # The revision new instances seed is one of them.
+    assert WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST in BUILTIN_IMPLEMENTATIONS
 
 
 def test_the_port_matches_the_package_live_when_a_checkout_is_configured(
