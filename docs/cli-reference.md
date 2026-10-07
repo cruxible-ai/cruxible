@@ -2224,7 +2224,9 @@ predicate (full, or a leaf unique across kinds) or `ClaimType:<predicate>`,
 `Document:<name>`, `Procedure:<name>`, `query:<name>`, `CaptureContract:<name>`,
 an artifact path, or a proposal id or prefix. Operational things resolve too:
 `Line:<name>` (or the Line identity digest `next` names a due Line by, in full
-or as a 12+ hex prefix) answers the Line's Procedure, trigger, authority, its
+or as a 12+ hex prefix) answers the Line's Procedure, its schedule kinds, each
+Trigger aimed at it by name and version (with the `get Trigger:<name>` that
+reads it), its authority, its
 arms (the principal kind, state and stop reason, and who armed each: a runtime
 credential's id and label only to that credential or an admin, otherwise
 `armed_by_withheld`), due and
@@ -2315,7 +2317,9 @@ Providers with their implementation digests (`get ProviderInterface:NAME`
 reads one, `--detail proof` its accepted inventory entry). `--section
 principals` lists the principal registry (`get Principal:ID` reads one), and
 `--section policies` every live standalone or embedded governed policy with its
-declaring artifact (`get ApprovalPolicy:instance` reads the approval policy).
+declaring artifact (`get ApprovalPolicy:instance` reads the approval policy,
+`get ProcedureRuntimePolicy:instance` the Procedure runtime ceilings and
+`get SourceAcquisitionPolicy:NAME` one source acquisition policy).
 The default map also counts every accepted Claim by status (accepted,
 conflicted, overturned, refused, retired) under `artifacts.claims`. Kinds page the same way
 when there are more than `--limit`. `--at` reads an earlier accepted generation.

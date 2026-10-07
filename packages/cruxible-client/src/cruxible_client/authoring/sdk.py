@@ -386,6 +386,12 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "resolution_contract": RefKind.RESOLUTION_CONTRACT,
     "mandate": RefKind.MANDATE,
     "procedure_run": RefKind.PROCEDURE_RUN,
+    "trigger": RefKind.TRIGGER,
+    "principal": RefKind.PRINCIPAL,
+    "approval_policy": RefKind.APPROVAL_POLICY,
+    "procedure_runtime_policy": RefKind.PROCEDURE_RUNTIME_POLICY,
+    "source_acquisition_policy": RefKind.SOURCE_ACQUISITION_POLICY,
+    "provider_interface": RefKind.PROVIDER_INTERFACE,
 }
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {

@@ -39,6 +39,7 @@ from cruxible_client.contracts.operational_reads import (
     GetLineArm,
     GetLineCard,
     GetLineOccurrence,
+    GetLineTrigger,
     GetMandateCard,
     GetPredictionWindow,
     GetResolutionContractCard,
@@ -59,13 +60,8 @@ from cruxible_client.contracts.procedure_mandates import (
     mandate_grant,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    CadenceTriggerPolicy,
-    CaptureLandingTriggerPolicy,
-    CaptureLandingTriggerPolicyV1,
     LineSpec,
     LineSpecAny,
-    WindowCloseTriggerPolicy,
-    WindowCloseTriggerPolicyV1,
     line_identity_digest,
     line_requested_rung,
 )
@@ -204,36 +200,19 @@ def uncited_capture_present(instance: PlaybillInstance, digest: str) -> bool:
 # -- Lines -----------------------------------------------------------------------------
 
 
-def trigger_summary(line: LineSpecAny, triggers: tuple[Trigger, ...]) -> tuple[str, str | None]:
-    """A Line's trigger kind, and one line saying when it fires.
+def trigger_kind(line: LineSpecAny, triggers: tuple[Trigger, ...]) -> str:
+    """The kinds of schedule that set a Line off.
 
-    A v6 Line embeds no trigger: the live Triggers aimed at it say when it
-    fires (``triggers``, in identity order), and with none it runs only when
-    run explicitly. An older Line answers from the trigger it embeds.
+    A v6 Line embeds no trigger: the live Triggers aimed at it (``triggers``)
+    say when it fires, and with none it is ``manual`` (it runs only when run
+    explicitly). An older Line answers from the trigger it embeds.
     """
 
     if isinstance(line, LineSpec):
         if not triggers:
-            return "manual", "runs only when run explicitly"
-        kinds = sorted({item.schedule.kind for item in triggers})
-        return "+".join(kinds), "; ".join(
-            f"{item.identity.qualified} fires {schedule_summary(item.schedule)}"
-            for item in triggers
-        )
-    trigger = line.trigger_policy
-    if isinstance(trigger, CadenceTriggerPolicy):
-        return trigger.kind, f"every {trigger.interval_seconds}s"
-    if isinstance(trigger, CaptureLandingTriggerPolicy):
-        return trigger.kind, f"when {trigger.event.capture_contract_identity.qualified} lands"
-    if isinstance(trigger, CaptureLandingTriggerPolicyV1):
-        return trigger.kind, (
-            f"when a Capture of contract {_short(trigger.anchor_capture_contract_digest)} lands"
-        )
-    if isinstance(trigger, WindowCloseTriggerPolicy):
-        return trigger.kind, "when " + window_summary(trigger.window) + " closes"
-    if isinstance(trigger, WindowCloseTriggerPolicyV1):
-        return trigger.kind, f"when a {trigger.window_seconds}s window closes"
-    return trigger.kind, None
+            return "manual"
+        return "+".join(sorted({item.schedule.kind for item in triggers}))
+    return line.trigger_policy.kind
 
 
 def schedule_summary(schedule: TriggerSchedule) -> str:
@@ -456,11 +435,22 @@ def line_card(
 ) -> GetLineCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         line = cast(LineSpecAny, projection.typed.source(identity))
-        triggers = aimed_triggers(projection, (line.identity.qualified,))
+        aimed = aimed_triggers(projection, (line.identity.qualified,)).get(
+            line.identity.qualified, ()
+        )
+        triggers = tuple(
+            GetLineTrigger(
+                trigger=item.identity.qualified,
+                version=_revision(projection, item.identity.qualified),
+                fires=schedule_summary(item.schedule),
+            )
+            for item in aimed
+        )
     digest = line_identity_digest(line.identity)
-    trigger, detail = trigger_summary(line, triggers.get(line.identity.qualified, ()))
+    trigger = trigger_kind(line, aimed)
     procedure = line.procedure.target.qualified
     next_steps = [render(procedure, None)]
+    next_steps.extend(render(item.trigger, None) for item in triggers)
     operations = line_operations(instance, digest, now=evaluation_time, viewer=viewer)
     runs, _more = run_rows(instance, limit=LINE_CARD_RUNS, line=line.identity)
     total, _running = run_counts(instance, line=line.identity)
@@ -482,11 +472,16 @@ def line_card(
         procedure=procedure,
         authority=line_authority(line),
         trigger=trigger,
-        trigger_detail=detail,
+        triggers=triggers,
         occurrence_epoch=line.occurrence_epoch,
         next=tuple(next_steps),
         **fields,
     )
+
+
+def _revision(projection: Any, identity: str) -> int:
+    row = projection.typed.envelope(identity)
+    return 1 if row is None else int(row.revision)
 
 
 def line_rows(
@@ -528,7 +523,7 @@ def line_rows(
                 lifecycle="retired" if line.lifecycle.state == "retired" else "live",
                 procedure=line.procedure.target.qualified,
                 authority=line_authority(line),
-                trigger=trigger_summary(line, triggers.get(line.identity.qualified, ()))[0],
+                trigger=trigger_kind(line, triggers.get(line.identity.qualified, ())),
                 arm=operations.arm_state,
                 due=operations.due,
                 waiting=operations.waiting,
@@ -946,7 +941,7 @@ __all__ = [
     "prediction_rows",
     "resolution_contract_card",
     "schedule_summary",
-    "trigger_summary",
+    "trigger_kind",
     "uncited_capture_present",
     "window_summary",
 ]

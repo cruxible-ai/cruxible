@@ -1082,6 +1082,9 @@ _GOVERNANCE_SECTIONS: frozenset[str] = frozenset({"principals", "policies"})
 # Declaring artifacts ``get`` resolves by their identity, for a policy row's next call.
 _GETTABLE_POLICY_DECLARERS = (
     "ApprovalPolicy:",
+    "ProcedureRuntimePolicy:",
+    "SourceAcquisitionPolicy:",
+    "Trigger:",
     "ClaimType:",
     "CaptureContract:",
     "QueryDefinition:",

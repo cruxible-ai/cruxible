@@ -134,14 +134,24 @@ class GetLineOccurrence(_StrictOperationalModel):
     state: Literal["due", "waiting"]
 
 
+class GetLineTrigger(_StrictOperationalModel):
+    """One live Trigger aimed at a Line: its name, accepted version and when it fires."""
+
+    trigger: str
+    version: int = Field(ge=1)
+    fires: str
+
+
 class GetLineCard(_StrictOperationalModel):
     line: str
     identity_digest: str
     lifecycle: str
     procedure: str
     authority: Literal["observe", "propose", "settle"]
+    #: The kinds of schedule that set this Line off (``manual`` with none).
     trigger: str
-    trigger_detail: str | None = Field(default=None, exclude_if=_omit_none)
+    #: Each live Trigger aimed at this Line; ``get Trigger:<name>`` reads one.
+    triggers: tuple[GetLineTrigger, ...] = ()
     occurrence_epoch: int = Field(ge=1)
     arms: tuple[GetLineArm, ...] = ()
     arms_total: int = Field(default=0, ge=0)
@@ -329,6 +339,7 @@ __all__ = [
     "GetLineArm",
     "GetLineCard",
     "GetLineOccurrence",
+    "GetLineTrigger",
     "GetMandateCard",
     "GetPendingInput",
     "GetPredictionWindow",

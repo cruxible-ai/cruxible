@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
+from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.captures import (
     CaptureContract,
@@ -54,6 +55,7 @@ from cruxible_client.contracts.get_reads import (
     GET_DETAILS_BY_KIND,
     GET_HISTORY_DEFAULT_LIMIT,
     ByteRange,
+    GetAcquisitionInput,
     GetApprovalPolicyCard,
     GetAttestationEvidence,
     GetBody,
@@ -70,6 +72,7 @@ from cruxible_client.contracts.get_reads import (
     GetHistory,
     GetPrincipalCard,
     GetProcedureCard,
+    GetProcedureRuntimePolicyCard,
     GetProcedureTrackRecord,
     GetProposalCard,
     GetProposalChange,
@@ -81,6 +84,7 @@ from cruxible_client.contracts.get_reads import (
     GetRequest,
     GetResult,
     GetRevision,
+    GetSourceAcquisitionPolicyCard,
     GetSubjectCard,
     GetSubjectClaim,
     GetTriggerCard,
@@ -91,6 +95,7 @@ from cruxible_client.contracts.get_reads import (
 )
 from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.repairs import RepairOperation
@@ -178,6 +183,8 @@ _TYPED_PREFIXES: Mapping[str, GetRefKind] = {
     "ProcedureRun": "procedure_run",
     "Principal": "principal",
     "ApprovalPolicy": "approval_policy",
+    "ProcedureRuntimePolicy": "procedure_runtime_policy",
+    "SourceAcquisitionPolicy": "source_acquisition_policy",
     "ProviderInterface": "provider_interface",
 }
 # The projection's artifact kind for each reference kind, and back.
@@ -194,6 +201,8 @@ _PROJECTION_KIND: Mapping[GetRefKind, str] = {
     "resolution_contract": "resolution-contract",
     "mandate": "procedure-mandate",
     "approval_policy": "approval-policy",
+    "procedure_runtime_policy": "procedure-runtime-policy",
+    "source_acquisition_policy": "source-acquisition-policy",
     "provider_interface": "provider-interface",
 }
 _REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
@@ -210,6 +219,8 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
     "resolution_contract": "ResolutionContract",
     "mandate": "ProcedureMandate",
     "approval_policy": "ApprovalPolicy",
+    "procedure_runtime_policy": "ProcedureRuntimePolicy",
+    "source_acquisition_policy": "SourceAcquisitionPolicy",
     "provider_interface": "ProviderInterface",
 }
 _NAMED_KINDS: tuple[GetRefKind, ...] = (
@@ -237,6 +248,8 @@ _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "procedure_run": "ProcedureRun",
     "principal": "Principal",
     "approval_policy": "ApprovalPolicy",
+    "procedure_runtime_policy": "ProcedureRuntimePolicy",
+    "source_acquisition_policy": "SourceAcquisitionPolicy",
     "provider_interface": "ProviderInterface",
 }
 # The orient section that lists each operational kind, named by a refusal
@@ -250,6 +263,8 @@ _ORIENT_SECTION: Mapping[GetRefKind, str] = {
     "procedure_run": "runs",
     "principal": "principals",
     "approval_policy": "policies",
+    "procedure_runtime_policy": "policies",
+    "source_acquisition_policy": "policies",
     "provider_interface": "interfaces",
 }
 
@@ -606,6 +621,8 @@ def _resolve_typed(
         "resolution_contract": "ResolutionContract",
         "mandate": "ProcedureMandate",
         "approval_policy": "ApprovalPolicy",
+        "procedure_runtime_policy": "ProcedureRuntimePolicy",
+        "source_acquisition_policy": "SourceAcquisitionPolicy",
         "provider_interface": "ProviderInterface",
     }[kind]
     candidates = tuple(
@@ -1179,6 +1196,59 @@ def _approval_policy_card(
     return GetApprovalPolicyCard(
         policy=resolved.display,
         mode=policy.mode,
+        next=(
+            _render_get(surface, resolved.display, "history"),
+            _render_get(surface, resolved.display, "proof"),
+        ),
+    )
+
+
+def _runtime_policy_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetProcedureRuntimePolicyCard:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        policy = cast(ProcedureRuntimePolicy, projection.typed.source(resolved.identity))
+    return GetProcedureRuntimePolicyCard(
+        policy=resolved.display,
+        provider_output_bytes_cap=policy.provider_output_bytes_cap,
+        result_bytes_cap=policy.result_bytes_cap,
+        repeat_attempts_cap=policy.repeat_attempts_cap,
+        next=(
+            _render_get(surface, resolved.display, "history"),
+            _render_get(surface, resolved.display, "proof"),
+        ),
+    )
+
+
+def _duration_text(microseconds: int) -> str:
+    return f"{microseconds / 1_000_000:g}s"
+
+
+def _acquisition_policy_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetSourceAcquisitionPolicyCard:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        policy = cast(SourceAcquisitionPolicy, projection.typed.source(resolved.identity))
+    return GetSourceAcquisitionPolicyCard(
+        policy=resolved.display,
+        lifecycle=policy.lifecycle.state,
+        coherence=policy.coherence.kind,
+        inputs=tuple(
+            GetAcquisitionInput(
+                input=rule.input_name,
+                requirement=rule.requirement,
+                max_age=None if rule.max_age is None else _duration_text(rule.max_age.microseconds),
+            )
+            for rule in policy.inputs
+        ),
         next=(
             _render_get(surface, resolved.display, "history"),
             _render_get(surface, resolved.display, "proof"),
@@ -1943,6 +2013,8 @@ def _proof(
         "resolution_contract",
         "mandate",
         "approval_policy",
+        "procedure_runtime_policy",
+        "source_acquisition_policy",
     }:
         with instance.bind_accepted_projection(coordinate) as projection:
             source = projection.typed.source(resolved.identity)
@@ -2119,6 +2191,10 @@ def service_playbill_get(
             card = _principal_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "approval_policy":
             card = _approval_policy_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "procedure_runtime_policy":
+            card = _runtime_policy_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "source_acquisition_policy":
+            card = _acquisition_policy_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "provider_interface":
             card = _provider_interface_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "mandate":

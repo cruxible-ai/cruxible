@@ -209,8 +209,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_get": (
         "Use when you have a reference to one thing -- a Claim id or prefix, kind/id, a "
-        "predicate, ClaimType:/Document:/Procedure:/query:/Principal:/ProviderInterface:<name>, "
-        "ApprovalPolicy:instance, or a proposal id -- and want its values. detail: summary "
+        "predicate, ClaimType:/Document:/Procedure:/query:/Trigger:/Principal:/"
+        "ProviderInterface:/SourceAcquisitionPolicy:<name>, ApprovalPolicy:instance, "
+        "ProcedureRuntimePolicy:instance, or a proposal id -- and want its values. detail: summary "
         "(default card), evidence, why, history, proof (full envelope), body (Document bytes "
         "by range). A wrong name refuses with the nearest names."
     ),
