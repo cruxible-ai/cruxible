@@ -17,8 +17,10 @@ from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import (
     AuthoringDiagnostic,
     DiagnosticFrontier,
+    PreflightCertificate,
     build_preflight_certificate,
 )
+from cruxible_client.contracts.projection import AcceptedCoordinate
 
 _STORED = Path(__file__).resolve().parents[1] / "fixtures/pre_hotfix_stored_records_0960559c.json"
 
@@ -64,11 +66,15 @@ def stub_preflight_result(
             )
         )
     )
-    stored = json.loads(_STORED.read_text(encoding="utf-8"))["preflight_certificate"]
-    values = {key: value for key, value in stored.items() if key != "certificate_digest"}
+    stored = PreflightCertificate.model_validate(
+        json.loads(_STORED.read_text(encoding="utf-8"))["preflight_certificate"]
+    )
+    # The builder digests a provisional model, so every value stays typed.
+    values: dict[str, Any] = {name: getattr(stored, name) for name in type(stored).model_fields}
+    del values["certificate_digest"]
     values.update(intent_id=intent_id, frontier_digest=frontier.digest)
     if accepted_coordinate is not None:
-        values["accepted_coordinate"] = dict(accepted_coordinate)
+        values["accepted_coordinate"] = AcceptedCoordinate.model_validate(dict(accepted_coordinate))
     return contracts.AuthoringPreflightResult.model_validate(
         {
             "verdict": verdict,

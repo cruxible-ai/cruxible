@@ -135,6 +135,7 @@ from cruxible_core.server.config import get_runtime_bearer_token, resolve_server
 from cruxible_core.server.playbill_request_models import (
     ApprovalRequest,
     AuthoringInputCompileRequest,
+    AuthoringInputSubmitRequest,
     AuthoringPreflightRequest,
     AuthoringRebaseRequest,
     AuthoringSubmitRequest,
@@ -357,7 +358,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_authoring_compile": TypeAdapter(AuthoringInputCompileRequest),
     "cruxible_authoring_preflight": TypeAdapter(AuthoringPreflightRequest),
     "cruxible_authoring_rebase": TypeAdapter(AuthoringRebaseRequest),
-    "cruxible_authoring_submit": TypeAdapter(AuthoringSubmitRequest),
+    "cruxible_authoring_submit": TypeAdapter(AuthoringSubmitRequest | AuthoringInputSubmitRequest),
     "cruxible_block_depublish": TypeAdapter(BlockDepublishRequest),
     "cruxible_claim_attest": None,  # shared preparation helper builds the body
     "cruxible_set": TypeAdapter(SetRequest),
@@ -1249,13 +1250,13 @@ def handle_playbill_authoring_get(
     )
 
 
-def handle_playbill_authoring_list_pending(
+def handle_playbill_authoring_list(
     instance_id: str,
 ) -> contracts.AuthoringIntentListRecord:
     return _dispatch_remote_or_local(
         lambda client: client.list_pending_authoring_intents(instance_id),
-        lambda: playbill_api.playbill_authoring_list_pending(instance_id),
-        operation_name="cruxible_authoring_list_pending",
+        lambda: playbill_api.playbill_authoring_list(instance_id),
+        operation_name="cruxible_authoring_list",
     )
 
 
@@ -1343,13 +1344,36 @@ def handle_playbill_authoring_rebase(
 
 def handle_playbill_authoring_submit(
     instance_id: str,
-    intent_id: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    intent_id: str | None = None,
 ) -> contracts.AuthoringSubmitResultRecord:
+    """Submit a payload directly, a staged intent, or a payload onto a staged intent."""
+
+    if payload is None:
+        if intent_id is None:
+            raise ConfigError("cruxible_authoring_submit takes a payload, an intent_id, or both")
+        staged = intent_id
+        return _dispatch_remote_or_local(
+            lambda client: client.submit_authoring_intent(instance_id, staged),
+            lambda: playbill_api.playbill_authoring_submit(instance_id, staged),
+            operation_name="cruxible_authoring_submit",
+            local_payload={},
+        )
+    request = _AUTHORING_INPUT.validate_python(payload)
     return _dispatch_remote_or_local(
-        lambda client: client.submit_authoring_intent(instance_id, intent_id),
-        lambda: playbill_api.playbill_authoring_submit(instance_id, intent_id),
+        lambda client: client.submit_authoring_input(
+            instance_id,
+            input=request.model_dump(mode="json"),
+            intent_id=intent_id,
+        ),
+        lambda: playbill_api.playbill_authoring_submit_input(
+            instance_id,
+            input=request,
+            intent_id=intent_id,
+        ),
         operation_name="cruxible_authoring_submit",
-        local_payload={},
+        local_payload={"input": request.model_dump(mode="json"), "intent_id": intent_id},
     )
 
 

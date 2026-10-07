@@ -5694,6 +5694,41 @@ compile_authoring_input(
 
 HTTP: `POST f'/api/v1/{instance_id}/authoring/compile'`.
 
+<a id="api-cruxibleclient-submit-authoring-input"></a>
+
+### `CruxibleClient.submit_authoring_input`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+submit_authoring_input(
+    instance_id: str,
+    *,
+    input: Mapping[str, Any],
+    intent_id: str | None = None,
+) -> contracts.AuthoringSubmitResultRecord
+```
+
+Compile one tagless input and submit it in one call; with `intent_id`, revise
+that staged intent first. HTTP: `POST f'/api/v1/{instance_id}/authoring/submit'`.
+
+<a id="api-cruxibleclient-preview-authoring-input"></a>
+
+### `CruxibleClient.preview_authoring_input`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+preview_authoring_input(
+    instance_id: str,
+    *,
+    input: Mapping[str, Any],
+) -> contracts.AuthoringPreflightResult
+```
+
+The preflight submitting this input would run, with every refusal; no intent is
+saved. HTTP: `POST f'/api/v1/{instance_id}/authoring/submit'` with `dry_run`.
+
 <a id="api-cruxibleclient-preflight-authoring-intent"></a>
 
 ### `CruxibleClient.preflight_authoring_intent`

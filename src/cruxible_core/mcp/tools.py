@@ -717,11 +717,11 @@ def register_tools(
         return handlers.handle_playbill_authoring_get(require_instance_id(instance_id), intent_id)
 
     @_tool
-    def cruxible_authoring_list_pending(
+    def cruxible_authoring_list(
         instance_id: InstanceId = None,
     ) -> contracts.AuthoringIntentListRecord:
         """List the authenticated writer's pending intents."""
-        return handlers.handle_playbill_authoring_list_pending(require_instance_id(instance_id))
+        return handlers.handle_playbill_authoring_list(require_instance_id(instance_id))
 
     @_tool
     def cruxible_authoring_compile(
@@ -781,11 +781,19 @@ def register_tools(
     def cruxible_authoring_submit(
         instance_id: InstanceId = None,
         *,
-        intent_id: str,
+        payload: AuthoringInput | None = None,
+        intent_id: str | None = None,
     ) -> contracts.AuthoringSubmitResultRecord:
-        """Idempotently submit one passing authoring intent."""
+        """Compile and submit a payload in one call, or submit a staged intent by ID.
+
+        With both, the payload replaces that staged intent's payload first. A
+        refused preflight returns the unsubmitted intent with its diagnostics.
+        Idempotent: resubmitting the same passing intent answers the same proposal.
+        """
         return handlers.handle_playbill_authoring_submit(
-            require_instance_id(instance_id), intent_id
+            require_instance_id(instance_id),
+            payload=None if payload is None else payload.model_dump(mode="json"),
+            intent_id=intent_id,
         )
 
     @_tool

@@ -70,7 +70,10 @@ def test_draft_submit_is_one_request_with_one_preflight(
     # The bound preflight is the one this submit ran, lint included.
     assert submitted._preflight is not None
     assert submitted._preflight.verdict == "passed"
-    assert submitted._preflight.certificate == submitted._raw["last_preflight"]["certificate"]
+    assert (
+        submitted._preflight.certificate.model_dump(mode="json")
+        == submitted._raw["last_preflight"]["certificate"]
+    )
 
 
 def test_staged_submit_costs_two_preflights_and_a_replay_costs_none(
@@ -125,3 +128,90 @@ def test_a_refused_one_call_submit_reports_what_prepare_would(
     assert refused.diagnostics == prepared.diagnostics
     assert refused._candidate_status is not None
     assert refused._candidate_status.proposal_id is None
+
+
+def _change_set_input() -> dict[str, object]:
+    from cruxible_client.contracts.authoring.inputs import (
+        ChangeSetInput,
+        ClaimTypeInput,
+        SubjectInput,
+    )
+
+    return ChangeSetInput(
+        kind="change_set",
+        members=(
+            SubjectInput(kind="subject", subject=_shell()),
+            ClaimTypeInput(kind="claim_type", claim_type=_claim_type()),
+        ),
+        rationale="Define the parity Subject and its ClaimType.",
+    ).model_dump(mode="json")
+
+
+def test_a_tagless_input_submits_in_one_call_and_a_dry_run_saves_nothing(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """`authoring submit PAYLOAD` is compile and submit; `--dry-run` is its preflight alone."""
+
+    http, instance_id, _key = playbill_http
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+    payload = _change_set_input()
+
+    previewed = transport.preview_authoring_input(instance_id, input=payload)
+
+    assert previewed.verdict == "passed", previewed.frontier
+    assert transport.list_pending_authoring_intents(instance_id).intents == []
+
+    submitted = transport.submit_authoring_input(instance_id, input=payload)
+
+    assert submitted.status.proposal_id is not None
+    assert submitted.preflight is not None and submitted.preflight.verdict == "passed"
+    assert str(submitted.intent["semantic_identity"]).startswith("ChangeSet:")
+    # The preview ran the same checks over the same lowered payload.
+    assert submitted.preflight.certificate.payload_digest == previewed.certificate.payload_digest
+
+
+def test_a_refused_dry_run_returns_every_refusal_and_saves_no_intent(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    from cruxible_client.contracts.authoring.inputs import ChangeSetInput
+    from tests.test_server.test_playbill_change_set_surfaces import _claim_input
+
+    http, instance_id, _key = playbill_http
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+    # A Claim whose Subject and ClaimType exist nowhere refuses at preflight.
+    lone = ChangeSetInput(
+        kind="change_set",
+        members=(_claim_input(),),
+        rationale="State a value for a slot that was never opened.",
+    ).model_dump(mode="json")
+
+    previewed = transport.preview_authoring_input(instance_id, input=lone)
+
+    assert previewed.verdict == "refused"
+    assert previewed.frontier.diagnostics
+    assert transport.list_pending_authoring_intents(instance_id).intents == []
+    # The submit refuses with the same diagnostics, and keeps the intent it made.
+    refused = transport.submit_authoring_input(instance_id, input=lone)
+    assert refused.status.proposal_id is None
+    assert refused.preflight is not None
+    assert [item.code for item in refused.preflight.frontier.diagnostics] == [
+        item.code for item in previewed.frontier.diagnostics
+    ]
+
+
+def test_a_dry_run_takes_no_intent_id(playbill_http: tuple[TestClient, str, Path]) -> None:
+    http, instance_id, _key = playbill_http
+
+    response = http.post(
+        f"/api/v1/{instance_id}/authoring/submit",
+        json={
+            "tag": "playbill-authoring-input-submit-request-v1",
+            "input": _change_set_input(),
+            "intent_id": "AIT-" + "1" * 32,
+            "dry_run": True,
+        },
+    )
+
+    assert response.status_code == 422

@@ -137,7 +137,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_authoring_get": (
         "Use when you need the current durable content and state of one authoring intent."
     ),
-    "cruxible_authoring_list_pending": (
+    "cruxible_authoring_list": (
         "Use when you need to find your incomplete authoring work without remembering handles."
     ),
     "cruxible_authoring_compile": (

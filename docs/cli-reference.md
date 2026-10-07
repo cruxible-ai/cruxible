@@ -1060,7 +1060,7 @@ source handles it was computed from, `--detail history` its revisions, and
 under `artifacts.claims`.
 
 Claims are written through `cruxible set`, `add`, `retire` and `write`, or authored
-through `cruxible authoring create`/`compile`; the retired direct v1 proposal
+through `cruxible authoring submit`/`compile`; the retired direct v1 proposal
 commands are not a second writer. `cruxible retire` retires a Claim with its
 complete dependent Claim closure in one change set. When a Claim shares anything
 with a retired Claim, `get CLM-... --detail why` also carries a
@@ -1094,26 +1094,35 @@ between ambiguous histories.
 ## authoring
 
 ~~~text
-cruxible authoring create PAYLOAD
-cruxible authoring create --example claim-flow-a|claim-self-source|claim-subject-relation|claim-revision|procedure|change-set|claim-type-succession
-cruxible authoring create --example claim-cite-supporting-evidence
+cruxible authoring submit PAYLOAD [--dry-run] [--and-activate]
+cruxible authoring submit --intent-id INTENT_ID [PAYLOAD] [--and-activate]
+cruxible authoring example [NAME]
+cruxible authoring example claim-cite-supporting-evidence
   --attestation-claim-id CLAIM_ID --capture-digest DIGEST
-cruxible authoring get INTENT_ID
-cruxible authoring resume INTENT_ID
-cruxible authoring list
 cruxible authoring compile PAYLOAD [--intent-id INTENT_ID]
 cruxible authoring bind --file PATH --anchor TEXT [--occurrence N]
   [--window-lines N]
   --payload-file CLAIM_STUB
 cruxible authoring preflight INTENT_ID
 cruxible authoring rebase INTENT_ID
-cruxible authoring submit INTENT_ID
 cruxible authoring status INTENT_ID
-cruxible authoring abandon-insertion INTENT_ID [--expectation-id ID]
+cruxible authoring get INTENT_ID
+cruxible authoring list
 ~~~
 
+PAYLOAD is a tagless authoring input file, or `-` for stdin. `authoring submit
+PAYLOAD` compiles, checks and submits in one call; `--dry-run` returns the
+preflight the submit would run, with every refusal, and saves no intent. Durable
+intents are optional, for staged work on large definitions: `compile PAYLOAD`
+creates one (its ID is `certificate.intent_id`), `compile PAYLOAD --intent-id ID`
+revises it (the daemon keeps every revision), `rebase ID` advances a refused one
+to the accepted head, and `submit --intent-id ID` submits it. `get` and `list`
+find staged work again after the context that started it is gone.
+`authoring example` prints a model-generated template for NAME, or lists the
+names without one.
+
 A Claim input names the Claim it revises with `revises`, a Claim ID; omit it
-to state a new Claim. `--example claim-revision` prints one. The three
+to state a new Claim. `authoring example claim-revision` prints one. The three
 attestation-door examples (`claim-cite-supporting-evidence`,
 `claim-adjudicate-contradicting-evidence`, `claim-adjudicate-unreviewed-evidence`)
 revise the Claim named by `--attestation-claim-id` to cite the Capture named by
@@ -1150,9 +1159,9 @@ may retire a Claim the set does not otherwise touch. Two sibling Claims contendi
 one cardinality-one slot are un-authorable in a single set by construction, not
 merely unrepaired: dispositioning one needs the other's Claim ID, which the
 daemon mints only at create from the already-frozen payload, so that refusal's
-repair is to merge the two decisions or split the set. `--example change-set`
-prints a mixed set to start from, and `--example claim-type-succession` prints a
-vocabulary evolution.
+repair is to merge the two decisions or split the set. `authoring example change-set`
+prints a mixed set to start from, and `authoring example claim-type-succession`
+prints a vocabulary evolution.
 
 A `claim_type_succession` member succeeds an accepted ClaimType and settles its
 whole reverse-pin closure in the same generation. Members lower in dependency
@@ -1181,14 +1190,6 @@ changed members one daemon will receive in a single submission is the operator's
 set additionally requires it to fit under the advertised change-set record
 ceiling described there, which preflight checks before lowering anything.
 
-No intent publishes a Claim into a page any more, and none mints a publication
-expectation. `abandon-insertion` releases one an instance already holds, and
-because a change set that published several Claims owns one expectation per
-publishing member it takes an `expectation_id` naming the one it is about; a
-singular Claim intent owns exactly one and may omit it. `cruxible block
-depublish SOURCE_ID BLOCK_ID` is the same release addressed the way a page names
-it, and is the verb to reach for.
-
 The authoring coordinator owns stable identities, timestamps, bases, and proposal
 references. `compile` creates or updates an intent and performs a binding preflight;
 `rebase` advances an unsubmitted refused intent to the current accepted coordinate;
@@ -1198,7 +1199,7 @@ approval or activation conditions without impersonating the actors who own them.
 selects the 1-based `N`th match. The resulting selector records the total number
 observed while its start/end bytes name the selected occurrence; multiple matches
 are therefore truthful input metadata, not an unresolved selection.
-Use `--example claim-subject-relation` for a subject-valued Claim such as
+Use `authoring example claim-subject-relation` for a subject-valued Claim such as
 `sec.vulnerability/<cve> → sec.vuln.affects_package → sec.package/<package>`.
 Both endpoint Subjects must already be accepted and admitted by the ClaimType.
 A projection block's marker grammar is a page-level shape rather than an
@@ -1257,8 +1258,8 @@ base or sibling definitions; explicit pins remain assertions. SDK `vocabulary=`
 accepts World ClaimType references and retains their stale-reference checks.
 Use `cx.run_query(name)` to read the accepted result and receipt.
 
-`authoring create --example query-claims-by-type` provides a Claim query without
-placeholder digests. `--example query-ontology` and `--example query-procedures`
+`authoring example query-claims-by-type` provides a Claim query without
+placeholder digests. `authoring example query-ontology` and `authoring example query-procedures`
 provide artifact queries; MCP's authoring-example and authoring-compile tools use
 these same typed inputs. Both are `query_definition` inputs.
 
@@ -1449,8 +1450,8 @@ change-set member) names its Procedure and `parameters` -- the Procedure's
 input record, which lowering checks against the Procedure's input contract,
 refusing `cruxible.authoring.line_parameters_refused` with the expected
 fields. It names an `acquisition_policy` (an `acquisition_policy` input) only
-when the Procedure has Source nodes. `authoring create --example line` prints a
-Line over the `--example procedure` Procedure, and `--example
+when the Procedure has Source nodes. `authoring example line` prints a
+Line over the `authoring example procedure` Procedure, and `authoring example
 acquisition-policy` a policy for a Source Procedure's Line.
 
 When a Line runs is not the Line's own: a `trigger` input authors a Trigger
@@ -1470,8 +1471,8 @@ reason. The Trigger law refuses an expression outside this grammar
 have several Triggers; one with none runs only when run explicitly, and `run`
 of a Line with Triggers names the Trigger it fires on (`--trigger`). Retiring
 a Line with live Triggers aimed at it refuses unless they are retired or
-retargeted in the same change set. `authoring create --example trigger` prints
-an hourly cron Trigger for the `--example line` Line, and `get Trigger:NAME` reads
+retargeted in the same change set. `authoring example trigger` prints
+an hourly cron Trigger for the `authoring example line` Line, and `get Trigger:NAME` reads
 one. A Trigger never fires retroactively: it matches only Captures recorded
 strictly after its version was accepted and fixed windows that close strictly
 after it, and admission refuses an earlier one supplied or queued anyway
@@ -1580,12 +1581,12 @@ protects, and refuses the run if that file exists but cannot be read as one.
 A Line whose runs can propose or settle needs a current accepted
 ProcedureMandate over its exact Procedure; without one each run refuses
 `line_mandate_required`, and `arm` refuses up front with
-`cruxible.line.mandate_required`, both naming `authoring create --example
+`cruxible.line.mandate_required`, both naming `authoring example
 procedure-mandate`. An observe-only Line -- one whose Procedure's terminals, or
 whose `max_authority`, stop at observe -- needs no mandate. A mandate whose
 `resource_ceiling` exceeds the Procedure's hard caps is refused naming each
-widened cap with both values; `--example procedure-mandate` uses the
-`--example procedure` caps.
+widened cap with both values; `authoring example procedure-mandate` uses the
+`authoring example procedure` caps.
 
 A Line whose Procedure ends in a `propose_change_set` terminal produces a
 proposal. Each resolved candidate template must be one Claim proposal item --
@@ -2056,7 +2057,7 @@ needs activation, not more approval.
 A `mandate_expiring` row is a live, unsuspended ProcedureMandate whose
 `expires_at` falls after the evaluation time and within `--expiring-within`.
 Nothing renews a mandate, so its repair starts a successor from
-`cruxible authoring create --example procedure-mandate`; a successor
+`cruxible authoring example procedure-mandate`; a successor
 whose window reaches past the lead time, or the mandate's retirement, closes
 the row.
 
@@ -2566,7 +2567,7 @@ if not, why: `can_author` and `authoring_refusal` carry exactly the code, detail
 and repair authoring would return (`cruxible.identity.principal_unconfigured`,
 `principal_absent`, `principal_revoked`, `credential_unbound`,
 `permission_insufficient`, or `cruxible.instance.decommissioned`). Authoring
-refuses such an actor at `authoring create`, before any payload is compiled or
+refuses such an actor at `authoring compile` and `submit`, before any payload is compiled or
 preflighted, rather than at proposal evaluation
 (`cruxible.proposal.creator_principal_invalid`).
 `proposal list` prints a labeled `COORDINATE_TIME` column and deterministically

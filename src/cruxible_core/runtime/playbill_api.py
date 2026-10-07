@@ -1478,10 +1478,10 @@ def playbill_authoring_get(
     return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_authoring_list_pending(
+def playbill_authoring_list(
     instance_id: str,
 ) -> contracts.AuthoringIntentListRecord:
-    check_permission("cruxible_authoring_list_pending", instance_id=instance_id)
+    check_permission("cruxible_authoring_list", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.list_pending(actor=actor)
     return contracts.AuthoringIntentListRecord.model_validate(result.model_dump(mode="json"))
@@ -1492,12 +1492,16 @@ def _authoring_preflight_result(
     *,
     actor: AuthenticatedActor,
     result: PreflightResult,
+    payload: AuthoringPayload | None = None,
 ) -> contracts.AuthoringPreflightResult:
+    """Serve one preflight with its advisory lint; ``payload`` when nothing was stored."""
+
     values = result.model_dump(mode="json")
-    payload = coordinator.store.get(
-        result.certificate.intent_id,
-        actor_id=actor.actor_id,
-    ).payload
+    if payload is None:
+        payload = coordinator.store.get(
+            result.certificate.intent_id,
+            actor_id=actor.actor_id,
+        ).payload
 
     def _at() -> AcceptedProjectionCoordinate:
         at = result.certificate.accepted_coordinate
@@ -1594,6 +1598,58 @@ def playbill_authoring_compile_and_submit(
     )
 
 
+def playbill_authoring_submit_input(
+    instance_id: str,
+    *,
+    input: AuthoringInput,
+    intent_id: str | None = None,
+) -> contracts.AuthoringSubmitResultRecord:
+    """Compile one tagless input and submit it; the preflight it ran rides along."""
+
+    check_permission("cruxible_authoring_compile", instance_id=instance_id)
+    check_permission("cruxible_authoring_submit", instance_id=instance_id)
+    coordinator, actor = _authoring_coordinator(instance_id)
+    result = coordinator.submit_input(
+        actor=actor,
+        input=input,
+        canonical_timestamp=canonical_candidate_timestamp(utc_now()),
+        intent_id=intent_id,
+    )
+    submitted = contracts.AuthoringSubmitResultRecord.model_validate(result.model_dump(mode="json"))
+    preflight = result.intent.last_preflight
+    if preflight is None:
+        return submitted
+    return submitted.model_copy(
+        update={
+            "preflight": _authoring_preflight_result(coordinator, actor=actor, result=preflight)
+        }
+    )
+
+
+def playbill_authoring_preview_input(
+    instance_id: str,
+    *,
+    input: AuthoringInput,
+) -> contracts.AuthoringPreflightResult:
+    """Preflight one tagless input exactly as a submit would, and save no intent.
+
+    Every refusal the submit would return comes back in the frontier; nothing is
+    stored, so the certificate names an intent that does not exist.
+    """
+
+    check_permission("cruxible_authoring_compile", instance_id=instance_id)
+    with change_entry(True, "direct"):
+        coordinator, actor = _authoring_coordinator(instance_id)
+        intent, computed = coordinator.preview_input(
+            actor=actor,
+            input=input,
+            canonical_timestamp=canonical_candidate_timestamp(utc_now()),
+        )
+        return _authoring_preflight_result(
+            coordinator, actor=actor, result=computed.result, payload=intent.payload
+        )
+
+
 def playbill_authoring_compile_input(
     instance_id: str,
     *,
@@ -1680,6 +1736,7 @@ def playbill_block_depublish(
 
     check_permission("cruxible_block_depublish", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
+        _require_writer(instance_id)
         instance = get_playbill_manager().get(instance_id)
         return service_depublish_playbill_block(
             instance,

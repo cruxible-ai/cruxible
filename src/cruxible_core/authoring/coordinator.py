@@ -282,6 +282,7 @@ class AuthoringIntentCoordinator:
         actor: AuthenticatedActor,
         payload: AuthoringPayload,
         canonical_timestamp: str,
+        reference_expectations: tuple[AuthoringExpectation, ...] | None = None,
     ) -> tuple[AuthoringIntentV1, ComputedPreflight]:
         """Preflight one payload exactly as submit would, and write nothing.
 
@@ -302,10 +303,37 @@ class AuthoringIntentCoordinator:
                 payload=payload,
                 canonical_timestamp=canonical_timestamp,
                 at=AcceptedCoordinate.from_internal(self.instance.accepted_coordinate()),
-                reference_expectations=None,
+                reference_expectations=reference_expectations,
                 intent_id=f"AIT-{secrets.token_hex(16)}",
             )
             return intent, compute_preflight(self.instance, intent=intent, actor=actor)
+
+    def preview_input(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        input: AuthoringInput,
+        canonical_timestamp: str,
+    ) -> tuple[AuthoringIntentV1, ComputedPreflight]:
+        """Preflight one tagless input as ``submit_input`` would, and save no intent.
+
+        The input lowers and binds its existing-capture expectations exactly as
+        a create would, so the preview refuses everything the submit would.
+        """
+
+        # Refused at the same doors, and before lowering, exactly as create refuses.
+        self.instance.require_writable()
+        require_authoring_principal(self.instance, actor.actor_id)
+        payload = lower_authoring_input(input)
+        return self.preview(
+            actor=actor,
+            payload=payload,
+            canonical_timestamp=canonical_timestamp,
+            reference_expectations=self._existing_capture_reference_expectations(
+                payload,
+                coordinate=self.instance.accepted_coordinate(),
+            ),
+        )
 
     def create_input(
         self,
@@ -547,31 +575,70 @@ class AuthoringIntentCoordinator:
         intent_id: str | None = None,
     ) -> PreflightResult:
         self.instance.require_writable()
+        view = self._compose_input(
+            actor=actor,
+            input=input,
+            canonical_timestamp=canonical_timestamp,
+            intent_id=intent_id,
+        )
+        return self.preflight(view.intent.intent_id, actor=actor)
+
+    def submit_input(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        input: AuthoringInput,
+        canonical_timestamp: str,
+        intent_id: str | None = None,
+    ) -> AuthoringSubmitResult:
+        """Compile one tagless input and submit it in one call.
+
+        Without ``intent_id`` the input becomes a new intent; with one, it
+        replaces that staged intent's payload first. Submit computes and binds
+        its own preflight, so a refused input returns the unsubmitted intent
+        with that preflight bound, as compile would have.
+        """
+
+        self.instance.require_writable()
+        view = self._compose_input(
+            actor=actor,
+            input=input,
+            canonical_timestamp=canonical_timestamp,
+            intent_id=intent_id,
+        )
+        return self.submit(view.intent.intent_id, actor=actor)
+
+    def _compose_input(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        input: AuthoringInput,
+        canonical_timestamp: str,
+        intent_id: str | None,
+    ) -> AuthoringIntentView:
         if intent_id is None:
-            view = self.create_input(
+            return self.create_input(
                 actor=actor,
                 input=input,
                 canonical_timestamp=canonical_timestamp,
             )
-        else:
-            current = self.store.get(intent_id, actor_id=actor.actor_id)
-            payload = lower_authoring_input(input)
-            base = self.instance.resolve_accepted_coordinate(
-                git_oid=current.base_coordinate.git_oid,
-                semantic_root=current.base_coordinate.semantic_root,
-                generation_root=current.base_coordinate.generation_root,
-                compiler_digest=current.base_coordinate.compiler_digest,
-            )
-            view = self.replace_payload(
-                intent_id,
-                actor=actor,
-                payload=payload,
-                reference_expectations=self._existing_capture_reference_expectations(
-                    payload,
-                    coordinate=base,
-                ),
-            )
-        return self.preflight(view.intent.intent_id, actor=actor)
+        current = self.store.get(intent_id, actor_id=actor.actor_id)
+        payload = lower_authoring_input(input)
+        base = self.instance.resolve_accepted_coordinate(
+            git_oid=current.base_coordinate.git_oid,
+            semantic_root=current.base_coordinate.semantic_root,
+            generation_root=current.base_coordinate.generation_root,
+            compiler_digest=current.base_coordinate.compiler_digest,
+        )
+        return self.replace_payload(
+            intent_id,
+            actor=actor,
+            payload=payload,
+            reference_expectations=self._existing_capture_reference_expectations(
+                payload,
+                coordinate=base,
+            ),
+        )
 
     def _existing_capture_reference_expectations(
         self,

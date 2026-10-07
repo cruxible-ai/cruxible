@@ -276,16 +276,7 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             + "\n",
             encoding="utf-8",
         )
-        compiled = run_cli_json(
-            "authoring",
-            "compile",
-            str(authoring_path),
-        )
-        submitted = run_cli_json(
-            "authoring",
-            "submit",
-            str(compiled["certificate"]["intent_id"]),
-        )
+        submitted = run_cli_json("authoring", "submit", str(authoring_path))
         return str(submitted["status"]["proposal_id"])
 
     for path in sorted((bundle_dir / "claim-types").glob("*.json")):
@@ -345,10 +336,9 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
                 str(path),
             )
             intent_id = prepared["certificate"]["intent_id"]
+            submitted = run_cli_json("authoring", "submit", "--intent-id", str(intent_id))
         else:
-            compiled = run_cli_json("authoring", "compile", str(path))
-            intent_id = compiled["certificate"]["intent_id"]
-        submitted = run_cli_json("authoring", "submit", str(intent_id))
+            submitted = run_cli_json("authoring", "submit", str(path))
         record(
             f"claim_input:{payload['subject']}#{payload['predicate']}",
             "playbill_authoring_submit",
@@ -367,12 +357,7 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
         )
 
     for path in sorted((bundle_dir / "procedures").glob("*.json")):
-        compiled = run_cli_json("authoring", "compile", str(path))
-        submitted = run_cli_json(
-            "authoring",
-            "submit",
-            str(compiled["certificate"]["intent_id"]),
-        )
+        submitted = run_cli_json("authoring", "submit", str(path))
         record(
             f"procedure:{path.stem}",
             "playbill_authoring_submit",

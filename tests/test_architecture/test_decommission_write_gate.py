@@ -50,22 +50,14 @@ COORDINATOR_CLASS = "AuthoringIntentCoordinator"
 STORE_WRITES = frozenset({"create", "transition", "record_program_stamp", "complete"})
 
 # Public coordinator methods that persist WITHOUT a gate, each declared here
-# with the reason. All five are the protocol roll-forward described at the top
-# of this module: reading a pending intent may expire an expectation that has
-# already lapsed, and finalizing records an acceptance that already happened,
-# which is the instance describing what happened to it, not a new intent. A
-# decommissioned instance keeps serving what it accepted, so these stay open on
-# purpose. A name is added here only for that reason -- a
-# door that persists a new intent belongs in DECLARED_WRITE_GATES instead.
-DECLARED_ROLL_FORWARD_DOORS = frozenset(
-    {
-        f"{COORDINATOR_CLASS}.get",
-        f"{COORDINATOR_CLASS}.resume",
-        f"{COORDINATOR_CLASS}.list_pending",
-        f"{COORDINATOR_CLASS}.status",
-        f"{COORDINATOR_CLASS}.finalize_completed",
-    }
-)
+# with the reason. Finalizing records an acceptance that already happened, which
+# is the instance describing what happened to it, not a new intent; a
+# decommissioned instance keeps serving what it accepted, so it stays open on
+# purpose. Reads (get, list_pending, status) persist nothing since the
+# publication protocol that rolled expectations forward on read was cut. A name
+# is added here only for that reason -- a door that persists a new intent belongs
+# in DECLARED_WRITE_GATES instead.
+DECLARED_ROLL_FORWARD_DOORS = frozenset({f"{COORDINATOR_CLASS}.finalize_completed"})
 
 # module path -> the qualified names that refuse a decommissioned instance.
 DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
@@ -104,11 +96,13 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             "AuthoringIntentCoordinator.compile",
             "AuthoringIntentCoordinator.compile_input",
             "AuthoringIntentCoordinator.compile_and_submit",
+            "AuthoringIntentCoordinator.submit_input",
             "AuthoringIntentCoordinator.rebase",
             "AuthoringIntentCoordinator.submit",
             # A dry run writes nothing, but it is the write's own path up to
             # the commit, so it refuses exactly where the write would.
             "AuthoringIntentCoordinator.preview",
+            "AuthoringIntentCoordinator.preview_input",
         }
     ),
     # set, retire and write: one door that lowers onto the coordinator above.

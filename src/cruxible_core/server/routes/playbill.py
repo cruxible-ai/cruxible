@@ -70,6 +70,7 @@ from cruxible_core.server.playbill_request_models import (
     ApprovalRequest,
     AuditRequest,
     AuthoringInputCompileRequest,
+    AuthoringInputSubmitRequest,
     AuthoringPreflightRequest,
     AuthoringRebaseRequest,
     AuthoringSubmitRequest,
@@ -760,7 +761,7 @@ def settle_prediction(
 def list_pending_authoring_intents(
     instance_id: str,
 ) -> contracts.AuthoringIntentListRecord:
-    return playbill_api.playbill_authoring_list_pending(resolve_server_instance_id(instance_id))
+    return playbill_api.playbill_authoring_list(resolve_server_instance_id(instance_id))
 
 
 @router.post(
@@ -845,12 +846,24 @@ def preflight_authoring_intent(
 
 @router.post(
     "/{instance_id}/authoring/submit",
-    response_model=contracts.AuthoringSubmitResultRecord,
+    response_model=contracts.AuthoringSubmitResultRecord | contracts.AuthoringPreflightResult,
 )
 def compile_and_submit_authoring(
     instance_id: str,
-    req: PlaybillAuthoringCompileRequestV3,
-) -> contracts.AuthoringSubmitResultRecord:
+    req: PlaybillAuthoringCompileRequestV3 | AuthoringInputSubmitRequest,
+) -> contracts.AuthoringSubmitResultRecord | contracts.AuthoringPreflightResult:
+    """Compile and submit one payload; a dry-run input answers with its preflight."""
+
+    if isinstance(req, AuthoringInputSubmitRequest):
+        if req.dry_run:
+            return playbill_api.playbill_authoring_preview_input(
+                resolve_server_instance_id(instance_id), input=req.input
+            )
+        return playbill_api.playbill_authoring_submit_input(
+            resolve_server_instance_id(instance_id),
+            input=req.input,
+            intent_id=req.intent_id,
+        )
     return playbill_api.playbill_authoring_compile_and_submit(
         resolve_server_instance_id(instance_id),
         payload=req.payload,

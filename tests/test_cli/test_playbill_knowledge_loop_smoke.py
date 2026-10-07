@@ -121,15 +121,10 @@ def _author_and_accept(
     path: Path,
     payload: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    compiled = cruxible.json(
-        "authoring",
-        "compile",
-        _write(path, payload),
-    )
     submitted = cruxible.json(
         "authoring",
         "submit",
-        str(compiled["certificate"]["intent_id"]),
+        _write(path, payload),
     )
     accepted = cruxible.accept(str(submitted["status"]["proposal_id"]))
     return submitted, accepted
@@ -596,6 +591,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
             brief = cruxible.run(
                 "authoring",
                 "submit",
+                "--intent-id",
                 intent_id,
                 "--and-activate",
                 "--brief",
@@ -609,6 +605,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
             submitted = cruxible.json(
                 "authoring",
                 "submit",
+                "--intent-id",
                 intent_id,
             )
             claim_identities.append(f"Claim:{submitted['intent']['semantic_identity']}")

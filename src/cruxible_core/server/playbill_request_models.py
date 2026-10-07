@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts import (
     CURATION_LIST_DEFAULT_LIMIT,
@@ -196,6 +196,28 @@ class AuthoringInputCompileRequest(_StrictPlaybillRequest):
     )
     input: AuthoringInput
     intent_id: str | None = None
+
+
+class AuthoringInputSubmitRequest(_StrictPlaybillRequest):
+    """Compile one tagless input and submit it, or preview it with ``dry_run``.
+
+    With ``intent_id`` the input replaces that staged intent's payload before
+    the submit. ``dry_run`` previews a new input: it returns the preflight the
+    submit would run and saves no intent, so it takes no ``intent_id``.
+    """
+
+    tag: Literal["playbill-authoring-input-submit-request-v1"] = (
+        "playbill-authoring-input-submit-request-v1"
+    )
+    input: AuthoringInput
+    intent_id: str | None = None
+    dry_run: bool = False
+
+    @model_validator(mode="after")
+    def _dry_run_takes_no_intent(self) -> "AuthoringInputSubmitRequest":
+        if self.dry_run and self.intent_id is not None:
+            raise ValueError("a dry run previews a new input and takes no intent_id")
+        return self
 
 
 class AuthoringPreflightRequest(_StrictPlaybillRequest):

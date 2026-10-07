@@ -164,7 +164,7 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
         "authoring",
     ]
     compiled = runner.invoke(cli, [*common, "compile", str(payload), "--json"])
-    submitted = runner.invoke(cli, [*common, "submit", INTENT_ID, "--json"])
+    submitted = runner.invoke(cli, [*common, "submit", "--intent-id", INTENT_ID, "--json"])
 
     assert compiled.exit_code == 0, compiled.output
     assert submitted.exit_code == 0, submitted.output
@@ -174,6 +174,64 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
     ]
     assert "target: inst_authoring @ https://authoring.example.test (explicit)" in compiled.stderr
     assert INTENT_ID in submitted.output
+
+
+def test_cli_submit_takes_a_payload_directly_and_dry_run_saves_nothing(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    payload = tmp_path / "claim.json"
+    authoring = claim_self_source_example().model_dump(mode="json")
+    payload.write_text(json.dumps(authoring))
+    calls: list[tuple[str, object, object]] = []
+
+    class StubClient:
+        def submit_authoring_input(
+            self, instance_id: str, *, input: dict[str, object], intent_id: str | None
+        ) -> contracts.AuthoringSubmitResultRecord:
+            calls.append(("submit", input, intent_id))
+            return contracts.AuthoringSubmitResultRecord(
+                intent={"intent_id": INTENT_ID},
+                status=contracts.CandidateStatusRecord(
+                    state="draft", current_accepted_coordinate=COORDINATE
+                ),
+            )
+
+        def preview_authoring_input(
+            self, instance_id: str, *, input: dict[str, object]
+        ) -> contracts.AuthoringPreflightResult:
+            calls.append(("preview", input, None))
+            return stub_preflight_result(verdict="refused", diagnostics=(stub_diagnostic("x"),))
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    runner = CliRunner()
+    common = [
+        "--server-url",
+        "https://authoring.example.test",
+        "--instance-id",
+        "inst_authoring",
+        "authoring",
+        "submit",
+    ]
+
+    direct = runner.invoke(cli, [*common, str(payload), "--json"])
+    onto = runner.invoke(cli, [*common, str(payload), "--intent-id", INTENT_ID, "--json"])
+    preview = runner.invoke(cli, [*common, str(payload), "--dry-run", "--json"])
+
+    assert direct.exit_code == 0, direct.output
+    assert onto.exit_code == 0, onto.output
+    assert preview.exit_code == 0, preview.output
+    assert calls == [
+        ("submit", authoring, None),
+        ("submit", authoring, INTENT_ID),
+        ("preview", authoring, None),
+    ]
+    assert json.loads(preview.stdout)["verdict"] == "refused"
+    neither = runner.invoke(cli, common)
+    assert neither.exit_code == 2 and "provide PAYLOAD, --intent-id, or both" in neither.output
+    staged_preview = runner.invoke(cli, [*common, "--intent-id", INTENT_ID, "--dry-run"])
+    assert staged_preview.exit_code == 2
+    assert "takes no --intent-id" in staged_preview.output
 
 
 def test_cli_claim_type_propose_delivers_nonblocking_source_lint(

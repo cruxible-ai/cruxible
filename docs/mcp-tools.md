@@ -212,27 +212,29 @@ from accepted law evidence, never carried forward from acceptance.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_authoring_create` | Create or recover a durable authoring intent | `GOVERNED_WRITE` |
 | `cruxible_authoring_example` | Return a model-generated ClaimType/Claim/Procedure input | `READ_ONLY` |
 | `cruxible_authoring_get` | Read one authoring intent | `READ_ONLY` |
-| `cruxible_authoring_resume` | Return an intent's durable continuation | `READ_ONLY` |
-| `cruxible_authoring_list_pending` | List the caller's pending intents | `READ_ONLY` |
-| `cruxible_authoring_compile` | Create or update an intent and preflight it | `GOVERNED_WRITE` |
+| `cruxible_authoring_list` | List the caller's in-progress intents | `READ_ONLY` |
+| `cruxible_authoring_compile` | Stage a payload as an intent (new, or revising `intent_id`) and run every check | `GOVERNED_WRITE` |
 | `cruxible_authoring_bind` | Read an anchored workspace selection, derive commitments, and compile | `GOVERNED_WRITE` |
 | `cruxible_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
 | `cruxible_authoring_rebase` | Rebase a stale intent onto the current accepted coordinate | `GOVERNED_WRITE` |
-| `cruxible_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
+| `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
 | `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
-| `cruxible_authoring_abandon_insertion` | Release a publication expectation an instance already holds | `GOVERNED_WRITE` |
 | `cruxible_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp and registers the block | `GOVERNED_WRITE` |
 | `cruxible_block_sync` | Check each projection block's backings; edits no page | `READ_ONLY` |
 | `cruxible_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes | `GOVERNED_WRITE` |
-| `cruxible_block_depublish` | Release the registration that demands one page block, whichever road declared it | `GOVERNED_WRITE` |
+| `cruxible_block_depublish` | Release the declaration that registers one page block | `GOVERNED_WRITE` |
 
 The coordinator mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.
 
-`cruxible_authoring_create` takes one tagless input, and the
+The flow is `compile` (or `bind`), then `rebase` or `preflight` as needed, then
+`submit` and `status`, with `get` and `list` to find work again; a one-shot write
+is `cruxible_authoring_submit` with a `payload`. `cruxible_authoring_example`
+prints a template for any input kind.
+
+Every payload is one tagless input, and the
 `change_set` kind carries any mix of members -- `claim`, `claim_type`,
 `claim_retirement`, `subject`, `query_definition`, `procedure`,
 `procedure_mandate`, `acquisition_policy`, `line` -- as one intent that admits

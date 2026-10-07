@@ -1188,6 +1188,43 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.AuthoringPreflightResult)
 
+    def submit_authoring_input(
+        self,
+        instance_id: str,
+        *,
+        input: Mapping[str, Any],
+        intent_id: str | None = None,
+    ) -> contracts.AuthoringSubmitResultRecord:
+        """Compile one tagless input and submit it; with ``intent_id``, onto that intent."""
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/authoring/submit",
+            json={
+                "tag": "playbill-authoring-input-submit-request-v1",
+                "input": dict(input),
+                "intent_id": intent_id,
+            },
+        )
+        return self._parse_model(response, contracts.AuthoringSubmitResultRecord)
+
+    def preview_authoring_input(
+        self,
+        instance_id: str,
+        *,
+        input: Mapping[str, Any],
+    ) -> contracts.AuthoringPreflightResult:
+        """The preflight submitting this input would run, with no intent saved."""
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/authoring/submit",
+            json={
+                "tag": "playbill-authoring-input-submit-request-v1",
+                "input": dict(input),
+                "dry_run": True,
+            },
+        )
+        return self._parse_model(response, contracts.AuthoringPreflightResult)
+
     def preflight_authoring_intent(
         self,
         instance_id: str,
