@@ -524,7 +524,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_read_capture(
+    def cruxible_capture_read(
         instance_id: InstanceId = None, *, request: CaptureReadRequest
     ) -> CaptureRead:
         """Read exact retained Capture evidence with a byte budget and body permission."""
@@ -604,7 +604,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_propose_principal_change(
+    def cruxible_principal_propose(
         instance_id: InstanceId = None,
         *,
         principal: PrincipalRecord,

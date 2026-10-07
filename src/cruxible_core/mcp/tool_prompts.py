@@ -95,7 +95,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_proposal_withdraw": (
         "Use when an open proposal can never be activated and should leave the open inventory."
     ),
-    "cruxible_read_capture": (
+    "cruxible_capture_read": (
         "Use when you need verified retained Capture evidence for inspection or Claim authoring. "
         "Requires body-read permission; max_bytes bounds returned material. "
         "Never refetches sources."
@@ -114,7 +114,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use to propose an explicit compiler upgrade bound to the exact accepted base. "
         "Requires admin permission; approve and activate through the normal proposal workflow."
     ),
-    "cruxible_propose_principal_change": (
+    "cruxible_principal_propose": (
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
     ),
     "cruxible_propose_claim_type": (

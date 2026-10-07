@@ -74,7 +74,7 @@ PERMISSION_MODE_NAMES: tuple[str, ...] = tuple(_MODE_NAMES)
 # ---------------------------------------------------------------------------
 
 TOOL_PERMISSIONS: dict[str, PermissionMode] = {
-    "cruxible_read_capture": PermissionMode.GOVERNED_WRITE,
+    "cruxible_capture_read": PermissionMode.GOVERNED_WRITE,
     "cruxible_provider_catalog": PermissionMode.READ_ONLY,
     "cruxible_provider_install": PermissionMode.ADMIN,
     "cruxible_kit_build": PermissionMode.READ_ONLY,
@@ -158,7 +158,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_activate": PermissionMode.GRAPH_WRITE,
     "cruxible_compiler_upgrade": PermissionMode.ADMIN,
     "cruxible_init": PermissionMode.ADMIN,
-    "cruxible_propose_principal_change": PermissionMode.ADMIN,
+    "cruxible_principal_propose": PermissionMode.ADMIN,
 }
 
 # HTTP/CLI operations that share the same runtime boundary without being MCP tools.

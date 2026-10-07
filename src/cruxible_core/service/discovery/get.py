@@ -767,7 +767,7 @@ def _render_read_capture(surface: ReadSurface, digest: str) -> str:
             "client.read_capture(instance_id, "
             f"CaptureReadRequest(capture_digest={json.dumps(digest)}))"
         )
-    return f'cruxible_read_capture(request={{"capture_digest": {json.dumps(digest)}}})'
+    return f'cruxible_capture_read(request={{"capture_digest": {json.dumps(digest)}}})'
 
 
 def _value_was_cut(

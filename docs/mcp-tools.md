@@ -167,7 +167,7 @@ names the whole body's `body_digest`.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_read_capture` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying) | `GOVERNED_WRITE` |
+| `cruxible_capture_read` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying) | `GOVERNED_WRITE` |
 
 ## Sources
 
@@ -191,7 +191,7 @@ The principal registry is `orient(section="principals")`; one record is
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_compiler_upgrade` | Propose an exact compiler transition; signed approval and activation use the ordinary proposal workflow. | `ADMIN` |
-| `cruxible_propose_principal_change` | Propose rotation, revocation, or recovery | `ADMIN` |
+| `cruxible_principal_propose` | Propose rotation, revocation, or recovery | `ADMIN` |
 
 ## Subjects, ClaimTypes, and Claims
 

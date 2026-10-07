@@ -371,7 +371,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_curation_accept_fixed": TypeAdapter(CurationAcceptFixedRequest),
     "cruxible_curation_overrule": TypeAdapter(CurationOverruleRequest),
     "cruxible_curation_suppress": TypeAdapter(CurationSuppressRequest),
-    "cruxible_read_capture": TypeAdapter(CaptureReadRequest),
+    "cruxible_capture_read": TypeAdapter(CaptureReadRequest),
     "cruxible_init": TypeAdapter(InitRequest),
     "cruxible_predict": TypeAdapter(contracts.PredictRequest),
     "cruxible_procedure_bind": TypeAdapter(ProcedureBindRequest),
@@ -380,7 +380,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_propose_claim_type": TypeAdapter(ProposeClaimTypeInputRequest),
     "cruxible_propose_document": TypeAdapter(ProposeDocumentRequest),
     "cruxible_compiler_upgrade": TypeAdapter(CompilerUpgradeRequest),
-    "cruxible_propose_principal_change": TypeAdapter(ProposePrincipalRequest),
+    "cruxible_principal_propose": TypeAdapter(ProposePrincipalRequest),
     "cruxible_propose_source_bundle": TypeAdapter(SourceProposeRequest),
     "cruxible_procedure_measure": TypeAdapter(contracts.ProcedureMeasureRequest),
     "cruxible_settle": TypeAdapter(contracts.SettleRequest),
@@ -937,7 +937,7 @@ def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequest) 
     return _dispatch_remote_or_local(
         lambda client: client.read_capture(instance_id, request),
         lambda: playbill_api.playbill_read_capture(instance_id, request),
-        operation_name="cruxible_read_capture",
+        operation_name="cruxible_capture_read",
         local_payload=request.model_dump(mode="json"),
     )
 
@@ -1093,7 +1093,7 @@ def handle_playbill_propose_principal_change(
             dry_run=dry_run,
             at=at,
         ),
-        operation_name="cruxible_propose_principal_change",
+        operation_name="cruxible_principal_propose",
         local_payload={
             "principal": record.model_dump(mode="json"),
             "proposal_name": proposal_name,

@@ -26,7 +26,7 @@ PLAYBILL_DOCUMENT_TOOLS = {
     "cruxible_source_context",
     "cruxible_source_check",
     "cruxible_propose_source_bundle",
-    "cruxible_propose_principal_change",
+    "cruxible_principal_propose",
 }
 
 
