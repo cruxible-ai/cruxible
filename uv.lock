@@ -163,6 +163,7 @@ source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "cruxible-client" },
+    { name = "cruxible-provider-runtime" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -191,6 +192,7 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
     { name = "cruxible-client", editable = "packages/cruxible-client" },
+    { name = "cruxible-provider-runtime", specifier = ">=0.2.0" },
     { name = "cryptography", specifier = ">=46.0" },
     { name = "fastapi", specifier = ">=0.100" },
     { name = "httpx", specifier = ">=0.24" },
@@ -227,6 +229,19 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.24" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pyyaml", specifier = ">=6.0" },
+]
+
+[[package]]
+name = "cruxible-provider-runtime"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/6f/cfcd35a23e642d57cc9b4f9842f2f3b4794144fc45bd5ef8192d422e07c8/cruxible_provider_runtime-0.2.0-py3-none-any.whl", hash = "sha256:2e68393da079aa747c39085cc7ebb33b5b6105e44c57e6fc9854da47541b93a3", size = 109075, upload-time = "2026-10-07T19:34:14.996Z" },
 ]
 
 [[package]]

@@ -39,6 +39,9 @@ dependencies = [
     # bundled mcp.server.fastmcp the tools are built on; the SDK-2.0 migration
     # is tracked separately (wi-mcp-sdk-2-migration).
     "mcp>=1.0,<2",
+    # Provider installs materialize environments with the provider runtime toolchain
+    # (providers/package_materialization.py imports it); core never runs provider code.
+    "cruxible-provider-runtime>=0.2.0",
 ]
 
 [project.optional-dependencies]

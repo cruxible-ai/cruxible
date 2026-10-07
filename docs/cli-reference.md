@@ -434,9 +434,9 @@ has tag `cruxible-provider-runtime-operational-config-v1` and these entries:
 
 Unknown entries, non-positive timing values, malformed JSON, unsafe deployment
 paths, and an unreadable file degrade only the Provider lane with a typed cause.
-Provider installation requires the first-party `cruxible-provider-runtime` toolchain
-and `uv` in the daemon environment. The 0.2.0 runtime may be installed from a locally
-built wheel before publication. Installed providers run in supervised child
+Provider installation uses the first-party `cruxible-provider-runtime` toolchain, which
+the `cruxible` package installs as a dependency, and needs `uv` in the daemon
+environment. Installed providers run in supervised child
 processes; the one exception is `workspace.file`, which is built into core (see
 [init](#init)) and runs inside the daemon with no provider install. It needs no
 deployment and keeps running while this lane is degraded. Its receipts carry
