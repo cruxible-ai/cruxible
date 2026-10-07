@@ -14,6 +14,7 @@ The dispatch store's records keep their internal ``arm`` names.
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
@@ -24,6 +25,7 @@ from types import SimpleNamespace
 from typing import Any, Literal
 from uuid import uuid4
 
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import CruxibleError, ExecutionError
 from cruxible_client.contracts.line_dispatch import (
     LineDispatchItem,
@@ -1197,9 +1199,22 @@ def service_dispatch_line(
         if request.occurrence_id:
             sql += " AND occurrence_id=?"
             args.append(request.occurrence_id)
+        if request.cursor is not None:
+            after = _dispatch_cursor_key(request.cursor)
+            sql += " AND (eligible_at>? OR (eligible_at=? AND occurrence_id>?))"
+            args.extend((after[0], after[0], after[1]))
         rows = conn.execute(
             sql + " ORDER BY eligible_at,occurrence_id LIMIT ?", (*args, request.limit)
         ).fetchall()
+    # Keyset over (eligible_at, occurrence_id): a page continues past every row
+    # it attempted, so a row that stays blocked is reported once per drain.
+    page_cursor = None
+    if len(rows) == request.limit and rows:
+        last = json.loads(rows[-1][0])
+        page_cursor = _dispatch_cursor(
+            str(format_datetime(_instant(last["occurrence"]["eligible_at"]))),
+            last["occurrence"]["occurrence_id"],
+        )
     results = []
     for row in rows:
         data = json.loads(row[0])
@@ -1424,4 +1439,24 @@ def service_dispatch_line(
                     refusal=refusal,
                 )
             )
-    return LineDispatchResult(items=tuple(results))
+    return LineDispatchResult(items=tuple(results), cursor=page_cursor)
+
+
+def _dispatch_cursor(eligible_at: str, occurrence_id: str) -> str:
+    return base64.urlsafe_b64encode(
+        canonical_bytes({"eligible_at": eligible_at, "occurrence_id": occurrence_id})
+    ).decode("ascii")
+
+
+def _dispatch_cursor_key(cursor: str) -> tuple[str, str]:
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")))
+        key = (decoded["eligible_at"], decoded["occurrence_id"])
+        if not all(isinstance(part, str) for part in key) or set(decoded) != {
+            "eligible_at",
+            "occurrence_id",
+        }:
+            raise ValueError("cursor fields")
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ExecutionError("dispatch cursor must be one a previous dispatch returned") from exc
+    return key

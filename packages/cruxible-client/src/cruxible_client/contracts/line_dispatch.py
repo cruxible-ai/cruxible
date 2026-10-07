@@ -103,6 +103,13 @@ class LineDispatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     occurrence_id: str | None = None
     limit: int = Field(default=100, ge=1, le=100)
+    cursor: str | None = Field(
+        default=None,
+        description=(
+            "Continue after the last occurrence a previous page attempted (its `cursor`), "
+            "so occurrences that stayed blocked are not attempted again."
+        ),
+    )
     retry: bool = Field(
         default=False,
         description=(
@@ -240,3 +247,6 @@ class LineDispatchItem(BaseModel):
 class LineDispatchResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     items: tuple[LineDispatchItem, ...] = ()
+    #: Set when the page was full: pass it back to continue past every
+    #: occurrence this page attempted, including those that stayed blocked.
+    cursor: str | None = None

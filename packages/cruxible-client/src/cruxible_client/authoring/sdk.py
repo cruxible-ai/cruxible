@@ -4546,9 +4546,17 @@ class Line:
         )
 
     def dispatch(
-        self, *, occurrence_id: str | None = None, limit: int = 100, retry: bool = False
+        self,
+        *,
+        occurrence_id: str | None = None,
+        limit: int = 100,
+        retry: bool = False,
+        cursor: str | None = None,
     ) -> api.LineDispatchResult:
-        """Run pending occurrences under this connection's current actor and authority.
+        """Run up to ``limit`` pending occurrences under this connection's authority.
+
+        A full page returns ``cursor``; pass it back to continue past every
+        occurrence that page attempted, including those that stayed blocked.
 
         Next: ``cx.get(f"ProcedureRun:{item.run_id}")`` for each admitted run.
         """
@@ -4556,7 +4564,9 @@ class Line:
         return cx._client.dispatch_line(
             cx._instance_id,
             self.name,
-            request=api.LineDispatchRequest(occurrence_id=occurrence_id, limit=limit, retry=retry),
+            request=api.LineDispatchRequest(
+                occurrence_id=occurrence_id, limit=limit, retry=retry, cursor=cursor
+            ),
         )
 
     def run(

@@ -5574,6 +5574,10 @@ def evaluate_line(
             )
 
 
+#: Occurrences one `line dispatch` request attempts while draining.
+_LINE_DISPATCH_PAGE = 100
+
+
 @line_group.command("dispatch")
 @click.argument("line")
 @click.option("--occurrence-id", default=None, help="Dispatch only this pending occurrence.")
@@ -5603,24 +5607,23 @@ def dispatch_line(
 
     from cruxible_client.contracts.line_dispatch import LineDispatchRequest, LineDispatchResult
 
-    page = 100 if limit is None else limit
+    page = _LINE_DISPATCH_PAGE if limit is None else limit
     items: list[Any] = []
-    seen: set[str] = set()
+    cursor: str | None = None
     while True:
+        request = LineDispatchRequest(
+            occurrence_id=occurrence_id, limit=page, retry=retry, cursor=cursor
+        )
         result = _server_call(
-            lambda client, instance_id: client.dispatch_line(
-                instance_id,
-                line,
-                request=LineDispatchRequest(occurrence_id=occurrence_id, limit=page, retry=retry),
-            ),
+            lambda client, instance_id: client.dispatch_line(instance_id, line, request=request),
             command_name="cruxible line dispatch",
         )
-        fresh = [item for item in result.items if item.occurrence_id not in seen]
-        items.extend(fresh)
-        seen.update(item.occurrence_id for item in fresh)
-        # Drain until a page comes back short or holds only what stayed blocked.
-        if limit is not None or occurrence_id is not None or len(result.items) < page or not fresh:
+        items.extend(result.items)
+        # Each page continues past every occurrence the last one attempted, so
+        # a page that stayed blocked never hides the occurrences after it.
+        if limit is not None or result.cursor is None:
             break
+        cursor = result.cursor
     drained = LineDispatchResult(items=tuple(items))
     if output_json:
         _emit_json(drained.model_dump(mode="json"))

@@ -195,3 +195,57 @@ def test_a_read_only_caller_may_dry_run_evaluate_but_not_enqueue(
     assert answer["error_type"] == "PermissionDeniedError", refused.text
     assert answer["context"]["required_mode"] == "GOVERNED_WRITE", refused.text
     assert not dispatch_root(instance).exists()
+
+
+def test_cli_line_dispatch_drains_past_a_full_page_that_stays_blocked(
+    playbill_http, tmp_path, monkeypatch
+):
+    """S3 review b F-002: a blocked first page does not hide the occurrences after it."""
+
+    from cruxible_client.contracts.errors import ExecutionError
+    from cruxible_core.service.procedures import line_dispatch
+
+    _http, instance_id, instance, line, procedure, now, transport = _served_line_world(
+        playbill_http, tmp_path, monkeypatch
+    )
+    for index in range(5):
+        capture(instance, procedure, partition=f"run:anchor-{index}")
+    monkeypatch.setattr(commands, "_server_call", lambda call, **_: call(transport, instance_id))
+    monkeypatch.setattr(commands, "_LINE_DISPATCH_PAGE", 2)
+    runner = CliRunner()
+    evaluated = runner.invoke(
+        commands.line_group,
+        [
+            "evaluate",
+            line.identity.name,
+            "--since",
+            READ_TIME.isoformat(),
+            "--until",
+            now.isoformat(),
+            "--json",
+        ],
+    )
+    assert evaluated.exit_code == 0, evaluated.output
+    ordered = sorted(
+        (item for item in json.loads(evaluated.output)["occurrences"] if item["pending"]),
+        key=lambda item: (item["eligible_at"], item["occurrence_id"]),
+    )
+    assert len(ordered) == 5
+    blocked = {item["occurrence_id"] for item in ordered[:2]}
+    run = line_dispatch.service_run_playbill_line
+
+    def blocking(*args, **kwargs):  # type: ignore[no-untyped-def]
+        if kwargs["request"].occurrence_id in blocked:
+            raise ExecutionError("provider lane busy")
+        return run(*args, **kwargs)
+
+    monkeypatch.setattr(line_dispatch, "service_run_playbill_line", blocking)
+
+    drained = runner.invoke(commands.line_group, ["dispatch", line.identity.name, "--json"])
+
+    assert drained.exit_code == 0, drained.output
+    items = json.loads(drained.output)["items"]
+    # Every occurrence is visited exactly once: the two blocked ones are
+    # reported once and stay pending, the three after them are admitted.
+    assert [item["occurrence_id"] for item in items] == [item["occurrence_id"] for item in ordered]
+    assert [item["status"] for item in items] == ["blocked"] * 2 + ["admitted"] * 3
