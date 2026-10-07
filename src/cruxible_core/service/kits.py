@@ -1318,6 +1318,16 @@ def _add_kit(
     inspected = (
         None if mode.previewing or not manifest.providers else _inspect_staged(instance, manifest)
     )
+    for provider in manifest.providers:
+        # The staged bytes must reproduce what the manifest says they are.
+        if inspected is not None and inspected[provider.provider_id].provider != provider:
+            raise RequestRefusedError(
+                "cruxible.kit.provider_manifest_mismatch",
+                f"the staged files of bundled provider {provider.provider_id} do not "
+                "reproduce its manifest entry (provider id, package, version, files or "
+                "interfaces); rebuild the kit with kit build",
+                repair=RepairOperation(operation="cruxible.kit.build"),
+            )
     steps, missing = _provider_steps(tree, manifest, inspected)
     described: dict[str, object] = {
         "transition": transition,
@@ -1363,6 +1373,19 @@ def _add_kit(
         assert mode.head is not None
         tree = instance.immutable_tree_at(mode.head.git_oid)
         awaiting_install = False
+        assert inspected is not None
+        absent = [
+            provider.provider_id
+            for provider in manifest.providers
+            if _provider_here(tree, provider, inspected[provider.provider_id])[0] != "installed"
+        ]
+        if absent:
+            raise RequestRefusedError(
+                "cruxible.kit.provider_not_installed",
+                f"after installing, {', '.join(absent)} is not the live bundled build here; "
+                "the definitions that pin it are not proposed",
+                repair=RepairOperation(operation="cruxible.kit.status"),
+            )
     blocked = _ownership_conflicts(instance, tree, manifest)
     blocked.extend(
         f"{step.provider_id}: {step.detail}" for step in steps if step.action == "blocked"

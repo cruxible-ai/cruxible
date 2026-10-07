@@ -648,3 +648,72 @@ def test_a_bundled_provider_matches_only_with_its_whole_dependency_closure(
     finally:
         for _ in opened:
             pass
+
+
+def test_kit_add_refuses_a_manifest_its_staged_provider_files_do_not_reproduce(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
+) -> None:
+    """Review F-005: the staged wheel is inspected before anything is installed."""
+
+    opened = _worlds(tmp_path, monkeypatch)
+    publisher, consumer = next(opened)
+    try:
+        project = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
+        _install(publisher, project)
+        _author(publisher)
+        release = _build(publisher, project)
+        wrong = release.manifest.providers[0].model_copy(
+            update={"provider_id": "fictional", "package": "fictional", "version": "9.9.9"}
+        )
+        release = release.model_copy(
+            update={"manifest": release.manifest.model_copy(update={"providers": (wrong,)})}
+        )
+        installs: list[object] = []
+        monkeypatch.setattr(
+            playbill_api, "service_install_provider", lambda *a, **k: installs.append(k)
+        )
+        before = _tree(consumer)
+        with pytest.raises(RequestRefusedError) as refused:
+            _add(consumer, release, dry_run=False)
+        assert refused.value.error_code == "cruxible.kit.provider_manifest_mismatch"
+        assert installs == []
+        assert _tree(consumer) == before
+    finally:
+        for _ in opened:
+            pass
+
+
+def test_kit_add_rechecks_each_provider_is_live_before_proposing_definitions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
+) -> None:
+    """Review F-005: an install reporting success without the bundled Provider live
+    proposes no definitions."""
+
+    from cruxible_client.contracts.provider_installation import ProviderInstallResult
+
+    opened = _worlds(tmp_path, monkeypatch)
+    publisher, consumer = next(opened)
+    try:
+        project = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
+        _install(publisher, project)
+        _author(publisher)
+        release = _build(publisher, project)
+        monkeypatch.setattr(
+            playbill_api,
+            "service_install_provider",
+            lambda *a, **k: ProviderInstallResult(
+                installation_id=_ZERO,
+                provider_id="kit-call",
+                status="ready",
+                installed=True,
+                registered=True,
+            ),
+        )
+        before = _tree(consumer)
+        with pytest.raises(RequestRefusedError) as refused:
+            _add(consumer, release, dry_run=False)
+        assert refused.value.error_code == "cruxible.kit.provider_not_installed"
+        assert _tree(consumer) == before
+    finally:
+        for _ in opened:
+            pass
