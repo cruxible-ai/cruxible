@@ -160,3 +160,88 @@ def test_a_partial_evaluation_leaves_only_the_uncovered_rest(tmp_path):
 
     (rest,), _ = line_attention(instance, now=restarted + timedelta(seconds=1))
     assert (rest.since, rest.until) == (middle, gap.until)
+
+
+# --- range boundaries for generation Triggers (S3 delta review F-001) --------
+
+
+def _pending_rows(instance) -> int:  # type: ignore[no-untyped-def]
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+
+    with LineDispatchStore(instance).locked() as conn:
+        return int(conn.execute("SELECT count(*) FROM pending").fetchone()[0])
+
+
+def test_an_accept_exactly_at_the_gaps_inclusive_start_is_found(tmp_path):
+    """The listener covered [enable, 16:00:11.000001); an accept at that instant is the gap's."""
+
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
+    start = READ_TIME + timedelta(seconds=10)  # 16:00:10
+    _enable(instance, line, start)
+    _match(instance, start + timedelta(seconds=1))  # durable checked-until 16:00:11.000001
+    boundary = start + timedelta(seconds=1, microseconds=1)
+    _accept_generation(instance, owner, "at-the-boundary", boundary)  # daemon down
+    restarted = start + timedelta(seconds=6)  # 16:00:16
+    _match(instance, restarted, daemon_id="restarted")
+    (gap,), _ = line_attention(instance, now=restarted)
+    assert gap.since == boundary
+
+    evaluated = _evaluate(instance, line, gap, restarted + timedelta(seconds=1))
+
+    assert evaluated.status == "met"
+    (occurrence,) = evaluated.occurrences
+    assert occurrence.pending and occurrence.eligible_at == boundary
+    gaps, (work,) = line_attention(instance, now=restarted + timedelta(seconds=1))
+    assert gaps == () and work.due == 1
+    result = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequest(),
+        actor=_actor(instance),
+        caller_rung=3,
+        now=restarted + timedelta(seconds=2),
+    )
+    assert [item.status for item in result.items] == ["admitted"]
+
+
+def test_an_accept_exactly_at_the_exclusive_end_is_outside_the_range(tmp_path):
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
+    accepted_at = READ_TIME + timedelta(seconds=20)
+    _accept_generation(instance, owner, "at-the-end", accepted_at)
+    since = accepted_at - timedelta(seconds=5)
+
+    def evaluate(until):  # type: ignore[no-untyped-def]
+        return service_evaluate_line(
+            instance,
+            line.identity.name,
+            LineEvaluateRequest(since=since, until=until, dry_run=True),
+            actor=None,
+            now=accepted_at + timedelta(seconds=5),
+        )
+
+    excluded = evaluate(accepted_at)
+    assert excluded.status == "not_met" and excluded.occurrences == ()
+    included = evaluate(accepted_at + timedelta(microseconds=1))
+    assert included.status == "met" and len(included.occurrences) == 1
+    assert included.occurrences[0].eligible_at == accepted_at
+
+
+def test_an_accept_at_since_the_listener_already_delivered_is_not_delivered_again(tmp_path):
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
+    start = READ_TIME + timedelta(seconds=10)
+    _enable(instance, line, start)
+    accepted_at = start + timedelta(seconds=1)
+    _accept_generation(instance, owner, "delivered-live", accepted_at)
+    _match(instance, start + timedelta(seconds=2))  # the live segment delivers it
+    assert _pending_rows(instance) == 1
+
+    evaluated = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=accepted_at, until=start + timedelta(seconds=3)),
+        actor=_actor(instance),
+        now=start + timedelta(seconds=4),
+    )
+
+    assert evaluated.status == "not_met" and evaluated.occurrences == ()
+    assert _pending_rows(instance) == 1

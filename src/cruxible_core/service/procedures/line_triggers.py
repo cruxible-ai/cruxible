@@ -62,6 +62,38 @@ class TriggerRange:
     limit: int = 256
 
 
+def _delivered_generations(
+    instance: PlaybillInstance,
+    accepted: Any,
+    trigger: AcceptedTrigger,
+    *,
+    identity: str,
+) -> frozenset[int]:
+    """Every generation an occurrence of this Trigger was already delivered on.
+
+    The dispatch store keeps every occurrence the Line's listener matched or an
+    evaluation enqueued, whatever became of it; the journal keeps admissions.
+    """
+
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
+
+    delivered: set[int] = set()
+    for admission in _trigger_admissions(instance, accepted, trigger.trigger.identity):
+        cause = getattr(admission, "trigger_binding", None)
+        if cause is not None and cause.generation is not None:
+            delivered.add(int(cause.generation))
+    if dispatch_root(instance).exists():
+        with LineDispatchStore(instance).locked() as conn:
+            for (payload,) in conn.execute(
+                "SELECT payload FROM pending WHERE line_id=? AND trigger_id=?",
+                (identity, trigger.trigger.identity.qualified),
+            ).fetchall():
+                binding = json.loads(payload)["occurrence"].get("binding") or {}
+                if isinstance(binding.get("generation"), int):
+                    delivered.add(binding["generation"])
+    return frozenset(delivered)
+
+
 def service_check_line_trigger(
     instance: PlaybillInstance,
     line: str,
@@ -233,6 +265,35 @@ def service_check_line_trigger(
 
                 with instance.accepted_history_reader() as history:
                     head = history.sequence
+                if generation_after is None and generation_cursors is None:
+                    # An explicit or historical evaluation reads [since, until),
+                    # `since` inclusive: accepts strictly before `since` are
+                    # outside it, an accept exactly at `since` is inside. The
+                    # latest generation accepted before `until` stands for every
+                    # accept in the range (coalesced) and is eligible at its own
+                    # acceptance instant. It is new unless an occurrence on that
+                    # exact generation was already delivered (matched or
+                    # evaluated before); anything delivered later than the range
+                    # is another occurrence and never stands in for this one.
+                    floor = trigger_generation(instance, trigger.trigger)
+                    if request.since is not None:
+                        floor = max(
+                            floor,
+                            generation_at(instance, request.since - timedelta(microseconds=1)),
+                        )
+                    head = min(head, generation_at(instance, until - timedelta(microseconds=1)))
+                    generation_updates[name] = head
+                    if head > floor and head not in _delivered_generations(
+                        instance, accepted, trigger, identity=identity
+                    ):
+                        with instance.accepted_history_reader() as history:
+                            accepted_at = instance.accepted_evaluation_time(
+                                history.generation(head).git_oid
+                            )
+                        bindings.append(
+                            (trigger, trigger_binding_for(trigger, generation=head), accepted_at)
+                        )
+                    continue
                 covered = trigger_generation(instance, trigger.trigger)
                 recorded = None if generation_cursors is None else generation_cursors.get(name)
                 if generation_after is not None:
@@ -244,35 +305,20 @@ def service_check_line_trigger(
                 if recorded is not None:
                     covered = max(covered, recorded)
                 else:
-                    # Only a cold check recovers coverage from admissions. An
-                    # armed session retains it in its scan cursors thereafter.
+                    # A listening segment recorded before generation cursors
+                    # recovers coverage from admissions once, then keeps it in
+                    # its scan cursors.
                     for prior_admission in _trigger_admissions(
                         instance, accepted, trigger.trigger.identity
                     ):
                         cause = getattr(prior_admission, "trigger_binding", None)
                         if cause is not None and cause.generation is not None:
                             covered = max(covered, cause.generation)
-                if generation_after is None:
-                    # An explicit or historical evaluation reads [since, until):
-                    # the latest generation accepted before `until` stands for
-                    # every accept in the range (coalesced), and it is eligible
-                    # at its own acceptance instant, so a range that holds no
-                    # accept finds none rather than one at `now`.
-                    head = min(head, generation_at(instance, until - timedelta(microseconds=1)))
-                    with instance.accepted_history_reader() as history:
-                        accepted_at = instance.accepted_evaluation_time(
-                            history.generation(head).git_oid
-                        )
-                    eligible_at = max(accepted_at, request.since or accepted_at)
-                else:
-                    # A listening segment matches what was accepted since its
-                    # last pass, as of now.
-                    eligible_at = now
+                # A listening segment matches what was accepted since its last
+                # pass, as of now.
                 generation_updates[name] = head
                 if head > covered:
-                    bindings.append(
-                        (trigger, trigger_binding_for(trigger, generation=head), eligible_at)
-                    )
+                    bindings.append((trigger, trigger_binding_for(trigger, generation=head), now))
             elif schedule_is_timed(schedule):
                 binding = trigger_binding_for(trigger)
                 _, due = _line_occurrence(
