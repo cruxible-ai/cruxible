@@ -473,14 +473,15 @@ def test_k4_startup_recovery_precedes_serving(
         "recover_provider_runtime",
         lambda: (order.append("recover"), real_recover())[1],
     )
-    real_fastapi = app_module.FastAPI
+    # create_app builds the application through its request-context subclass.
+    real_app_class = app_module._HTTPRequestContextApp
 
-    class Spy(real_fastapi):  # type: ignore[misc,valid-type]
+    class Spy(real_app_class):  # type: ignore[misc,valid-type]
         def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
             order.append("fastapi")
             super().__init__(*args, **kwargs)
 
-    monkeypatch.setattr(app_module, "FastAPI", Spy)
+    monkeypatch.setattr(app_module, "_HTTPRequestContextApp", Spy)
     assert app_module.create_app() is not None
     assert order[:2] == ["recover", "fastapi"]
 
