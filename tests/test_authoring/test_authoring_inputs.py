@@ -366,6 +366,7 @@ def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
     lowered = lower_claim_type_input(
         source_intent,
         tree=instance.tree_at(instance.accepted_coordinate().git_oid),
+        identity_rules=True,
     )
     assert "anticipated_source_ids" not in lowered.model_dump(mode="json")
 
@@ -509,7 +510,7 @@ def test_fresh_template_claim_reaches_supported_through_flow_a(
     assert verdict.verdict.verdict == "supported"
 
 
-def test_claim_type_input_preserves_optional_freshness_in_v5() -> None:
+def test_claim_type_input_preserves_optional_freshness_in_v7() -> None:
     original = claim_type_input_example()
     freshness = ClaimEvidenceFreshness(
         stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
@@ -521,17 +522,17 @@ def test_claim_type_input_preserves_optional_freshness_in_v5() -> None:
         }
     )
 
-    plain = lower_claim_type_input(original, tree={})
-    governed = lower_claim_type_input(fresh, tree={})
+    plain = lower_claim_type_input(original, tree={}, identity_rules=True)
+    governed = lower_claim_type_input(fresh, tree={}, identity_rules=True)
 
-    assert plain.artifact_format == "playbill-claim-type-v5"
+    assert plain.artifact_format == "playbill-claim-type-v7"
     assert plain.evidence_freshness is None
     assert "evidence_freshness" not in original.model_dump(mode="json")
-    assert governed.artifact_format == "playbill-claim-type-v5"
+    assert governed.artifact_format == "playbill-claim-type-v7"
     assert governed.evidence_freshness == freshness
 
 
-def test_claim_type_input_preserves_attestation_consequences_in_v5() -> None:
+def test_claim_type_input_preserves_attestation_consequences_in_v7() -> None:
     original = claim_type_input_example()
     policy = ClaimAttestationConsequencePolicy(
         rules=(
@@ -550,9 +551,10 @@ def test_claim_type_input_preserves_attestation_consequences_in_v5() -> None:
             }
         ),
         tree={},
+        identity_rules=True,
     )
 
-    assert governed.artifact_format == "playbill-claim-type-v5"
+    assert governed.artifact_format == "playbill-claim-type-v7"
     assert governed.evidence_freshness is None
     assert governed.attestation_consequence_policy == policy
 
@@ -566,7 +568,7 @@ def test_claim_type_input_refuses_producer_authorization() -> None:
                     {
                         "rule_id": "derivation",
                         "claim_roles": ["derivation"],
-                        "capture_contract_digests": ["sha256:" + "ab" * 32],
+                        "capture_contracts": ["repo.replace-me"],
                         "evidence_kinds": ["self_asserted"],
                         "admission": "derivational",
                         "subject_binding": "exact_claim_subject",
@@ -577,7 +579,7 @@ def test_claim_type_input_refuses_producer_authorization() -> None:
         }
     )
     with pytest.raises(ClaimTypeInputValidationError, match="allowed_reducer_digests"):
-        lower_claim_type_input(producer_bound, tree={})
+        lower_claim_type_input(producer_bound, tree={}, identity_rules=True)
 
 
 def test_empty_claim_type_policy_warns_when_an_accepted_capture_contract_exists(

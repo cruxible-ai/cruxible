@@ -1054,7 +1054,10 @@ the other's law.
 Every ClaimType authoring path writes ClaimType v7 with identity evidence rules:
 `propose --input`, the SDK draft, the authoring examples and change-set members.
 A rule that names an exact contract digest no accepted contract version carries
-is refused, never authored as an exact-digest rule.
+is refused, never authored as an exact-digest rule. On an instance whose
+accepted compiler predates revision 31 (which admits neither v7 nor identity
+rules), authoring refuses `cruxible.claim_type.compiler_upgrade_required`, whose
+repair is `cruxible compiler upgrade --to <current compiler>`.
 
 `upgrade` is the one move for an older ClaimType. A v1-v5 ClaimType whose rules
 still name contracts by exact digest first takes the identity-rule conversion,

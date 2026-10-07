@@ -50,10 +50,14 @@ from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV2,
 )
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.types import CompilerCoordinate
-from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER, GOVERNED_TRIGGERS_COMPILER
+from cruxible_core.compiler.compiler import (
+    AUTHORITY_VERBS_COMPILER,
+    GOVERNED_TRIGGERS_COMPILER,
+    current_compiler_coordinate,
+)
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import ProposalInspection
@@ -341,43 +345,29 @@ def _identity_evidence_policy(
     return {**{k: v for k, v in raw.items() if k not in {"rules", "tag"}}, "rules": rules}
 
 
-def _digest_evidence_policy(
-    raw: Mapping[str, object], *, identities: Mapping[str, str]
-) -> Mapping[str, object]:
-    """Lower identity-named rules to exact digests for a compiler without v6.
-
-    Each named contract resolves to its accepted (or anticipated) version, so an
-    input written for identity rules still lowers where only exact rules exist.
-    """
-
-    raw_rules = raw.get("rules", [])
-    rule_list = raw_rules if isinstance(raw_rules, list | tuple) else ()
-    if not any(isinstance(rule, dict) and "capture_contracts" in rule for rule in rule_list):
-        return raw
-    digest_for = {identity: digest for digest, identity in identities.items()}
-    rules: list[object] = []
-    for raw_rule in rule_list:
-        if not isinstance(raw_rule, dict) or "capture_contracts" not in raw_rule:
-            rules.append(raw_rule)
-            continue
-        rule = dict(raw_rule)
-        digests = set(rule.pop("capture_contract_digests", []) or [])
-        for item in rule.pop("capture_contracts") or []:
-            identity = _contract_ref(item).target.qualified
-            if identity not in digest_for:
-                raise ClaimTypeInputReferenceError(
-                    f"{identity} is not an accepted or anticipated CaptureContract"
-                )
-            digests.add(digest_for[identity])
-        rule["capture_contract_digests"] = sorted(digests)
-        rules.append(rule)
-    return {**raw, "rules": rules}
-
-
 class ClaimTypeInputReferenceError(FormatError):
     """An authored evidence rule names a contract that cannot be referenced."""
 
     error_code = "cruxible.claim_type.input_invalid"
+
+
+class ClaimTypeRequiresCompilerUpgrade(FormatError):
+    """ClaimType authoring writes v7 with identity rules; this compiler admits neither."""
+
+    error_code = "cruxible.claim_type.compiler_upgrade_required"
+
+    def __init__(self) -> None:
+        target = current_compiler_coordinate()
+        super().__init__(
+            f"{self.error_code}: ClaimType authoring writes ClaimType v7 with identity "
+            "evidence rules, which need compiler revision 31 or later; this instance's "
+            "accepted compiler predates them. Repair: propose `cruxible compiler upgrade "
+            f"--to {target.rule_digest}`, activate it, then author the ClaimType again."
+        )
+        self.repair = RepairOperation(
+            operation="cruxible.compiler.upgrade",
+            arguments={"to": target.rule_digest, "name": "upgrade-for-claim-type-v7"},
+        )
 
 
 class ClaimTypeMemberDescriptionsStale(FormatError):
@@ -457,29 +447,17 @@ def _v7_fields(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> di
     }
 
 
-def _refuse_v5_fallback(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> None:
-    """A v5 ClaimType cannot say what v7 says, so lowering never silently drops it."""
-
-    if predecessor is not None and predecessor.artifact_format == "playbill-claim-type-v7":
-        raise ClaimTypeInputReferenceError(
-            f"{ClaimTypeInputReferenceError.error_code}: ClaimType:{value.predicate} is v7; "
-            "every evidence rule must name its contracts by identity (capture_contracts), "
-            "because a v5 successor would silently return it to accumulating evidence"
-        )
-    named = [field for field in _V7_INPUT_FIELDS if getattr(value, field) not in (None, ())]
-    if named:
-        raise ClaimTypeInputReferenceError(
-            f"{ClaimTypeInputReferenceError.error_code}: {', '.join(named)} need ClaimType v7, "
-            "whose evidence rules name contracts by identity (capture_contracts)"
-        )
-
-
 def lower_claim_type_input(
     value: ClaimTypeInputRecord,
     *,
     tree: Mapping[str, bytes],
     identity_rules: bool = False,
 ) -> ClaimType:
+    if not identity_rules:
+        # Every ClaimType authoring path writes v7 with identity evidence rules;
+        # a compiler before revision 31 admits neither, so it is upgraded first
+        # rather than handed a v5 exact-digest ClaimType.
+        raise ClaimTypeRequiresCompilerUpgrade()
     path = claim_type_path(value.predicate)
     predecessor = None
     if path in tree:
@@ -488,31 +466,19 @@ def lower_claim_type_input(
     payload.pop("anticipated_source_ids", None)
     for field in _V7_INPUT_FIELDS:
         payload.pop(field, None)
-    payload["artifact_format"] = (
-        "playbill-claim-type-v7" if identity_rules else "playbill-claim-type-v5"
+    payload["artifact_format"] = "playbill-claim-type-v7"
+    # Every rule names its contracts by identity. A rule naming an exact digest
+    # no accepted contract version carries has no identity to follow, so it is
+    # refused rather than authored as a v5 exact-digest rule.
+    identity_policy = _identity_evidence_policy(
+        value.evidence_admission_policy,
+        identities=_contract_identities(tree, value.anticipated_source_ids),
     )
-    identities = _contract_identities(tree, value.anticipated_source_ids)
-    identity_policy = None
-    if identity_rules:
-        # Every rule names its contracts by identity. A rule naming an exact
-        # digest no accepted contract version carries has no identity to follow,
-        # so it is refused rather than authored as a v5 exact-digest rule.
-        identity_policy = _identity_evidence_policy(
-            value.evidence_admission_policy, identities=identities
-        )
-    if payload["artifact_format"] == "playbill-claim-type-v7":
-        payload.update(_v7_fields(value, predecessor))
-    else:
-        _refuse_v5_fallback(value, predecessor)
+    payload.update(_v7_fields(value, predecessor))
     try:
-        if identity_policy is not None:
-            payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicy.model_validate(
-                identity_policy
-            ).model_dump(mode="json")
-        else:
-            payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV2.model_validate(
-                _digest_evidence_policy(value.evidence_admission_policy, identities=identities)
-            ).model_dump(mode="json")
+        payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicy.model_validate(
+            identity_policy
+        ).model_dump(mode="json")
     except ValidationError as exc:
         raise ClaimTypeInputValidationError(exc) from exc
     payload["identity"] = ArtifactIdentity(kind="ClaimType", name=value.predicate).model_dump(

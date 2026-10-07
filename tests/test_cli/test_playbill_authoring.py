@@ -307,7 +307,7 @@ def test_cli_claim_type_template_is_complete_model_generated_and_local(monkeypat
     assert result.exit_code == 0, result.output
     rendered = ClaimTypeInputRecord.model_validate(json.loads(result.stdout))
     assert rendered == claim_type_input_template()
-    lowered = lower_claim_type_input(rendered, tree={})
+    lowered = lower_claim_type_input(rendered, tree={}, identity_rules=True)
     assert lowered.identity.qualified == "ClaimType:project.work_item.status"
     assert lowered.evidence_admission_policy.rules[0].rule_id == "source-repo.replace-me"
     assert rendered.anticipated_source_ids == ("repo.replace-me",)

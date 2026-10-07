@@ -14,7 +14,19 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.captures import (
+    capture_contract_digest,
+    foreign_source_capture_contract,
+)
+from cruxible_client.contracts.claim_types import (
+    V7_FIELDS,
+    ClaimType,
+    claim_type_digest,
+    claim_type_path,
+    parse_claim_type,
+    render_claim_type,
+)
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.laws import (
     ACCEPTANCE_LAWS,
@@ -24,10 +36,10 @@ from cruxible_client.contracts.laws import (
     CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW,
     AcceptanceLawRegistry,
 )
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputRecord,
     claim_type_input_template,
-    lower_claim_type_input,
 )
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
@@ -56,7 +68,50 @@ def _claim_type(
     if object_subject_kind is not None:
         payload.pop("literal_schema", None)
         payload.update(object_kind="subject", allowed_object_subject_kinds=[object_subject_kind])
-    lowered = lower_claim_type_input(ClaimTypeInputRecord.model_validate(payload), tree=tree)
+    return _historical_v5(ClaimTypeInputRecord.model_validate(payload), tree)
+
+
+def _historical_v5(value: ClaimTypeInputRecord, tree: dict[str, bytes]) -> ClaimType:
+    """The v5 ClaimType the reuse law judged, built as the historical fixture it is.
+
+    Current authoring writes only v7; these laws govern v5 history, so the
+    fixture states the v5 artifact the pre-v7 lowering produced for this input:
+    each rule names its anticipated foreign-source contract by exact digest.
+    """
+
+    digests = {
+        foreign_source_capture_contract(source_id).identity.qualified: capture_contract_digest(
+            foreign_source_capture_contract(source_id)
+        ).tagged
+        for source_id in value.anticipated_source_ids
+    }
+    payload = value.model_dump(mode="json", exclude={"anticipated_source_ids"})
+    for field in V7_FIELDS:
+        payload.pop(field, None)
+    rules = []
+    for rule in payload["evidence_admission_policy"]["rules"]:
+        rule = dict(rule)
+        rule["capture_contract_digests"] = sorted(
+            digests[item] for item in rule.pop("capture_contracts")
+        )
+        rules.append(rule)
+    path = claim_type_path(value.predicate)
+    predecessor = None if path not in tree else parse_claim_type(tree[path], path=path)
+    lowered = ClaimType.model_validate(
+        {
+            **payload,
+            "artifact_format": TAG,
+            "identity": {"kind": "ClaimType", "name": value.predicate},
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2.model_validate(
+                {"rules": rules}
+            ).model_dump(mode="json"),
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=(
+                    None if predecessor is None else claim_type_digest(predecessor).tagged
+                )
+            ).model_dump(mode="json"),
+        }
+    )
     assert lowered.artifact_format == TAG
     return lowered
 

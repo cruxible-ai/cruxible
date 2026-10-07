@@ -439,7 +439,11 @@ def test_lowering_never_falls_back_to_v5() -> None:
         ClaimTypeInputReferenceError, match="name the contract in capture_contracts"
     ):
         _lower(_input(evidence_admission_policy=unaccepted, anticipated_source_ids=[]), tree)
-    with pytest.raises(ClaimTypeInputReferenceError, match="need ClaimType v7"):
+    # A compiler without identity rules gets no v5 fallback either: it refuses
+    # toward a compiler upgrade.
+    from cruxible_core.claims.claim_type_inputs import ClaimTypeRequiresCompilerUpgrade
+
+    with pytest.raises(ClaimTypeRequiresCompilerUpgrade):
         _lower(_input(description="Status."), {}, identity_rules=False)
 
 

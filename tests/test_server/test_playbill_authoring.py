@@ -581,9 +581,9 @@ def test_http_claim_type_routes_preserve_optional_lint_payload(
         )
         path = f"/api/v1/{instance_id}/claim-types/proposals"
         request = {
-            "claim_type": lower_claim_type_input(claim_type_input_example(), tree={}).model_dump(
-                mode="json"
-            ),
+            "claim_type": lower_claim_type_input(
+                claim_type_input_example(), tree={}, identity_rules=True
+            ).model_dump(mode="json"),
             "proposal_name": "warn",
         }
     else:
