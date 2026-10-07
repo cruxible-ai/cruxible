@@ -12,7 +12,12 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from cruxible_client import Cruxible
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.artifacts import (
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    ArtifactPin,
+    ArtifactRef,
+)
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
 from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependent
@@ -36,7 +41,9 @@ from cruxible_client.contracts.kits import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
+    ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionRule,
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicy,
 )
@@ -846,6 +853,86 @@ def test_a_kept_definition_stays_held_when_a_release_narrows_its_prefix(
         consumer.settle(removal)
     assert (_path(flag), "retire") in {(item.path, item.action) for item in removal.plan}
     assert consumer.claim_type(flag).lifecycle.state == "retired"
+
+
+def _identity_rule_type(predicate: str, contract: CaptureContract) -> ClaimType:
+    return _claim_type(predicate, {"type": "string"}).model_copy(
+        update={
+            "artifact_format": "playbill-claim-type-v6",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="orders",
+                        claim_roles=("observation",),
+                        capture_contracts=(
+                            ArtifactRef(role="capture-contract", target=contract.identity),
+                        ),
+                        evidence_kinds=("database_record",),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize("rule", ["identity", "exact_digest"])
+def test_a_dropped_contract_an_evidence_rule_needs_is_kept_or_retired_with_it(
+    worlds: tuple[_World, _World], rule: str
+) -> None:
+    """F-006: evidence-rule consumers are dependents, though no pin names the contract."""
+
+    publisher, consumer = worlds
+    contract = _contract("acme.orders-v1")
+    _author_contract(publisher, contract)
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    local = "local.account.status"
+    consumer.author(
+        _identity_rule_type(local, contract)
+        if rule == "identity"
+        else _pinning_type(local, contract)
+    )
+    full = publisher.build("2.0.0")
+    release = KitBundle(
+        manifest=full.manifest.model_copy(
+            update={
+                "artifacts": tuple(
+                    item for item in full.manifest.artifacts if item.path != CONTRACT_PATH
+                )
+            }
+        ),
+        artifacts=tuple(item for item in full.artifacts if item.path != CONTRACT_PATH),
+    )
+    installed_contract = consumer.tree()[CONTRACT_PATH]
+
+    # Explicit keep, previewed: kept with no question asked.
+    explicit = playbill_api.playbill_kit_add(
+        consumer.instance_id,
+        KitAddRequest(bundle=release, source="test", keep=("CaptureContract:acme.orders-v1",)),
+    )
+    planned = next(item for item in explicit.plan if item.path == CONTRACT_PATH)
+    assert (planned.action, planned.detail) == ("keep", None)
+
+    # By default the contract a live type's evidence rule needs is kept.
+    default = consumer.add(release)
+    assert default.status == "accepted", default.detail
+    planned = next(item for item in default.plan if item.path == CONTRACT_PATH)
+    assert (planned.action, planned.dependent_count) == ("keep", 1)
+    assert "retire_dependents" in (planned.detail or "")
+    assert consumer.tree()[CONTRACT_PATH] == installed_contract
+
+    # Retiring it on request retires the type that needs it, in one change.
+    retired = consumer.add(release, retire_dependents=("CaptureContract:acme.orders-v1",))
+    assert retired.status == "accepted", retired.detail
+    planned = next(item for item in retired.plan if item.path == CONTRACT_PATH)
+    assert (planned.action, planned.dependent_count) == ("retire", 1)
+    assert consumer.claim_type(local).lifecycle.state == "retired"
+    assert (
+        parse_capture_contract(consumer.tree()[CONTRACT_PATH], path=CONTRACT_PATH).lifecycle.state
+        == "retired"
+    )
 
 
 def test_overlapping_ownership_is_refused(worlds: tuple[_World, _World]) -> None:

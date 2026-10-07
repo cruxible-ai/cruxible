@@ -20,6 +20,7 @@ from typing import Any, Literal
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.claim_types import parse_claim_type
 from cruxible_client.contracts.documents import (
     DocumentLifecycle,
     DocumentShell,
@@ -55,6 +56,7 @@ from cruxible_client.contracts.kits import (
     kit_receipt_document_id,
     kit_version_key,
 )
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.projection import AcceptedCoordinate as ServedCoordinate
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.claims.artifact_references import (
@@ -349,6 +351,9 @@ class _Diff:
         self.content: dict[str, str] = {}
         # Divergences kept on purpose, recorded in the receipt.
         self.kept: list[KitKeptDivergence] = []
+        # Identity -> dependents counted beyond the pin closure (evidence-rule
+        # consumers of a CaptureContract, with their closures).
+        self.semantic_counts: dict[str, int] = {}
 
 
 def _installed_content(entry: KitInstalledArtifact, tree: Mapping[str, bytes]) -> str | None:
@@ -481,13 +486,53 @@ def _retirement(path: str, current: bytes) -> bytes:
     return content
 
 
-def _live_dependents(tree: Mapping[str, bytes], identity: ArtifactIdentity, path: str) -> int:
+def _live_dependents(
+    tree: Mapping[str, bytes], identity: ArtifactIdentity, path: str
+) -> frozenset[str]:
+    """The paths of the live reverse-pin closure of one definition."""
+
     try:
-        return len(
-            dependent_closure_inventory(tree, roots=(identity,), fixed_paths=frozenset({path}))
+        return frozenset(
+            item.path
+            for item in dependent_closure_inventory(
+                tree, roots=(identity,), fixed_paths=frozenset({path})
+            )
         )
     except ClaimTypeMigrationError:
-        return 0
+        return frozenset()
+
+
+def _evidence_rule_consumers(
+    tree: Mapping[str, bytes], contract: ArtifactDependencyStateV1
+) -> tuple[tuple[str, ArtifactIdentity], ...]:
+    """Live ClaimTypes whose evidence rules admit captures under this CaptureContract.
+
+    A semantic dependency, not a pin: an identity rule (ClaimType v6 and later)
+    names the contract by identity and a historical rule by exact digest, and
+    neither is a reverse-pin edge. Retiring the contract strands every one of
+    them, which admission refuses. Claims citing the contract are provenance and
+    never count.
+    """
+
+    found = []
+    for path in sorted(tree):
+        if not (path.startswith("claim-types/") and path.endswith(".json")):
+            continue
+        try:
+            claim_type = parse_claim_type(tree[path], path=path)
+        except ValueError:
+            continue
+        if claim_type.lifecycle.state != "live":
+            continue
+        for rule in claim_type.evidence_admission_policy.rules:
+            if isinstance(rule, ClaimEvidenceAdmissionRule):
+                names = any(ref.target == contract.identity for ref in rule.capture_contracts)
+            else:
+                names = contract.artifact_digest in getattr(rule, "capture_contract_digests", ())
+            if names:
+                found.append((path, claim_type.identity))
+                break
+    return tuple(found)
 
 
 def _settle_dropped(
@@ -520,7 +565,20 @@ def _settle_dropped(
             continue
         identity = state.identity.qualified
         previously = kept.get(path)
-        dependents = _live_dependents(tree, state.identity, path)
+        dependent_paths = set(_live_dependents(tree, state.identity, path))
+        consumers = (
+            _evidence_rule_consumers(tree, state)
+            if state.identity.kind == "CaptureContract"
+            else ()
+        )
+        for consumer_path, consumer in consumers:
+            dependent_paths.add(consumer_path)
+            dependent_paths |= _live_dependents(tree, consumer, consumer_path)
+        dependent_paths.discard(path)
+        dependents = len(dependent_paths)
+        if consumers:
+            # Counted here in full; the pin-closure recount must not shrink it.
+            diff.semantic_counts[identity] = dependents
         named_retire = identity in retire_dependents
         if identity in keep or (
             not named_retire
@@ -558,6 +616,12 @@ def _settle_dropped(
         diff.writes[path] = _retirement(path, current)
         if dependents:
             retiring_with_dependents.add(identity)
+        for consumer_path, consumer in consumers:
+            # A ClaimType whose evidence rules need the retired contract retires
+            # with it, and its own dependents with it.
+            if consumer_path not in diff.writes:
+                diff.writes[consumer_path] = _retirement(consumer_path, tree[consumer_path])
+            retiring_with_dependents.add(consumer.qualified)
     return retiring_with_dependents
 
 
@@ -635,7 +699,7 @@ def _settle_dependents(
         return dict(diff.writes), [str(error)]
     diff.plan[:] = [
         item.model_copy(update={"dependent_count": counts[item.identity]})
-        if item.identity in counts
+        if item.identity in counts and item.identity not in diff.semantic_counts
         else item
         for item in diff.plan
     ]

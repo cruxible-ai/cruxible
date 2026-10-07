@@ -977,7 +977,9 @@ carried to the kit's final definitions; the preview counts each definition's
 dependents rather than listing them.
 
 A definition the kit installed that the release dropped retires when nothing
-live depends on it. One with live dependents is kept until a decision names it:
+live depends on it. Dependents include the live ClaimTypes whose evidence rules
+admit captures under a dropped CaptureContract (by identity or exact digest),
+though no pin names it. One with live dependents is kept until a decision names it:
 `--keep IDENTITY` keeps it live, `--retire-dependents IDENTITY` retires it and its
 dependents. A kept definition stays the kit's even when a later release narrows
 its prefixes. Changing a definition another installed kit owns or holds, or
