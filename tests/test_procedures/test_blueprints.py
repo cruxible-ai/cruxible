@@ -726,3 +726,59 @@ def test_one_provider_fills_two_slots_of_different_interfaces() -> None:
     } == {("a", first["interface_digest"]), ("b", other_interface)}
     nodes = {node.node_id: node for node in instance_of.definition.nodes}
     assert nodes["second"].implementation_digest == other_implementation  # type: ignore[union-attr]
+
+
+@pytest.mark.usefixtures("contracted_demo")
+def test_the_blueprint_law_refuses_a_position_bound_to_another_interface() -> None:
+    """S3 review a F-003: the occurrence checks run on Blueprints, not first at instantiation."""
+
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from cruxible_client.contracts.procedures.blueprints import (
+        blueprint_path,
+        evaluate_blueprint_law,
+    )
+    from tests.core_support._p2b1_support import accepted_interface
+
+    good = _blueprint()
+    interface = accepted_interface()
+    accepted = evaluate_blueprint_law(
+        good,
+        path=blueprint_path(good.identity.name),
+        predecessor=None,
+        provider_interfaces={interface.artifact_digest: interface},
+    )
+    assert accepted.verdict == "accepted", accepted.diagnostics
+
+    raw = good.definition.model_dump(mode="json", by_alias=True)
+    wrong = {
+        "role": "provider-interface",
+        "target": {"kind": "ProviderInterface", "name": "other.interface"},
+        "artifact_digest": "sha256:" + "5" * 64,
+    }
+    raw["nodes"][0]["interface"] = wrong
+    definition = ProcedureDefinition.model_validate(raw)
+    pins = sorted(
+        [pin for pin in good.pins if pin.role != "provider-interface"]
+        + [ArtifactPin.model_validate(wrong)],
+        key=lambda pin: (pin.role.encode(), pin.target.qualified.encode(), pin.artifact_digest),
+    )
+    bad = BlueprintArtifact(
+        identity=good.identity,
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        pins=tuple(pins),
+        owned_contracts=good.owned_contracts,
+        activation_policy="drain",
+    )
+
+    refused = evaluate_blueprint_law(
+        bad,
+        path=blueprint_path(bad.identity.name),
+        predecessor=None,
+        provider_interfaces={interface.artifact_digest: interface},
+    )
+
+    assert refused.verdict == "refused"
+    assert [item.code for item in refused.diagnostics] == [
+        "cruxible.blueprint.provider_interface_pin_mismatch"
+    ]

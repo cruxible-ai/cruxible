@@ -33,6 +33,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     BlueprintArtifact,
     BlueprintOrigin,
     ProcedureArtifact,
+    check_provider_node_contract,
     procedure_owned_contract_digest,
     provider_occurrences,
 )
@@ -45,6 +46,7 @@ from cruxible_client.contracts.procedures.graph import compute_procedure_definit
 from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedurePinSlot,
+    ProcedurePinSlotRef,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.provider_interfaces import AcceptedProviderInterfaceRegistration
@@ -189,6 +191,40 @@ def evaluate_blueprint_law(
                 "cruxible.blueprint.slot_interface_unknown",
                 f"Slot {slot.slot_name!r} names no accepted ProviderInterface.",
                 path=path,
+            )
+    # The occurrence checks the Procedure law runs, on the same positions, so a
+    # Blueprint no Provider could ever satisfy is refused here rather than at
+    # every instantiation. Only the Provider and implementation lookups wait
+    # for a binding.
+    declared = {slot.slot_name: slot for slot in blueprint.definition.pin_slots}
+    for occurrence_id, occurrence in provider_occurrences(blueprint.definition):
+        interface_pin = getattr(occurrence, "interface")
+        interface_digest = getattr(occurrence, "interface_digest")
+        accepted_interface = interfaces.get(interface_pin.artifact_digest)
+        if accepted_interface is None or (
+            accepted_interface.registration.identity != interface_pin.target
+            or accepted_interface.registration.interface_digest != interface_digest
+        ):
+            return _refusal(
+                "cruxible.blueprint.provider_interface_pin_mismatch",
+                f"Provider occurrence {occurrence_id!r} does not bind its exact interface.",
+                path=path,
+            )
+        slot_ref = getattr(occurrence, "provider")
+        if isinstance(slot_ref, ProcedurePinSlotRef) and (
+            declared[slot_ref.slot_name].interface_digest != interface_digest
+        ):
+            return _refusal(
+                "cruxible.blueprint.provider_interface_pin_mismatch",
+                f"Provider occurrence {occurrence_id!r} names another interface than its "
+                f"slot {slot_ref.slot_name!r} declares.",
+                path=path,
+            )
+        try:
+            check_provider_node_contract(occurrence, accepted_interface, blueprint)
+        except (ValueError, KeyError) as exc:
+            return _refusal(
+                "cruxible.blueprint.provider_interface_pin_mismatch", str(exc), path=path
             )
     return BlueprintLawResult(
         verdict="accepted",

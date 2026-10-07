@@ -576,7 +576,7 @@ def _evaluate_provider_pins(
 def check_provider_node_contract(
     node: object,
     interface: AcceptedProviderInterfaceRegistration,
-    procedure: ProcedureArtifact,
+    procedure: ProcedureArtifact | BlueprintArtifact,
 ) -> ProviderOperationContract | None:
     """Check specialization and exact operation schemas before materialization.
 
