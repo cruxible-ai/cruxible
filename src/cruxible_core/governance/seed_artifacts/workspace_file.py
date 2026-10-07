@@ -1,15 +1,48 @@
-"""Compiler-owned exact inputs for the ``workspace.file`` Provider seed."""
+"""Compiler-owned ``workspace.file`` registration and built-in Provider.
+
+New instances start with these two artifacts at genesis (the
+``triggers-4-workspace-file`` genesis seed set in ``ledger/bootstrap.py``): the
+ProviderInterface registration over the exact V2 operation definition the package
+``cruxible-provider-workspace`` ships (``workspace-file-interface.json``, digest
+``faa92552...`` under its retained ``cruxible.interface.stub.v1`` domain), and the
+``cruxible-builtin`` Provider whose one implementation is core's in-process adapter
+(``cruxible_core.providers.builtin_workspace_file``).
+
+Identity. The implementation digest is the ordinary
+``provider_implementation_digest(interface_id, interface_digest, entrypoint,
+distribution_sha256)``. A built-in has no wheel, so ``distribution_sha256`` is
+``WORKSPACE_FILE_BUILTIN_REVISION``: a compiler-owned constant, frozen like
+``WEB_FETCH_INTERFACE_DIGEST``, that names the adapter's behaviour. It is not the
+core version and not the module's source bytes; it changes only when the
+adapter's output for some input changes, and the behaviour golden in
+``tests/test_providers/test_builtin_workspace_file.py`` fails until it does.
+The materialization, deployment, environment-manifest and lock digests are
+typed constants derived from the implementation digest, so a binding to the
+built-in is the same in every daemon.
+
+The bucket classifier is compiler-owned too: ``WorkspaceFileBucketClassifier``
+measures the same two dimensions the package classifier does, re-proven against
+the same six conformance fixtures (``WORKSPACE_FILE_FIXTURES``, byte-equal to the
+package's registration fixtures).
+"""
 
 from __future__ import annotations
 
 import base64
 import hashlib
-from dataclasses import dataclass
+import json
+from importlib.resources import files
 from typing import TYPE_CHECKING, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
-from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
+from cruxible_client.contracts.canonical import (
+    CanonicalValue,
+    Sha256Value,
+    canonical_bytes,
+    typed_digest,
+)
 from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistration,
     ProviderBucketClass,
     ProviderBucketConformanceFixture,
     ProviderBucketConformanceFixtureProof,
@@ -21,101 +54,65 @@ from cruxible_client.contracts.provider_interfaces import (
     provider_bucket_fixture_set_digest,
     provider_bucket_vocabulary_digest,
     provider_external_interface_definition_digest,
+    provider_interface_digest,
+    provider_interface_path,
 )
 from cruxible_client.contracts.providers import (
+    Provider,
     ProviderDistributionRef,
-    ProviderImplementationManifestV1,
+    ProviderImplementationManifest,
     ProviderLocalDistributionPin,
     ProviderLocalEnvBackendPin,
-    ProviderRuntimeArtifactPayloadV1,
-    ProviderRuntimeManifestV1,
-    ProviderV2,
+    ProviderRuntimeArtifactPayload,
+    ProviderRuntimeManifest,
     provider_expected_implementation_records,
+    provider_implementation_digest,
     provider_manifest_digest,
 )
-from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_DIGEST
+from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_V2_DIGEST
+from cruxible_core.providers.builtin_workspace_file import (
+    byte_size_class,
+    content_kind_class,
+    decode_declared_bytes,
+)
 
 if TYPE_CHECKING:
     from cruxible_core.providers.provider_local_runtime import ProviderSpawnDeadline
 
 WORKSPACE_FILE_INTERFACE_ID = "workspace.file"
-WORKSPACE_FILE_PROVIDER_ID = "cruxible-provider-workspace"
 WORKSPACE_FILE_INTERFACE_DOMAIN: Literal["cruxible.interface.stub.v1"] = (
     "cruxible.interface.stub.v1"
 )
-WORKSPACE_FILE_WHEEL_DIGEST = (
-    "sha256:e710b00549a8ef8b1b0f6774dd3d801bd6612b3374c304ec87a5ef42bebd1aae"
+WORKSPACE_FILE_BUILTIN_PROVIDER_ID = "cruxible-builtin"
+WORKSPACE_FILE_BUILTIN_ENTRYPOINT = "cruxible_core.providers.builtin_workspace_file:WorkspaceFile"
+#: The built-in adapter's behaviour revision. Bump only on a semantic change
+#: (some input structures or refuses differently), together with the behaviour
+#: golden; never for a refactor, a version bump or a docstring.
+WORKSPACE_FILE_BUILTIN_REVISION = (
+    "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d"
 )
-WORKSPACE_FILE_IMPLEMENTATION_DIGEST = (
-    "sha256:1dc4e265a2f63985cb7f5b7bbd47dbea601345ed5d1f6fa979134c59547467c7"
-)
-WORKSPACE_FILE_LOCK_DIGEST = (
-    "sha256:b7bb433e6fe67d1142af7a705fd548ebffe7700ac44aba8c59ab9894e9cc38e4"
-)
-WORKSPACE_FILE_PROTOCOL_FIXTURE_DIGEST = (
-    "sha256:56b1d2799515c84f3848d08c79b33a3297280ebef82232701612ccf3ce4488c7"
-)
-WORKSPACE_FILE_PROVIDER_COMMIT = "8e7436f359dd28c2afdc4b9941fd09e33fa0e470"
+#: The one local-environment pin key the built-in Provider advertises.
+WORKSPACE_FILE_BUILTIN_ENVIRONMENT_PIN_KEY = "builtin"
 WORKSPACE_FILE_CLASSIFIER_IDENTITY = "cruxible.core.workspace.file"
 WORKSPACE_FILE_CLASSIFIER_VERSION = 1
-WORKSPACE_FILE_ENTRYPOINT = "cruxible_provider_workspace.file:WorkspaceFile"
+WORKSPACE_FILE_CAPTURE_CONTRACT_FAMILY = "workspace.file.capture.v1"
 
-_DIGEST_SCHEMA = {
-    "type": "string",
-    "required": True,
-    "pattern": "^sha256:[0-9a-f]{64}$",
-}
-WORKSPACE_FILE_INTERFACE_PREIMAGE: dict[str, object] = {
-    "interface_id": WORKSPACE_FILE_INTERFACE_ID,
-    "version": 1,
-    "effect_class": "pure",
-    "input": {
-        "logical_source": {"type": "string", "required": True},
-        "commitment_digest": _DIGEST_SCHEMA,
-        "content_encoding": {"type": "string", "required": True, "enum": ["base64"]},
-        "bytes": {"type": "string", "required": True},
-        "byte_length": {"type": "integer", "required": True, "minimum": 0},
-        "bytes_digest": _DIGEST_SCHEMA,
-    },
-    "output": {
-        "input_bucket": {"type": "string"},
-        "source": {
-            "type": "object",
-            "properties": {
-                "logical_source": {"type": "string"},
-                "commitment_digest": {"type": "string"},
-                "bytes_digest": {"type": "string"},
-                "byte_length": {"type": "integer"},
-            },
-        },
-        "content": {
-            "type": "object",
-            "one_of": [
-                {
-                    "kind": "text",
-                    "encoding": "utf-8",
-                    "bom": {"type": "boolean"},
-                    "newline": {
-                        "type": "string",
-                        "enum": ["lf", "crlf", "cr", "mixed", "none"],
-                    },
-                    "trailing_newline": {"type": "boolean"},
-                    "line_count": {"type": "integer"},
-                    "character_count": {"type": "integer"},
-                    "text": {"type": "string"},
-                    "lines": {"type": "array", "items": {"type": "string"}},
-                },
-                {
-                    "kind": "bytes",
-                    "encoding": "base64",
-                    "byte_length": {"type": "integer"},
-                    "bytes": {"type": "string"},
-                },
-            ],
-        },
-    },
-    "refusals": ["invalid_parameter", "mismatched_lengths", "provider_declined"],
-}
+#: The exact V2 operation definition, byte-for-byte the package's
+#: ``contracts/workspace.file.json``; its canonical bytes reproduce
+#: ``WORKSPACE_FILE_INTERFACE_V2_DIGEST`` (checked at import).
+WORKSPACE_FILE_INTERFACE_DEFINITION: dict[str, object] = json.loads(
+    files("cruxible_core.governance.seed_artifacts")
+    .joinpath("workspace-file-interface.json")
+    .read_bytes()
+)
+if (
+    provider_external_interface_definition_digest(
+        canonical_bytes(WORKSPACE_FILE_INTERFACE_DEFINITION).hex(),
+        domain=WORKSPACE_FILE_INTERFACE_DOMAIN,
+    )
+    != WORKSPACE_FILE_INTERFACE_V2_DIGEST
+):  # pragma: no cover - import-time guard on checked-in bytes
+    raise RuntimeError("workspace.file interface definition drifted from its frozen digest")
 
 
 def _vocabulary() -> ProviderBucketVocabulary:
@@ -193,25 +190,8 @@ _FIXTURE_BYTES: dict[str, bytes] = {
 }
 
 
-def _content_kind(data: bytes) -> str:
-    if b"\x00" in data:
-        return "binary"
-    try:
-        data.decode("utf-8")
-    except UnicodeDecodeError:
-        return "binary"
-    return "text"
-
-
-def _byte_size(length: int) -> str:
-    for name, ceiling in (("tiny", 4_096), ("small", 65_536), ("medium", 1_048_576)):
-        if length <= ceiling:
-            return name
-    return "large"
-
-
 def _fixture(fixture_id: str, data: bytes) -> ProviderBucketConformanceFixture:
-    bucket = f"content_kind={_content_kind(data)};byte_size={_byte_size(len(data))}"
+    bucket = f"content_kind={content_kind_class(data)};byte_size={byte_size_class(len(data))}"
     return ProviderBucketConformanceFixture(
         fixture_id=fixture_id,
         canonical_input={
@@ -255,7 +235,7 @@ WORKSPACE_FILE_CLASSIFIER_DIGEST = provider_bucket_classifier_digest(
 
 
 class WorkspaceFileBucketClassifier:
-    """Core conformance double; it receives bounded bytes, never a locator."""
+    """Compiler-owned classifier; it receives bounded bytes, never a locator."""
 
     classifier_identity = WORKSPACE_FILE_CLASSIFIER_IDENTITY
     classifier_version = WORKSPACE_FILE_CLASSIFIER_VERSION
@@ -268,64 +248,49 @@ class WorkspaceFileBucketClassifier:
             raise ValueError("workspace.file classifier input must be an object")
         if canonical_input.get("content_encoding") != "base64":
             raise ValueError("workspace.file classifier requires base64 bytes")
-        encoded = canonical_input.get("bytes")
-        if not isinstance(encoded, str):
+        if not isinstance(canonical_input.get("bytes"), str):
             raise ValueError("workspace.file classifier requires bytes")
-        try:
-            data = base64.b64decode(encoded.encode("ascii"), validate=True)
-        except (UnicodeEncodeError, ValueError) as exc:
-            raise ValueError("workspace.file classifier requires canonical base64") from exc
-        return f"content_kind={_content_kind(data)};byte_size={_byte_size(len(data))}"
+        data = decode_declared_bytes(canonical_input)
+        if data is None:
+            raise ValueError("workspace.file classifier requires canonical base64")
+        return f"content_kind={content_kind_class(data)};byte_size={byte_size_class(len(data))}"
 
 
-@dataclass(frozen=True)
-class WorkspaceFileSeedManifestV1:
-    materialization_source: Literal["local", "registry"]
-    provider_commit: str
-    protocol_fixture_digest: str
-    wheel_digest: str
-    implementation_digest: str
-    lock_digest: str
-    materialization_digests: tuple[tuple[str, str], ...]
-
-
-WORKSPACE_FILE_SEED_MANIFEST = WorkspaceFileSeedManifestV1(
-    materialization_source="local",
-    provider_commit=WORKSPACE_FILE_PROVIDER_COMMIT,
-    protocol_fixture_digest=WORKSPACE_FILE_PROTOCOL_FIXTURE_DIGEST,
-    wheel_digest=WORKSPACE_FILE_WHEEL_DIGEST,
-    implementation_digest=WORKSPACE_FILE_IMPLEMENTATION_DIGEST,
-    lock_digest=WORKSPACE_FILE_LOCK_DIGEST,
-    materialization_digests=(
-        (
-            "linux-cp311",
-            "sha256:c82171e90b55633d85d5da601ba9ad7125b246917df3a265df5a54a21e676443",
-        ),
-        (
-            "linux-cp312",
-            "sha256:1584850eca8b6001f4df174f96137696634e05326128eba76479cdfd26af370c",
-        ),
-        (
-            "macos-arm-cp312",
-            "sha256:1684ea14402849ae498001254aa4a3598c78512b59eb7a2e5954e9fc4edf5dea",
-        ),
-    ),
+WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST = provider_implementation_digest(
+    interface_id=WORKSPACE_FILE_INTERFACE_ID,
+    interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
+    entrypoint=WORKSPACE_FILE_BUILTIN_ENTRYPOINT,
+    distribution_sha256=WORKSPACE_FILE_BUILTIN_REVISION,
 )
+
+
+def _derived(role: str) -> str:
+    return typed_digest(
+        Sha256Value,
+        f"cruxible-builtin-provider-{role}-v1",
+        {"implementation_digest": WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST},
+    ).tagged
+
+
+WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST = _derived("materialization")
+WORKSPACE_FILE_BUILTIN_DEPLOYMENT_DIGEST = _derived("deployment")
+WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST = _derived("environment-manifest")
+WORKSPACE_FILE_BUILTIN_LOCK_DIGEST = _derived("lock")
 
 
 def workspace_file_interface_registration(
     *, lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 ) -> ProviderInterfaceRegistrationV1:
-    interface_bytes = canonical_bytes(WORKSPACE_FILE_INTERFACE_PREIMAGE)
+    """The compiler-owned registration over the exact V2 definition bytes."""
+
+    interface_bytes = canonical_bytes(WORKSPACE_FILE_INTERFACE_DEFINITION)
     vocabulary_bytes = canonical_bytes(_vocabulary().model_dump(mode="json"))
     return ProviderInterfaceRegistrationV1(
         identity=ArtifactIdentity(kind="ProviderInterface", name=WORKSPACE_FILE_INTERFACE_ID),
         interface_id=WORKSPACE_FILE_INTERFACE_ID,
         interface_bytes_hex=interface_bytes.hex(),
         interface_digest_domain=WORKSPACE_FILE_INTERFACE_DOMAIN,
-        interface_digest=provider_external_interface_definition_digest(
-            interface_bytes.hex(), domain=WORKSPACE_FILE_INTERFACE_DOMAIN
-        ),
+        interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
         vocabulary_bytes_hex=vocabulary_bytes.hex(),
         vocabulary_digest=provider_bucket_vocabulary_digest(vocabulary_bytes.hex()),
         classifier_identity=WORKSPACE_FILE_CLASSIFIER_IDENTITY,
@@ -333,56 +298,63 @@ def workspace_file_interface_registration(
         classifier_digest=WORKSPACE_FILE_CLASSIFIER_DIGEST,
         conformance_fixture_set_digest=WORKSPACE_FILE_FIXTURE_SET_DIGEST,
         conformance_proofs=WORKSPACE_FILE_CONFORMANCE_PROOFS,
+        # The definition spells a no-effect operation "pure"; governed, it is "none".
         effect_class="none",
         lifecycle=lifecycle,
     )
 
 
-def workspace_file_provider(
+def workspace_file_builtin_provider(
     *,
     interface_artifact_digest: str,
     lifecycle: ArtifactLifecycle = ArtifactLifecycle(),
-) -> ProviderV2:
+) -> Provider:
+    """The ``cruxible-builtin`` Provider implementing ``workspace.file`` in-process."""
+
     selectors = tuple(proof.selector for proof in WORKSPACE_FILE_CONFORMANCE_PROOFS)
-    implementation = ProviderImplementationManifestV1(
+    implementation = ProviderImplementationManifest(
         interface_id=WORKSPACE_FILE_INTERFACE_ID,
-        interface_digest=WORKSPACE_FILE_INTERFACE_DIGEST,
-        entrypoint=WORKSPACE_FILE_ENTRYPOINT,
+        interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
+        entrypoint=WORKSPACE_FILE_BUILTIN_ENTRYPOINT,
         backends=("local_env",),
         declared_input_buckets=selectors,
         bucket_conformance={
             proof.selector: proof.fixture_id for proof in WORKSPACE_FILE_CONFORMANCE_PROOFS
         },
         declared_endpoints=(),
-        capture_contract_families=("workspace.file.capture.v1",),
+        capture_contract_families=(WORKSPACE_FILE_CAPTURE_CONTRACT_FAMILY,),
         deterministic=True,
         side_effects=False,
     )
-    manifest = ProviderRuntimeManifestV1(
-        provider_id=WORKSPACE_FILE_PROVIDER_ID,
-        distribution=ProviderDistributionRef(name="cruxible-provider-workspace", version="0.1.0"),
+    manifest = ProviderRuntimeManifest(
+        provider_id=WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
+        distribution=ProviderDistributionRef(name=WORKSPACE_FILE_BUILTIN_PROVIDER_ID, version="1"),
         supported_protocol_majors=(1,),
         implementations=(implementation,),
     )
-    runtime_artifact = ProviderRuntimeArtifactPayloadV1(
-        provider_id=WORKSPACE_FILE_PROVIDER_ID,
+    runtime_artifact = ProviderRuntimeArtifactPayload(
+        provider_id=WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
         status="accepted",
         manifest=manifest,
         manifest_digest=provider_manifest_digest(manifest),
         distribution=ProviderLocalDistributionPin(
-            name="cruxible-provider-workspace",
-            version="0.1.0",
-            filename="cruxible_provider_workspace-0.1.0-py3-none-any.whl",
-            sha256=WORKSPACE_FILE_WHEEL_DIGEST,
+            name=WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
+            version="1",
+            filename="cruxible-builtin-workspace-file",
+            sha256=WORKSPACE_FILE_BUILTIN_REVISION,
         ),
         local_env=ProviderLocalEnvBackendPin(
-            lock_sha256=WORKSPACE_FILE_LOCK_DIGEST,
-            materialization_digests=dict(WORKSPACE_FILE_SEED_MANIFEST.materialization_digests),
+            lock_sha256=WORKSPACE_FILE_BUILTIN_LOCK_DIGEST,
+            materialization_digests={
+                WORKSPACE_FILE_BUILTIN_ENVIRONMENT_PIN_KEY: (
+                    WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST
+                )
+            },
         ),
     )
-    provider = ProviderV2(
-        identity=ArtifactIdentity(kind="Provider", name=WORKSPACE_FILE_PROVIDER_ID),
-        control_domain=WORKSPACE_FILE_PROVIDER_ID,
+    provider = Provider(
+        identity=ArtifactIdentity(kind="Provider", name=WORKSPACE_FILE_BUILTIN_PROVIDER_ID),
+        control_domain=WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
         signing_keys=(),
         capture_contract_digests=(),
         pins=(
@@ -396,20 +368,39 @@ def workspace_file_provider(
         runtime_artifact=runtime_artifact,
         implementations=provider_expected_implementation_records(runtime_artifact),
     )
-    if provider.implementations[0].implementation_digest != WORKSPACE_FILE_IMPLEMENTATION_DIGEST:
-        raise RuntimeError("workspace.file seed implementation digest drifted")
+    (record,) = provider.implementations
+    if record.implementation_digest != WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST:
+        raise RuntimeError("workspace.file built-in implementation digest drifted")
     return provider
 
 
+def workspace_file_accepted_registration() -> AcceptedProviderInterfaceRegistration:
+    """The seeded registration as an accepted artifact (its classifier's install key)."""
+
+    registration = workspace_file_interface_registration()
+    return AcceptedProviderInterfaceRegistration(
+        path=provider_interface_path(WORKSPACE_FILE_INTERFACE_ID),
+        registration=registration,
+        artifact_digest=provider_interface_digest(registration).tagged,
+    )
+
+
 __all__ = [
+    "WORKSPACE_FILE_BUILTIN_DEPLOYMENT_DIGEST",
+    "WORKSPACE_FILE_BUILTIN_ENTRYPOINT",
+    "WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST",
+    "WORKSPACE_FILE_BUILTIN_ENVIRONMENT_PIN_KEY",
+    "WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST",
+    "WORKSPACE_FILE_BUILTIN_LOCK_DIGEST",
+    "WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST",
+    "WORKSPACE_FILE_BUILTIN_PROVIDER_ID",
+    "WORKSPACE_FILE_BUILTIN_REVISION",
+    "WORKSPACE_FILE_CLASSIFIER_DIGEST",
     "WORKSPACE_FILE_FIXTURES",
-    "WORKSPACE_FILE_IMPLEMENTATION_DIGEST",
-    "WORKSPACE_FILE_INTERFACE_DIGEST",
+    "WORKSPACE_FILE_INTERFACE_DEFINITION",
     "WORKSPACE_FILE_INTERFACE_ID",
-    "WORKSPACE_FILE_PROTOCOL_FIXTURE_DIGEST",
-    "WORKSPACE_FILE_PROVIDER_ID",
-    "WORKSPACE_FILE_SEED_MANIFEST",
     "WorkspaceFileBucketClassifier",
+    "workspace_file_accepted_registration",
+    "workspace_file_builtin_provider",
     "workspace_file_interface_registration",
-    "workspace_file_provider",
 ]

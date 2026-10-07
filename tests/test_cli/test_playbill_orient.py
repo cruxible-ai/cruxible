@@ -52,9 +52,15 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     page = cruxible.json("orient", "--section", "claim_types", "--limit", "1")
     assert [row["predicate"] for row in page["claim_types"]] == [f"{KIND}.status"]
     assert "(no procedures)" in cruxible.run("orient", "--section", "procedures").stdout
-    assert mapped["artifacts"]["interfaces"] == 0
-    assert cruxible.json("orient", "--section", "interfaces")["interfaces"] == []
-    assert "(no interfaces)" in cruxible.run("orient", "--section", "interfaces").stdout
+    # A new instance starts with workspace.file built in.
+    assert mapped["artifacts"]["interfaces"] == 1
+    (interface,) = cruxible.json("orient", "--section", "interfaces")["interfaces"]
+    assert interface["name"] == "workspace.file"
+    assert [item["provider"] for item in interface["providers"]] == ["cruxible-builtin"]
+    assert (
+        "workspace.file  effect=none  providers=cruxible-builtin"
+        in cruxible.run("orient", "--section", "interfaces").stdout
+    )
     assert "floor" not in mapped
 
     # With a floor exported into this workspace, orient says where it is.
@@ -86,14 +92,19 @@ def test_an_interfaces_page_prints_each_contract_and_who_implements_it() -> None
                     "input": ["bytes: string", "byte_length: integer"],
                     "output": ["content: object"],
                     "effect": "none",
-                    "providers": ["cruxible-provider-workspace"],
+                    "providers": [
+                        {
+                            "provider": "cruxible-builtin",
+                            "implementation_digest": "sha256:" + "6" * 64,
+                        }
+                    ],
                 }
             ],
             "next": [],
         }
     )
 
-    assert "workspace.file  effect=none  providers=cruxible-provider-workspace" in text
+    assert "workspace.file  effect=none  providers=cruxible-builtin" in text
     assert "  Structure the bytes of one workspace file read." in text
     assert "  in:  bytes: string, byte_length: integer" in text
     assert "  out: content: object" in text

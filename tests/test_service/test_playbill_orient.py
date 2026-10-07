@@ -591,7 +591,10 @@ def test_orient_pages_the_provider_interfaces_a_procedure_can_call(
     )
     rest = service_playbill_orient(instance, section="interfaces", cursor=first.next_cursor)
     assert rest.interfaces is not None
-    ((demo),) = rest.interfaces
+    # Every new instance also starts with the built-in workspace.file.
+    demo, workspace = rest.interfaces
+    assert workspace.name == "workspace.file"
+    assert [item.provider for item in workspace.providers] == ["cruxible-builtin"]
     assert (demo.name, demo.input, demo.output, demo.effect) == (
         "demo.interface",
         (),
@@ -607,24 +610,28 @@ def test_orient_pages_the_provider_interfaces_a_procedure_can_call(
     assert [item.entry.identity.removeprefix("ProviderInterface:") for item in inventory] == [
         "demo.fetch",
         "demo.interface",
+        "workspace.file",
     ]
 
     # The map counts them and points at the section.
     default = service_playbill_orient(instance, surface="mcp")
-    assert default.artifacts is not None and default.artifacts.interfaces == 2
+    assert default.artifacts is not None and default.artifacts.interfaces == 3
     assert 'cruxible_orient(section="interfaces")' in default.next
 
 
-def test_orient_without_interfaces_counts_none_and_suggests_no_section(
+def test_orient_of_a_new_instance_counts_only_the_built_in_interface(
     seeded,  # type: ignore[no-untyped-def]
 ) -> None:
     instance = seeded
     result = service_playbill_orient(instance, surface="mcp")
 
-    assert result.artifacts is not None and result.artifacts.interfaces == 0
-    assert not any("interfaces" in line for line in result.next)
-    empty = service_playbill_orient(instance, section="interfaces")
-    assert empty.interfaces == () and empty.next == ()
+    assert result.artifacts is not None and result.artifacts.interfaces == 1
+    assert 'cruxible_orient(section="interfaces")' in result.next
+    section = service_playbill_orient(instance, section="interfaces")
+    assert section.interfaces is not None
+    (workspace,) = section.interfaces
+    assert (workspace.name, workspace.effect) == ("workspace.file", "none")
+    assert [item.provider for item in workspace.providers] == ["cruxible-builtin"]
 
 
 def test_modal_evidence_hoists_in_both_views_and_round_trips_empty_exceptions(

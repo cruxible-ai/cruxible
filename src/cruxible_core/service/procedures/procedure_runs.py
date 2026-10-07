@@ -4906,11 +4906,18 @@ def service_recover_provider_invocations(
     invocation_ids: tuple[str, ...],
     recovery_failure_codes: Mapping[str, str] | None = None,
     recorded_at: datetime,
+    close_in_process_starts: bool = False,
 ) -> tuple[str, ...]:
-    """Close exact durable starts whose child groups were recovered at startup."""
+    """Close exact durable starts whose child groups were recovered at startup.
+
+    ``close_in_process_starts`` also closes every unmatched start of a core
+    built-in (an admitted occurrence fenced ``in_process``): it holds no process
+    lease, so no lease recovery names it, and the daemon calls this once at
+    startup, before it serves, when no in-process invocation can be live.
+    """
 
     failures = {} if recovery_failure_codes is None else dict(recovery_failure_codes)
-    if not invocation_ids and not failures:
+    if not invocation_ids and not failures and not close_in_process_starts:
         return ()
     wanted = set(invocation_ids)
     observed_failures: list[tuple[str, str, str]] = []
@@ -4922,6 +4929,14 @@ def service_recover_provider_invocations(
     handled: set[str] = set()
     for partition_id in journal.partition_ids(stream):
         records = journal.all_records(stream, partition_id)
+        if not invocation_ids and not failures:
+            # The startup scan for built-in starts: a partition whose starts are
+            # all completed needs no body read.
+            kinds = [stored.record.event_kind for stored in records]
+            if kinds.count("provider_invocation_started") == kinds.count(
+                "provider_invocation_completed"
+            ):
+                continue
         admission: ProcedureRunAdmissionV5 | None = None
         plan = None
         starts: dict[str, ProviderInvocationStarted] = {}
@@ -4946,6 +4961,18 @@ def service_recover_provider_invocations(
             continue
         handled.update(wanted & set(completed))
         unresolved_ids = set(starts) - set(completed)
+        if close_in_process_starts:
+            # Built-in starts are closed by the startup scan, not by a lease.
+            in_process_paths = {
+                item.occurrence_path
+                for item in plan.external_occurrences
+                if item.local_execution.fence_scope == "in_process"
+            }
+            wanted |= {
+                invocation_id
+                for invocation_id in unresolved_ids
+                if starts[invocation_id].occurrence_path in in_process_paths
+            }
         failed_pending_ids = tuple(sorted(set(failures) & unresolved_ids, key=str.encode))
         for invocation_id in failed_pending_ids:
             observed_failures.append((admission.run_id, invocation_id, failures[invocation_id]))
@@ -4991,10 +5018,19 @@ def service_recover_provider_invocations(
         _activate_writer(journal, stream, partition_id)
         try:
             for invocation_id, started, occurrence in resolved_occurrences:
-                outcome = map_provider_refusal(
-                    "provider_process_group_survived_recovery",
-                    message="Daemon startup terminated an incomplete Provider process group.",
-                    detail={},
+                in_process = occurrence.local_execution.fence_scope == "in_process"
+                outcome = (
+                    map_provider_refusal(
+                        "provider_in_process_interrupted",
+                        message="Daemon startup closed a built-in invocation a crash interrupted.",
+                        detail={},
+                    )
+                    if in_process
+                    else map_provider_refusal(
+                        "provider_process_group_survived_recovery",
+                        message="Daemon startup terminated an incomplete Provider process group.",
+                        detail={},
+                    )
                 )
                 assert isinstance(outcome, ProviderInvocationOutcome)
                 declared = tuple(
@@ -5030,10 +5066,10 @@ def service_recover_provider_invocations(
                         declared_endpoints=declared,
                         observed_endpoints=(),
                         dynamic_endpoint_forms=dynamic,
-                        observer_backend="child-self-report",
+                        observer_backend="core.in-process" if in_process else "child-self-report",
                         observer_grade="attribution",
                     ),
-                    fence_scope="process_group+descendant_sweep",
+                    fence_scope=occurrence.local_execution.fence_scope,
                     secret_references=tuple(
                         sorted(
                             (

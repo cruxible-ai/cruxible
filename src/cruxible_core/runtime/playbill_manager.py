@@ -416,6 +416,66 @@ class PlaybillInstanceManager:
             )
         return result
 
+    def recover_in_process_provider_invocations(self) -> dict[str, tuple[str, ...]]:
+        """Close core built-in invocations a crash left started but not completed.
+
+        A built-in runs inside the daemon with no process lease, so lease
+        recovery never names it. Before the daemon serves, nothing in-process
+        can be live: every unmatched built-in start is closed as interrupted and
+        its attempt finalized failed, so no run stays recovery-required. Logs
+        and continues per instance; it never keeps the daemon from starting.
+        """
+
+        from cruxible_core.service.procedures.procedure_runs import (
+            service_recover_provider_invocations,
+        )
+
+        closed: dict[str, tuple[str, ...]] = {}
+        try:
+            records = get_registry().list_instances()
+        except Exception as exc:
+            _log.warning("in_process_provider_recovery_enumeration_failed", reason=str(exc))
+            return closed
+        for record in records:
+            if record.backend != GOVERNED_DAEMON_BACKEND:
+                continue
+            try:
+                instance = self.get(record.instance_id)
+            except (
+                BootstrapError,
+                ReseedRequired,
+                InstanceNotFoundError,
+                InstanceLocationRefusedError,
+            ) as exc:
+                _log.warning(
+                    "in_process_provider_recovery_instance_skipped",
+                    instance_id=record.instance_id,
+                    reason=str(exc),
+                )
+                continue
+            try:
+                recovered = service_recover_provider_invocations(
+                    instance,
+                    invocation_ids=(),
+                    recorded_at=utc_now(),
+                    close_in_process_starts=True,
+                )
+            except Exception as exc:
+                _log.warning(
+                    "in_process_provider_recovery_failed",
+                    instance_id=record.instance_id,
+                    reason=str(exc),
+                )
+                continue
+            if recovered:
+                closed[record.instance_id] = recovered
+                _log.info(
+                    "in_process_provider_invocations_closed",
+                    instance_id=record.instance_id,
+                    invocations=list(recovered),
+                )
+        return closed
+
     def recover_proposal_egress(self) -> dict[str, dict[str, str]]:
         """Resolve prepared-but-unresolved proposal terminals before serving requests.
 

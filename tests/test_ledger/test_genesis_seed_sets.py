@@ -36,6 +36,10 @@ FROZEN_SEED_SETS = (
     ("empty", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
     ("triggers-3", "8cb042bc848fdee33bd027357e2457b750899b2977600192b8da4c000cd6b9c4"),
     ("triggers-4", "1fdfd48c7ac8e052884d5715c2f00d38486170497c7209f5f918d1f931f321ee"),
+    (
+        "triggers-4-workspace-file",
+        "fc654913366642ee75ea1bcf3a1590d0b8b5d3f5d16e0e71ca9a8b603eca458c",
+    ),
 )
 
 

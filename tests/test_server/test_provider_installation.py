@@ -59,14 +59,19 @@ def installer_http(tmp_path, monkeypatch, request, provider_checkout):
 def test_transfer_install_and_restart_reuse(
     installer_http, tmp_path, monkeypatch, provider_checkout
 ):
+    from tests.support.provider_installation import build_local_call
+
     http, instance_id, _ = installer_http
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
     repository = provider_checkout.repository
     wheels = provider_checkout.wheels
+    # workspace.file is built into new instances, so the transferred wheel is
+    # the unpublished local-call package rather than cruxible-provider-workspace.
+    wheel, lock = build_local_call(tmp_path, repository)
     arguments = dict(
-        wheel=next(wheels.glob("cruxible_provider_workspace-*.whl")),
-        lock=repository / "packages/cruxible-provider-workspace/uv.lock",
+        wheel=wheel,
+        lock=lock,
         dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
     )
     result = install_provider_wheel(client, instance_id, **arguments)
@@ -172,63 +177,6 @@ def _run_call(
     assert run.status == "succeeded", state.model_dump_json(indent=2)
     assert state.receipt_digest
     return run.result.model_dump()
-
-
-@pytest.mark.xfail(
-    reason=(
-        "workspace.file declares its output content with oneOf, which the SDK record "
-        "checker (cruxible_client.contracts.records) does not support"
-    ),
-    strict=True,
-)
-def test_installed_workspace_operation_runs_in_real_child(
-    installer_http, tmp_path, provider_checkout
-):
-    import base64
-    import hashlib
-    import json
-
-    http, instance_id, reviewer = installer_http
-    client = CruxibleClient(base_url="http://cruxible")
-    client._client = http
-    repository = provider_checkout.repository
-    wheels = provider_checkout.wheels
-    result = install_provider_wheel(
-        client,
-        instance_id,
-        wheel=next(wheels.glob("cruxible_provider_workspace-*.whl")),
-        lock=repository / "packages/cruxible-provider-workspace/uv.lock",
-        dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
-    )
-    assert result.registered
-    definition = json.loads(
-        (
-            repository
-            / "packages/cruxible-provider-workspace/src/cruxible_provider_workspace"
-            / "contracts/workspace.file.json"
-        ).read_bytes()
-    )
-    body = b"hello from an installed provider\n"
-    digest = "sha256:" + hashlib.sha256(body).hexdigest()
-    output = _run_call(
-        client,
-        http,
-        instance_id,
-        reviewer,
-        tmp_path,
-        "workspace.file",
-        {
-            "logical_source": "test.file",
-            "commitment_digest": digest,
-            "content_encoding": "base64",
-            "bytes": base64.b64encode(body).decode(),
-            "byte_length": len(body),
-            "bytes_digest": digest,
-        },
-        definition["contracts"]["input"]["fields"],
-        definition["contracts"]["output"]["fields"],
-    )
-    assert output["content"]["text"] == body.decode()
 
 
 @pytest.mark.parametrize("legacy_proof", [False, True])
@@ -572,7 +520,8 @@ def test_repository_catalog_install_and_retry(installer_http, monkeypatch):
         "cruxible-provider-docs",
         "cruxible-provider-quant",
     }
-    request = ProviderInstallRequest(package="cruxible-provider-workspace")
+    # workspace.file is built in on new instances; noop stands in for a package.
+    request = ProviderInstallRequest(package="cruxible-provider-noop")
     result = client.install_provider(instance_id, request)
     assert result.status == "ready", result
     monkeypatch.setattr(service, "_source_files", lambda *a: pytest.fail("retry rebuilt package"))
@@ -635,13 +584,13 @@ def test_install_by_name_from_an_index_uses_the_embedded_lock(
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
     assert "install by name" in (client.list_provider_packages(instance_id).detail or "")
-    request = ProviderInstallRequest(package="cruxible-provider-workspace")
+    request = ProviderInstallRequest(package="cruxible-provider-noop")
     result = client.install_provider(instance_id, request)
     assert result.status == "ready" and result.registered, result
     deployment = get_playbill_manager().provider_runtime_operator().config.deployments[0]
     wheels = provider_checkout.wheels
-    workspace = next(wheels.glob("cruxible_provider_workspace-*.whl"))
-    assert deployment.distribution_path.endswith(workspace.name)
+    noop = next(wheels.glob("cruxible_provider_noop-*.whl"))
+    assert deployment.distribution_path.endswith(noop.name)
     monkeypatch.setattr(service, "_source_files", lambda *a: pytest.fail("retry refetched"))
     again = client.install_provider(instance_id, request)
     assert again.status == "ready" and again.installation_id == result.installation_id

@@ -6485,7 +6485,9 @@ def _render_orient(result: Mapping[str, Any]) -> str:
             lines.append("  ".join(str(value) for value in row.values()))
     if section == "interfaces":
         for row in result["interfaces"]:
-            providers = ",".join(row.get("providers", ())) or "(no provider)"
+            providers = (
+                ",".join(item["provider"] for item in row.get("providers", ())) or "(no provider)"
+            )
             lines.append(f"{row['name']}  effect={row['effect']}  providers={providers}")
             if row.get("description"):
                 lines.append(f"  {row['description']}")

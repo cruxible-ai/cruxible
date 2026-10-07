@@ -28,6 +28,10 @@ from cruxible_client.contracts.providers import (
     parse_provider,
     provider_digest,
 )
+from cruxible_core.providers.builtin_runtime import (
+    BuiltinDispatchingInvoker,
+    builtin_provider_binding,
+)
 from cruxible_core.providers.package_classifier import PackageBucketClassifier
 from cruxible_core.providers.provider_classifiers import (
     PROVIDER_BUCKET_CLASSIFIER_REGISTRY,
@@ -659,9 +663,12 @@ class ProviderRuntimeOperator:
         with self._lock:
             self._lazy_rearm_locked()
             if self.unavailable_reason is not None:
-                return _UnavailableProviderRuntimeInvoker(
-                    code=self.unavailable_code or "provider_runtime_recovery_failed",
-                    detail=self.unavailable_reason,
+                # Core built-ins run in-process and need none of what failed.
+                return BuiltinDispatchingInvoker(
+                    _UnavailableProviderRuntimeInvoker(
+                        code=self.unavailable_code or "provider_runtime_recovery_failed",
+                        detail=self.unavailable_reason,
+                    )
                 )
             assert self.process_leases is not None
         coordinate = instance.coordinate_for_oid(accepted_oid)
@@ -707,9 +714,11 @@ class ProviderRuntimeOperator:
                     detail = f"Provider classifier installation failed: {type(exc).__name__}: {exc}"
                     self.mark_unavailable("provider_runtime_recovery_failed", detail)
                     _state, code, lane_detail = self.lane_status()
-                    return _UnavailableProviderRuntimeInvoker(
-                        code=code or "provider_runtime_recovery_failed",
-                        detail=lane_detail or detail,
+                    return BuiltinDispatchingInvoker(
+                        _UnavailableProviderRuntimeInvoker(
+                            code=code or "provider_runtime_recovery_failed",
+                            detail=lane_detail or detail,
+                        )
                     )
                 interfaces[digest] = accepted_interface
         for accepted_interface in interfaces.values():
@@ -742,7 +751,7 @@ class ProviderRuntimeOperator:
             process_leases=self.process_leases,
             driver=self.driver,
         )
-        return _OperatorBoundProviderRuntimeInvoker(self, invoker)
+        return BuiltinDispatchingInvoker(_OperatorBoundProviderRuntimeInvoker(self, invoker))
 
     def admit_line_provider(
         self,
@@ -752,8 +761,17 @@ class ProviderRuntimeOperator:
         *,
         eligible_environment_pin_keys: tuple[str, ...],
     ) -> VerifiedProviderBinding:
-        """Resolve one accepted Line closure against operator-owned deployments."""
+        """Resolve one accepted Line closure against operator-owned deployments.
 
+        A core built-in resolves to its constant in-process binding without a
+        deployment, and regardless of the subprocess lane's availability.
+        """
+
+        builtin = builtin_provider_binding(
+            accepted_provider, accepted_interface, implementation_digest
+        )
+        if builtin is not None:
+            return builtin
         with self._lock:
             self._lazy_rearm_locked()
             if self.unavailable_reason is not None:
