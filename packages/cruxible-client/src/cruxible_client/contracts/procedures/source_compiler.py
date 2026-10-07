@@ -187,12 +187,14 @@ def _assignable(actual: ValueType, expected: ValueType) -> bool:
     def admits(a: dict[str, Any], b: dict[str, Any]) -> bool:
         if not b:
             return True
-        if "anyOf" in a:
-            remaining = {k: v for k, v in a.items() if k != "anyOf"}
-            return all(admits({**remaining, **variant}, b) for variant in a["anyOf"])
-        if "anyOf" in b:
-            remaining = {k: v for k, v in b.items() if k != "anyOf"}
-            return any(admits(a, {**remaining, **variant}) for variant in b["anyOf"])
+        for union in ("anyOf", "oneOf"):
+            if union in a:
+                remaining = {k: v for k, v in a.items() if k != union}
+                return all(admits({**remaining, **variant}, b) for variant in a[union])
+        for union in ("anyOf", "oneOf"):
+            if union in b:
+                remaining = {k: v for k, v in b.items() if k != union}
+                return any(admits(a, {**remaining, **variant}) for variant in b[union])
         actual_kind, expected_kind = a.get("type"), b.get("type")
         if isinstance(actual_kind, list):
             return all(admits({**a, "type": kind}, b) for kind in actual_kind)
