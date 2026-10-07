@@ -2228,7 +2228,9 @@ proposals or mutate accepted knowledge. `overrule` closes an item permanently:
 its pattern is never raised again. `accept-fixed` links an item to the accepted
 change that fixed it, named by proposal (pinned with `--changeset-digest` if
 wanted) or by `--generation`; the change must postdate the item and touch its
-subject or evidence. `suppress` hides the item (`item`) or its whole lineage,
+subject or evidence. Detection never closes an item itself, even one whose
+artifact a later change retired: closing a fixed pattern is always this
+attributed ruling. `suppress` hides the item (`item`) or its whole lineage,
 the successors its pattern opens after a fix (`lineage`), until
 `--until-generation` or until `unsuppress` lifts it; detection keeps running.
 
