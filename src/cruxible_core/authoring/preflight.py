@@ -642,7 +642,7 @@ def _authored_claims(
 
     One intent is one changeset, so the two source-binding checks below run once
     per authored Claim rather than once per intent -- and a set's diagnostics
-    address the member that owns them, `members[2].insertion_target`, which is
+    address the member that owns them, `members[2].source`, which is
     also exactly what `reference_expectations` already address.
     """
 
@@ -665,37 +665,6 @@ def _claim_surface_diagnostics(
     """Refusals knowable from one authored Claim's own surface, before any tree."""
 
     diagnostics: list[AuthoringDiagnostic] = []
-    if payload.insertion_target is not None:
-        # A Claim projected as its own text is the overlap the two-block-kinds
-        # law refuses: the page attests itself into concrete. The field stays
-        # on the payload so an intent stored before this ruling still parses
-        # and its bound registration still folds; nothing may carry one in.
-        diagnostics.append(
-            _diagnostic(
-                code="cruxible.authoring.insertion_target_removed",
-                stage="source_binding",
-                offending_element=f"{prefix}insertion_target",
-                message=(
-                    "Publishing a Claim as its own page text is no longer authored: a "
-                    "projection block is prose held to accepted Claims, never a Claim "
-                    "rendered into a page."
-                ),
-                repairs=(
-                    _repair(
-                        "author_a_source_block",
-                        "Write the prose in the page, capture the page as a source, and "
-                        "cite the span it states -- the source-block route.",
-                        None,
-                    ),
-                    _repair(
-                        "declare_a_projection_block",
-                        "Declare a projection block over accepted Claims with "
-                        "`cruxible block repin --claim ...`.",
-                        None,
-                    ),
-                ),
-            )
-        )
     if isinstance(payload.source, WorkingSelectionObservation):
         count = payload.source.selector.observed_occurrence_count
         if count > 1 and payload.source.selector.selected_occurrence is None:

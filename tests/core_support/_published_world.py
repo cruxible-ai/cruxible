@@ -52,10 +52,8 @@ from cruxible_core.service.discovery.next import (
     NextWorkspaceObservation,
 )
 from tests.core_support._support import initialize_local
-from tests.test_authoring.test_authoring_insertions_v2 import (
-    _activate,
-)
 from tests.test_authoring.test_authoring_preflight import (
+    _activate,
     _seed_claim_surface,
     _working_payload,
 )

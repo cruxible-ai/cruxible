@@ -5,7 +5,7 @@ That digest identifies the audited top-level read/response surface; before the
 lineage's first public release it can be re-pinned only atomically with the SDK
 handshake, program stamp, snapshot, and guardrail. After first public release,
 every change requires a coordinated version succession. This independent
-catalog freezes the deeper request, payload, intent, and insertion closure.
+catalog freezes the deeper request, payload and intent closure.
 """
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "AuthoringIntent",
     "AuthoringIntentCompileRequest",
     "AuthoringIntentCompileRequestV1",
-    "AuthoringIntentCompileRequestV2",
     "AuthoringIntentList",
     "AuthoringIntentPreflightRequest",
     "AuthoringIntentSubmitRequest",
@@ -73,10 +72,6 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "DiagnosticFrontier",
     "DiagnosticFrontierLimits",
     "ExistingCaptureCitationSource",
-    "InsertionAnchorWindow",
-    "InsertionExpectation",
-    "InsertionTarget",
-    "InsertionTerminalTombstone",
     "LineAuthoringPayload",
     "MandateConditionAuthoring",
     "MandateScopeAuthoring",
@@ -89,8 +84,6 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "ProjectionCheckRequest",
     "ProjectionCheckResult",
     "ProjectionDependencyIssue",
-    "PublicationPreparation",
-    "PublicationSourceObservation",
     "QueryDefinitionAuthoringPayload",
     "RepairAlternative",
     "ResolutionContractAuthoringPayload",

@@ -73,7 +73,6 @@ def _claim_payload() -> dict[str, Any]:
         "citation_role": None,
         "revises": None,
         "existing_claim_dispositions": [],
-        "insertion_target": None,
     }
 
 

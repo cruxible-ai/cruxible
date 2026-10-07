@@ -10,7 +10,6 @@ from pydantic import BaseModel
 from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
-    AuthoringIntentCompileRequestV2,
 )
 from cruxible_core.server import playbill_request_models as server_models
 
@@ -30,10 +29,9 @@ def _request_shape(model: type[BaseModel]) -> dict[str, Any]:
     ("client_model", "server_model"),
     [
         (AuthoringIntentCompileRequestV1, server_models.PlaybillAuthoringCompileRequest),
-        (AuthoringIntentCompileRequestV2, server_models.PlaybillAuthoringCompileRequestV2),
         (AuthoringIntentCompileRequest, server_models.PlaybillAuthoringCompileRequestV3),
     ],
-    ids=("compile-v1", "compile-v2", "compile-v3"),
+    ids=("compile-v1", "compile-v3"),
 )
 def test_client_and_server_share_each_authoring_request_model(
     client_model: type[BaseModel],

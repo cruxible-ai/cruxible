@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import cast
 
 from cruxible_client.authoring.context import WorkspaceBinding
-from cruxible_client.authoring.insertions import (
-    InsertionApplyError,
-    replace_publication_file,
+from cruxible_client.authoring.page_writes import (
+    PageWriteError,
+    replace_page_file,
 )
 from cruxible_client.authoring.projection_manifests import (
     load_projection_manifests,
@@ -1045,8 +1045,8 @@ def sync_projection_blocks(
         if check:
             continue
         try:
-            replace_publication_file(path, expected=content, replacement=replacement)
-        except InsertionApplyError as exc:
+            replace_page_file(path, expected=content, replacement=replacement)
+        except PageWriteError as exc:
             for index in changed_item_indexes:
                 items[index] = BlockSyncItem(
                     path=relative,
@@ -1246,8 +1246,8 @@ def repin_projection_block(
     retain_local_manifests(root, manifests)
     load_projection_manifests(root, replacement)
     try:
-        replace_publication_file(path, expected=content, replacement=replacement)
-    except InsertionApplyError as exc:
+        replace_page_file(path, expected=content, replacement=replacement)
+    except PageWriteError as exc:
         raise ProjectionRepinError(str(exc)) from exc
     # The page now carries a marker this instance has never heard of. A block
     # was known to the instance only if the retired publication road minted it,

@@ -1084,8 +1084,6 @@ class AuthoringIntentStore:
                 or current.payload != updated.payload
                 or current.payload_digest != updated.payload_digest
                 or current.create_fingerprint != updated.create_fingerprint
-                or current.insertion_expectation != updated.insertion_expectation
-                or current.insertion_expectations != updated.insertion_expectations
                 or current.change_set_claim_identities != updated.change_set_claim_identities
                 or updated.intent_revision != current.intent_revision + 1
                 or updated.last_preflight is not None

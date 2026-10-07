@@ -1855,10 +1855,8 @@ the SDK can install explicitly supplied reviewed body bytes.
 There is no SDK option that publishes a Claim as its own page text. `publish_to`
 was that road and it is gone: it minted a block whose one backing was the
 publishing Claim itself, which is a source block projected as its own
-projection -- the overlap the two-block-kinds law refuses. An intent carrying
-`insertion_target` refuses typed as
-`cruxible.authoring.insertion_target_removed`, naming both roads above as the
-repair.
+projection -- the overlap the two-block-kinds law refuses; a Claim payload has
+no field for it.
 
 On MCP the same adapter runs in the MCP server process:
 `cruxible_block_repin` takes the block and its page (`file`,

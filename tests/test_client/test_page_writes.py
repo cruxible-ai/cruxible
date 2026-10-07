@@ -12,13 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.authoring.insertions import (
-    InsertionApplyError,
-    replace_publication_file,
-)
+from cruxible_client.authoring.page_writes import PageWriteError, replace_page_file
 
 
-def test_publication_file_replace_refuses_a_concurrent_edit(
+def test_page_replace_refuses_a_concurrent_edit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -33,8 +30,8 @@ def test_publication_file_replace_refuses_a_concurrent_edit(
         return original(path)
 
     monkeypatch.setattr(Path, "read_bytes", edit_before_compare)
-    with pytest.raises(InsertionApplyError, match="compare-and-swap"):
-        replace_publication_file(source, expected=b"before\n", replacement=b"after\n")
+    with pytest.raises(PageWriteError, match="compare-and-swap"):
+        replace_page_file(source, expected=b"before\n", replacement=b"after\n")
 
     monkeypatch.setattr(Path, "read_bytes", original)
     assert source.read_bytes() == concurrent

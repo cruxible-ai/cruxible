@@ -7,11 +7,11 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 
-class InsertionApplyError(ValueError):
-    """A local source cannot be reconciled with its insertion expectation."""
+class PageWriteError(ValueError):
+    """A workspace page could not be replaced exactly as it was read."""
 
 
-def replace_publication_file(
+def replace_page_file(
     path: Path,
     *,
     expected: bytes,
@@ -29,17 +29,17 @@ def replace_publication_file(
             os.fsync(output.fileno())
         temporary.chmod(original_mode)
         if path.read_bytes() != expected:
-            raise InsertionApplyError("source bytes changed before the whole-file compare-and-swap")
+            raise PageWriteError("source bytes changed before the whole-file compare-and-swap")
         os.replace(temporary, path)
         temporary = None
     except OSError as exc:
-        raise InsertionApplyError(f"source could not be replaced atomically: {exc}") from exc
+        raise PageWriteError(f"source could not be replaced atomically: {exc}") from exc
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 
 
 __all__ = [
-    "InsertionApplyError",
-    "replace_publication_file",
+    "PageWriteError",
+    "replace_page_file",
 ]
