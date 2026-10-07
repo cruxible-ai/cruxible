@@ -9,7 +9,9 @@ sole proposal door exactly once per admitted operation.
 Three properties are load-bearing:
 
 * **Evidence is the run's own.** Each item cites the produced Capture in its
-  own dependency closure as `ExistingCaptureCitationSource`. Nothing an
+  own dependency closure as `ExistingCaptureCitationSource`, or, when the
+  closure produced none, the one retained Capture the run was admitted (a
+  Line's trigger input). Nothing an
   author writes into a template can name, borrow, or omit evidence, and the
   Claim's grade is whatever its ClaimType's evidence admission policy says
   about that Capture.
@@ -77,6 +79,7 @@ from cruxible_core.procedures.egress import (
 from cruxible_core.procedures.nested import ProcedureDelegation, authority_procedure
 from cruxible_core.procedures.terminal_dependencies import (
     TerminalItemDependencyManifestV1,
+    citable_captures,
 )
 from cruxible_core.procedures.terminal_services import (
     ProposalDeliveryRefused,
@@ -177,12 +180,17 @@ def evidence_by_item(
     request: TerminalEgressRequestV1,
     manifests: Mapping[str, TerminalItemDependencyManifestV1],
 ) -> dict[str, str]:
-    """Pick the one produced Capture each item's own closure reached."""
+    """Pick the one Capture each item's own closure reached (see ``citable_captures``)."""
 
     evidence: dict[str, str] = {}
     for item in request.items:
         manifest = manifests.get(item.item_key)
-        produced = () if manifest is None else manifest.produced_capture_digests
+        produced = citable_captures(manifest)
+        consumed = (
+            ()
+            if manifest is None
+            else (*manifest.produced_capture_digests, *manifest.admitted_capture_digests)
+        )
         parsed = None
         if (
             isinstance(item.value, dict)
@@ -192,7 +200,9 @@ def evidence_by_item(
             if isinstance(parsed.source, SelfSourceBody):
                 continue
             selected = parsed.source.capture_digest
-            if selected not in produced:
+            # An explicitly selected Capture must be in the item's own closure,
+            # produced by the run or admitted into it.
+            if selected not in consumed:
                 raise ProposalDeliveryRefused(
                     "proposal_item_evidence_missing",
                     "Selected evidence is outside the item's verified closure.",
@@ -202,17 +212,17 @@ def evidence_by_item(
         if len(produced) == 0:
             raise ProposalDeliveryRefused(
                 "proposal_item_evidence_missing",
-                "The item's dependency closure reached no produced Capture to cite.",
+                "The item's dependency closure reached no produced or admitted Capture to cite.",
                 details={"item_key": item.item_key, "child_index": item.child_index},
             )
         if len(produced) > 1:
             raise ProposalDeliveryRefused(
                 "proposal_item_evidence_ambiguous",
-                "The item's dependency closure reached more than one produced Capture.",
+                "The item's dependency closure reached more than one Capture it could cite.",
                 details={
                     "item_key": item.item_key,
                     "child_index": item.child_index,
-                    "produced_capture_digests": list(produced),
+                    "capture_digests": list(produced),
                 },
             )
         evidence[item.item_key] = produced[0]

@@ -7,9 +7,10 @@ terminal, typed to the item, before lowering runs.
 
 The item names a Claim STATEMENT and the author's rationale, and nothing
 about its evidence. Evidence is never caller-supplied: the daemon attaches the
-produced Capture that sits in the item's own dependency closure, so a computed
-interpretation cites exactly the observation the run made and cannot borrow,
-invent, or omit one.
+produced Capture that sits in the item's own dependency closure (or, when the
+closure produced none, the one Capture the run was admitted, such as a Line's
+trigger input), so a computed interpretation cites exactly the observation the
+run made or consumed and cannot borrow, invent, or omit one.
 """
 
 from __future__ import annotations

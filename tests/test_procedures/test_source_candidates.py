@@ -229,7 +229,7 @@ def test_nested_capture_selection_rejects_unrelated_handles():
     )
     result = bind_source_candidate(candidate, **args)
     assert result["source"]["capture_digest"] == registered.digest
-    with pytest.raises(ValueError, match="one verified produced Capture"):
+    with pytest.raises(ValueError, match="one verified Capture"):
         bind_source_candidate(
             {**candidate, "source_value": {"capture_digest": "sha256:" + "d" * 64}}, **args
         )

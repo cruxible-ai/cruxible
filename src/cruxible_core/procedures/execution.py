@@ -4409,9 +4409,9 @@ class ProcedureExecutor:
                     "request": request.model_dump(mode="json"),
                     "prepared": None if prepared is None else prepared.model_dump(mode="json"),
                     "evidence": {
-                        item_key: manifest.produced_capture_digests[0]
+                        item_key: citable[0]
                         for item_key, manifest in manifests.items()
-                        if len(manifest.produced_capture_digests) == 1
+                        if len(citable := citable_captures(manifest)) == 1
                     },
                 },
             )

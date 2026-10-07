@@ -1694,7 +1694,11 @@ and the run succeeds; an element that is not a Claim proposal item refuses
 template must be one Claim proposal item --
 a statement, a rationale, and optionally the Claim lineage it revises. The
 daemon supplies the evidence: the produced Capture in that item's own
-dependency closure is cited, so a computed interpretation is a Claim under its
+dependency closure is cited -- or, when the closure produced none, the one
+Capture the run was admitted (a Line's `trigger_input` Capture); none is
+`proposal_item_evidence_missing` and more than one
+`proposal_item_evidence_ambiguous`, and an item that names its Capture must
+name one in its own closure, produced or admitted -- so a computed interpretation is a Claim under its
 ClaimType's evidence admission policy, never an attested observation and never
 a self-asserted one. The items are lowered through the same change-set
 authoring every surface uses, the exact live ProcedureMandate is evaluated

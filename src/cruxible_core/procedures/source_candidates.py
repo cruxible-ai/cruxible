@@ -80,7 +80,11 @@ def bind_source_candidate(
         selected = provenance.get(alias)
         if selected is None or not selected.whole.issubset(item_tokens):
             raise ValueError("candidate evidence does not belong to this item's dataflow")
-        captures = {p.digest for p in selected.whole if p.slot == "produced_capture"}
+        # The run's own observation, else the retained Capture it was admitted
+        # (a Line's trigger input), as proposal delivery cites.
+        captures = {p.digest for p in selected.whole if p.slot == "produced_capture"} or {
+            p.digest for p in selected.whole if p.slot == "admitted_capture"
+        }
         if isinstance(candidate.source_value, dict) and set(candidate.source_value) == {
             "capture_digest"
         }:
@@ -90,7 +94,7 @@ def bind_source_candidate(
             selected_capture = candidate.source_value["capture_digest"]
             captures = captures & {selected_capture} if isinstance(selected_capture, str) else set()
         if len(captures) != 1:
-            raise ValueError("selected evidence must identify one verified produced Capture")
+            raise ValueError("selected evidence must identify one verified Capture")
         source = ExistingCaptureCitationSource(capture_digest=captures.pop())
         citation_role = "evidence" if candidate.source_kind == "supported_by" else "copy"
 
