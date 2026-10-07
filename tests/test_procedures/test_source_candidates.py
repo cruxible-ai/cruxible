@@ -235,6 +235,64 @@ def test_nested_capture_selection_rejects_unrelated_handles():
         )
 
 
+def _mixed_closure_candidate(selection: dict[str, object] | str):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_core.procedures.terminal_dependencies import (
+        AliasProvenanceV1,
+        admitted_capture_token,
+        produced_capture_token,
+    )
+
+    admitted = admitted_capture_token("sha256:" + "a" * 64)
+    produced = produced_capture_token("sha256:" + "b" * 64)
+    tokens = frozenset({admitted, produced})
+    candidate = dict(
+        tag="playbill-source-claim-candidate-v1",
+        subject_kind=delivery.SUBJECT_KIND,
+        subject_id=delivery.SUBJECT_ID,
+        predicate=delivery.PREDICATE,
+        value="high",
+        role="observation",
+        rationale="Read from the feed.",
+        source_kind="supported_by",
+        source_value=selection,
+        source_alias="feed.content",
+    )
+    args = dict(
+        procedure_identity=ArtifactIdentity(kind="Procedure", name="mixed"),
+        procedure_digest="sha256:" + "c" * 64,
+        outputs={},
+        provenance={"feed": AliasProvenanceV1(whole=tokens)},
+        item_tokens=tokens,
+    )
+    return candidate, args, admitted.digest, produced.digest
+
+
+def test_an_explicit_selection_may_name_the_admitted_capture_beside_a_produced_one():
+    """S3 review b F-003: explicit selection is checked against produced and admitted."""
+
+    from cruxible_core.procedures.source_candidates import bind_source_candidate
+
+    candidate, args, admitted, produced = _mixed_closure_candidate({"capture_digest": "x"})
+    for chosen in (admitted, produced):
+        bound = bind_source_candidate(
+            {**candidate, "source_value": {"capture_digest": chosen}}, **args
+        )
+        assert bound["source"]["capture_digest"] == chosen
+    with pytest.raises(ValueError, match="one verified Capture"):
+        bind_source_candidate(
+            {**candidate, "source_value": {"capture_digest": "sha256:" + "e" * 64}}, **args
+        )
+
+
+def test_an_implicit_selection_prefers_the_produced_capture():
+    from cruxible_core.procedures.source_candidates import bind_source_candidate
+
+    candidate, args, _admitted, produced = _mixed_closure_candidate("high")
+    bound = bind_source_candidate(candidate, **args)
+    assert bound["source"]["capture_digest"] == produced
+
+
 @pytest.mark.parametrize(
     "kind,expression",
     [

@@ -80,19 +80,24 @@ def bind_source_candidate(
         selected = provenance.get(alias)
         if selected is None or not selected.whole.issubset(item_tokens):
             raise ValueError("candidate evidence does not belong to this item's dataflow")
-        # The run's own observation, else the retained Capture it was admitted
-        # (a Line's trigger input), as proposal delivery cites.
-        captures = {p.digest for p in selected.whole if p.slot == "produced_capture"} or {
-            p.digest for p in selected.whole if p.slot == "admitted_capture"
-        }
+        produced = {p.digest for p in selected.whole if p.slot == "produced_capture"}
+        admitted = {p.digest for p in selected.whole if p.slot == "admitted_capture"}
         if isinstance(candidate.source_value, dict) and set(candidate.source_value) == {
             "capture_digest"
         }:
-            # A nested terminal returns an exact registered capture handle. Its
-            # provenance can also include upstream observations it consumed.
-            # Select the handle only when retained dataflow actually contains it.
+            # An explicit selection (a nested terminal's exact capture handle)
+            # may name any Capture in the item's own dataflow, produced or
+            # admitted; it is accepted only when the dataflow contains it.
             selected_capture = candidate.source_value["capture_digest"]
-            captures = captures & {selected_capture} if isinstance(selected_capture, str) else set()
+            captures = (
+                (produced | admitted) & {selected_capture}
+                if isinstance(selected_capture, str)
+                else set()
+            )
+        else:
+            # Implicit: the run's own observation, else the retained Capture it
+            # was admitted (a Line's trigger input), as proposal delivery cites.
+            captures = produced or admitted
         if len(captures) != 1:
             raise ValueError("selected evidence must identify one verified Capture")
         source = ExistingCaptureCitationSource(capture_digest=captures.pop())
