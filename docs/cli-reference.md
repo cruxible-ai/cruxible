@@ -979,8 +979,10 @@ dependents rather than listing them.
 A definition the kit installed that the release dropped retires when nothing
 live depends on it. One with live dependents is kept until a decision names it:
 `--keep IDENTITY` keeps it live, `--retire-dependents IDENTITY` retires it and its
-dependents. Changing a definition another installed kit owns, or owning a prefix
-that overlaps another kit's, blocks the change. `add` refuses a release older than
+dependents. A kept definition stays the kit's even when a later release narrows
+its prefixes. Changing a definition another installed kit owns or holds, or
+owning a prefix that overlaps another kit's or takes in a definition it holds,
+blocks the change. `add` refuses a release older than
 the installed one unless `--allow-downgrade`, and the preview names the transition
 (install, upgrade, downgrade, reinstall).
 

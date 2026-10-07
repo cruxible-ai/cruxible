@@ -814,6 +814,40 @@ def test_a_kept_dropped_definition_stays_the_kits_until_retired_later(
     assert not any(item.path == _path(SEATS) for item in status.kept)
 
 
+def test_a_kept_definition_stays_held_when_a_release_narrows_its_prefix(
+    worlds: tuple[_World, _World],
+) -> None:
+    """F-002: a kit holds what its receipt records, not only what its prefixes name."""
+
+    publisher, consumer = worlds
+    flag = "acme.other.flag"
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(flag, {"type": "string"}))
+    consumer.add(publisher.build("1.0.0"))
+    narrowed = _without(publisher.build("2.0.0"), flag)
+    narrowed = narrowed.model_copy(
+        update={"manifest": narrowed.manifest.model_copy(update={"owns": ("acme.account.",)})}
+    )
+    kept = consumer.add(narrowed, keep=(f"ClaimType:{flag}",))
+    assert kept.status == "accepted", kept.detail
+
+    # Another kit taking that definition is refused, however its prefix reads.
+    publisher.succeed(flag, {"type": "string", "minLength": 1})
+    competing = consumer.add(publisher.build("1.0.0", kit_id="beta", owns=("acme.other.",)))
+    assert competing.status == "blocked", competing
+    assert f"ClaimType:{flag} is held by kit acme" in (competing.detail or "")
+    assert consumer.claim_type(flag).literal_schema == {"type": "string"}
+
+    # The holder still removes it, as an unedited definition it installed.
+    removal = playbill_api.playbill_kit_remove(
+        consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+    )
+    assert removal.status in {"accepted", "proposed"}, removal.detail
+    if removal.status == "proposed":
+        consumer.settle(removal)
+    assert (_path(flag), "retire") in {(item.path, item.action) for item in removal.plan}
+    assert consumer.claim_type(flag).lifecycle.state == "retired"
+
+
 def test_overlapping_ownership_is_refused(worlds: tuple[_World, _World]) -> None:
     publisher, consumer = worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))

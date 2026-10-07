@@ -642,11 +642,29 @@ def _settle_dependents(
     return {**settled, **diff.writes}, []
 
 
+def _held_by_other_kits(
+    instance: PlaybillInstance, tree: Mapping[str, bytes], kit_id: str
+) -> dict[str, str]:
+    """Every definition path another installed kit holds -> that kit.
+
+    A kit holds what its receipt records, not only what its current prefixes
+    name: a definition the release dropped but the consumer kept stays that
+    kit's even when a later release narrows its prefixes past it.
+    """
+
+    return {
+        entry.path: receipt.kit_id
+        for receipt in _receipts(instance, tree)
+        if receipt.kit_id != kit_id
+        for entry in receipt.artifacts
+    }
+
+
 def _foreign_takeovers(
     instance: PlaybillInstance, tree: Mapping[str, bytes], kit_id: str, diff: _Diff
 ) -> list[str]:
-    """A release may not change a definition another installed kit owns: a hard block,
-    like overlapping ownership."""
+    """A release may not change a definition another installed kit owns or holds: a
+    hard block, like overlapping ownership."""
 
     owners = [
         (prefix, receipt.kit_id)
@@ -654,14 +672,17 @@ def _foreign_takeovers(
         if receipt.kit_id != kit_id and receipt.artifacts
         for prefix in receipt.owns
     ]
-    found = []
+    held = _held_by_other_kits(instance, tree, kit_id)
+    found: list[str] = []
     for item in diff.plan:
         if item.action != "replace" or item.identity is None:
             continue
         name = item.identity.partition(":")[2]
-        for prefix, owner in owners:
-            if name.startswith(prefix):
-                found.append(f"{item.identity} is owned by kit {owner}")
+        owned_by = [owner for prefix, owner in owners if name.startswith(prefix)]
+        found.extend(f"{item.identity} is owned by kit {owner}" for owner in owned_by)
+        holder = held.get(item.path)
+        if holder is not None and holder not in owned_by:
+            found.append(f"{item.identity} is held by kit {holder}")
     return found
 
 
@@ -676,6 +697,17 @@ def _ownership_conflicts(
             for theirs in receipt.owns:
                 if prefix.startswith(theirs) or theirs.startswith(prefix):
                     conflicts.append(f"{prefix} overlaps {theirs}, owned by kit {receipt.kit_id}")
+    # A prefix may not take in a definition another kit still holds outside
+    # its own prefixes (one it kept after its release dropped it).
+    for path, holder in sorted(_held_by_other_kits(instance, tree, manifest.kit_id).items()):
+        current = tree.get(path)
+        if current is None:
+            continue
+        identity = _artifact_state(path, current).identity
+        if any(identity.name.startswith(prefix) for prefix in manifest.owns) and not any(
+            conflict.endswith(f"owned by kit {holder}") for conflict in conflicts
+        ):
+            conflicts.append(f"{identity.qualified} is held by kit {holder}")
     return conflicts
 
 
