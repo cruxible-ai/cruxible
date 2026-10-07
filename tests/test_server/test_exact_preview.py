@@ -429,8 +429,14 @@ def test_a_head_accepted_before_the_record_refuses_a_pinned_withdrawal(
 
     assert moved == [True]
     _refused(refused, 409, "cruxible.preview.state_moved")
-    status = _ok(client.get(f"{base}"))
-    assert status.get("withdrawal") is None, status
+    # get is the one proposal read: its proof carries the status entry.
+    proof = _ok(
+        client.post(
+            _api(instance_id, "/get"),
+            json={"ref": proposed["proposal"]["admission"]["proposal_id"], "detail": "proof"},
+        )
+    )["proof"]
+    assert proof["status"]["withdrawal_present"] is False, proof["status"]
 
 
 def test_decommissioning_previews_by_default_and_commits_only_with_its_coordinate(

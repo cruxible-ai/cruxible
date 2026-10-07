@@ -205,13 +205,7 @@ def approve_and_activate(proposal_id: str, *, key_dir: Path) -> dict[str, Any]:
         "--yes",
         "--json",
     )
-    activated = run_cli_json(
-        "proposal",
-        "activate",
-        proposal_id,
-        "--workspace-root",
-        str(key_dir.parent),
-    )
+    activated = run_cli_json("proposal", "activate", proposal_id)
     if activated["status"] != "accepted":  # pragma: no cover - a refusal raises earlier
         raise RuntimeError(f"proposal {proposal_id} did not settle: {activated}")
     return dict(activated)
