@@ -1272,9 +1272,11 @@ lists Triggers by `name`, `schedule` (`cadence`, `cron`, `capture_landing`,
 `window_close`, `generation_accepted`), `target_kind` (`line` or `action`),
 `target` and `lifecycle`; `--select` adds `cron`, `cadence`, `capture_contract`
 and `version`. `query Line` lists Lines with their `procedure`, `authority`,
-`lifecycle`, `enabled` (whether the Line's automation is admitting work) and
-live `triggers`. Both filter on those fields, list only live rows unless a
-`lifecycle` filter is given, and page like any compact query. `--where` filters combine as
+`lifecycle`, `enabled` (whether the Line's automation is admitting work), its
+first 25 live `triggers` and `triggers_total`. Both filter on those fields,
+list only live rows unless a `lifecycle` filter is given, and page like any
+compact query; an answer past 2000 rows is `capped` and says so. `--order-by`
+sorts by each column's type (numbers as numbers), nulls last, ties by name. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
 `subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
 `--follow field:alias` hops forward along one of KIND's Subject-valued predicates;

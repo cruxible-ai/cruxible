@@ -150,8 +150,10 @@ class GetLineCard(_StrictOperationalModel):
     authority: Literal["observe", "propose", "settle"]
     #: The kinds of schedule that set this Line off (``manual`` with none).
     trigger: str
-    #: Each live Trigger aimed at this Line; ``get Trigger:<name>`` reads one.
+    #: The first live Triggers aimed at this Line, in identity order;
+    #: ``get Trigger:<name>`` reads one, ``query Trigger --where target=...`` lists all.
     triggers: tuple[GetLineTrigger, ...] = ()
+    triggers_total: int = Field(default=0, ge=0)
     occurrence_epoch: int = Field(ge=1)
     arms: tuple[GetLineArm, ...] = ()
     arms_total: int = Field(default=0, ge=0)

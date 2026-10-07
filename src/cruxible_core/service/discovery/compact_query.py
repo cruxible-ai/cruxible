@@ -2478,6 +2478,8 @@ def service_playbill_query(
             candidates=listed.rows,
             keys=listed.keys,
             render=lambda page: [dict(row) for row in page],
+            capped=listed.capped,
+            notes=listed.notes,
         )
     elif request.kind is None:
         if request.where or request.select or request.follow or request.order_by:

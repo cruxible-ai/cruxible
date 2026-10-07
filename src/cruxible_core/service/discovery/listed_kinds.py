@@ -3,26 +3,31 @@
 ``query kind=Trigger`` and ``query kind=Line`` list the accepted Triggers and
 Lines with the same grammar every compact query uses (``where``, ``contains``,
 ``select``, ``order_by``, paging), on CLI, MCP and SDK alike. They are read
-straight from the typed-state index at the coordinate, not through the query
-engine: neither is a Subject kind nor a definition kind of the query grammar.
+from the typed-state index at the coordinate, not through the query engine:
+neither is a Subject kind nor a definition kind of the query grammar.
 
-Without a ``lifecycle`` filter only live rows are listed. A Trigger row's
-schedule detail (cron expression, cadence, capture contract) and version are
-columns ``select`` adds; a Line row says whether the Line is enabled (its
-automation is running) and names its live Triggers.
+The index selects what it can (lifecycle, name, schedule, target and target
+kind; a Line's procedure and authority), in identity order, and the answer
+stops at ``LISTING_MAX_RESULTS`` matching rows: past it the answer is
+``capped`` and says so, as a compact query that hits its server cap does. A
+Trigger's schedule detail (cron expression, cadence, capture contract) is read
+from its artifact only when the request selects, searches or orders by it. A
+Line row lists at most ``LINE_TRIGGER_NAMES_MAX`` of its Triggers beside their
+total. Without a ``lifecycle`` filter only live rows are listed. ``order_by``
+sorts by each column's type, nulls last in either direction, ties by identity.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+import functools
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.compact_query import QueryColumn, QueryRequest
-from cruxible_client.contracts.operational_reads import OrientLine
-from cruxible_client.contracts.procedures.line_specs import LineSpecAny
+from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
 from cruxible_client.contracts.procedures.windows import CaptureEventWindow
 from cruxible_client.contracts.triggers import (
     CadenceSchedule,
@@ -38,45 +43,85 @@ from cruxible_core.service.read_refusals import nearest
 
 ListedKind = Literal["Trigger", "Line"]
 LISTED_KINDS: tuple[ListedKind, ...] = ("Trigger", "Line")
+#: The most rows one Trigger or Line listing answers; past it the answer is capped.
+LISTING_MAX_RESULTS = 2000
+#: The most Trigger names one Line row lists; ``triggers_total`` counts them all.
+LINE_TRIGGER_NAMES_MAX = 25
 
 _LISTING_DIGEST_DOMAIN = "playbill-compact-listing-v1"
 _LIFECYCLES = ("live", "retired")
 _SCHEDULES = ("cadence", "capture_landing", "cron", "generation_accepted", "window_close")
+_AUTHORITIES = ("observe", "propose", "settle")
+_RUNG_OF: dict[str, int] = {authority: rung for rung, authority in RUNG_AUTHORITY.items()}
+#: Rows scanned per index chunk while matching.
+_CHUNK = 500
 
 
 @dataclass(frozen=True)
 class ListedField:
-    """One column of a listed kind: its type, and whether ``where`` may filter on it."""
+    """One column of a listed kind: its type, whether ``where`` filters it, and where.
+
+    ``index_column`` names the typed-state column an ``eq`` or ``in`` filter on
+    this field is pushed into; ``detail`` columns need the artifact itself.
+    """
 
     column: QueryColumn
     filterable: bool = True
     #: Shown without ``select``; detail columns appear only when selected.
     default: bool = True
+    index_column: str | None = None
+    detail: bool = False
 
 
 _FIELDS: Mapping[ListedKind, tuple[ListedField, ...]] = {
     "Trigger": (
-        ListedField(QueryColumn(name="name", type="string")),
-        ListedField(QueryColumn(name="schedule", type="enum", members=_SCHEDULES)),
-        ListedField(QueryColumn(name="target_kind", type="enum", members=("action", "line"))),
-        ListedField(QueryColumn(name="target", type="string")),
-        ListedField(QueryColumn(name="lifecycle", type="enum", members=_LIFECYCLES)),
-        ListedField(QueryColumn(name="version", type="integer"), filterable=False, default=False),
-        ListedField(QueryColumn(name="cron", type="string"), filterable=False, default=False),
-        ListedField(QueryColumn(name="cadence", type="integer"), filterable=False, default=False),
+        ListedField(QueryColumn(name="name", type="string"), index_column="identity"),
         ListedField(
-            QueryColumn(name="capture_contract", type="string"), filterable=False, default=False
+            QueryColumn(name="schedule", type="enum", members=_SCHEDULES),
+            index_column="schedule_kind",
+        ),
+        ListedField(
+            QueryColumn(name="target_kind", type="enum", members=("action", "line")),
+            index_column="target_kind",
+        ),
+        ListedField(QueryColumn(name="target", type="string"), index_column="target"),
+        ListedField(
+            QueryColumn(name="lifecycle", type="enum", members=_LIFECYCLES),
+            index_column="lifecycle",
+        ),
+        ListedField(QueryColumn(name="version", type="integer"), filterable=False, default=False),
+        ListedField(
+            QueryColumn(name="cron", type="string"), filterable=False, default=False, detail=True
+        ),
+        ListedField(
+            QueryColumn(name="cadence", type="integer"),
+            filterable=False,
+            default=False,
+            detail=True,
+        ),
+        ListedField(
+            QueryColumn(name="capture_contract", type="string"),
+            filterable=False,
+            default=False,
+            detail=True,
         ),
     ),
     "Line": (
-        ListedField(QueryColumn(name="name", type="string")),
-        ListedField(QueryColumn(name="procedure", type="string")),
+        ListedField(QueryColumn(name="name", type="string"), index_column="identity"),
         ListedField(
-            QueryColumn(name="authority", type="enum", members=("observe", "propose", "settle"))
+            QueryColumn(name="procedure", type="string"), index_column="procedure_identity"
         ),
-        ListedField(QueryColumn(name="lifecycle", type="enum", members=_LIFECYCLES)),
+        ListedField(
+            QueryColumn(name="authority", type="enum", members=_AUTHORITIES),
+            index_column="requested_terminal_rung",
+        ),
+        ListedField(
+            QueryColumn(name="lifecycle", type="enum", members=_LIFECYCLES),
+            index_column="lifecycle",
+        ),
         ListedField(QueryColumn(name="enabled", type="boolean")),
         ListedField(QueryColumn(name="triggers", type="string", cardinality="many")),
+        ListedField(QueryColumn(name="triggers_total", type="integer"), filterable=False),
         ListedField(QueryColumn(name="version", type="integer"), filterable=False, default=False),
     ),
 }
@@ -84,88 +129,24 @@ _FIELDS: Mapping[ListedKind, tuple[ListedField, ...]] = {
 
 @dataclass(frozen=True)
 class ListedAnswer:
-    """Every matching row in order, with the columns shown and the keys paging binds."""
+    """Every matching row in order (at most the ceiling), with columns, keys and cap."""
 
     spec_digest: str
     columns: tuple[QueryColumn, ...]
     rows: list[dict[str, Any]]
     keys: list[tuple[str, ...]]
+    capped: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
 
 
-def _trigger_rows(projection: Any) -> list[tuple[str, dict[str, Any]]]:
-    rows: list[tuple[str, dict[str, Any]]] = []
-    for identity, revision in projection.typed.connection.execute(
-        "SELECT identity, revision FROM triggers ORDER BY identity"
-    ):
-        trigger = cast(Trigger, projection.typed.source(str(identity)))
-        schedule = trigger.schedule
-        contract: str | None = None
-        if isinstance(schedule, CaptureLandingSchedule):
-            contract = schedule.event.capture_contract_identity.qualified
-        elif isinstance(schedule, WindowCloseSchedule) and isinstance(
-            schedule.window, CaptureEventWindow
-        ):
-            contract = schedule.window.event.capture_contract_identity.qualified
-        line = trigger.line
-        rows.append(
-            (
-                trigger.identity.qualified,
-                {
-                    "name": trigger.identity.name,
-                    "schedule": schedule.kind,
-                    "target_kind": trigger.target.kind,
-                    "target": line.qualified if line is not None else str(trigger.action),
-                    "lifecycle": trigger.lifecycle.state,
-                    "version": int(revision),
-                    "cron": schedule.expression if isinstance(schedule, CronSchedule) else None,
-                    "cadence": (
-                        schedule.interval_seconds if isinstance(schedule, CadenceSchedule) else None
-                    ),
-                    "capture_contract": contract,
-                },
-            )
-        )
-    return rows
+@dataclass(frozen=True)
+class _Check:
+    field: str
+    operator: str
+    value: object
 
 
-def _line_rows(
-    projection: Any, state: Mapping[str, OrientLine]
-) -> list[tuple[str, dict[str, Any]]]:
-    from cruxible_core.service.discovery.operational import aimed_triggers
-
-    lines = [
-        cast(LineSpecAny, projection.typed.source(str(identity)))
-        for (identity,) in projection.typed.connection.execute(
-            "SELECT identity FROM lines ORDER BY identity"
-        )
-    ]
-    revisions = {
-        str(identity): int(revision)
-        for identity, revision in projection.typed.connection.execute(
-            "SELECT identity, revision FROM lines"
-        )
-    }
-    aimed = aimed_triggers(projection, tuple(line.identity.qualified for line in lines))
-    rows: list[tuple[str, dict[str, Any]]] = []
-    for line in lines:
-        identity = line.identity.qualified
-        orient = state[identity]
-        rows.append(
-            (
-                identity,
-                {
-                    "name": line.identity.name,
-                    "procedure": orient.procedure,
-                    "authority": orient.authority,
-                    "lifecycle": orient.lifecycle,
-                    # Enabled: the Line's automation is admitting work now.
-                    "enabled": orient.arm in {"running", "stalled"},
-                    "triggers": [item.identity.qualified for item in aimed.get(identity, ())],
-                    "version": revisions.get(identity, 1),
-                },
-            )
-        )
-    return rows
+# -- filters ------------------------------------------------------------------------
 
 
 def _filter_value(kind: ListedKind, field: ListedField, value: object, path: str) -> str | bool:
@@ -201,21 +182,9 @@ def _filter_value(kind: ListedKind, field: ListedField, value: object, path: str
     return value
 
 
-def _cell_values(row: Mapping[str, Any], name: str) -> list[object]:
-    cell = row.get(name)
-    if cell is None:
-        return []
-    return list(cell) if isinstance(cell, list) else [cell]
-
-
-def _matcher(
-    kind: ListedKind, request: QueryRequest
-) -> tuple[Callable[[Mapping[str, Any]], bool], bool]:
-    """The row predicate ``where`` states, and whether it names a lifecycle."""
-
+def _checks(kind: ListedKind, request: QueryRequest) -> list[_Check]:
     fields = {item.column.name: item for item in _FIELDS[kind] if item.filterable}
-    checks: list[tuple[str, str, object]] = []
-    names_lifecycle = False
+    checks: list[_Check] = []
     for index, item in enumerate(request.where):
         path = f"where[{index}]"
         listed = fields.get(item.field)
@@ -238,8 +207,9 @@ def _matcher(
                 repair=f"use {' or '.join(sorted(allowed))}",
                 field_path=path,
             )
+        value: object
         if item.operator == "in":
-            value: object = tuple(
+            value = tuple(
                 _filter_value(kind, listed, entry, f"{path}.in")
                 for entry in cast(tuple[object, ...], item.value)
             )
@@ -247,21 +217,65 @@ def _matcher(
             value = str(item.value)
         else:
             value = _filter_value(kind, listed, item.value, f"{path}.{item.operator}")
-        names_lifecycle = names_lifecycle or item.field == "lifecycle"
-        checks.append((item.field, item.operator, value))
-    needle = None if request.contains is None else request.contains.casefold()
+        checks.append(_Check(item.field, item.operator, value))
+    return checks
+
+
+def _index_value(kind: ListedKind, field: str, value: object) -> object:
+    """A filter value as the typed-state index stores it."""
+
+    if field == "name":
+        return f"{kind}:{value}"
+    if field == "authority":
+        return _RUNG_OF[str(value)]
+    return value
+
+
+def _index_selection(
+    kind: ListedKind, checks: Sequence[_Check]
+) -> tuple[str, list[object], list[_Check]]:
+    """The SQL predicate the index answers, its parameters, and the checks left for rows."""
+
+    fields = {item.column.name: item for item in _FIELDS[kind]}
+    clauses: list[str] = []
+    parameters: list[object] = []
+    remaining: list[_Check] = []
+    for check in checks:
+        column = fields[check.field].index_column
+        if column is None or check.operator not in {"eq", "in"}:
+            remaining.append(check)
+            continue
+        values = cast(tuple[object, ...], check.value) if check.operator == "in" else (check.value,)
+        clauses.append(f"{column} IN ({','.join('?' * len(values))})")
+        parameters.extend(_index_value(kind, check.field, value) for value in values)
+    if not any(check.field == "lifecycle" for check in checks):
+        clauses.append("lifecycle='live'")
+    return " AND ".join(clauses), parameters, remaining
+
+
+def _cell_values(row: Mapping[str, Any], name: str) -> list[object]:
+    cell = row.get(name)
+    if cell is None:
+        return []
+    return list(cell) if isinstance(cell, list) else [cell]
+
+
+def _matcher(checks: Sequence[_Check], contains: str | None) -> Callable[[Mapping[str, Any]], bool]:
+    needle = None if contains is None else contains.casefold()
 
     def matches(row: Mapping[str, Any]) -> bool:
-        for name, operator, value in checks:
-            cell = _cell_values(row, name)
-            if operator == "eq":
-                matched = value in cell
-            elif operator == "ne":
-                matched = value not in cell
-            elif operator == "in":
-                matched = any(entry in cell for entry in cast(tuple[object, ...], value))
+        for check in checks:
+            cell = _cell_values(row, check.field)
+            if check.operator == "eq":
+                matched = check.value in cell
+            elif check.operator == "ne":
+                matched = check.value not in cell
+            elif check.operator == "in":
+                matched = any(entry in cell for entry in cast(tuple[object, ...], check.value))
             else:
-                matched = any(str(value).casefold() in str(entry).casefold() for entry in cell)
+                matched = any(
+                    str(check.value).casefold() in str(entry).casefold() for entry in cell
+                )
             if not matched:
                 return False
         if needle is not None:
@@ -269,7 +283,95 @@ def _matcher(
             return any(needle in text.casefold() for text in texts)
         return True
 
-    return matches, names_lifecycle
+    return matches
+
+
+# -- rows ---------------------------------------------------------------------------
+
+
+def _trigger_detail(trigger: Trigger) -> dict[str, Any]:
+    schedule = trigger.schedule
+    contract: str | None = None
+    if isinstance(schedule, CaptureLandingSchedule):
+        contract = schedule.event.capture_contract_identity.qualified
+    elif isinstance(schedule, WindowCloseSchedule) and isinstance(
+        schedule.window, CaptureEventWindow
+    ):
+        contract = schedule.window.event.capture_contract_identity.qualified
+    return {
+        "cron": schedule.expression if isinstance(schedule, CronSchedule) else None,
+        "cadence": schedule.interval_seconds if isinstance(schedule, CadenceSchedule) else None,
+        "capture_contract": contract,
+    }
+
+
+def _trigger_rows(
+    projection: Any, where: str, parameters: Sequence[object], *, detail: bool
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    cursor = projection.typed.connection.execute(
+        "SELECT identity, revision, schedule_kind, target_kind, target, lifecycle "
+        f"FROM triggers WHERE {where} ORDER BY identity",
+        tuple(parameters),
+    )
+    while chunk := cursor.fetchmany(_CHUNK):
+        for identity, revision, schedule, target_kind, target, lifecycle in chunk:
+            row: dict[str, Any] = {
+                "name": str(identity).removeprefix("Trigger:"),
+                "schedule": str(schedule),
+                "target_kind": str(target_kind),
+                "target": str(target),
+                "lifecycle": str(lifecycle),
+                "version": int(revision),
+            }
+            if detail:
+                row.update(_trigger_detail(cast(Trigger, projection.typed.source(str(identity)))))
+            yield str(identity), row
+
+
+def _line_rows(
+    instance: PlaybillInstance,
+    projection: Any,
+    where: str,
+    parameters: Sequence[object],
+    *,
+    evaluation_time: datetime,
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    from cruxible_core.service.discovery.operational import (
+        aimed_trigger_page,
+        line_arm_states,
+    )
+
+    cursor = projection.typed.connection.execute(
+        "SELECT identity, revision, procedure_identity, requested_terminal_rung, lifecycle, "
+        f"identity_digest FROM lines WHERE {where} ORDER BY identity",
+        tuple(parameters),
+    )
+    while chunk := cursor.fetchmany(_CHUNK):
+        identities = tuple(str(item[0]) for item in chunk)
+        aimed = aimed_trigger_page(projection, identities, limit=LINE_TRIGGER_NAMES_MAX)
+        # The Line's automation state, read from the dispatch store as orient reads it.
+        arms = line_arm_states(
+            instance, {str(item[0]): str(item[5]) for item in chunk}, now=evaluation_time
+        )
+        for identity, revision, procedure, rung, lifecycle, _digest in chunk:
+            name = str(identity)
+            yield (
+                name,
+                {
+                    "name": name.removeprefix("Line:"),
+                    "procedure": str(procedure),
+                    "authority": RUNG_AUTHORITY[max(int(rung), 1)],
+                    "lifecycle": str(lifecycle),
+                    # Enabled: the Line's automation is admitting work now.
+                    "enabled": arms.get(name) in {"running", "stalled"},
+                    "triggers": list(aimed[name].identities),
+                    "triggers_total": aimed[name].total,
+                    "version": int(revision),
+                },
+            )
+
+
+# -- shape --------------------------------------------------------------------------
 
 
 def _columns(kind: ListedKind, request: QueryRequest) -> tuple[QueryColumn, ...]:
@@ -292,12 +394,9 @@ def _columns(kind: ListedKind, request: QueryRequest) -> tuple[QueryColumn, ...]
     return tuple(chosen)
 
 
-def _ordered(
-    kind: ListedKind,
-    rows: list[tuple[str, dict[str, Any]]],
-    order_by: Sequence[str],
-) -> list[tuple[str, dict[str, Any]]]:
+def _order_names(kind: ListedKind, order_by: Sequence[str]) -> list[tuple[str, bool]]:
     names = [item.column.name for item in _FIELDS[kind]]
+    ordered: list[tuple[str, bool]] = []
     for index, raw in enumerate(order_by):
         name = raw.removeprefix("-").removeprefix("+")
         if name not in names:
@@ -308,14 +407,39 @@ def _ordered(
                 repair=f"order by one of {', '.join(names)}",
                 field_path=f"order_by[{index}]",
             )
-    for raw in reversed(order_by):
-        name = raw.removeprefix("-").removeprefix("+")
-        rows = sorted(
-            rows,
-            key=lambda item: str(item[1].get(name, "")),
-            reverse=raw.startswith("-"),
-        )
-    return rows
+        ordered.append((name, raw.startswith("-")))
+    return ordered
+
+
+def _sort_key(value: object) -> Any:
+    """A comparable key in the column's own type: numbers as numbers, lists element-wise."""
+
+    if isinstance(value, list):
+        return tuple(str(entry) for entry in value)
+    if isinstance(value, bool):
+        return int(value)
+    return value
+
+
+def ordered_rows(
+    rows: Sequence[tuple[str, Mapping[str, Any]]], order: Sequence[tuple[str, bool]]
+) -> list[tuple[str, Mapping[str, Any]]]:
+    """Rows sorted by each (column, descending) in turn: typed, nulls last, ties by identity."""
+
+    def compare(left: tuple[str, Mapping[str, Any]], right: tuple[str, Mapping[str, Any]]) -> int:
+        for name, descending in order:
+            first, second = left[1].get(name), right[1].get(name)
+            if first is None or second is None:
+                if first is None and second is None:
+                    continue
+                return 1 if first is None else -1
+            a, b = _sort_key(first), _sort_key(second)
+            if a != b:
+                result = -1 if a < b else 1
+                return -result if descending else result
+        return (left[0] > right[0]) - (left[0] < right[0])
+
+    return sorted(rows, key=functools.cmp_to_key(compare))
 
 
 def listed_kind_answer(
@@ -324,8 +448,12 @@ def listed_kind_answer(
     request: QueryRequest,
     *,
     evaluation_time: datetime,
+    max_results: int | None = None,
 ) -> ListedAnswer:
-    """Every Trigger or Line the request selects, at the coordinate, as compact rows."""
+    """The Triggers or Lines the request selects, at the coordinate, as compact rows."""
+
+    if max_results is None:
+        max_results = LISTING_MAX_RESULTS
 
     kind = cast(ListedKind, request.kind)
     if request.follow:
@@ -335,27 +463,34 @@ def listed_kind_answer(
             repair=f"drop follow; get the {kind}'s card for what it names",
             field_path="follow",
         )
-    matches, names_lifecycle = _matcher(kind, request)
+    checks = _checks(kind, request)
     columns = _columns(kind, request)
-    state: dict[str, OrientLine] = {}
-    if kind == "Line":
-        from cruxible_core.service.discovery.operational import line_rows
-
-        # Each Line's automation state, read from the dispatch store as orient reads it.
-        state = {
-            row.line: row
-            for row in line_rows(instance, coordinate, evaluation_time=evaluation_time)
-        }
+    order = _order_names(kind, request.order_by)
+    where, parameters, remaining = _index_selection(kind, checks)
+    matches = _matcher(remaining, request.contains)
+    detail_names = {item.column.name for item in _FIELDS[kind] if item.detail}
+    detail = request.contains is not None or bool(
+        detail_names & ({column.name for column in columns} | {name for name, _ in order})
+    )
+    kept: list[tuple[str, Mapping[str, Any]]] = []
+    capped = False
     with instance.bind_accepted_projection(coordinate) as projection:
-        candidates = (
-            _trigger_rows(projection) if kind == "Trigger" else _line_rows(projection, state)
+        rows = (
+            _trigger_rows(projection, where, parameters, detail=detail)
+            if kind == "Trigger"
+            else _line_rows(
+                instance, projection, where, parameters, evaluation_time=evaluation_time
+            )
         )
-    kept = [
-        (identity, row)
-        for identity, row in candidates
-        if (names_lifecycle or row["lifecycle"] == "live") and matches(row)
-    ]
-    kept = _ordered(kind, kept, request.order_by)
+        for identity, row in rows:
+            if not matches(row):
+                continue
+            if len(kept) == max_results:
+                capped = True
+                break
+            kept.append((identity, row))
+    if order:
+        kept = ordered_rows(kept, order)
     shown = {column.name for column in columns} | {"name"}
     spec_digest = typed_digest(
         Sha256Value,
@@ -368,12 +503,29 @@ def listed_kind_answer(
             "order_by": list(request.order_by),
         },
     ).tagged
+    cap: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+    if capped:
+        cap = (f"max_results={max_results}",)
+        notes = (
+            f"the answer hit the server cap {cap[0]}; rows past it are not listed; "
+            "narrow the query with where",
+        )
     return ListedAnswer(
         spec_digest=spec_digest,
         columns=columns,
         rows=[{name: value for name, value in row.items() if name in shown} for _, row in kept],
         keys=[(identity,) for identity, _ in kept],
+        capped=cap,
+        notes=notes,
     )
 
 
-__all__ = ["LISTED_KINDS", "ListedAnswer", "listed_kind_answer"]
+__all__ = [
+    "LINE_TRIGGER_NAMES_MAX",
+    "LISTED_KINDS",
+    "LISTING_MAX_RESULTS",
+    "ListedAnswer",
+    "listed_kind_answer",
+    "ordered_rows",
+]
