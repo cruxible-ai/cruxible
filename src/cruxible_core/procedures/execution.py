@@ -5062,28 +5062,28 @@ class ProcedureExecutor:
             raise _InternalFailure(
                 outcome.code or "provider_protocol_violation", details=outcome.detail
             ) from exc
-        # The budget refusal precedes the started event: an invocation is
-        # journaled as started only when a spawn follows, so a run out of time
-        # refuses with its budget code instead of an unmatched start.
         budget = occurrence.budget_translation
-        elapsed_microseconds = max(
-            0,
-            (self.clock.monotonic_ns() - state.run_started_monotonic_ns) // 1000,
-        )
-        remaining_run_microseconds = max(
-            0,
-            admission.budget.wall_clock.microseconds - elapsed_microseconds,
-        )
-        effective_wall_clock_seconds = min(
-            float(budget.runtime_wall_clock_seconds),
-            remaining_run_microseconds / 1_000_000,
-        )
-        if effective_wall_clock_seconds <= 0:
-            raise _RunRefusal(
-                "budget_wall_clock",
-                "No Procedure wall-clock budget remains before Provider spawn.",
-                node_id=node_id,
+        no_budget_message = "No Procedure wall-clock budget remains before Provider spawn."
+
+        def effective_wall_clock_seconds() -> float:
+            """The Provider's window: its own cap, clipped to what the run has left now."""
+            elapsed_microseconds = max(
+                0,
+                (self.clock.monotonic_ns() - state.run_started_monotonic_ns) // 1000,
             )
+            remaining_run_microseconds = max(
+                0,
+                admission.budget.wall_clock.microseconds - elapsed_microseconds,
+            )
+            return min(
+                float(budget.runtime_wall_clock_seconds),
+                remaining_run_microseconds / 1_000_000,
+            )
+
+        # A run already out of time refuses before anything is journaled, so no
+        # start is recorded for an invocation that never spawns.
+        if effective_wall_clock_seconds() <= 0:
+            raise _RunRefusal("budget_wall_clock", no_budget_message, node_id=node_id)
         started = ProviderInvocationStarted(
             invocation_id=invocation_id,
             occurrence_path=occurrence.occurrence_path,
@@ -5099,30 +5099,36 @@ class ProcedureExecutor:
             started.model_dump(mode="json"),
         )
         state.provider_invocations_started += 1
-        context = ProviderRuntimeRunContextV1(
-            protocol_version=occurrence.local_execution.protocol_version,
-            run_id=admission.run_id,
-            interface_id=occurrence.interface_id,
-            interface_digest=occurrence.interface_digest,
-            implementation_digest=occurrence.implementation_digest,
-            entrypoint=occurrence.local_execution.entrypoint,
-            coordinates={
-                "accepted_coordinate": admission.accepted_coordinate.model_dump(mode="json"),
-                "occurrence_path": occurrence.occurrence_path,
-                "invocation_id": invocation_id,
-            },
-            input=payload,
-            input_bucket=measured_bucket,
-            capture_contract=occurrence.capture_contract_digest,
-            budgets=ProviderRuntimeBudgetsV1(
-                wall_clock_seconds=effective_wall_clock_seconds,
-                output_bytes=budget.runtime_output_bytes_cap,
-                cost_units=None,
-            ),
-            declared_endpoints=occurrence.local_execution.declared_endpoints,
-        )
+        # The durable start write takes time too: the window is measured again
+        # immediately before spawn. With nothing left the Provider never spawns,
+        # and the start is closed by a matching completion carrying the refusal.
+        wall_clock_seconds = effective_wall_clock_seconds()
         driver_result: ProviderDriverOutcomeV1 | None = None
         try:
+            if wall_clock_seconds <= 0:
+                raise ProviderLocalRuntimeRefused("budget_wall_clock", no_budget_message)
+            context = ProviderRuntimeRunContextV1(
+                protocol_version=occurrence.local_execution.protocol_version,
+                run_id=admission.run_id,
+                interface_id=occurrence.interface_id,
+                interface_digest=occurrence.interface_digest,
+                implementation_digest=occurrence.implementation_digest,
+                entrypoint=occurrence.local_execution.entrypoint,
+                coordinates={
+                    "accepted_coordinate": admission.accepted_coordinate.model_dump(mode="json"),
+                    "occurrence_path": occurrence.occurrence_path,
+                    "invocation_id": invocation_id,
+                },
+                input=payload,
+                input_bucket=measured_bucket,
+                capture_contract=occurrence.capture_contract_digest,
+                budgets=ProviderRuntimeBudgetsV1(
+                    wall_clock_seconds=wall_clock_seconds,
+                    output_bytes=budget.runtime_output_bytes_cap,
+                    cost_units=None,
+                ),
+                declared_endpoints=occurrence.local_execution.declared_endpoints,
+            )
             driver_result = self.provider_runtime_invoker.invoke_provider(
                 occurrence=occurrence,
                 context=context,

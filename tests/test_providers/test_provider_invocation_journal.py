@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 from pydantic import ValidationError
@@ -1190,22 +1189,52 @@ def test_provider_call_budget_subtracts_elapsed_run_time_at_each_spawn(tmp_path:
     assert invoker.wall_windows == [pytest.approx(admitted_window - 0.4)]
 
 
-def test_a_run_out_of_time_before_spawn_refuses_without_journaling_a_start(
-    tmp_path: Path,
-) -> None:
-    class _SpentClock(_ElapsedClock):
-        """No time passes anywhere except at the Provider spawn's budget check."""
+class _SteppedClock(_ElapsedClock):
+    """Time moves only when a test advances it."""
 
-        def monotonic_ns(self) -> int:
-            spawning = sys._getframe(1).f_code.co_name == "_invoke_provider_v4"
-            return 10**15 if spawning else 0
+    def __init__(self) -> None:
+        super().__init__()
+        self.elapsed_ns = 0
+
+    def monotonic_ns(self) -> int:
+        return self.elapsed_ns
+
+
+def _run_with_time_passing(
+    tmp_path: Path, *, at_bind: float = 0.0, during_start_append: float = 0.0
+) -> tuple[Any, Any, Any, _Invoker, list[float]]:
+    """Run one Provider call, spending fractions of the run budget at two moments.
+
+    ``at_bind`` passes while the Provider is bound, before anything is journaled;
+    ``during_start_append`` passes while the durable start record is written.
+    """
 
     accepted = _accepted_one_provider()
     prepared, fixture = _prepared_v5(accepted, tmp_path)
+    run_budget_ns = prepared.admission.budget.wall_clock.microseconds * 1000
+    clock = _SteppedClock()
+    windows: list[float] = []
+
+    class _Binding(_Invoker):
+        def bind_provider(self, *, occurrence):  # type: ignore[no-untyped-def]
+            clock.elapsed_ns += round(run_budget_ns * at_bind)
+            return super().bind_provider(occurrence=occurrence)
+
+        def invoke_provider(self, **kwargs):  # type: ignore[no-untyped-def]
+            windows.append(kwargs["context"].budgets.wall_clock_seconds)
+            return super().invoke_provider(**kwargs)
+
+    class _SlowStartJournal(ProcedureExecutor):
+        def _append_event(self, admission, records, event_kind, payload):  # type: ignore[no-untyped-def]
+            appended = super()._append_event(admission, records, event_kind, payload)
+            if event_kind == "provider_invocation_started":
+                clock.elapsed_ns += round(run_budget_ns * during_start_append)
+            return appended
+
     registry = ProviderBucketClassifierRegistry()
     install_demo_classifier(registry)
-    invoker = _Invoker()
-    result = ProcedureExecutor(
+    invoker = _Binding()
+    result = _SlowStartJournal(
         journal=fixture.journal,
         bodies=fixture.bodies,
         run_index=fixture.run_index,
@@ -1214,19 +1243,63 @@ def test_a_run_out_of_time_before_spawn_refuses_without_journaling_a_start(
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
         provider_classifier_registry=registry,
-        clock=_SpentClock(),
+        clock=clock,
     ).execute(prepared, accepted)
+    return result, prepared, fixture, invoker, windows
+
+
+def _event_kinds(prepared: Any, fixture: Any) -> list[str]:
+    records = fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    return [item.record.event_kind for item in records]
+
+
+def test_a_run_out_of_time_before_spawn_refuses_without_journaling_a_start(
+    tmp_path: Path,
+) -> None:
+    result, prepared, fixture, invoker, _ = _run_with_time_passing(tmp_path, at_bind=1.5)
 
     # The budget refusal surfaces as itself, not as provider_completion_not_durable.
     assert result.status == "refused"
     assert result.refusal is not None and result.refusal.code == "budget_wall_clock"
     assert invoker.calls == []
-    records = fixture.journal.all_records(
-        prepared.admission.journal_stream,
-        prepared.admission.journal_partition_id,
+    assert "provider_invocation_started" not in _event_kinds(prepared, fixture)
+
+
+def test_a_start_append_that_spends_the_budget_closes_the_start_without_spawning(
+    tmp_path: Path,
+) -> None:
+    result, prepared, fixture, invoker, _ = _run_with_time_passing(
+        tmp_path, during_start_append=1.5
     )
-    kinds = [item.record.event_kind for item in records]
-    assert "provider_invocation_started" not in kinds
+
+    # The start is durable, so it is closed by a matching completion that carries
+    # the budget refusal; the Provider never runs after the deadline.
+    assert invoker.calls == []
+    assert result.status == "refused"
+    assert result.refusal is not None and result.refusal.code == "budget_wall_clock"
+    kinds = _event_kinds(prepared, fixture)
+    assert kinds.count("provider_invocation_started") == 1
+    assert kinds.count("provider_invocation_completed") == 1
+
+
+def test_a_start_append_that_spends_part_of_the_budget_shrinks_the_provider_window(
+    tmp_path: Path,
+) -> None:
+    result, prepared, _, invoker, windows = _run_with_time_passing(
+        tmp_path, at_bind=0.25, during_start_append=0.5
+    )
+
+    assert result.status == "succeeded"
+    assert len(invoker.calls) == 1
+    run_seconds = prepared.admission.budget.wall_clock.microseconds / 1_000_000
+    provider_cap = prepared.acquisition_plan.external_occurrences[
+        0
+    ].budget_translation.runtime_wall_clock_seconds
+    # Measured after the start record, not before it.
+    assert windows == [pytest.approx(min(provider_cap, run_seconds * 0.25))]
 
 
 @pytest.mark.parametrize(
