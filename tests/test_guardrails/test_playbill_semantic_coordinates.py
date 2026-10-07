@@ -20,6 +20,7 @@ from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     ATTESTATION_ACCEPTANCE_LAW,
     AUTHORITY_VERBS_UPGRADE_LAW,
+    BLUEPRINT_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW,
     CLAIM_EVIDENCE_UPGRADE_LAW,
@@ -118,6 +119,13 @@ LAW_COORDINATES: tuple[
         "playbill-line-v6",
         1,
         "sha256:4e145cfe2c8250d7851d9383137686cc6591d2b5219cd12b18e271db555b3b97",
+    ),
+    (
+        BLUEPRINT_ACCEPTANCE_LAW,
+        "cruxible.blueprint.v1",
+        "cruxible-blueprint-v1",
+        1,
+        "sha256:b6380980932c72385339216581694936da573292d3712dcf57f927e2aa67dd71",
     ),
     (
         TRIGGER_ACCEPTANCE_LAW,

@@ -615,7 +615,9 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
     runner = CliRunner()
     help_result = runner.invoke(cli, ["authoring", "example", "--help"])
     assert help_result.exit_code == 0
-    assert "Input kind family: claim | procedure | subject | query_definition" in help_result.output
+    assert "Input kind family: claim | procedure | blueprint | blueprint_instance" in (
+        help_result.output
+    )
     # Click wraps the family list, so read it as a list rather than by substring:
     # a bare `claim_retirement` was satisfied by the sentence *below* the list.
     unwrapped = " ".join(help_result.output.split())
@@ -632,6 +634,8 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
         "line",
         "trigger",
         "procedure",
+        "blueprint",
+        "blueprint_instance",
     ]
     assert (
         "approval_policy and procedure_runtime_policy are the reverse: the member union "

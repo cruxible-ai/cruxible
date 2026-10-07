@@ -605,6 +605,15 @@ LINE_V6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="line",
     artifact_tag="playbill-line-v6",
 )
+# A Blueprint keeps stable identity and types every open slot by an accepted
+# ProviderInterface; it never runs, so it needs no runtime closure.
+BLUEPRINT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.blueprint.v1", "cruxible-blueprint-v1", semantic_revision=1
+    ),
+    artifact_kind="blueprint",
+    artifact_tag="cruxible-blueprint-v1",
+)
 # A Trigger aims at a live Line that accepts its event, or at an internal
 # action on a cadence; a retired Trigger is never revived.
 TRIGGER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
@@ -793,6 +802,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
         PROCEDURE_V2_ACCEPTANCE_LAW,
         LINE_V6_ACCEPTANCE_LAW,
+        BLUEPRINT_ACCEPTANCE_LAW,
         TRIGGER_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         PROVIDER_V2_ACCEPTANCE_LAW,
@@ -810,6 +820,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
 
 __all__ = [
     "AcceptanceLawRegistry",
+    "BLUEPRINT_ACCEPTANCE_LAW",
     "APPROVAL_POLICY_ACCEPTANCE_LAW",
     "APPROVAL_POLICY_LAW",
     "APPROVAL_POLICY_LAW_IDENTIFIER",

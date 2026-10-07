@@ -34,6 +34,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
+from cruxible_client.contracts.procedures.closure import ProcedureSlotBinding
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
@@ -121,10 +122,9 @@ def _owned_contract_key(contract: ProcedureOwnedContract) -> bytes:
     return canonical_bytes(contract.model_dump(mode="json", by_alias=True))
 
 
-class ProcedureArtifact(_StrictProcedureArtifactModel):
-    """Procedure envelope whose Contract closure rides with its owner."""
+class _GraphEnvelope(_StrictProcedureArtifactModel):
+    """What a Procedure and a Blueprint share: one graph and the Contracts it carries."""
 
-    artifact_format: Literal["playbill-procedure-v2"] = "playbill-procedure-v2"
     identity: ArtifactIdentity
     definition: ProcedureDefinition
     definition_digest: str
@@ -165,17 +165,14 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
             raise ValueError("owned Contracts must be unique by digest")
         return value
 
-    @model_validator(mode="after")
-    def _correspondence(self) -> "ProcedureArtifact":
-        if self.identity.kind != "Procedure" or not _PROCEDURE_NAME_RE.fullmatch(
-            self.identity.name
-        ):
-            raise ValueError("Procedure identity must be path-addressable")
+    def _check_envelope(self, kind: str) -> None:
+        if self.identity.kind != kind or not _PROCEDURE_NAME_RE.fullmatch(self.identity.name):
+            raise ValueError(f"{kind} identity must be path-addressable")
         if self.definition.name != self.identity.name:
-            raise ValueError("Procedure definition name must match stable artifact identity")
+            raise ValueError(f"{kind} definition name must match stable artifact identity")
         expected = compute_procedure_definition_digest(self.definition).tagged
         if self.definition_digest != expected:
-            raise ValueError("Procedure definition_digest does not reproduce its graph format")
+            raise ValueError(f"{kind} definition_digest does not reproduce its graph format")
         declared_exact = {
             (pin.role, pin.target.qualified, pin.artifact_digest) for pin in self.pins
         }
@@ -189,15 +186,11 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
             for binding in referenced_bindings
         }
         if not referenced_exact.issubset(declared_exact):
-            raise ValueError("Procedure definition contains exact pins absent from its envelope")
+            raise ValueError(f"{kind} definition contains exact pins absent from its envelope")
         declared_slots = {slot.slot_name for slot in self.definition.pin_slots}
-        referenced_slots = {
-            binding.slot_name
-            for binding in iter_pin_bindings(self.definition)
-            if isinstance(binding, ProcedurePinSlotRef)
-        }
+        referenced_slots = set(self.definition.open_slots)
         if not referenced_slots.issubset(declared_slots):
-            raise ValueError("Procedure definition references undeclared slots")
+            raise ValueError(f"{kind} definition references undeclared slots")
 
         contracts = {
             contract.identity.qualified: procedure_owned_contract_digest(contract).tagged
@@ -213,14 +206,80 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
             (binding.target.qualified, binding.artifact_digest) for binding in referenced_contracts
         }
         if referenced_contract_keys != set(contracts.items()):
-            raise ValueError("every owned Contract must be referenced exactly by the Procedure")
+            raise ValueError(f"every owned Contract must be referenced exactly by the {kind}")
         declared_contract_keys = {
             (pin.target.qualified, pin.artifact_digest)
             for pin in self.pins
             if pin.target.kind == "Contract"
         }
         if declared_contract_keys != referenced_contract_keys:
-            raise ValueError("Procedure envelope contains an unreferenced Contract pin")
+            raise ValueError(f"{kind} envelope contains an unreferenced Contract pin")
+
+
+class BlueprintOrigin(_StrictProcedureArtifactModel):
+    """The Blueprint a Procedure was instantiated from, and the Provider bound per slot."""
+
+    tag: Literal["cruxible-blueprint-origin-v1"] = "cruxible-blueprint-origin-v1"
+    blueprint: ArtifactPin
+    bindings: tuple[ProcedureSlotBinding, ...]
+
+    @model_validator(mode="after")
+    def _shape(self) -> "BlueprintOrigin":
+        if self.blueprint.role != "blueprint" or self.blueprint.target.kind != "Blueprint":
+            raise ValueError("a Blueprint origin pins its Blueprint with role blueprint")
+        names = tuple(item.slot_name for item in self.bindings)
+        if not names or names != tuple(sorted(set(names), key=lambda item: item.encode())):
+            raise ValueError("Blueprint bindings must be nonempty, sorted and unique by slot")
+        for item in self.bindings:
+            if item.artifact_pin.target.kind != "Provider" or item.artifact_pin.role != "provider":
+                raise ValueError("a Blueprint slot binds one exact Provider")
+        return self
+
+
+class ProcedureArtifact(_GraphEnvelope):
+    """Procedure envelope whose Contract closure rides with its owner.
+
+    ``blueprint`` records the Blueprint it was instantiated from and the exact
+    Provider bound to each slot; it is provenance, not a dependency.
+    """
+
+    artifact_format: Literal["playbill-procedure-v2"] = "playbill-procedure-v2"
+    blueprint: BlueprintOrigin | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> "ProcedureArtifact":
+        self._check_envelope("Procedure")
+        return self
+
+
+class BlueprintArtifact(_GraphEnvelope):
+    """A Procedure skeleton: the same definition with interface-typed Provider slots open.
+
+    Not runnable. Instantiating it binds one compatible accepted Provider per
+    slot and yields an ordinary Procedure that records this Blueprint and its
+    bindings.
+    """
+
+    artifact_format: Literal["cruxible-blueprint-v1"] = "cruxible-blueprint-v1"
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> "BlueprintArtifact":
+        self._check_envelope("Blueprint")
+        slots = {slot.slot_name: slot for slot in self.definition.pin_slots}
+        if not slots:
+            raise ValueError("a Blueprint declares at least one open Provider slot")
+        if set(self.definition.open_slots) != set(slots):
+            raise ValueError("every declared Blueprint slot must be used by a node")
+        for slot in slots.values():
+            if slot.artifact_kind != "Provider" or slot.pin_role != "provider":
+                raise ValueError("a Blueprint slot is an interface-typed Provider slot")
+        provider_slots = {
+            getattr(occurrence, "provider").slot_name
+            for _occurrence_id, occurrence in provider_occurrences(self.definition)
+            if isinstance(getattr(occurrence, "provider"), ProcedurePinSlotRef)
+        }
+        if provider_slots != set(slots):
+            raise ValueError("Blueprint slots stand only in Provider positions")
         return self
 
 

@@ -286,6 +286,8 @@ AuthoringExampleName = Literal[
     "claim-exact-content",
     "claim-revision",
     "procedure",
+    "blueprint",
+    "blueprint-instance",
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",

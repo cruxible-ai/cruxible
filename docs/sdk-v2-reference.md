@@ -24,7 +24,7 @@ provider contracts, and execution surfaces remain in use.
 - [Typed host execution](#typed-host-execution)
 - [Lifecycle and execution boundary](#lifecycle-and-execution-boundary)
 - [Procedure declaration](#procedure-declaration)
-- [ProcedureBlueprint](#procedureblueprint)
+- [ProcedureSource](#proceduresource)
 - [Bindings and provider selection](#bindings-and-provider-selection)
 - [Python source language](#python-source-language)
 - [Typed state access](#typed-state-access)
@@ -70,7 +70,7 @@ ordinary Python objects whose methods execute during authoring.
 | Name | Role | Availability |
 |---|---|---|
 | `procedure` | Decorate a literal Procedure definition. | Implemented; signature below. |
-| `ProcedureBlueprint` | Immutable source and binding selection; preview/build operations. | Implemented host object. |
+| `ProcedureSource` | Immutable source and binding selection; preview/build operations. | Implemented host object. |
 | `ProcedureWorld`, `ProcedureSubject`, `ClaimSelection[T]`, `ProcedureClaim[T]` | Typed, admitted-state expressions using the existing ontology. | Symbolic compiler interfaces; not separately instantiated Python classes. |
 | `query`, `ProcedureQueryResult` | Named-query state tap and structured result. | Source intrinsic and result adapter. |
 | `call` | Invoke a contracted provider operation. | Source intrinsic over Call semantics. |
@@ -81,7 +81,7 @@ ordinary Python objects whose methods execute during authoring.
 | `invoke`, `InvocationOutcome[T]` | Invoke an exact accepted child Procedure. | Implemented sequential child execution. |
 | `parallel` | Concurrent independent branches with a join. | Reserved sketch; no final callable signature or default failure policy. |
 | `ProcedurePreview`, `CompositionDiagnostic`, `ProcedureCompositionError` | Existing inspection/error types extended with source information. | Shared public inspection/error types; extended with source information. |
-| `Cruxible.procedure(definition=...)` | Consume a `ProcedureBlueprint` as well as the existing input forms. | Implemented overload; returns the existing `ProcedureDraft`. |
+| `Cruxible.procedure(definition=...)` | Consume a `ProcedureSource` as well as the existing input forms. | Implemented overload; returns the existing `ProcedureDraft`. |
 | `Contract.value`, `bindings.<slot>.input`, `bindings.<query>.parameters` | Construct schema-defined records. | Contract-derived constructors; not executable user helpers. |
 | Typed `Procedure.input/run` | Construct host invocation values. | Typed adapters over existing definition reads and execution services. |
 
@@ -285,7 +285,8 @@ procedure(
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot",
     acquisition_policy: str | None = None,
     description: str | None = None,
-) -> decorator producing ProcedureBlueprint
+    slots: Mapping[str, str] | None = None,
+) -> decorator producing ProcedureSource
 ```
 
 | Argument | Required/default | Meaning and validation |
@@ -298,6 +299,7 @@ procedure(
 | `activation_policy` | `"snapshot"` | Existing lifecycle behavior; values retain their current meanings. |
 | `acquisition_policy` | `None` | Accepted acquisition policy when needed by Source operations. Missing required policy prevents readiness. |
 | `description` | `None` | Optional human description retained with the definition. |
+| `slots` | `None` | Open Provider slots: binding name -> ProviderInterface name. Each must be used as `bindings.<slot>` in `source(...)`/`call(...)`. While any slot is unbound the source builds a **Blueprint** (a skeleton that never runs); bind every slot with `bind(slot=cx.provider_interface(...))` and it builds a Procedure. |
 
 A Procedure's authority is not an argument: it is the most its terminals and
 invoked children can do (`observe`, `propose` or `settle`), and previews report it
@@ -311,7 +313,7 @@ supported subset. The host decorator arguments supply metadata and contracts;
 source compilation does not execute arbitrary decorator argument expressions in
 the daemon.
 
-**Returns:** a `ProcedureBlueprint`; no run, draft, or proposal is created.
+**Returns:** a `ProcedureSource`; no run, draft, or proposal is created.
 Calling the resulting object as an ordinary function is an error directing the
 author to preview/build or to invoke an accepted Procedure.
 
@@ -325,7 +327,7 @@ An undecorated helper defined by the author is not automatically compiled when
 called from a Procedure. Use a documented intrinsic, a contracted provider, or
 an explicitly accepted child Procedure.
 
-## ProcedureBlueprint
+## ProcedureSource
 
 ### Readable properties
 
@@ -342,11 +344,23 @@ decorator; reading a property has no network or execution effect.
 | `activation_policy` | Existing literal union | Declared activation policy. |
 | `acquisition_policy`, `description` | `str \| None` | Optional definition metadata. |
 | `bindings` | Readonly mapping of slot name to `BindingValue` | Explicit selections currently supplied; an absent slot remains unbound. |
+| `slots`, `open_slots`, `is_blueprint` | Mapping / tuple / bool | Declared Provider slots, those still unbound, and whether `build()` yields a Blueprint. |
+
+### Blueprints
+
+A Blueprint is a Procedure definition whose interface-typed Provider slots stay
+open; it is accepted like any definition but never runs. `cx.procedure(definition=source)`
+on a source with open slots authors one (`BlueprintInput`, kind `blueprint`).
+`cruxible get Blueprint:<name>` previews instantiation: each slot's interface and
+the installed Providers that fit it. Instantiate with
+`cx.procedure(definition=BlueprintInstanceInput(kind="blueprint_instance", name=..., blueprint=..., bindings={slot: provider}))`:
+lowering checks each binding against its slot's interface and writes an ordinary
+Procedure that records its Blueprint and bindings.
 
 ### `bind`
 
 ```text
-bind(**bindings: BindingValue) -> ProcedureBlueprint
+bind(**bindings: BindingValue) -> ProcedureSource
 ```
 
 Returns a new blueprint with the named selections. Unmentioned selections are
@@ -398,7 +412,7 @@ substitute for admission. The accepted graph retains `definition.source`.
 ```text
 cx.procedure(
     *,
-    definition: ProcedureInput | Sequence | ProcedureBlueprint,
+    definition: ProcedureInput | Sequence | ProcedureSource,
 ) -> ProcedureDraft
 ```
 
@@ -416,7 +430,7 @@ from its uses and requires them to be consistent.
 
 | Source use | Required binding | Selection operation in host code |
 |---|---|---|
-| `call(bindings.normalize, ...)` | `ProviderBinding` for the compatible Call interface | `cx.provider_binding(interface, provider=...)` |
+| `call(bindings.normalize, ...)` | `ProviderBinding` for the compatible Call interface | `cx.provider_interface(interface, provider=...)` |
 | `source(bindings.fetch, ...)` | `ProviderBinding` for a Source-compatible acquisition interface | Same accepted provider discovery operation. |
 | `query(bindings.exposures, ...)` | `QueryRef` | `cx.get("query:NAME").ref`; the `QueryRef` is resolved at binding. |
 | `invoke(bindings.observer, ...)` | `ProcedureRef` | `cx.accepted_procedure(name).ref` |
@@ -429,7 +443,7 @@ validated at execution even if static compatibility passed.
 
 ```python
 # Existing provider discovery; source-blueprint .bind is PROPOSED.
-fetch = cx.provider_binding("web.fetch", provider="web")
+fetch = cx.provider_interface("web.fetch", provider="web")
 bound = observe_http.bind(fetch=fetch)
 preview = bound.preview(world=cx.world())
 intent = cx.procedure(definition=bound).prepare()
@@ -1465,7 +1479,7 @@ def observe_feed(request, bindings):
 ```python
 # Bind the accepted provider interface:
 bound_observer = observe_feed.bind(
-    fetch=cx.provider_binding("web.fetch", provider="web"),
+    fetch=cx.provider_interface("web.fetch", provider="web"),
 )
 observer_preview = bound_observer.preview(world=cx.world())
 observer_intent = cx.procedure(definition=bound_observer).prepare()
@@ -1671,7 +1685,7 @@ def convert_advisory(request, bindings):
 from base64 import b64encode
 
 bound_converter = convert_advisory.bind(
-    converter=cx.provider_binding("doc.to_markdown", provider="docs"),
+    converter=cx.provider_interface("doc.to_markdown", provider="docs"),
 )
 converter_preview = bound_converter.preview(world=cx.world())
 converter_intent = cx.procedure(definition=bound_converter).prepare()

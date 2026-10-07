@@ -30,7 +30,10 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import FormatError
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedure,
+    provider_occurrences,
+)
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.procedures.models import (
     ExhaustTapNode,
@@ -132,11 +135,35 @@ def line_slot_interface_digest(
 ) -> str:
     """Digest the nominal interface surface this LineSpec closed.
 
-    Only slots the LineSpec actually binds contribute, and only their declared
+    Only the slots the Procedure's Blueprint bound contribute, and only their
     role/kind/interface, never the implementation bound into them.
     """
 
     surface: list[dict[str, str]] = []
+    origin = accepted_procedure.procedure.blueprint
+    for binding in () if origin is None else origin.bindings:
+        interface_digest = next(
+            (
+                str(getattr(occurrence, "interface_digest"))
+                for _occurrence_id, occurrence in provider_occurrences(
+                    accepted_procedure.procedure.definition
+                )
+                if getattr(occurrence, "provider") == binding.artifact_pin
+            ),
+            None,
+        )
+        if interface_digest is None:
+            raise LineTrackRecordError(
+                f"Blueprint slot {binding.slot_name!r} binds no Provider occurrence"
+            )
+        surface.append(
+            {
+                "artifact_kind": "Provider",
+                "interface_digest": interface_digest,
+                "pin_role": "provider",
+                "slot_name": binding.slot_name,
+            }
+        )
     surface.sort(key=lambda item: item["slot_name"].encode("utf-8"))
     return typed_digest(
         Sha256Value,

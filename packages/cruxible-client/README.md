@@ -1061,7 +1061,7 @@ Records operational suppression of matching open work for the requested scope an
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-provider_binding(interface: str, *, provider: str | None=None) -> ProviderBinding
+provider_interface(interface: str, *, provider: str | None=None) -> ProviderBinding
 ```
 
 Discovers one accepted interface and selects one registered implementation.
@@ -3229,7 +3229,7 @@ when diagnostics remain. Unbound providers are errors, not hidden defaults.
 Bounded Repeat is available in shared ProcedureInput but has no Sequence step
 class. Current Sequence has no general value-merge, nested invoke, recursion, or
 parallel execution. Python source compiles through `@procedure` /
-`ProcedureBlueprint` in `cruxible_client.authoring.source`, not through Sequence. StateTap binds at admission;
+`ProcedureSource` in `cruxible_client.authoring.source`, not through Sequence. StateTap binds at admission;
 Source requests can depend on prior runtime outputs. Graph legality does not
 promise availability in every run lane.
 

@@ -387,7 +387,7 @@ proposal and activation, plus any candidate-committed approval requirements.
 
 The implemented authoring API accepts a `ProcedureInput` or a typed `Sequence`
 from `cruxible_client.authoring.procedures`. Sequence supports blueprint-first
-composition, accepted provider selection with `cx.provider_binding(...)`,
+composition, accepted provider selection with `cx.provider_interface(...)`,
 immutable `.bind(...)`, and a structured `.preview()` before preparation.
 `cx.procedure(definition=blueprint).prepare()` uses the same authoring lifecycle
 as other definitions. Preview does not invoke providers or grant authority.
@@ -408,7 +408,7 @@ can report capture/proposal terminals as unsupported because those require the
 Line lane. Use `cx.run_line(...)` for an accepted, authorized Line occurrence.
 
 Retained Python source works today: decorate a function with `@procedure` from
-`cruxible_client.authoring.source` to get a `ProcedureBlueprint`, then
+`cruxible_client.authoring.source` to get a `ProcedureSource`, then
 `preview(world=...)` or `build(world=...)` it. The
 [SDK v2 reference proposal](sdk-v2-reference.md) also describes further forms
 (typed field reads inside Procedures, branch-value merging, composition); check

@@ -56,6 +56,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_runnability,
 )
+from cruxible_client.contracts.procedures.blueprints import parse_blueprint
 from cruxible_client.contracts.procedures.line_specs import (
     line_identity_digest,
     line_requested_rung,
@@ -191,6 +192,16 @@ OWNER_CODECS = (
                 "TEXT NOT NULL CHECK(activation_policy IN ('drain','abort','snapshot','epoch-check'))",
             ),
             ("runnable", "TEXT NOT NULL CHECK(runnable IN ('direct','line','unsupported'))"),
+        ),
+    ),
+    OwnerCodec(
+        "blueprint",
+        "Blueprint",
+        "blueprints",
+        parse_blueprint,
+        (
+            ("definition_digest", "TEXT NOT NULL"),
+            ("slot_count", "INTEGER NOT NULL CHECK(slot_count>=1)"),
         ),
     ),
     OwnerCodec(
@@ -565,6 +576,8 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
             definition_format=str(source.definition.graph_format),
             runnable=procedure_runnability(source.definition)[0],
         )
+    if owner.kind == "blueprint":
+        result["slot_count"] = len(source.definition.pin_slots)
     if owner.kind in ("line", "procedure-mandate"):
         result.update(
             procedure_identity=source.procedure.target.qualified,

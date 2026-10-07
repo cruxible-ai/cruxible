@@ -212,6 +212,7 @@ GOVERNED_TRIGGERS_ARTIFACT_KINDS = ArtifactKindRegistry(
     (
         *AUTHORITY_VERBS_ARTIFACT_KINDS.entries(),
         ArtifactPathKind("trigger", re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")),
+        ArtifactPathKind("blueprint", re.compile(r"^blueprints/[a-z][a-z0-9_.-]{0,255}\.json$")),
     )
 )
 _REVISION_31_AND_LATER = (AUTHORITY_VERBS_ARTIFACT_KINDS, GOVERNED_TRIGGERS_ARTIFACT_KINDS)
@@ -222,6 +223,7 @@ RegisteredPathKind = Literal[
     "resolution-contract",
     "attestation",
     "approval-policy",
+    "blueprint",
     "procedure-runtime-policy",
     "capture-contract",
     "changeset",
@@ -672,6 +674,50 @@ def parse_projection_tree(
                             artifact_digest=digest,
                         ),
                     )
+                )
+                continue
+            if kind == "blueprint":
+                from cruxible_client.contracts.procedures.blueprints import (
+                    blueprint_digest,
+                    parse_blueprint,
+                )
+                from cruxible_client.contracts.procedures.source_compiler import (
+                    verify_source_graph,
+                )
+
+                blueprint = parse_blueprint(content, path=path, codec=artifact_codec)
+                verify_source_graph(blueprint)
+                identity = blueprint.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                digest = blueprint_digest(blueprint).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity,
+                        kind,
+                        blueprint.artifact_format,
+                        path,
+                        digest,
+                        blueprint.lifecycle.predecessor_digest,
+                        projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=file_digest(content).tagged,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                if blueprint.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                        role=pin.role,
+                    )
+                    for pin in blueprint.pins
                 )
                 continue
             if kind == "trigger":

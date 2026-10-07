@@ -166,7 +166,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                 ),
             )
 
-        observer = observer.bind(fetch=pb.provider_binding("web.fetch"))
+        observer = observer.bind(fetch=pb.provider_interface("web.fetch"))
         authored = observer.build(world=pb.world())
         assert "sha256:" not in authored.model_dump_json()
         preview = observer.preview(world=pb.world())

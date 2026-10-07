@@ -48,6 +48,25 @@ class SourceProviderBinding(_Closed):
     )(lambda value: ArtifactDigest.from_tagged(value).tagged)
 
 
+class SourceSlotBinding(_Closed):
+    """An open Provider slot: the interface it needs, no implementation chosen.
+
+    Source that uses one compiles to a Blueprint; instantiating the Blueprint
+    replaces it with a ``SourceProviderBinding`` and compiles again.
+    """
+
+    kind: Literal["slot"] = "slot"
+    interface: str
+    interface_version: str
+    interface_digest: str
+    effect_class: Literal["none", "external_read", "external_mutation"]
+    operation: ProviderOperationContract
+
+    _versions = field_validator("interface_version", "interface_digest")(
+        lambda value: ArtifactDigest.from_tagged(value).tagged
+    )
+
+
 class SourceQueryBinding(_Closed):
     kind: Literal["query"] = "query"
     name: str
@@ -70,7 +89,7 @@ class SourceProcedureBinding(_Closed):
 
 
 SourceBinding = Annotated[
-    SourceProviderBinding | SourceQueryBinding | SourceProcedureBinding,
+    SourceProviderBinding | SourceSlotBinding | SourceQueryBinding | SourceProcedureBinding,
     Field(discriminator="kind"),
 ]
 

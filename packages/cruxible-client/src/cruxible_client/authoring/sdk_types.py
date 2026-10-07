@@ -36,6 +36,7 @@ class RefKind(str, Enum):
     MANDATE = "mandate"
     PROCEDURE_RUN = "procedure_run"
     TRIGGER = "trigger"
+    BLUEPRINT = "blueprint"
     PRINCIPAL = "principal"
     APPROVAL_POLICY = "approval_policy"
     PROCEDURE_RUNTIME_POLICY = "procedure_runtime_policy"

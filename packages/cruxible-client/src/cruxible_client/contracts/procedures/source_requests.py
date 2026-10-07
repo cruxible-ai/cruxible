@@ -30,6 +30,13 @@ class SourceProviderSelection(_Closed):
     interface: str
 
 
+class SourceSlotSelection(_Closed):
+    """An open Provider slot typed by an accepted interface: the source builds a Blueprint."""
+
+    kind: Literal["slot"] = "slot"
+    interface: str
+
+
 class SourceQuerySelection(_Closed):
     kind: Literal["query"] = "query"
     name: str
@@ -41,7 +48,7 @@ class SourceProcedureSelection(_Closed):
 
 
 SourceSelection = Annotated[
-    SourceProviderSelection | SourceQuerySelection | SourceProcedureSelection,
+    SourceProviderSelection | SourceSlotSelection | SourceQuerySelection | SourceProcedureSelection,
     Field(discriminator="kind"),
 ]
 

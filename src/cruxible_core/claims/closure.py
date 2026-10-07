@@ -129,6 +129,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "source-acquisition-policy",
         "claim",
         "procedure",
+        "blueprint",
         "procedure-mandate",
         "line",
         "trigger",
@@ -313,6 +314,22 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_digest=procedure_artifact_digest(procedure).tagged,
                 pins=procedure.pins,
                 lifecycle=procedure.lifecycle,
+            )
+        if path.startswith("blueprints/"):
+            from cruxible_client.contracts.procedures.blueprints import (
+                blueprint_digest,
+                parse_blueprint,
+            )
+
+            blueprint = parse_blueprint(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="blueprint",
+                artifact_tag=blueprint.artifact_format,
+                identity=blueprint.identity,
+                artifact_digest=blueprint_digest(blueprint).tagged,
+                pins=blueprint.pins,
+                lifecycle=blueprint.lifecycle,
             )
         if path.startswith("procedure-mandates/"):
             procedure_mandate = parse_procedure_mandate_any(content, path=path)

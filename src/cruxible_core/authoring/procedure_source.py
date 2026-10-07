@@ -37,6 +37,7 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceProcedureBinding,
     SourceProviderBinding,
     SourceQueryBinding,
+    SourceSlotBinding,
     SourceSpan,
 )
 from cruxible_client.contracts.procedures.source_requests import (
@@ -44,6 +45,7 @@ from cruxible_client.contracts.procedures.source_requests import (
     SourceProcedureSelection,
     SourceProviderSelection,
     SourceQuerySelection,
+    SourceSlotSelection,
 )
 from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
 from cruxible_client.contracts.provider_interfaces import (
@@ -194,6 +196,17 @@ def resolve_source(
                 effect_class=interface.effect_class,
                 operation=read_provider_operation_contract(interface.interface_bytes_hex),
             )
+        elif isinstance(selected, SourceSlotSelection):
+            interface = require(
+                "ProviderInterface", selected.interface, ProviderInterfaceRegistrationV1
+            )
+            bindings[name] = SourceSlotBinding(
+                interface=interface.identity.name,
+                interface_version=provider_interface_digest(interface).tagged,
+                interface_digest=interface.interface_digest,
+                effect_class=interface.effect_class,
+                operation=read_provider_operation_contract(interface.interface_bytes_hex),
+            )
         elif isinstance(selected, SourceQuerySelection):
             query = require("QueryDefinition", selected.name, QueryDefinition)
             bindings[name] = SourceQueryBinding(
@@ -338,6 +351,8 @@ def verify_source_bindings(
             selections[name] = SourceProviderSelection(
                 provider=binding.provider, interface=binding.interface
             )
+        elif isinstance(binding, SourceSlotBinding):
+            selections[name] = SourceSlotSelection(interface=binding.interface)
         elif isinstance(binding, SourceQueryBinding):
             selections[name] = SourceQuerySelection(name=binding.name)
         else:

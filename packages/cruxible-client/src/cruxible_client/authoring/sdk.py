@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
 
 from pydantic import SecretStr, TypeAdapter
 
@@ -75,7 +75,7 @@ from cruxible_client.authoring.selectors import (
     WorkspaceSources,
 )
 from cruxible_client.authoring.signing import ApprovalSigner
-from cruxible_client.authoring.source import ProcedureBlueprint
+from cruxible_client.authoring.source import ProcedureSource
 from cruxible_client.authoring.source_map import (
     DiagnosticSourceMap,
     capture_keyword_sites,
@@ -98,6 +98,8 @@ from cruxible_client.contracts.artifacts import (
     ArtifactRef,
 )
 from cruxible_client.contracts.authoring.inputs import (
+    BlueprintInput,
+    BlueprintInstanceInput,
     ProcedureInput,
     ProcedureMandateInput,
     QueryDefinitionInput,
@@ -379,6 +381,7 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "subject": RefKind.SUBJECT,
     "claim_type": RefKind.CLAIM_TYPE,
     "procedure": RefKind.PROCEDURE,
+    "blueprint": RefKind.BLUEPRINT,
     "query": RefKind.QUERY,
     "document": RefKind.DOCUMENT,
     "capture_contract": RefKind.CAPTURE_CONTRACT,
@@ -742,6 +745,12 @@ class PredictionSettlement:
     relation: dict[str, object]
 
 
+#: Every form ``cx.procedure`` accepts.
+ProcedureDefinitionInput: TypeAlias = (
+    ProcedureInput | BlueprintInput | BlueprintInstanceInput | ProcedureSequence | ProcedureSource
+)
+
+
 @dataclass(frozen=True)
 class ProcedureDraft(_IntentDraft):
     """One Procedure drafted by ``cx.procedure(definition=...)``.
@@ -1060,7 +1069,13 @@ class ChangeSetDraft:
         return self
 
     def procedure(
-        self, *, definition: ProcedureInput | ProcedureSequence | ProcedureBlueprint
+        self,
+        *,
+        definition: ProcedureInput
+        | BlueprintInput
+        | BlueprintInstanceInput
+        | ProcedureSequence
+        | ProcedureSource,
     ) -> ChangeSetDraft:
         """Compose a Procedure with its Line and mandate in one existing changeset.
 
@@ -3466,7 +3481,7 @@ class Cruxible:
             DiagnosticSourceMap(()),
         )
 
-    def provider_binding(self, interface: str, *, provider: str | None = None) -> ProviderBinding:
+    def provider_interface(self, interface: str, *, provider: str | None = None) -> ProviderBinding:
         """Select a registered interface through existing accepted-state discovery.
 
         Discovery never installs a provider or authorizes its execution. Multiple
@@ -3495,7 +3510,11 @@ class Cruxible:
     def procedure(
         self,
         *,
-        definition: ProcedureInput | ProcedureSequence | ProcedureBlueprint,
+        definition: ProcedureInput
+        | BlueprintInput
+        | BlueprintInstanceInput
+        | ProcedureSequence
+        | ProcedureSource,
     ) -> ProcedureDraft:
         """Author a Procedure from a Sequence or the input shared by CLI and HTTP.
 
@@ -3517,15 +3536,20 @@ class Cruxible:
         """
 
         sites = capture_keyword_sites("procedure", stacklevel=1)
-        if isinstance(definition, ProcedureBlueprint):
+        if isinstance(definition, ProcedureSource):
             definition = definition.build(world=self.world())
         if isinstance(definition, ProcedureSequence):
             definition = definition.build()
-        if not isinstance(definition, ProcedureInput):
-            raise TypeError("procedure definition must be a ProcedureInput or authoring Sequence")
+        if not isinstance(definition, ProcedureInput | BlueprintInput | BlueprintInstanceInput):
+            raise TypeError(
+                "procedure definition must be a ProcedureInput, BlueprintInput, "
+                "BlueprintInstanceInput, ProcedureSource or authoring Sequence"
+            )
         payload = lower_authoring_input(definition)
         assert isinstance(payload, ProcedureAuthoringPayload)
-        if "source_request" in definition.definition:
+        if isinstance(definition, BlueprintInstanceInput):
+            pass  # Lowering resolves the Blueprint and each bound Provider.
+        elif "source_request" in definition.definition:
             from cruxible_client.contracts.procedures.source_requests import (
                 ProcedureSourceRequest,
             )

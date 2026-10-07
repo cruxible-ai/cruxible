@@ -186,6 +186,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
+    ProcedureArtifact,
     ProcedureFormatError,
     evaluate_procedure_law,
     parse_procedure,
@@ -200,6 +201,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_digest,
     parse_line_spec,
 )
+from cruxible_client.contracts.procedures.models import iter_pin_bindings
 from cruxible_client.contracts.procedures.windows import CaptureEventWindow
 from cruxible_client.contracts.proposal_models import (
     AuthenticatedActor,
@@ -385,6 +387,7 @@ _PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
 _TRIGGER_PATH_RE = re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")
+_BLUEPRINT_PATH_RE = re.compile(r"^blueprints/[a-z][a-z0-9_.-]{0,255}\.json$")
 _QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.json$")
 _EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.json$")
 
@@ -401,6 +404,7 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _PROCEDURE_PATH_RE,
     _LINE_PATH_RE,
     _TRIGGER_PATH_RE,
+    _BLUEPRINT_PATH_RE,
     _QUERY_DEFINITION_PATH_RE,
     _EXHAUST_PROMOTION_PATH_RE,
 )
@@ -1716,28 +1720,14 @@ def _accepted(
     )
 
 
-def _procedure_member(context: _MemberContext) -> _MemberVerdict:
-    procedure = parse_procedure(context.content, path=context.path)
-    installed = _installed(context, procedure.artifact_format)
-    from cruxible_client.contracts.laws import (
-        SDK_SOURCE_PROCEDURE_LAW,
-        SOURCE_CHECKED_PROCEDURE_LAW,
-    )
+def _verify_source(context: _MemberContext, procedure: Any) -> None:
+    """Resolve a source graph's retained declarations against candidate state."""
+
     from cruxible_client.contracts.query.definitions import (
         parse_query_definition,
         query_definition_path,
     )
     from cruxible_core.authoring.procedure_source import verify_source_bindings
-
-    source_law = (
-        SOURCE_CHECKED_PROCEDURE_LAW
-        if procedure.definition.source is not None
-        and procedure.definition.source.rules == "cruxible.procedure-source.v2"
-        else SDK_SOURCE_PROCEDURE_LAW
-    )
-    if context.historical_law_coordinate is not None and installed != source_law:
-        raise ProposalIntegrityError("graph-v6 requires its exact source-compilation law")
-    installed = source_law
 
     def source_lookup(identity: str) -> object | None:
         kind = identity.split(":", 1)[0]
@@ -1792,6 +1782,96 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         claim_types=(source_lookup(identity) for identity in type_ids),
         subject_kinds=subject_kinds,
     )
+
+
+def _blueprint_origin_refusal(
+    context: _MemberContext, procedure: ProcedureArtifact
+) -> CompilerDiagnostic | None:
+    """A Procedure that names its Blueprint must be exactly that Blueprint, instantiated."""
+
+    from cruxible_client.contracts.procedures.blueprints import (
+        BlueprintInstantiationError,
+        blueprint_digest,
+        blueprint_path,
+        instantiate_blueprint,
+        parse_blueprint,
+    )
+
+    origin = procedure.blueprint
+    assert origin is not None
+    path = blueprint_path(origin.blueprint.target.name)
+    content = context.candidate_tree.get(path)
+    blueprint = None if content is None else parse_blueprint(content, path=path)
+    if blueprint is None or blueprint_digest(blueprint).tagged != origin.blueprint.artifact_digest:
+        return _diagnostic(
+            "cruxible.procedure.blueprint_origin_mismatch",
+            "The Procedure names a Blueprint version that is not the current accepted one.",
+            context.path,
+        )
+    by_digest = {item.artifact_digest: item for item in context.resolved.providers.values()}
+    providers = {}
+    for binding in origin.bindings:
+        provider = by_digest.get(binding.artifact_pin.artifact_digest)
+        if provider is None:
+            return _diagnostic(
+                "cruxible.procedure.blueprint_origin_mismatch",
+                f"Slot {binding.slot_name!r} binds a Provider that is not accepted.",
+                context.path,
+            )
+        providers[binding.slot_name] = provider
+    referenced = {
+        (pin.role, pin.target.qualified, pin.artifact_digest)
+        for pin in iter_pin_bindings(procedure.definition)
+        if isinstance(pin, ArtifactPin)
+    }
+    try:
+        expected = instantiate_blueprint(
+            blueprint,
+            blueprint_artifact_digest=origin.blueprint.artifact_digest,
+            name=procedure.identity.name,
+            providers=providers,
+            activation_policy=procedure.activation_policy,
+            extra_pins=tuple(
+                pin
+                for pin in procedure.pins
+                if (pin.role, pin.target.qualified, pin.artifact_digest) not in referenced
+            ),
+            lifecycle=procedure.lifecycle,
+        )
+    except (BlueprintInstantiationError, ValueError) as exc:
+        return _diagnostic("cruxible.procedure.blueprint_origin_mismatch", str(exc), context.path)
+    if expected != procedure:
+        return _diagnostic(
+            "cruxible.procedure.blueprint_origin_mismatch",
+            "The Procedure is not its Blueprint instantiated with the recorded bindings.",
+            context.path,
+        )
+    return None
+
+
+def _procedure_member(context: _MemberContext) -> _MemberVerdict:
+    procedure = parse_procedure(context.content, path=context.path)
+    installed = _installed(context, procedure.artifact_format)
+    from cruxible_client.contracts.laws import (
+        SDK_SOURCE_PROCEDURE_LAW,
+        SOURCE_CHECKED_PROCEDURE_LAW,
+    )
+
+    source_law = (
+        SOURCE_CHECKED_PROCEDURE_LAW
+        if procedure.definition.source is not None
+        and procedure.definition.source.rules == "cruxible.procedure-source.v2"
+        else SDK_SOURCE_PROCEDURE_LAW
+    )
+    if context.historical_law_coordinate is not None and installed != source_law:
+        raise ProposalIntegrityError("graph-v6 requires its exact source-compilation law")
+    installed = source_law
+
+    _verify_source(context, procedure)
+    if procedure.blueprint is not None:
+        origin_refusal = _blueprint_origin_refusal(context, procedure)
+        if origin_refusal is not None:
+            return _MemberVerdict(diagnostics=(origin_refusal,))
     predecessor: AcceptedProcedure | None = None
     if context.parent_content is not None:
         previous = parse_procedure(context.parent_content, path=context.path)
@@ -2088,6 +2168,48 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
         activation_policy="snapshot",
         result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
         retired=trigger.lifecycle.state == "retired",
+    )
+
+
+def _blueprint_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_client.contracts.procedures.blueprints import (
+        AcceptedBlueprint,
+        blueprint_digest,
+        evaluate_blueprint_law,
+        parse_blueprint,
+    )
+
+    blueprint = parse_blueprint(context.content, path=context.path)
+    _verify_source(context, blueprint)
+    predecessor: AcceptedBlueprint | None = None
+    if context.parent_content is not None:
+        previous = parse_blueprint(context.parent_content, path=context.path)
+        predecessor = AcceptedBlueprint(
+            path=context.path, blueprint=previous, artifact_digest=blueprint_digest(previous).tagged
+        )
+    law = evaluate_blueprint_law(
+        blueprint,
+        path=context.path,
+        predecessor=predecessor,
+        provider_interfaces={
+            accepted.artifact_digest: accepted
+            for accepted in context.resolved.provider_interfaces.values()
+        },
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted Blueprint law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, blueprint.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=(),
+        activation_policy=blueprint.activation_policy,
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=blueprint.lifecycle.state == "retired",
     )
 
 
@@ -3430,6 +3552,13 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         evaluate=_trigger_member,
     ),
     _MemberKind(
+        name="blueprint",
+        pattern=_BLUEPRINT_PATH_RE,
+        removal_code="cruxible.change_set.delete_unsupported",
+        removal_message="Blueprints are retired by successor, never removed.",
+        evaluate=_blueprint_member,
+    ),
+    _MemberKind(
         name="query-definition",
         pattern=_QUERY_DEFINITION_PATH_RE,
         removal_code="cruxible.change_set.delete_unsupported",
@@ -3520,6 +3649,7 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "exhaust-promotion",
     "line",
     "trigger",
+    "blueprint",
     "query-definition",
     "provider",
     "provider-interface",
@@ -3854,7 +3984,7 @@ def _evaluate_scoped_members(
             )
 
         except FormatError as exc:
-            if kind.name not in {"attestation", "resolution-contract", "trigger"}:
+            if kind.name not in {"attestation", "resolution-contract", "trigger", "blueprint"}:
                 raise
             return CandidateEvaluation(
                 candidate_tree,

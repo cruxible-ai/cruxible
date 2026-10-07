@@ -1373,6 +1373,13 @@ exactly; open slots belong only to a Blueprint. The direct lane runs `state_tap`
 `emit_capture`, `post_inbox`, `propose_change_set`, `settle_change_set` -- run
 only as a Line: a direct invocation carries no requested authority, no
 occurrence, and no mandate coordinate, and none is fabricated for it.
+
+A **Blueprint** is the same definition with interface-typed Provider slots left
+open (`cruxible authoring example blueprint`); it is accepted but never runs.
+`cruxible get Blueprint:NAME` lists each slot's interface and the installed
+Providers that fit it. Instantiate it with one Provider per slot
+(`cruxible authoring example blueprint-instance`, kind `blueprint_instance`):
+the result is an ordinary Procedure that records its Blueprint and bindings.
 The Line lane serves `propose_change_set`, and `settle_change_set` under a live
 settle ProcedureMandate; see `cruxible line`.
 
