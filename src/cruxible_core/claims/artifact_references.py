@@ -278,6 +278,13 @@ def _at(value: object, steps: tuple[str, ...], remap: Mapping[str, str] | None) 
     yield from _at(item, rest, remap)
 
 
+def movable_references(path: str) -> bool:
+    """Whether ``move_references`` can re-pin an artifact at ``path``: a family with a
+    reference table, or a Procedure or Blueprint (through its typed graph)."""
+
+    return path.startswith(_GRAPH_FAMILIES) or reference_fields(path) is not None
+
+
 def referenced_digests(path: str, payload: Mapping[str, Any]) -> Iterator[str]:
     if path.startswith(_GRAPH_FAMILIES):
         yield from _graph_digests(path, payload)

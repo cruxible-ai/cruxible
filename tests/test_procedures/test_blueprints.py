@@ -804,3 +804,79 @@ def test_a_blueprint_change_set_member_authors_its_blueprint_path() -> None:
     assert lowering._member_primary_path(procedure, claim_identities={}) == procedure_path(
         "acme.increment"
     )
+
+
+@pytest.mark.usefixtures("contracted_demo")
+def test_a_blueprint_and_an_instance_dependent_move_with_their_interface() -> None:
+    """Review F-004: the dependent closure carries Blueprint and Procedure dependents
+    through their typed graph (definition digest recomputed) when ``move_graphs`` is
+    set; a Procedure's Blueprint origin stays as recorded, provenance."""
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.procedures.blueprints import parse_blueprint
+    from cruxible_client.contracts.provider_interfaces import provider_interface_digest
+    from cruxible_core.claims.claim_type_migrations import (
+        ClaimTypeDependentDisposition,
+        ClaimTypeMigrationDependentInvalid,
+        build_dependent_closure_candidate,
+        dependent_closure_inventory,
+    )
+
+    interface = accepted_interface()
+    blueprint = _blueprint()
+    blueprint_digest_before = blueprint_digest(blueprint).tagged
+    instance = instantiate_blueprint(
+        blueprint,
+        blueprint_artifact_digest=blueprint_digest_before,
+        name="provider-v4",
+        providers={"lookup": accepted_provider()},
+    )
+    tree = {
+        interface.path: render_provider_interface(interface.registration),
+        blueprint_path(blueprint.identity.name): render_blueprint(blueprint),
+        procedure_path("provider-v4"): render_procedure(instance),
+    }
+    successor = interface.registration.model_copy(
+        update={"lifecycle": ArtifactLifecycle(predecessor_digest=interface.artifact_digest)}
+    )
+    moved_digest = provider_interface_digest(successor).tagged
+    changed = {interface.path: render_provider_interface(successor)}
+    inventory = dependent_closure_inventory(
+        tree, roots=(interface.registration.identity,), fixed_paths=frozenset(changed)
+    )
+    dispositions = tuple(
+        ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
+        for item in inventory
+    )
+    assert {item.path for item in inventory} == {
+        blueprint_path(blueprint.identity.name),
+        procedure_path("provider-v4"),
+    }
+    with pytest.raises(ClaimTypeMigrationDependentInvalid):
+        build_dependent_closure_candidate(
+            tree=tree, changed=changed, inventory=inventory, dispositions=dispositions
+        )
+
+    settled, _normalized = build_dependent_closure_candidate(
+        tree=tree,
+        changed=changed,
+        inventory=inventory,
+        dispositions=dispositions,
+        move_graphs=True,
+    )
+
+    path = blueprint_path(blueprint.identity.name)
+    moved = parse_blueprint(settled[path], path=path)
+    assert moved.lifecycle.predecessor_digest == blueprint_digest_before
+    assert {pin.artifact_digest for pin in moved.pins if pin.role == "provider-interface"} == {
+        moved_digest
+    }
+    assert moved.definition_digest == compute_procedure_definition_digest(moved.definition).tagged
+    procedure = parse_procedure(
+        settled[procedure_path("provider-v4")], path=procedure_path("provider-v4")
+    )
+    assert {pin.artifact_digest for pin in procedure.pins if pin.role == "provider-interface"} == {
+        moved_digest
+    }
+    assert procedure.blueprint is not None
+    assert procedure.blueprint.blueprint.artifact_digest == blueprint_digest_before

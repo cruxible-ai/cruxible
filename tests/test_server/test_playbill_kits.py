@@ -53,7 +53,10 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicy,
 )
-from cruxible_client.contracts.procedures.artifacts import parse_procedure
+from cruxible_client.contracts.procedures.artifacts import (
+    parse_procedure,
+    procedure_artifact_digest,
+)
 from cruxible_client.contracts.provider_interfaces import ProviderInterfaceRegistration
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
@@ -1684,3 +1687,44 @@ def test_keeping_a_policy_keeps_the_procedure_pinned_to_the_consumers_version(
     assert plan[POLICY_PATH].consequence == "overwrites_your_edit"
     assert acquisition_policy_digest(_live_policy(consumer)).tagged == kept
     assert _procedure_policy_pin(consumer.tree()[PROCEDURE_PATH]) == kept
+
+
+def test_an_upgrade_carries_a_consumer_procedure_pinning_a_kit_policy(
+    worlds: tuple[_World, _World],
+) -> None:
+    """Review F-004: a Procedure the consumer authored outside the release takes a
+    successor through its typed graph; dropping the policy can retire it with it."""
+
+    publisher, consumer = worlds
+    _author_policy(publisher, 1)
+    assert consumer.add(publisher.build("1.0.0")).status == "accepted"
+    _author_counting_procedure(consumer)
+    before = parse_procedure(consumer.tree()[PROCEDURE_PATH], path=PROCEDURE_PATH)
+
+    _author_policy(publisher, 2)
+    upgraded = consumer.add(publisher.build("1.1.0"))
+
+    assert upgraded.status == "accepted", upgraded
+    (policy_plan,) = (item for item in upgraded.plan if item.path == POLICY_PATH)
+    assert (policy_plan.action, policy_plan.dependent_count) == ("replace", 1)
+    after = parse_procedure(consumer.tree()[PROCEDURE_PATH], path=PROCEDURE_PATH)
+    assert after.lifecycle.predecessor_digest == procedure_artifact_digest(before).tagged
+    consumer_policy = acquisition_policy_digest(_live_policy(consumer)).tagged
+    assert _procedure_policy_pin(consumer.tree()[PROCEDURE_PATH]) == consumer_policy
+    assert consumer.pb.accepted_procedure(PROCEDURE).run().status == "succeeded"
+
+    # The next release drops the policy: retiring it retires the consumer's
+    # Procedure with it, by name.
+    dropped = KitBundle(
+        manifest=publisher.build("1.2.0").manifest.model_copy(
+            update={"artifacts": (), "owns": ("acme.",)}
+        ),
+        artifacts=(),
+    )
+    retired = consumer.add(dropped, retire_dependents=(f"SourceAcquisitionPolicy:{POLICY}",))
+    assert retired.status == "accepted", retired
+    tree = consumer.tree()
+    assert parse_procedure(tree[PROCEDURE_PATH], path=PROCEDURE_PATH).lifecycle.state == "retired"
+    assert parse_acquisition_policy(tree[POLICY_PATH], path=POLICY_PATH).lifecycle.state == (
+        "retired"
+    )

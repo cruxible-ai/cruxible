@@ -41,7 +41,11 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
-from cruxible_core.claims.artifact_references import move_references, reference_fields
+from cruxible_core.claims.artifact_references import (
+    movable_references,
+    move_references,
+    reference_fields,
+)
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputRecord,
     ClaimTypeLintWarningV1,
@@ -588,8 +592,13 @@ def _canonical_successor_bytes(
     claim_retirement_reason: ClaimRetirementReason | None = None,
     claim_effective_until: datetime | None = None,
     typed_references: bool = False,
+    move_graphs: bool = False,
 ) -> bytes:
     """Return the exact successor bytes one dependent takes under its disposition.
+
+    ``move_graphs`` (a kit install) carries a Procedure or Blueprint dependent
+    through its typed graph (``move_references``); otherwise re-pointing one is
+    authoring and refuses.
 
     `supplied_content` is already-canonical successor bytes another authoring
     pass produced -- the change set's `re_author` disposition, where the whole
@@ -710,7 +719,7 @@ def _canonical_successor_bytes(
                 ),
                 "predecessor_digest": current.artifact_digest,
             }
-        if current.artifact_kind == "procedure":
+        if current.artifact_kind == "procedure" and not move_graphs:
             # A Procedure graph's pins are bound into its definition digest and,
             # for source Procedures, into the retained source: re-pointing them
             # is authoring, not migration.
@@ -1026,6 +1035,7 @@ def build_dependent_closure_candidate(
     changed: Mapping[str, bytes],
     inventory: tuple[ClaimTypeMigrationInventoryItemV1, ...],
     dispositions: tuple[ClaimTypeDependentDisposition, ...],
+    move_graphs: bool = False,
 ) -> tuple[dict[str, bytes], tuple[ClaimTypeMigrationDispositionV3, ...]]:
     """Settle the closure of several changed definitions as one generation.
 
@@ -1034,6 +1044,10 @@ def build_dependent_closure_candidate(
     each takes exactly one successor naming its accepted digest, however many
     changed definitions it pins; its pins move to the final bytes in
     ``changed`` and to the successors of dependents settled before it.
+
+    ``move_graphs`` also carries (or retires) Procedure and Blueprint dependents,
+    moving their pins through their typed graph; a Blueprint origin a Procedure
+    records stays as it was, provenance.
     """
 
     by_identity = {item.identity.qualified: item for item in inventory}
@@ -1070,7 +1084,10 @@ def build_dependent_closure_candidate(
                 f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
                 f"{disposition}"
             )
-        if reference_fields(row.path) is None:
+        movable = (
+            movable_references(row.path) if move_graphs else reference_fields(row.path) is not None
+        )
+        if not movable:
             raise ClaimTypeMigrationDependentInvalid(
                 f"{ClaimTypeMigrationDependentInvalid.code}: {identity} cannot be re-pinned "
                 "automatically; settle it through its own change first"
@@ -1086,6 +1103,7 @@ def build_dependent_closure_candidate(
             claim_retirement_reason=entry.claim_retirement_reason,
             claim_effective_until=entry.claim_effective_until,
             typed_references=True,
+            move_graphs=move_graphs,
         )
         writes[row.path] = content
         overlay[row.path] = content

@@ -937,7 +937,11 @@ def _settle_dependents(
         return dict(diff.writes), refused
     try:
         settled, _normalized = build_dependent_closure_candidate(
-            tree=tree, changed=changed, inventory=inventory, dispositions=tuple(dispositions)
+            tree=tree,
+            changed=changed,
+            inventory=inventory,
+            dispositions=tuple(dispositions),
+            move_graphs=True,
         )
     except ClaimTypeMigrationError as error:
         return dict(diff.writes), [str(error)]
