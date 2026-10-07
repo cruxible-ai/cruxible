@@ -177,7 +177,9 @@ def test_workspace_config_writer_adds_machine_local_git_exclusion(tmp_path: Path
     assert b"/.cruxible/coverage.json\n" in (workspace / ".git/info/exclude").read_bytes()
 
 
-@pytest.mark.parametrize("existing_floor", [None, "playbill-floor-export-v2"])
+@pytest.mark.parametrize(
+    "existing_floor", [None, "playbill-floor-export-v2", "playbill-floor-export-v5"]
+)
 def test_floor_output_writer_upgrades_the_config_and_keeps_its_root(
     tmp_path: Path, existing_floor: str | None
 ) -> None:
@@ -364,3 +366,28 @@ def test_floor_refresh_reuses_verified_files_and_repairs_local_edits(tmp_path: P
     materialize_floor(workspace, export=export)
     assert not card.is_symlink()
     assert external.read_bytes() == card.read_bytes()
+
+
+@pytest.mark.parametrize(
+    "held_format",
+    ["playbill-floor-export-v2", "playbill-floor-export-v5", "playbill-floor-export-v6"],
+)
+def test_a_held_floor_profile_from_any_shipped_format_still_reads(
+    tmp_path: Path, held_format: str
+) -> None:
+    from cruxible_client.authoring.workspace import configured_floor_output
+
+    workspace = tmp_path / "workspace"
+    config_path = workspace / ".cruxible" / "coverage.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "tag": "playbill-coverage-workspace-config-v2",
+                "instance_id": "inst_floor",
+                "floor_output": {"tag": "playbill-floor-output-v1", "format": held_format},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert configured_floor_output(workspace) is not None

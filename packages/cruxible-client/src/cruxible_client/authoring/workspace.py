@@ -81,8 +81,8 @@ _CONFIG_PATH = PurePosixPath(".cruxible/coverage.json")
 _CONFIG_EXCLUDE_RULE = b"/.cruxible/coverage.json\n"
 _FLOOR_DOMAIN = FLOOR_FORMAT
 # A workspace's floor_output profile names a format; live workspaces still hold
-# profiles written as v2, which refresh to the current floor unchanged.
-_FLOOR_PROFILE_FORMATS = {"playbill-floor-export-v2", _FLOOR_DOMAIN}
+# profiles written as v2 or v5, which refresh to the current floor unchanged.
+_FLOOR_PROFILE_FORMATS = {"playbill-floor-export-v2", "playbill-floor-export-v5", _FLOOR_DOMAIN}
 _WORKSPACE_CONFIG_TAG = "playbill-coverage-workspace-config-v2"
 _FLOOR_OUTPUT = {
     "tag": "playbill-floor-output-v1",
