@@ -1,11 +1,11 @@
 """Typed source authoring uses real installed provider wheels and normal run doors."""
 
-import os
 import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any
+
+import pytest
 
 from cruxible_client import Cruxible, Disposition
 from cruxible_client.authoring.inputs import CarriedContractInput
@@ -33,6 +33,7 @@ from cruxible_client.contracts.procedures.models import ProcedureBudget, Procedu
 from cruxible_client.provider_installation import install_provider_package
 from cruxible_client.transport.http import CruxibleClient
 from tests.core_support._pc_c_support import capture_contract
+from tests.support.provider_checkout import checkout_predates_web_fetch_material
 from tests.test_procedures.test_procedure_proposal_delivery import _claim_type, _subject
 from tests.test_procedures.test_procedure_source_runs import _policy
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
@@ -47,15 +48,24 @@ def _proof(client: CruxibleClient, instance_id: str, ref: str) -> dict[str, Any]
     return dict(proof)
 
 
+@pytest.mark.xfail(
+    checkout_predates_web_fetch_material(),
+    reason=(
+        "the providers checkout's web.fetch declares no captured material schema "
+        "(cruxible-providers ff0dab1, not yet on its main), so the source compiler refuses"
+    ),
+    strict=True,
+)
 def test_installed_fetch_parent_proposal_and_accepted_derivation(
     installer_http,  # noqa: F811
     tmp_path,
+    provider_checkout,
 ):
     http, instance_id, reviewer = installer_http
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
-    repository = Path(os.environ["CRUXIBLE_TEST_PROVIDER_REPOSITORY"])
-    wheels = Path(os.environ["CRUXIBLE_TEST_PROVIDER_WHEELS"])
+    repository = provider_checkout.repository
+    wheels = provider_checkout.wheels
     installed = install_provider_package(
         client,
         instance_id,
@@ -202,7 +212,6 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             output=Result,
             budget=budget,
             hard_caps=caps,
-            terminal_capability=2,
         )
         def parent(request, world, bindings):
             observed = invoke(bindings.observer, input=bindings.observer.input(url=request.url))
@@ -279,7 +288,6 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             output=Result,
             budget=budget,
             hard_caps=caps,
-            terminal_capability=2,
         )
         def verify_parent(request, world, bindings):
             baseline = world.security.advisory["osv-2026-0001"].severity.one()

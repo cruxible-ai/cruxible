@@ -1,4 +1,8 @@
-"""Finding a provider release by name on a PEP 503 index, without the network."""
+"""Finding a provider release by name on a PEP 503 index, without the network.
+
+Fetching and listing go through the provider toolchain, so most of these run
+only with the cruxible-providers checkout (tests/support/provider_checkout.py).
+"""
 
 import hashlib
 from pathlib import Path
@@ -33,6 +37,7 @@ def _index(root: Path, name: str, files: list[tuple[Path, str]]) -> str:
     return root.as_uri() + "/"
 
 
+@pytest.mark.usefixtures("provider_runtime")
 def test_by_name_is_the_newest_final_listed_release(tmp_path):
     files = tmp_path / "files"
     files.mkdir()
@@ -62,6 +67,7 @@ def test_by_name_is_the_newest_final_listed_release(tmp_path):
         find_release((index,), "cruxible-provider-web", "9", transport)
 
 
+@pytest.mark.usefixtures("provider_runtime")
 def test_the_first_index_listing_a_package_is_the_only_one_consulted(tmp_path):
     first_files, second_files = tmp_path / "a", tmp_path / "b"
     first_files.mkdir()
@@ -87,6 +93,7 @@ def test_the_first_index_listing_a_package_is_the_only_one_consulted(tmp_path):
         find_release((empty,), "cruxible-provider-web", None, transport)
 
 
+@pytest.mark.usefixtures("provider_runtime")
 def test_unhashed_files_are_never_candidates(tmp_path):
     files = tmp_path / "files"
     files.mkdir()
@@ -103,8 +110,8 @@ def test_unhashed_files_are_never_candidates(tmp_path):
         )
 
 
+@pytest.mark.usefixtures("provider_runtime")
 def test_fetched_bytes_must_match_the_listed_hash(tmp_path):
-    pytest.importorskip("cruxible_provider_runtime")
     files = tmp_path / "files"
     files.mkdir()
     wheel = _wheel(files, "cruxible-provider-web", "0.2.0", lock=b"lock")
@@ -132,6 +139,7 @@ def test_a_wheel_without_its_lock_cannot_install_by_name(tmp_path):
         embedded_lock(without)
 
 
+@pytest.mark.usefixtures("provider_runtime")
 def test_a_release_this_python_cannot_run_is_never_chosen(tmp_path):
     files = tmp_path / "files"
     files.mkdir()

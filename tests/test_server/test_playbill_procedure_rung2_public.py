@@ -8,7 +8,6 @@ no provider invoker or classifier is substituted.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from collections.abc import Iterator
 from datetime import datetime
@@ -64,6 +63,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._pc_c_support import capture_contract
+from tests.support.provider_checkout import ProviderCheckout
 from tests.test_procedures.test_procedure_source_runs import _contracts
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 from tests.test_server.test_provider_installation import interface_entry
@@ -83,16 +83,12 @@ ADVISORY = b"high"
 def installed_host(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    provider_checkout: ProviderCheckout,
 ) -> Iterator[tuple[TestClient, str, Path, Path]]:
     """A real installed provider and an operator-attached workspace."""
 
-    repository = os.environ.get("CRUXIBLE_TEST_PROVIDER_REPOSITORY")
-    wheels = os.environ.get("CRUXIBLE_TEST_PROVIDER_WHEELS")
-    if not repository or not wheels:
-        pytest.skip(
-            "requires built provider wheels and repository via CRUXIBLE_TEST_PROVIDER_* variables"
-        )
-    pytest.importorskip("cruxible_provider_runtime")
+    repository = provider_checkout.repository
+    wheels = provider_checkout.wheels
     state = tmp_path / "server-state"
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
     config = state / PROVIDER_RUNTIME_CONFIG_PATH
@@ -100,7 +96,7 @@ def installed_host(
     config.write_text(
         json.dumps(
             {
-                "provider_repository": repository,
+                "provider_repository": str(repository),
                 "provider_index_urls": [
                     "https://pypi.org/simple",
                     "https://files.pythonhosted.org/",
@@ -151,9 +147,9 @@ def installed_host(
         installed = install_provider_package(
             transport,
             instance_id,
-            wheel=next(Path(wheels).glob("cruxible_provider_workspace-*.whl")),
-            lock=Path(repository) / "packages/cruxible-provider-workspace/uv.lock",
-            dependency_wheels=(next(Path(wheels).glob("cruxible_provider_runtime-*.whl")),),
+            wheel=next(wheels.glob("cruxible_provider_workspace-*.whl")),
+            lock=repository / "packages/cruxible-provider-workspace/uv.lock",
+            dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
         )
         assert installed.status == "ready", installed
         yield client, instance_id, reviewer.private_key_path, workspace
@@ -456,14 +452,14 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             "name": LINE_NAME,
             "procedure_name": PROCEDURE_NAME,
             "acquisition_policy_name": POLICY_NAME,
-            "requested_terminal_rung": 2,
+            "max_authority": "propose",
         },
         {
             "tag": "playbill-procedure-mandate-authoring-payload-v1",
             "name": MANDATE_NAME,
             "procedure_name": PROCEDURE_NAME,
-            "rung": 2,
-            "authority_ceiling": definition.hard_caps.model_dump(mode="json"),
+            "grants": "propose",
+            "resource_ceiling": definition.hard_caps.model_dump(mode="json"),
             "namespace": ["claims"],
             "valid_from": "2026-01-01T00:00:00Z",
             "expires_at": "2027-01-01T00:00:00Z",

@@ -16,6 +16,17 @@ uv sync --all-packages --all-extras
 uv run pytest
 ```
 
+The provider-runtime tests (provider installation, package index) run against
+a [cruxible-providers](https://github.com/cruxible-ai/cruxible-providers)
+checkout, as CI does at the commit pinned in `.github/workflows/ci.yml`. Point
+`CRUXIBLE_PROVIDERS_CHECKOUT` at one and install its runtime; without the
+variable those tests skip:
+
+```bash
+export CRUXIBLE_PROVIDERS_CHECKOUT=../cruxible-providers
+uv pip install "$CRUXIBLE_PROVIDERS_CHECKOUT/packages/cruxible-provider-runtime"
+```
+
 Some tests pin golden outputs (workflow shapes, query semantics, receipts).
 If a change intentionally shifts a pinned shape, regenerate with
 `CRUXIBLE_UPDATE_GOLDENS=1 uv run pytest` and review the resulting diff as

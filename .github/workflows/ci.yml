@@ -7,11 +7,10 @@ on:
     branches: [main]
 
 env:
-  # The commit the workspace.file seed manifest pins
-  # (WORKSPACE_FILE_SEED_MANIFEST.provider_commit). The adapter checkout must be
-  # at exactly this commit and clean, or the seeding tests skip instead of
-  # reproducing the real local materialization.
-  CRUXIBLE_PROVIDERS_COMMIT: 8e7436f359dd28c2afdc4b9941fd09e33fa0e470
+  # The cruxible-providers commit the provider-runtime tests run against
+  # (tests/support/provider_checkout.py): the runtime is installed from it and
+  # the provider wheels the installation tests transfer are built from it.
+  CRUXIBLE_PROVIDERS_COMMIT: e6b01420c559a0a2ff8f2064252148e712652eb4
 
 jobs:
   test:
@@ -27,8 +26,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # cruxible-providers is public, so this is an ordinary second checkout and
-      # needs no credential. Without it the five seeding tests skip and the
-      # local materialization law is never exercised in CI.
+      # needs no credential. Without it the provider-runtime tests skip.
       - uses: actions/checkout@v4
         with:
           repository: cruxible-ai/cruxible-providers
@@ -42,6 +40,11 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --all-packages --all-extras
+
+      # Not a declared dependency: the daemon's operator installs the provider
+      # toolchain beside it. uv run keeps it (its sync is not exact).
+      - name: Install the provider runtime from the providers checkout
+        run: uv pip install "$CRUXIBLE_PROVIDERS_CHECKOUT/packages/cruxible-provider-runtime"
 
       - name: Lint
         run: uv run ruff check src packages/cruxible-client/src tests

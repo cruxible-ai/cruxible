@@ -9,6 +9,10 @@ from pathlib import Path
 import pytest
 
 from tests.core_support._world_templates import TEMPLATES, WORLD_STATS_ENV
+from tests.support.provider_checkout import (  # noqa: F401 - shared fixtures
+    provider_checkout,
+    provider_runtime,
+)
 
 _DOCKER_TEST_ENV = "CRUXIBLE_RUN_DOCKER_TESTS"
 _WHEEL_TEST_ENV = "CRUXIBLE_RUN_WHEEL_TESTS"
