@@ -222,7 +222,7 @@ def register_tools(
         return handlers.handle_server_info()
 
     @_tool
-    def cruxible_provider_catalog(
+    def cruxible_provider_list(
         instance_id: InstanceId = None,
     ) -> ProviderCatalog:
         """List provider packages in the configured repository: name, version, interface IDs."""
@@ -234,7 +234,7 @@ def register_tools(
         *,
         request: ProviderInstallRequest,
     ) -> ProviderInstallResult:
-        """Install a provider package and propose its definitions; requires ADMIN."""
+        """Install a provider package and register it; lands when policy needs no approval."""
         return handlers.handle_playbill_provider_install(require_instance_id(instance_id), request)
 
     @_tool

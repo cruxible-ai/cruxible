@@ -5,14 +5,16 @@ from __future__ import annotations
 from cruxible_core.errors import ConfigError
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
-    "cruxible_provider_catalog": (
+    "cruxible_provider_list": (
         "Use when you need to discover available provider packages: each package's name, "
         "version and the provider interface IDs it implements."
     ),
     "cruxible_provider_install": (
         "Use when you want to install a provider package by name (from the configured "
-        "repository or the provider index) and register its definitions. Requires admin "
-        "permission; installation grants no execution permissions."
+        "repository or the provider index) and register its definitions. The registration "
+        "lands at once when the approval policy requires no approval, otherwise it stops at "
+        "proposed (awaiting_approval). Requires admin permission; installation grants no "
+        "execution permissions."
     ),
     "cruxible_kit_build": (
         "Use when you want to export the definitions under owned identity prefixes as a "

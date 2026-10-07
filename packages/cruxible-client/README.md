@@ -6048,7 +6048,6 @@ include constructor/validator definitions for request and response contracts.
 
 | Root import | Definition / availability |
 |---|---|
-| `install_provider_package` | `cruxible_client.provider_installation` · [Source](src/cruxible_client/provider_installation.py) |
 | `ApprovalReviewMismatch` | `cruxible_client.authoring.approval` · [Source](src/cruxible_client/authoring/approval.py) |
 | `ReviewedProposal` | `cruxible_client.authoring.approval` · [Source](src/cruxible_client/authoring/approval.py) |
 | `ApprovalSigner` | `cruxible_client.authoring.signing` · [Source](src/cruxible_client/authoring/signing.py) |
@@ -6979,18 +6978,6 @@ The sanctioned entry point for a caller that holds a client rather than a
 caller has to reach for a private constructor. The workspace is only the
 root a relative source selection would resolve against; this reads nothing
 from it, so a directory with no Cruxible workspace is fine.
-
-### Module `cruxible_client.provider_installation`
-
-[Source](src/cruxible_client/provider_installation.py)
-
-#### `install_provider_package`
-
-```text
-install_provider_package(client: 'CruxibleClient', instance_id: str, *, wheel: pathlib._local.Path, lock: pathlib._local.Path, dependency_wheels: tuple[pathlib._local.Path, ...] = (), extras: tuple[str, ...] = (), control_domain: str = 'operator', reverify: bool = False) -> cruxible_client.contracts.provider_installation.ProviderInstallResult
-```
-
-Paths are consumed here on the client; the daemon receives only CAS references.
 
 ### Contract model index
 

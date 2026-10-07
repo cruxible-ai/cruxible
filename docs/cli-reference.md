@@ -862,7 +862,8 @@ body.
 ~~~text
 cruxible provider list [--json]
 cruxible provider install NAME[==VERSION] | WHEEL [--lock FILE]
-  [--dependency WHEEL]... [--extra NAME]... [--reverify] [--dry-run] [--json]
+  [--dependency WHEEL]... [--extra NAME]... [--control-domain NAME] [--reverify]
+  [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 Installation requires **ADMIN**. A package name resolves through the daemon's
@@ -878,9 +879,15 @@ CAS, so this also works against a remote daemon.
 
 The shared installer prepares an exact Python environment, verifies it once,
 checks package classifiers in supervised children, and proposes the package's
-node-type interfaces and Provider definition through ordinary acceptance.
-It returns `ready`, `awaiting_approval`, or `blocked`, with per-operation missing
-requirements. Missing browser resources remain explicit; Python extras do not
+provider interfaces and Provider definition through ordinary acceptance.
+The registration lands at once when the approval policy requires no approval
+(`ready`); otherwise it stops at proposed (`awaiting_approval`) for the ordinary
+review and activation. It returns `ready`, `awaiting_approval`, or `blocked`,
+with per-operation missing requirements. `--control-domain` names the control
+domain the Provider definition records (default `operator`); `--at OID` commits
+only if accepted state is still the coordinate a preview answered at.
+Installation requires the current compiler; an instance on an older one runs
+`cruxible compiler upgrade` first. Missing browser resources remain explicit; Python extras do not
 install browsers. Credentials, grants, and invocation remain separate.
 
 Retries reuse the prepared installation and an open registration proposal.
@@ -889,9 +896,8 @@ Runs reuse the retained verification record without hashing the environment.
 Treat installed environments as immutable; `--reverify` detects manual changes
 and refuses drift instead of silently resealing or repairing it.
 
-SDK: `install_provider_package(client, instance_id, wheel=..., lock=...,
-dependency_wheels=(...))`, or `client.install_provider` with a typed
-request. MCP: `cruxible_provider_catalog` and
+Installing is an operator job, so the SDK has no install method; the transport
+`client.install_provider` takes a typed request. MCP: `cruxible_provider_list` and
 `cruxible_provider_install`. HTTP: `GET /{instance}/providers`
 and `POST /{instance}/providers/install`.
 

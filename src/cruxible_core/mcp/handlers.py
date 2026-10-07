@@ -490,7 +490,7 @@ def handle_playbill_provider_catalog(instance_id: str) -> ProviderCatalog:
     return _dispatch_remote_or_local(
         lambda client: client.list_provider_packages(instance_id),
         lambda: playbill_api.playbill_provider_catalog(instance_id),
-        operation_name="cruxible_provider_catalog",
+        operation_name="cruxible_provider_list",
     )
 
 

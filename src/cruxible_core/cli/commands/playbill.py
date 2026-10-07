@@ -126,7 +126,6 @@ from cruxible_client.kits import (
     resolve_kit,
     write_kit_directory,
 )
-from cruxible_client.provider_installation import install_provider_package
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, claim_type_input_template
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
 from cruxible_core.cli.commands._common import (
@@ -163,6 +162,7 @@ from cruxible_core.cli.principal_settings import (
     default_key_dir,
     write_principal_settings,
 )
+from cruxible_core.cli.provider_wheels import install_provider_wheel
 from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingSourceObservation,
@@ -1496,23 +1496,28 @@ def list_provider_packages(output_json: bool) -> None:
 
 @provider_group.command("install")
 @click.argument("package_or_wheel")
-@click.option("--lock", "lock_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--lock",
+    "lock_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="The lock file a local wheel was built with (required with a wheel).",
+)
 @click.option(
     "--dependency",
     "dependencies",
     multiple=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="A locked dependency wheel to transfer with a local wheel (repeatable).",
 )
-@click.option("--extra", "extras", multiple=True)
-@click.option("--reverify", is_flag=True, help="Recheck a retained installation explicitly.")
+@click.option("--extra", "extras", multiple=True, help="A package extra to install (repeatable).")
 @click.option(
-    "--dry-run",
-    is_flag=True,
-    help=(
-        "Resolve the package and, if it is already prepared here, evaluate the registration "
-        "it would propose; fetch, build, register and propose nothing. By name only."
-    ),
+    "--control-domain",
+    default="operator",
+    show_default=True,
+    help="The control domain the Provider definition records for this package.",
 )
+@click.option("--reverify", is_flag=True, help="Recheck a retained installation explicitly.")
+@change_control_options
 @json_option
 @handle_errors
 def install_provider(
@@ -1520,14 +1525,22 @@ def install_provider(
     lock_path: Path | None,
     dependencies: tuple[Path, ...],
     extras: tuple[str, ...],
+    control_domain: str,
     reverify: bool,
-    dry_run: bool,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     """Install a package by name (NAME or NAME==VERSION) or transfer a local wheel.
 
     By name, the package comes from the configured provider repository, or else
-    from the provider index (PyPI unless the operator configured indexes).
+    from the provider index (PyPI unless the operator configured indexes). The
+    install proposes the package's registration, which lands at once when the
+    approval policy requires no approval; otherwise it stops at proposed
+    (awaiting_approval) for the ordinary review and activation. ``--dry-run`` is
+    a validation-only preview by name: it resolves the package and, if it is
+    already prepared here, evaluates the registration it would propose; it
+    fetches, builds, registers and proposes nothing.
     """
     if package_or_wheel.endswith(".whl"):
         if lock_path is None:
@@ -1538,14 +1551,16 @@ def install_provider(
                 "daemon before anything can be evaluated"
             )
         result = _server_call(
-            lambda client, instance_id: install_provider_package(
+            lambda client, instance_id: install_provider_wheel(
                 client,
                 instance_id,
                 wheel=Path(package_or_wheel),
                 lock=lock_path,
                 dependency_wheels=dependencies,
                 extras=extras,
+                control_domain=control_domain,
                 reverify=reverify,
+                at=at,
             ),
             command_name="cruxible provider install",
         )
@@ -1557,8 +1572,10 @@ def install_provider(
             package=package,
             version=version if pinned else None,
             extras=tuple(sorted(set(extras))),
+            control_domain=control_domain,
             reverify=reverify,
-            dry_run=dry_run or None,
+            dry_run=dry_run,
+            at=at,
         )
         result = _server_call(
             lambda client, instance_id: client.install_provider(instance_id, request),

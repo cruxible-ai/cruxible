@@ -75,7 +75,7 @@ PERMISSION_MODE_NAMES: tuple[str, ...] = tuple(_MODE_NAMES)
 
 TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_capture_read": PermissionMode.GOVERNED_WRITE,
-    "cruxible_provider_catalog": PermissionMode.READ_ONLY,
+    "cruxible_provider_list": PermissionMode.READ_ONLY,
     "cruxible_provider_install": PermissionMode.ADMIN,
     "cruxible_kit_build": PermissionMode.READ_ONLY,
     "cruxible_kit_status": PermissionMode.READ_ONLY,
