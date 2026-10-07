@@ -4796,6 +4796,7 @@ __all__ = [
     "ClaimTypeProposal",
     "Intent",
     "KnowledgeCard",
+    "Line",
     "MeasurementBatch",
     "MeasurementOutcome",
     "NextPage",

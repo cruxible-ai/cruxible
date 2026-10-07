@@ -13,7 +13,6 @@ from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
-    AuthoringIntentCompileRequestV2,
 )
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
@@ -1088,26 +1087,15 @@ class CruxibleClient:
         reference_expectations: Sequence[Mapping[str, Any]] | None = None,
         program_stamp: Mapping[str, Any] | None = None,
     ) -> contracts.AuthoringPreflightResult:
-        request: (
-            AuthoringIntentCompileRequestV1
-            | AuthoringIntentCompileRequestV2
-            | AuthoringIntentCompileRequest
-        )
+        request: AuthoringIntentCompileRequestV1 | AuthoringIntentCompileRequest
+        if (reference_expectations is None) != (program_stamp is None):
+            raise ValueError("reference_expectations and program_stamp travel together")
         if reference_expectations is None:
-            if program_stamp is not None:
-                raise ValueError("program_stamp requires reference_expectations")
             request = AuthoringIntentCompileRequestV1.model_validate(
                 {"payload": dict(payload), "intent_id": intent_id}
             )
-        elif program_stamp is None:
-            request = AuthoringIntentCompileRequestV2.model_validate(
-                {
-                    "payload": dict(payload),
-                    "reference_expectations": [dict(item) for item in reference_expectations],
-                    "intent_id": intent_id,
-                }
-            )
         else:
+            assert program_stamp is not None
             request = AuthoringIntentCompileRequest.model_validate(
                 {
                     "payload": dict(payload),

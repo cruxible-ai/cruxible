@@ -514,7 +514,6 @@ def _verify_provider_pins(
 __all__ = [
     "AUTHORITY_RUNG",
     "AcceptedLineSpec",
-    "LINE_IDENTITY_DIGEST_DOMAIN",
     "LineAuthority",
     "LineSpec",
     "LineSpecFormatError",

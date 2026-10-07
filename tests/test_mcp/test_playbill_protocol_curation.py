@@ -68,7 +68,7 @@ def test_protocol_call_refuses_hidden_playbill_tool(
 
 
 def test_protocol_call_allows_advertised_tool(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, mcp_daemon: object
 ) -> None:
     monkeypatch.delenv("CRUXIBLE_MCP_PROFILE", raising=False)
     server = create_server()

@@ -139,7 +139,6 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
         "citation_role": None,
         "revises": None,
         "existing_claim_dispositions": [],
-        "insertion_target": None,
     }
     compiled = client.post(
         f"/api/v1/{instance_id}/authoring/compile",

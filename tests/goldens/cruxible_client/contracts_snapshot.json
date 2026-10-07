@@ -22028,7 +22028,6 @@
                   "terminal_authority_capped_by_line_max_authority",
                   "terminal_authority_capped_by_propagated_sensitivity",
                   "terminal_authority_capped_by_mandate_grant",
-                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -22667,7 +22666,6 @@
                   "terminal_authority_capped_by_line_max_authority",
                   "terminal_authority_capped_by_propagated_sensitivity",
                   "terminal_authority_capped_by_mandate_grant",
-                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -43225,16 +43223,6 @@
             "$ref": "#/$defs/ProcedureRunBudget"
           }
         },
-        "calibration_coordinate_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "calibration_coordinate_digest",
-          "required": true,
-          "schema": {
-            "title": "Calibration Coordinate Digest",
-            "type": "string"
-          }
-        },
         "chain_head_digest": {
           "has_default": false,
           "has_default_factory": false,
@@ -44712,7 +44700,6 @@
                   "terminal_authority_capped_by_line_max_authority",
                   "terminal_authority_capped_by_propagated_sensitivity",
                   "terminal_authority_capped_by_mandate_grant",
-                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -45383,10 +45370,6 @@
           "budget": {
             "$ref": "#/$defs/ProcedureRunBudget"
           },
-          "calibration_coordinate_digest": {
-            "title": "Calibration Coordinate Digest",
-            "type": "string"
-          },
           "chain_head_digest": {
             "title": "Chain Head Digest",
             "type": "string"
@@ -45679,7 +45662,6 @@
           "resolved_provider_bindings",
           "sensitivity_policy_digest",
           "mandate_coordinate_digest",
-          "calibration_coordinate_digest",
           "taint_labels",
           "epsilon_member",
           "admission_material_manifest",
@@ -45699,7 +45681,6 @@
         "attribution",
         "bound_coordinate",
         "budget",
-        "calibration_coordinate_digest",
         "chain_head_digest",
         "deployment_snapshot_digest",
         "epsilon_member",
@@ -47359,7 +47340,6 @@
                   "terminal_authority_capped_by_line_max_authority",
                   "terminal_authority_capped_by_propagated_sensitivity",
                   "terminal_authority_capped_by_mandate_grant",
-                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -48017,16 +47997,6 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/ProcedureRunBudget"
-          }
-        },
-        "calibration_coordinate_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "calibration_coordinate_digest",
-          "required": true,
-          "schema": {
-            "title": "Calibration Coordinate Digest",
-            "type": "string"
           }
         },
         "chain_head_digest": {
@@ -49454,7 +49424,6 @@
                   "terminal_authority_capped_by_line_max_authority",
                   "terminal_authority_capped_by_propagated_sensitivity",
                   "terminal_authority_capped_by_mandate_grant",
-                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -50048,10 +50017,6 @@
           "budget": {
             "$ref": "#/$defs/ProcedureRunBudget"
           },
-          "calibration_coordinate_digest": {
-            "title": "Calibration Coordinate Digest",
-            "type": "string"
-          },
           "chain_head_digest": {
             "title": "Chain Head Digest",
             "type": "string"
@@ -50316,7 +50281,6 @@
           "resolved_provider_bindings",
           "sensitivity_policy_digest",
           "mandate_coordinate_digest",
-          "calibration_coordinate_digest",
           "taint_labels",
           "epsilon_member",
           "admission_material_manifest",
@@ -50334,7 +50298,6 @@
         "attribution",
         "bound_coordinate",
         "budget",
-        "calibration_coordinate_digest",
         "chain_head_digest",
         "deployment_snapshot_digest",
         "epsilon_member",
@@ -50450,16 +50413,6 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/ProcedureRunBudget"
-          }
-        },
-        "calibration_coordinate_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "calibration_coordinate_digest",
-          "required": true,
-          "schema": {
-            "title": "Calibration Coordinate Digest",
-            "type": "string"
           }
         },
         "chain_head_digest": {
@@ -51887,7 +51840,6 @@
                   "terminal_authority_capped_by_line_max_authority",
                   "terminal_authority_capped_by_propagated_sensitivity",
                   "terminal_authority_capped_by_mandate_grant",
-                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -52523,10 +52475,6 @@
           "budget": {
             "$ref": "#/$defs/ProcedureRunBudget"
           },
-          "calibration_coordinate_digest": {
-            "title": "Calibration Coordinate Digest",
-            "type": "string"
-          },
           "chain_head_digest": {
             "title": "Chain Head Digest",
             "type": "string"
@@ -52791,7 +52739,6 @@
           "resolved_provider_bindings",
           "sensitivity_policy_digest",
           "mandate_coordinate_digest",
-          "calibration_coordinate_digest",
           "taint_labels",
           "epsilon_member",
           "admission_material_manifest",
@@ -52809,7 +52756,6 @@
         "attribution",
         "bound_coordinate",
         "budget",
-        "calibration_coordinate_digest",
         "chain_head_digest",
         "deployment_snapshot_digest",
         "epsilon_member",
@@ -54484,7 +54430,6 @@
                   "terminal_authority_capped_by_line_max_authority",
                   "terminal_authority_capped_by_propagated_sensitivity",
                   "terminal_authority_capped_by_mandate_grant",
-                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -55174,10 +55119,6 @@
               "budget": {
                 "$ref": "#/$defs/ProcedureRunBudget"
               },
-              "calibration_coordinate_digest": {
-                "title": "Calibration Coordinate Digest",
-                "type": "string"
-              },
               "chain_head_digest": {
                 "title": "Chain Head Digest",
                 "type": "string"
@@ -55470,7 +55411,6 @@
               "resolved_provider_bindings",
               "sensitivity_policy_digest",
               "mandate_coordinate_digest",
-              "calibration_coordinate_digest",
               "taint_labels",
               "epsilon_member",
               "admission_material_manifest",
@@ -55835,10 +55775,6 @@
               "budget": {
                 "$ref": "#/$defs/ProcedureRunBudget"
               },
-              "calibration_coordinate_digest": {
-                "title": "Calibration Coordinate Digest",
-                "type": "string"
-              },
               "chain_head_digest": {
                 "title": "Chain Head Digest",
                 "type": "string"
@@ -56103,7 +56039,6 @@
               "resolved_provider_bindings",
               "sensitivity_policy_digest",
               "mandate_coordinate_digest",
-              "calibration_coordinate_digest",
               "taint_labels",
               "epsilon_member",
               "admission_material_manifest",
@@ -56147,10 +56082,6 @@
               },
               "budget": {
                 "$ref": "#/$defs/ProcedureRunBudget"
-              },
-              "calibration_coordinate_digest": {
-                "title": "Calibration Coordinate Digest",
-                "type": "string"
               },
               "chain_head_digest": {
                 "title": "Chain Head Digest",
@@ -56416,7 +56347,6 @@
               "resolved_provider_bindings",
               "sensitivity_policy_digest",
               "mandate_coordinate_digest",
-              "calibration_coordinate_digest",
               "taint_labels",
               "epsilon_member",
               "admission_material_manifest",
@@ -56711,8 +56641,7 @@
                       "procedure_terminal_capability",
                       "line_max_authority",
                       "propagated_sensitivity",
-                      "mandate_grant",
-                      "calibration"
+                      "mandate_grant"
                     ],
                     "type": "string"
                   },
@@ -57934,8 +57863,7 @@
                   "procedure_terminal_capability",
                   "line_max_authority",
                   "propagated_sensitivity",
-                  "mandate_grant",
-                  "calibration"
+                  "mandate_grant"
                 ],
                 "type": "string"
               },
@@ -58323,8 +58251,7 @@
                   "procedure_terminal_capability",
                   "line_max_authority",
                   "propagated_sensitivity",
-                  "mandate_grant",
-                  "calibration"
+                  "mandate_grant"
                 ],
                 "type": "string"
               },

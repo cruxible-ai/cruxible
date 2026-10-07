@@ -101,15 +101,8 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:8e07be2e725adfb1d07d16263bbb0558b1fd118a6e54870eb7b4321a52b1bf34"
+    "sha256:bfbac94baca8f3c7b57ce1af749b24710f15a7030c60dbfb826ca95e70a9df93"
 )
-INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
-INSERTION_TARGET_V2_DIGEST_DOMAIN = "playbill-insertion-target-v2"
-INSERTION_EXPECTATION_V2_DIGEST_DOMAIN = "playbill-insertion-expectation-v2"
-INSERTION_PREPARATION_V2_DIGEST_DOMAIN = "playbill-publication-preparation-v2"
-INSERTION_SOURCE_OBSERVATION_V2_DIGEST_DOMAIN = "playbill-publication-source-observation-v2"
-INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN = "playbill-insertion-terminal-tombstone-v2"
-PUBLICATION_BLOCK_ID_DOMAIN = "playbill-publication-block-id-v1"
 
 MAX_DIAGNOSTICS = 128
 MAX_BLOCKED_CHECKS = 128
@@ -578,194 +571,6 @@ class WorkingSelectionObservation(_StrictAuthoringModel):
         )
 
 
-class InsertionAnchorWindow(_StrictAuthoringModel):
-    tag: Literal["playbill-insertion-anchor-window-v1"] = "playbill-insertion-anchor-window-v1"
-    anchor_content_base64: str
-    anchor_bytes_digest: str
-    start_byte: int = Field(ge=0)
-    end_byte: int = Field(ge=0)
-    insertion_offset: int = Field(ge=0)
-    observed_occurrence_count: int = Field(ge=0)
-
-    @field_validator("anchor_content_base64")
-    @classmethod
-    def _content(cls, value: str) -> str:
-        content = _canonical_base64(value, label="insertion anchor content")
-        if len(content) > 4 * 1024:
-            raise ValueError("insertion anchor exceeds its 4 KiB byte limit")
-        return value
-
-    @field_validator("anchor_bytes_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        return _sha256(value, label="insertion anchor digest")
-
-    @model_validator(mode="after")
-    def _correspondence(self) -> "InsertionAnchorWindow":
-        content = _canonical_base64(
-            self.anchor_content_base64,
-            label="insertion anchor content",
-        )
-        if self.end_byte < self.start_byte:
-            raise ValueError("insertion anchor window is decreasing")
-        if len(content) != self.end_byte - self.start_byte:
-            raise ValueError("insertion anchor bytes differ from the declared window")
-        expected = "sha256:" + hashlib.sha256(content).hexdigest()
-        if self.anchor_bytes_digest != expected:
-            raise ValueError("insertion anchor digest differs from its exact bytes")
-        return self
-
-    @property
-    def content(self) -> bytes:
-        return _canonical_base64(
-            self.anchor_content_base64,
-            label="insertion anchor content",
-        )
-
-
-InsertionOperation: TypeAlias = Literal[
-    "insert_before",
-    "insert_after",
-    "replace_window",
-    "append",
-]
-
-
-def _insertion_source_id(value: str) -> str:
-    if not _CANONICAL_NAME_RE.fullmatch(value):
-        raise ValueError("insertion source_id must be stable, locator-free, and canonical")
-    return value
-
-
-class InsertionTarget(_StrictAuthoringModel):
-    tag: Literal["playbill-insertion-target-v2"] = "playbill-insertion-target-v2"
-    source_id: str
-    coordinate: WorkingSelectionCoordinate
-    initial_preimage_digest: str
-    initial_preimage_byte_length: int = Field(ge=0)
-    selector: InsertionAnchorWindow
-    operation: InsertionOperation
-
-    @field_validator("source_id")
-    @classmethod
-    def _source_id(cls, value: str) -> str:
-        return _insertion_source_id(value)
-
-    @field_validator("initial_preimage_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        return _sha256(value, label="insertion initial whole-source digest")
-
-    @model_validator(mode="after")
-    def _target_shape(self) -> "InsertionTarget":
-        if self.coordinate.source_byte_length != self.initial_preimage_byte_length:
-            raise ValueError("insertion initial preimage length differs from its coordinate")
-        if isinstance(self.coordinate, WorkingDigestCoordinate) and (
-            self.coordinate.source_content_digest != self.initial_preimage_digest
-        ):
-            raise ValueError("insertion initial preimage differs from its coordinate")
-        # Reuse v1's offset/occurrence laws without its obsolete postimage arithmetic.
-        source_length = self.coordinate.source_byte_length
-        selector = self.selector
-        if selector.end_byte > source_length or selector.insertion_offset > source_length:
-            raise ValueError("insertion target exceeds the proposer-observed source")
-        if selector.observed_occurrence_count != 1:
-            raise ValueError("insertion anchor must have exactly one observed occurrence")
-        if self.operation == "insert_before" and selector.insertion_offset != selector.start_byte:
-            raise ValueError("insert_before offset must equal the anchor start")
-        if self.operation == "insert_after" and selector.insertion_offset != selector.end_byte:
-            raise ValueError("insert_after offset must equal the anchor end")
-        if self.operation == "replace_window" and selector.insertion_offset != selector.start_byte:
-            raise ValueError("replace_window offset must equal the window start")
-        if self.operation == "append" and selector.insertion_offset != source_length:
-            raise ValueError("append offset must equal the observed source length")
-        return self
-
-
-def insertion_target_v2_digest(target: InsertionTarget) -> str:
-    payload = target.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(Sha256Value, INSERTION_TARGET_V2_DIGEST_DOMAIN, payload).tagged
-
-
-class PublicationSourceObservation(_StrictAuthoringModel):
-    tag: Literal["playbill-publication-source-observation-v2"] = (
-        "playbill-publication-source-observation-v2"
-    )
-    source_id: str
-    content_base64: str
-    content_digest: str
-    byte_length: int = Field(ge=0)
-
-    @field_validator("source_id")
-    @classmethod
-    def _source_id(cls, value: str) -> str:
-        return _insertion_source_id(value)
-
-    @field_validator("content_base64")
-    @classmethod
-    def _content(cls, value: str) -> str:
-        _canonical_base64(value, label="publication source content")
-        return value
-
-    @field_validator("content_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        return _sha256(value, label="publication source digest")
-
-    @model_validator(mode="after")
-    def _correspondence(self) -> "PublicationSourceObservation":
-        content = self.content
-        if len(content) != self.byte_length:
-            raise ValueError("publication source length does not reproduce")
-        if "sha256:" + hashlib.sha256(content).hexdigest() != self.content_digest:
-            raise ValueError("publication source digest does not reproduce")
-        return self
-
-    @property
-    def content(self) -> bytes:
-        return _canonical_base64(self.content_base64, label="publication source content")
-
-
-def publication_source_observation_v2_digest(value: PublicationSourceObservation) -> str:
-    payload = value.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(
-        Sha256Value,
-        INSERTION_SOURCE_OBSERVATION_V2_DIGEST_DOMAIN,
-        payload,
-    ).tagged
-
-
-def insertion_expectation_id(
-    *,
-    instance_id: str,
-    intent_id: str,
-    intent_revision: int,
-    member_identity: str | None = None,
-) -> str:
-    """Name one publication expectation inside one intent revision.
-
-    A change set may publish several Claims at once, so the ID takes the member
-    that owns it. A singular Claim intent owns exactly one, and its preimage
-    stays the three-field preimage it has always been so its already-minted
-    expectation IDs still reproduce.
-    """
-
-    preimage: dict[str, object] = {
-        "instance_id": instance_id,
-        "intent_id": intent_id,
-        "intent_revision": intent_revision,
-    }
-    if member_identity is not None:
-        preimage["member_identity"] = member_identity
-    return typed_digest(
-        Sha256Value,
-        INSERTION_EXPECTATION_ID_DOMAIN,
-        preimage,
-    ).tagged
-
-
 class SelfSourceBody(_StrictAuthoringModel):
     tag: Literal["playbill-self-source-body-v1"] = "playbill-self-source-body-v1"
     content_base64: str
@@ -814,7 +619,6 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
     citation_role: Literal["evidence", "copy"] | None = None
     revises: str | None = None
     existing_claim_dispositions: tuple[AuthoringExistingClaimDisposition, ...] = ()
-    insertion_target: InsertionTarget | None = None
 
     @field_validator("rationale")
     @classmethod
@@ -1766,268 +1570,6 @@ class CandidateStatus(_StrictAuthoringModel):
         return self
 
 
-InsertionExpectationState: TypeAlias = Literal[
-    "awaiting_claim_acceptance",
-    "pending",
-    "prepared",
-    "bound",
-    "expired",
-    "abandoned",
-    "claim_currency_changed",
-]
-
-
-def publication_block_id(expectation_id: str) -> str:
-    _sha256(expectation_id, label="publication expectation ID")
-    digest = typed_digest(
-        Sha256Value,
-        PUBLICATION_BLOCK_ID_DOMAIN,
-        {"expectation_id": expectation_id},
-    ).tagged.removeprefix("sha256:")
-    return "pub-" + digest[:32]
-
-
-class PublicationPreparation(_StrictAuthoringModel):
-    tag: Literal["playbill-publication-preparation-v2"] = "playbill-publication-preparation-v2"
-    expectation_id: str
-    revision: int = Field(ge=1)
-    accepted_coordinate: AcceptedCoordinate
-    accepted_generation: int = Field(ge=0)
-    source_id: str
-    rebased_selector: InsertionAnchorWindow
-    operation: InsertionOperation
-    body_digest: str
-    body_byte_length: int = Field(ge=0)
-    block_id: str
-    stamp: ProjectionBlockStampAny
-    inserted_block_digest: str
-    inserted_block_byte_length: int = Field(ge=0)
-    block_start_byte: int = Field(ge=0)
-    block_end_byte: int = Field(ge=0)
-    body_start_byte: int = Field(ge=0)
-    body_end_byte: int = Field(ge=0)
-    target_digest: str
-    expires_at: datetime
-    preparation_digest: str
-
-    @field_validator(
-        "expectation_id",
-        "body_digest",
-        "inserted_block_digest",
-        "target_digest",
-        "preparation_digest",
-    )
-    @classmethod
-    def _digests(cls, value: str) -> str:
-        return _sha256(value, label="publication preparation digest")
-
-    @field_validator("source_id")
-    @classmethod
-    def _source_id(cls, value: str) -> str:
-        return _insertion_source_id(value)
-
-    @field_validator("expires_at")
-    @classmethod
-    def _time(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
-
-    @field_serializer("expires_at", when_used="json")
-    def _serialize_time(self, value: datetime) -> str:
-        rendered = format_datetime(value)
-        assert rendered is not None
-        return rendered
-
-    @model_validator(mode="after")
-    def _shape(self) -> "PublicationPreparation":
-        if self.block_id != publication_block_id(self.expectation_id):
-            raise ValueError("publication block ID does not reproduce")
-        if self.stamp.source_id != self.source_id or self.stamp.block_id != self.block_id:
-            raise ValueError("publication stamp differs from its source or block")
-        if not (
-            self.block_start_byte
-            <= self.body_start_byte
-            <= self.body_end_byte
-            <= self.block_end_byte
-        ):
-            raise ValueError("publication block/body spans are malformed")
-        if self.body_end_byte - self.body_start_byte != self.body_byte_length:
-            raise ValueError("publication body span length does not reproduce")
-        if self.block_end_byte - self.block_start_byte != self.inserted_block_byte_length:
-            raise ValueError("publication block span length does not reproduce")
-        if self.preparation_digest != publication_preparation_v2_digest(self):
-            raise ValueError("publication preparation digest does not reproduce")
-        return self
-
-
-def publication_preparation_v2_digest(value: PublicationPreparation) -> str:
-    payload = value.model_dump(mode="json")
-    payload.pop("tag")
-    payload.pop("preparation_digest")
-    return typed_digest(Sha256Value, INSERTION_PREPARATION_V2_DIGEST_DOMAIN, payload).tagged
-
-
-class InsertionTerminalTombstone(_StrictAuthoringModel):
-    tag: Literal["playbill-insertion-terminal-tombstone-v2"] = (
-        "playbill-insertion-terminal-tombstone-v2"
-    )
-    result_key: str
-    intent_id: str
-    expectation_id: str
-    final_state: Literal["bound", "expired", "abandoned", "claim_currency_changed"]
-    preparation_digest: str | None = None
-    source_id: str | None = None
-    block_id: str | None = None
-    accepted_claim_identity: str
-    accepted_claim_artifact_digest: str
-    accepted_claim_coordinate: AcceptedCoordinate | None = None
-    finalized_at: datetime
-    retain_until: datetime
-    tombstone_digest: str
-
-    @field_validator(
-        "result_key",
-        "expectation_id",
-        "preparation_digest",
-        "accepted_claim_artifact_digest",
-        "tombstone_digest",
-    )
-    @classmethod
-    def _digests(cls, value: str | None) -> str | None:
-        if value is not None:
-            _sha256(value, label="publication tombstone digest")
-        return value
-
-    @field_validator("finalized_at", "retain_until")
-    @classmethod
-    def _times(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
-
-    @field_serializer("finalized_at", "retain_until", when_used="json")
-    def _serialize_times(self, value: datetime) -> str:
-        rendered = format_datetime(value)
-        assert rendered is not None
-        return rendered
-
-    @model_validator(mode="after")
-    def _shape(self) -> "InsertionTerminalTombstone":
-        if self.retain_until < self.finalized_at:
-            raise ValueError("publication tombstone retention precedes finalization")
-        commitments = (
-            self.preparation_digest,
-            self.source_id,
-            self.block_id,
-        )
-        if self.final_state == "bound" and not all(item is not None for item in commitments):
-            raise ValueError("bound publication tombstone requires exact source commitments")
-        if self.final_state != "bound" and any(item is not None for item in commitments):
-            raise ValueError("unbound publication tombstone cannot claim applied source bytes")
-        if self.final_state == "bound" and self.accepted_claim_coordinate is None:
-            raise ValueError("bound publication tombstone requires its accepted Claim coordinate")
-        if self.tombstone_digest != insertion_terminal_tombstone_v2_digest(self):
-            raise ValueError("publication tombstone digest does not reproduce")
-        return self
-
-
-def insertion_terminal_tombstone_v2_digest(value: InsertionTerminalTombstone) -> str:
-    payload = value.model_dump(mode="json")
-    payload.pop("tag")
-    payload.pop("tombstone_digest")
-    return typed_digest(
-        Sha256Value,
-        INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN,
-        payload,
-    ).tagged
-
-
-class InsertionExpectation(_StrictAuthoringModel):
-    tag: Literal["playbill-insertion-expectation-v2"] = "playbill-insertion-expectation-v2"
-    expectation_id: str
-    state: InsertionExpectationState
-    claim_identity: str
-    original_claim_artifact_digest: str
-    claim_statement_digest: str
-    accepted_claim_coordinate: AcceptedCoordinate | None = None
-    target: InsertionTarget
-    preparation: PublicationPreparation | None = None
-    expires_at: datetime
-    terminal_tombstone: InsertionTerminalTombstone | None = None
-    expectation_digest: str
-
-    @field_validator(
-        "expectation_id",
-        "original_claim_artifact_digest",
-        "claim_statement_digest",
-        "expectation_digest",
-    )
-    @classmethod
-    def _digests(cls, value: str) -> str:
-        return _sha256(value, label="publication expectation digest")
-
-    @field_validator("expires_at")
-    @classmethod
-    def _time(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
-
-    @field_serializer("expires_at", when_used="json")
-    def _serialize_time(self, value: datetime) -> str:
-        rendered = format_datetime(value)
-        assert rendered is not None
-        return rendered
-
-    @model_validator(mode="after")
-    def _shape(self) -> "InsertionExpectation":
-        if self.state == "awaiting_claim_acceptance" and self.accepted_claim_coordinate is not None:
-            raise ValueError("awaiting publication cannot claim an accepted Claim coordinate")
-        if self.state in {"pending", "prepared", "bound"} and (
-            self.accepted_claim_coordinate is None
-        ):
-            raise ValueError("accepted publication state requires its Claim coordinate")
-        if self.state == "prepared" and self.preparation is None:
-            raise ValueError("prepared publication state requires exact preparation")
-        terminal = self.state in {
-            "bound",
-            "expired",
-            "abandoned",
-            "claim_currency_changed",
-        }
-        if terminal != (self.terminal_tombstone is not None):
-            raise ValueError("terminal publication state requires exactly one tombstone")
-        if self.state == "bound" and self.preparation is None:
-            raise ValueError("bound publication state requires its preparation")
-        if self.preparation is not None:
-            if self.accepted_claim_coordinate != self.preparation.accepted_coordinate:
-                raise ValueError("publication preparation names another accepted Claim coordinate")
-            if self.preparation.expires_at != self.expires_at:
-                raise ValueError("publication preparation changes the expectation expiry")
-        if self.terminal_tombstone is not None:
-            if self.terminal_tombstone.expectation_id != self.expectation_id:
-                raise ValueError("publication tombstone names another expectation")
-            if self.terminal_tombstone.final_state != self.state:
-                raise ValueError("publication tombstone disagrees with its terminal state")
-            if self.terminal_tombstone.accepted_claim_coordinate != self.accepted_claim_coordinate:
-                raise ValueError("publication tombstone changes the accepted Claim coordinate")
-        if self.expectation_digest != insertion_expectation_v2_digest(self):
-            raise ValueError("publication expectation digest does not reproduce")
-        return self
-
-
-def insertion_expectation_v2_digest(value: InsertionExpectation) -> str:
-    payload = value.model_dump(mode="json")
-    payload.pop("tag")
-    payload.pop("expectation_digest")
-    return typed_digest(Sha256Value, INSERTION_EXPECTATION_V2_DIGEST_DOMAIN, payload).tagged
-
-
-def build_insertion_expectation_v2(**values: object) -> InsertionExpectation:
-    provisional = InsertionExpectation.model_construct(
-        **cast(dict[str, Any], values),
-        expectation_digest="sha256:" + "0" * 64,
-    )
-    return InsertionExpectation.model_validate(
-        {**values, "expectation_digest": insertion_expectation_v2_digest(provisional)}
-    )
-
-
 class PreflightCertificate(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-preflight-certificate-v1"] = (
         "playbill-authoring-preflight-certificate-v1"
@@ -2181,11 +1723,6 @@ class AuthoringIntentV1(_StrictAuthoringModel):
     intent_revision: int = Field(default=0, ge=0)
     last_preflight: PreflightResult | None = None
     candidate_status: CandidateStatus
-    # A singular Claim intent carries its one expectation in both fields; a
-    # change set carries one per publishing Claim member in the plural field and
-    # nothing in the singular one, because no single expectation is "the" one.
-    insertion_expectation: InsertionExpectation | None = None
-    insertion_expectations: tuple[InsertionExpectation, ...] = ()
     change_set_claim_identities: tuple[ChangeSetClaimIdentity, ...] = ()
 
     @field_validator("intent_id")
@@ -2255,25 +1792,6 @@ class AuthoringIntentV1(_StrictAuthoringModel):
             claim_path(self.semantic_identity)
             if self.change_set_claim_identities:
                 raise ValueError("a singular Claim intent owns no change-set Claim identities")
-            if self.insertion_expectation is not None:
-                if self.payload.insertion_target is None:
-                    raise ValueError("insertion expectation requires an insertion target")
-                if self.insertion_expectation.claim_identity != self.semantic_identity:
-                    raise ValueError("insertion expectation names another Claim identity")
-                expected_id = insertion_expectation_id(
-                    instance_id=self.instance_id,
-                    intent_id=self.intent_id,
-                    intent_revision=self.intent_revision,
-                )
-                if self.insertion_expectation.expectation_id != expected_id:
-                    raise ValueError("insertion expectation ID does not reproduce")
-                if self.insertion_expectation.target != self.payload.insertion_target:
-                    raise ValueError("publication expectation changes its frozen target")
-            expected_plural = (
-                () if self.insertion_expectation is None else (self.insertion_expectation,)
-            )
-            if self.insertion_expectations != expected_plural:
-                raise ValueError("a singular Claim intent carries its one expectation in both")
         else:
             if isinstance(self.payload, ChangeSetAuthoringPayload):
                 if (
@@ -2299,11 +1817,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                 expected_identity = authoring_member_identity(self.payload)
             if self.semantic_identity != expected_identity:
                 raise ValueError("AuthoringIntent identity differs from its payload")
-            if self.insertion_expectation is not None:
-                raise ValueError("non-Claim AuthoringIntent cannot own an insertion expectation")
             if not isinstance(self.payload, ChangeSetAuthoringPayload):
-                if self.insertion_expectations:
-                    raise ValueError("only a Claim member can own a publication expectation")
                 if self.change_set_claim_identities:
                     raise ValueError("only a change set owns per-member Claim identities")
             else:
@@ -2336,30 +1850,6 @@ class AuthoringIntentV1(_StrictAuthoringModel):
             claim_id = by_member[member_identity]
             if member.revises is not None and member.revises != claim_id:
                 raise ValueError("a revising Claim member keeps the lineage it names")
-        expectations = self.insertion_expectations
-        expectation_ids = tuple(item.expectation_id for item in expectations)
-        if expectation_ids != tuple(sorted(set(expectation_ids), key=lambda item: item.encode())):
-            raise ValueError("publication expectations must be ID-sorted and unique")
-        published = {
-            by_member[identity]: (identity, member)
-            for identity, member in claim_members.items()
-            if member.insertion_target is not None
-        }
-        for expectation in expectations:
-            named = published.get(expectation.claim_identity)
-            if named is None:
-                raise ValueError("publication expectation names no publishing Claim member")
-            member_identity, member = named
-            expected_id = insertion_expectation_id(
-                instance_id=self.instance_id,
-                intent_id=self.intent_id,
-                intent_revision=self.intent_revision,
-                member_identity=member_identity,
-            )
-            if expectation.expectation_id != expected_id:
-                raise ValueError("insertion expectation ID does not reproduce")
-            if expectation.target != member.insertion_target:
-                raise ValueError("publication expectation changes its frozen target")
 
 
 class AuthoringIntent(AuthoringIntentV1):
@@ -2399,23 +1889,6 @@ class AuthoringIntentCompileRequestV1(_StrictAuthoringModel):
     )
     payload: AuthoringPayload
     intent_id: str | None = None
-
-
-class AuthoringIntentCompileRequestV2(_StrictAuthoringModel):
-    tag: Literal["playbill-authoring-intent-compile-request-v2"] = (
-        "playbill-authoring-intent-compile-request-v2"
-    )
-    payload: AuthoringPayload
-    reference_expectations: tuple[AuthoringExpectation, ...]
-    intent_id: str | None = None
-
-    @field_validator("reference_expectations")
-    @classmethod
-    def _reference_expectations(
-        cls,
-        value: tuple[AuthoringExpectation, ...],
-    ) -> tuple[AuthoringExpectation, ...]:
-        return canonical_reference_expectations(value)
 
 
 class AuthoringIntentCompileRequest(_StrictAuthoringModel):
@@ -2737,26 +2210,9 @@ class BlockDetachResult(_StrictAuthoringModel):
 
 __all__ = [
     "BlockDetachResult",
-    "AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN",
-    "AUTHORING_CREATE_FINGERPRINT_DOMAIN",
-    "AUTHORING_FRONTIER_DIGEST_DOMAIN",
-    "AUTHORING_INSTANCE_DESCRIPTOR_DIGEST_DOMAIN",
     "AUTHORING_INTENT_ID_RE",
-    "AUTHORING_PAYLOAD_DIGEST_DOMAIN",
-    "AUTHORING_PREFLIGHT_CERTIFICATE_DIGEST_DOMAIN",
-    "AUTHORING_PROGRAM_DIGEST_DOMAIN",
-    "AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN",
-    "AUTHORING_REFERENCE_EXPECTATIONS_DIGEST_DOMAIN",
     "AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST",
     "AUTHORING_SDK_VERSION",
-    "AUTHORING_RESOLVED_DIGEST_DOMAIN",
-    "INSERTION_EXPECTATION_ID_DOMAIN",
-    "INSERTION_EXPECTATION_V2_DIGEST_DOMAIN",
-    "INSERTION_PREPARATION_V2_DIGEST_DOMAIN",
-    "INSERTION_SOURCE_OBSERVATION_V2_DIGEST_DOMAIN",
-    "INSERTION_TARGET_V2_DIGEST_DOMAIN",
-    "INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN",
-    "PUBLICATION_BLOCK_ID_DOMAIN",
     "AcceptanceCondition",
     "AuthoringArtifactReference",
     "AuthoringCandidateReference",
@@ -2764,7 +2220,6 @@ __all__ = [
     "AuthoringClaimStatement",
     "AuthoringDiagnostic",
     "AuthoringExactContentObject",
-    "AuthoringIntentCompileRequestV2",
     "AuthoringIntentCompileRequest",
     "AuthoringIntentCompileRequestV1",
     "AuthoringIntentList",
@@ -2800,14 +2255,6 @@ __all__ = [
     "ClaimDependencyDrafts",
     "DiagnosticFrontierLimits",
     "DiagnosticFrontier",
-    "InsertionAnchorWindow",
-    "InsertionExpectationState",
-    "InsertionExpectation",
-    "InsertionOperation",
-    "InsertionTarget",
-    "InsertionTerminalTombstone",
-    "PublicationPreparation",
-    "PublicationSourceObservation",
     "BlockSyncItem",
     "BlockSyncOutcome",
     "BlockSyncReadReason",
@@ -2851,15 +2298,7 @@ __all__ = [
     "authoring_program_digest",
     "authoring_program_stamp_operation_key",
     "canonical_reference_expectations",
-    "build_insertion_expectation_v2",
     "build_preflight_certificate",
-    "insertion_expectation_id",
-    "insertion_expectation_v2_digest",
-    "insertion_target_v2_digest",
-    "insertion_terminal_tombstone_v2_digest",
-    "publication_block_id",
-    "publication_preparation_v2_digest",
-    "publication_source_observation_v2_digest",
     "preflight_certificate_digest",
     "reference_expectations_digest",
 ]

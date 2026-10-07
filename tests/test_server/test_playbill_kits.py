@@ -520,12 +520,16 @@ def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
 
 
 def test_claim_type_upgrade_is_one_verb_on_the_sdk_http_and_mcp_doors(
-    worlds: tuple[_World, _World],
+    worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
     from cruxible_core.mcp import handlers
+    from tests.support.mcp_daemon import bind_mcp_daemon
 
     publisher, _consumer = worlds
+    mcp_client = CruxibleClient(base_url="http://cruxible")
+    mcp_client._client = publisher.http  # type: ignore[assignment]
+    bind_mcp_daemon(monkeypatch, mcp_client)
     publisher.author(_claim_type(SEATS, {"type": "integer"}))
     before = publisher.tree()
 
@@ -536,14 +540,14 @@ def test_claim_type_upgrade_is_one_verb_on_the_sdk_http_and_mcp_doors(
     ]
     assert publisher.tree() == before
 
-    local = handlers.handle_playbill_claim_type_upgrade(
+    served = handlers.handle_playbill_claim_type_upgrade(
         publisher.instance_id,
         ClaimTypeUpgradeRequest(
             claim_types=(SEATS,), revision_evidence="accumulate", dry_run=False
         ),
     )
-    assert local.status == "proposed" and local.proposal_id is not None, local
-    publisher.approve(local.proposal_id)
+    assert served.status == "proposed" and served.proposal_id is not None, served
+    publisher.approve(served.proposal_id)
     upgraded = publisher.claim_type(SEATS)
     assert (upgraded.artifact_format, upgraded.revision_evidence) == (
         "playbill-claim-type-v7",

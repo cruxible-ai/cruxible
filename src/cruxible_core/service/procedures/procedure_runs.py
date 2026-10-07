@@ -2632,7 +2632,6 @@ def _state_from_records(
                 selection_decision_digest=admission.selection_decision_digest,
                 sensitivity_policy_digest=cast(str, admission.sensitivity_policy_digest),
                 mandate_coordinate_digest=cast(str, admission.mandate_coordinate_digest),
-                calibration_coordinate_digest=cast(str, admission.calibration_coordinate_digest),
                 taint_labels=admission.taint_labels,
                 epsilon_member=admission.epsilon_member,
                 admission_material_manifest=(

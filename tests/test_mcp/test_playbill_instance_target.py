@@ -127,9 +127,9 @@ def test_workspace_binding_on_another_daemon_is_refused(
 
     with pytest.raises(ConfigError, match="selects instance inst_bound"):
         require_instance_id()
+    # With no transport in its environment the adapter's daemon is the binding's.
     monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET")
-    with pytest.raises(ConfigError, match="daemon is not configured"):
-        require_instance_id()
+    assert require_instance_id() == "inst_bound"
 
 
 def test_an_incomplete_workspace_binding_does_not_select_an_instance(
@@ -200,7 +200,7 @@ def test_server_info_answers_an_instance_scoped_credential(
 
 
 def test_server_info_keeps_daemon_fields_for_a_daemon_scope_caller(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, mcp_daemon: object
 ) -> None:
     monkeypatch.setenv("CRUXIBLE_INSTANCE_ID", "inst_env")
 

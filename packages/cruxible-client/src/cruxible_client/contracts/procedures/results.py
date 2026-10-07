@@ -78,7 +78,6 @@ HISTORICAL_NODE_REFUSAL_CODES: dict[str, str] = {
         "terminal_authority_capped_by_propagated_sensitivity"
     ),
     "terminal_rung_capped_by_mandate_grant": "terminal_authority_capped_by_mandate_grant",
-    "terminal_rung_capped_by_calibration": "terminal_authority_capped_by_calibration",
 }
 
 
@@ -149,7 +148,6 @@ ProcedureNodeRefusalCode: TypeAlias = Literal[
     "terminal_authority_capped_by_line_max_authority",
     "terminal_authority_capped_by_propagated_sensitivity",
     "terminal_authority_capped_by_mandate_grant",
-    "terminal_authority_capped_by_calibration",
     "provider_acquisition_plan_required",
     "provider_acquisition_plan_mismatch",
     "workspace_file_read_refused",
@@ -1031,7 +1029,6 @@ ServedAuthorityTerm: TypeAlias = Literal[
     "line_max_authority",
     "propagated_sensitivity",
     "mandate_grant",
-    "calibration",
 ]
 
 
@@ -1174,7 +1171,6 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
     resolved_provider_bindings: tuple[ProcedureProviderBindingV1, ...]
     sensitivity_policy_digest: str
     mandate_coordinate_digest: str
-    calibration_coordinate_digest: str
     taint_labels: tuple[str, ...]
     epsilon_member: bool
     admission_material_manifest: ProcedureAdmissionMaterialManifest
@@ -1190,7 +1186,6 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
         "selection_decision_digest",
         "sensitivity_policy_digest",
         "mandate_coordinate_digest",
-        "calibration_coordinate_digest",
         "admission_material_manifest_digest",
     )(_digest)
 
@@ -1338,9 +1333,6 @@ class ProcedureRunReceipt(ProcedureRunReceiptV5):
 
 
 __all__ = [
-    "PROCEDURE_ADMISSION_MATERIAL_DOMAIN",
-    "PROCEDURE_ACQUISITION_PLAN_V2_DOMAIN",
-    "PROCEDURE_SELECTION_DECISION_DOMAIN",
     "ProcedureAdmissionMaterialManifest",
     "ProcedureSourceObservation",
     "ProcedureAdmissionMaterialMember",

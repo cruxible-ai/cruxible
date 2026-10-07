@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client import (
     CruxibleClient,
@@ -47,11 +47,9 @@ from cruxible_client.contracts.attestations import ApprovalAttestation, Approval
 from cruxible_client.contracts.authoring.models import BlockDetachResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.change_control import (
-    ChangeControlRequest,
     StateCoordinate,
 )
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationAppendRequest,
     ClaimAttestationAppendResult,
     ClaimAttestationCaptureReference,
     ClaimStance,
@@ -62,11 +60,9 @@ from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeResult,
 )
 from cruxible_client.contracts.declared_blocks import (
-    PROJECTION_STAMP_ADAPTER,
     BlockRepinResult,
 )
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.get_reads import (
     ByteRange,
     GetRequest,
@@ -115,6 +111,12 @@ from cruxible_core.coverage.workspace import (
 )
 from cruxible_core.errors import ConfigError, DaemonOperationScopeError, DataValidationError
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.mcp.daemon import (
+    DaemonUnavailableError,
+    configured_daemon_target,
+    forget_local_daemon,
+    resolve_daemon_target,
+)
 from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
 from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.workspace import (
@@ -125,27 +127,9 @@ from cruxible_core.mcp.workspace import (
     optional_mcp_git_workspace_root,
     resolve_workspace_path,
 )
-from cruxible_core.runtime import host_api, playbill_api
-from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
+from cruxible_core.server.config import get_runtime_bearer_token
 from cruxible_core.server.playbill_request_models import (
-    ApprovalRequest,
-    AuthoringInputCompileRequest,
-    AuthoringInputSubmitRequest,
-    AuthoringPreflightRequest,
-    AuthoringRebaseRequest,
-    AuthoringSubmitRequest,
-    BlockDepublishRequest,
     CompilerUpgradeRequest,
-    CurationAcceptFixedRequest,
-    CurationOverruleRequest,
-    CurationSuppressRequest,
-    ProposalReadmitRequest,
-    ProposalWithdrawRequest,
-    ProposeClaimTypeInputRequest,
-    ProposeDocumentRequest,
-    ProposePrincipalRequest,
-    SourceProposeRequest,
-    StoreBodyRequest,
 )
 from cruxible_core.service.change_preview import state_change_scope
 from cruxible_core.service.discovery.since import validate_playbill_since_request
@@ -164,128 +148,6 @@ _CLAIM_TYPE_MIGRATION: TypeAdapter[ClaimTypeMigrationRequestAny] = TypeAdapter(
 )
 
 
-class _LocalFloorClient:
-    """Give the shared client adapter the same calls in library mode."""
-
-    def activate_proposal(self, instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
-        return playbill_api.playbill_activate(instance_id, proposal_id)
-
-    def export_floor(
-        self,
-        instance_id: str,
-        *,
-        at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
-        include: Sequence[contracts.FloorExportPart] = (),
-    ) -> contracts.FloorExport:
-        if at is not None:  # pragma: no cover - shared refresh always asks for current
-            raise DataValidationError("local floor adapter accepts only the current coordinate")
-        return playbill_api.playbill_export_floor(instance_id, include=tuple(include))
-
-    def floor_delta(
-        self,
-        instance_id: str,
-        *,
-        at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
-        base_generation: int | None = None,
-        base_renderer: str | None = None,
-    ) -> FloorDelta:
-        return playbill_api.playbill_floor_delta(
-            instance_id,
-            at=None
-            if at is None
-            else AcceptedCoordinate.model_validate(
-                at if isinstance(at, Mapping) else at.model_dump(mode="json")
-            ),
-            base_generation=base_generation,
-            base_renderer=base_renderer,
-        )
-
-    def check_projection_blocks(
-        self, instance_id: str, *, request: contracts.ProjectionCheckRequest
-    ) -> contracts.ProjectionCheckResult:
-        return playbill_api.playbill_check_projection_blocks(instance_id, request=request)
-
-    def read_block_sync_backing(
-        self,
-        instance_id: str,
-        *,
-        request: contracts.BlockSyncReadRequest,
-    ) -> contracts.BlockSyncReadResult:
-        return playbill_api.playbill_read_block_sync_backing(instance_id, request=request)
-
-
-class _LocalCoverageClient:
-    """Serve the shared next-workspace coverage scan in library mode."""
-
-    def resolve_coverage(
-        self,
-        instance_id: str,
-        *,
-        observations: Sequence[Mapping[str, Any]],
-        at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
-        budget: Mapping[str, Any] | None = None,
-        scan_budget: Mapping[str, Any] | None = None,
-    ) -> contracts.CoverageResult:
-        return playbill_api.playbill_resolve_coverage(
-            instance_id,
-            observations=tuple(
-                WorkingSourceObservation.model_validate(item) for item in observations
-            ),
-            at=None if at is None else AcceptedCoordinate.model_validate(_json(at)),
-            budget=None if budget is None else CoverageCardBudget.model_validate(budget),
-            scan_budget=(
-                None if scan_budget is None else CoverageScanBudget.model_validate(scan_budget)
-            ),
-        )
-
-    def head(self, instance_id: str) -> contracts.Head:
-        return playbill_api.playbill_head(instance_id)
-
-
-def _json(value: contracts.AcceptedCoordinate | Mapping[str, Any]) -> dict[str, Any]:
-    return value.model_dump(mode="json") if isinstance(value, BaseModel) else dict(value)
-
-
-class _LocalSourceContextClient:
-    """Supply accepted context to the shared local compiler in library mode."""
-
-    def source_context(self, instance_id: str) -> contracts.SourceContext:
-        return playbill_api.playbill_source_context(instance_id)
-
-
-class _LocalAttestationClient:
-    """Expose the client-side signing adapter without giving the daemon a key."""
-
-    def whoami(self, instance_id: str) -> contracts.WhoAmI:
-        return playbill_api.playbill_whoami(instance_id)
-
-    def orient(
-        self,
-        instance_id: str,
-        *,
-        section: contracts.OrientSection,
-        limit: int,
-        cursor: str | None = None,
-    ) -> contracts.OrientResult:
-        return playbill_api.playbill_orient(
-            instance_id, section=section, limit=limit, cursor=cursor, surface="sdk"
-        )
-
-    def get(self, instance_id: str, *, request: GetRequest) -> GetResult:
-        return playbill_api.playbill_get(instance_id, request=request)
-
-    def append_claim_attestation(
-        self,
-        instance_id: str,
-        *,
-        request: ClaimAttestationAppendRequest,
-    ) -> ClaimAttestationAppendResult:
-        return playbill_api.playbill_append_claim_attestation(instance_id, request=request)
-
-    def server_info(self) -> contracts.ServerInfoResult:
-        return host_api.server_info()
-
-
 def reset_client_cache() -> None:
     global _client_cache, _client_cache_key
     with _client_cache_lock:
@@ -293,23 +155,24 @@ def reset_client_cache() -> None:
             _client_cache.close()
         _client_cache = None
         _client_cache_key = None
+        forget_local_daemon()
 
 
-def _get_client() -> CruxibleClient | None:
+def _get_client() -> CruxibleClient:
+    """The daemon client: configured, found, or started (`cruxible_core.mcp.daemon`)."""
+
     global _client_cache, _client_cache_key
-    settings = resolve_server_settings()
-    if not settings.enabled:
-        reset_client_cache()
-        return None
+    target = resolve_daemon_target()
     token = get_runtime_bearer_token()
     principal_id = configured_principal_id()
-    cache_key = (settings.server_url, settings.server_socket, token, principal_id)
+    cache_key = (target.server_url, target.server_socket, token, principal_id)
     with _client_cache_lock:
         if _client_cache is None or _client_cache_key != cache_key:
-            reset_client_cache()
+            if _client_cache is not None:
+                _client_cache.close()
             _client_cache = CruxibleClient(
-                base_url=settings.server_url,
-                socket_path=settings.server_socket,
+                base_url=target.server_url,
+                socket_path=target.server_socket,
                 token=token,
                 principal_id=principal_id,
             )
@@ -317,124 +180,40 @@ def _get_client() -> CruxibleClient | None:
         return _client_cache
 
 
-#: The served request model each mutating MCP operation is validated through
-#: when it runs in process. An MCP client with no daemon reaches the facade
-#: directly, which used to mean it skipped whatever the HTTP route's request
-#: model checks beyond the facade's own signature -- a control character in a
-#: decommission reason passed the MCP door and then raised the raw pydantic
-#: error from inside the write, where it renders as an untyped failure rather
-#: than a refusal the caller can read. One seam, so the local door and the
-#: served door reach the same DECISION -- the same model, the same validators,
-#: on the same payload. Not the same rendering: over HTTP the route answers 422
-#: with pydantic's structured error body, and in process the local door raises
-#: a typed `DataValidationError` naming the operation. Same verdict, two
-#: shapes, because in process there is no HTTP envelope to put the other one
-#: in.
-#:
-#: `None` is a declaration, not an omission: that route carries no request body,
-#: so there is no second model to agree with. The guardrail in
-#: `tests/test_architecture/test_mcp_validation_seam.py` requires every mutating
-#: operation to appear here and every entry with a model to be given a payload.
-MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
-    "cruxible_line_dispatch": TypeAdapter(contracts.LineDispatchRequest),
-    "cruxible_line_evaluate": TypeAdapter(contracts.LineEvaluateRequest),
-    "cruxible_line_enable": TypeAdapter(ChangeControlRequest),
-    "cruxible_line_disable": TypeAdapter(ChangeControlRequest),
-    "cruxible_provider_install": TypeAdapter(ProviderInstallRequest),
-    "cruxible_kit_add": TypeAdapter(KitAddRequest),
-    "cruxible_kit_remove": TypeAdapter(KitRemoveRequest),
-    "cruxible_claim_type_upgrade": TypeAdapter(ClaimTypeUpgradeRequest),
-    "cruxible_proposal_activate": None,  # path only
-    "cruxible_authoring_bind": TypeAdapter(AuthoringInputCompileRequest),
-    "cruxible_authoring_compile": TypeAdapter(AuthoringInputCompileRequest),
-    "cruxible_authoring_preflight": TypeAdapter(AuthoringPreflightRequest),
-    "cruxible_authoring_rebase": TypeAdapter(AuthoringRebaseRequest),
-    "cruxible_authoring_submit": TypeAdapter(AuthoringSubmitRequest | AuthoringInputSubmitRequest),
-    "cruxible_block_depublish": TypeAdapter(BlockDepublishRequest),
-    "cruxible_claim_attest": None,  # shared preparation helper builds the body
-    "cruxible_set": TypeAdapter(SetRequest),
-    "cruxible_retire": TypeAdapter(RetireRequest),
-    "cruxible_write": TypeAdapter(WriteRequest),
-    "cruxible_claim_type_migrate": TypeAdapter(ClaimTypeMigrationRequestAny),
-    "cruxible_curation_accept_fixed": TypeAdapter(CurationAcceptFixedRequest),
-    "cruxible_curation_overrule": TypeAdapter(CurationOverruleRequest),
-    "cruxible_curation_suppress": TypeAdapter(CurationSuppressRequest),
-    "cruxible_capture_read": TypeAdapter(CaptureReadRequest),
-    "cruxible_prediction_propose": TypeAdapter(contracts.PredictRequest),
-    "cruxible_proposal_readmit": TypeAdapter(ProposalReadmitRequest),
-    "cruxible_proposal_withdraw": TypeAdapter(ProposalWithdrawRequest),
-    "cruxible_claim_type_propose": TypeAdapter(ProposeClaimTypeInputRequest),
-    "cruxible_document_propose": TypeAdapter(ProposeDocumentRequest),
-    "cruxible_compiler_upgrade": TypeAdapter(CompilerUpgradeRequest),
-    "cruxible_principal_propose": TypeAdapter(ProposePrincipalRequest),
-    "cruxible_propose_source_bundle": TypeAdapter(SourceProposeRequest),
-    "cruxible_procedure_measure": TypeAdapter(contracts.ProcedureMeasureRequest),
-    "cruxible_prediction_settle": TypeAdapter(contracts.SettleRequest),
-    "cruxible_body_store": TypeAdapter(StoreBodyRequest),
-    "cruxible_proposal_approve_submit": TypeAdapter(ApprovalRequest),
-}
-
-
-def _validate_local_request(operation_name: str, payload: Mapping[str, Any]) -> None:
-    """Refuse locally whatever the served route's request model refuses.
-
-    The decision is the served one, byte for byte: the same model object the
-    route binds, so a payload the route rejects is rejected here for the same
-    reason. What differs is the shape it comes back in -- a typed
-    `DataValidationError` naming the operation rather than the route's 422 --
-    because a library caller has no HTTP response to read. It is not the served
-    refusal; it is the served refusal's verdict, rendered for the door it came
-    through.
-    """
-
-    model = MCP_LOCAL_REQUEST_MODELS.get(operation_name)
-    if model is None:
-        return
-    try:
-        model.validate_python(dict(payload))
-    except ValidationError as exc:
-        raise DataValidationError(
-            f"{operation_name}: invalid request", errors=validation_lines(exc)
-        ) from exc
-
-
-def _dispatch_remote_or_local(
+def _daemon_call(
     remote_call: Callable[[CruxibleClient], ResultT],
-    local_call: Callable[[], ResultT],
     *,
-    allow_local: bool = True,
     operation_name: str,
-    local_payload: Mapping[str, Any] | None = None,
 ) -> ResultT:
+    """Run one operation on the daemon; every MCP tool takes this one path."""
+
     try:
         client = _get_client()
+    except DaemonUnavailableError:
+        raise
     except ConfigError as exc:
-        raise ConfigError(
-            f"{exc} Required by {operation_name}; configure CRUXIBLE_SERVER_URL "
-            "or CRUXIBLE_SERVER_SOCKET."
-        ) from exc
-    if client is not None:
-        try:
-            return remote_call(client)
-        except ServerUnreachableError as exc:
-            raise ServerUnreachableError(
-                exc.target,
-                f"{exc.reason} (needed by {operation_name})",
-            ) from exc
-    if not allow_local:
-        raise ConfigError(f"Local execution disabled for {operation_name}; configure a daemon.")
-    if local_payload is not None:
-        _validate_local_request(operation_name, local_payload)
-    return local_call()
+        raise ConfigError(f"{exc} Required by {operation_name}.") from exc
+    try:
+        return remote_call(client)
+    except ServerUnreachableError as exc:
+        configured = configured_daemon_target()
+        if configured is not None:
+            detail = (
+                f"{exc.reason} (needed by {operation_name}; the daemon is configured by "
+                f"{configured.source}, so none is started in its place)"
+            )
+        else:
+            # The found or started daemon went away: the next call finds or starts one.
+            reset_client_cache()
+            detail = f"{exc.reason} (needed by {operation_name}; the next call looks again)"
+        raise ServerUnreachableError(exc.target, detail) from exc
 
 
 def _daemon_version() -> str:
-    """The daemon's public version probe; in library mode this process is the daemon."""
+    """The daemon's public version probe."""
 
-    return _dispatch_remote_or_local(
-        lambda client: client.version(),
-        lambda: __version__,
-        operation_name="daemon version probe (GET /version)",
+    return _daemon_call(
+        lambda client: client.version(), operation_name="daemon version probe (GET /version)"
     )
 
 
@@ -442,10 +221,8 @@ def handle_server_info() -> McpServerInfoResult:
     """Answer a daemon-scope caller with daemon metadata, a scoped one with its instance."""
 
     try:
-        daemon = _dispatch_remote_or_local(
-            lambda client: client.server_info(),
-            host_api.server_info,
-            operation_name="cruxible_server_info",
+        daemon = _daemon_call(
+            lambda client: client.server_info(), operation_name="cruxible_server_info"
         )
     except (ClientDaemonOperationScopeError, DaemonOperationScopeError) as exc:
         scope = exc.credential_scope
@@ -454,10 +231,8 @@ def handle_server_info() -> McpServerInfoResult:
             instance_id=scope,
             adapter_version=__version__,
             daemon_version=_daemon_version(),
-            host=_dispatch_remote_or_local(
-                lambda client: client.show_host(scope),
-                lambda: host_api.show_playbill_host(scope),
-                operation_name="cruxible_server_info",
+            host=_daemon_call(
+                lambda client: client.show_host(scope), operation_name="cruxible_server_info"
             ),
             identity=_playbill_whoami(scope),
         )
@@ -475,18 +250,14 @@ def handle_playbill_store_body(instance_id: str, content_base64: str) -> contrac
         content = base64.b64decode(content_base64, validate=True)
     except ValueError as exc:
         raise DataValidationError("Cruxible body is not canonical base64") from exc
-    return _dispatch_remote_or_local(
-        lambda client: client.store_body(instance_id, content),
-        lambda: playbill_api.playbill_store_body(instance_id, content_base64=content_base64),
-        operation_name="cruxible_body_store",
-        local_payload={"content_base64": content_base64},
+    return _daemon_call(
+        lambda client: client.store_body(instance_id, content), operation_name="cruxible_body_store"
     )
 
 
 def handle_playbill_provider_catalog(instance_id: str) -> ProviderCatalog:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.list_provider_packages(instance_id),
-        lambda: playbill_api.playbill_provider_catalog(instance_id),
         operation_name="cruxible_provider_catalog",
     )
 
@@ -495,56 +266,42 @@ def handle_playbill_provider_install(
     instance_id: str,
     request: ProviderInstallRequest,
 ) -> ProviderInstallResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.install_provider(instance_id, request),
-        lambda: playbill_api.playbill_provider_install(instance_id, request),
         operation_name="cruxible_provider_install",
-        local_payload=request.model_dump(mode="json"),
     )
 
 
 def handle_playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.build_kit(instance_id, request),
-        lambda: playbill_api.playbill_kit_build(instance_id, request),
-        operation_name="cruxible_kit_build",
+    return _daemon_call(
+        lambda client: client.build_kit(instance_id, request), operation_name="cruxible_kit_build"
     )
 
 
 def handle_playbill_kit_status(instance_id: str) -> KitStatus:
-    return _dispatch_remote_or_local(
-        lambda client: client.kit_status(instance_id),
-        lambda: playbill_api.playbill_kit_status(instance_id),
-        operation_name="cruxible_kit_status",
+    return _daemon_call(
+        lambda client: client.kit_status(instance_id), operation_name="cruxible_kit_status"
     )
 
 
 def handle_playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.add_kit(instance_id, request),
-        lambda: playbill_api.playbill_kit_add(instance_id, request),
-        operation_name="cruxible_kit_add",
-        local_payload=request.model_dump(mode="json"),
+    return _daemon_call(
+        lambda client: client.add_kit(instance_id, request), operation_name="cruxible_kit_add"
     )
 
 
 def handle_playbill_claim_type_upgrade(
     instance_id: str, request: ClaimTypeUpgradeRequest
 ) -> ClaimTypeUpgradeResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.upgrade_claim_types(instance_id, request),
-        lambda: playbill_api.playbill_claim_type_upgrade(instance_id, request),
         operation_name="cruxible_claim_type_upgrade",
-        local_payload=request.model_dump(mode="json"),
     )
 
 
 def handle_playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.remove_kit(instance_id, request),
-        lambda: playbill_api.playbill_kit_remove(instance_id, request),
-        operation_name="cruxible_kit_remove",
-        local_payload=request.model_dump(mode="json"),
+    return _daemon_call(
+        lambda client: client.remove_kit(instance_id, request), operation_name="cruxible_kit_remove"
     )
 
 
@@ -558,7 +315,7 @@ def handle_playbill_propose_document(
     at: str | None = None,
 ) -> contracts.ProposalInspection:
     document = DocumentShell.model_validate(shell)
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.propose_document(
             instance_id,
             shell=document.model_dump(mode="json"),
@@ -567,22 +324,7 @@ def handle_playbill_propose_document(
             dry_run=dry_run,
             at=at,
         ),
-        lambda: playbill_api.playbill_propose_document(
-            instance_id,
-            shell=document,
-            proposal_name=proposal_name,
-            source_compilation_digest=source_compilation_digest,
-            dry_run=dry_run,
-            at=at,
-        ),
         operation_name="cruxible_document_propose",
-        local_payload={
-            "shell": document.model_dump(mode="json"),
-            "proposal_name": proposal_name,
-            "dry_run": dry_run,
-            "at": at,
-            "source_compilation_digest": source_compilation_digest,
-        },
     )
 
 
@@ -592,11 +334,8 @@ def handle_playbill_review(
     *,
     include_body: bool,
 ) -> contracts.ProposalReview:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.review_proposal(instance_id, proposal_id, include_body=include_body),
-        lambda: playbill_api.playbill_review_proposal(
-            instance_id, proposal_id, include_body=include_body
-        ),
         operation_name="cruxible_proposal_review",
     )
 
@@ -608,14 +347,8 @@ def handle_playbill_prepare_approval(
     signer_id: str,
     include_body: bool,
 ) -> contracts.ApprovalChallenge:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.prepare_approval(
-            instance_id,
-            proposal_id,
-            signer_id=signer_id,
-            include_body=include_body,
-        ),
-        lambda: playbill_api.playbill_prepare_approval(
             instance_id,
             proposal_id,
             signer_id=signer_id,
@@ -631,19 +364,13 @@ def handle_playbill_submit_approval(
     attestation: dict[str, Any],
 ) -> contracts.ApprovalReceipt:
     public_attestation = ApprovalAttestation.model_validate(attestation)
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.submit_approval(
             instance_id,
             proposal_id,
             attestation=public_attestation.model_dump(mode="json"),
         ),
-        lambda: playbill_api.playbill_submit_approval(
-            instance_id,
-            proposal_id,
-            attestation=public_attestation,
-        ),
         operation_name="cruxible_proposal_approve_submit",
-        local_payload={"attestation": public_attestation.model_dump(mode="json")},
     )
 
 
@@ -702,19 +429,14 @@ def _sole_approval_signer(key_dir: Path) -> str:
 def handle_playbill_activate(instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
     """Activation is a daemon act; the daemon's trigger delivers the floor."""
 
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.activate_proposal(instance_id, proposal_id),
-        lambda: playbill_api.playbill_activate(instance_id, proposal_id),
         operation_name="cruxible_proposal_activate",
     )
 
 
 def _playbill_whoami(instance_id: str) -> contracts.WhoAmI:
-    return _dispatch_remote_or_local(
-        lambda client: client.whoami(instance_id),
-        lambda: playbill_api.playbill_whoami(instance_id),
-        operation_name="cruxible_whoami",
-    )
+    return _daemon_call(lambda client: client.whoami(instance_id), operation_name="cruxible_whoami")
 
 
 def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
@@ -741,7 +463,7 @@ def handle_playbill_orient(
     from cruxible_core.mcp.curation import session_tool_names
 
     tools = tuple(sorted(session_tool_names()))
-    result = _dispatch_remote_or_local(
+    result = _daemon_call(
         lambda client: client.orient(
             instance_id,
             kind=kind,
@@ -750,19 +472,6 @@ def handle_playbill_orient(
             cursor=cursor,
             at=at,
             evaluation_time=evaluation_time,
-            surface="mcp",
-            caller_tools=tools,
-        ),
-        lambda: playbill_api.playbill_orient(
-            instance_id,
-            kind=kind,
-            section=section,
-            limit=limit,
-            cursor=cursor,
-            at=at
-            if at is None or isinstance(at, str)
-            else AcceptedCoordinate.model_validate(_json(at)),
-            evaluation_time=parse_datetime(evaluation_time),
             surface="mcp",
             caller_tools=tools,
         ),
@@ -783,11 +492,8 @@ def handle_playbill_list_proposals(
     cursor: str | None = None,
 ) -> contracts.ProposalList:
     normalized = cast(Any, status)
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.list_proposals(
-            instance_id, status=normalized, limit=limit, cursor=cursor
-        ),
-        lambda: playbill_api.playbill_list_proposals(
             instance_id, status=normalized, limit=limit, cursor=cursor
         ),
         operation_name="cruxible_proposal_list",
@@ -801,13 +507,9 @@ def handle_playbill_readmit_proposal(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalReadmitResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.readmit_proposal(instance_id, proposal_id, dry_run=dry_run, at=at),
-        lambda: playbill_api.playbill_readmit_proposal(
-            instance_id, proposal_id, dry_run=dry_run, at=at
-        ),
         operation_name="cruxible_proposal_readmit",
-        local_payload={"dry_run": dry_run, "at": at},
     )
 
 
@@ -819,32 +521,24 @@ def handle_playbill_withdraw_proposal(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalWithdrawResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.withdraw_proposal(
             instance_id, proposal_id, reason=reason, dry_run=dry_run, at=at
         ),
-        lambda: playbill_api.playbill_withdraw_proposal(
-            instance_id, proposal_id, reason, dry_run=dry_run, at=at
-        ),
         operation_name="cruxible_proposal_withdraw",
-        local_payload={"reason": reason, "dry_run": dry_run, "at": at},
     )
 
 
 def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequest) -> CaptureRead:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.read_capture(instance_id, request),
-        lambda: playbill_api.playbill_read_capture(instance_id, request),
         operation_name="cruxible_capture_read",
-        local_payload=request.model_dump(mode="json"),
     )
 
 
 def handle_playbill_source_context(instance_id: str) -> contracts.SourceContext:
-    return _dispatch_remote_or_local(
-        lambda client: client.source_context(instance_id),
-        lambda: playbill_api.playbill_source_context(instance_id),
-        operation_name="cruxible_source_context",
+    return _daemon_call(
+        lambda client: client.source_context(instance_id), operation_name="cruxible_source_context"
     )
 
 
@@ -880,11 +574,10 @@ def handle_playbill_source_check(
             root_aliases=root_aliases or {},
         )
     )
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.check_source_bundle(
             instance_id, bundle=frozen.model_dump(mode="json")
         ),
-        lambda: playbill_api.playbill_check_source_bundle(instance_id, bundle=frozen),
         operation_name="cruxible_source_check",
     )
 
@@ -899,7 +592,7 @@ def handle_playbill_propose_source_bundle(
     at: str | None = None,
 ) -> contracts.ProposalInspection:
     frozen = SourceCompilationBundle.model_validate(bundle)
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.propose_source_bundle(
             instance_id,
             bundle=frozen.model_dump(mode="json"),
@@ -908,22 +601,7 @@ def handle_playbill_propose_source_bundle(
             dry_run=dry_run,
             at=at,
         ),
-        lambda: playbill_api.playbill_propose_source_bundle(
-            instance_id,
-            bundle=frozen,
-            source_name=source_name,
-            proposal_name=proposal_name,
-            dry_run=dry_run,
-            at=at,
-        ),
         operation_name="cruxible_propose_source_bundle",
-        local_payload={
-            "bundle": frozen.model_dump(mode="json"),
-            "source_name": source_name,
-            "proposal_name": proposal_name,
-            "dry_run": dry_run,
-            "at": at,
-        },
     )
 
 
@@ -945,7 +623,7 @@ def handle_playbill_compiler_upgrade(
             "at": at,
         }
     )
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.propose_compiler_upgrade(
             instance_id,
             target=request.target,
@@ -954,16 +632,7 @@ def handle_playbill_compiler_upgrade(
             dry_run=dry_run,
             at=at,
         ),
-        lambda: playbill_api.playbill_propose_compiler_upgrade(
-            instance_id,
-            target=request.target,
-            base=request.base,
-            proposal_name=proposal_name,
-            dry_run=dry_run,
-            at=at,
-        ),
         operation_name="cruxible_compiler_upgrade",
-        local_payload=request.model_dump(mode="json"),
     )
 
 
@@ -976,7 +645,7 @@ def handle_playbill_propose_principal_change(
     at: str | None = None,
 ) -> contracts.ProposalInspection:
     record = PrincipalRecord.model_validate(principal)
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.propose_principal_change(
             instance_id,
             principal=record.model_dump(mode="json"),
@@ -984,20 +653,7 @@ def handle_playbill_propose_principal_change(
             dry_run=dry_run,
             at=at,
         ),
-        lambda: playbill_api.playbill_propose_principal_change(
-            instance_id,
-            principal=record,
-            proposal_name=proposal_name,
-            dry_run=dry_run,
-            at=at,
-        ),
         operation_name="cruxible_principal_propose",
-        local_payload={
-            "principal": record.model_dump(mode="json"),
-            "proposal_name": proposal_name,
-            "dry_run": dry_run,
-            "at": at,
-        },
     )
 
 
@@ -1010,7 +666,7 @@ def handle_playbill_propose_claim_type(
     at: str | None = None,
 ) -> contracts.ClaimTypeInputProposalResult:
     request = ClaimTypeInputRecord.model_validate(input)
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.propose_claim_type_input(
             instance_id,
             input=request.model_dump(mode="json"),
@@ -1018,20 +674,7 @@ def handle_playbill_propose_claim_type(
             dry_run=dry_run,
             at=at,
         ),
-        lambda: playbill_api.playbill_propose_claim_type_input(
-            instance_id,
-            input=request,
-            proposal_name=proposal_name,
-            dry_run=dry_run,
-            at=at,
-        ),
         operation_name="cruxible_claim_type_propose",
-        local_payload={
-            "input": request.model_dump(mode="json"),
-            "proposal_name": proposal_name,
-            "dry_run": dry_run,
-            "at": at,
-        },
     )
 
 
@@ -1040,14 +683,12 @@ def handle_playbill_migrate_claim_type(
     request: dict[str, Any],
 ) -> contracts.ClaimTypeMigrationResponse:
     migration = _CLAIM_TYPE_MIGRATION.validate_python(request)
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.migrate_claim_type(
             instance_id,
             request=migration.model_dump(mode="json"),
         ),
-        lambda: playbill_api.playbill_migrate_claim_type(instance_id, request=migration),
         operation_name="cruxible_claim_type_migrate",
-        local_payload=migration.model_dump(mode="json"),
     )
 
 
@@ -1117,9 +758,8 @@ def handle_playbill_claim_attest(
         raise DataValidationError(
             "cruxible_claim_attest: invalid request", errors=validation_lines(exc)
         ) from exc
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: _handle_claim_attestation(client, instance_id, prepared),
-        lambda: _handle_claim_attestation(_LocalAttestationClient(), instance_id, prepared),
         operation_name="cruxible_claim_attest",
     )
 
@@ -1144,9 +784,8 @@ def handle_playbill_authoring_get(
     instance_id: str,
     intent_id: str,
 ) -> contracts.AuthoringIntentViewRecord:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.get_authoring_intent(instance_id, intent_id),
-        lambda: playbill_api.playbill_authoring_get(instance_id, intent_id),
         operation_name="cruxible_authoring_get",
     )
 
@@ -1154,9 +793,8 @@ def handle_playbill_authoring_get(
 def handle_playbill_authoring_list(
     instance_id: str,
 ) -> contracts.AuthoringIntentListRecord:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.list_pending_authoring_intents(instance_id),
-        lambda: playbill_api.playbill_authoring_list(instance_id),
         operation_name="cruxible_authoring_list",
     )
 
@@ -1168,19 +806,13 @@ def handle_playbill_authoring_compile(
     intent_id: str | None,
 ) -> contracts.AuthoringPreflightResult:
     request = _AUTHORING_INPUT.validate_python(payload)
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.compile_authoring_input(
             instance_id,
             input=request.model_dump(mode="json"),
             intent_id=intent_id,
         ),
-        lambda: playbill_api.playbill_authoring_compile_input(
-            instance_id,
-            input=request,
-            intent_id=intent_id,
-        ),
         operation_name="cruxible_authoring_compile",
-        local_payload={"input": request.model_dump(mode="json"), "intent_id": intent_id},
     )
 
 
@@ -1203,19 +835,13 @@ def handle_playbill_authoring_bind(
         anchor=anchor,
         window_lines=window_lines,
     )
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.compile_authoring(
             instance_id,
             payload=bound.model_dump(mode="json"),
             intent_id=None,
         ),
-        lambda: playbill_api.playbill_authoring_compile(
-            instance_id,
-            payload=bound,
-            intent_id=None,
-        ),
         operation_name="cruxible_authoring_bind",
-        local_payload={"input": bound.model_dump(mode="json"), "intent_id": None},
     )
 
 
@@ -1223,11 +849,9 @@ def handle_playbill_authoring_preflight(
     instance_id: str,
     intent_id: str,
 ) -> contracts.AuthoringPreflightResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.preflight_authoring_intent(instance_id, intent_id),
-        lambda: playbill_api.playbill_authoring_preflight(instance_id, intent_id),
         operation_name="cruxible_authoring_preflight",
-        local_payload={},
     )
 
 
@@ -1235,11 +859,9 @@ def handle_playbill_authoring_rebase(
     instance_id: str,
     intent_id: str,
 ) -> contracts.AuthoringIntentViewRecord:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.rebase_authoring_intent(instance_id, intent_id),
-        lambda: playbill_api.playbill_authoring_rebase(instance_id, intent_id),
         operation_name="cruxible_authoring_rebase",
-        local_payload={},
     )
 
 
@@ -1255,26 +877,18 @@ def handle_playbill_authoring_submit(
         if intent_id is None:
             raise ConfigError("cruxible_authoring_submit takes a payload, an intent_id, or both")
         staged = intent_id
-        return _dispatch_remote_or_local(
+        return _daemon_call(
             lambda client: client.submit_authoring_intent(instance_id, staged),
-            lambda: playbill_api.playbill_authoring_submit(instance_id, staged),
             operation_name="cruxible_authoring_submit",
-            local_payload={},
         )
     request = _AUTHORING_INPUT.validate_python(payload)
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.submit_authoring_input(
             instance_id,
             input=request.model_dump(mode="json"),
             intent_id=intent_id,
         ),
-        lambda: playbill_api.playbill_authoring_submit_input(
-            instance_id,
-            input=request,
-            intent_id=intent_id,
-        ),
         operation_name="cruxible_authoring_submit",
-        local_payload={"input": request.model_dump(mode="json"), "intent_id": intent_id},
     )
 
 
@@ -1282,49 +896,10 @@ def handle_playbill_authoring_status(
     instance_id: str,
     intent_id: str,
 ) -> contracts.CandidateStatusRecord:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.authoring_intent_status(instance_id, intent_id),
-        lambda: playbill_api.playbill_authoring_status(instance_id, intent_id),
         operation_name="cruxible_authoring_status",
     )
-
-
-class _LocalBlockClient(_LocalFloorClient):
-    """The reads and the declaration block repin makes, served in library mode."""
-
-    def head(
-        self,
-        instance_id: str,
-        *,
-        at: contracts.AcceptedCoordinate | Mapping[str, Any] | str | None = None,
-    ) -> contracts.Head:
-        return playbill_api.playbill_head(
-            instance_id,
-            at=at
-            if at is None or isinstance(at, str)
-            else AcceptedCoordinate.model_validate(_json(at)),
-        )
-
-    def get(self, instance_id: str, *, request: GetRequest) -> GetResult:
-        return playbill_api.playbill_get(instance_id, request=request)
-
-    def query(
-        self, instance_id: str, *, request: contracts.QueryRequest
-    ) -> contracts.QueryResultRecord:
-        return playbill_api.playbill_query(instance_id, request=request)
-
-    def declare_block(
-        self, instance_id: str, stamp: Mapping[str, Any]
-    ) -> contracts.BlockDeclareResult:
-        return playbill_api.playbill_block_declare(
-            instance_id, PROJECTION_STAMP_ADAPTER.validate_python(dict(stamp))
-        )
-
-
-def _block_client() -> CruxibleClient:
-    """The daemon client, or the in-process one: the SDK adapter runs on either."""
-
-    return _get_client() or cast(CruxibleClient, _LocalBlockClient())
 
 
 def handle_playbill_block_repin(
@@ -1361,7 +936,7 @@ def handle_playbill_block_repin(
     )
     path = sources.path_for_source(source_id)
     stamp = repin_projection_block(
-        _block_client(),
+        _get_client(),
         instance_id,
         workspace=root,
         source_id=source_id,
@@ -1400,7 +975,7 @@ def handle_playbill_block_sync(
 
     root = mcp_workspace_root()
     return sync_projection_blocks(
-        _block_client(),
+        _get_client(),
         instance_id,
         workspace=root,
         paths=tuple(resolve_workspace_path(item, root=root, kind="file") for item in files),
@@ -1455,7 +1030,7 @@ def handle_playbill_block_detach(
         describe="detaching retired projection blocks",
     ) as change:
         synced = sync_projection_blocks(
-            _block_client(),
+            _get_client(),
             instance_id,
             workspace=root,
             check=change.previewing,
@@ -1482,20 +1057,11 @@ def handle_playbill_block_depublish(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.BlockDepublishResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.depublish_block(
             instance_id, source_id, block_id, dry_run=dry_run, at=at
         ),
-        lambda: playbill_api.playbill_block_depublish(
-            instance_id, source_id, block_id, dry_run=dry_run, at=at
-        ),
         operation_name="cruxible_block_depublish",
-        local_payload={
-            "source_id": source_id,
-            "block_id": block_id,
-            "dry_run": dry_run,
-            "at": at,
-        },
     )
 
 
@@ -1533,10 +1099,8 @@ def handle_playbill_get(
                 for error in exc.errors(include_url=False)
             ],
         ) from exc
-    return _dispatch_remote_or_local(
-        lambda client: client.get(instance_id, request=request),
-        lambda: playbill_api.playbill_get(instance_id, request=request),
-        operation_name="cruxible_get",
+    return _daemon_call(
+        lambda client: client.get(instance_id, request=request), operation_name="cruxible_get"
     )
 
 
@@ -1566,10 +1130,8 @@ def handle_playbill_query(
 ) -> contracts.QueryResultRecord:
     """Build one typed compact or named ``query`` request and answer it."""
     request = _playbill_query_request("cruxible_query", evaluation_time, fields)
-    return _dispatch_remote_or_local(
-        lambda client: client.query(instance_id, request=request),
-        lambda: playbill_api.playbill_query(instance_id, request=request),
-        operation_name="cruxible_query",
+    return _daemon_call(
+        lambda client: client.query(instance_id, request=request), operation_name="cruxible_query"
     )
 
 
@@ -1630,11 +1192,8 @@ def handle_playbill_set(instance_id: str, **fields: Any) -> WriteOutcome:
     """Put one value in one field of one Subject."""
 
     request = _write_request(SetRequest, "cruxible_set", fields)
-    return _dispatch_remote_or_local(
-        lambda client: client.set(instance_id, request=request),
-        lambda: playbill_api.playbill_set(instance_id, request=request),
-        operation_name="cruxible_set",
-        local_payload=request.model_dump(mode="json"),
+    return _daemon_call(
+        lambda client: client.set(instance_id, request=request), operation_name="cruxible_set"
     )
 
 
@@ -1642,11 +1201,8 @@ def handle_playbill_retire(instance_id: str, **fields: Any) -> WriteOutcome:
     """End one live Claim, by ID or by its Subject and field."""
 
     request = _write_request(RetireRequest, "cruxible_retire", fields)
-    return _dispatch_remote_or_local(
-        lambda client: client.retire(instance_id, request=request),
-        lambda: playbill_api.playbill_retire(instance_id, request=request),
-        operation_name="cruxible_retire",
-        local_payload=request.model_dump(mode="json"),
+    return _daemon_call(
+        lambda client: client.retire(instance_id, request=request), operation_name="cruxible_retire"
     )
 
 
@@ -1654,11 +1210,8 @@ def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
     """Apply set, add and retire changes as one change set."""
 
     request = _write_request(WriteRequest, "cruxible_write", fields)
-    return _dispatch_remote_or_local(
-        lambda client: client.write(instance_id, request=request),
-        lambda: playbill_api.playbill_write(instance_id, request=request),
-        operation_name="cruxible_write",
-        local_payload=request.model_dump(mode="json"),
+    return _daemon_call(
+        lambda client: client.write(instance_id, request=request), operation_name="cruxible_write"
     )
 
 
@@ -1673,9 +1226,8 @@ def handle_playbill_query_spec(
     request = _playbill_query_request(
         "cruxible_query_spec", evaluation_time, {**fields, "spec": spec}
     )
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.query(instance_id, request=request),
-        lambda: playbill_api.playbill_query(instance_id, request=request),
         operation_name="cruxible_query_spec",
     )
 
@@ -1700,7 +1252,7 @@ def handle_playbill_procedure_run(
             "trigger_event": trigger_event,
         }
     )
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.run_procedure(
             instance_id,
             resolution_contract=resolution_contract,
@@ -1712,7 +1264,6 @@ def handle_playbill_procedure_run(
             at=None if request.at is None else request.at.model_dump(mode="json"),
             input=request.input,
         ),
-        lambda: playbill_api.playbill_procedure_run(instance_id, name, request=request),
         operation_name="cruxible_procedure_run",
     )
 
@@ -1722,11 +1273,9 @@ def handle_playbill_procedure_measure(
     name: str,
     request: contracts.ProcedureMeasureRequest,
 ) -> contracts.ProcedureMeasureResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.measure_procedure(instance_id, name, request=request),
-        lambda: playbill_api.playbill_procedure_measure(instance_id, name, request=request),
         operation_name="cruxible_procedure_measure",
-        local_payload=request.model_dump(mode="json"),
     )
 
 
@@ -1735,9 +1284,8 @@ def handle_playbill_procedure_readings(
     name: str,
     request: contracts.ProcedureReadingsRequest,
 ) -> contracts.ProcedureReadingsResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.list_procedure_readings(instance_id, name, request=request),
-        lambda: playbill_api.playbill_procedure_readings(instance_id, name, request=request),
         operation_name="cruxible_procedure_readings",
     )
 
@@ -1745,44 +1293,36 @@ def handle_playbill_procedure_readings(
 def handle_playbill_line_enable(
     instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
 ) -> contracts.LineEnablement:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.enable_line(instance_id, line, dry_run=dry_run, at=at),
-        lambda: playbill_api.playbill_line_enable(instance_id, line, dry_run=dry_run, at=at),
         operation_name="cruxible_line_enable",
-        local_payload={"dry_run": dry_run, "at": at},
     )
 
 
 def handle_playbill_line_disable(
     instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
 ) -> contracts.LineEnablement:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.disable_line(instance_id, line, dry_run=dry_run, at=at),
-        lambda: playbill_api.playbill_line_disable(instance_id, line, dry_run=dry_run, at=at),
         operation_name="cruxible_line_disable",
-        local_payload={"dry_run": dry_run, "at": at},
     )
 
 
 def handle_playbill_line_evaluate(
     instance_id: str, line: str, request: contracts.LineEvaluateRequest
 ) -> contracts.LineEvaluateResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.evaluate_line(instance_id, line, request=request),
-        lambda: playbill_api.playbill_line_evaluate(instance_id, line, request=request),
         operation_name="cruxible_line_evaluate",
-        local_payload=request.model_dump(mode="json"),
     )
 
 
 def handle_playbill_line_dispatch(
     instance_id: str, line: str, request: contracts.LineDispatchRequest
 ) -> contracts.LineDispatchResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.dispatch_line(instance_id, line, request=request),
-        lambda: playbill_api.playbill_line_dispatch(instance_id, line, request=request),
         operation_name="cruxible_line_dispatch",
-        local_payload=request.model_dump(mode="json"),
     )
 
 
@@ -1808,7 +1348,7 @@ def handle_playbill_line_run(
             ),
         }
     )
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.run_line(
             instance_id,
             resolution_contract=resolution_contract,
@@ -1820,11 +1360,6 @@ def handle_playbill_line_run(
                 None if request.evaluation_time is None else request.evaluation_time.isoformat()
             ),
         ),
-        lambda: playbill_api.playbill_line_run(
-            instance_id,
-            line,
-            request=request,
-        ),
         operation_name="cruxible_line_run",
     )
 
@@ -1832,9 +1367,8 @@ def handle_playbill_line_run(
 def handle_playbill_prediction_list(
     instance_id: str, request: contracts.ResolutionContractsRequest
 ) -> contracts.ResolutionContractsResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.list_predictions(instance_id, request=request),
-        lambda: playbill_api.playbill_prediction_list(instance_id, request=request),
         operation_name="cruxible_prediction_list",
     )
 
@@ -1843,11 +1377,9 @@ def handle_playbill_predict(
     instance_id: str,
     request: contracts.PredictRequest,
 ) -> contracts.PredictResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.predict(instance_id, request=request),
-        lambda: playbill_api.playbill_predict(instance_id, request=request),
         operation_name="cruxible_prediction_propose",
-        local_payload=request.model_dump(mode="json"),
     )
 
 
@@ -1856,19 +1388,13 @@ def handle_playbill_settle_prediction(
     prediction_id: str,
     request: contracts.SettleRequest,
 ) -> contracts.SettleResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.settle_prediction(
             instance_id,
             prediction_id,
             request=request,
         ),
-        lambda: playbill_api.playbill_settle_prediction(
-            instance_id,
-            prediction_id,
-            request=request,
-        ),
         operation_name="cruxible_prediction_settle",
-        local_payload=request.model_dump(mode="json"),
     )
 
 
@@ -1898,7 +1424,7 @@ def handle_playbill_since(
             "cursor": cursor,
         }
     )
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.since(
             instance_id,
             generation=request.generation,
@@ -1907,10 +1433,6 @@ def handle_playbill_since(
             max_rows=request.max_rows,
             max_bytes=request.max_bytes,
             cursor=request.cursor,
-        ),
-        lambda: playbill_api.playbill_since(
-            instance_id,
-            request=request,
         ),
         operation_name="cruxible_since",
     )
@@ -1970,37 +1492,7 @@ def handle_playbill_next(
             caller_tools=tools,
         )
 
-    def local() -> contracts.NextResult:
-        observed, coordinate = observe_next_workspace_with_coverage(
-            _LocalCoverageClient(),
-            instance_id,
-            workspace,
-            observation=observation,
-            access_profile=profile,
-        )
-        request: dict[str, Any] = {
-            "tag": "playbill-next-request-v2",
-            "at": None if coordinate is None else coordinate.model_dump(mode="json"),
-            "evaluation_time": stamped,
-            "access_profile": profile,
-            "workspace_observation": observed,
-            "expiring_within": None if expiring_within is None else dict(expiring_within),
-            "since_result_digest": since_result_digest,
-            "limit": limit,
-            "cursor": cursor,
-            "caller_surface": "mcp",
-            "caller_tools": list(tools),
-        }
-        return playbill_api.playbill_next(
-            instance_id,
-            request={key: value for key, value in request.items() if value is not None},
-        )
-
-    return _dispatch_remote_or_local(
-        remote,
-        local,
-        operation_name="cruxible_next",
-    )
+    return _daemon_call(remote, operation_name="cruxible_next")
 
 
 def handle_playbill_curation_list(
@@ -2018,15 +1510,7 @@ def handle_playbill_curation_list(
         "permitted_access_classes": ["instance", "public"],
         "disclose_restricted_existence": True,
     }
-    request = {
-        "tag": "playbill-curation-list-request-v1",
-        "evaluation_time": evaluation_time,
-        "access_profile": profile,
-        "workspace_observation": workspace_observation,
-        "limit": limit,
-        "cursor": cursor,
-    }
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.list_curation(
             instance_id,
             evaluation_time=evaluation_time,
@@ -2035,7 +1519,6 @@ def handle_playbill_curation_list(
             limit=limit,
             cursor=cursor,
         ),
-        lambda: playbill_api.playbill_curation_list(instance_id, request=request),
         operation_name="cruxible_curation_list",
     )
 
@@ -2061,23 +1544,7 @@ def handle_playbill_audit(
         sorted(set(claim_type_identities), key=lambda item: item.encode("utf-8"))
     )
     ordered_subject_kinds = tuple(sorted(set(subject_kinds), key=lambda item: item.encode("utf-8")))
-    request = {
-        "tag": "playbill-audit-request-v1",
-        "evaluation_time": evaluation_time,
-        "access_profile": profile,
-        "scope": {
-            "tag": "playbill-audit-scope-v1",
-            "claim_type_identities": list(ordered_claim_types),
-            "subject_kinds": list(ordered_subject_kinds),
-        },
-        "budget": {
-            "tag": "playbill-audit-budget-v1",
-            "max_rows": max_rows,
-            "max_bytes": max_bytes,
-        },
-        "cursor": cursor,
-    }
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.audit(
             instance_id,
             evaluation_time=evaluation_time,
@@ -2088,7 +1555,6 @@ def handle_playbill_audit(
             max_bytes=max_bytes,
             cursor=cursor,
         ),
-        lambda: playbill_api.playbill_audit(instance_id, request=request),
         operation_name="cruxible_audit",
     )
 
@@ -2103,7 +1569,7 @@ def handle_playbill_curation_overrule(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.CurationActionResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.overrule_curation(
             instance_id,
             item_id=item_id,
@@ -2113,27 +1579,7 @@ def handle_playbill_curation_overrule(
             dry_run=dry_run,
             at=at,
         ),
-        lambda: playbill_api.playbill_curation_overrule(
-            instance_id,
-            request={
-                "tag": "playbill-curation-overrule-request-v1",
-                "item_id": item_id,
-                "expected_latest_event_digest": expected_latest_event_digest,
-                "reason": reason,
-                "attribution_refs": attribution_refs,
-                "dry_run": dry_run,
-                "at": at,
-            },
-        ),
         operation_name="cruxible_curation_overrule",
-        local_payload={
-            "item_id": item_id,
-            "expected_latest_event_digest": expected_latest_event_digest,
-            "reason": reason,
-            "attribution_refs": attribution_refs,
-            "dry_run": dry_run,
-            "at": at,
-        },
     )
 
 
@@ -2149,7 +1595,7 @@ def handle_playbill_curation_accept_fixed(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.CurationActionResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.accept_fixed_curation(
             instance_id,
             item_id=item_id,
@@ -2161,31 +1607,7 @@ def handle_playbill_curation_accept_fixed(
             dry_run=dry_run,
             at=at,
         ),
-        lambda: playbill_api.playbill_curation_accept_fixed(
-            instance_id,
-            request={
-                "tag": "playbill-curation-accept-fixed-request-v1",
-                "item_id": item_id,
-                "expected_latest_event_digest": expected_latest_event_digest,
-                "reason": reason,
-                "accepted_proposal_id": accepted_proposal_id,
-                "accepted_changeset_digest": accepted_changeset_digest,
-                "attribution_refs": attribution_refs,
-                "dry_run": dry_run,
-                "at": at,
-            },
-        ),
         operation_name="cruxible_curation_accept_fixed",
-        local_payload={
-            "item_id": item_id,
-            "expected_latest_event_digest": expected_latest_event_digest,
-            "reason": reason,
-            "accepted_proposal_id": accepted_proposal_id,
-            "accepted_changeset_digest": accepted_changeset_digest,
-            "attribution_refs": attribution_refs,
-            "dry_run": dry_run,
-            "at": at,
-        },
     )
 
 
@@ -2201,7 +1623,7 @@ def handle_playbill_curation_suppress(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.CurationActionResult:
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.suppress_curation(
             instance_id,
             item_id=item_id,
@@ -2213,31 +1635,7 @@ def handle_playbill_curation_suppress(
             dry_run=dry_run,
             at=at,
         ),
-        lambda: playbill_api.playbill_curation_suppress(
-            instance_id,
-            request={
-                "tag": "playbill-curation-suppress-request-v1",
-                "item_id": item_id,
-                "expected_latest_event_digest": expected_latest_event_digest,
-                "reason": reason,
-                "scope": scope,
-                "until_generation": until_generation,
-                "attribution_refs": attribution_refs,
-                "dry_run": dry_run,
-                "at": at,
-            },
-        ),
         operation_name="cruxible_curation_suppress",
-        local_payload={
-            "item_id": item_id,
-            "expected_latest_event_digest": expected_latest_event_digest,
-            "reason": reason,
-            "scope": scope,
-            "until_generation": until_generation,
-            "attribution_refs": attribution_refs,
-            "dry_run": dry_run,
-            "at": at,
-        },
     )
 
 
@@ -2277,18 +1675,12 @@ def handle_playbill_coverage(
         )
     cards = None if budget is None else CoverageCardBudget.model_validate(budget)
     scan = None if scan_budget is None else CoverageScanBudget.model_validate(scan_budget)
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: client.resolve_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observed],
             budget=(None if cards is None else cards.model_dump(mode="json")),
             scan_budget=(None if scan is None else scan.model_dump(mode="json")),
-        ),
-        lambda: playbill_api.playbill_resolve_coverage(
-            instance_id,
-            observations=observed,
-            budget=cards,
-            scan_budget=scan,
         ),
         operation_name="cruxible_coverage",
     )
@@ -2320,16 +1712,9 @@ def handle_playbill_workspace_source_compile(
             for name, path in root_aliases.items()
         }
     )
-    return _dispatch_remote_or_local(
+    return _daemon_call(
         lambda client: compile_client_source_context(
             client,
-            instance_id,
-            catalog=catalog,
-            repository_root=repository,
-            aliases=aliases,
-        ),
-        lambda: compile_client_source_context(
-            _LocalSourceContextClient(),
             instance_id,
             catalog=catalog,
             repository_root=repository,
@@ -2379,10 +1764,8 @@ def handle_playbill_floor_export(
     if include and mode == "status":
         raise DataValidationError("include applies only to floor export modes 'bytes' and 'write'")
     if mode == "status":
-        head = _dispatch_remote_or_local(
-            lambda client: client.head(instance_id),
-            lambda: playbill_api.playbill_head(instance_id),
-            operation_name="cruxible_floor_export",
+        head = _daemon_call(
+            lambda client: client.head(instance_id), operation_name="cruxible_floor_export"
         )
         return inspect_workspace_floor(
             mcp_git_workspace_root(),
@@ -2392,21 +1775,18 @@ def handle_playbill_floor_export(
         )
     parts = floor_export_parts(include)
     if mode == "bytes":
-        return _dispatch_remote_or_local(
+        return _daemon_call(
             lambda client: client.export_floor(instance_id, **parts),
-            lambda: playbill_api.playbill_export_floor(instance_id, **parts),
             operation_name="cruxible_floor_export",
         )
     # The CLI's write path: export, write, and record the refresh profile with
     # its opt-in parts, naming the daemon this MCP server talks to.
     workspace = mcp_git_workspace_root()
-    settings = resolve_server_settings()
-    transport = (
-        {"server_socket": settings.server_socket}
-        if settings.enabled and settings.server_socket
-        else {"server_url": settings.server_url}
-        if settings.enabled and settings.server_url
-        else {}
+    daemon = resolve_daemon_target()
+    transport: dict[str, str | None] = (
+        {"server_socket": daemon.server_socket}
+        if daemon.server_socket
+        else {"server_url": daemon.server_url}
     )
 
     def write(
@@ -2440,18 +1820,13 @@ def handle_playbill_floor_export(
         )[1]
 
     if not include:
-        return _dispatch_remote_or_local(
-            write_delta,
-            lambda: write_delta(_LocalFloorClient()),
-            operation_name="cruxible_floor_export",
-        )
-    return _dispatch_remote_or_local(
+        return _daemon_call(write_delta, operation_name="cruxible_floor_export")
+    return _daemon_call(
         lambda client: write(
             lambda: client.export_floor(instance_id, **parts),
             (lambda: daemon_floor_delivery(client, instance_id, workspace, include=tuple(include)))
             if transport.get("server_socket")
             else None,
         ),
-        lambda: write(lambda: playbill_api.playbill_export_floor(instance_id, **parts)),
         operation_name="cruxible_floor_export",
     )

@@ -30,7 +30,7 @@ def host_client(tmp_path, monkeypatch):
     return TestClient(create_app())
 
 
-@pytest.mark.parametrize("surface", ["sdk", "mcp-local", "mcp-remote", "cli"])
+@pytest.mark.parametrize("surface", ["sdk", "mcp", "cli"])
 def test_upgrade_surfaces_create_the_same_reviewable_proposal(
     tmp_path, monkeypatch, host_client, surface
 ):
@@ -52,10 +52,8 @@ def test_upgrade_surfaces_create_the_same_reviewable_proposal(
             instance_id, target=UPGRADE_COMPILER, base=base, proposal_name="upgrade"
         )
         payload = result.model_dump(mode="json")
-    elif surface.startswith("mcp"):
-        monkeypatch.setattr(
-            handlers, "_get_client", lambda: None if surface == "mcp-local" else client
-        )
+    elif surface == "mcp":
+        monkeypatch.setattr(handlers, "_get_client", lambda: client)
         result = handlers.handle_playbill_compiler_upgrade(
             instance_id,
             target_compiler_digest=UPGRADE_COMPILER.rule_digest,

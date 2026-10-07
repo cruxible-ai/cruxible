@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from cruxible_client import contracts
 from cruxible_core.mcp import handlers
+from tests.support.mcp_daemon import bind_mcp_daemon
 
 
 def _result(evaluation_time: str) -> contracts.AuditResult:
@@ -39,10 +40,10 @@ def test_mcp_audit_delegates_exact_scope_budget_and_profile(monkeypatch) -> None
         seen.update(instance_id=instance_id, request=request)
         return _result("2026-08-26T18:00:00+00:00")
 
-    monkeypatch.setattr(handlers, "_get_client", lambda: None)
+    bind_mcp_daemon(monkeypatch, instances=["inst_mcp"])
     monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_audit", stub)
     result = handlers.handle_playbill_audit(
-        "inst",
+        "inst_mcp",
         evaluation_time="2026-08-26T18:00:00+00:00",
         access_profile=None,
         claim_type_identities=["ClaimType:status"],

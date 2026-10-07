@@ -61,14 +61,12 @@ from cruxible_core.service.discovery.next import (
 )
 from cruxible_core.service.proposals.publications import service_declare_playbill_block
 from tests.core_support._support import initialize_local
-from tests.test_authoring.test_authoring_insertions_v2 import (
-    _activate,
-    _successor_payload,
-)
 from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
+    _activate,
     _seed_claim_surface,
     _self_source_payload,
+    _successor_payload,
 )
 
 ACCESS_PROFILE = CoverageAccessProfile(

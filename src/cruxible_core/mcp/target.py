@@ -35,8 +35,9 @@ def _transport(server_url: object, server_socket: object) -> str | None:
 def _workspace_instance_id(env: Mapping[str, str]) -> str | None:
     """The instance the MCP workspace binds, when it lives on this adapter's daemon.
 
-    The adapter's daemon comes only from its own environment, so a binding that
-    names another daemon is refused rather than followed.
+    With no transport in its environment the adapter's daemon is the binding's
+    own (`cruxible_core.mcp.daemon`); a binding naming another daemon than the
+    environment's is refused rather than followed.
     """
 
     bare = {key: value for key, value in env.items() if key not in _TARGET_ENV}
@@ -63,11 +64,11 @@ def _workspace_instance_id(env: Mapping[str, str]) -> str | None:
         adapter = _transport(env.get("CRUXIBLE_SERVER_URL"), env.get("CRUXIBLE_SERVER_SOCKET"))
     except (OSError, RuntimeError, ValueError):
         return None
-    if adapter is None or adapter != bound:
+    if adapter is not None and adapter != bound:
         raise ConfigError(
             f"The workspace binding {binding.workspace_binding_path} selects instance "
             f"{binding.instance_id} on {bound}, but this MCP server's daemon is "
-            f"{adapter or 'not configured'}. Pass instance_id, or set {MCP_INSTANCE_ENV}."
+            f"{adapter}. Pass instance_id, or set {MCP_INSTANCE_ENV}."
         )
     return binding.instance_id
 

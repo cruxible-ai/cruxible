@@ -182,14 +182,14 @@ def test_http_and_mcp_playbill_calls_delegate_to_the_dedicated_facade() -> None:
     surface = expected["surface"]
     facade = _facade_operations()
     http = _playbill_facade_calls(HTTP_ROUTES)
-    mcp = _playbill_facade_calls(MCP_HANDLERS)
 
     assert list(facade) == surface["facade_verbs"]
     assert http == facade
-    assert set(mcp) <= set(facade)
-    # Breadth, not just count: a handler that starts calling one more facade
-    # operation moves the ratified pin instead of passing unnoticed.
-    assert list(mcp) == surface["mcp_facade_operations"]
+    # MCP has no in-process road: every tool reaches the facade through the
+    # daemon's routes, so the handlers name no facade verb at all.
+    assert _playbill_facade_calls(MCP_HANDLERS) == ()
+    assert "playbill_api" not in MCP_HANDLERS.read_text(encoding="utf-8")
+    assert "host_api" not in MCP_HANDLERS.read_text(encoding="utf-8")
     assert "from cruxible_core.runtime import api\n" not in HTTP_ROUTES.read_text(encoding="utf-8")
 
 

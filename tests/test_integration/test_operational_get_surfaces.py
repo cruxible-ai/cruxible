@@ -112,8 +112,7 @@ def test_the_mcp_tool_answers_a_line_card_by_its_identity_digest(world, monkeypa
 
     instance, line = world
     client = _ServiceClient(instance)
-    monkeypatch.setattr(handlers, "_get_client", lambda: None)
-    monkeypatch.setattr(handlers.playbill_api, "playbill_get", client.get)
+    monkeypatch.setattr(handlers, "_get_client", lambda: client)
     server = create_server()
 
     async def exercise() -> tuple[bool, str]:
@@ -201,12 +200,7 @@ def test_the_cli_pages_the_operational_sections(world, monkeypatch, tmp_path) ->
 def test_the_mcp_orient_tool_pages_lines(world, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     instance, line = world
     client = _orient_client(instance)
-    monkeypatch.setattr(handlers, "_get_client", lambda: None)
-    monkeypatch.setattr(
-        handlers.playbill_api,
-        "playbill_orient",
-        lambda instance_id, **values: client.orient(instance_id, **values),
-    )
+    monkeypatch.setattr(handlers, "_get_client", lambda: client)
     server = create_server()
 
     async def exercise() -> str:

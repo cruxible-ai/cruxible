@@ -23,7 +23,7 @@ from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._knowledge_loop_support import EVALUATION_TIME, SUBJECT_KIND, seed_claims
 from tests.core_support._relation_query_support import BATCH_KIND, DELIVERS, seed_relations
 
-SURFACES = ("transport", "mcp-local", "mcp-remote", "cli", "sdk")
+SURFACES = ("transport", "mcp", "cli", "sdk")
 EXPECTED = [
     ("wi-42", f"{BATCH_KIND}/b-1", "open", None),
     ("wi-42", f"{BATCH_KIND}/b-2", "closed", None),
@@ -128,9 +128,7 @@ def test_every_surface_follows_a_relation_backwards(
             .page
         )
     else:
-        monkeypatch.setattr(
-            handlers, "_get_client", lambda: None if surface == "mcp-local" else client
-        )
+        monkeypatch.setattr(handlers, "_get_client", lambda: client)
         result = handlers.handle_playbill_query(
             instance_id,
             kind=SUBJECT_KIND,
@@ -200,9 +198,7 @@ def test_every_surface_pages_reverse_rows_and_refuses_a_wrong_predicate(
                     }
                 ),
             )
-        monkeypatch.setattr(
-            handlers, "_get_client", lambda: None if surface == "mcp-local" else client
-        )
+        monkeypatch.setattr(handlers, "_get_client", lambda: client)
         return handlers.handle_playbill_query(
             instance_id,
             kind=SUBJECT_KIND,
@@ -270,9 +266,7 @@ def test_every_surface_orients_with_the_incoming_predicates(
         result = _playbill(client, instance_id, tmp_path).orient(kind=SUBJECT_KIND)
         marker = f'cx.query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}"'
     else:
-        monkeypatch.setattr(
-            handlers, "_get_client", lambda: None if surface == "mcp-local" else client
-        )
+        monkeypatch.setattr(handlers, "_get_client", lambda: client)
         result = handlers.handle_playbill_orient(instance_id, kind=SUBJECT_KIND)
         marker = f'cruxible_query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}"'
 

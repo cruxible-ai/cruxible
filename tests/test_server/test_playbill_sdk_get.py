@@ -160,9 +160,7 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
     transport = pb._client  # noqa: SLF001
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
-    monkeypatch.setattr(
-        handlers, "_dispatch_remote_or_local", lambda remote, _local, **_kw: remote(transport)
-    )
+    monkeypatch.setattr(handlers, "_get_client", lambda: transport)
     prefix = ["--server-url", "http://testserver", "--instance-id", instance_id]
     url = f"/api/v1/{instance_id}/get"
     for ref, detail in (
@@ -246,6 +244,7 @@ def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
     transport = CruxibleClient(base_url="http://testserver")
     transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    monkeypatch.setattr(handlers, "_get_client", lambda: transport)
     get_url = f"/api/v1/{instance_id}/get"
     capture_url = f"/api/v1/{instance_id}/captures/read"
 
@@ -276,7 +275,7 @@ def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
         sdk_rows = {row["subject"]: row for row in pb.query(kind=EXACT_KIND, select=["status"])}
         assert sdk_rows[ruling.subject]["status"] == text
 
-        # MCP (local dispatch through the same facade).
+        # MCP (through the same daemon).
         mcp_card = handlers.handle_playbill_get(instance_id, ref=ruling.claim_id).card
         assert mcp_card is not None and mcp_card.value == text  # type: ignore[union-attr]
         mcp_history = handlers.handle_playbill_get(
@@ -382,6 +381,7 @@ def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
 
     # SDK and MCP.
     pb = _sdk(client, instance_id, tmp_path)
+    monkeypatch.setattr(handlers, "_get_client", lambda: pb._client)  # noqa: SLF001
     assert pb.query(kind="ClaimType", at=compact).page.receipt.coordinate.git_oid == earlier.oid
     assert handlers.handle_playbill_get(instance_id, ref=ref, at=compact).coordinate.git_oid == (
         compact

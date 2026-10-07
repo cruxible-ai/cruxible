@@ -421,11 +421,6 @@ class Diagnostic:
     call_site: CallSite | None
 
 
-@dataclass(frozen=True)
-class DerivationSpec:
-    name: str
-
-
 class SdkError(CoreError, ValueError):
     code = "cruxible.sdk.refused"
 
@@ -579,7 +574,6 @@ __all__ = [
     "ClaimRef",
     "ClaimRole",
     "ClaimTypeRef",
-    "DerivationSpec",
     "Diagnostic",
     "Disposition",
     "Duration",

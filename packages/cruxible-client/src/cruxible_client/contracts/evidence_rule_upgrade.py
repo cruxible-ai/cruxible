@@ -15,12 +15,6 @@ class EvidenceRuleConversion(_Model):
     widened_versions: tuple[str, ...] = ()
 
 
-class EvidenceRuleRefusal(_Model):
-    claim_type: str
-    reason: str
-
-
 __all__ = [
     "EvidenceRuleConversion",
-    "EvidenceRuleRefusal",
 ]

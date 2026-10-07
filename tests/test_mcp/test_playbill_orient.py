@@ -1,9 +1,10 @@
-"""MCP orient: typed parameters, dual-mode dispatch, tool-call rendering."""
+"""MCP orient: typed parameters, daemon dispatch, tool-call rendering."""
 
 from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -33,15 +34,14 @@ def _answer() -> contracts.OrientResult:
     )
 
 
-def test_local_mcp_orient_renders_for_mcp_and_passes_typed_inputs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_mcp_orient_renders_for_mcp_and_forwards_its_inputs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     seen: dict[str, Any] = {}
 
     def orient_stub(instance_id: str, **values: Any) -> contracts.OrientResult:
         seen.update(values, instance_id=instance_id)
         return _answer()
 
-    monkeypatch.setattr(handlers, "_get_client", lambda: None)
-    monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_orient", orient_stub)
+    monkeypatch.setattr(handlers, "_get_client", lambda: SimpleNamespace(orient=orient_stub))
 
     result = handlers.handle_playbill_orient(
         "inst",
@@ -52,10 +52,11 @@ def test_local_mcp_orient_renders_for_mcp_and_passes_typed_inputs(monkeypatch) -
     )
 
     assert result.generation == 4
+    assert seen["instance_id"] == "inst"
     assert seen["surface"] == "mcp"
     assert seen["section"] == "queries" and seen["limit"] == 5
-    assert seen["at"] == AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json"))
-    assert seen["evaluation_time"] == datetime(2026, 9, 2, tzinfo=UTC)
+    assert seen["at"] == COORDINATE
+    assert seen["evaluation_time"] == "2026-09-02T00:00:00Z"
 
     handlers.handle_playbill_orient("inst", at="1" * 64)
     assert seen["at"] == "1" * 64
@@ -102,10 +103,9 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
     }
 
 
-@pytest.mark.parametrize("remote", [False, True])
 @pytest.mark.parametrize("tools", [(), ("cruxible_orient", "cruxible_prediction_settle")])
 def test_mcp_orient_forwards_the_advertised_tools(
-    monkeypatch: pytest.MonkeyPatch, remote: bool, tools: tuple[str, ...]
+    monkeypatch: pytest.MonkeyPatch, tools: tuple[str, ...]
 ) -> None:
     seen: dict[str, Any] = {}
 
@@ -113,14 +113,7 @@ def test_mcp_orient_forwards_the_advertised_tools(
         seen.update(values)
         return _answer()
 
-    from types import SimpleNamespace
-
-    monkeypatch.setattr(
-        handlers,
-        "_get_client",
-        lambda: SimpleNamespace(orient=orient_stub) if remote else None,
-    )
-    monkeypatch.setattr(handlers.playbill_api, "playbill_orient", orient_stub)
+    monkeypatch.setattr(handlers, "_get_client", lambda: SimpleNamespace(orient=orient_stub))
     monkeypatch.setattr("cruxible_core.mcp.curation.session_tool_names", lambda: set(tools))
     handlers.handle_playbill_orient("inst")
     assert seen["caller_tools"] == tuple(sorted(tools))
@@ -135,9 +128,8 @@ def test_mcp_orient_reports_the_mcp_workspace_floor(monkeypatch, tmp_path) -> No
     (floor / "manifest.json").write_text(
         json.dumps({"coordinate": {"git_oid": "9" * 64}, "generation": 1}), encoding="utf-8"
     )
-    monkeypatch.setattr(handlers, "_get_client", lambda: None)
     monkeypatch.setattr(
-        "cruxible_core.runtime.playbill_api.playbill_orient", lambda *_a, **_k: _answer()
+        handlers, "_get_client", lambda: SimpleNamespace(orient=lambda *_a, **_k: _answer())
     )
     monkeypatch.setattr(handlers, "optional_mcp_git_workspace_root", lambda: tmp_path)
 

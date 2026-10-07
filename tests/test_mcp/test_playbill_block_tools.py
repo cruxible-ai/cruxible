@@ -26,7 +26,7 @@ def adapter(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _RepinClient:
     _workspace(tmp_path)
     client = _RepinClient()
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setattr(handlers, "_block_client", lambda: client)
+    monkeypatch.setattr(handlers, "_get_client", lambda: client)
     return client
 
 
@@ -162,7 +162,7 @@ def _retired_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     page = _sync_workspace(tmp_path)
     client = _SyncClient(refusal="block_backing_retired")
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setattr(handlers, "_block_client", lambda: client)
+    monkeypatch.setattr(handlers, "_get_client", lambda: client)
     return page
 
 
