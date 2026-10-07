@@ -5041,7 +5041,12 @@ class ProcedureExecutor:
                         if item == "dynamic:target-from-run-input"
                     ),
                 ),
-                observer_backend="child-self-report",
+                # A core built-in has no child to self-report; core is the observer.
+                observer_backend=(
+                    "core.in-process"
+                    if occurrence.local_execution.fence_scope == "in_process"
+                    else "child-self-report"
+                ),
                 observer_grade="attribution",
             )
             output = None
@@ -5088,7 +5093,9 @@ class ProcedureExecutor:
             outcome=outcome,
             output=journal_output,
             egress=egress,
-            fence_scope="process_group+descendant_sweep",
+            # From the binding: a subprocess Provider's process-group fence, or
+            # "in_process" for a core built-in (providers/builtin_runtime.py).
+            fence_scope=verified_binding.fence_scope,
             secret_references=tuple(
                 sorted(
                     (

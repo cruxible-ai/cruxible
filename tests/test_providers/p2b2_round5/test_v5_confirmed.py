@@ -596,7 +596,8 @@ def test_l8_fence_scope_is_required_and_fixed() -> None:
     assert field.is_required()
     from typing import get_args
 
-    assert get_args(field.annotation) == ("process_group+descendant_sweep",)
+    # A subprocess Provider's fence, or a core built-in run in the daemon itself.
+    assert get_args(field.annotation) == ("process_group+descendant_sweep", "in_process")
     assert "best-effort cross-session" in (field.description or "")
 
 

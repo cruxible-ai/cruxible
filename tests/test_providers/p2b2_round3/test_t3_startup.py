@@ -237,8 +237,11 @@ def test_an_unmatched_recovered_start_degrades_and_continues(
         lambda self, instance_id: SimpleNamespace(instance_id=instance_id),
     )
 
-    def refuse(instance, **_kwargs: object) -> None:
-        seen.append(instance.instance_id)
+    def refuse(instance, **kwargs: object) -> None:
+        # The startup scan for in-process built-in starts calls the same
+        # service; this test counts the lease-recovery fold only.
+        if not kwargs.get("close_in_process_starts"):
+            seen.append(instance.instance_id)
         raise run_service.ProcedureRunRecoveryRequired("no admitted occurrence")
 
     monkeypatch.setattr(run_service, "service_recover_provider_invocations", refuse)

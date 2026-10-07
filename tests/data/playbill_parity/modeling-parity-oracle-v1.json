@@ -132,11 +132,11 @@
         }
       ],
       "playbill_rows": [{ "status": "<conflict>" }],
-      "playbill_refusal_code": "playbill.query.claim_conflict",
+      "playbill_refusal_code": "cruxible.query.claim_conflict",
       "divergence": {
         "kind": "single_valued_conflict",
         "donor": "The property store holds one value per field, so the second write replaced the first. wi-1 silently left the active work queue and no read can recover that a disagreement existed.",
-        "playbill": "Both Claims stand accepted. A refuse_on_conflict policy refuses with playbill.query.claim_conflict; a surface_conflicts policy returns the row with the field in the conflict state and names both competing statement digests.",
+        "playbill": "Both Claims stand accepted. A refuse_on_conflict policy refuses with cruxible.query.claim_conflict; a surface_conflicts policy returns the row with the field in the conflict state and names both competing statement digests.",
         "deliberate": true
       }
     },

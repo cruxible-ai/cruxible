@@ -1,13 +1,14 @@
-"""Install a real workspace provider, then author/run/accept/read a Line over HTTP.
+"""Author/run/accept/read a workspace Line over HTTP on a fresh instance.
 
-Only workspace attachment is an operator setup action. All governed definitions,
-provider registration, proposal approval and Claim reads use public surfaces;
-no provider invoker or classifier is substituted.
+workspace.file is a core built-in: genesis seeds its ProviderInterface and the
+``cruxible-builtin`` Provider, and the daemon runs the adapter in-process. Only
+workspace attachment is an operator setup action; nothing is installed. All
+governed definitions, proposal approval and Claim reads use public surfaces; no
+provider invoker or classifier is substituted.
 """
 
 from __future__ import annotations
 
-import json
 import subprocess
 from collections.abc import Iterator
 from datetime import datetime
@@ -53,17 +54,17 @@ from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_V2_DIGEST,
     WorkspaceFileSourceRequest,
 )
-from cruxible_client.provider_installation import install_provider_package
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.governance.keys import generate_client_principal_key
+from cruxible_core.governance.seed_artifacts.workspace_file import (
+    WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
+)
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
-from cruxible_core.runtime.provider_runtime import PROVIDER_RUNTIME_CONFIG_PATH
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._pc_c_support import capture_contract
-from tests.support.provider_checkout import ProviderCheckout
 from tests.test_procedures.test_procedure_source_runs import _contracts
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 from tests.test_server.test_provider_installation import interface_entry
@@ -83,27 +84,11 @@ ADVISORY = b"high"
 def installed_host(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    provider_checkout: ProviderCheckout,
 ) -> Iterator[tuple[TestClient, str, Path, Path]]:
-    """A real installed provider and an operator-attached workspace."""
+    """A fresh instance (workspace.file built in) and an operator-attached workspace."""
 
-    repository = provider_checkout.repository
-    wheels = provider_checkout.wheels
     state = tmp_path / "server-state"
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
-    config = state / PROVIDER_RUNTIME_CONFIG_PATH
-    config.parent.mkdir(parents=True)
-    config.write_text(
-        json.dumps(
-            {
-                "provider_repository": str(repository),
-                "provider_index_urls": [
-                    "https://pypi.org/simple",
-                    "https://files.pythonhosted.org/",
-                ],
-            }
-        )
-    )
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     reset_permissions()
@@ -142,16 +127,6 @@ def installed_host(
             },
         )
         assert initialized.status_code == 200, initialized.text
-        transport = CruxibleClient(base_url="http://cruxible")
-        transport._client = client
-        installed = install_provider_package(
-            transport,
-            instance_id,
-            wheel=next(wheels.glob("cruxible_provider_workspace-*.whl")),
-            lock=repository / "packages/cruxible-provider-workspace/uv.lock",
-            dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
-        )
-        assert installed.status == "ready", installed
         yield client, instance_id, reviewer.private_key_path, workspace
     get_playbill_manager().clear()
     reset_runtime_credential_store()
@@ -376,6 +351,29 @@ def _binding_digest(workspace: Path) -> str:
     )
 
 
+def _provider_receipts(instance_id: str) -> list[dict[str, Any]]:
+    """Every Provider invocation receipt the instance's run journal holds."""
+
+    import cruxible_core.service.procedures.procedure_runs as service
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    instance = get_playbill_manager().get(instance_id)
+    journal, _root = service._journal(instance)  # noqa: SLF001
+    stream = service._stream(instance)  # noqa: SLF001
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    receipts = []
+    for partition_id in journal.partition_ids(stream):
+        for stored in journal.all_records(stream, partition_id):
+            if stored.record.event_kind == "provider_invocation_completed":
+                payload = parse_journal_payload(
+                    instance.body_store().read(stored.record.payload_digest, access=access)
+                )
+                assert isinstance(payload, dict)
+                receipts.append(dict(payload["receipt"]))
+    return receipts
+
+
 def _proposal_proof(transport: CruxibleClient, instance_id: str, proposal_id: str) -> Any:
     """get is the one proposal read: its proof carries the evaluation and candidate."""
 
@@ -405,12 +403,14 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
 
-    # 1. Discover the installed interface and the live Provider implementing it.
+    # 1. Discover the seeded interface and the built-in Provider implementing it.
     interface = interface_entry(transport, instance_id, "workspace.file")
     assert interface["identity"] == "ProviderInterface:workspace.file"
     assert interface["interface_digest"] == WORKSPACE_FILE_INTERFACE_V2_DIGEST
-    assert interface["providers"], interface
-    provider = interface["providers"][0]
+    assert interface["classifier_status"] == "installed"
+    (provider,) = interface["providers"]
+    assert provider["provider_identity"] == "Provider:cruxible-builtin"
+    assert provider["implementation_digest"] == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
 
     # 2. Author definitions through public surfaces, including the typed SDK for capture.
     contract = capture_contract()
@@ -548,6 +548,12 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     state = transport.run_line(instance_id, identity_digest, occurrence_id=None)
     assert state.status == "succeeded", state.model_dump_json(indent=2)
     assert state.run_id is not None
+    # The built-in ran in-process, and its durable receipt says so.
+    (invocation,) = _provider_receipts(instance_id)
+    assert invocation["fence_scope"] == "in_process"
+    assert invocation["egress"]["observer_backend"] == "core.in-process"
+    assert invocation["implementation_digest"] == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
+    assert invocation["outcome"]["status"] == "ok"
     (egress,) = state.terminal_egress
     assert egress.verdict == "delivered"
     if terminal_kind == "emit_capture":

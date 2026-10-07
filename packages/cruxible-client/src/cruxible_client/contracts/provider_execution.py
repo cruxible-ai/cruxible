@@ -232,6 +232,12 @@ class ProviderEgressObservation(_StrictProviderExecutionModel):
         return value
 
 
+#: How a Provider invocation is fenced. A subprocess Provider is a fenced
+#: process group; a core built-in runs in the daemon's own process, holds no
+#: process lease, and is closed at daemon startup if a crash interrupts it.
+ProviderFenceScope = Literal["process_group+descendant_sweep", "in_process"]
+
+
 class VerifiedProviderBinding(_StrictProviderExecutionModel):
     tag: Literal["playbill-verified-provider-binding-v1"] = "playbill-verified-provider-binding-v1"
     provider_artifact_digest: str
@@ -245,6 +251,12 @@ class VerifiedProviderBinding(_StrictProviderExecutionModel):
     entrypoint: str
     protocol_version: Literal["1.0"] = "1.0"
     declared_endpoints: tuple[str, ...] = ()
+    # Omitted when it is the subprocess default, so every binding digested
+    # before core built-ins existed keeps its bytes.
+    fence_scope: ProviderFenceScope = Field(
+        default="process_group+descendant_sweep",
+        exclude_if=lambda value: value == "process_group+descendant_sweep",
+    )
 
     _digests = field_validator(
         "provider_artifact_digest",
@@ -448,10 +460,12 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
     outcome: ProviderInvocationOutcome
     output: object | None = None
     egress: ProviderEgressObservation
-    fence_scope: Literal["process_group+descendant_sweep"] = Field(
+    fence_scope: ProviderFenceScope = Field(
         description=(
-            "Process-group kill plus deterministic same-session sweep and best-effort "
-            "cross-session sweep within the configured poll interval."
+            "process_group+descendant_sweep: process-group kill plus deterministic "
+            "same-session sweep and best-effort cross-session sweep within the configured "
+            "poll interval. in_process: a core built-in ran inside the daemon; an "
+            "invocation a crash interrupts is closed at daemon startup."
         )
     )
     secret_references: tuple[ProviderSecretReceiptReference, ...] = ()
@@ -657,6 +671,7 @@ __all__ = [
     "ProviderSecretReference",
     "ProviderSecretResolutionPlan",
     "ProcedureDerivedSourceRequest",
+    "ProviderFenceScope",
     "VerifiedProviderBinding",
     "build_procedure_derived_source_request",
     "provider_external_occurrence_plan_digest",

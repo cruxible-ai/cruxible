@@ -83,7 +83,6 @@ from cruxible_client.contracts.provider_execution import (
     VerifiedProviderBinding,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
     parse_provider_interface,
     provider_interface_digest,
     provider_interface_path,
@@ -94,21 +93,18 @@ from cruxible_client.contracts.providers import (
     provider_path,
 )
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_DIGEST,
+    WORKSPACE_FILE_INTERFACE_V2_DIGEST,
     WorkspaceFileSourceRequest,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader, workspace_binding_digest
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.governance.seed_artifacts.workspace_file import (
-    WORKSPACE_FILE_IMPLEMENTATION_DIGEST,
+    WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
+    WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
     WORKSPACE_FILE_INTERFACE_ID,
-    WORKSPACE_FILE_PROVIDER_ID,
 )
 from cruxible_core.procedures.execution import ProcedureAdmissionBoundPayloadV5
-from cruxible_core.providers.provider_classifiers import (
-    install_compiler_owned_provider_classifier,
-)
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
@@ -299,8 +295,8 @@ def _procedure(  # noqa: PLR0913
                 capture_contract=capture_pin,
                 provider=provider_pin,
                 interface=interface_pin,
-                interface_digest=WORKSPACE_FILE_INTERFACE_DIGEST,
-                implementation_digest=WORKSPACE_FILE_IMPLEMENTATION_DIGEST,
+                interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
+                implementation_digest=WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
                 request=request.model_dump(mode="json"),
                 as_=SOURCE_ALIAS,
                 next="shape",
@@ -409,39 +405,16 @@ def _world(  # noqa: PLR0913
     pin_policy: bool = False,
 ):  # type: ignore[no-untyped-def]
     instance, owner = initialize_local(tmp_path)
-    # Frozen definitions remain useful unit fixtures; public installation has a
-    # separate real-wheel integration test and no checkout-dependent seed path.
-    from cruxible_client.contracts.provider_interfaces import render_provider_interface
-    from cruxible_client.contracts.providers import render_provider
-    from cruxible_core.governance.seed_artifacts.workspace_file import (
-        workspace_file_interface_registration,
-        workspace_file_provider,
-    )
-
-    interface = workspace_file_interface_registration()
-    provider = workspace_file_provider(
-        interface_artifact_digest=provider_interface_digest(interface).tagged
-    )
-    initial = submit_member_candidate(
-        instance,
-        members={
-            provider_interface_path(interface.interface_id): render_provider_interface(interface),
-            provider_path(provider.identity.name): render_provider(provider),
-        },
-        actor_id="owner",
-        proposal_name="source-fixture-provider",
-        proposal_family="procedure",
-        timestamp=SEED_STAMP,
-    )
-    accept_proposal(instance, owner, initial)
+    # Genesis seeds the workspace.file interface and the core built-in Provider
+    # (and the classifier is compiler-owned); the Procedure pins them as accepted.
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     registration = parse_provider_interface(
         tree[provider_interface_path(WORKSPACE_FILE_INTERFACE_ID)],
         path=provider_interface_path(WORKSPACE_FILE_INTERFACE_ID),
     )
     provider = parse_provider(
-        tree[provider_path(WORKSPACE_FILE_PROVIDER_ID)],
-        path=provider_path(WORKSPACE_FILE_PROVIDER_ID),
+        tree[provider_path(WORKSPACE_FILE_BUILTIN_PROVIDER_ID)],
+        path=provider_path(WORKSPACE_FILE_BUILTIN_PROVIDER_ID),
     )
     provider_pin = ArtifactPin(
         role="provider",
@@ -452,16 +425,6 @@ def _world(  # noqa: PLR0913
         role="provider-interface",
         target=registration.identity,
         artifact_digest=provider_interface_digest(registration).tagged,
-    )
-    # The daemon operator installs the compiler-owned bucket classifier when it
-    # binds an invoker; the stub operator does the same thing here so the run
-    # classifies its input exactly as the served lane would.
-    install_compiler_owned_provider_classifier(
-        AcceptedProviderInterfaceRegistration(
-            path=provider_interface_path(WORKSPACE_FILE_INTERFACE_ID),
-            registration=registration,
-            artifact_digest=interface_pin.artifact_digest,
-        )
     )
     # `initialize_local` attaches exactly this root to the instance.
     workspace_root = tmp_path / "workspace"

@@ -961,6 +961,20 @@ def test_cli_validation_names_field_path_and_matching_example(tmp_path: Path) ->
     assert "cruxible authoring example claim-self-source" in result.output
 
 
+def _catalog(workspace: Path, source: Path) -> None:
+    """Name ``source`` repo.work-items in the workspace's source catalog (bind checks it)."""
+
+    (workspace / ".cruxible").mkdir(exist_ok=True)
+    (workspace / ".cruxible" / "sources.yaml").write_text(
+        "tag: playbill-source-catalog-v1\n"
+        "catalog_kind: portable\n"
+        "entries:\n"
+        "  - name: repo.work-items\n"
+        f"    locator: {source.relative_to(workspace).as_posix()}\n",
+        encoding="utf-8",
+    )
+
+
 def test_cli_bind_derives_observation_and_compiles(
     monkeypatch,
     tmp_path: Path,
@@ -970,6 +984,7 @@ def test_cli_bind_derives_observation_and_compiles(
     stub = claim_self_source_example().model_dump(mode="json")
     stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
     stub["citation_role"] = "evidence"
+    _catalog(tmp_path, source)
     payload_file = tmp_path / "stub.json"
     payload_file.write_text(json.dumps(stub))
     calls: list[dict[str, object]] = []
@@ -996,6 +1011,8 @@ def test_cli_bind_derives_observation_and_compiles(
             "inst_authoring",
             "authoring",
             "bind",
+            "--workspace-root",
+            str(tmp_path),
             "--file",
             str(source),
             "--anchor",
@@ -1024,6 +1041,7 @@ def test_cli_bind_ambiguity_reports_candidate_offsets_without_calling_daemon(
     stub = claim_self_source_example().model_dump(mode="json")
     stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
     stub["citation_role"] = "evidence"
+    _catalog(tmp_path, source)
     payload_file = tmp_path / "stub.json"
     payload_file.write_text(json.dumps(stub))
     monkeypatch.setattr(
@@ -1036,6 +1054,8 @@ def test_cli_bind_ambiguity_reports_candidate_offsets_without_calling_daemon(
         [
             "authoring",
             "bind",
+            "--workspace-root",
+            str(tmp_path),
             "--file",
             str(source),
             "--anchor",
@@ -1060,6 +1080,7 @@ def test_cli_bind_missing_anchor_has_no_occurrence_repair_hint(
     stub = claim_self_source_example().model_dump(mode="json")
     stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
     stub["citation_role"] = "evidence"
+    _catalog(tmp_path, source)
     payload_file = tmp_path / "stub.json"
     payload_file.write_text(json.dumps(stub))
     monkeypatch.setattr(
@@ -1072,6 +1093,8 @@ def test_cli_bind_missing_anchor_has_no_occurrence_repair_hint(
         [
             "authoring",
             "bind",
+            "--workspace-root",
+            str(tmp_path),
             "--file",
             str(source),
             "--anchor",
@@ -1098,6 +1121,7 @@ def test_cli_bind_occurrence_selects_one_ambiguous_anchor(
     stub = claim_self_source_example().model_dump(mode="json")
     stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
     stub["citation_role"] = "evidence"
+    _catalog(tmp_path, source)
     payload_file = tmp_path / "stub.json"
     payload_file.write_text(json.dumps(stub))
     calls: list[dict[str, object]] = []
@@ -1123,6 +1147,8 @@ def test_cli_bind_occurrence_selects_one_ambiguous_anchor(
             "inst_authoring",
             "authoring",
             "bind",
+            "--workspace-root",
+            str(tmp_path),
             "--file",
             str(source),
             "--anchor",
@@ -1167,6 +1193,7 @@ def test_cli_bind_declared_block_refuses_every_role(
     stub = claim_self_source_example().model_dump(mode="json")
     stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
     stub["citation_role"] = citation_role
+    _catalog(tmp_path, source)
     payload_file = tmp_path / "stub.json"
     payload_file.write_text(json.dumps(stub))
     calls: list[dict[str, object]] = []
@@ -1192,6 +1219,8 @@ def test_cli_bind_declared_block_refuses_every_role(
             "inst_authoring",
             "authoring",
             "bind",
+            "--workspace-root",
+            str(tmp_path),
             "--file",
             str(source),
             "--anchor",

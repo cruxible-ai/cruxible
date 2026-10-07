@@ -16,10 +16,11 @@ from cruxible_client.contracts.provider_interfaces import (
     ProviderInterfaceRegistrationV1,
     provider_bucket_fixture_digest,
 )
+from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_DIGESTS
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_FIXTURES,
-    WORKSPACE_FILE_INTERFACE_DIGEST,
     WorkspaceFileBucketClassifier,
+    workspace_file_accepted_registration,
 )
 from cruxible_core.providers.web_fetch import (
     WEB_FETCH_FIXTURES,
@@ -233,12 +234,23 @@ def install_compiler_owned_provider_classifier(
 
     if accepted.registration.interface_digest == WEB_FETCH_INTERFACE_DIGEST:
         return PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(accepted, WebFetchBucketClassifier())
-    if accepted.registration.interface_digest != WORKSPACE_FILE_INTERFACE_DIGEST:
+    # Both workspace.file revisions read the same host-owned bytes; a package
+    # registration carries its own classifier code instead.
+    if accepted.registration.interface_digest not in WORKSPACE_FILE_INTERFACE_DIGESTS or isinstance(
+        accepted.registration, ProviderInterfaceRegistration
+    ):
         return None
     return PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(
         accepted,
         WorkspaceFileBucketClassifier(),
     )
+
+
+# The built-in workspace.file registration is the same compiler-owned bytes in
+# every instance that seeds it, so its classifier is re-proven once here rather
+# than waiting for an invoker: a degraded Provider lane cannot leave the
+# in-process built-in without its classifier.
+install_compiler_owned_provider_classifier(workspace_file_accepted_registration())
 
 
 __all__ = [
