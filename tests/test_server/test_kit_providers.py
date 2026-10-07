@@ -717,3 +717,56 @@ def test_kit_add_rechecks_each_provider_is_live_before_proposing_definitions(
     finally:
         for _ in opened:
             pass
+
+
+@pytest.mark.parametrize("prior", ["overlapping kit", "newer release"])
+def test_refusals_the_current_state_decides_come_before_any_provider_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_checkout: ProviderCheckout,
+    prior: str,
+) -> None:
+    """Review F-006: ownership overlap and a disallowed downgrade install nothing."""
+
+    opened = _worlds(tmp_path, monkeypatch)
+    publisher, consumer = next(opened)
+    try:
+        project = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
+        _install(publisher, project)
+        _author(publisher)
+        release = _build(publisher, project)
+        policy_path = f"source-acquisition-policies/{POLICY}.json"
+        installed = KitBundle(
+            manifest=release.manifest.model_copy(
+                update={
+                    "kit_id": "prior" if prior == "overlapping kit" else "acme",
+                    "version": "1.0.0" if prior == "overlapping kit" else "2.0.0",
+                    "providers": (),
+                    "artifacts": tuple(
+                        item for item in release.manifest.artifacts if item.path == policy_path
+                    ),
+                }
+            ),
+            artifacts=tuple(item for item in release.artifacts if item.path == policy_path),
+        )
+        first = playbill_api.playbill_kit_add(
+            consumer.instance_id, KitAddRequest(bundle=installed, dry_run=False)
+        )
+        assert first.status == "accepted", first
+        installs: list[object] = []
+        monkeypatch.setattr(
+            playbill_api, "service_install_provider", lambda *a, **k: installs.append(k)
+        )
+        before = _tree(consumer)
+
+        refused = _add(consumer, release, dry_run=False)
+
+        assert refused.status == "blocked", refused
+        assert ("overlaps" if prior == "overlapping kit" else "older than") in (
+            refused.detail or ""
+        )
+        assert installs == []
+        assert _tree(consumer) == before
+    finally:
+        for _ in opened:
+            pass

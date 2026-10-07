@@ -1164,6 +1164,37 @@ def _provider_steps(
     return steps, missing
 
 
+def _early_refusals(
+    instance: PlaybillInstance,
+    tree: Mapping[str, bytes],
+    manifest: KitManifest,
+    contents: Mapping[str, bytes],
+    *,
+    downgrade: bool,
+    installed_version: str | None,
+) -> list[str]:
+    """Refusals the current state decides, checked before any provider installs."""
+
+    refused = _ownership_conflicts(instance, tree, manifest)
+    if downgrade:
+        refused.append(
+            f"release {manifest.version} is older than installed {installed_version}; "
+            "pass allow_downgrade (--allow-downgrade) to install it"
+        )
+    for path, content in sorted(contents.items()):
+        held = tree.get(path)
+        if (
+            path.startswith("provider-interfaces/")
+            and held is not None
+            and (_without_lifecycle(json.loads(held)) != _without_lifecycle(json.loads(content)))
+        ):
+            refused.append(
+                f"{path} here differs from what the kit's bundled provider registers; it "
+                "came from another package, so the kit cannot take it over"
+            )
+    return refused
+
+
 def _inspect_staged(
     instance: PlaybillInstance, manifest: KitManifest
 ) -> dict[str, InspectedProviderPackage]:
@@ -1340,6 +1371,25 @@ def _add_kit(
     # the definitions without evaluating them.
     awaiting_install = bool(missing) and not any(step.action == "blocked" for step in steps)
     if awaiting_install and not mode.previewing:
+        # Every refusal the current state already decides comes before any
+        # provider is prepared or installed.
+        early = _early_refusals(
+            instance,
+            tree,
+            manifest,
+            contents,
+            downgrade=transition == "downgrade" and not request.allow_downgrade,
+            installed_version=installed_version,
+        )
+        if early:
+            return KitChangeResult(
+                kit_id=manifest.kit_id,
+                version=manifest.version,
+                status="blocked",
+                detail="; ".join(early),
+                coordinate=mode.coordinate,
+                **described,  # type: ignore[arg-type]
+            )
         steps = _install_providers(instance, missing, steps, install_provider)
         described["providers"] = tuple(steps)
         pending = [step for step in steps if step.action in {"awaiting_approval", "blocked"}]
