@@ -252,9 +252,27 @@ def service_check_line_trigger(
                         cause = getattr(prior_admission, "trigger_binding", None)
                         if cause is not None and cause.generation is not None:
                             covered = max(covered, cause.generation)
+                if generation_after is None:
+                    # An explicit or historical evaluation reads [since, until):
+                    # the latest generation accepted before `until` stands for
+                    # every accept in the range (coalesced), and it is eligible
+                    # at its own acceptance instant, so a range that holds no
+                    # accept finds none rather than one at `now`.
+                    head = min(head, generation_at(instance, until - timedelta(microseconds=1)))
+                    with instance.accepted_history_reader() as history:
+                        accepted_at = instance.accepted_evaluation_time(
+                            history.generation(head).git_oid
+                        )
+                    eligible_at = max(accepted_at, request.since or accepted_at)
+                else:
+                    # A listening segment matches what was accepted since its
+                    # last pass, as of now.
+                    eligible_at = now
                 generation_updates[name] = head
                 if head > covered:
-                    bindings.append((trigger, trigger_binding_for(trigger, generation=head), now))
+                    bindings.append(
+                        (trigger, trigger_binding_for(trigger, generation=head), eligible_at)
+                    )
             elif schedule_is_timed(schedule):
                 binding = trigger_binding_for(trigger)
                 _, due = _line_occurrence(
