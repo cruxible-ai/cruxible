@@ -763,6 +763,102 @@ def test_item_suppression_hides_until_unsuppressed_in_the_served_fold(
         )
 
 
+def test_a_lineage_suppression_lifts_from_its_resolved_owner_after_a_recurrence(
+    tmp_path: Path,
+) -> None:
+    """F-003: suppress the lineage, fix the item, see it recur hidden, then lift it."""
+
+    instance, item = _seed_item(tmp_path)
+    store = instance.review_operational_store()
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    suppressed = service_suppress_playbill_curation(
+        instance,
+        request=PlaybillCurationSuppressRequestV1(
+            item_id=item.item_id,
+            expected_latest_event_digest=item.latest_event_digest,
+            reason="defer the whole lineage",
+            scope="lineage",
+        ),
+        actor_context=_actor(),
+    ).item
+    fixed = build_curation_accepted_fixed(
+        item_id=item.item_id,
+        expected_latest_event_digest=suppressed.latest_event_digest,
+        actor_principal_id="curator",
+        reason="fixed",
+        accepted_proposal_id="sha256:" + "2" * 64,
+        accepted_changeset_digest="sha256:" + "3" * 64,
+        resolved_generation=1,
+        affected_members=(
+            CurationAffectedMemberV1(
+                path="claim-types/project.work_item.status.json",
+                disposition="replace",
+                predecessor_artifact_digest="sha256:" + "4" * 64,
+                candidate_artifact_digest="sha256:" + "5" * 64,
+            ),
+        ),
+    )
+    resolved = store.append(
+        family="curation",
+        partition_id=item.item_id,
+        event_id=fixed.event_id,
+        payload=fixed,
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=suppressed.latest_event_digest,
+    )
+    successor = build_pattern_observation(
+        detection=_detection(), predecessor_item_id=item.item_id, accepted_generation=2
+    )
+    store.append(
+        family="curation",
+        partition_id=successor.item_id,
+        event_id=successor.event_id,
+        payload=successor,
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=None,
+    )
+
+    def recurrence():  # type: ignore[no-untyped-def]
+        items = replay_curation_items(store.events(family="curation"))
+        return next(entry for entry in items if entry.item_id == successor.item_id), items
+
+    child, items = recurrence()
+    assert child.suppressed_at(2, all_items=items)
+    suppression_id = suppressed.suppressions[0].event_id
+    with pytest.raises(CurationSuppressionInvalid, match=f"predecessor {item.item_id}"):
+        service_unsuppress_playbill_curation(
+            instance,
+            request=PlaybillCurationUnsuppressRequestV1(
+                item_id=child.item_id,
+                expected_latest_event_digest=child.latest_event_digest,
+                reason="lift from the successor",
+                suppression_event_id=suppression_id,
+            ),
+            actor_context=_actor(),
+        )
+
+    lifted = service_unsuppress_playbill_curation(
+        instance,
+        request=PlaybillCurationUnsuppressRequestV1(
+            item_id=item.item_id,
+            expected_latest_event_digest=resolved.event_digest,
+            reason="resume the lineage",
+        ),
+        actor_context=_actor(),
+    )
+
+    assert lifted.item.status == "accepted_fixed"
+    assert lifted.item.suppressions == ()
+    child, items = recurrence()
+    assert not child.suppressed_at(2, all_items=items)
+
+
 def test_overrule_stays_silent_on_redetection_and_detector_identity_is_versioned(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

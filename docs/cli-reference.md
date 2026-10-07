@@ -2233,6 +2233,9 @@ artifact a later change retired: closing a fixed pattern is always this
 attributed ruling. `suppress` hides the item (`item`) or its whole lineage,
 the successors its pattern opens after a fix (`lineage`), until
 `--until-generation` or until `unsuppress` lifts it; detection keeps running.
+`unsuppress` names the item that recorded the suppression, even once that item
+is fixed: a lineage suppression on a resolved item keeps hiding its successors
+until lifted there.
 
 ## audit
 

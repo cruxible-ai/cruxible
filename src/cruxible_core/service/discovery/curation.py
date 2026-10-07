@@ -969,15 +969,20 @@ def _curation_key(item: CurationItemV1) -> tuple[str, str, str]:
     return (item.pattern_kind, item.subject.qualified, item.item_id)
 
 
+def _item(instance: PlaybillInstance, item_id: str) -> CurationItemV1:
+    item = next((item for item in _replay_items(instance) if item.item_id == item_id), None)
+    if item is None:
+        raise CurationItemNotFound(f"curation item does not exist: {item_id}")
+    return item
+
+
 def _open_item(
     instance: PlaybillInstance,
     item_id: str,
     *,
     allow_quarantined: bool = False,
 ) -> CurationItemV1:
-    item = next((item for item in _replay_items(instance) if item.item_id == item_id), None)
-    if item is None:
-        raise CurationItemNotFound(f"curation item does not exist: {item_id}")
+    item = _item(instance, item_id)
     if item.status != "open" and not (allow_quarantined and item.status == "quarantined"):
         raise CurationItemAlreadyResolved(f"curation item is already {item.status}: {item_id}")
     return item
@@ -1123,11 +1128,16 @@ def service_unsuppress_playbill_curation(
     request: PlaybillCurationUnsuppressRequestV1,
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationActionResultV1:
-    """Lift one suppression recorded on an item, so what it hid is listed again."""
+    """Lift one suppression recorded on an item, so what it hid is listed again.
+
+    The item that recorded the suppression owns it, whatever its status: a
+    lineage suppression outlives its item's fix and keeps hiding the successors
+    the pattern opens, so it must stay liftable on a resolved predecessor.
+    """
 
     instance.require_writable()
     with change_entry(request.dry_run, "direct"):
-        item = _open_item(instance, request.item_id, allow_quarantined=True)
+        item = _item(instance, request.item_id)
         if request.suppression_event_id is None:
             if len(item.suppressions) != 1:
                 raise CurationSuppressionInvalid(
@@ -1138,8 +1148,14 @@ def service_unsuppress_playbill_curation(
         else:
             suppression_event_id = request.suppression_event_id
             if suppression_event_id not in {entry.event_id for entry in item.suppressions}:
+                owner = _suppression_owner(instance, item, suppression_event_id)
                 raise CurationSuppressionInvalid(
                     f"curation item {item.item_id} carries no suppression {suppression_event_id}"
+                    + (
+                        ""
+                        if owner is None
+                        else f"; predecessor {owner} recorded it, so unsuppress that item"
+                    )
                 )
         coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
         generation = _generation(instance, coordinate)
@@ -1161,6 +1177,21 @@ def service_unsuppress_playbill_curation(
             actor_context=actor_context,
             operation="cruxible.curation.unsuppress",
         )
+
+
+def _suppression_owner(
+    instance: PlaybillInstance, item: CurationItemV1, suppression_event_id: str
+) -> str | None:
+    """The predecessor whose lineage suppression this is, if one recorded it."""
+
+    by_id = {entry.item_id: entry for entry in _replay_items(instance)}
+    current = item.predecessor_item_id
+    while current is not None and current in by_id:
+        predecessor = by_id[current]
+        if suppression_event_id in {entry.event_id for entry in predecessor.suppressions}:
+            return predecessor.item_id
+        current = predecessor.predecessor_item_id
+    return None
 
 
 def _proposals_for_candidate(instance: PlaybillInstance, candidate_digest: str) -> list[str]:
