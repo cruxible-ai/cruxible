@@ -375,7 +375,6 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "submit_approval",
         "approve_proposal",
         "activate_proposal",
-        "abandon_authoring_insertion",
         "compile_authoring",
         "compile_authoring_input",
         "submit_authoring_input",

@@ -287,15 +287,16 @@ def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     http, instance_id, private_key_path = playbill_http
-    accepted_contract_digest = _install_direct_capture_contract(http, instance_id, private_key_path)
+    _install_direct_capture_contract(http, instance_id, private_key_path)
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
     runner = CliRunner()
     example_payload = defaulted_claim_type_input_example().model_dump(mode="json")
-    assert (
-        accepted_contract_digest
-        in example_payload["evidence_admission_policy"]["rules"][0]["capture_contract_digests"]
+    # The rule also names the accepted direct contract, by identity.
+    rule = example_payload["evidence_admission_policy"]["rules"][0]
+    rule["capture_contracts"] = sorted(
+        [*rule["capture_contracts"], DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.qualified]
     )
     input_path = tmp_path / "claim-type-input.json"
     input_path.write_text(json.dumps(example_payload), encoding="utf-8")
