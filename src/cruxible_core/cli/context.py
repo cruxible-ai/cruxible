@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Mapping
@@ -13,13 +13,33 @@ from cruxible_core.errors import ConfigError
 
 
 @dataclass(frozen=True)
+class RememberedPrincipals:
+    """The principal settings files the CLI knows for one instance, and which it acts as.
+
+    ``settings`` maps a principal ID to its ``cruxible.env`` (written by `cruxible
+    init` or `cruxible principal add`); ``active`` is the one the CLI loads.
+    """
+
+    active: str | None = None
+    settings: Mapping[str, str] = field(default_factory=dict)
+
+    def as_json(self) -> dict[str, object]:
+        payload: dict[str, object] = {"settings": dict(sorted(self.settings.items()))}
+        if self.active is not None:
+            payload["active"] = self.active
+        return payload
+
+
+@dataclass(frozen=True)
 class CliContextState:
-    """Remembered server transport and active governed instance."""
+    """Remembered server transport, active governed instance and principal settings."""
 
     server_url: str | None = None
     server_socket: str | None = None
     instance_id: str | None = None
     instance_transport: str | None = None
+    #: Per instance ID: the principal settings files the CLI knows and loads.
+    principals: Mapping[str, RememberedPrincipals] = field(default_factory=dict)
 
     def bound_instance_transport(self) -> str | None:
         if self.instance_transport:
@@ -30,8 +50,8 @@ class CliContextState:
             return f"unix://{Path(self.server_socket).expanduser().resolve()}"
         return None
 
-    def as_json(self) -> dict[str, str]:
-        payload: dict[str, str] = {}
+    def as_json(self) -> dict[str, object]:
+        payload: dict[str, object] = {}
         if self.server_url:
             payload["server_url"] = self.server_url
         if self.server_socket:
@@ -41,7 +61,35 @@ class CliContextState:
             bound_transport = self.bound_instance_transport()
             if bound_transport:
                 payload["instance_transport"] = bound_transport
+        if self.principals:
+            payload["principals"] = {
+                instance: entry.as_json() for instance, entry in sorted(self.principals.items())
+            }
         return payload
+
+    def remember_principal(
+        self, instance_id: str, principal_id: str, settings_path: Path, *, activate: bool
+    ) -> CliContextState:
+        """This state with one principal's settings file known (and optionally active)."""
+
+        entry = self.principals.get(instance_id, RememberedPrincipals())
+        updated = RememberedPrincipals(
+            active=principal_id if activate else entry.active,
+            settings={**entry.settings, principal_id: str(settings_path)},
+        )
+        return replace(self, principals={**self.principals, instance_id: updated})
+
+    def select_principal(self, instance_id: str, principal_id: str) -> CliContextState:
+        """This state acting as one already-known principal of ``instance_id``."""
+
+        entry = self.principals[instance_id]
+        return replace(
+            self,
+            principals={
+                **self.principals,
+                instance_id: RememberedPrincipals(active=principal_id, settings=entry.settings),
+            },
+        )
 
 
 def get_cli_context_path(environ: Mapping[str, str] | None = None) -> Path:
@@ -84,7 +132,31 @@ def load_cli_context(environ: Mapping[str, str] | None = None) -> CliContextStat
         server_socket=server_socket,
         instance_id=instance_id,
         instance_transport=instance_transport,
+        principals=_load_principals(payload.get("principals"), path),
     )
+
+
+def _load_principals(raw: object, path: Path) -> dict[str, RememberedPrincipals]:
+    if raw is None:
+        return {}
+    malformed = ConfigError(
+        f"CLI context field 'principals' at {path} must map instance IDs to "
+        "{active, settings} objects"
+    )
+    if not isinstance(raw, dict):
+        raise malformed
+    principals: dict[str, RememberedPrincipals] = {}
+    for instance, entry in raw.items():
+        if not isinstance(entry, dict):
+            raise malformed
+        active = entry.get("active")
+        settings = entry.get("settings", {})
+        if (active is not None and not isinstance(active, str)) or not isinstance(settings, dict):
+            raise malformed
+        if not all(isinstance(k, str) and isinstance(v, str) for k, v in settings.items()):
+            raise malformed
+        principals[str(instance)] = RememberedPrincipals(active=active, settings=dict(settings))
+    return principals
 
 
 def save_cli_context(

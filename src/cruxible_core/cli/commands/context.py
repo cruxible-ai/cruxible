@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import click
@@ -14,7 +15,9 @@ from cruxible_core.cli.commands._common import (
     _persist_cli_context,
     _root_ctx_obj,
 )
+from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.cli.principal_settings import default_key_dir, principal_settings_path
 from cruxible_core.server.config import resolve_server_settings
 
 
@@ -97,6 +100,9 @@ def context_show(output_json: bool) -> None:
         "daemon_host_registration": registration,
         "attachment_disagreement": disagreement,
         "remembered_instance_ignored": obj.get("context_instance_transport_mismatch"),
+        "principal_id": obj.get("principal_id"),
+        "principal_source": obj.get("principal_source"),
+        "principal_settings": obj.get("principal_settings"),
     }
     if output_json:
         _emit_json(payload)
@@ -112,6 +118,11 @@ def context_show(output_json: bool) -> None:
     click.echo(f"Instance ID: {payload['instance_id'] or '<none>'} ({instance_source})")
     if payload["remembered_instance_ignored"]:
         click.echo(f"Remembered instance ignored: {payload['remembered_instance_ignored']}")
+    if payload["principal_id"]:
+        where = f", {payload['principal_settings']}" if payload["principal_settings"] else ""
+        click.echo(f"Principal: {payload['principal_id']} ({payload['principal_source']}{where})")
+    else:
+        click.echo("Principal: <none>")
     attachment = "attached" if payload["workspace_attached"] else "not attached"
     click.echo(f"Workspace: {payload['workspace']} ({payload['workspace_source']}, {attachment})")
     click.echo(f"Workspace config: {config_attachment['status']}")
@@ -184,20 +195,68 @@ def context_connect(
 
 
 @connect_group.command("use")
-@click.argument("instance_id")
+@click.argument("instance_id", required=False)
+@click.option(
+    "--principal",
+    "principal_id",
+    default=None,
+    help=(
+        "Act as this principal on the instance: the CLI loads the settings `cruxible init` "
+        "or `cruxible principal add` wrote for it."
+    ),
+)
 @handle_errors
-def context_use(instance_id: str) -> None:
-    """Set the active governed instance ID."""
+def context_use(instance_id: str | None, principal_id: str | None) -> None:
+    """Set the active governed instance ID, the principal the CLI acts as, or both.
+
+    The CLI loads the active principal's settings (key, and with daemon auth its
+    credential) itself. A process that sets its own principal (--principal-id,
+    CRUXIBLE_PRINCIPAL_ID, CRUXIBLE_PRINCIPAL_KEY or a bearer token) keeps it.
+    """
+    if instance_id is None and principal_id is None:
+        raise click.UsageError("Name an INSTANCE_ID, --principal ID, or both")
     existing = _load_persisted_cli_context()
     if not existing.server_url and not existing.server_socket:
         raise click.UsageError("Set a remembered server first with 'cruxible context connect'")
-    _persist_cli_context(
-        server_url=existing.server_url,
-        server_socket=existing.server_socket,
-        instance_id=instance_id,
-        instance_transport=existing.bound_instance_transport(),
+    state = existing
+    if instance_id is not None:
+        state = replace(
+            state,
+            instance_id=instance_id,
+            instance_transport=existing.bound_instance_transport(),
+        )
+    if principal_id is not None:
+        target = state.instance_id
+        if target is None:
+            raise click.UsageError(
+                "No active instance to act on; repair: `cruxible context use INSTANCE_ID "
+                f"--principal {principal_id}`"
+            )
+        state = _with_principal(state, target, principal_id)
+    save_cli_context(state)
+    if instance_id is not None:
+        click.echo(f"Active instance: {instance_id}")
+    if principal_id is not None:
+        settings = state.principals[str(state.instance_id)].settings[principal_id]
+        click.echo(f"Active principal: {principal_id} (settings {settings})")
+
+
+def _with_principal(state: CliContextState, instance_id: str, principal_id: str) -> CliContextState:
+    """``state`` acting as ``principal_id``: a remembered one, or one at the default key dir."""
+
+    known = state.principals.get(instance_id)
+    if known is not None and principal_id in known.settings:
+        return state.select_principal(instance_id, principal_id)
+    default = principal_settings_path(default_key_dir(instance_id, principal_id))
+    if default.is_file():
+        return state.remember_principal(instance_id, principal_id, default, activate=True)
+    remembered = ", ".join(sorted(known.settings)) if known is not None else ""
+    raise click.UsageError(
+        f"No settings are remembered for principal {principal_id} on {instance_id} "
+        f"(remembered: {remembered or 'none'}), and none are at {default}. Settings are "
+        "written by `cruxible init` and `cruxible principal add`; a principal set up "
+        "elsewhere loads its file with: set -a; . DIR/cruxible.env; set +a"
     )
-    click.echo(f"Active instance: {instance_id}")
 
 
 @connect_group.command("clear")

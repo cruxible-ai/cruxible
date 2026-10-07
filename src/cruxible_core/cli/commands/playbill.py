@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import re
@@ -99,6 +100,7 @@ from cruxible_client.contracts.kits import (
     KitChangeResult,
     KitRemoveRequest,
 )
+from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.procedures.results import ProcedureHaltTerminal
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
@@ -134,9 +136,11 @@ from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
     _echo_active_write_target,
+    _echo_creation_write_target,
     _echo_write_target,
     _emit_brief,
     _emit_json,
+    _remember_principal_settings,
     _require_instance_id,
     _root_ctx_obj,
     _transport_target,
@@ -150,6 +154,7 @@ from cruxible_core.cli.main import handle_errors
 from cruxible_core.cli.principal_settings import (
     PRINCIPAL_KEY_ENV,
     PRINCIPAL_SETTINGS_FILE,
+    default_key_dir,
     write_principal_settings,
 )
 from cruxible_core.coverage.adapter import (
@@ -197,7 +202,7 @@ from cruxible_core.governance.keys import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
-from cruxible_core.server.config import get_runtime_bearer_token
+from cruxible_core.server.config import get_runtime_bearer_token, get_server_state_root
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
     ProcedureBindRequest,
@@ -1016,13 +1021,20 @@ def create_host(
 
 
 @playbill_group.command("init")
-@click.option("--key-dir", required=True, help="Client custody directory outside the workspace.")
+@click.option(
+    "--key-dir",
+    default=None,
+    help=(
+        "Client custody directory outside the workspace and the daemon state root "
+        "(default: $XDG_CONFIG_HOME/cruxible/keys/INSTANCE/PRINCIPAL, else under ~/.config)."
+    ),
+)
 @click.option(
     "--principal-id",
     default=None,
     help=(
-        "Owner principal ID this init makes you (default: CRUXIBLE_PRINCIPAL_ID or the "
-        "global --principal-id)."
+        "Owner principal ID this init makes you (default: CRUXIBLE_PRINCIPAL_ID, the "
+        "global --principal-id, else your OS username)."
     ),
 )
 @click.option(
@@ -1068,7 +1080,7 @@ def create_host(
 @json_option
 @handle_errors
 def init_playbill(
-    key_dir: str,
+    key_dir: str | None,
     principal_id: str | None,
     reviewer_key_dir: str | None,
     require_independent_approval: bool,
@@ -1082,6 +1094,13 @@ def init_playbill(
     output_json: bool,
 ) -> None:
     """Make you the owner: create client custody and bootstrap the approval policy.
+
+    With no instance selected, init first creates the host (as `cruxible host
+    create` does) and selects it, so a new project is one bare `cruxible init`.
+    The owner principal ID defaults to your OS username and the key directory to
+    a per-user config path outside the workspace and the daemon state root. The
+    CLI remembers the owner's settings and acts as the owner from then on
+    (`cruxible context use --principal ID` switches).
 
     With daemon auth off, the owner principal ID is the identity this process
     claims for the init request; no bootstrap secret is needed.
@@ -1098,25 +1117,20 @@ def init_playbill(
         _refuse_tcp_workspace_operation(git_workspace)
     if not (_root_ctx_obj().get("server_url") or _root_ctx_obj().get("server_socket")):
         raise click.UsageError("Local execution disabled for cruxible init; use server mode.")
-    selected = _require_instance_id()
     transport = _transport_target(_root_ctx_obj())
     if transport is None:  # pragma: no cover - guarded by _get_client above
         raise click.UsageError("Server mode is required for cruxible init")
+    configured = _root_ctx_obj().get("principal_id")
+    if principal_id is None:
+        principal_id = configured if configured is not None else _os_principal_id()
+    selected_instance = _root_ctx_obj().get("instance_id")
     config_transport = _workspace_config_transport() if git_workspace is not None else {}
     if git_workspace is not None:
         validate_workspace_config_write(
             git_workspace,
-            instance_id=selected,
+            instance_id=selected_instance,
             replace=replace,
             **config_transport,
-        )
-    configured = _root_ctx_obj().get("principal_id")
-    if principal_id is None:
-        principal_id = configured
-    if principal_id is None:
-        raise click.UsageError(
-            "cruxible init needs the owner principal ID; repair: "
-            "`cruxible init --principal-id ID --key-dir DIR`"
         )
     if configured is not None and configured != principal_id:
         raise click.UsageError(
@@ -1129,8 +1143,14 @@ def init_playbill(
         # credential the credential decides who acts, so no claim is sent.
         _root_ctx_obj()["principal_id"] = principal_id
     workspace = git_workspace
+    selected = str(selected_instance) if selected_instance else _create_host_for_init(transport)
+    owner_key_dir = (
+        Path(key_dir).expanduser()
+        if key_dir is not None
+        else _default_owner_key_dir(selected, principal_id, workspace)
+    )
     specifications: list[tuple[Path, str, PrincipalKind]] = [
-        (Path(key_dir).expanduser(), principal_id, "ordinary")
+        (owner_key_dir, principal_id, "ordinary")
     ]
     if reviewer_key_dir is not None:
         specifications.append((Path(reviewer_key_dir).expanduser(), "reviewer", "ordinary"))
@@ -1175,7 +1195,7 @@ def init_playbill(
     _activate_server_instance(result.instance_id)
     owner_token = _mint_owner_credential(owner, principal_id=principal_id)
     settings = write_principal_settings(
-        Path(key_dir),
+        owner_key_dir,
         ctx_obj=_root_ctx_obj(),
         instance_id=result.instance_id,
         principal_id=principal_id,
@@ -1183,6 +1203,7 @@ def init_playbill(
         token=owner_token,
         written_by="cruxible init",
     )
+    _remember_principal_settings(result.instance_id, principal_id, settings, activate=True)
     if output_json:
         _emit_json({**_json_receipt(result), "owner_settings_path": str(settings)})
         return
@@ -1196,18 +1217,72 @@ def init_playbill(
     click.echo(f"Owner principal: {principal_id}")
     click.echo(f"Owner settings: {settings}")
     click.echo(
-        f"Next: set -a; . {settings}; set +a -- later commands then act as {principal_id} "
-        "(CRUXIBLE_PRINCIPAL_ID)"
+        f"The CLI now acts as {principal_id} on this host (remembered in its context; "
+        "`cruxible context use --principal ID` switches). Another process loads the "
+        f"settings with: set -a; . {settings}; set +a"
         + (
             "."
             if owner_token is not None
-            else "; with daemon auth off that is a claim of identity, not authentication: "
-            "every process of this OS user is equally trusted."
+            else ". With daemon auth off the principal ID is a claim of identity, not "
+            "authentication: every process of this OS user is equally trusted."
         )
     )
     if reviewer is not None:
         click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
         click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
+
+
+def _os_principal_id() -> str:
+    """The owner principal ID a bare init defaults to: the OS username, lowercased."""
+
+    try:
+        name = getpass.getuser().strip().lower()
+    except (KeyError, OSError):  # pragma: no cover - no passwd entry and no LOGNAME/USER
+        name = ""
+    if not is_canonical_principal_id(name):
+        raise click.UsageError(
+            f"your OS username {name!r} is not a principal ID (lowercase letter first, then "
+            "letters, digits, '_', '.' or '-'); repair: `cruxible init --principal-id ID`"
+        )
+    return name
+
+
+def _create_host_for_init(transport: str) -> str:
+    """Allocate the host a bare init initializes, and select it before anything else.
+
+    Selecting it first means a retry after a failed init initializes this same
+    host instead of allocating another.
+    """
+
+    _echo_creation_write_target({})
+    created = _dispatch_cli(
+        lambda client: client.create_host(dry_run=False),
+        lambda: None,
+        allow_local=False,
+        command_name="cruxible init",
+    )
+    assert isinstance(created, contracts.HostResult)
+    _activate_server_instance(created.instance_id)
+    click.echo(f"Created Cruxible host {created.instance_id} @ {transport}", err=True)
+    return created.instance_id
+
+
+def _default_owner_key_dir(instance_id: str, principal_id: str, workspace: Path | None) -> Path:
+    """The per-user key directory a bare init uses, refused inside a workspace or state root."""
+
+    directory = default_key_dir(instance_id, principal_id)
+    roots = [] if workspace is None else [workspace.resolve()]
+    try:
+        roots.append(get_server_state_root().resolve())
+    except CoreError:  # pragma: no cover - no resolvable local state root
+        pass
+    for root in roots:
+        if directory == root or root in directory.parents:
+            raise click.UsageError(
+                f"the default key directory {directory} lies inside {root}; keys stay outside "
+                "every workspace and the daemon state root. Repair: `cruxible init --key-dir DIR`"
+            )
+    return directory
 
 
 def _mint_owner_credential(owner: GeneratedKeyMaterial, *, principal_id: str) -> str | None:
@@ -2406,6 +2481,8 @@ def add_principal(
         token=token,
         written_by="cruxible principal add",
     )
+    # Known to this CLI's context, not acted as: `context use --principal` switches.
+    _remember_principal_settings(outcome.instance_id, principal_id, settings, activate=False)
     next_steps = _principal_add_next_steps(outcome, principal_id, custody, permission_mode)
     if output_json:
         _emit_json(

@@ -18,7 +18,13 @@ from cruxible_client.authoring.context import (
 )
 from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
-from cruxible_core.cli.context import load_cli_context
+from cruxible_core.cli.context import CliContextState, load_cli_context
+from cruxible_core.cli.principal_settings import (
+    PRINCIPAL_ID_ENV,
+    PRINCIPAL_KEY_ENV,
+    PRINCIPAL_TOKEN_ENV,
+    read_principal_settings,
+)
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
 
@@ -805,7 +811,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         {
             "show": _command("context", "context_show", "Show resolved CLI context."),
             "connect": _command("context", "context_connect", "Persist daemon context."),
-            "use": _command("context", "context_use", "Set the active instance ID."),
+            "use": _command("context", "context_use", "Set the active instance or principal."),
             "clear": _command("context", "context_clear", "Clear remembered context."),
         },
         module="context",
@@ -964,3 +970,66 @@ def cli(
             "workspace_attached": resolved.workspace_attached,
         }
     )
+    _load_remembered_principal(ctx, stored, resolved.instance_id)
+
+
+def _load_remembered_principal(
+    ctx: click.Context, stored: CliContextState, instance_id: str | None
+) -> None:
+    """Act as the principal the context remembers for this instance, as if its file was sourced.
+
+    `cruxible init` and `cruxible principal add` remember the ``cruxible.env``
+    they write; `cruxible context use --principal ID` picks the active one. A
+    process that names its own principal (--principal-id, CRUXIBLE_PRINCIPAL_ID)
+    or carries its own key or credential keeps them: an agent launched with its
+    own settings file is never overridden.
+    """
+
+    obj = ctx.obj
+    if obj.get("principal_id"):
+        source = ctx.get_parameter_source("principal_id")
+        obj["principal_source"] = (
+            "environment" if source is click.core.ParameterSource.ENVIRONMENT else "explicit"
+        )
+        return
+    if instance_id is None or any(
+        os.environ.get(name) for name in (PRINCIPAL_KEY_ENV, PRINCIPAL_TOKEN_ENV)
+    ):
+        return
+    entry = stored.principals.get(instance_id)
+    if entry is None or entry.active is None or entry.active not in entry.settings:
+        return
+    path = Path(entry.settings[entry.active])
+    try:
+        settings = read_principal_settings(path)
+    except (OSError, ValueError) as exc:
+        click.echo(
+            f"warning: the remembered settings of principal {entry.active} are unreadable "
+            f"({exc}); continuing without a principal. Repair: `cruxible context use "
+            "--principal ID` for another principal",
+            err=True,
+        )
+        return
+    if settings.instance_id != instance_id or settings.principal_id != entry.active:
+        click.echo(
+            f"warning: {path} names principal {settings.principal_id} of instance "
+            f"{settings.instance_id}, not {entry.active} of {instance_id}; continuing "
+            "without a principal",
+            err=True,
+        )
+        return
+    variables = (PRINCIPAL_ID_ENV, PRINCIPAL_KEY_ENV, PRINCIPAL_TOKEN_ENV)
+    previous = {name: os.environ.get(name) for name in variables}
+
+    def restore() -> None:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    os.environ.update(settings.environment())
+    ctx.call_on_close(restore)
+    obj["principal_id"] = settings.principal_id
+    obj["principal_source"] = "remembered"
+    obj["principal_settings"] = str(settings.path)

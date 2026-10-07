@@ -62,10 +62,21 @@ realpath:
 
 ~~~text
 cruxible context connect
-cruxible context use
+cruxible context use [INSTANCE_ID] [--principal ID]
 cruxible context show
 cruxible context clear
 ~~~
+
+The context also remembers which principal's settings the CLI uses on each
+instance. `cruxible init` remembers the owner's `cruxible.env` and makes it
+active; `cruxible principal add` remembers the new principal's file without
+switching to it. The CLI loads the active principal's settings itself (its
+principal ID, key and, with daemon auth, its bearer credential), so no shell
+sourcing is needed; `context use --principal ID` switches, and `context show`
+names the principal and where it came from. A process that sets its own
+principal (`--principal-id`, `CRUXIBLE_PRINCIPAL_ID`, `CRUXIBLE_PRINCIPAL_KEY`
+or `CRUXIBLE_SERVER_BEARER_TOKEN`) keeps it, so an agent launched with its own
+`cruxible.env` works unchanged.
 
 ## Previews
 
@@ -141,6 +152,17 @@ outcome says so: `preview_scope: validation_only` and `not_run` naming those
 steps, with the coordinate it evaluated at.
 
 ## credential
+
+Credentials and principals are different things. A credential is a daemon
+bearer token: it authorizes transport (which endpoints a request may reach, at
+which permission tier) and, when the daemon runs with auth, says which principal
+the request acts as. A principal is a governed signing key registered in the
+instance's ledger (`cruxible init`, `cruxible principal add`): it is who
+authors, approves and is attributed, and its approvals are signed with its
+private key, never with a token. With auth off there are no credentials to
+speak of and the principal ID is a claim of identity; with auth on each
+credential is bound to one principal. Revoking a principal revokes its
+credentials; rotating a credential never changes the principal.
 
 Manage runtime bearer credentials:
 
@@ -529,7 +551,10 @@ cruxible workspace floor-delivery STATE [--instance-id ID] [--json]
 cruxible workspace detach [--instance-id ID] [--dry-run|--commit] [--at DIGEST] [--json]
 ~~~
 
-Allocates an empty daemon-owned host and remembers it. When the selected daemon
+`cruxible init` creates the host itself when no instance is selected, so a new
+project is one bare `cruxible init`; `host create` stays for allocating a host
+without becoming its owner. `host create` allocates an empty daemon-owned host
+and remembers it. When the selected daemon
 is reached through `--server-socket` or `CRUXIBLE_SERVER_SOCKET`, the command
 also registers the selected Git worktree with the daemon. Every selected
 workspace gets an atomic `.cruxible/coverage.json` v2 write containing exactly
@@ -587,8 +612,8 @@ those blocks (`cruxible block depublish`) or retire their backing Claims first.
 ## init
 
 ~~~text
-cruxible init --key-dir DIR
-  --principal-id ID
+cruxible init [--key-dir DIR]
+  [--principal-id ID]
   [--reviewer-key-dir DIR]
   [--require-independent-approval]
   [--recovery-key-dir DIR]
@@ -599,12 +624,20 @@ cruxible init --key-dir DIR
   [--mirror-url URL]
 ~~~
 
-Makes you the owner under `--principal-id` (default: the configured
-`CRUXIBLE_PRINCIPAL_ID` / global `--principal-id`; they must agree). On an
-auth-off daemon the init request claims that principal, so no bootstrap secret
-is needed; set `CRUXIBLE_PRINCIPAL_ID` to it afterwards so later commands act as
-the owner. An init whose caller is not one of the owner principals it names is
-refused with `cruxible.identity.init_owner_mismatch`.
+With no instance selected, init first creates a host (as `host create` does),
+selects it, and initializes it: a retry after a failure initializes that same
+host. Makes you the owner under `--principal-id` (default: the configured
+`CRUXIBLE_PRINCIPAL_ID` / global `--principal-id`, which must agree with the
+flag, else your OS username lowercased; a username that is no principal ID is
+refused with the `--principal-id` repair). `--key-dir` defaults to
+`$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/PRINCIPAL` (`~/.config` when unset): a
+per-user path outside the workspace and the daemon state root, refused if it
+would fall inside either. On an auth-off daemon the init request claims that
+principal, so no bootstrap secret is needed. Init writes the owner's settings
+file (`DIR/cruxible.env`) and remembers it in the CLI context, so later commands
+act as the owner without sourcing anything (see [context](#context)). An init
+whose caller is not one of the owner principals it names is refused with
+`cruxible.identity.init_owner_mismatch`.
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
 ledger with its public principal record. A missing `--key-dir` is created with

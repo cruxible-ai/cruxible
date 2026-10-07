@@ -4,6 +4,9 @@
 agent, beside the private key in the principal's key directory. It is a shell
 file of `export` lines (`set -a; . DIR/cruxible.env; set +a`), readable by the
 CLI, the SDK and the MCP server alike because each reads the same variables.
+The CLI also remembers each file it wrote in its context and loads the active
+principal's file itself (`cruxible context use --principal ID` switches); a
+process that sets these variables itself keeps them.
 The bearer token appears only when the daemon runs with auth; it is written
 owner-only (0600) and never printed.
 """
@@ -13,6 +16,7 @@ from __future__ import annotations
 import os
 import shlex
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 PRINCIPAL_SETTINGS_FILE = "cruxible.env"
@@ -20,8 +24,79 @@ PRINCIPAL_KEY_ENV = "CRUXIBLE_PRINCIPAL_KEY"
 _TOKEN_ENV = "CRUXIBLE_SERVER_BEARER_TOKEN"
 
 
+PRINCIPAL_ID_ENV = "CRUXIBLE_PRINCIPAL_ID"
+PRINCIPAL_TOKEN_ENV = _TOKEN_ENV
+
+
 def principal_settings_path(key_dir: Path) -> Path:
     return key_dir.expanduser().resolve() / PRINCIPAL_SETTINGS_FILE
+
+
+def default_key_dir(
+    instance_id: str, principal_id: str, environ: Mapping[str, str] | None = None
+) -> Path:
+    """Where `cruxible init` keeps a principal's key when no --key-dir is given.
+
+    A per-user config path (``$XDG_CONFIG_HOME/cruxible``, else
+    ``~/.config/cruxible``), one directory per instance and principal: outside
+    every workspace and outside the daemon state root, so custody never lands
+    beside the bytes it signs for.
+    """
+
+    env = os.environ if environ is None else environ
+    raw = env.get("XDG_CONFIG_HOME")
+    base = Path(raw).expanduser() if raw else Path.home() / ".config"
+    return (base / "cruxible" / "keys" / instance_id / principal_id).resolve()
+
+
+@dataclass(frozen=True)
+class PrincipalSettings:
+    """What a principal's ``cruxible.env`` names: who acts, on what, with which key."""
+
+    path: Path
+    instance_id: str
+    principal_id: str
+    private_key_path: str
+    token: str | None
+
+    def environment(self) -> dict[str, str]:
+        """The variables a process that sourced this file would have."""
+
+        values = {
+            PRINCIPAL_ID_ENV: self.principal_id,
+            PRINCIPAL_KEY_ENV: self.private_key_path,
+        }
+        if self.token is not None:
+            values[PRINCIPAL_TOKEN_ENV] = self.token
+        return values
+
+
+def read_principal_settings(path: Path) -> PrincipalSettings:
+    """Parse the ``export`` lines `write_principal_settings` wrote; refuse anything else."""
+
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("export "):
+            continue
+        name, _, raw = line.removeprefix("export ").partition("=")
+        words = shlex.split(raw)
+        if len(words) != 1:
+            raise ValueError(f"principal settings line for {name} is not one quoted value")
+        values[name] = words[0]
+    missing = [
+        name
+        for name in ("CRUXIBLE_INSTANCE_ID", PRINCIPAL_ID_ENV, PRINCIPAL_KEY_ENV)
+        if not values.get(name)
+    ]
+    if missing:
+        raise ValueError(f"principal settings {path} name no {', '.join(missing)}")
+    return PrincipalSettings(
+        path=path,
+        instance_id=values["CRUXIBLE_INSTANCE_ID"],
+        principal_id=values[PRINCIPAL_ID_ENV],
+        private_key_path=values[PRINCIPAL_KEY_ENV],
+        token=values.get(PRINCIPAL_TOKEN_ENV),
+    )
 
 
 def _transport_lines(obj: Mapping[str, object]) -> list[str]:
@@ -89,9 +164,14 @@ def _write_owner_only(path: Path, content: str) -> None:
 
 
 __all__ = [
+    "PRINCIPAL_ID_ENV",
     "PRINCIPAL_KEY_ENV",
     "PRINCIPAL_SETTINGS_FILE",
+    "PRINCIPAL_TOKEN_ENV",
+    "PrincipalSettings",
+    "default_key_dir",
     "principal_settings_path",
+    "read_principal_settings",
     "set_principal_settings_token",
     "write_principal_settings",
 ]
