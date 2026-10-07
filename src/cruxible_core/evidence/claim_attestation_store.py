@@ -611,7 +611,7 @@ class ClaimAttestationEvidenceStore:
         if self._poisoned:
             raise _error(
                 "store_poisoned",
-                "attestation store requires recovery; run `cruxible claim-attestation recover`",
+                "attestation store requires recovery; run `cruxible claim recover-attestation`",
             )
         # Recover or refuse an unreadable pointer before the global fork check,
         # so multiple replay-valid maximal roots retain their distinct typed

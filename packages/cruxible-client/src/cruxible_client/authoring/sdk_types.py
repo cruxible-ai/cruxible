@@ -36,6 +36,12 @@ class RefKind(str, Enum):
     RESOLUTION_CONTRACT = "resolution_contract"
     MANDATE = "mandate"
     PROCEDURE_RUN = "procedure_run"
+    TRIGGER = "trigger"
+    PRINCIPAL = "principal"
+    APPROVAL_POLICY = "approval_policy"
+    PROCEDURE_RUNTIME_POLICY = "procedure_runtime_policy"
+    SOURCE_ACQUISITION_POLICY = "source_acquisition_policy"
+    PROVIDER_INTERFACE = "provider_interface"
 
 
 @runtime_checkable

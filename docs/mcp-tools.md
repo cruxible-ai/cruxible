@@ -106,16 +106,16 @@ that starts reaching one more verb moves the pin.
 |---|---|---|
 | `cruxible_server_info` | Return the adapter and daemon versions with daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
 
-## Host and initialization
+## Host and providers
 
-Allocating a host (`cruxible host create`), releasing its worktree
-(`cruxible workspace detach`) and decommissioning an instance
-(`cruxible instance decommission`) are operator acts with no MCP tool.
+Setting up a host (`cruxible init`, or `cruxible host create` to allocate one
+without becoming its owner), releasing its worktree (`cruxible workspace
+detach`) and decommissioning an instance (`cruxible instance decommission`) are
+operator acts with no MCP tool.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_init` | Bootstrap a host with public principal records | `ADMIN` |
-| `cruxible_provider_catalog` | List provider packages from the configured daemon repository | `READ_ONLY` |
+| `cruxible_provider_catalog` | List provider packages from the configured daemon repository, each with its version and the provider interface IDs it implements | `READ_ONLY` |
 | `cruxible_provider_install` | Install exact package bytes and propose its definitions, without execution grants | `ADMIN` |
 
 ## Kits
@@ -167,7 +167,7 @@ names the whole body's `body_digest`.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_read_capture` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying) | `GOVERNED_WRITE` |
+| `cruxible_capture_read` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying) | `GOVERNED_WRITE` |
 
 ## Sources
 
@@ -191,7 +191,7 @@ The principal registry is `orient(section="principals")`; one record is
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_compiler_upgrade` | Propose an exact compiler transition; signed approval and activation use the ordinary proposal workflow. | `ADMIN` |
-| `cruxible_propose_principal_change` | Propose rotation, revocation, or recovery | `ADMIN` |
+| `cruxible_principal_propose` | Propose rotation, revocation, or recovery | `ADMIN` |
 
 ## Subjects, ClaimTypes, and Claims
 
@@ -203,7 +203,7 @@ The principal registry is `orient(section="principals")`; one record is
 | `cruxible_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
 | `cruxible_retire` | End one live Claim, by Claim ID or by Subject and single-value field, with its dependent Claims, in one change set | `GOVERNED_WRITE` |
 | `cruxible_write` | Apply `set`, `add` (one more value in a many-valued field) and `retire` changes as one change set, accepted or refused together | `GOVERNED_WRITE` |
-| `cruxible_get` | Read one thing by any reference (Claim id or prefix, `kind/id`, predicate, `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:`/`Principal:`/`ProviderInterface:<name>`, `ApprovalPolicy:instance`, artifact path, proposal id, or an operational reference: `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is cut to `{value, truncated: true, length}`, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why` (a Claim's verdict and law evidence, or a Subject's or Document's governance and provenance), `history` (newest first, paged by `limit` and `cursor`), `proof` (the full accepted envelope and facts, with the full `accepted_coordinate`), or `body` with a byte `range` and the whole `body_digest`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both; an all-digit `at` of 11 or fewer characters is always a generation); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
+| `cruxible_get` | Read one thing by any reference (Claim id or prefix, `kind/id`, predicate, `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:`/`Trigger:`/`Principal:`/`ProviderInterface:`/`SourceAcquisitionPolicy:<name>`, `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, artifact path, proposal id, or an operational reference: `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is cut to `{value, truncated: true, length}`, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why` (a Claim's verdict and law evidence, or a Subject's or Document's governance and provenance), `history` (newest first, paged by `limit` and `cursor`), `proof` (the full accepted envelope and facts, with the full `accepted_coordinate`), or `body` with a byte `range` and the whole `body_digest`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both; an all-digit `at` of 11 or fewer characters is always a generation); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
 
 A proposal is not accepted state. A Claim's verdict is computed at read time
 from accepted law evidence, never carried forward from acceptance.
@@ -304,7 +304,9 @@ authority plane beside accepted state.
 `cruxible_query` takes exactly one mode: compact or a query `name`
 (a full spec runs through `cruxible_query_spec`, in the `full`
 profile, so the default tool stays small). Compact mode names a Subject
-`kind` (or `ClaimType` / `Procedure` for definitions) and/or free text
+`kind` (or `ClaimType` / `Procedure` for definitions, or `Trigger` / `Line`
+to list Triggers by name, schedule, target and lifecycle and Lines by
+enabled) and/or free text
 `contains`. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
 `ne`, `lt`, `lte`, `gt`, `gte`, `in` (a list), `exists` (a boolean) or
 `contains` (case-insensitive text); filters combine as all-of. A field is a
@@ -345,7 +347,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
 | `cruxible_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
 | `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so an activation refresh exports the same parts; `mode=status` reports whether that floor is current, stale, or absent. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref and coordinate), `current/<kind>/INDEX`, readable `documents/` and `provenance/`; digests stay in `provenance/` and the manifest. `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
-| `cruxible_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
+| `cruxible_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, inline `grep_results` text, or `whole_working_set`) | `READ_ONLY` |
 
 `cruxible_next` renders each repair's `command` as the MCP tool call
 that performs it (for example `cruxible_settle(prediction_id="RSC-...")`,

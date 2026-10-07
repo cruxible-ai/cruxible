@@ -28,7 +28,6 @@ from cruxible_client.authoring.procedures import (
     ProcedureStateDependency,
     ProviderBinding,
 )
-from cruxible_client.authoring.queries import QueryBinding
 from cruxible_client.authoring.sdk_types import ProcedureRef, QueryRef
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.procedures.models import (
@@ -65,7 +64,7 @@ class ProcedureBlueprint:
     _request: ProcedureSourceRequest
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
     acquisition_policy: str | None = None
-    _bindings: Mapping[str, ProviderBinding | QueryBinding | QueryRef | ProcedureRef] = field(
+    _bindings: Mapping[str, ProviderBinding | QueryRef | ProcedureRef] = field(
         default_factory=lambda: MappingProxyType({})
     )
 
@@ -108,7 +107,7 @@ class ProcedureBlueprint:
         return self._request.description
 
     @property
-    def bindings(self) -> Mapping[str, ProviderBinding | QueryBinding | QueryRef | ProcedureRef]:
+    def bindings(self) -> Mapping[str, ProviderBinding | QueryRef | ProcedureRef]:
         return self._bindings
 
     def __call__(self, *args: object, **kwargs: object) -> None:
@@ -117,15 +116,13 @@ class ProcedureBlueprint:
             "Use preview/build or run its accepted Procedure."
         )
 
-    def bind(
-        self, **bindings: ProviderBinding | QueryBinding | QueryRef | ProcedureRef
-    ) -> ProcedureBlueprint:
+    def bind(self, **bindings: ProviderBinding | QueryRef | ProcedureRef) -> ProcedureBlueprint:
         unknown = set(bindings) - _binding_slots(self.source)
         if unknown:
             raise ValueError(f"Unknown Procedure binding slots: {sorted(unknown)}")
         for name, value in bindings.items():
             if not name.isidentifier() or not isinstance(
-                value, (ProviderBinding, QueryBinding, QueryRef, ProcedureRef)
+                value, (ProviderBinding, QueryRef, ProcedureRef)
             ):
                 raise TypeError("Bindings require named accepted provider/query/Procedure handles")
         return replace(self, _bindings=MappingProxyType(dict(self._bindings, **bindings)))
@@ -140,9 +137,6 @@ class ProcedureBlueprint:
                 selections[name] = SourceProviderSelection(
                     provider=value.provider, interface=value.interface
                 )
-            elif isinstance(value, QueryBinding):
-                world._playbill._assert_coordinate(value.ref.coordinate)
-                selections[name] = SourceQuerySelection(name=value.ref.address)
             elif isinstance(value, QueryRef):
                 world._playbill._assert_coordinate(value.coordinate)
                 selections[name] = SourceQuerySelection(name=value.address)

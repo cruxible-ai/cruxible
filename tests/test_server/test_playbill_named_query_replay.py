@@ -1,7 +1,7 @@
-"""A named query's replay through the served ``query`` verb, as the old run_query gave it.
+"""A named query's replay through the served ``query`` verb.
 
-The SDK's ``run_query`` and a declared block's query backing read a named
-query's full receipt through ``query``. These run against a real daemon (an
+``cx.query(name=..., receipt="full")`` and a declared block's query backing read
+a named query's full receipt through ``query``. These run against a real daemon (an
 in-process HTTP app over a seeded instance), never a fake, because the
 properties under test live in the service: which parameter bindings it admits
 and which budgets it runs.
@@ -121,6 +121,12 @@ def _sdk(client: CruxibleClient, instance_id: str, tmp_path: Path) -> Cruxible:
     )
 
 
+def _replay(pb: Cruxible, name: str, params: dict[str, Any] | None = None) -> Any:
+    replay = pb.query(name=name, params=params, receipt="full").page.receipt.replay
+    assert replay is not None
+    return replay
+
+
 def _coordinate(instance: Any) -> AcceptedCoordinate:
     return AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
@@ -133,10 +139,8 @@ def test_the_sdk_binds_an_explicit_null_distinct_from_the_default(
 ) -> None:
     client, instance_id, _instance = served
     pb = _sdk(client, instance_id, tmp_path)
-    binding = pb.query_binding(BY_STATUS)
-
-    explicit = pb.run_query(binding, parameters=binding.parameters(optional_status=None))
-    defaulted = pb.run_query(binding)
+    explicit = _replay(pb, BY_STATUS, {"optional_status": None})
+    defaulted = _replay(pb, BY_STATUS)
 
     assert explicit.result.verdict == "completed"
     assert [(item.name, item.value) for item in explicit.result.parameters] == [
@@ -145,7 +149,7 @@ def test_the_sdk_binds_an_explicit_null_distinct_from_the_default(
     assert [(item.name, item.value) for item in defaulted.result.parameters] == [
         ("optional_status", "ready")
     ]
-    assert explicit.receipt.parameter_digest != defaulted.receipt.parameter_digest
+    assert explicit.execution.parameter_digest != defaulted.execution.parameter_digest
 
 
 def test_http_admits_a_null_parameter_and_the_definition_decides(
@@ -242,21 +246,21 @@ def test_a_replay_runs_declared_budgets_past_the_surface_ceiling(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """run_query's result and digest do not move with the compact surface's ceiling."""
+    """A full receipt's result and digest do not move with the compact surface's ceiling."""
 
     client, instance_id, _instance = served
     pb = _sdk(client, instance_id, tmp_path)
-    uncapped = pb.run_query(QUERY_NAME)
+    uncapped = _replay(pb, QUERY_NAME)
     assert len(uncapped.result.rows) == 2
 
     monkeypatch.setattr(compact_module, "COMPACT_QUERY_MAX_RESULTS", 1)
-    replayed = pb.run_query(QUERY_NAME)
+    replayed = _replay(pb, QUERY_NAME)
 
     assert replayed.result.verdict == "completed"
     assert replayed.result.truncation.clipped_budgets == ()
     assert replayed.result.budgets.max_results == work_item_query().default_budgets.max_results
     assert replayed.result == uncapped.result
-    assert replayed.receipt == uncapped.receipt
+    assert replayed.execution == uncapped.execution
     # The compact page is still held under the ceiling.
     compact = pb.query(name=QUERY_NAME).page
     assert compact.capped == ("max_results=1",)

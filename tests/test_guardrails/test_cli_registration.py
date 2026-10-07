@@ -101,7 +101,7 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     # registration group whose children are the root's; the read cut removed the
     # subject, policy and query groups (query is one command), and the stub leaf
     # replaced the world group.
-    assert len(groups) == 28, f"expected 28 Cruxible/host groups, found {len(groups)}"
+    assert len(groups) == 27, f"expected 27 Cruxible/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:

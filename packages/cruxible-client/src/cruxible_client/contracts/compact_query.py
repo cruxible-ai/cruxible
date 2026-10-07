@@ -266,7 +266,10 @@ class QueryRequest(BaseModel):
     kind: str | None = Field(
         default=None,
         max_length=256,
-        description="A Subject kind, or ClaimType / Procedure for definitions.",
+        description=(
+            "A Subject kind, ClaimType / Procedure for definitions, or Trigger / Line to "
+            "list those."
+        ),
     )
     where: tuple[QueryFilter, ...] = Field(default=(), max_length=QUERY_MAX_FILTERS)
     contains: str | None = Field(

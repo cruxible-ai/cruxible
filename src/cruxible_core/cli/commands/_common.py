@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -18,6 +18,8 @@ from cruxible_core.cli.context import (
     CliContextState,
     clear_cli_context,
     load_cli_context,
+    normalized_transport,
+    principal_binding,
     save_cli_context,
 )
 from cruxible_core.server.config import get_runtime_bearer_token
@@ -155,11 +157,7 @@ def _emit_json(data: Any, *, sort_keys: bool = False) -> None:
 
 
 def _transport_target(obj: Mapping[str, Any]) -> str | None:
-    if obj.get("server_url"):
-        return str(obj["server_url"]).rstrip("/")
-    if obj.get("server_socket"):
-        return f"unix://{Path(str(obj['server_socket'])).expanduser().resolve()}"
-    return None
+    return normalized_transport(obj.get("server_url"), obj.get("server_socket"))
 
 
 def _target_source_qualifier(instance_source: str, transport_source: str) -> str:
@@ -308,7 +306,8 @@ def _activate_server_instance(instance_id: str) -> ActiveInstanceChange | None:
     if not state.server_url and not state.server_socket:
         return None
     save_cli_context(
-        CliContextState(
+        replace(
+            load_cli_context(),
             server_url=state.server_url,
             server_socket=state.server_socket,
             instance_id=instance_id,
@@ -334,12 +333,33 @@ def _persist_cli_context(
     instance_id: str | None,
     instance_transport: str | None = None,
 ) -> None:
+    """Remember transport and instance; the principals the context knows are kept."""
+
     save_cli_context(
-        CliContextState(
+        replace(
+            load_cli_context(),
             server_url=server_url,
             server_socket=server_socket,
             instance_id=instance_id,
             instance_transport=instance_transport,
+        )
+    )
+
+
+def _remember_principal_settings(
+    instance_id: str, principal_id: str, settings_path: Path, *, activate: bool
+) -> None:
+    """Remember a principal's settings file so the CLI can load it (and act as it)."""
+
+    transport = _transport_target(_root_ctx_obj())
+    if transport is None:  # pragma: no cover - settings are written only in server mode
+        return
+    save_cli_context(
+        load_cli_context().remember_principal(
+            principal_binding(transport, instance_id),
+            principal_id,
+            settings_path,
+            activate=activate,
         )
     )
 

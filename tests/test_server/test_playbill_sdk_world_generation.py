@@ -242,7 +242,7 @@ def test_a_same_set_definition_lands_with_the_claim_that_reads_it_in_one_generat
     claims = landed.sec.vulnerability["cve-2026-69247"].claims
     assert {claim.predicate for claim in claims} == {AFFECTS, SEVERITY}
     assert playbill.coordinate == world.coordinate
-    latest = playbill.claim_views([claim.claim_id for claim in claims])
+    latest = [playbill.get(claim.claim_id).value for claim in claims]
     assert {claim.predicate for claim in latest} == {AFFECTS, SEVERITY}
     assert playbill.coordinate.git_oid == receipt.accepted_coordinate.git_oid
     assert landed.sec.vulnerability["cve-2026-69247"].severity[0].value == "high"

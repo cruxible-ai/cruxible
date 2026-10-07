@@ -24,7 +24,7 @@ before enabling them.
 | `cruxible instance` | Managed config-authority instances | Decommissions a daemon-hosted instance |
 | `cruxible query` | Ran a named query from the config | Runs a compact or named query over accepted state |
 | `cruxible procedure` | Showed and withdrew config procedures | Binds, runs and measures governed Procedures |
-| `cruxible_init` (MCP) | Initialized or reloaded a config instance | Bootstraps governed state |
+| `cruxible_init` (MCP) | Initialized or reloaded a config instance | Removed: setup is an operator step (`cruxible init`) |
 | `cruxible_query` (MCP) | Ran a named query | Runs a compact or named query over accepted state |
 | `.cruxible/` in a project | The 0.3 instance directory (`instance.json`, `state.db`) | The workspace directory (client custody, sources, floor); a worktree whose `.cruxible/` holds a 0.3 instance is refused until it moves aside, and so is one whose `.cruxible/` is, lies inside or holds the daemon state root (`~/.cruxible` or `CRUXIBLE_STATE_ROOT`) |
 

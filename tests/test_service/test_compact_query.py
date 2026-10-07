@@ -223,7 +223,7 @@ def test_claim_type_rows_name_capture_contracts_never_digests(instance: Any) -> 
         _query(instance, kind="ClaimType", where=[{"field": "predicat", "eq": "x"}])
 
 
-def test_named_query_runs_as_run_query_does(instance: Any) -> None:
+def test_named_query_runs_its_accepted_definition(instance: Any) -> None:
     result = _query(instance, name=QUERY_NAME)
 
     assert result.receipt.mode == "named"

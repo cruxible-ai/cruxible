@@ -6,7 +6,8 @@ from cruxible_core.errors import ConfigError
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_provider_catalog": (
-        "Use when you need to discover available provider packages and their node types."
+        "Use when you need to discover available provider packages: each package's name, "
+        "version and the provider interface IDs it implements."
     ),
     "cruxible_provider_install": (
         "Use when you want to install a provider package by name (from the configured "
@@ -42,7 +43,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_server_info": (
         "Use when you need adapter and daemon versions with state, auth, and host metadata."
     ),
-    "cruxible_init": ("Use when you need to bootstrap Cruxible from client-generated public keys."),
     "cruxible_store_body": (
         "Use when you need to store exact Document bytes inertly before proposing them."
     ),
@@ -95,7 +95,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_proposal_withdraw": (
         "Use when an open proposal can never be activated and should leave the open inventory."
     ),
-    "cruxible_read_capture": (
+    "cruxible_capture_read": (
         "Use when you need verified retained Capture evidence for inspection or Claim authoring. "
         "Requires body-read permission; max_bytes bounds returned material. "
         "Never refetches sources."
@@ -114,7 +114,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use to propose an explicit compiler upgrade bound to the exact accepted base. "
         "Requires admin permission; approve and activate through the normal proposal workflow."
     ),
-    "cruxible_propose_principal_change": (
+    "cruxible_principal_propose": (
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
     ),
     "cruxible_propose_claim_type": (
@@ -209,8 +209,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_get": (
         "Use when you have a reference to one thing -- a Claim id or prefix, kind/id, a "
-        "predicate, ClaimType:/Document:/Procedure:/query:/Principal:/ProviderInterface:<name>, "
-        "ApprovalPolicy:instance, or a proposal id -- and want its values. detail: summary "
+        "predicate, ClaimType:/Document:/Procedure:/query:/Trigger:/Principal:/"
+        "ProviderInterface:/SourceAcquisitionPolicy:<name>, ApprovalPolicy:instance, "
+        "ProcedureRuntimePolicy:instance, or a proposal id -- and want its values. detail: summary "
         "(default card), evidence, why, history, proof (full envelope), body (Document bytes "
         "by range). A wrong name refuses with the nearest names."
     ),
@@ -219,7 +220,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         '(e.g. "dev.roadmap_item") with where filters such as '
         '{"field": "adoption_state", "eq": "adopted"} (also ne, lt, lte, gt, gte, in, '
         "exists, contains), select, follow and order_by; contains alone searches every "
-        "Claim value; kind ClaimType or Procedure lists definitions. Or pass a query name "
+        "Claim value; kind ClaimType or Procedure lists definitions, kind Trigger or Line "
+        "lists Triggers (name, schedule, target) and Lines (enabled, triggers). Or pass a "
+        "query name "
         "with params (budgets, receipt=full for its replay receipt). Rows lead with values "
         "and carry flags (stale, contested, contradicted, uncovered, unsure_hold); status "
         "adds overturned, refused or retired Claims (retired also lists retired Subjects) "

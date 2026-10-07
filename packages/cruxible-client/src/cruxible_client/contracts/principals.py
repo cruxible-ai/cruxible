@@ -24,6 +24,10 @@ _PRINCIPAL_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 #: user is equally trusted. With auth on it must equal the credential's principal.
 PRINCIPAL_ID_HEADER = "X-Cruxible-Principal-Id"
 PRINCIPAL_ID_ENV = "CRUXIBLE_PRINCIPAL_ID"
+#: The caller's local Ed25519 private key: the variable `cruxible init` and
+#: `cruxible principal add` write into a principal's settings file, and the one
+#: the Claim attestation signer reads.
+PRINCIPAL_KEY_ENV = "CRUXIBLE_PRINCIPAL_KEY"
 
 
 def is_canonical_principal_id(value: str) -> bool:
@@ -153,6 +157,7 @@ def parse_principal_record(content: bytes, *, path: str) -> PrincipalRecord:
 
 
 __all__ = [
+    "PRINCIPAL_KEY_ENV",
     "PrincipalRegistrySnapshot",
     "parse_principal_record",
     "principal_registry_from_tree",

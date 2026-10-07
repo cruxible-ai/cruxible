@@ -234,34 +234,6 @@ def test_cli_independent_approval_flag_validates_before_provisioning(
     assert reached == []
 
 
-def test_cli_init_requires_an_active_instance_before_provisioning(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
-    reached: list[str] = []
-    monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.generate_client_principal_key",
-        lambda *_args, **_kwargs: reached.append("key"),
-    )
-
-    result = CliRunner().invoke(
-        cli,
-        [
-            "--server-url",
-            "https://init.example.test",
-            "init",
-            "--key-dir",
-            str(tmp_path.parent / "missing-instance-custody"),
-        ],
-    )
-
-    assert result.exit_code == 2
-    assert "--instance-id is required in server mode" in result.output
-    assert reached == []
-
-
 def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

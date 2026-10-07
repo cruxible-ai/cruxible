@@ -7,11 +7,12 @@ Three modes, exactly one per call:
   ``QueryDefinitionSpec`` wrapped as an inline definition (its own digest, no
   accepted path) and runs through the same evaluator as a governed
   QueryDefinition. ``kind: ClaimType`` / ``kind: Procedure`` select definitions
-  through the artifact entry. ``contains`` with no kind searches the values of
-  every live Claim.
+  through the artifact entry; ``kind: Trigger`` / ``kind: Line`` list those
+  artifacts from the typed-state index (``listed_kinds``). ``contains`` with no
+  kind searches the values of every live Claim.
 - **spec** -- a full ``QueryDefinitionSpec``, pinned at the coordinate.
 - **name** -- an accepted QueryDefinition with its ``params``, run exactly as
-  ``run_query`` runs it.
+  its declaration states.
 
 Lowered filters are the ones the accepted grammar states exactly: a
 one-cardinality predicate compared, matched against a set or tested for
@@ -102,6 +103,7 @@ from cruxible_core.query.backends import ClaimQueryFactsV1
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
+from cruxible_core.service.discovery.listed_kinds import LISTED_KINDS, listed_kind_answer
 from cruxible_core.service.discovery.query import (
     build_accepted_query_facts,
     evaluate_accepted_query,
@@ -225,7 +227,10 @@ def _mode(request: QueryRequest) -> QueryMode:
         )
     shapes_cells = request.claims or request.status != _LIVE_ONLY
     if shapes_cells and (
-        mode != "inline" or request.kind is None or request.kind in ARTIFACT_KINDS
+        mode != "inline"
+        or request.kind is None
+        or request.kind in ARTIFACT_KINDS
+        or request.kind in LISTED_KINDS
     ):
         raise query_refusal(
             "cruxible.query.mode_invalid",
@@ -2154,7 +2159,7 @@ def _named_answer(
     artifacts = isinstance(definition.query.entry, QueryArtifactsEntry)
     # A caller's own budgets run as given, up to the definition's maximum (the
     # engine refuses past it). A full receipt is a replay, so it runs the
-    # definition's declared budgets exactly as run_query did: its result and
+    # definition's declared budgets exactly: its result and
     # digest never depend on the compact surface's ceiling or the page size.
     # Otherwise the definition's budgets are held under that ceiling.
     if request.budgets is not None:
@@ -2462,6 +2467,19 @@ def service_playbill_query(
             evaluation_time=evaluation_time,
             mode="inline",
             request=request,
+        )
+    elif request.kind in LISTED_KINDS:
+        listed = listed_kind_answer(instance, coordinate, request, evaluation_time=evaluation_time)
+        answer = _Answer(
+            mode="inline",
+            kind=request.kind,
+            spec_digest=listed.spec_digest,
+            columns=listed.columns,
+            candidates=listed.rows,
+            keys=listed.keys,
+            render=lambda page: [dict(row) for row in page],
+            capped=listed.capped,
+            notes=listed.notes,
         )
     elif request.kind is None:
         if request.where or request.select or request.follow or request.order_by:

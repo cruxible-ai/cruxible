@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import re
@@ -15,7 +16,6 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar, cast, get_args
 
 import click
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from cruxible_client import (
@@ -99,6 +99,7 @@ from cruxible_client.contracts.kits import (
     KitChangeResult,
     KitRemoveRequest,
 )
+from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.procedures.results import ProcedureHaltTerminal
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
@@ -134,9 +135,11 @@ from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
     _echo_active_write_target,
+    _echo_creation_write_target,
     _echo_write_target,
     _emit_brief,
     _emit_json,
+    _remember_principal_settings,
     _require_instance_id,
     _root_ctx_obj,
     _transport_target,
@@ -147,9 +150,20 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.cli.payloads import (
+    PayloadFile,
+    payload_label,
+    read_payload_bytes,
+    read_payload_document,
+    read_payload_text,
+)
+from cruxible_core.cli.payloads import model_field_errors as _model_field_errors
+from cruxible_core.cli.payloads import read_mapping as _read_mapping
+from cruxible_core.cli.payloads import read_model as _read_model
 from cruxible_core.cli.principal_settings import (
     PRINCIPAL_KEY_ENV,
     PRINCIPAL_SETTINGS_FILE,
+    default_key_dir,
     write_principal_settings,
 )
 from cruxible_core.coverage.adapter import (
@@ -197,7 +211,7 @@ from cruxible_core.governance.keys import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
-from cruxible_core.server.config import get_runtime_bearer_token
+from cruxible_core.server.config import get_runtime_bearer_token, get_server_state_root
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
     ProcedureBindRequest,
@@ -271,41 +285,6 @@ def _server_call(
     return cast(ResultT, result)
 
 
-def _model_field_errors(exc: ValidationError) -> list[str]:
-    """Render one pydantic failure per line as ``field.path: message``."""
-    rendered: list[str] = []
-    for error in exc.errors(include_url=False):
-        location = ".".join(str(part) for part in error.get("loc", ()))
-        message = str(error.get("msg", "invalid"))
-        rendered.append(f"{location}: {message}" if location else message)
-    return rendered
-
-
-def _read_model(path: str, model: type[ResultT]) -> ResultT:
-    source = Path(path).expanduser()
-    try:
-        payload = yaml.safe_load(source.read_text())
-    except (OSError, yaml.YAMLError) as exc:
-        raise click.ClickException(f"Could not read {source}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise click.ClickException(f"{source} must contain one mapping")
-    validator = getattr(model, "model_validate")
-    try:
-        return cast(ResultT, validator(payload))
-    except ValidationError as exc:
-        # A malformed request file is the caller's mistake, not a crash: without
-        # this the raw pydantic ValidationError escapes `handle_errors` (which
-        # catches only the client CoreError family) and prints a Python
-        # traceback, unlike every other refusal on this CLI. Carry the field
-        # paths so the caller can repair the file from the message alone.
-        # DataValidationError renders `summary: <errors>` itself, so the summary
-        # must not repeat the field list.
-        raise DataValidationError(
-            f"{source} is not a valid {model.__name__}",
-            errors=_model_field_errors(exc),
-        ) from exc
-
-
 def _read_since_access_profile(path: str) -> dict[str, Any]:
     """Read a CoverageAccessProfile file for since, filling model defaults.
 
@@ -322,17 +301,6 @@ def _read_since_access_profile(path: str) -> dict[str, Any]:
                 for err in exc.errors(include_url=False)
             ]
         ) from exc
-
-
-def _read_mapping(path: str) -> dict[str, Any]:
-    source = Path(path).expanduser()
-    try:
-        payload = yaml.safe_load(source.read_text())
-    except (OSError, yaml.YAMLError) as exc:
-        raise click.ClickException(f"Could not read {source}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise click.ClickException(f"{source} must contain one mapping")
-    return cast(dict[str, Any], payload)
 
 
 _AUTHORING_INPUT_ADAPTER: TypeAdapter[AuthoringInput] = TypeAdapter(AuthoringInput)
@@ -570,7 +538,7 @@ def _write_init_resume_marker(path: Path, payload: Mapping[str, str]) -> None:
 def _adopt_init_retry_key(
     target: ClientPrincipalKeyTarget,
     *,
-    workspace: Path | None,
+    forbidden_roots: tuple[Path, ...],
     transport: str,
     instance_id: str,
 ) -> GeneratedKeyMaterial:
@@ -585,7 +553,7 @@ def _adopt_init_retry_key(
         target.directory,
         principal_id=target.principal.principal_id,
         kind=target.principal.kind,
-        forbidden_roots=_forbidden_roots_for(workspace),
+        forbidden_roots=forbidden_roots,
     )
     expected = _init_resume_payload(
         target,
@@ -602,17 +570,17 @@ def _adopt_init_retry_key(
 
 def _prepare_init_custody(
     *,
-    workspace: Path | None,
     transport: str,
     instance_id: str,
     specifications: tuple[tuple[Path, str, PrincipalKind], ...],
+    forbidden_roots: tuple[Path, ...],
 ) -> tuple[tuple[GeneratedKeyMaterial, ...], tuple[Path, ...]]:
     targets = tuple(
         validate_client_principal_key_target(
             directory,
             principal_id=principal_id,
             kind=kind,
-            forbidden_roots=_forbidden_roots_for(workspace),
+            forbidden_roots=forbidden_roots,
         )
         for directory, principal_id, kind in specifications
     )
@@ -638,7 +606,7 @@ def _prepare_init_custody(
             prepared.append(
                 _adopt_init_retry_key(
                     target,
-                    workspace=workspace,
+                    forbidden_roots=forbidden_roots,
                     transport=transport,
                     instance_id=instance_id,
                 )
@@ -660,7 +628,7 @@ def _prepare_init_custody(
                 target.directory,
                 principal_id=target.principal.principal_id,
                 kind=target.principal.kind,
-                forbidden_roots=_forbidden_roots_for(workspace),
+                forbidden_roots=forbidden_roots,
             )
             _write_init_resume_marker(
                 marker,
@@ -1016,13 +984,20 @@ def create_host(
 
 
 @playbill_group.command("init")
-@click.option("--key-dir", required=True, help="Client custody directory outside the workspace.")
+@click.option(
+    "--key-dir",
+    default=None,
+    help=(
+        "Client custody directory outside the workspace and the daemon state root "
+        "(default: $XDG_CONFIG_HOME/cruxible/keys/INSTANCE/PRINCIPAL, else under ~/.config)."
+    ),
+)
 @click.option(
     "--principal-id",
     default=None,
     help=(
-        "Owner principal ID this init makes you (default: CRUXIBLE_PRINCIPAL_ID or the "
-        "global --principal-id)."
+        "Owner principal ID this init makes you (default: CRUXIBLE_PRINCIPAL_ID, the "
+        "global --principal-id, else your OS username)."
     ),
 )
 @click.option(
@@ -1068,7 +1043,7 @@ def create_host(
 @json_option
 @handle_errors
 def init_playbill(
-    key_dir: str,
+    key_dir: str | None,
     principal_id: str | None,
     reviewer_key_dir: str | None,
     require_independent_approval: bool,
@@ -1082,6 +1057,13 @@ def init_playbill(
     output_json: bool,
 ) -> None:
     """Make you the owner: create client custody and bootstrap the approval policy.
+
+    With no instance selected, init first creates the host (as `cruxible host
+    create` does) and selects it, so a new project is one bare `cruxible init`.
+    The owner principal ID defaults to your OS username and the key directory to
+    a per-user config path outside the workspace and the daemon state root. The
+    CLI remembers the owner's settings and acts as the owner from then on
+    (`cruxible context use --principal ID` switches).
 
     With daemon auth off, the owner principal ID is the identity this process
     claims for the init request; no bootstrap secret is needed.
@@ -1098,25 +1080,20 @@ def init_playbill(
         _refuse_tcp_workspace_operation(git_workspace)
     if not (_root_ctx_obj().get("server_url") or _root_ctx_obj().get("server_socket")):
         raise click.UsageError("Local execution disabled for cruxible init; use server mode.")
-    selected = _require_instance_id()
     transport = _transport_target(_root_ctx_obj())
     if transport is None:  # pragma: no cover - guarded by _get_client above
         raise click.UsageError("Server mode is required for cruxible init")
+    configured = _root_ctx_obj().get("principal_id")
+    if principal_id is None:
+        principal_id = configured if configured is not None else _os_principal_id()
+    selected_instance = _root_ctx_obj().get("instance_id")
     config_transport = _workspace_config_transport() if git_workspace is not None else {}
     if git_workspace is not None:
         validate_workspace_config_write(
             git_workspace,
-            instance_id=selected,
+            instance_id=selected_instance,
             replace=replace,
             **config_transport,
-        )
-    configured = _root_ctx_obj().get("principal_id")
-    if principal_id is None:
-        principal_id = configured
-    if principal_id is None:
-        raise click.UsageError(
-            "cruxible init needs the owner principal ID; repair: "
-            "`cruxible init --principal-id ID --key-dir DIR`"
         )
     if configured is not None and configured != principal_id:
         raise click.UsageError(
@@ -1129,8 +1106,29 @@ def init_playbill(
         # credential the credential decides who acts, so no claim is sent.
         _root_ctx_obj()["principal_id"] = principal_id
     workspace = git_workspace
+    custody_roots = _init_custody_roots(workspace)
+    # Every explicit custody directory is checked before a host is allocated or
+    # a key generated; the default one as soon as the host names it.
+    for role, flag, explicit in (
+        ("owner", "--key-dir", key_dir),
+        ("reviewer", "--reviewer-key-dir", reviewer_key_dir),
+        ("recovery", "--recovery-key-dir", recovery_key_dir),
+    ):
+        if explicit is not None:
+            _refuse_custody_inside(role, Path(explicit), custody_roots, flag=flag)
+    selected = str(selected_instance) if selected_instance else _create_host_for_init(transport)
+    owner_key_dir = (
+        Path(key_dir).expanduser()
+        if key_dir is not None
+        else _refuse_custody_inside(
+            "owner",
+            default_key_dir(selected, principal_id),
+            custody_roots,
+            flag="--key-dir",
+        )
+    )
     specifications: list[tuple[Path, str, PrincipalKind]] = [
-        (Path(key_dir).expanduser(), principal_id, "ordinary")
+        (owner_key_dir, principal_id, "ordinary")
     ]
     if reviewer_key_dir is not None:
         specifications.append((Path(reviewer_key_dir).expanduser(), "reviewer", "ordinary"))
@@ -1139,10 +1137,10 @@ def init_playbill(
             (Path(recovery_key_dir).expanduser(), recovery_principal_id, "recovery")
         )
     materials, markers = _prepare_init_custody(
-        workspace=workspace,
         transport=transport,
         instance_id=selected,
         specifications=tuple(specifications),
+        forbidden_roots=custody_roots,
     )
     owner = materials[0]
     reviewer = materials[1] if reviewer_key_dir is not None else None
@@ -1175,7 +1173,7 @@ def init_playbill(
     _activate_server_instance(result.instance_id)
     owner_token = _mint_owner_credential(owner, principal_id=principal_id)
     settings = write_principal_settings(
-        Path(key_dir),
+        owner_key_dir,
         ctx_obj=_root_ctx_obj(),
         instance_id=result.instance_id,
         principal_id=principal_id,
@@ -1183,6 +1181,7 @@ def init_playbill(
         token=owner_token,
         written_by="cruxible init",
     )
+    _remember_principal_settings(result.instance_id, principal_id, settings, activate=True)
     if output_json:
         _emit_json({**_json_receipt(result), "owner_settings_path": str(settings)})
         return
@@ -1196,18 +1195,90 @@ def init_playbill(
     click.echo(f"Owner principal: {principal_id}")
     click.echo(f"Owner settings: {settings}")
     click.echo(
-        f"Next: set -a; . {settings}; set +a -- later commands then act as {principal_id} "
-        "(CRUXIBLE_PRINCIPAL_ID)"
+        f"The CLI now acts as {principal_id} on this host (remembered in its context; "
+        "`cruxible context use --principal ID` switches). Another process loads the "
+        f"settings with: set -a; . {settings}; set +a"
         + (
             "."
             if owner_token is not None
-            else "; with daemon auth off that is a claim of identity, not authentication: "
-            "every process of this OS user is equally trusted."
+            else ". With daemon auth off the principal ID is a claim of identity, not "
+            "authentication: every process of this OS user is equally trusted."
         )
     )
     if reviewer is not None:
         click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
         click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
+
+
+def _os_principal_id() -> str:
+    """The owner principal ID a bare init defaults to: the OS username, lowercased."""
+
+    try:
+        name = getpass.getuser().strip().lower()
+    except (KeyError, OSError):  # pragma: no cover - no passwd entry and no LOGNAME/USER
+        name = ""
+    if not is_canonical_principal_id(name):
+        raise click.UsageError(
+            f"your OS username {name!r} is not a principal ID (lowercase letter first, then "
+            "letters, digits, '_', '.' or '-'); repair: `cruxible init --principal-id ID`"
+        )
+    return name
+
+
+def _create_host_for_init(transport: str) -> str:
+    """Allocate the host a bare init initializes, and select it before anything else.
+
+    Selecting it first means a retry after a failed init initializes this same
+    host instead of allocating another.
+    """
+
+    _echo_creation_write_target({})
+    created = _dispatch_cli(
+        lambda client: client.create_host(dry_run=False),
+        lambda: None,
+        allow_local=False,
+        command_name="cruxible init",
+    )
+    assert isinstance(created, contracts.HostResult)
+    _activate_server_instance(created.instance_id)
+    click.echo(f"Created Cruxible host {created.instance_id} @ {transport}", err=True)
+    return created.instance_id
+
+
+def _init_custody_roots(workspace: Path | None) -> tuple[Path, ...]:
+    """Where init never puts a key: the workspace and the local daemon state root."""
+
+    roots = [] if workspace is None else [workspace]
+    try:
+        roots.append(get_server_state_root())
+    except CoreError:  # pragma: no cover - no resolvable local state root
+        pass
+    return tuple(root.expanduser().resolve() for root in roots)
+
+
+def _within_real_name(candidate: Path, root: Path) -> bool:
+    """Containment on resolved names, case-insensitively (macOS volumes ignore case)."""
+
+    inner = tuple(part.casefold() for part in candidate.parts)
+    outer = tuple(part.casefold() for part in root.parts)
+    return inner[: len(outer)] == outer
+
+
+def _refuse_custody_inside(
+    role: str, directory: Path, roots: tuple[Path, ...], *, flag: str
+) -> Path:
+    """``directory`` (symlinks resolved) if it is outside every root; else a refusal."""
+
+    resolved = directory.expanduser().resolve()
+    for root in roots:
+        if _within_real_name(resolved, root):
+            raise click.UsageError(
+                f"the {role} key directory lies inside {root}; keys stay outside every "
+                f"workspace and the daemon state root (custody path={str(resolved)!r}, "
+                f"forbidden root={str(root)!r}). Repair: `cruxible init {flag} DIR` with DIR "
+                "outside both"
+            )
+    return resolved
 
 
 def _mint_owner_credential(owner: GeneratedKeyMaterial, *, principal_id: str) -> str | None:
@@ -1252,11 +1323,11 @@ def body_group() -> None:
 
 
 @body_group.command("store")
-@click.argument("path", type=click.Path(exists=True, dir_okay=False))
+@click.argument("path", type=PayloadFile())
 @json_option
 @handle_errors
 def store_body(path: str, output_json: bool) -> None:
-    content = Path(path).read_bytes()
+    content = read_payload_bytes(path)
     result = _server_call(
         lambda client, instance_id: client.store_body(instance_id, content),
         command_name="cruxible body store",
@@ -1714,7 +1785,7 @@ def document_group() -> None:
 
 
 @document_group.command("propose")
-@click.option("--envelope", type=click.Path(exists=True, dir_okay=False))
+@click.option("--envelope", type=PayloadFile())
 @click.option("--example", type=click.Choice(["document"]))
 @click.option("--name", "proposal_name")
 @change_control_options
@@ -2406,6 +2477,8 @@ def add_principal(
         token=token,
         written_by="cruxible principal add",
     )
+    # Known to this CLI's context, not acted as: `context use --principal` switches.
+    _remember_principal_settings(outcome.instance_id, principal_id, settings, activate=False)
     next_steps = _principal_add_next_steps(outcome, principal_id, custody, permission_mode)
     if output_json:
         _emit_json(
@@ -2685,8 +2758,8 @@ def claim_type_group() -> None:
 
 
 @claim_type_group.command("propose")
-@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False))
-@click.option("--envelope", type=click.Path(exists=True, dir_okay=False), hidden=True)
+@click.option("--input", "input_path", type=PayloadFile())
+@click.option("--envelope", type=PayloadFile(), hidden=True)
 @click.option(
     "--template",
     is_flag=True,
@@ -2756,7 +2829,7 @@ def propose_claim_type(
 
 
 @claim_type_group.command("migrate")
-@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("request_file", type=PayloadFile())
 @json_option
 @handle_errors
 def migrate_claim_type(request_file: str, output_json: bool) -> None:
@@ -2939,7 +3012,7 @@ def claim_group() -> None:
 @click.option(
     "--request",
     "request_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Advanced: a ResolutionContractsRequest file with an exact hypothesis reference.",
 )
 @json_option
@@ -2975,7 +3048,7 @@ def resolution_contracts(claim_id: str | None, request_file: str | None, output_
 
 
 @playbill_group.command("predict")
-@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("request_file", type=PayloadFile())
 @json_option
 @handle_errors
 def predict(request_file: str, output_json: bool) -> None:
@@ -3008,7 +3081,7 @@ def predict(request_file: str, output_json: bool) -> None:
 @click.option(
     "--request",
     "request_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help=(
         "Advanced: a SettleRequest file (exact contract reference, anchor event, "
         "or terminal evidence)."
@@ -3059,19 +3132,18 @@ def settle(
     click.echo(f"Outcome: {result.resolution['settlement_outcome']}")
 
 
-@playbill_group.group("claim-attestation")
-def claim_attestation_group() -> None:
-    """Operate the principal-authored Claim-attestation evidence ledger."""
-
-
-@claim_attestation_group.command("recover")
+@claim_group.command("recover-attestation")
 @handle_errors
 def recover_claim_attestations() -> None:
-    """Roll the sole durable unpublished attestation forward after a poison refusal."""
+    """Roll the sole durable unpublished attestation forward after a poison refusal.
+
+    Run this when a Claim write or attestation refuses because the
+    Claim-attestation evidence ledger requires recovery.
+    """
 
     _server_call(
         lambda client, instance_id: client.recover_claim_attestations(instance_id),
-        command_name="cruxible claim-attestation recover",
+        command_name="cruxible claim recover-attestation",
     )
     click.echo("Claim-attestation evidence ledger recovered.")
 
@@ -3165,7 +3237,7 @@ _EXPECTATION_ID_HELP = (
     "payload",
     required=False,
     metavar="PAYLOAD_FILE",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
 )
 @click.option(
     "--example",
@@ -3292,7 +3364,7 @@ def list_pending_authoring_intents(output_json: bool) -> None:
 
 
 @authoring_group.command("compile")
-@click.argument("payload", type=click.Path(exists=True, dir_okay=False))
+@click.argument("payload", type=PayloadFile())
 @click.option("--intent-id", default=None)
 @json_option
 @handle_errors
@@ -3321,7 +3393,7 @@ def compile_authoring(payload: str, intent_id: str | None, output_json: bool) ->
 @click.option(
     "--payload-file",
     required=True,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Claim stub whose source contains only the working tag and logical source_id.",
 )
 @json_option
@@ -3960,7 +4032,7 @@ def retire(
 
 
 @playbill_group.command("write")
-@click.argument("file", required=False, type=click.Path(exists=True, dir_okay=False))
+@click.argument("file", required=False, type=PayloadFile())
 @click.option("--because", default=None, help="Why; overrides the file's because.")
 @click.option("--schema", is_flag=True, help="Print the JSON schema FILE is validated against.")
 @click.option(
@@ -3984,10 +4056,11 @@ def write_changes(
 ) -> None:
     """Apply FILE's set, add and retire changes as one change set.
 
-    FILE (YAML or JSON) holds {"because": ..., "changes": [...]}, or a bare list
-    of changes with --because. Each change is {"op": "set" | "add", "subject",
-    "field", "value"} or {"op": "retire", "target"}; a top-level "subject" is
-    the Subject of every change that names none. --schema prints the schema.
+    FILE (YAML or JSON; - reads stdin) holds {"because": ..., "changes": [...]},
+    or a bare list of changes with --because. Each change is {"op": "set" |
+    "add", "subject", "field", "value"} or {"op": "retire", "target"}; a
+    top-level "subject" is the Subject of every change that names none.
+    --schema prints the schema.
     """
 
     if schema:
@@ -3995,11 +4068,8 @@ def write_changes(
         return
     if file is None:
         raise click.UsageError("pass FILE, or --schema to see what FILE holds")
-    source = Path(file).expanduser()
-    try:
-        payload = yaml.safe_load(source.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise click.ClickException(f"Could not read {source}: {exc}") from exc
+    source = payload_label(file)
+    payload = read_payload_document(file)
     if isinstance(payload, list):
         payload = {"changes": payload}
     try:
@@ -4682,7 +4752,7 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
 @click.option(
     "--spec",
     "spec_path",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     default=None,
     help="A QueryDefinitionSpec file (JSON or YAML).",
 )
@@ -4745,9 +4815,12 @@ def query_group(
     """Query accepted state: cruxible query [KIND] [--where 'f=v']...
 
     This answers one query and prints its values as a table with flags, then
-    the next command when the page is truncated. KIND is a Subject kind, or
-    ClaimType / Procedure for definitions; --name runs an accepted named query
-    (orient --section queries lists them), --spec a full definition.
+    the next command when the page is truncated. KIND is a Subject kind,
+    ClaimType / Procedure for definitions, or Trigger / Line (Triggers by name,
+    schedule, target_kind, target and lifecycle; Lines by enabled; --select
+    adds a Trigger's cron, cadence, capture_contract or version); --name runs
+    an accepted named query (orient --section queries lists them), --spec a
+    full definition.
     """
 
     if ctx.args:
@@ -4868,7 +4941,7 @@ def procedure_readiness(name: str, evaluation_time: str, output_json: bool) -> N
 
 @procedure_group.command("bind")
 @click.argument("name")
-@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("request_file", type=PayloadFile())
 @json_option
 @handle_errors
 def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
@@ -4994,25 +5067,25 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
 
 @procedure_group.command("run")
 @click.argument("name")
-@click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("input_file", type=PayloadFile())
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @click.option(
     "--at",
     "at_file",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="AcceptedCoordinate JSON/YAML file; its presence selects replay lane.",
 )
 @click.option(
     "--resolution-contract",
     "contract_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Exact accepted ResolutionContract reference JSON/YAML.",
 )
 @click.option(
     "--trigger-event",
     "event_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Exact retained Capture event reference JSON/YAML.",
 )
 @json_option
@@ -5082,7 +5155,7 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
     "--at",
     "at_file",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="AcceptedCoordinate JSON/YAML file naming the OBSERVATION coordinate.",
 )
 @json_option
@@ -5374,13 +5447,13 @@ def dispatch_line(
 @click.option(
     "--resolution-contract",
     "contract_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Exact accepted ResolutionContract reference JSON/YAML.",
 )
 @click.option(
     "--trigger-event",
     "event_file",
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="Exact retained Capture event reference JSON/YAML.",
 )
 @json_option
@@ -5439,7 +5512,7 @@ def run_line(
     "--access-profile",
     "access_profile_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
 )
 @click.option(
@@ -5654,7 +5727,7 @@ def curation_group() -> None:
     "--access-profile",
     "access_profile_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
 )
 @click.option(
@@ -5856,14 +5929,14 @@ def curation_suppress(
     "--access-profile",
     "access_profile_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
 )
 @click.option(
     "--cursor",
     "cursor_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="AuditCursor JSON/YAML returned by a prior page.",
 )
 @json_option
@@ -5926,14 +5999,14 @@ def audit(
     "--access-profile",
     "access_profile_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
 )
 @click.option(
     "--cursor",
     "cursor_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="SinceCursor JSON/YAML returned by a prior page.",
 )
 @json_option
@@ -6296,7 +6369,7 @@ def _coverage_options(function: Callable[..., Any]) -> Callable[..., Any]:
         "--bindings",
         "bindings_path",
         default=None,
-        type=click.Path(exists=True, dir_okay=False),
+        type=PayloadFile(),
         help="A mapping of working path to PLANE:IDENTITY.",
     )(function)
     function = click.option(
@@ -6347,9 +6420,7 @@ def _coverage_observations(
     visible without the caller having to guess which window moved.
     """
 
-    grep_text = (
-        None if grep_path is None else Path(grep_path).expanduser().read_text(encoding="utf-8")
-    )
+    grep_text = None if grep_path is None else read_payload_text(grep_path)
     return observe_workspace(
         bindings,
         root=root,
@@ -6400,7 +6471,7 @@ def _resolved_coverage(
     "--grep-results",
     "grep_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=PayloadFile(),
     help="A `grep -n` result batch to resolve as one operation.",
 )
 @click.option("--all", "whole_working_set", is_flag=True, help="Resolve the whole declared scope.")

@@ -49,6 +49,18 @@ refused, typed, unless it names a positive number of seconds. A timeout never
 means the request failed: the daemon may still be running it, so verify state
 before retrying.
 
+Every argument that takes a one-off payload also accepts `-` to read it from
+stdin, so a heredoc or a pipe works and nothing lands on disk: `write -`,
+`authoring compile -`, `authoring bind --payload-file -`, `claim-type propose
+--input -`, `claim-type migrate -`, `predict -`, `settle --request -`,
+`resolution-contracts --request -`, `query --spec -`, `coverage resolve
+--grep-results -`, the Procedure and Line request, input, `--at`,
+`--resolution-contract` and `--trigger-event` files, access profiles and
+cursors, and `body store -`. One command reads stdin for one argument; a second
+`-` is refused. Real artifacts stay files: Procedure source, signed source
+bundles, kit and provider lock files, key directories, cited workspace files
+and block pages.
+
 ## context
 
 Manage remembered daemon and instance context. `context show` reports the
@@ -62,10 +74,25 @@ realpath:
 
 ~~~text
 cruxible context connect
-cruxible context use
+cruxible context use [INSTANCE_ID] [--principal ID]
 cruxible context show
 cruxible context clear
 ~~~
+
+The context also remembers which principal's settings the CLI uses on each
+instance. `cruxible init` remembers the owner's `cruxible.env` and makes it
+active; `cruxible principal add` remembers the new principal's file without
+switching to it. The CLI loads the active principal's settings itself (its
+principal ID, key and, with daemon auth, its bearer credential), so no shell
+sourcing is needed; `context use --principal ID` switches, and `context show`
+names the principal and where it came from. A process that sets its own
+principal (`--principal-id`, `CRUXIBLE_PRINCIPAL_ID`, `CRUXIBLE_PRINCIPAL_KEY`
+or `CRUXIBLE_SERVER_BEARER_TOKEN`) keeps it, so an agent launched with its own
+`cruxible.env` works unchanged. Settings are remembered for one instance on one
+daemon endpoint (URL or socket), and the file must name that endpoint: when a
+command targets another daemon, by flag, environment or workspace config, the
+CLI loads nothing and acts as no principal, so a credential never reaches a
+daemon it was not issued by.
 
 ## Previews
 
@@ -141,6 +168,17 @@ outcome says so: `preview_scope: validation_only` and `not_run` naming those
 steps, with the coordinate it evaluated at.
 
 ## credential
+
+Credentials and principals are different things. A credential is a daemon
+bearer token: it authorizes transport (which endpoints a request may reach, at
+which permission tier) and, when the daemon runs with auth, says which principal
+the request acts as. A principal is a governed signing key registered in the
+instance's ledger (`cruxible init`, `cruxible principal add`): it is who
+authors, approves and is attributed, and its approvals are signed with its
+private key, never with a token. With auth off there are no credentials to
+speak of and the principal ID is a claim of identity; with auth on each
+credential is bound to one principal. Revoking a principal revokes its
+credentials; rotating a credential never changes the principal.
 
 Manage runtime bearer credentials:
 
@@ -529,7 +567,10 @@ cruxible workspace floor-delivery STATE [--instance-id ID] [--json]
 cruxible workspace detach [--instance-id ID] [--dry-run|--commit] [--at DIGEST] [--json]
 ~~~
 
-Allocates an empty daemon-owned host and remembers it. When the selected daemon
+`cruxible init` creates the host itself when no instance is selected, so a new
+project is one bare `cruxible init`; `host create` stays for allocating a host
+without becoming its owner. `host create` allocates an empty daemon-owned host
+and remembers it. When the selected daemon
 is reached through `--server-socket` or `CRUXIBLE_SERVER_SOCKET`, the command
 also registers the selected Git worktree with the daemon. Every selected
 workspace gets an atomic `.cruxible/coverage.json` v2 write containing exactly
@@ -587,8 +628,8 @@ those blocks (`cruxible block depublish`) or retire their backing Claims first.
 ## init
 
 ~~~text
-cruxible init --key-dir DIR
-  --principal-id ID
+cruxible init [--key-dir DIR]
+  [--principal-id ID]
   [--reviewer-key-dir DIR]
   [--require-independent-approval]
   [--recovery-key-dir DIR]
@@ -599,12 +640,23 @@ cruxible init --key-dir DIR
   [--mirror-url URL]
 ~~~
 
-Makes you the owner under `--principal-id` (default: the configured
-`CRUXIBLE_PRINCIPAL_ID` / global `--principal-id`; they must agree). On an
-auth-off daemon the init request claims that principal, so no bootstrap secret
-is needed; set `CRUXIBLE_PRINCIPAL_ID` to it afterwards so later commands act as
-the owner. An init whose caller is not one of the owner principals it names is
-refused with `cruxible.identity.init_owner_mismatch`.
+With no instance selected, init first creates a host (as `host create` does),
+selects it, and initializes it: a retry after a failure initializes that same
+host. Makes you the owner under `--principal-id` (default: the configured
+`CRUXIBLE_PRINCIPAL_ID` / global `--principal-id`, which must agree with the
+flag, else your OS username lowercased; a username that is no principal ID is
+refused with the `--principal-id` repair). `--key-dir` defaults to
+`$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/PRINCIPAL` (`~/.config` when unset): a
+per-user path outside the workspace and the daemon state root. Every custody
+directory (owner, reviewer and recovery, default or explicit, with symlinks
+resolved and case ignored) is refused inside either before any host is
+allocated or key generated; a refused default is reported after the new host
+is selected, so the retry initializes that host. On an auth-off daemon the init request claims that
+principal, so no bootstrap secret is needed. Init writes the owner's settings
+file (`DIR/cruxible.env`) and remembers it in the CLI context, so later commands
+act as the owner without sourcing anything (see [context](#context)). An init
+whose caller is not one of the owner principals it names is refused with
+`cruxible.identity.init_owner_mismatch`.
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
 ledger with its public principal record. A missing `--key-dir` is created with
@@ -643,8 +695,7 @@ repository, and a ledger nobody can open is not evidence anyone can read
 the attached workspace refuses with the typed
 `cruxible.init.object_format_conflict` before any state is written; instances
 already initialized keep their pinned format forever. The
-equivalent request field is `git_object_format` on the HTTP/SDK init body and on
-MCP `cruxible_init`.
+equivalent request field is `git_object_format` on the HTTP init body.
 
 `--mirror-url` binds the ledger mirror during bootstrap, before subsequent
 proposals. An instance can publish nowhere initially; `cruxible ledger set-mirror`
@@ -1044,6 +1095,7 @@ version; the refusal names them.
 ~~~text
 cruxible claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS]
+cruxible claim recover-attestation
 ~~~
 
 Claims are read through `cruxible query`, `cruxible get` and `cruxible orient`.
@@ -1081,15 +1133,9 @@ the hold.
 predicate, object, role, qualifier, lifecycle, predecessor digest) in its
 top-level `statement` field alongside the canonical envelope.
 
-## claim-attestation
-
-~~~text
-cruxible claim-attestation recover
-~~~
-
-Recovery is an admin-only repair for an interrupted evidence-ledger append. It
-rolls the sole durable unpublished event forward and refuses rather than choosing
-between ambiguous histories.
+`recover-attestation` is an admin-only repair for an interrupted
+Claim-attestation evidence-ledger append. It rolls the sole durable unpublished
+event forward and refuses rather than choosing between ambiguous histories.
 
 ## authoring
 
@@ -1220,8 +1266,19 @@ cruxible query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'
 
 `query` has no subcommands: it answers any question over accepted state in one
 call, the same read as MCP `cruxible_query` and SDK `cx.query`. KIND is
-a Subject kind, or `ClaimType` / `Procedure` for definitions; `--contains` alone
-searches every live Claim value across kinds. `--where` filters combine as
+a Subject kind, `ClaimType` / `Procedure` for definitions, or `Trigger` / `Line`;
+`--contains` alone searches every live Claim value across kinds. `query Trigger`
+lists Triggers by `name`, `schedule` (`cadence`, `cron`, `capture_landing`,
+`window_close`, `generation_accepted`), `target_kind` (`line` or `action`),
+`target` and `lifecycle`; `--select` adds `cron`, `cadence`, `capture_contract`
+and `version`. `query Line` lists Lines with their `procedure`, `authority`,
+`lifecycle`, `enabled` (whether the Line's automation is admitting work), its
+first 25 live `triggers` and `triggers_total` (a `triggers` filter or a
+`--contains` search reads every live Trigger aimed at the Line, not only the
+names shown). Both filter on those fields,
+list only live rows unless a `lifecycle` filter is given, and page like any
+compact query; an answer past 2000 rows is `capped` and says so. `--order-by`
+sorts by each column's type (numbers as numbers), nulls last, ties by name. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
 `subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
 `--follow field:alias` hops forward along one of KIND's Subject-valued predicates;
@@ -1255,7 +1312,7 @@ by the normal intent submission and approval flow. `cx.changes().query_definitio
 includes a query in a changeset. Omitted ClaimType pins resolve against the intent
 base or sibling definitions; explicit pins remain assertions. SDK `vocabulary=`
 accepts World ClaimType references and retains their stale-reference checks.
-Use `cx.run_query(name)` to read the accepted result and receipt.
+Use `cx.query(name=NAME, receipt="full")` to read the accepted result and receipt.
 
 `authoring create --example query-claims-by-type` provides a Claim query without
 placeholder digests. `--example query-ontology` and `--example query-procedures`
@@ -2168,8 +2225,22 @@ two adds on one field land in one change set. A top-level `"subject"` is the
 Subject of every change that names none (a retire's target may then be
 `{"field": ...}`); a change's own subject overrides it, and a change with
 neither refuses `cruxible.write.subject_required`. `--schema` prints what FILE
-holds. A refusal prints its code, the nearest valid names and the repair, and
+holds; `write -` reads the change set from stdin, so a heredoc or a pipe needs
+no file. A refusal prints its code, the nearest valid names and the repair, and
 exits 1.
+
+Two lanes change accepted state. Value changes are these verbs: one change uses
+its verb (`set`, `add`, `retire`; MCP `cruxible_set` and `cruxible_retire`; SDK
+`cx.set` and `cx.retire`), and several changes that must land together use
+`write` (MCP `cruxible_write`; SDK `cx.changes(because=..., subject=...)` with
+`.set`, `.add` and `.retire`, then `.write()`): atomic, one proposal under a
+review policy, one generation, one `because`, one preview. Each is applied
+under the approval policy, accepting in the same call when it and your tier
+allow. Definitions go through authoring instead (`cruxible authoring compile`
+and `submit`; SDK `cx.changes(rationale=...)`): an intent you compile and
+preflight, a proposal, then review and activation. ClaimTypes keep their own
+`claim-type` group, because changing vocabulary disposes the Claims that
+depend on it.
 
 ## get
 
@@ -2185,7 +2256,9 @@ predicate (full, or a leaf unique across kinds) or `ClaimType:<predicate>`,
 `Document:<name>`, `Procedure:<name>`, `query:<name>`, `CaptureContract:<name>`,
 an artifact path, or a proposal id or prefix. Operational things resolve too:
 `Line:<name>` (or the Line identity digest `next` names a due Line by, in full
-or as a 12+ hex prefix) answers the Line's Procedure, trigger, authority, its
+or as a 12+ hex prefix) answers the Line's Procedure, its schedule kinds, each
+Trigger aimed at it by name and version (with the `get Trigger:<name>` that
+reads it), its authority, its
 arms (the principal kind, state and stop reason, and who armed each: a runtime
 credential's id and label only to that credential or an admin, otherwise
 `armed_by_withheld`), due and
@@ -2276,7 +2349,9 @@ Providers with their implementation digests (`get ProviderInterface:NAME`
 reads one, `--detail proof` its accepted inventory entry). `--section
 principals` lists the principal registry (`get Principal:ID` reads one), and
 `--section policies` every live standalone or embedded governed policy with its
-declaring artifact (`get ApprovalPolicy:instance` reads the approval policy).
+declaring artifact (`get ApprovalPolicy:instance` reads the approval policy,
+`get ProcedureRuntimePolicy:instance` the Procedure runtime ceilings and
+`get SourceAcquisitionPolicy:NAME` one source acquisition policy).
 The default map also counts every accepted Claim by status (accepted,
 conflicted, overturned, refused, retired) under `artifacts.claims`. Kinds page the same way
 when there are more than `--limit`. `--at` reads an earlier accepted generation.

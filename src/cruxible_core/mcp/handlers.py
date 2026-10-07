@@ -144,7 +144,6 @@ from cruxible_core.server.playbill_request_models import (
     CurationAcceptFixedRequest,
     CurationOverruleRequest,
     CurationSuppressRequest,
-    InitRequest,
     InsertionAbandonRequest,
     ProposalReadmitRequest,
     ProposalWithdrawRequest,
@@ -371,8 +370,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_curation_accept_fixed": TypeAdapter(CurationAcceptFixedRequest),
     "cruxible_curation_overrule": TypeAdapter(CurationOverruleRequest),
     "cruxible_curation_suppress": TypeAdapter(CurationSuppressRequest),
-    "cruxible_read_capture": TypeAdapter(CaptureReadRequest),
-    "cruxible_init": TypeAdapter(InitRequest),
+    "cruxible_capture_read": TypeAdapter(CaptureReadRequest),
     "cruxible_predict": TypeAdapter(contracts.PredictRequest),
     "cruxible_procedure_bind": TypeAdapter(ProcedureBindRequest),
     "cruxible_proposal_readmit": TypeAdapter(ProposalReadmitRequest),
@@ -380,7 +378,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_propose_claim_type": TypeAdapter(ProposeClaimTypeInputRequest),
     "cruxible_propose_document": TypeAdapter(ProposeDocumentRequest),
     "cruxible_compiler_upgrade": TypeAdapter(CompilerUpgradeRequest),
-    "cruxible_propose_principal_change": TypeAdapter(ProposePrincipalRequest),
+    "cruxible_principal_propose": TypeAdapter(ProposePrincipalRequest),
     "cruxible_propose_source_bundle": TypeAdapter(SourceProposeRequest),
     "cruxible_procedure_measure": TypeAdapter(contracts.ProcedureMeasureRequest),
     "cruxible_settle": TypeAdapter(contracts.SettleRequest),
@@ -481,40 +479,6 @@ def handle_server_info() -> McpServerInfoResult:
         adapter_version=__version__,
         daemon_version=daemon.version,
         daemon=daemon,
-    )
-
-
-def handle_playbill_init(
-    instance_id: str,
-    principals: list[dict[str, Any]],
-    operating_profile: str,
-    require_independent_approval: bool = False,
-    *,
-    git_object_format: str | None = None,
-) -> contracts.InitResult:
-    records = tuple(PrincipalRecord.model_validate(item) for item in principals)
-    return _dispatch_remote_or_local(
-        lambda client: client.init(
-            instance_id,
-            principals=[item.model_dump(mode="json") for item in records],
-            operating_profile=cast(Any, operating_profile),
-            require_independent_approval=require_independent_approval,
-            git_object_format=cast(Any, git_object_format),
-        ),
-        lambda: playbill_api.playbill_init(
-            instance_id,
-            principals=records,
-            operating_profile=cast(Any, operating_profile),
-            require_independent_approval=require_independent_approval,
-            git_object_format=cast(Any, git_object_format),
-        ),
-        operation_name="cruxible_init",
-        local_payload={
-            "principals": [item.model_dump(mode="json") for item in records],
-            "operating_profile": operating_profile,
-            "require_independent_approval": require_independent_approval,
-            "git_object_format": git_object_format,
-        },
     )
 
 
@@ -937,7 +901,7 @@ def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequest) 
     return _dispatch_remote_or_local(
         lambda client: client.read_capture(instance_id, request),
         lambda: playbill_api.playbill_read_capture(instance_id, request),
-        operation_name="cruxible_read_capture",
+        operation_name="cruxible_capture_read",
         local_payload=request.model_dump(mode="json"),
     )
 
@@ -1093,7 +1057,7 @@ def handle_playbill_propose_principal_change(
             dry_run=dry_run,
             at=at,
         ),
-        operation_name="cruxible_propose_principal_change",
+        operation_name="cruxible_principal_propose",
         local_payload={
             "principal": record.model_dump(mode="json"),
             "proposal_name": proposal_name,
@@ -2446,7 +2410,7 @@ def handle_playbill_coverage(
     bindings: Mapping[str, str] | None = None,
     files: tuple[str, ...] = (),
     ranges: tuple[str, ...] = (),
-    grep_results_path: str | None = None,
+    grep_results: str | None = None,
     whole_working_set: bool = False,
     budget: dict[str, Any] | None = None,
     scan_budget: dict[str, Any] | None = None,
@@ -2462,12 +2426,12 @@ def handle_playbill_coverage(
             bindings,
             files=files,
             ranges=ranges,
-            grep_results_path=grep_results_path,
+            grep_results=grep_results,
             whole_working_set=whole_working_set,
         )
-    elif files or ranges or grep_results_path is not None or whole_working_set:
+    elif files or ranges or grep_results is not None or whole_working_set:
         raise DataValidationError(
-            "files, ranges, grep_results_path, and whole_working_set apply only with bindings"
+            "files, ranges, grep_results, and whole_working_set apply only with bindings"
         )
     else:
         observed = tuple(
@@ -2542,28 +2506,19 @@ def _workspace_observations(
     *,
     files: tuple[str, ...],
     ranges: tuple[str, ...],
-    grep_results_path: str | None,
+    grep_results: str | None,
     whole_working_set: bool,
 ) -> tuple[WorkingSourceObservation, ...]:
     """Read selected workspace bytes and lower them to existing coverage wire."""
 
     workspace = mcp_workspace_root()
-    grep_text = (
-        None
-        if grep_results_path is None
-        else resolve_workspace_path(
-            grep_results_path,
-            root=workspace,
-            kind="file",
-        ).read_text(encoding="utf-8")
-    )
     return tuple(
         observe_workspace(
             bindings_from_mapping(bindings),
             root=workspace,
             files=files,
             ranges=ranges,
-            grep_text=grep_text,
+            grep_text=grep_results,
             whole_working_set=whole_working_set,
         )
     )

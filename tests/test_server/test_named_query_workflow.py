@@ -100,31 +100,17 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
         page = api.QueryResultRecord.model_validate(
             invoke("query", "--name", name, "--receipt", "full")
         )
-        result = _run(page, name)
     elif surface == "mcp":
-        result = _run(handlers.handle_playbill_query(instance_id, name=name, receipt="full"), name)
+        page = handlers.handle_playbill_query(instance_id, name=name, receipt="full")
     else:
-        result = pb.run_query(name)
-    assert result.result.verdict == "completed"
-    assert result.receipt.definition_digest == result.definition_digest
-    if not ordinary:
-        assert isinstance(result.artifact_definitions, tuple)
-        if example is query_procedures_example:
-            assert result.artifact_definitions == ()
-
-
-def _run(page: api.QueryResultRecord, name: str) -> api.QueryRun:
-    """A named query's full receipt, read as the run it records."""
-
+        page = pb.query(name=name, receipt="full").page
     replay = page.receipt.replay
     assert replay is not None
-    return api.QueryRun(
-        coordinate=api.AcceptedCoordinate.model_validate(
-            page.receipt.coordinate.model_dump(mode="json")
-        ),
-        name=name,
-        definition_path=replay.definition_path,
-        definition_digest=page.receipt.spec_digest,
-        result=replay.result,
-        receipt=replay.execution,
-    )
+    assert replay.result.verdict == "completed"
+    assert replay.execution.definition_digest == page.receipt.spec_digest
+    if not ordinary:
+        assert replay.result.result_shape == "artifact_definition"
+        assert not replay.result.truncation.truncated
+        definitions = tuple(row.artifact for row in replay.result.rows if row.artifact)
+        if example is query_procedures_example:
+            assert definitions == ()

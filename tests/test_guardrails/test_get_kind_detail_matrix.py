@@ -38,6 +38,7 @@ _TABLES = {
     "resolution_contract": ("resolution_contracts", ""),
     "mandate": ("procedure_mandates", ""),
     "provider_interface": ("provider_interfaces", ""),
+    "source_acquisition_policy": ("source_acquisition_policies", ""),
 }
 _REF_FORMS = {
     "claim": lambda identity: identity.removeprefix("Claim:"),
@@ -52,6 +53,7 @@ _REF_FORMS = {
     "resolution_contract": lambda identity: identity,
     "mandate": lambda identity: "Mandate:" + identity.removeprefix("ProcedureMandate:"),
     "provider_interface": lambda identity: identity,
+    "source_acquisition_policy": lambda identity: identity,
 }
 
 
@@ -70,6 +72,7 @@ def _refs(instance: Any) -> dict[str, str]:
     if principals:
         found["principal"] = f"Principal:{principals[0].principal_id}"
     found["approval_policy"] = "ApprovalPolicy:instance"
+    found["procedure_runtime_policy"] = "ProcedureRuntimePolicy:instance"
     runs = service_playbill_orient(instance, section="runs").runs or ()
     if runs:
         found["procedure_run"] = f"ProcedureRun:{runs[0].run}"
