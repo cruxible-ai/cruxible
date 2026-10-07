@@ -68,10 +68,10 @@ def test_cli_line_run_forwards_only_the_occurrence_assertion(monkeypatch) -> Non
             occurrence_id: str | None,
             evaluation_time: str,
             resolution_contract=None,
-            trigger_event=None,
-            trigger=None,
+            event=None,
+            repeat=False,
         ) -> contracts.ProcedureRunState:
-            assert resolution_contract is None and trigger_event is None and trigger is None
+            assert resolution_contract is None and event is None and repeat is False
             calls.append((instance_id, line_identity_digest, occurrence_id, evaluation_time))
             return contracts.ProcedureRunState(
                 run_id=None,

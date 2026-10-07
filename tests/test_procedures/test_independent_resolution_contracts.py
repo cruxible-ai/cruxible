@@ -498,6 +498,7 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
     from cruxible_core.service.procedures import procedure_runs
     from cruxible_core.service.procedures.procedure_runs import (
         LineRunRequest,
+        TriggerFire,
         service_get_playbill_procedure_run,
         service_run_playbill_line,
     )
@@ -545,11 +546,9 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
         return service_run_playbill_line(
             instance,
             path_identity_digest=line_id,
-            request=LineRunRequest(
-                line=line_id,
-                trigger=window_trigger.identity.name,
-                resolution_contract=reference,
-            ),
+            request=LineRunRequest(line=line_id, resolution_contract=reference),
+            # The window Trigger's occurrence, as dispatch admits it.
+            trigger_fire=TriggerFire(trigger=window_trigger.identity.name),
             actor_context=_actor(instance),
             caller_rung=3,
             daemon_clock=SimpleNamespace(now=lambda: instant),
@@ -618,6 +617,7 @@ result = procedure_runs.service_run_playbill_line(
     actor_context=GovernedActorContext.model_validate(args["actor"]),
     caller_rung=3,
     daemon_clock=SimpleNamespace(now=lambda: datetime.fromisoformat(args["now"])),
+    trigger_fire=procedure_runs.TriggerFire(trigger=args["trigger"]),
 )
 assert procedure_runs.service_get_playbill_procedure_run(instance, run_id=result.run_id) == result
 print(result.model_dump_json())
@@ -627,11 +627,10 @@ print(result.model_dump_json())
                 {
                     "root": str(instance.root),
                     "trust_root": instance.trust_root.model_dump(mode="json"),
-                    "request": LineRunRequest(
-                        line=line_id,
-                        trigger=window_trigger.identity.name,
-                        resolution_contract=ref,
-                    ).model_dump(mode="json"),
+                    "request": LineRunRequest(line=line_id, resolution_contract=ref).model_dump(
+                        mode="json"
+                    ),
+                    "trigger": window_trigger.identity.name,
                     "actor": _actor(instance).model_dump(mode="json"),
                     "now": (end + timedelta(days=2)).isoformat(),
                 }
