@@ -598,6 +598,32 @@ def test_install_by_name_from_an_index_uses_the_embedded_lock(
         client.install_provider(instance_id, request.model_copy(update={"version": "99.0"}))
 
 
+def test_installing_a_package_for_a_built_in_interface_refuses_by_name(
+    installer_http, provider_checkout
+):
+    from cruxible_client.errors import ConfigError
+
+    http, instance_id, _ = installer_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = http
+    repository = provider_checkout.repository
+    wheels = provider_checkout.wheels
+    with pytest.raises(ConfigError, match="workspace.file is built in on this instance"):
+        install_provider_wheel(
+            client,
+            instance_id,
+            wheel=next(wheels.glob("cruxible_provider_workspace-*.whl")),
+            lock=repository / "packages/cruxible-provider-workspace/uv.lock",
+            dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
+        )
+    # Nothing was registered: no deployment, and the built-in is untouched.
+    assert not get_playbill_manager().provider_runtime_operator().config.deployments
+    entry = interface_entry(client, instance_id, "workspace.file")
+    assert [item["provider_identity"] for item in entry["providers"]] == [
+        "Provider:cruxible-builtin"
+    ]
+
+
 def test_malformed_wheel_is_a_typed_refusal_before_registration(installer_http, tmp_path):
     from cruxible_client.errors import ConfigError
 
