@@ -1084,8 +1084,10 @@ def line_attention(
     A restart rolls an enabled Line forward-only: the range between the last
     instant its daemon matched and the restart is a coverage gap until an
     explicit ``line evaluate`` covers it, and work it matched before the
-    restart waits for ``line dispatch``. Only Lines enabled now are read; a
-    disabled or stopped Line owes nothing automatic.
+    restart waits for ``line dispatch``. Only Lines enabled now are read (a
+    disabled or stopped Line owes nothing automatic), but a range any earlier
+    enablement of the Line in this epoch left uncovered stays listed until an
+    evaluation covers it.
     """
 
     if not dispatch_root(instance).exists():
@@ -1099,19 +1101,18 @@ def line_attention(
             for row in conn.execute("SELECT payload FROM sessions WHERE active=1").fetchall()
         ]
         for session in sorted(active, key=lambda item: item["line"].encode("utf-8")):
-            segments = sorted(
-                (
-                    data
-                    for data in (
-                        json.loads(row[0])
-                        for row in conn.execute(
-                            "SELECT payload FROM sessions WHERE line_id=?", (session["line_id"],)
-                        ).fetchall()
-                    )
-                    if data["arm_id"] == session["arm_id"]
-                ),
-                key=lambda data: data["starts_at"],
-            )
+            # Every enablement of this Line in this epoch, not only the current
+            # one: re-enabling (another credential, or after a disable) does not
+            # evaluate a range an earlier enablement's restart left uncovered.
+            # Gaps lie between consecutive segments of one enablement, so each
+            # keeps its own boundaries; a deliberate stop is never a gap.
+            by_enablement: dict[str, list[dict[str, Any]]] = {}
+            for (payload,) in conn.execute(
+                "SELECT payload FROM sessions WHERE line_id=? AND epoch=?",
+                (session["line_id"], session["occurrence_epoch"]),
+            ).fetchall():
+                data = json.loads(payload)
+                by_enablement.setdefault(data["arm_id"], []).append(data)
             covered = sorted(
                 (_instant(since), _instant(until))
                 for since, until in conn.execute(
@@ -1119,13 +1120,19 @@ def line_attention(
                     (session["line_id"], session["occurrence_epoch"]),
                 ).fetchall()
             )
-            for before, after in zip(segments, segments[1:], strict=False):
-                if before["stops_at"] is None or before.get("stop_reason") is not None:
-                    continue
-                for since, until in _uncovered(
-                    _instant(before["stops_at"]), _instant(after["starts_at"]), covered
-                ):
-                    gaps.append(LineCoverageGap(session["line"], session["line_id"], since, until))
+            line_gaps: list[LineCoverageGap] = []
+            for segments in by_enablement.values():
+                segments.sort(key=lambda data: data["starts_at"])
+                for before, after in zip(segments, segments[1:], strict=False):
+                    if before["stops_at"] is None or before.get("stop_reason") is not None:
+                        continue
+                    line_gaps.extend(
+                        LineCoverageGap(session["line"], session["line_id"], since, until)
+                        for since, until in _uncovered(
+                            _instant(before["stops_at"]), _instant(after["starts_at"]), covered
+                        )
+                    )
+            gaps.extend(sorted(line_gaps, key=lambda gap: (gap.since, gap.until)))
             due, oldest = conn.execute(
                 "SELECT count(*),min(eligible_at) FROM pending WHERE line_id=? "
                 "AND disposition='pending' AND eligible_at<=? "
