@@ -10,7 +10,7 @@ env:
   # The cruxible-providers commit the provider-runtime tests run against
   # (tests/support/provider_checkout.py): the runtime is installed from it and
   # the provider wheels the installation tests transfer are built from it.
-  CRUXIBLE_PROVIDERS_COMMIT: e6b01420c559a0a2ff8f2064252148e712652eb4
+  CRUXIBLE_PROVIDERS_COMMIT: db085204aa66a0d23ae347ab808e7bbd5e6dc99e
 
 jobs:
   test:
