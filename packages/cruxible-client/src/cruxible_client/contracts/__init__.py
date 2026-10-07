@@ -941,7 +941,7 @@ class LedgerMirror(BaseModel):
     """Where one instance publishes its ledger, and whether that copy is current.
 
     `ledger set-mirror` binds a remote and waits boundedly for initial publication;
-    `ledger clone-url` reads its status. A publish barrier is acknowledged when
+    `orient` shows the URL and `next` its health. A publish barrier is acknowledged when
     published_sequence reaches wait_sequence, even if newer work is pending. The
     URL carries no credential -- one that could is refused before it is stored --
     so this model is safe to print, log and hand to anyone who may read the
@@ -966,6 +966,23 @@ class LedgerMirror(BaseModel):
     published_refs: dict[str, str] = Field(default_factory=dict)
     wait_sequence: int | None = Field(default=None, ge=0)
     detail: str | None = None
+
+
+class LedgerMirrorCleared(BaseModel):
+    """The mirror an instance stopped publishing to, or would stop on a preview.
+
+    Clearing calls nothing back: what was already sent stays on the remote.
+    ``already_clear`` answers an instance that had no mirror bound.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["cruxible-ledger-mirror-cleared-v1"] = "cruxible-ledger-mirror-cleared-v1"
+    instance_id: str
+    status: Literal["cleared", "would_clear", "already_clear"]
+    previous_mirror_url: str | None = None
+    #: A preview's accepted coordinate; commit it with ``at`` set to its git oid.
+    coordinate: AcceptedCoordinate | None = None
 
 
 ClaimTypeLintCode: TypeAlias = Literal[

@@ -85,6 +85,13 @@ class LedgerMirrorRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
+class LedgerMirrorClearRequest(_StrictPlaybillRequest):
+    """Stop publishing to the bound mirror. Commits by default; preview with dry_run."""
+
+    dry_run: DryRun = None
+    at: PreviewAt = None
+
+
 class LedgerPublishRequest(_StrictPlaybillRequest):
     """Wait at most this many seconds for the configured mirror to acknowledge."""
 

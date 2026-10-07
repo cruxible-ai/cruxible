@@ -4989,17 +4989,17 @@ publish_ledger(instance_id: str, *, timeout: float=60.0) -> contracts.LedgerMirr
 
 HTTP: `POST f'/api/v1/{instance_id}/ledger/publish'`.
 
-<a id="api-cruxibleclient-get-ledger-mirror"></a>
+<a id="api-cruxibleclient-clear-ledger-mirror"></a>
 
-### `CruxibleClient.get_ledger_mirror`
+### `CruxibleClient.clear_ledger_mirror`
 
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-get_ledger_mirror(instance_id: str) -> contracts.LedgerMirror
+clear_ledger_mirror(instance_id: str, *, dry_run: bool | None=None, at: str | None=None) -> contracts.LedgerMirrorCleared
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/ledger/mirror'`.
+HTTP: `POST f'/api/v1/{instance_id}/ledger/mirror/clear'`.
 
 <a id="api-cruxibleclient-list-provider-packages"></a>
 

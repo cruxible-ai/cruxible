@@ -685,6 +685,43 @@ def playbill_ledger_set_mirror(
         return _mirror_receipt(instance_id, url=instance.ledger_mirror_url() or url, state=state)
 
 
+def playbill_ledger_clear_mirror(
+    instance_id: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.LedgerMirrorCleared:
+    """Unbind the mirror so nothing more is published; what was sent stays sent."""
+
+    check_permission("cruxible_ledger_set_mirror", instance_id=instance_id)
+    with change_entry(dry_run, "direct"):
+        _require_writer(instance_id)
+        instance = get_playbill_manager().get(instance_id)
+        with change_scope(
+            instance,
+            dry_run=dry_run,
+            at=at,
+            kind="direct",
+            operation="cruxible.ledger.set-mirror",
+            describe="clearing the ledger mirror",
+        ) as mode:
+            previous = instance.clear_ledger_mirror(confirm_head=mode.confirm_head)
+            if previous is None:
+                return contracts.LedgerMirrorCleared(
+                    instance_id=instance_id, status="already_clear"
+                )
+            if mode.previewing:
+                return contracts.LedgerMirrorCleared(
+                    instance_id=instance_id,
+                    status="would_clear",
+                    previous_mirror_url=previous,
+                    coordinate=full_coordinate(instance),
+                )
+        return contracts.LedgerMirrorCleared(
+            instance_id=instance_id, status="cleared", previous_mirror_url=previous
+        )
+
+
 def playbill_ledger_publish(
     instance_id: str,
     *,
@@ -725,17 +762,6 @@ def playbill_ledger_publish(
                 )
             state = instance.publish_ledger_mirror(timeout=timeout)
         return _mirror_receipt(instance_id, url=url, state=state)
-
-
-def playbill_ledger_clone_url(instance_id: str) -> contracts.LedgerMirror:
-    """Print the URL a reviewer clones, or refuse typed when there is none."""
-
-    check_permission("cruxible_read", instance_id=instance_id)
-    instance = get_playbill_manager().get(instance_id)
-    url = instance.ledger_mirror_url()
-    if url is None:
-        raise LedgerMirrorUnset()
-    return _mirror_receipt(instance_id, url=url, state=instance.ledger_mirror_state())
 
 
 def playbill_provider_catalog(instance_id: str) -> ProviderCatalog:

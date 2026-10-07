@@ -518,6 +518,7 @@ def test_rotating_a_bound_credential_needs_its_principals_authority(
 _UNGUARDED_WRITES = (
     ("/bodies", {"content_base64": "Ym9keQ=="}),
     ("/ledger/mirror", {"url": "https://mirror.example.test/ledger.git"}),
+    ("/ledger/mirror/clear", {}),
     ("/ledger/publish", {"timeout": 0}),
     ("/claim-attestations/recover", {}),
     ("/claim-types/upgrade", {}),
@@ -541,11 +542,10 @@ def test_an_unbound_credential_is_refused_on_every_instance_write(
         )
         assert refused.status_code == 403, (path, refused.text)
         assert refused.json()["error_code"] == "cruxible.identity.credential_unbound", path
-    mirror = client.get(
-        f"/api/v1/{instance_id}/ledger/clone-url",
-        headers={"Authorization": f"Bearer {unbound}"},
-    )
-    assert "mirror.example.test" not in mirror.text
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH")
+    oriented = client.get(f"/api/v1/{instance_id}/orient")
+    assert oriented.status_code == 200, oriented.text
+    assert oriented.json().get("mirror_url") is None
 
 
 def test_an_unregistered_claim_is_refused_on_every_instance_write(

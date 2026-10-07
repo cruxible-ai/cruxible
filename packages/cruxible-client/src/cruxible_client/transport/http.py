@@ -569,6 +569,17 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.LedgerMirror)
 
+    def clear_ledger_mirror(
+        self, instance_id: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> contracts.LedgerMirrorCleared:
+        """Unbind the mirror so nothing more is published; what was sent stays sent."""
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/ledger/mirror/clear",
+            json=_change_control(dry_run, at),
+        )
+        return self._parse_model(response, contracts.LedgerMirrorCleared)
+
     def publish_ledger(
         self,
         instance_id: str,
@@ -583,10 +594,6 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/ledger/publish",
             json={"timeout": timeout, **_change_control(dry_run, at)},
         )
-        return self._parse_model(response, contracts.LedgerMirror)
-
-    def get_ledger_mirror(self, instance_id: str) -> contracts.LedgerMirror:
-        response = self._client.get(f"/api/v1/{instance_id}/ledger/mirror")
         return self._parse_model(response, contracts.LedgerMirror)
 
     def list_provider_packages(self, instance_id: str) -> ProviderCatalog:

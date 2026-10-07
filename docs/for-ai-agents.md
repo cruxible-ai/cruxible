@@ -358,7 +358,7 @@ evaluated candidate. Use the id `proposal list` prints.
 
 An agent with no attached workspace reads the same refs from the ledger mirror.
 `orient --json` carries `mirror_url` when the instance publishes to
-one, and `cruxible ledger clone-url` asks for it directly; clone that, and
+one; clone that, and
 `origin/main` is accepted state while `origin/proposals/<proposal-id>` is the
 candidate. Local write completion does not imply remote visibility. Before a
 remote review, run `cruxible ledger publish --json` and require non-null

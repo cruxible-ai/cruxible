@@ -1380,24 +1380,52 @@ def decommission_instance(
 
 @playbill_group.group("ledger")
 def ledger_group() -> None:
-    """Publish this instance's ledger, and read where it publishes to."""
+    """Publish this instance's ledger to a mirror reviewers can clone."""
 
 
 @ledger_group.command("set-mirror")
-@click.argument("url")
+@click.argument("url", required=False)
+@click.option(
+    "--clear",
+    is_flag=True,
+    help="Unbind the mirror so nothing more is published (what was sent stays sent).",
+)
 @change_control_options
 @json_option
 @handle_errors
-def set_ledger_mirror(url: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+def set_ledger_mirror(
+    url: str | None, clear: bool, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     """Bind the remote and wait boundedly for its initial publication attempt.
 
     The URL must carry no credential: the daemon reads its token from its own
-    environment, and this string is printed back by `ledger clone-url` to
-    anyone who may read the instance at all. Every accepted byte is sent there at
-    once and cannot be called back, so it previews first; commit that preview
-    with ``--commit --at OID``.
+    environment, and `orient` shows this string to anyone who may read the
+    instance at all. Every accepted byte is sent there at once and cannot be
+    called back, so it previews first; commit that preview with
+    ``--commit --at OID``. ``--clear`` (no URL) unbinds the mirror and commits
+    by default; preview it with ``--dry-run``.
     """
 
+    if clear == (url is not None):
+        raise click.UsageError("pass either URL or --clear")
+    if clear:
+        cleared = _server_call(
+            lambda client, instance_id: client.clear_ledger_mirror(
+                instance_id, dry_run=dry_run, at=at
+            ),
+            command_name="cruxible ledger set-mirror",
+        )
+        if output_json:
+            _emit_json(cleared.model_dump(mode="json"))
+            return
+        if cleared.status == "already_clear":
+            click.echo("No ledger mirror is bound.")
+            return
+        verb = "Would stop" if cleared.status == "would_clear" else "Stopped"
+        click.echo(f"{verb} publishing to {cleared.previous_mirror_url}.")
+        echo_preview_next(cleared.status, cleared.coordinate)
+        return
+    assert url is not None
     result = _server_call(
         lambda client, instance_id: client.set_ledger_mirror(
             instance_id, url=url, dry_run=dry_run, at=at
@@ -1412,27 +1440,6 @@ def set_ledger_mirror(url: str, dry_run: bool | None, at: str | None, output_jso
     if result.detail is not None:
         click.echo(f"Detail: {printable(result.detail)}")
     echo_preview_next(result.status, result.coordinate)
-
-
-@ledger_group.command("clone-url")
-@json_option
-@handle_errors
-def ledger_clone_url(output_json: bool) -> None:
-    """Print the ledger mirror a reviewer clones to read this instance's proposals."""
-
-    result = _server_call(
-        lambda client, instance_id: client.get_ledger_mirror(instance_id),
-        command_name="cruxible ledger clone-url",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    click.echo(result.mirror_url)
-    click.echo(
-        f"Publication: {result.status}; acknowledged request {result.published_sequence}, "
-        f"latest requested {result.requested_sequence}",
-        err=True,
-    )
 
 
 @ledger_group.command("publish")
@@ -6038,6 +6045,8 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         f"Cruxible {result['instance']} generation={result['generation']} "
         f"at {result['coordinate']['git_oid'][:12]} accepted {result['accepted_at']}"
     ]
+    if result.get("mirror_url"):
+        lines.append(f"Ledger mirror: {result['mirror_url']}")
     floor = result.get("floor")
     if floor is not None:
         behind = floor["generations_behind"]

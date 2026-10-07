@@ -81,6 +81,7 @@ from cruxible_core.server.playbill_request_models import (
     FloorExportRequest,
     InitRequest,
     InstanceDecommissionRequest,
+    LedgerMirrorClearRequest,
     LedgerMirrorRequest,
     LedgerPublishRequest,
     NextRequest,
@@ -192,6 +193,21 @@ def set_ledger_mirror(
 
 
 @router.post(
+    "/{instance_id}/ledger/mirror/clear",
+    response_model=contracts.LedgerMirrorCleared,
+)
+def clear_ledger_mirror(
+    instance_id: str,
+    req: LedgerMirrorClearRequest,
+) -> contracts.LedgerMirrorCleared:
+    return playbill_api.playbill_ledger_clear_mirror(
+        resolve_server_instance_id(instance_id),
+        dry_run=req.dry_run,
+        at=req.at,
+    )
+
+
+@router.post(
     "/{instance_id}/ledger/publish",
     response_model=contracts.LedgerMirror,
 )
@@ -205,14 +221,6 @@ def publish_ledger(
         dry_run=req.dry_run,
         at=req.at,
     )
-
-
-@router.get(
-    "/{instance_id}/ledger/mirror",
-    response_model=contracts.LedgerMirror,
-)
-def ledger_clone_url(instance_id: str) -> contracts.LedgerMirror:
-    return playbill_api.playbill_ledger_clone_url(resolve_server_instance_id(instance_id))
 
 
 @router.get("/{instance_id}/providers", response_model=ProviderCatalog)

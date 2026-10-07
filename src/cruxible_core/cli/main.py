@@ -447,17 +447,12 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         attr="instance_group",
     ),
     "ledger": _group(
-        "Publish this instance's ledger, and read where it publishes to.",
+        "Publish this instance's ledger to a mirror reviewers can clone.",
         {
             "set-mirror": _command(
                 "playbill",
                 "set_ledger_mirror",
-                "Bind the remote this ledger publishes to.",
-            ),
-            "clone-url": _command(
-                "playbill",
-                "ledger_clone_url",
-                "Print the ledger mirror a reviewer clones.",
+                "Bind (or --clear) the remote this ledger publishes to.",
             ),
             "publish": _command(
                 "playbill",

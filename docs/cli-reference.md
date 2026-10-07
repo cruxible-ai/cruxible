@@ -754,7 +754,7 @@ coordinate: `--commit --at OID` (see [Previews](#previews)).
 
 ~~~text
 cruxible ledger set-mirror URL [--dry-run|--commit] [--at OID]
-cruxible ledger clone-url
+cruxible ledger set-mirror --clear [--dry-run|--commit] [--at OID] [--json]
 cruxible ledger publish [--timeout 0..60] [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
@@ -829,8 +829,7 @@ exact `published_refs` acknowledged by the remote. The barrier succeeded when
 may still be `pending` or `publishing`. Failure is `behind`; timeout returns the
 actual pending/publishing status. A destination change interrupts the old wait.
 A success acknowledges that snapshot at that time, not permanent remote durability.
-`clone-url` keeps stdout as the URL and reports publication status on stderr;
-`--json` returns both. Missing local status is rebuilt; it is not ledger authority.
+Missing local status is rebuilt; it is not ledger authority.
 
 The URL never carries a credential. `https://user:token@host/...` is refused,
 as is plain `http://`, `ext::` and anything whose host or user begins with a
@@ -850,12 +849,13 @@ because Git refuses a push between repositories with different hash algorithms.
 `set-mirror` publishes immediately, so a wrong credential or an unreachable host
 is reported at once rather than at the next governed write. It stays bound
 either way: a remote that is temporarily unreachable is not a wrong remote.
-`clone-url` prints the URL a reviewer clones and refuses with the typed
-`cruxible.ledger.mirror_unset` when the instance publishes nowhere; the same
-value rides `cruxible orient --json` as `mirror_url`, so an agent
-that has just oriented already has it. The equivalent surfaces are
-`POST`/`GET /{instance}/ledger/mirror` and the `mirror_url` field on
-the init body.
+`cruxible orient` prints the URL a reviewer clones (`mirror_url` in
+`--json`), and `cruxible next` reports the mirror's health with its repair.
+`set-mirror --clear` unbinds the mirror: nothing more is published, and what
+was already sent stays on the remote. It commits by default; `--dry-run`
+previews it. The equivalent surfaces are `POST /{instance}/ledger/mirror`,
+`POST /{instance}/ledger/mirror/clear` and the `mirror_url` field on the init
+body.
 
 ## provider
 
