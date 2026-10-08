@@ -10,6 +10,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import ProposalDigest
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
@@ -47,7 +48,7 @@ from cruxible_core.service.list_pages import (
 
 ProposalInventoryStatus = Literal["open", "settled", "incomplete"]
 ProposalIncompleteReason = Literal["missing_admission", "missing_evaluation", "missing_candidate"]
-ProposalTerminalReason = Literal["accepted", "refused", "stale", "withdrawn"]
+ProposalTerminalReason = Literal["accepted", "refused", "stale", "withdrawn", "rejected"]
 #: Where the actor ID came from. ``runtime_credential`` is the principal the
 #: bearer credential is bound to; ``unbound_credential`` is a credential that
 #: acts as no principal (no actor ID); ``principal_claim`` is an auth-off
@@ -123,6 +124,19 @@ class PlaybillProposalWithdrawResultV1(_StrictOperationalReadModel):
     withdrawn_at: str
     already_withdrawn: bool = False
     #: The accepted coordinate the withdrawal was checked at; ``at`` pins a commit.
+    coordinate: AcceptedCoordinate | None = None
+
+
+class PlaybillProposalRejectResultV1(_StrictOperationalReadModel):
+    tag: Literal["playbill-proposal-reject-result-v1"] = "playbill-proposal-reject-result-v1"
+    #: ``would_reject`` answers a preview, which recorded nothing (R12).
+    status: Literal["rejected", "would_reject"] = "rejected"
+    proposal_id: str
+    actor_id: str
+    reason: str
+    rejected_at: str
+    already_rejected: bool = False
+    #: The accepted coordinate the rejection was checked at; ``at`` pins a commit.
     coordinate: AcceptedCoordinate | None = None
 
 
@@ -373,6 +387,12 @@ def _proposal_entries(
             and row["candidate_parent_semantic_root"] is None
         ):
             missing.append("missing_candidate")
+        reason = row["reason"]
+        if reason == "withdrawn":
+            # One closing record carries both endings; its kind tells them apart.
+            closed = evidence.read_withdrawal(row["proposal_id"])
+            if closed is not None and closed.kind == "rejected":
+                reason = "rejected"
         entries.append(
             PlaybillProposalListEntryV1(
                 proposal_id=row["proposal_id"],
@@ -383,8 +403,8 @@ def _proposal_entries(
                 else None,
                 verdict=None if row["evaluation_status"] == "missing" else row["evaluation_status"],
                 candidate_digest=row["candidate_digest"],
-                status="incomplete" if missing else "open" if row["reason"] is None else "settled",
-                terminal_reason=None if missing else row["reason"],
+                status="incomplete" if missing else "open" if reason is None else "settled",
+                terminal_reason=None if missing else reason,
                 incomplete_reasons=tuple(missing),
                 withdrawal_present=row["withdrawal_path"] is not None,
             )
@@ -653,6 +673,24 @@ class ProposalAwaitingApproval:
     eligible_approvals: int
 
 
+def _signature_required_unsigned(
+    candidate: CandidateRecordAnyVersion,
+    signers: set[str],
+    ordinary_principal_ids: frozenset[str],
+) -> bool:
+    """Whether settlement still needs a signature the approval policy does not ask for.
+
+    A compiler upgrade settles only with at least one signed client approval,
+    whatever the approval policy says (settlement refuses "compiler upgrade
+    requires a signed client approval"). Under a policy with no independent
+    requirement, the creator's own signature counts, as settlement counts it.
+    """
+
+    return any(member.artifact_kind == "compiler-upgrade" for member in candidate.members) and not (
+        signers & ordinary_principal_ids
+    )
+
+
 def proposals_awaiting_approval(
     instance: PlaybillInstance,
     coordinate: AcceptedCoordinate,
@@ -667,7 +705,9 @@ def proposals_awaiting_approval(
     is what stands between them and activation. A candidate qualifies while its
     approval requirement is unmet -- counted exactly as activation counts it,
     over distinct active ordinary signers other than its creator -- and this
-    principal is such a signer who has not signed it yet.
+    principal is such a signer who has not signed it yet. A compiler upgrade
+    also qualifies while it carries no signature at all (settlement requires
+    one even when the policy does not), and then its creator may give it.
     `ordinary_principal_ids` is the coordinate's active ordinary registry.
     """
 
@@ -682,23 +722,28 @@ def proposals_awaiting_approval(
             connection,
             sequence,
             columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest",
-            where="candidate_parent_semantic_root=? AND actor_id!=?",
-            parameters=(coordinate.semantic_root, principal_id),
+            where="candidate_parent_semantic_root=?",
+            parameters=(coordinate.semantic_root,),
         )
     awaiting = []
     for row in rows:
         candidate = evidence.read_candidate(row["candidate_digest"])
-        if not candidate.approval_requirements:
-            continue
         signers = {
             submission.attestation.signer_id
             for submission in evidence.read_approvals(row["candidate_digest"])
         }
         if principal_id in signers:
             continue
-        eligible = len((signers - {row["actor_id"]}) & ordinary_principal_ids)
-        minimum = candidate.approval_requirements[0].minimum_distinct_signers
-        if eligible >= minimum:
+        if candidate.approval_requirements:
+            if row["actor_id"] == principal_id:
+                continue  # The creator never counts toward an independent requirement.
+            eligible = len((signers - {row["actor_id"]}) & ordinary_principal_ids)
+            minimum = candidate.approval_requirements[0].minimum_distinct_signers
+            if eligible >= minimum:
+                continue
+        elif _signature_required_unsigned(candidate, signers, ordinary_principal_ids):
+            eligible, minimum = 0, 1
+        else:
             continue
         awaiting.append(
             ProposalAwaitingApproval(
@@ -712,6 +757,78 @@ def proposals_awaiting_approval(
             )
         )
     return tuple(awaiting)
+
+
+@dataclass(frozen=True)
+class ProposalAwaitingActivation:
+    """One of a principal's own open candidates whose approval requirement is met."""
+
+    proposal_id: str
+    target_ref: str
+    admitted_at: str
+    candidate_digest: str
+    approvals: int
+
+
+def proposals_awaiting_activation(
+    instance: PlaybillInstance,
+    coordinate: AcceptedCoordinate,
+    *,
+    principal_id: str,
+    ordinary_principal_ids: frozenset[str],
+) -> tuple[ProposalAwaitingActivation, ...]:
+    """The principal's own open candidates at `coordinate` that activation is next for.
+
+    Read through the open-parent locator, like ``proposals_awaiting_approval``:
+    candidates neither refused, accepted nor withdrawn whose parent is the
+    coordinate's semantic root. A candidate qualifies when it needs no approval
+    or its requirement is met, counted exactly as activation counts it. A
+    principal-lifecycle candidate is the actor's own signature to give first,
+    and a compiler upgrade with no signature yet needs one before settlement,
+    so neither is listed here until then.
+    """
+
+    evidence = instance.proposal_evidence()
+    with _bound_inventory(instance, coordinate) as bound:
+        if bound is None:
+            return ()
+        connection, sequence = bound
+        rows = _open_candidates(
+            connection,
+            sequence,
+            columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest",
+            where="candidate_parent_semantic_root=? AND actor_id=?",
+            parameters=(coordinate.semantic_root, principal_id),
+        )
+    ready = []
+    for row in rows:
+        candidate = evidence.read_candidate(row["candidate_digest"])
+        if candidate.members and all(
+            member.artifact_kind == "principal-lifecycle" for member in candidate.members
+        ):
+            continue
+        signers = {
+            submission.attestation.signer_id
+            for submission in evidence.read_approvals(row["candidate_digest"])
+        }
+        eligible = len((signers - {row["actor_id"]}) & ordinary_principal_ids)
+        if candidate.approval_requirements and (
+            eligible < candidate.approval_requirements[0].minimum_distinct_signers
+        ):
+            continue
+        if _signature_required_unsigned(candidate, signers, ordinary_principal_ids):
+            # Settlement needs a signature first: the approval row offers it.
+            continue
+        ready.append(
+            ProposalAwaitingActivation(
+                proposal_id=row["proposal_id"],
+                target_ref=row["target_ref"],
+                admitted_at=timestamp(row["admitted_at_us"]),
+                candidate_digest=row["candidate_digest"],
+                approvals=eligible,
+            )
+        )
+    return tuple(ready)
 
 
 def service_resolve_playbill_proposal_selector(
@@ -796,7 +913,7 @@ def _readmit(
     # A stale proposal may be withdrawn instead of readmitted, and that is the
     # actor saying this tree will never be settled. Readmitting it would settle
     # exactly that tree, under a new proposal id, so it refuses here.
-    instance.proposal_evidence().refuse_withdrawn(source.admission.proposal_id)
+    instance.proposal_evidence().refuse_closed(source.admission.proposal_id)
     source_status = next(
         (
             entry
@@ -1007,65 +1124,137 @@ def _withdraw(
         raise ProposalAdmissionError(
             "only the source proposal actor, or a daemon-wide operator, may withdraw it"
         )
-    existing = instance.proposal_evidence().read_withdrawal(admission.proposal_id)
-    if existing is not None:
-        return PlaybillProposalWithdrawResultV1(
-            proposal_id=existing.proposal_id,
-            actor_id=existing.actor_id,
-            reason=existing.reason,
-            withdrawn_at=existing.withdrawn_at,
-            already_withdrawn=True,
+    record, already, coordinate = _close(
+        instance,
+        mode,
+        ProposalWithdrawalRecord(
+            proposal_id=admission.proposal_id,
+            actor_id=actor_id,
+            reason=reason,
+            withdrawn_at=withdrawn_at,
+        ),
+    )
+    return PlaybillProposalWithdrawResultV1(
+        status="would_withdraw" if mode.previewing and not already else "withdrawn",
+        proposal_id=record.proposal_id,
+        actor_id=record.actor_id,
+        reason=record.reason,
+        withdrawn_at=record.withdrawn_at,
+        already_withdrawn=already,
+        coordinate=coordinate,
+    )
+
+
+def service_reject_playbill_proposal(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    actor_id: str,
+    reason: str,
+    rejected_at: str,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> PlaybillProposalRejectResultV1:
+    """Record a reviewer's terminal statement that a proposal will not be accepted.
+
+    ``dry_run`` runs every check and records nothing (``would_reject``, R12).
+
+    Rejection is withdrawal's reviewer-side twin: the same durable, immutable
+    closing record (``kind: rejected``) with a required reason, the same move
+    out of the open inventory, and the same refusal at every settlement door.
+    The proposal's own actor withdraws rather than rejects. Only an open or
+    stale proposal may be rejected. Nothing remembers a rejection against a
+    later proposal of the same change.
+    """
+
+    with change_scope(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="cruxible.proposal.reject",
+        describe=f"rejecting proposal {proposal_id}",
+    ) as mode:
+        admission = instance.proposal_evidence().read_admission(proposal_id)
+        if admission.actor_id == actor_id:
+            raise ProposalAdmissionError(
+                "a proposal's own actor withdraws it rather than rejecting it: "
+                "run cruxible proposal withdraw"
+            )
+        record, already, coordinate = _close(
+            instance,
+            mode,
+            ProposalWithdrawalRecord(
+                proposal_id=admission.proposal_id,
+                actor_id=actor_id,
+                reason=reason,
+                withdrawn_at=rejected_at,
+                kind="rejected",
+            ),
         )
+        return PlaybillProposalRejectResultV1(
+            status="would_reject" if mode.previewing and not already else "rejected",
+            proposal_id=record.proposal_id,
+            actor_id=record.actor_id,
+            reason=record.reason,
+            rejected_at=record.withdrawn_at,
+            already_rejected=already,
+            coordinate=coordinate,
+        )
+
+
+def _close(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    record: ProposalWithdrawalRecord,
+) -> tuple[ProposalWithdrawalRecord, bool, AcceptedCoordinate | None]:
+    """Write one closing record; return it, whether it already existed, and the head.
+
+    A proposal closes once. The same kind of close again returns the existing
+    record; the other kind refuses, since a withdrawn proposal cannot also be
+    rejected (or the reverse).
+    """
+
+    existing = instance.proposal_evidence().read_withdrawal(record.proposal_id)
+    if existing is not None:
+        if existing.kind != record.kind:
+            raise ProposalAdmissionError(
+                f"proposal {record.proposal_id} is already {existing.kind}; "
+                "a closed proposal closes once"
+            )
+        return existing, True, None
     entry = next(
         (
             item
             for item in _proposal_entries(
                 instance,
                 AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-                admission.proposal_id,
+                record.proposal_id,
             )
-            if item.proposal_id == admission.proposal_id
+            if item.proposal_id == record.proposal_id
         ),
         None,
     )
     if entry is None:  # pragma: no cover - a read admission always lists
-        raise ProposalNotFoundError(proposal_id)
+        raise ProposalNotFoundError(record.proposal_id)
+    verb = "withdrawn" if record.kind == "withdrawn" else "rejected"
     if entry.status != "open" and entry.terminal_reason != "stale":
         raise ProposalAdmissionError(
-            f"only an open or stale proposal may be withdrawn; this one is {entry.terminal_reason}"
+            f"only an open or stale proposal may be {verb}; this one is {entry.terminal_reason}"
         )
-    record = ProposalWithdrawalRecord(
-        proposal_id=admission.proposal_id,
-        actor_id=actor_id,
-        reason=reason,
-        withdrawn_at=withdrawn_at,
-    )
     head = mode.head
     assert head is not None
     coordinate = AcceptedCoordinate.from_internal(head)
     if mode.previewing:
-        return PlaybillProposalWithdrawResultV1(
-            status="would_withdraw",
-            proposal_id=record.proposal_id,
-            actor_id=record.actor_id,
-            reason=record.reason,
-            withdrawn_at=record.withdrawn_at,
-            coordinate=coordinate,
-        )
-    # A pinned withdrawal confirms the live accepted head and records while
+        return record, False, coordinate
+    # A pinned close confirms the live accepted head and records while
     # holding it still (R12).
     with mode.committing():
         instance.proposal_evidence().write_withdrawal(record)
     # Release local closed-candidate roots even without a configured mirror.
     instance.advertise_workspace()
     instance.request_ledger_mirror()
-    return PlaybillProposalWithdrawResultV1(
-        proposal_id=record.proposal_id,
-        actor_id=record.actor_id,
-        reason=record.reason,
-        withdrawn_at=record.withdrawn_at,
-        coordinate=coordinate,
-    )
+    return record, False, coordinate
 
 
 def service_playbill_whoami(
@@ -1117,6 +1306,7 @@ __all__ = [
     "PlaybillProposalListEntryV1",
     "PlaybillProposalListV1",
     "PlaybillProposalReadmitResultV1",
+    "PlaybillProposalRejectResultV1",
     "PlaybillProposalWithdrawResultV1",
     "PlaybillWhoAmIV1",
     "CredentialPermissionMode",
@@ -1128,11 +1318,13 @@ __all__ = [
     "StaleProposal",
     "WhoAmIActorIdSource",
     "proposal_readmission",
+    "proposals_awaiting_activation",
     "proposals_awaiting_approval",
     "readmission_operation_digest",
     "service_list_playbill_proposals",
     "service_playbill_proposal_status",
     "service_readmit_playbill_proposal",
+    "service_reject_playbill_proposal",
     "service_withdraw_playbill_proposal",
     "service_playbill_whoami",
     "stale_unreadmitted_proposals",

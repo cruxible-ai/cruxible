@@ -233,6 +233,7 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
         predicate="note",
         claim="CLM-3",
         value=TruncatedText(
+            truncated=True,
             preview="n" * 500,
             length=900,
             read_whole=WholeValueRead(ref="CLM-3", at="3" * 64),

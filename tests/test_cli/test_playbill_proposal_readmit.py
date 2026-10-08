@@ -302,3 +302,72 @@ def test_withdraw_cli_says_when_the_answer_is_the_earlier_one(
     assert result.exit_code == 0, result.output
     assert "(already withdrawn)" in result.output
     assert "Reason: its change-set record exceeds the ledger blob ceiling" in result.output
+
+
+def _reject_result() -> contracts.ProposalRejectResult:
+    return contracts.ProposalRejectResult(
+        proposal_id=SOURCE_ID,
+        actor_id="reviewer",
+        reason="the query reads the wrong field",
+        rejected_at="2026-09-08T09:00:00.000000Z",
+    )
+
+
+def test_reject_client_and_cli_send_and_report_the_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class StubTransport:
+        def post(self, path, *, json):
+            calls.append((path, json))
+            return httpx.Response(200, json=_reject_result().model_dump(mode="json"))
+
+    client = CruxibleClient(base_url="https://playbill.invalid")
+    client._client = StubTransport()  # type: ignore[assignment]
+    assert (
+        client.reject_proposal("inst_test", SOURCE_ID, reason="the query reads the wrong field")
+        == _reject_result()
+    )
+    assert calls == [
+        (
+            f"/api/v1/inst_test/proposals/{SOURCE_ID}/reject",
+            {
+                "tag": "playbill-proposal-reject-request-v1",
+                "reason": "the query reads the wrong field",
+            },
+        )
+    ]
+
+    class StubClient:
+        def resolve_proposal_selector(self, _instance_id, selector):
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
+
+        def reject_proposal(self, instance_id, proposal_id, *, reason, **_control):
+            assert (instance_id, proposal_id) == ("inst_test", SOURCE_ID)
+            assert reason == "the query reads the wrong field"
+            return _reject_result()
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "reject",
+            "sha256:11111111",
+            "--reason",
+            "the query reads the wrong field",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        "target: inst_test @ https://playbill.invalid (explicit)",
+        f"rejected  {SOURCE_ID}  2026-09-08T09:00:00.000000Z",
+        "Reason: the query reads the wrong field",
+    ]

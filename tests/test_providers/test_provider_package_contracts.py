@@ -220,3 +220,28 @@ def test_prepared_environment_can_supply_a_superset_of_operation_extras() -> Non
     old = old.model_copy(update={"local_env": payload.local_env})
     with pytest.raises(ValueError, match="materialization_reference_missing"):
         provider_expected_implementation_records(old)
+
+
+def test_an_index_default_never_requires_its_path_dependency_wheels() -> None:
+    """kit build --default-provider ships none of the default's files (C1)."""
+
+    from cruxible_core.errors import RequestRefusedError
+    from cruxible_core.providers.package_inspection import check_path_dependencies
+
+    runtime = {"cruxible-provider-runtime": "0.4.0"}
+    # A default installs by name: the runtime its lock names by path is the index's.
+    check_path_dependencies("cruxible-provider-web", runtime, {}, delivery="index")
+    # A bundled package still carries it.
+    with pytest.raises(RequestRefusedError) as refused:
+        check_path_dependencies("cruxible-provider-web", runtime, {}, delivery="bundled")
+    assert refused.value.error_code == "cruxible.kit.provider_dependency_missing"
+    # A wheel that is given must still be exactly the locked one, either way.
+    for delivery in ("index", "bundled"):
+        with pytest.raises(RequestRefusedError) as mismatched:
+            check_path_dependencies(
+                "cruxible-provider-web",
+                runtime,
+                {"cruxible-provider-runtime": "0.3.0"},
+                delivery=delivery,  # type: ignore[arg-type]
+            )
+        assert mismatched.value.error_code == "cruxible.kit.provider_dependency_mismatch"

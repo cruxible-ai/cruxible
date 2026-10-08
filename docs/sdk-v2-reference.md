@@ -652,6 +652,12 @@ that requires an unambiguous result must check `has_conflicts`; it cannot change
 that QueryDefinition to `refuse_on_conflict`. Zero visible results does not
 establish absence of unknown or excluded facts.
 
+A projected field over a many-valued ClaimType (`cardinality: many`) is the list
+of its values, in canonical order, and is never a conflict; only a one-valued
+field's competing values are a `claim_object` conflict. A comparison filter or
+ordering key over a many-valued field reads its value when it holds exactly one
+and finds no value to compare when it holds several.
+
 ### Typed rows and projections
 
 Row types follow the QueryDefinition's declared result shape:

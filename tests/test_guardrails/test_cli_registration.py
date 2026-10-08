@@ -131,9 +131,9 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # Includes retained evidence reads through `capture read`, `cruxible mcp` and the kit verbs.
     # S3: `procedure readiness|status` folded into `get`, `procedure bind` was cut,
     # `line status` folded into `get Line:<name>`, `line check` became
-    # `line evaluate --dry-run`.
-    assert len(leaf_claims) == 98, (
-        f"expected 98 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    # `line evaluate --dry-run`. v1 polish added `proposal reject`.
+    assert len(leaf_claims) == 99, (
+        f"expected 99 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

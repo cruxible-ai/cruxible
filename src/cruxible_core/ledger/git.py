@@ -194,8 +194,8 @@ class GitLedger:
 
     def configure_signing(self) -> None:
         settings = {
-            "user.name": "playbill-daemon",
-            "user.email": "daemon@playbill.invalid",
+            "user.name": "cruxible-daemon",
+            "user.email": "daemon@cruxible.invalid",
             "gpg.format": "ssh",
             "user.signingkey": str(self._signing_key_path),
             "commit.gpgsign": "true",
@@ -228,10 +228,10 @@ class GitLedger:
         )
 
         commit_environment = {
-            "GIT_AUTHOR_NAME": "playbill-daemon",
-            "GIT_AUTHOR_EMAIL": "daemon@playbill.invalid",
-            "GIT_COMMITTER_NAME": "playbill-daemon",
-            "GIT_COMMITTER_EMAIL": "daemon@playbill.invalid",
+            "GIT_AUTHOR_NAME": "cruxible-daemon",
+            "GIT_AUTHOR_EMAIL": "daemon@cruxible.invalid",
+            "GIT_COMMITTER_NAME": "cruxible-daemon",
+            "GIT_COMMITTER_EMAIL": "daemon@cruxible.invalid",
             "GIT_AUTHOR_DATE": timestamp,
             "GIT_COMMITTER_DATE": timestamp,
         }
@@ -280,10 +280,10 @@ class GitLedger:
             else self._extend_tree(extends_tree, tree, base_rows=extends_rows)
         )
         environment = {
-            "GIT_AUTHOR_NAME": "playbill-daemon",
-            "GIT_AUTHOR_EMAIL": "daemon@playbill.invalid",
-            "GIT_COMMITTER_NAME": "playbill-daemon",
-            "GIT_COMMITTER_EMAIL": "daemon@playbill.invalid",
+            "GIT_AUTHOR_NAME": "cruxible-daemon",
+            "GIT_AUTHOR_EMAIL": "daemon@cruxible.invalid",
+            "GIT_COMMITTER_NAME": "cruxible-daemon",
+            "GIT_COMMITTER_EMAIL": "daemon@cruxible.invalid",
             "GIT_AUTHOR_DATE": timestamp,
             "GIT_COMMITTER_DATE": timestamp,
         }
@@ -731,8 +731,8 @@ class GitLedger:
         commit_environment = {
             "GIT_AUTHOR_NAME": actor_id,
             "GIT_AUTHOR_EMAIL": f"{actor_id}@proposal.playbill.invalid",
-            "GIT_COMMITTER_NAME": "playbill-daemon",
-            "GIT_COMMITTER_EMAIL": "daemon@playbill.invalid",
+            "GIT_COMMITTER_NAME": "cruxible-daemon",
+            "GIT_COMMITTER_EMAIL": "daemon@cruxible.invalid",
             "GIT_AUTHOR_DATE": timestamp,
             "GIT_COMMITTER_DATE": timestamp,
         }
@@ -809,8 +809,8 @@ class GitLedger:
             raw = (
                 f"tree {empty_tree}\n"
                 + "".join(f"parent {parent}\n" for parent in parents)
-                + "author playbill-daemon <daemon@playbill.invalid> 0 +0000\n"
-                + "committer playbill-daemon <daemon@playbill.invalid> 0 +0000\n\n"
+                + "author cruxible-daemon <daemon@cruxible.invalid> 0 +0000\n"
+                + "committer cruxible-daemon <daemon@cruxible.invalid> 0 +0000\n\n"
                 + "Retain closed proposal\n"
             ).encode()
             tip = (
@@ -1146,8 +1146,8 @@ class GitLedger:
         return {
             "GIT_AUTHOR_NAME": actor_id,
             "GIT_AUTHOR_EMAIL": f"{actor_id}@proposal.playbill.invalid",
-            "GIT_COMMITTER_NAME": "playbill-daemon",
-            "GIT_COMMITTER_EMAIL": "daemon@playbill.invalid",
+            "GIT_COMMITTER_NAME": "cruxible-daemon",
+            "GIT_COMMITTER_EMAIL": "daemon@cruxible.invalid",
             "GIT_AUTHOR_DATE": timestamp,
             "GIT_COMMITTER_DATE": timestamp,
         }
@@ -1179,7 +1179,7 @@ class GitLedger:
                     "GIT_AUTHOR_IDENT": (
                         f"{actor_id} <{actor_id}@proposal.playbill.invalid> {date}"
                     ),
-                    "GIT_COMMITTER_IDENT": f"playbill-daemon <daemon@playbill.invalid> {date}",
+                    "GIT_COMMITTER_IDENT": f"cruxible-daemon <daemon@cruxible.invalid> {date}",
                     "i18n.commitencoding": encoding,
                 }
         return dict(

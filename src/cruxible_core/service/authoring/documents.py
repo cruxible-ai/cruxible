@@ -33,6 +33,7 @@ from cruxible_client.contracts.errors import (
     ProjectionIntegrityError,
     ProposalActivationRequestInvalid,
     ProposalIntegrityError,
+    ProposalStale,
     SettlementIntegrityError,
 )
 from cruxible_client.contracts.principal_rendering import render_principal
@@ -325,7 +326,7 @@ def _candidate_for_proposal(
     # The settlement doors, approval and activation, both resolve their
     # candidate here, so this is where a withdrawal becomes terminal in fact
     # rather than a note in the inventory.
-    instance.proposal_evidence().refuse_withdrawn(inspection.proposal.admission.proposal_id)
+    instance.proposal_evidence().refuse_closed(inspection.proposal.admission.proposal_id)
     candidate = inspection.proposal.candidate
     if candidate is None:
         diagnostics = inspection.proposal.evaluation.diagnostics
@@ -513,6 +514,15 @@ def service_activate_playbill_proposal(
     evaluation = proposal.evaluation
     if evaluation.evaluated_tree_oid is None:
         raise ProposalIntegrityError("candidate evaluation is missing its exact tree")
+    from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+
+    # Settlement would refuse a moved head as an integrity failure; a proposal
+    # that is merely stale gets the repair its author can run.
+    if (
+        service_playbill_proposal_status(instance, proposal_id=proposal_id).terminal_reason
+        == "stale"
+    ):
+        raise ProposalStale(proposal_id)
     base = instance.coordinate_for_oid(evaluation.evaluated_base_oid)
     if candidate.candidate.parent_semantic_root != base.semantic_root:
         raise SettlementIntegrityError("candidate parent root differs from evaluated base")

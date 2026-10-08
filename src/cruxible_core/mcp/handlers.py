@@ -587,6 +587,22 @@ def handle_playbill_withdraw_proposal(
     )
 
 
+def handle_playbill_reject_proposal(
+    instance_id: str,
+    proposal_id: str,
+    reason: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.ProposalRejectResult:
+    return _daemon_call(
+        lambda client: client.reject_proposal(
+            instance_id, proposal_id, reason=reason, dry_run=dry_run, at=at
+        ),
+        operation_name="cruxible_proposal_reject",
+    )
+
+
 def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequest) -> CaptureRead:
     return _daemon_call(
         lambda client: client.read_capture(instance_id, request),

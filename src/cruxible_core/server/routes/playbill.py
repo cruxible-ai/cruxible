@@ -91,6 +91,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringCompileRequest,
     PlaybillAuthoringCompileRequestV3,
     ProposalReadmitRequest,
+    ProposalRejectRequest,
     ProposalWithdrawRequest,
     ProposeClaimTypeInputRequest,
     ProposeClaimTypeRequest,
@@ -476,6 +477,24 @@ def withdraw_proposal(
     req: ProposalWithdrawRequest,
 ) -> contracts.ProposalWithdrawResult:
     return playbill_api.playbill_withdraw_proposal(
+        resolve_server_instance_id(instance_id),
+        proposal_id,
+        req.reason,
+        dry_run=req.dry_run,
+        at=req.at,
+    )
+
+
+@router.post(
+    "/{instance_id}/proposals/{proposal_id}/reject",
+    response_model=contracts.ProposalRejectResult,
+)
+def reject_proposal(
+    instance_id: str,
+    proposal_id: str,
+    req: ProposalRejectRequest,
+) -> contracts.ProposalRejectResult:
+    return playbill_api.playbill_reject_proposal(
         resolve_server_instance_id(instance_id),
         proposal_id,
         req.reason,

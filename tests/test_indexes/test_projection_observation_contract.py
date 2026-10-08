@@ -114,6 +114,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "proposal_stale",
         # An open candidate the calling principal could approve.
         "proposal_awaiting_approval",
+        # The calling principal's own candidate that activation is next for.
+        "proposal_awaiting_activation",
         "mandate_expiring",
         # An armed Line that stopped by itself, or stopped draining its own work.
         "consumer_stalled",
@@ -145,6 +147,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "cruxible.sources.propose",
         "cruxible.proposal.readmit",
         "cruxible.proposal.approve",
+        "cruxible.proposal.activate",
         "cruxible.compiler.upgrade",
         "cruxible.line.enable",
         "cruxible.line.dispatch",

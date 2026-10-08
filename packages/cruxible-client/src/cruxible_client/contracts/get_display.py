@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from cruxible_client._error_base import printable
-from cruxible_client.contracts.read_values import ExactContentRef, ShownValue, TruncatedText
+from cruxible_client.contracts.read_values import (
+    ExactContentRef,
+    ShownObject,
+    ShownValue,
+    TruncatedText,
+    shown_plain,
+)
 
 GET_CLI_VALUE_WIDTH = 120
 GET_CLI_HISTORY_VALUE_WIDTH = 80
@@ -47,7 +53,7 @@ def _shown(value: object) -> object:
     ``ShownValue`` keeps one typed rule for both.
     """
 
-    if isinstance(value, TruncatedText | ExactContentRef):
+    if isinstance(value, TruncatedText | ExactContentRef | ShownObject):
         return value
     wire = _wire_value(value)
     try:
@@ -84,7 +90,7 @@ def get_value_display(
             "[" + ", ".join(item.text for item in items) + "]",
             any(item.truncated for item in items),
         )
-    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    text = value if isinstance(value, str) else json.dumps(shown_plain(value), ensure_ascii=False)
     shown = printable(text)
     if len(shown) <= width:
         return GetValueDisplay(shown)

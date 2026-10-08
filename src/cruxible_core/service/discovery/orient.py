@@ -1151,7 +1151,7 @@ def _operational_rows(
 ) -> tuple[tuple[Any, ...], list[str], Any]:
     """An accepted operational family's rows, their keys, and each row's get reference.
 
-    Operational state (arm state, pending counts, bound windows) is read live at
+    Operational state (enablement state, pending counts, bound windows) is read live at
     the current head; the section's answer carries ``live`` to say so.
     """
 

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.kits import KitProvider, KitProviderFile
+from cruxible_client.contracts.kits import KitProvider, KitProviderDelivery, KitProviderFile
 from cruxible_client.contracts.provider_interfaces import (
     provider_interface_path,
     render_provider_interface,
@@ -41,8 +41,10 @@ class InspectedProviderPackage:
     #: This host's environment pin key and the materialization digest installing
     #: these exact bytes records there: the whole dependency closure, path
     #: dependency wheels included, which the lock pins only by name and version.
-    pin_key: str
-    materialization: str
+    #: None for an index default built without its path dependencies' wheels:
+    #: the consumer's closure is whatever the provider index serves.
+    pin_key: str | None
+    materialization: str | None
 
 
 def _refuse(code: str, message: str) -> RequestRefusedError:
@@ -60,16 +62,17 @@ def inspect_provider_package(
     wheel: tuple[str, bytes],
     lock: bytes,
     dependencies: tuple[tuple[str, bytes], ...] = (),
-    embedded_lock_required: bool = False,
+    delivery: KitProviderDelivery = "bundled",
 ) -> InspectedProviderPackage:
     """The manifest entry for one wheel, its lock and its path-sourced dependency wheels.
 
-    The lock's root must be this wheel's distribution at its version. Every other
-    package the lock names by path (a first-party sibling such as the provider
-    runtime, until it resolves from an index) must come as a wheel; registry
-    packages resolve by name at install time and are never bundled. A package a
-    consumer installs by name (``embedded_lock_required``) materializes from the
-    lock its wheel embeds, so the lock given must be exactly that one.
+    The lock's root must be this wheel's distribution at its version. For a
+    bundled package every other package the lock names by path (a first-party
+    sibling such as the provider runtime, until it resolves from an index) must
+    come as a wheel; registry packages resolve by name at install time and are
+    never bundled. An ``index`` default ships none of its files, so its path
+    dependencies are never required; it materializes from the lock its wheel
+    embeds, so the lock given must be exactly that one.
     """
 
     with tempfile.TemporaryDirectory(prefix="cruxible-kit-provider-") as temporary:
@@ -88,7 +91,7 @@ def inspect_provider_package(
                 document = PackageRegistrationDocumentV1.model_validate(bundle.export_document())
             locked = toolchain("resolution").load_uv_lock(lock_path)
             dependency_pins = tuple(wheels.wheel_pin(path) for path in dependency_paths)
-        if embedded_lock_required:
+        if delivery == "index":
             try:
                 embedded = embedded_lock(wheel_path)
             except ConfigError as exc:
@@ -119,25 +122,21 @@ def inspect_provider_package(
         for row in rows
         if row["name"] != pin.name and "registry" not in row.get("source", {})
     }
-    supplied = {item.name: item for item in dependency_pins}
-    missing = sorted(set(by_path) - set(supplied))
-    if missing:
-        raise _refuse(
-            "cruxible.kit.provider_dependency_missing",
-            f"the lock of {pin.name} names {', '.join(missing)} by path; bundle each one's "
-            "built wheel beside the provider's (in its dist/ directory)",
-        )
-    extra = sorted(name for name in supplied if name not in by_path)
-    mismatched = sorted(
-        name for name, item in supplied.items() if name in by_path and item.version != by_path[name]
-    )
-    if extra or mismatched:
-        raise _refuse(
-            "cruxible.kit.provider_dependency_mismatch",
-            f"the dependency wheels bundled with {pin.name} are not the path packages its "
-            f"lock names (unexpected: {extra or 'none'}; other version: {mismatched or 'none'})",
-        )
+    supplied = {item.name: item.version for item in dependency_pins}
+    check_path_dependencies(pin.name, by_path, supplied, delivery=delivery)
     registrations = document.interface_registrations()
+    if set(by_path) - set(supplied):
+        # An index default given no wheel for a path dependency: the consumer's
+        # closure is the index's, so there is no exact closure to record here.
+        return InspectedProviderPackage(
+            provider=_kit_provider(document, pin, locked, dependency_pins, registrations),
+            interfaces={
+                provider_interface_path(item.interface_id): render_provider_interface(item)
+                for item in registrations
+            },
+            pin_key=None,
+            materialization=None,
+        )
     with tempfile.TemporaryDirectory(prefix="cruxible-kit-provider-") as temporary:
         root = Path(temporary)
         dependency_root = root / "dependencies"
@@ -150,7 +149,58 @@ def inspect_provider_package(
                     _write(dependency_root, name, content) for name, content in dependencies
                 ),
             )
-    provider = KitProvider(
+    return InspectedProviderPackage(
+        provider=_kit_provider(document, pin, locked, dependency_pins, registrations),
+        interfaces={
+            provider_interface_path(item.interface_id): render_provider_interface(item)
+            for item in registrations
+        },
+        pin_key=resolved.pin_key,
+        materialization=resolved.materialization,
+    )
+
+
+def check_path_dependencies(
+    package: str,
+    by_path: dict[str, str],
+    supplied: dict[str, str],
+    *,
+    delivery: KitProviderDelivery,
+) -> None:
+    """Refuse dependency wheels that are not exactly the path packages the lock names.
+
+    ``by_path`` and ``supplied`` map distribution names to versions. A bundled
+    package must bring a wheel for every path package; an index default ships
+    none of its files, so a missing one is never required of it.
+    """
+
+    missing = sorted(set(by_path) - set(supplied))
+    if missing and delivery == "bundled":
+        raise _refuse(
+            "cruxible.kit.provider_dependency_missing",
+            f"the lock of {package} names {', '.join(missing)} by path; bundle each one's "
+            "built wheel beside the provider's (in its dist/ directory)",
+        )
+    extra = sorted(name for name in supplied if name not in by_path)
+    mismatched = sorted(
+        name for name, version in supplied.items() if name in by_path and version != by_path[name]
+    )
+    if extra or mismatched:
+        raise _refuse(
+            "cruxible.kit.provider_dependency_mismatch",
+            f"the dependency wheels bundled with {package} are not the path packages its "
+            f"lock names (unexpected: {extra or 'none'}; other version: {mismatched or 'none'})",
+        )
+
+
+def _kit_provider(
+    document: PackageRegistrationDocumentV1,
+    pin: Any,
+    locked: Any,
+    dependency_pins: tuple[Any, ...],
+    registrations: Any,
+) -> KitProvider:
+    return KitProvider(
         provider_id=document.manifest.provider_id,
         package=pin.name,
         version=pin.version,
@@ -164,15 +214,6 @@ def inspect_provider_package(
         ),
         interfaces=tuple(sorted(item.interface_id for item in registrations)),
     )
-    return InspectedProviderPackage(
-        provider=provider,
-        interfaces={
-            provider_interface_path(item.interface_id): render_provider_interface(item)
-            for item in registrations
-        },
-        pin_key=resolved.pin_key,
-        materialization=resolved.materialization,
-    )
 
 
-__all__ = ["InspectedProviderPackage", "inspect_provider_package"]
+__all__ = ["InspectedProviderPackage", "check_path_dependencies", "inspect_provider_package"]

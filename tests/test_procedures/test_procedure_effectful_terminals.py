@@ -60,7 +60,18 @@ NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 def test_direct_lane_requires_line_authority_for_effectful_terminals() -> None:
     effectful = {"emit_capture", "post_inbox", "propose_change_set", "settle_change_set"}
     assert DIRECT_NODE_KINDS.isdisjoint(effectful)
-    assert LINE_NODE_KINDS == effectful
+    # No lane delivers post_inbox, so it is not reported runnable on a Line either.
+    assert LINE_NODE_KINDS == effectful - {"post_inbox"}
+
+
+def test_a_post_inbox_procedure_reports_no_run_path() -> None:
+    from cruxible_client.contracts.procedures.artifacts import procedure_runnability
+    from tests.test_procedures.test_line_track_records import _artifacts
+
+    procedure, _line = _artifacts()
+    runnable, rows = procedure_runnability(procedure.procedure.definition)
+    assert runnable == "unsupported"
+    assert [(row.kind, row.runs_on) for row in rows] == [("post_inbox", "nowhere")]
 
 
 def _item(path: str, *, value: object = "value") -> TerminalEgressItemV1:

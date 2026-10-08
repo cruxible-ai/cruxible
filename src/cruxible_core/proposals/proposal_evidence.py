@@ -34,6 +34,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.errors import (
     ProposalIntegrityError,
     ProposalNotFoundError,
+    ProposalRejectedError,
     ProposalWithdrawnError,
 )
 from cruxible_client.contracts.source_catalog import SourceCompilationManifest
@@ -219,24 +220,32 @@ class ProposalEvidenceStore:
             raise ProposalIntegrityError("withdrawal evidence names another proposal")
         return record
 
-    def refuse_withdrawn(self, proposal_id: str) -> None:
-        """Refuse a settlement door asked to settle a withdrawn proposal.
+    def refuse_closed(self, proposal_id: str) -> None:
+        """Refuse a settlement door asked to settle a withdrawn or rejected proposal.
 
         Every door that would settle a proposal calls this: approval,
-        activation, and readmission. Without it a withdrawal is a note in the
-        inventory rather than a terminal transition -- a withdrawn proposal
+        activation, and readmission. Without it a withdrawal or rejection is a
+        note in the inventory rather than a terminal transition -- the proposal
         could be approved and activated, and the list would then report it
         `accepted`, which is the outcome the record says will never happen.
         """
 
         record = self.read_withdrawal(proposal_id)
-        if record is not None:
-            raise ProposalWithdrawnError(
+        if record is None:
+            return
+        if record.kind == "rejected":
+            raise ProposalRejectedError(
                 record.proposal_id,
                 actor_id=record.actor_id,
                 reason=record.reason,
-                withdrawn_at=record.withdrawn_at,
+                rejected_at=record.withdrawn_at,
             )
+        raise ProposalWithdrawnError(
+            record.proposal_id,
+            actor_id=record.actor_id,
+            reason=record.reason,
+            withdrawn_at=record.withdrawn_at,
+        )
 
     def write_source_compilation(self, manifest: SourceCompilationManifest) -> Path:
         """Persist a path-free immutable compile receipt beside proposal exhaust."""

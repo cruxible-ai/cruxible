@@ -57,6 +57,17 @@ from cruxible_core.server.service_install import (
 from cruxible_core.server.shutdown import ServerStopNotConfirmed
 from cruxible_core.server.state_lock import state_lock_holder_is_alive, state_lock_path
 
+_lifecycle_state_root_option = click.option(
+    "--state-root",
+    "state_root",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "State root of the local daemon (as given to `server start --state-root`), where "
+        "this command finds its bootstrap secret. Default: CRUXIBLE_STATE_ROOT, else ~/.cruxible."
+    ),
+)
+
 # Poll cadence while waiting for the re-exec'd daemon to start answering again.
 _RESTART_POLL_INTERVAL_SECONDS = 0.25
 
@@ -286,8 +297,9 @@ def server_start_cmd(
     show_default=True,
     help="Seconds to wait for the daemon to release its state root.",
 )
+@_lifecycle_state_root_option
 @handle_errors
-def server_stop_cmd(output_json: bool, timeout: float) -> None:
+def server_stop_cmd(output_json: bool, timeout: float, state_root: Path | None) -> None:
     """Stop the running daemon gracefully and release its state-root lock.
 
     A CLIENT command: it asks the daemon over the configured transport
@@ -304,7 +316,7 @@ def server_stop_cmd(output_json: bool, timeout: float) -> None:
     `server stop && server start` cannot walk into the lock refusal the stop was
     meant to clear.
     """
-    client = _get_client()
+    client = _get_client(state_root)
     if client is None:
         raise click.UsageError(f"{SERVER_MODE_REQUIRED_MESSAGE} {_DAEMON_REQUIRED_HINT}")
     result = client.server_stop()
@@ -502,15 +514,16 @@ def _echo_instance_scoped_status(
 
 @server_group.command("status")
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
+@_lifecycle_state_root_option
 @handle_errors
-def server_status_cmd(output_json: bool) -> None:
+def server_status_cmd(output_json: bool, state_root: Path | None) -> None:
     """Report a running daemon's version, state root, transport, auth, and instances.
 
     A CLIENT command: it queries an already-running daemon over the configured
     transport (`--server-url` / `--server-socket` or the matching env vars). If
     no daemon is reachable it fails with a clear message rather than hanging.
     """
-    client = _get_client()
+    client = _get_client(state_root)
     if client is None:
         raise click.UsageError(f"{SERVER_MODE_REQUIRED_MESSAGE} {_DAEMON_REQUIRED_HINT}")
     transport = _client_transport_label()
@@ -573,8 +586,11 @@ def server_status_cmd(output_json: bool) -> None:
     show_default=True,
     help="Seconds to wait for the restarted daemon to answer again.",
 )
+@_lifecycle_state_root_option
 @handle_errors
-def server_restart_cmd(output_json: bool, no_wait: bool, timeout: float) -> None:
+def server_restart_cmd(
+    output_json: bool, no_wait: bool, timeout: float, state_root: Path | None
+) -> None:
     """Re-exec the live daemon in place, preserving its port, state dir, and env.
 
     The daemon replaces its own process image, so picks up code changes without
@@ -582,7 +598,7 @@ def server_restart_cmd(output_json: bool, no_wait: bool, timeout: float) -> None
     to answer before returning, giving the dev loop a one-command, skew-proof
     upgrade step.
     """
-    client = _get_client()
+    client = _get_client(state_root)
     if client is None:
         raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
     result = client.server_restart()

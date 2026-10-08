@@ -20,12 +20,13 @@ FIRED = datetime(2026, 9, 1, 12, tzinfo=UTC)
 REQUEST = PlaybillCurationListRequestV1(access_profile=CoverageAccessProfile(profile_id="t"))
 
 
-def test_new_instances_seed_a_live_generation_accepted_detection_trigger() -> None:
-    (trigger,) = (item for item in seeded_triggers() if item.identity.name == "curation-detect")
-    assert trigger.schedule.kind == "generation_accepted"
-    assert trigger.target.action == "curation.detect"
+def test_new_instances_seed_no_detection_trigger_and_the_action_stays_opt_in() -> None:
+    """Curation is beta: detection runs only once someone authors its Trigger."""
+
+    assert not any(item.target.action == "curation.detect" for item in seeded_triggers())
     spec = INTERNAL_ACTIONS["curation.detect"]
     assert (spec.effect, spec.consumer, spec.part) == ("findings", "next", "curation")
+    assert spec.opt_in is True
 
 
 def test_the_list_writes_nothing_and_says_detection_has_not_run(tmp_path: Path) -> None:
@@ -35,7 +36,7 @@ def test_the_list_writes_nothing_and_says_detection_has_not_run(tmp_path: Path) 
 
     assert instance.review_operational_store().events() == ()
     assert listed.detection.state == "never_run"
-    assert listed.detection.trigger == "live"
+    assert listed.detection.trigger == "missing"
     assert listed.detector_coverage == ()
     assert {item.pattern_kind for item in listed.inactive_detectors} == {
         "playbill.curation.block_churn.v1",

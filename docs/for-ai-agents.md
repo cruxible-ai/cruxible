@@ -106,7 +106,9 @@ Read with three verbs, cheapest first:
    the value. `read_whole` is the exact read of the whole value,
    `{ref, detail: "evidence", at}` pinned to the generation the preview came
    from (`cx.read_whole(preview)` in the SDK); a plain `query` row cell has
-   none (ask with `claims`), and a write's `after` is the value you sent.
+   none (ask with `claims`), and a write's `after` is the value you sent. An
+   object value is shown whole, wrapped as `{"object": {...}}`, so an object
+   shaped like a preview or marker is never read as one.
 
 The floor is for orientation and grep and is eventually current. Right after
 a write, read exact values with `get` or `query`. `since(GENERATION)` lists

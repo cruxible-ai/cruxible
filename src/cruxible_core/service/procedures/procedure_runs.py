@@ -528,7 +528,8 @@ class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
     )
     coordinate: AcceptedCoordinate
     procedure_identity: ArtifactIdentity
-    procedure_artifact_digest: str
+    #: The Procedure's artifact digest, named as every other kind's proof names it.
+    artifact_digest: str
     definition_digest: str
     artifact: ProcedureArtifact
     runnable: ProcedureRunnable
@@ -1490,6 +1491,36 @@ def _plan_external_occurrences(
     return tuple(sorted(occurrences, key=lambda item: item.occurrence_path.encode("utf-8")))
 
 
+def _provider_bindings(
+    external_occurrences: Sequence[ProviderExternalOccurrencePlan],
+) -> tuple[ProcedureProviderBinding, ...]:
+    """One Provider binding per planned occurrence, in the node-id order admission requires.
+
+    Occurrences are planned in occurrence-path order (``call/...`` before
+    ``source/...``), which is not node-id order once a Source node's id sorts
+    before a Call node's.
+    """
+
+    return tuple(
+        ProcedureProviderBinding(
+            node_id=item.node_id,
+            provider_artifact_digest=item.provider_artifact_digest,
+            classification_plan=ProviderBucketClassificationPlan(
+                node_id=item.node_id,
+                interface_artifact_digest=item.interface_artifact_digest,
+                interface_digest=item.interface_digest,
+                vocabulary_digest=item.vocabulary_digest,
+                classifier_digest=item.classifier_digest,
+                accepted_bucket_selectors=item.accepted_bucket_selectors,
+            ),
+            implementation_digest=item.implementation_digest,
+            effect_class=item.effect_class,
+            secret_binding_identity_digests=item.secret_plan.binding_identity_digests,
+        )
+        for item in sorted(external_occurrences, key=lambda item: item.node_id.encode("utf-8"))
+    )
+
+
 def _line_external_occurrences(
     accepted_line: AcceptedLineSpec,
     accepted_procedure: AcceptedProcedure,
@@ -1828,7 +1859,7 @@ def _readiness(
     return ProcedureReadinessResultV1(
         coordinate=AcceptedCoordinate.from_internal(coordinate),
         procedure_identity=accepted.procedure.identity,
-        procedure_artifact_digest=accepted.artifact_digest,
+        artifact_digest=accepted.artifact_digest,
         definition_digest=accepted.procedure.definition_digest,
         artifact=accepted.procedure,
         runnable=runnable,
@@ -3055,24 +3086,7 @@ def _prepare_direct_external_run(
         invocation_input=invocation_input,
     )
     node_pin_sets = procedure_node_pin_sets(accepted)
-    bindings = tuple(
-        ProcedureProviderBinding(
-            node_id=item.node_id,
-            provider_artifact_digest=item.provider_artifact_digest,
-            classification_plan=ProviderBucketClassificationPlan(
-                node_id=item.node_id,
-                interface_artifact_digest=item.interface_artifact_digest,
-                interface_digest=item.interface_digest,
-                vocabulary_digest=item.vocabulary_digest,
-                classifier_digest=item.classifier_digest,
-                accepted_bucket_selectors=item.accepted_bucket_selectors,
-            ),
-            implementation_digest=item.implementation_digest,
-            effect_class=item.effect_class,
-            secret_binding_identity_digests=item.secret_plan.binding_identity_digests,
-        )
-        for item in external_occurrences
-    )
+    bindings = _provider_bindings(external_occurrences)
     deployment_snapshot_digest = typed_digest(
         Sha256Value,
         "playbill-provider-deployment-snapshot-v1",
@@ -3167,19 +3181,25 @@ def service_run_playbill_procedure(
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
     workspace_file_reader: WorkspaceFileReader | None = None,
     caller_rung: int | None = None,
+    daemon_clock: ProcedureClockProtocol | None = None,
 ) -> ProcedureRunStateV2:
     """Run one accepted Procedure directly.
 
     ``caller_rung`` is the served caller's tier (``PermissionMode.value - 1``);
     a Procedure whose terminals propose or settle refuses a read-only caller.
     ``None`` is an in-process caller that already holds its authority.
+
+    Without an explicit ``evaluation_time`` the run evaluates at the instant it
+    is admitted, by the daemon clock: the operator's invocation is the trigger,
+    so a Capture the run lands is observed when it was read, not at the
+    accepted head's older time (which no capture-landing Trigger accepted
+    after it could ever fire on). The run records that instant as its
+    ``evaluation_time``.
     """
     instance.require_writable()
     coordinate = _resolve_coordinate(instance, request.at)
-    evaluation_time = request.evaluation_time or (
-        ensure_utc(SystemProcedureClock().now())
-        if request.resolution_contract is not None
-        else instance.accepted_evaluation_time(coordinate.git_oid)
+    evaluation_time = request.evaluation_time or ensure_utc(
+        (daemon_clock or SystemProcedureClock()).now()
     )
     head_at_admission = instance.accepted_coordinate()
     # ``at`` binds a live invocation to an accepted coordinate. Exact replay is
@@ -3841,6 +3861,10 @@ def _run_playbill_line(
         if occurrence_basis_time is not None and is_timed
         else None
     )
+    # A timed occurrence happened at its tick, however late it is dispatched: a
+    # backfilled tick records the lapsed tick's instant, while the run is still
+    # admitted (and acts) at the daemon's instant.
+    occurrence_time = cadence_basis or evaluation_time
     if trigger is None and event is not None and not request.repeat:
         # A manual run on an event the enabled Line's automation already ran is
         # almost always a mistake; it runs again only when asked to.
@@ -4134,7 +4158,7 @@ def _run_playbill_line(
         line_identity=accepted_line.line.identity,
         line_spec_digest=accepted_line.artifact_digest,
         occurrence_id=occurrence_id,
-        occurrence_evaluation_time=evaluation_time,
+        occurrence_evaluation_time=occurrence_time,
         acquisition_policy_format=policy_format,
         acquisition_policy_digest=policy_digest,
         selection_decision=selection,
@@ -4178,24 +4202,7 @@ def _run_playbill_line(
             ]
         },
     ).tagged
-    bindings = tuple(
-        ProcedureProviderBinding(
-            node_id=item.node_id,
-            provider_artifact_digest=item.provider_artifact_digest,
-            classification_plan=ProviderBucketClassificationPlan(
-                node_id=item.node_id,
-                interface_artifact_digest=item.interface_artifact_digest,
-                interface_digest=item.interface_digest,
-                vocabulary_digest=item.vocabulary_digest,
-                classifier_digest=item.classifier_digest,
-                accepted_bucket_selectors=item.accepted_bucket_selectors,
-            ),
-            implementation_digest=item.implementation_digest,
-            effect_class=item.effect_class,
-            secret_binding_identity_digests=item.secret_plan.binding_identity_digests,
-        )
-        for item in external_occurrences
-    )
+    bindings = _provider_bindings(external_occurrences)
     fields = {
         "instance_id": instance.descriptor.instance_id,
         "run_id": "RUN-" + "0" * 64,
@@ -4236,7 +4243,7 @@ def _run_playbill_line(
         "lane": "current",
         "semantic_replay_key_digest": "sha256:" + "0" * 64,
         "line_identity": accepted_line.line.identity,
-        "occurrence_evaluation_time": evaluation_time,
+        "occurrence_evaluation_time": occurrence_time,
         "resolved_provider_bindings": bindings,
         "selection_decision": selection,
         "selection_decision_digest": selection_digest,
@@ -4264,7 +4271,7 @@ def _run_playbill_line(
                 occurrence_id=occurrence_id,
                 attempt=1,
                 admission_binding_digest=admission_digest,
-                occurrence_evaluation_time=evaluation_time,
+                occurrence_evaluation_time=occurrence_time,
             ),
         }
     )

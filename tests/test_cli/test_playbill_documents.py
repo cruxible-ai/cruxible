@@ -63,6 +63,16 @@ def test_cli_init_remembers_the_initialized_instance(monkeypatch, tmp_path) -> N
     monkeypatch.chdir(tmp_path)
 
     class StubClient:
+        def show_host(self, instance_id: str) -> contracts.HostInspection:
+            # An uninitialized host, as an unscoped operator sees it.
+            return contracts.HostInspection(
+                instance_id=instance_id,
+                managed_root=None,
+                workspace_root=None,
+                compatibility="uninitialized",
+                writable=False,
+            )
+
         def init(
             self,
             instance_id: str,
@@ -154,6 +164,16 @@ def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_pa
     monkeypatch.chdir(tmp_path)
 
     class StubClient:
+        def show_host(self, instance_id: str) -> contracts.HostInspection:
+            # An uninitialized host, as an unscoped operator sees it.
+            return contracts.HostInspection(
+                instance_id=instance_id,
+                managed_root=None,
+                workspace_root=None,
+                compatibility="uninitialized",
+                writable=False,
+            )
+
         def init(
             self,
             instance_id: str,
@@ -348,6 +368,15 @@ def test_cli_init_needs_an_owner_principal_and_claims_it_on_an_auth_off_daemon(
     claimed: list[object] = []
 
     class StubClient:
+        def show_host(self, instance_id: str) -> contracts.HostInspection:
+            return contracts.HostInspection(
+                instance_id=instance_id,
+                managed_root=None,
+                workspace_root=None,
+                compatibility="uninitialized",
+                writable=False,
+            )
+
         def init(self, instance_id: str, **_kwargs: object) -> object:
             from cruxible_core.cli.commands._common import _root_ctx_obj
 

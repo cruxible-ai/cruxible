@@ -26,7 +26,7 @@ the accepted coordinate and the evaluation time.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, ClassVar, Literal, Union
+from typing import Annotated, ClassVar, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, field_validator
 from typing_extensions import TypeAliasType
@@ -36,7 +36,12 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import ClaimQueryResult, QueryExecutionReceipt
-from cruxible_client.contracts.read_values import ExactContentRef, ShownValue, TruncatedText
+from cruxible_client.contracts.read_values import (
+    ExactContentRef,
+    ShownObject,
+    ShownValue,
+    TruncatedText,
+)
 
 QUERY_DEFAULT_LIMIT = 50
 QUERY_MAX_LIMIT = 500
@@ -371,8 +376,8 @@ class QueryClaimValue(QueryClaim):
 #: ``claims=True``, ``claims`` -- each column's Claims, typed.
 QueryCell = TypeAliasType(
     "QueryCell",
-    "TruncatedText | ExactContentRef | str | bool | int | float | None | list[QueryCell]"
-    " | dict[str, list[QueryClaim]] | dict[str, Any]",
+    "TruncatedText | ExactContentRef | ShownObject | str | bool | int | float | None"
+    " | list[QueryCell] | dict[str, list[QueryClaim]]",
 )
 
 

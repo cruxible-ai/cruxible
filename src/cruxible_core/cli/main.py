@@ -89,6 +89,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("proposal", "activate"): "active",
     ("proposal", "readmit"): "active",
     ("proposal", "withdraw"): "active",
+    ("proposal", "reject"): "active",
     ("sources", "propose"): "active",
     ("compiler", "upgrade"): "active",
     ("principal", "add"): "active",
@@ -467,7 +468,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "Manage governed Provider artifacts.",
         {
             "list": _command(
-                "playbill", "list_provider_packages", "List available provider packages."
+                "playbill",
+                "list_provider_packages",
+                "List installed Providers and repository packages.",
             ),
             "install": _command(
                 "playbill", "install_provider", "Install and register a provider package."
@@ -542,6 +545,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill",
                 "withdraw_proposal",
                 "Retire an open proposal that will never activate.",
+            ),
+            "reject": _command(
+                "playbill",
+                "reject_proposal",
+                "Reject another actor's open proposal, with a reason.",
             ),
             "review": _command(
                 "playbill", "review_proposal", "Render structured candidate review."
@@ -625,7 +633,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "bind": _command(
                 "playbill",
                 "bind_authoring_selection",
-                "Bind a Flow-A selection and compile it.",
+                "Bind a workspace anchor as evidence and compile the Claim.",
             ),
             "preflight": _command(
                 "playbill",
@@ -701,7 +709,8 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
     "audit": _command("playbill", "audit", "Read ranked Claim verification work."),
     "curation": _group(
-        "Review the ontology-maintenance patterns curation detection records.",
+        "Review curation detection's patterns (beta: only with an authored curation-detect "
+        "Trigger).",
         {
             "list": _command("playbill", "curation_list", "Read the curation queue."),
             "observe": _command(

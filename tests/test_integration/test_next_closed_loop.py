@@ -169,6 +169,7 @@ EXPECTED_OPERATIONS = {
     "unregistered_projection_block": "cruxible.block.repin",
     "proposal_stale": "cruxible.proposal.readmit",
     "proposal_awaiting_approval": "cruxible.proposal.approve",
+    "proposal_awaiting_activation": "cruxible.proposal.activate",
     "mandate_expiring": "cruxible.authoring.example",
     # A stopped enablement is resumed by enabling again under authority that holds.
     "consumer_stalled": "cruxible.line.enable",
@@ -1427,6 +1428,97 @@ def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     assert rows("reviewer", _request(instance)) == []
 
 
+def _proposal_awaiting_activation(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    """The author's own proposal is listed once activation is all it waits on (C4)."""
+
+    from cruxible_client.contracts.approval_policy import (
+        APPROVAL_POLICY_PATH,
+        ApprovalPolicy,
+        render_approval_policy,
+    )
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.test_proposals.test_approval_policy import _activate as _activate_policy
+    from tests.test_proposals.test_approval_policy import _submit_tree
+    from tests.test_proposals.test_proposals import DOCUMENT_PATH, _shell
+
+    instance, _owner = initialize_local(root)
+
+    def rows(caller: str | None) -> list[object]:
+        return [
+            item
+            for item in service_playbill_next(
+                instance, request=_request(instance), caller_principal_id=caller
+            ).items
+            if item.reason == "proposal_awaiting_activation"
+        ]
+
+    # Self-approval: the author's proposal needs nothing but activation.
+    body = instance.store_document_body(b"# Ready to activate\n")
+    ready = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            DOCUMENT_PATH: render_document(_shell(body.digest)),
+        },
+        name="closed-loop-ready",
+    )
+    assert ready.candidate is not None
+    proposal_id = ready.admission.proposal_id
+    (row,) = rows("owner")
+    assert row.subject_identity == proposal_id
+    assert row.repair.operation == EXPECTED_OPERATIONS["proposal_awaiting_activation"]
+    assert row.repair.command == f"cruxible proposal activate {proposal_id}"
+    # Only its author is told; nobody else, and no unattributed request.
+    assert rows("reviewer") == []
+    assert rows(None) == []
+
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    assert rows("owner") == []
+
+    # Independent approval: the row waits until another signer has approved.
+    tightening = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            APPROVAL_POLICY_PATH: render_approval_policy(
+                ApprovalPolicy(mode="independent_approval_required")
+            ),
+        },
+        name="closed-loop-activation-tighten",
+    )
+    assert _activate_policy(instance, tightening, tmp_path=root).status == "accepted"
+    later = instance.store_document_body(b"# Needs review first\n")
+    governed = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            "documents/playbill-review.json": render_document(
+                _shell(later.digest).model_copy(update={"identity": "document:playbill-review"})
+            ),
+        },
+        name="closed-loop-activation-governed",
+    )
+    assert governed.candidate is not None
+    assert rows("owner") == []
+    signed = _sign(
+        client_material(root, instance),
+        governed.candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=governed.admission.proposal_id,
+        attestation=signed.attestation,
+        authenticated_submitter="reviewer",
+    )
+    (approved,) = rows("owner")
+    assert approved.subject_identity == governed.admission.proposal_id
+    assert approved.detail["approvals"] == 1
+
+
 def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_digest,
@@ -1788,6 +1880,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("unregistered_projection_block", None): _unregistered_projection_block,
     ("proposal_stale", None): _proposal_stale,
     ("proposal_awaiting_approval", None): _proposal_awaiting_approval,
+    ("proposal_awaiting_activation", None): _proposal_awaiting_activation,
     ("mandate_expiring", None): _mandate_expiring,
     ("consumer_stalled", None): _consumer_stalled,
     ("line_coverage_gap", None): _line_coverage_gap,
@@ -1928,3 +2021,66 @@ def test_unbindable_prediction_row_identity_survives_an_unchanged_retry(tmp_path
     second = _row(instance, "prediction_window_unbindable", request)
     assert first == second and first.item_id == second.item_id
     assert "evaluated_at" not in second.detail
+
+
+def test_a_compiler_upgrade_offers_signing_before_activation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-002: a compiler upgrade settles only once signed, so next asks for that first.
+
+    Under self approval the policy asks no approval, but settlement refuses an
+    unsigned compiler upgrade. The author is offered the approve repair until a
+    signature exists, then activation; each offered repair is run and closes
+    its row.
+    """
+
+    from cruxible_core.compiler.compiler import (
+        RESOURCE_BUDGET_COMPILER,
+        current_compiler_coordinate,
+    )
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.test_ledger.test_compiler_upgrade import old_instance, propose
+
+    instance, owner, _reviewer = old_instance(tmp_path, monkeypatch, RESOURCE_BUDGET_COMPILER)
+    proposal = propose(instance, current_compiler_coordinate())
+    assert proposal.candidate is not None
+    assert proposal.candidate.approval_requirements == ()
+    proposal_id = proposal.admission.proposal_id
+
+    def rows(reason: str) -> list[Any]:
+        return [
+            item
+            for item in service_playbill_next(
+                instance, request=_request(instance), caller_principal_id="owner"
+            ).items
+            if item.reason == reason and item.subject_identity == proposal_id
+        ]
+
+    # Unsigned: activation would refuse, so it is not offered; signing is.
+    assert rows("proposal_awaiting_activation") == []
+    (approve,) = rows("proposal_awaiting_approval")
+    assert approve.repair.operation == "cruxible.proposal.approve"
+    assert approve.repair.command == f"cruxible proposal approve {proposal_id} --signer-id owner"
+
+    # Run the approve repair: the author signs the exact candidate.
+    signed = _sign(
+        owner,
+        proposal.candidate.candidate_digest,
+        proposal.candidate.candidate.parent_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal_id,
+        attestation=signed.attestation,
+        authenticated_submitter="owner",
+    )
+    assert rows("proposal_awaiting_approval") == []
+    (activate,) = rows("proposal_awaiting_activation")
+    assert activate.repair.command == f"cruxible proposal activate {proposal_id}"
+
+    # Run the activation repair: it settles, and the row closes.
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    assert rows("proposal_awaiting_activation") == []

@@ -583,6 +583,38 @@ def test_surface_conflicts_reports_the_conflict_set_and_never_picks_a_winner() -
     )
 
 
+def test_a_many_valued_field_projects_its_values_and_never_conflicts() -> None:
+    """Two values of a cardinality=many field are the field's values, not contenders."""
+
+    many = tuple(
+        item.model_copy(update={"cardinality": "many"})
+        for item in (status_claim(1, "wi-1", "ready"), status_claim(2, "wi-1", "blocked"))
+    )
+    result = run(all_items_query(), facts(many))
+
+    assert result.verdict == "completed"
+    assert result.conflicts == ()
+    row = next(item for item in result.rows if item.result_subject_identity.endswith("wi-1"))  # type: ignore[union-attr]
+    assert [(item.name, item.state, item.value) for item in row.fields] == [
+        ("item_id", "present", "wi-1"),
+        ("status", "present", ["blocked", "ready"]),
+    ]
+    # A refusing policy has nothing to refuse: the values are not a conflict.
+    refused_one = run(single_status_query(), facts(many), parameters={"item_id": "wi-1"})
+    assert refused_one.verdict == "completed"
+    (only,) = refused_one.rows
+    assert [item.value for item in only.fields if item.name == "status"] == [["blocked", "ready"]]
+
+
+def test_a_one_valued_field_with_two_values_still_conflicts() -> None:
+    competing = (status_claim(1, "wi-1", "ready"), status_claim(2, "wi-1", "blocked"))
+    assert all(item.cardinality == "one" for item in competing)
+
+    result = run(all_items_query(), facts(competing))
+
+    assert [item.kind for item in result.conflicts] == ["claim_object"]
+
+
 def test_agreeing_accepted_claims_are_not_a_conflict() -> None:
     result = run(
         all_items_query(),
