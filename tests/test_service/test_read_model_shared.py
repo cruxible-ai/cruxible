@@ -1113,7 +1113,9 @@ def test_only_subject_references_lose_their_prefix_in_a_projection(tmp_path: Pat
         result = service_playbill_query(
             instance, request=QueryRequest.model_validate({"evaluation_time": later, **fields})
         )
-        return next(row for row in result.rows if row.get("subject_id", row.get("item_id")) == "wi-1")
+        return next(
+            row for row in result.rows if row.get("subject_id", row.get("item_id")) == "wi-1"
+        )
 
     compact = row_of(kind=KIND, select=["notes", "governs"])
     assert sorted(compact["notes"]) == ["Subject:literal data", "plain"]

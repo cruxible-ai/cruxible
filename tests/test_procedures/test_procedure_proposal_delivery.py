@@ -1783,9 +1783,52 @@ def test_two_revisions_move_two_claims_into_one_many_valued_slot(tmp_path: Path)
 
 
 def test_a_revision_moving_a_claim_out_leaves_the_slot_it_left(tmp_path: Path) -> None:
-    """The first revision moves out of the slot before the second is lowered into it."""
+    """The first revision moves out of the slot before the second is lowered into it.
+
+    The disposition fill follows that move: the second revision, staying in the
+    slot the first one left, is dispositioned against nothing. Without the
+    movement-out bookkeeping it would still disposition the moved Claim (which
+    lowering tolerates as voluntary, so the end-to-end run alone cannot tell).
+    """
+
+    from cruxible_client.contracts.authoring.models import (
+        AuthoringClaimStatement,
+        ClaimAuthoringPayload,
+        ClaimDependencyDrafts,
+        ExistingCaptureCitationSource,
+        authoring_member_identity,
+    )
 
     instance, owner, root, procedure, first, second = _two_values(tmp_path)
+
+    def payload(claim_id: str, qualifier: str | None) -> ClaimAuthoringPayload:
+        statement = {
+            **item_template()["statement"],  # type: ignore[dict-item]
+            "qualifier": qualifier,
+            "object": {"kind": "literal", "value": "low"},
+        }
+        return ClaimAuthoringPayload(
+            statement=AuthoringClaimStatement.model_validate(statement),
+            rationale="Restated.",
+            source=ExistingCaptureCitationSource(capture_digest="sha256:" + "c" * 64),
+            citation_role="evidence",
+            revises=claim_id,
+            dependency_drafts=ClaimDependencyDrafts(),
+        )
+
+    members = tuple(
+        sorted(
+            (payload(first, "new"), payload(second, None)),
+            key=lambda member: authoring_member_identity(member).encode("utf-8"),
+        )
+    )
+    assert [member.revises for member in members] == [first, second]
+    filled = delivery_module._with_many_valued_dispositions(
+        members,
+        claim_ids={},
+        base_tree=instance.immutable_tree_at(instance.accepted_coordinate().git_oid),
+    )
+    assert [member.existing_claim_dispositions for member in filled] == [(), ()]
     line = _revising_line(
         instance,
         owner,
