@@ -1,4 +1,8 @@
-"""An operation's cost follows the change or the result, never accumulated history.
+"""Index- and store-level guards: their counted work does not grow with history.
+
+The whole service operations (a Line admission and run, a prediction
+settlement, a served query's facts) are measured end to end in
+``test_service_scaling.py``; these pin the primitives those operations use.
 
 Each operation is measured by counted work (SQLite VM steps on the journal index,
 journal frames read, store objects loaded and bytes written, accepted blobs and
