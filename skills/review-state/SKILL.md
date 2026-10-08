@@ -1,232 +1,121 @@
 ---
 name: review-state
-description: Review an existing state, inspect evaluation, queries, governed groups, feedback, and outcomes, and surface prioritized issues with the likely fix surface before making changes.
+description: Review an existing Cruxible instance - its work queues, value verdicts and evidence, open proposals, stale blocks and citations, Procedures and Lines, and kits - and report prioritized findings with the exact repair before changing anything.
 ---
 
 # Review State
 
-Use this skill on an existing state — the user's Crux — when the goal is diagnosis, quality review, or prioritizing follow-up work.
+Use this skill on an existing instance when the goal is diagnosis: what is
+wrong, what is weak, and what should be fixed first.
 
 This skill is for:
 
-- finding structural or behavioral problems
-- inspecting representative queries and receipts
-- reviewing governed groups and their outputs
-- spotting repeated feedback or outcome patterns
-- telling the user what is wrong and what should be fixed next
+- a health check before a hand-off or a release
+- finding weak, stale or contested values and their causes
+- checking that pages, citations and automation still match accepted state
+- telling the user what to fix next and with which command
 
-This skill is not the main build flow. By default, review first and surface findings before changing config, workflows, or graph state.
+Review first and report. Do not write, approve, or activate anything during the
+review unless the user asks.
 
-## Phase 1: Establish review scope
+## Phase 1: Scope
 
-Start by identifying:
-
-1. what the user is worried about
-2. whether the review is about:
-   - graph quality
-   - governed relationships
-   - query quality
-   - feedback or outcome patterns
-   - overall state health
-3. whether the state is a root state or an overlay
-4. which user-facing queries or downstream decisions matter most
-5. whether source files, prepared files, or `prepare-data` outputs are available for a source-to-state audit
-
-Then inspect the current state:
+Ask what the user is worried about (a wrong answer, stale pages, a stuck Line,
+general health) and which queries or decisions matter most. Then read the map:
 
 ```bash
-cruxible state status
-cruxible stats
-cruxible evaluate
+cruxible whoami
+cruxible orient
 ```
 
-If the state is an overlay and the review is about overall health, local fit quality, or handoff readiness, include upstream pull compatibility in scope by default.
+`orient` shows every kind, artifact counts, Claims by status, attention from
+the `next` queue, and Line enablements that stopped.
 
-## Phase 2: Inspect the most important surfaces
-
-Work from the surfaces that actually affect users.
-
-### Workflows, providers, and implementation
-
-If findings may come from how the state is built rather than only from final query outputs, inspect the implementation surfaces too:
-
-- canonical `workflows`
-- proposal `workflows`
-- `providers`
-- `integrations`
-- relevant config sections and provider code
-
-Use this to answer:
-
-- is the bad behavior caused by graph shape, or by how workflows and providers are wired?
-- are canonical `workflows` writing only deterministic, trusted results?
-- are proposal `workflows` producing the right candidates, signals, and groups?
-- is the likely fix in config design, provider code, or workflow implementation?
-
-### Queries and receipts
-
-If the state has `named_queries`, run the ones that matter to the user's concern and inspect receipts:
+## Phase 2: The work queues
 
 ```bash
-cruxible query --name <query_name> --param key=value
-cruxible get <ref> --detail why
+cruxible next                    # what is wrong or waiting, each row with its repair
+cruxible audit                   # Claims ranked as worth verifying
+cruxible curation list           # ontology-maintenance patterns detection found
+cruxible proposal list --status open
 ```
 
-If the review is about overall state health or handoff readiness, do not stop at representative coverage. Exercise all `named_queries`.
+- `next` status facets come first (instance, floor, ledger mirror, provider
+  lane, compiler, Line dispatch, consumers, triggers): any facet that needs
+  attention is a finding.
+- Group `next` rows by reason: `citation_drifted`, `claim_uncovered`,
+  `claim_stale_evidence`, `claim_conflicted`, `proposal_stale`,
+  `projection_backing_stale`, `line_coverage_gap`, `consumer_stalled` and the
+  rest. A row whose repair you cannot run still shows, with `repair_requires`
+  naming the tool and tier.
+- A stale proposal blocks nothing but will never activate; its author readmits
+  or withdraws it.
 
-Use this to answer:
+## Phase 3: Values and evidence
 
-- does the query answer the real user question?
-- does the receipt show a believable evidence path?
-- are results missing because of graph gaps, governed gaps, or query design problems?
-
-### Governed groups
-
-If the state uses governed relationships, inspect the review surfaces:
+For the kinds that matter, read values with their flags:
 
 ```bash
-cruxible group list
-cruxible group get --group <group_id>
-cruxible group resolutions
+cruxible query KIND --select a,b --claims
+cruxible query KIND --where 'status=open' --select owner
 ```
 
-Also inspect the governed design artifacts and config that define what those groups are supposed to mean:
-
-- relationship `matching` config
-- `design/governed/<relationship_type>.yaml`
-- relevant proposal `workflows`, `integrations`, and provider code
-
-Use this to answer:
-
-- are the right relationship types being governed?
-- do groups ask the right review question?
-- do `thesis_facts` and `analysis_state` look well-modeled?
-- are groups getting stuck, suppressed, or producing poor signals?
-- is the problem in the governed design itself, or in the provider/workflow implementation that is supposed to realize it?
-
-### Feedback and outcomes
-
-If the state has enough history, inspect recurring review and outcome patterns:
+Flags (`stale`, `contested`, `contradicted`, `uncovered`, `unsure_hold`) are
+findings. For each flagged value, read why:
 
 ```bash
-cruxible feedback analyze --relationship <relationship_type>
-cruxible outcome analyze --anchor-type <receipt|resolution> --surface-type <query|workflow|operation> --surface-name <name>
+cruxible get KIND/ID
+cruxible get CLM-… --detail evidence
+cruxible get CLM-… --detail why
+cruxible get CLM-… --detail history
 ```
 
-Use whichever filters match the review surface you are investigating. Treat these as evidence about recurring process failures, not as automatic instructions to mutate the state.
+Ask, per finding: is the evidence missing, not admitted by the ClaimType's
+rules, stale, or contradicted? Is the vocabulary wrong (a missing enum member,
+a field that should be many-valued)? Is the value simply out of date?
 
-If history is sparse, inspect the config surfaces directly instead:
+Run the named queries that matter (`cruxible query --name NAME`, with
+`--receipt full` for the Claims each row read) and check they answer the real
+question.
 
-- `feedback_profiles`
-- `outcome_profiles`
-- `decision_policies`
-- `quality_checks`
-- `constraints`
-
-Use this to answer:
-
-- do the configured review and outcome surfaces match the real recurring loops the state actually has?
-- are governance rules present where they are justified, and absent where they would just add noise?
-
-For a time-bounded uncertainty that later evidence can decide, recommend the
-served uncertain → predict → settle loop: author the predicted value as an
-ordinary Claim proposal with `Cruxible.predict(...)`, activate it through the
-normal review path, then call `Cruxible.settle(...)` with the later accepted
-observation (or an authorized retained terminal record). Only the resulting
-settled-outcome relation enters calibration; an open prediction does not.
-
-### Source-to-state audit
-
-If source files, cleaned files, or `prepare-data` outputs are available, compare them against the current state design and behavior.
-
-Use:
-
-- source files and cleaned files
-- `source_inventory`
-- `transform_lineage`
-- `loading_readiness_by_surface`
-- `likely_modeling_implications`
-- `open_questions`
-- current `config.yaml`
-- canonical `workflows`
-- governed relationship `matching` and design notes where relevant
-
-Use this to answer:
-
-- does each `entity_type` match a real source grain?
-- are current deterministic relationships actually supported by explicit keys and joins?
-- are any current canonical relationships ambiguous enough that they should be governed instead?
-- are any governed relationships actually deterministic and overcomplicated?
-- is the graph shape still consistent with what the prepared data supports?
-
-If those source or preparation artifacts are not available, say explicitly that the source-to-state classification audit was not performed.
-
-### Overlay pull compatibility
-
-If the state is an overlay and pull compatibility is in scope, inspect:
+## Phase 4: Files, pages and the floor
 
 ```bash
-cruxible state pull-preview
+cruxible sources check           # catalogued files against accepted Documents
+cruxible block sync --all        # projection blocks against their backings
+cruxible coverage resolve --all  # which spans of catalogued files are governed
 ```
 
-Use this to answer:
+A drifted citation, a modified Document, or a stale block is a finding; so is a
+catalogued file that should be cited and is not.
 
-- does the local fit still compose cleanly with the upstream state?
-- are any local additions likely to conflict with future upstream pulls?
-- should a change stay local, move upstream, or be simplified?
+## Phase 5: Procedures, Lines and kits
 
-## Phase 3: Classify findings by fix surface
+When the instance automates work:
 
-Do not just list problems. For each real issue, classify where the fix belongs:
+```bash
+cruxible orient --section lines
+cruxible get Line:NAME           # Triggers, enablements, pending work, recent runs
+cruxible orient --section runs
+cruxible procedure readings NAME # measurement standing, when measurements are declared
+cruxible kit status              # edited definitions, kept divergences, newer releases
+```
 
-- `prepare-data`: source file quality, key issues, join issues, grain issues
-- `create-state`: base graph shape, wrong canonical-versus-governed boundary, canonical workflow design, governed design, named queries, or feedback/outcome structure in a root state
-- `overlay-and-fit`: local fit boundary, wrong local canonical-versus-governed boundary, local canonical fit, local governed additions, local queries, or overlay pull-compatibility issues
-- provider or workflow implementation
-- query design
-- review policy, trust, feedback, or outcome configuration
-- upstream work rather than local work
+Look for Lines whose Triggers are inactive because the Line is not enabled,
+enablements that stopped (and why), coverage gaps after a restart, failing
+runs, and measurements that resolved contradicted.
 
-This classification is the main value of the review.
+## Phase 6: Report
 
-## Phase 4: Prioritize what matters
+Report findings in priority order, each as one row:
 
-Present findings in this order:
+| Severity | Area | Finding | Evidence | Repair |
+|---|---|---|---|---|
 
-1. broken or invalid states
-2. query failures or misleading query results
-3. governed-group design or workflow problems affecting important decisions
-4. repeated review or outcome patterns that indicate a real systemic issue
-5. missing relationships or coverage gaps
-6. cleanup or simplification opportunities
+- **Evidence** names the exact references (`CLM-…`, `KIND/ID`, a proposal ID,
+  `Line:NAME`) so anyone can `get` them.
+- **Repair** is the exact command (`next` usually supplies it), or the design
+  change it needs (a vocabulary migration, a new evidence rule, a source to
+  catalogue).
 
-Do not bury the important issues under low-value polish.
-
-## Phase 5: Surface the review to the user
-
-Default output is a prioritized findings report.
-
-For each finding, include:
-
-- what is wrong
-- why it matters
-- representative evidence
-- the likely fix surface
-- whether it should be fixed now, later, locally, or upstream
-
-If there are no meaningful issues, say that explicitly and mention any residual blind spots, such as:
-
-- no governed history yet
-- no representative query receipts yet
-- too little feedback or outcome data to infer patterns
-- source files or `prepare-data` outputs were not available for a source-to-state audit
-
-## Optional Follow-Up
-
-Only move from review into changes if the user asks for fixes or clearly wants you to continue.
-
-If the next step is clear:
-
-- use `prepare-data` for source-data issues
-- use `create-state` for root-state build or redesign work
-- use `overlay-and-fit` for local adaptation work
+Separate what is wrong now from what is risky, and say what you did not check.
