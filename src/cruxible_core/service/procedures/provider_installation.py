@@ -585,7 +585,17 @@ def service_install_provider(
     release = None
     if request.package and operator.config.provider_repository is not None:
         if request.version is not None:
-            raise ConfigError("a configured provider repository installs its checkout version")
+            raise ConfigError(
+                "a configured provider repository installs its checkout version, never an "
+                "exact release"
+                + (
+                    "; a kit's default provider names one, so install the repository's build "
+                    "with provider install first (the kit's default is then satisfied) or add "
+                    "the kit on a daemon without provider_repository"
+                    if expected_build is not None
+                    else ""
+                )
+            )
         with package_preparation_errors():
             source = _repository_fingerprint(operator, request.package)
     elif request.package:

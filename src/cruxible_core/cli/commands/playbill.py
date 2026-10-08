@@ -1752,10 +1752,12 @@ def _echo_kit_change(result: KitChangeResult) -> None:
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help=(
         "A published provider package directory the kit names as the default "
-        "implementation of its interfaces (repeatable), laid out as for --provider with "
-        "the published wheel in dist/. The kit carries none of its files: kit add "
-        "installs it by name and exact version from the provider index when no "
-        "installed Provider implements its interfaces."
+        "implementation of its interfaces (repeatable): pyproject.toml, uv.lock and the "
+        "published wheel in dist/ (path dependencies' wheels are not needed). The kit "
+        "carries none of its files. kit add installs it by name at exactly this version "
+        "from the provider index, refusing any other build, unless a live Provider already "
+        "implements its interfaces; a daemon with provider_repository configured refuses "
+        "that install (install the repository's build first with provider install)."
     ),
 )
 @json_option

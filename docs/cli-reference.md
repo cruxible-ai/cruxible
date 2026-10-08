@@ -1045,7 +1045,13 @@ and carries none of its files; the lock given must be the one the wheel embeds
 (`cruxible.kit.provider_lock_not_embedded` otherwise), because `add` installs the
 default by name and version from the daemon's provider index (PyPI unless the
 operator configured `provider_index_urls`), where its path dependencies come from
-the same index. `add` skips the install (`satisfied`) when no Procedure the kit
+the same index; `kit build` therefore never needs the wheels of the default's path
+dependencies in its `dist/`. A daemon with `provider_repository` configured
+installs a package by name from that checkout only, so it refuses the default's
+exact-version install: install the repository's build with `provider install`
+first (the default is then `satisfied`), or add the kit on a daemon without one.
+The `add` preview says which: an index default it would install reads `would
+install (by name from the provider index at exactly VERSION ...)`. `add` skips the install (`satisfied`) when no Procedure the kit
 carries pins the default, each of its interfaces the kit carries is live here as
 the kit carries it (the built-in `web.fetch` registration, or a package's whose classifier a
 deployment on this daemon hosts), and some live Provider implements each one; the Blueprint's slot
