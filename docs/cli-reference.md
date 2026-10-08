@@ -472,11 +472,13 @@ not supported yet (`cruxible.trigger.schedule_unsupported_for_action`), and an
 action name that is not registered is refused at acceptance
 (`cruxible.trigger.action_unknown`). A new
 instance is initialized with `evidence-sweep` (daily),
-`prediction-anchor-retry` (hourly), `floor-refresh` and `curation-detect`
-(both on accepted generations); change a schedule, add a Trigger, or retire
-one through an ordinary proposal. Internal-action Triggers need no
-enablement. `cruxible next` reports unscheduled findings
-actions, and an unscheduled floor action when workspace delivery is enabled.
+`prediction-anchor-retry` (hourly) and `floor-refresh` (on accepted
+generations); change a schedule, add a Trigger, or retire one through an
+ordinary proposal. Curation detection (beta) is opt-in: author a
+`curation-detect` Trigger aimed at the `curation.detect` action to run it.
+Internal-action Triggers need no enablement. `cruxible next` reports
+unscheduled findings actions other than opt-in `curation.detect`, and an
+unscheduled floor action when workspace delivery is enabled.
 
 No Trigger fires retroactively. A timer fires each of its instants once, all of
 them after the acceptance of its Trigger version: a new cadence first fires one
@@ -2479,16 +2481,17 @@ cruxible curation unsuppress ITEM_ID
   [--attribution-ref REF]... [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
-Detection runs on its own: the `curation.detect` internal action, fired by the
-seeded `curation-detect` Trigger on every accepted generation, runs every
-detector at the head and records what it found, evaluated at the fire's recorded
-instant. `curation list` is a pure read of that queue: it prints each item's ID,
+Curation is beta, and detection runs only when a Trigger aimed at the
+`curation.detect` internal action is authored (for example `curation-detect` on
+accepted generations; none is seeded, and `next` never runs or waits on it).
+Each fire runs every detector at the head and records what it found, evaluated
+at the fire's recorded instant. `curation list` is a pure read of that queue: it prints each item's ID,
 pattern kind, subject and `latest_event_digest` (what every ruling needs), when
 detection last ran (`current`, `behind` or `never_run`) and whether its Trigger
 is live, and the detectors that cannot run here and why (dead vocabulary needs
 `CRUXIBLE_CONSUMPTION_RECEIPTS=on`; block churn needs a recorded workspace scan).
-An instance created before the seeded Trigger needs it proposed once (`next`
-reports `curation.detect` as unscheduled).
+With no such Trigger, `curation list` reports detection `never_run` and its
+Trigger `missing`.
 
 Block churn is the one detector that reads the workspace, which the daemon never
 does: `curation observe` scans the workspace's declared blocks client-side and

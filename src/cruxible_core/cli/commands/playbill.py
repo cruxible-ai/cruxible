@@ -6167,7 +6167,11 @@ def _echo_next_status(status: contracts.NextStatus) -> None:
 
 @playbill_group.group("curation")
 def curation_group() -> None:
-    """Review the ontology-maintenance patterns curation detection records."""
+    """Review the ontology-maintenance patterns curation detection records (beta).
+
+    Curation is beta: detection runs only when a Trigger aimed at the
+    curation.detect action (curation-detect) is authored; none is seeded.
+    """
 
 
 def _curation_ruling_options(function: Callable[..., Any]) -> Callable[..., Any]:

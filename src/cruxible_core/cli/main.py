@@ -707,7 +707,8 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
     "audit": _command("playbill", "audit", "Read ranked Claim verification work."),
     "curation": _group(
-        "Review the ontology-maintenance patterns curation detection records.",
+        "Review curation detection's patterns (beta: only with an authored curation-detect "
+        "Trigger).",
         {
             "list": _command("playbill", "curation_list", "Read the curation queue."),
             "observe": _command(

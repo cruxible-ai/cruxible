@@ -233,9 +233,10 @@ Three queues tell you what to do, each a read:
   operation that repairs it: stale or drifted evidence, stale proposals, stale
   blocks, Lines with gaps, available compiler upgrades, and more.
 - **audit** ranks Claims worth verifying, by stake, weakness and recency.
-- **curation** lists ontology-maintenance patterns that detection found.
-  Detection runs on its own after accepted generations; `curation list` only
-  reads. Each item takes one ruling: `overrule` closes it as not applying,
+- **curation** (beta) lists ontology-maintenance patterns that detection found.
+  Detection runs only when a `curation-detect` Trigger aimed at the
+  `curation.detect` action is authored (none is seeded), never on `next`'s path;
+  `curation list` only reads. Each item takes one ruling: `overrule` closes it as not applying,
   permanently; `suppress` hides the item, or with `--scope lineage` also every
   successor its pattern opens; `unsuppress` lifts a suppression; and
   `accept-fixed` links it to the accepted proposal or generation that fixed
@@ -338,8 +339,9 @@ Lines are enabled, not armed:
   every tick it skipped, and `line dispatch` runs them. `next` names the exact
   command for each gap, for example after the daemon was down.
 
-Internal actions (floor refresh, evidence sweeps, prediction retries,
-curation detection) also run on Triggers, and need no enablement.
+Internal actions (floor refresh, evidence sweeps, prediction retries, and
+curation detection once its Trigger is authored) also run on Triggers, and need
+no enablement.
 
 "Arm" has one meaning: a labeled branch of a Procedure graph, such as a
 guard's true or false edge, which measurements can read at `arm` grain to

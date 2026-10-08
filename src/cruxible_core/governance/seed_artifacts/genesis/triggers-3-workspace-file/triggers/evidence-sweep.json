@@ -1,0 +1,20 @@
+{
+  "artifact_format": "playbill-trigger-v1",
+  "identity": {
+    "kind": "Trigger",
+    "name": "evidence-sweep"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "pins": [],
+  "schedule": {
+    "interval_seconds": 86400,
+    "kind": "cadence"
+  },
+  "target": {
+    "action": "evidence.sweep",
+    "kind": "action"
+  }
+}

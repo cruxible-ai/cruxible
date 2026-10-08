@@ -276,12 +276,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "prediction id and the observation's Claim ID."
     ),
     "cruxible_curation_list": (
-        "List the curation patterns detection recorded (detection runs on its own on accepted "
-        "generations); a pure read. Each item carries the latest_event_digest the rulings "
+        "Beta: detection runs only when a curation-detect Trigger is authored. "
+        "List the curation patterns detection recorded; a pure read. Each item carries the "
+        "latest_event_digest the rulings "
         "need; detection says when it last ran, inactive_detectors which detectors cannot run. "
         "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
     ),
     "cruxible_curation_observe": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
         "Record this workspace's declared blocks for block-churn detection, which needs the "
         "workspace the daemon never reads."
     ),
@@ -290,17 +292,21 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "This read records completed coverage but never recommends or executes a repair."
     ),
     "cruxible_curation_overrule": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
         "Use when a detected pattern does not apply here: closes the item permanently, and the "
         "pattern is never raised again."
     ),
     "cruxible_curation_accept_fixed": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
         "Use after an accepted change fixed an item: name it by accepted_proposal_id or "
         "accepted_generation; it must touch the item's subject or evidence."
     ),
     "cruxible_curation_suppress": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
         "Hide an item (scope item) or its whole lineage (scope lineage) without resolving it."
     ),
     "cruxible_curation_unsuppress": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
         "Lift a suppression on an item, so what it hid is listed again."
     ),
     "cruxible_since": (

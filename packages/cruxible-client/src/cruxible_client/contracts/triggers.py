@@ -196,6 +196,9 @@ class InternalActionSpec:
     #: The consumer kind and part that follow this action's fires.
     consumer: str
     part: str
+    #: An opt-in action runs only once someone authors a Trigger aimed at it;
+    #: no Trigger is seeded for it and none is expected (curation is beta).
+    opt_in: bool = False
 
 
 INTERNAL_ACTIONS: Final[Mapping[str, InternalActionSpec]] = MappingProxyType(
@@ -229,6 +232,7 @@ INTERNAL_ACTIONS: Final[Mapping[str, InternalActionSpec]] = MappingProxyType(
                 effect="findings",
                 consumer="next",
                 part="curation",
+                opt_in=True,
             ),
         )
     }

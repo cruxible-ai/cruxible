@@ -4230,10 +4230,13 @@ def _triggers_health(
     delivery_enabled = record is not None and record.floor_delivery
     # Workspace delivery defaults on when attached: an instance with it disabled
     # needs no floor schedule. Findings actions retain their existing advisory.
+    # An opt-in action (curation detection, beta) is expected to be unscheduled.
     unscheduled = [
         action
         for action, spec in INTERNAL_ACTIONS.items()
-        if action not in scheduled and (spec.effect == "findings" or delivery_enabled)
+        if action not in scheduled
+        and not spec.opt_in
+        and (spec.effect == "findings" or delivery_enabled)
     ]
     detail: dict[str, object] = {"scheduled": scheduled}
     if not unscheduled:
