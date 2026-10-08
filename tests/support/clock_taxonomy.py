@@ -416,6 +416,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureRunRequest", "evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureRunStateV2", "evaluation_time"): "EVALUATION INSTANT",
     ("ProposalAwaitingApproval", "admitted_at"): "ASSERTION TIME",
+    ("ProposalAwaitingActivation", "admitted_at"): "ASSERTION TIME",
     ("_ProjectionBlockStamp", "declared_generation"): "SETTLEMENT ORDER",
     ("BlockSyncReadRequest", "evaluation_time"): "EVALUATION INSTANT",
     ("ProjectionCheckRequest", "evaluation_time"): "EVALUATION INSTANT",
