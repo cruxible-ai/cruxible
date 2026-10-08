@@ -91,22 +91,12 @@ from its `env` block, or reuses the local daemon on
 
 ## Credentials and principals
 
-Two different things answer "who is this":
-
-- a **credential** is a daemon bearer token. It lets a caller reach the
-  daemon and caps what it may do with a tier (`read_only`, `governed_write`,
-  `graph_write`, `admin`). Credentials are managed with `cruxible credential`
-  and matter when the daemon runs with `--auth`;
-- a **principal** is a governed identity in the instance's ledger: a public
-  key with a role (owner, ordinary or recovery). Principals attribute every
-  governed act, and an approval is a signature made with the principal's
-  private key, which never leaves the client. Principals are managed with
-  `cruxible principal`.
-
-On an auth-off socket daemon the principal ID a process sends is a claim of
-identity, not authentication. Local key directories give attribution and
-repository hygiene; they are not a security boundary between processes of the
-same OS user.
+A credential (`cruxible credential`) is a daemon bearer token with a tier; a
+principal (`cruxible principal`) is a governed signing key that attributes
+acts and signs approvals, and its private key never leaves the client. On an
+auth-off socket daemon the principal ID a process sends is a claim of
+identity, not authentication. [Principals and
+credentials](docs/concepts.md#principals-and-credentials) explains both.
 
 ## Documentation
 
