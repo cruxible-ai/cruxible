@@ -603,6 +603,72 @@ def test_installing_a_package_for_a_built_in_interface_refuses_by_name(
     ]
 
 
+def test_a_transferred_wheel_resolves_registry_dependencies_from_the_default_index(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A transferred wheel (plain or a kit's) falls back to PyPI when the operator
+    configured no index, as an install by name does; configured indexes take
+    precedence, and a configured repository's checkout keeps to them."""
+
+    from cruxible_client.contracts.provider_installation import (
+        ProviderInstallRequest,
+        ProviderWheelObject,
+    )
+    from cruxible_core.providers.package_index import DEFAULT_PROVIDER_INDEX_URLS
+    from cruxible_core.service.procedures import provider_installation as service
+
+    zero = "sha256:" + "0" * 64
+    seen: list[tuple[str, ...]] = []
+
+    class Stop(Exception):
+        pass
+
+    def prepare(**arguments: Any) -> Any:
+        seen.append(arguments["index_urls"])
+        raise Stop
+
+    monkeypatch.setattr(service, "prepare_provider_package", prepare)
+    monkeypatch.setattr(service, "_source_files", lambda *args: (tmp_path, tmp_path, ()))
+    monkeypatch.setattr(service, "_repository_fingerprint", lambda *args: None)
+
+    def operator(configured: tuple[str, ...]) -> Any:
+        class Config:
+            provider_index_urls = configured
+
+        class Operator:
+            config = Config
+            state_root = tmp_path
+
+        return Operator()
+
+    transferred = ProviderInstallRequest(
+        wheel=ProviderWheelObject(filename="local_call-0.2.0-py3-none-any.whl", digest=zero),
+        lock_digest=zero,
+    )
+    repository = ProviderInstallRequest(package="local-call")
+    configured = ("https://index.example/simple/",)
+    for request, urls in (
+        (transferred, ()),
+        (transferred, configured),
+        (repository, ()),
+        (repository, configured),
+    ):
+        with pytest.raises(Stop):
+            service._install_locked(
+                None,  # type: ignore[arg-type]
+                operator(urls),
+                request,
+                zero,
+                tmp_path,
+                "actor",
+                "2026-10-08T00:00:00.000000Z",
+                None,
+                None,
+                confirm_head=lambda oid: None,
+            )
+    assert seen == [DEFAULT_PROVIDER_INDEX_URLS, configured, (), configured]
+
+
 def test_malformed_wheel_is_a_typed_refusal_before_registration(installer_http, tmp_path):
     from cruxible_client.errors import ConfigError
 

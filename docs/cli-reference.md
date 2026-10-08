@@ -429,7 +429,7 @@ has tag `cruxible-provider-runtime-operational-config-v1` and these entries:
 | `process_group_termination_timeout_seconds` | `5.0` | Child group termination and verification deadline. |
 | `deployments` | `[]` | Digest-keyed local Provider deployment records. |
 | `provider_repository` | `null` | Operator-configured provider repository used by `provider list` and name-based installs. |
-| `provider_index_urls` | `[]` | Explicit allowed package indexes and download origins, in lookup order. Without these, a transferred or repository install must supply locked dependency wheels, and an install by name uses PyPI. |
+| `provider_index_urls` | `[]` | Explicit allowed package indexes and download origins, in lookup order. Without these, an install by name and a transferred wheel resolve from PyPI, and a repository install must supply locked dependency wheels. |
 | `workspace_allowed_roots` | `[]` | Canonical absolute roots that widen `workspace.file` beyond an attached workspace; these are daemon-local authority and never come from an environment variable. The daemon state root, its trust, custody, Provider-secret, and instance substrate stay refused inside any allowed root. |
 
 Unknown entries, non-positive timing values, malformed JSON, unsafe deployment
@@ -887,8 +887,10 @@ hash the index publishes, and the environment is materialized from the lock the
 wheel embeds. With no `provider_index_urls` configured, the index is PyPI
 (`https://pypi.org/simple/`, files from `https://files.pythonhosted.org/`). A
 local wheel requires `--lock`; `--dependency` supplies local or offline locked
-dependency wheels. Local paths are read by the client and transferred through
-CAS, so this also works against a remote daemon.
+dependency wheels, and the registry dependencies the lock pins resolve by hash
+from the configured indexes, or from PyPI when none is configured. Local paths
+are read by the client and transferred through CAS, so this also works against
+a remote daemon.
 
 The shared installer prepares an exact Python environment, verifies it once,
 checks package classifiers in supervised children, and proposes the package's
