@@ -513,7 +513,11 @@ class PredictionPart:
                     "UPDATE contracts SET capture_generation=NULL,capture_ordinal=0,"
                     "scan_through=NULL,scan_cursor=NULL WHERE selector_digest IS NOT NULL"
                 )
-            if events or (known == generation and captures["ordinal"] > capture_head):
+            # Only the anchor-retry Trigger requeues unbindable anchors. A new
+            # landing cannot restore what one lacks (its own record or its own
+            # payload body, which names its run), so requeueing every anchor per
+            # landing was cost that grew with every anchor ever refused.
+            if events:
                 connection.execute(
                     "INSERT INTO retries SELECT identity,record_digest,? "
                     "FROM unbindable WHERE true "

@@ -647,15 +647,32 @@ def test_state_an_earlier_version_wrote_is_rebuilt_with_exact_counts(tmp_path: P
         assert connection.execute("SELECT count(*) FROM windows").fetchone() == (1,)
 
 
-def test_new_capture_landings_retry_unbindable_anchors_without_a_clock(tmp_path: Path) -> None:
+def test_capture_landings_never_requeue_unbindable_anchors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A landing cannot restore an anchor's own record or payload: only the Trigger retries."""
+
     instance, event, restore = unbindable_world(tmp_path)
     drain(instance, now=served.PREDICTED_AT)
     assert len(unbindable_anchors(instance)) == 1
     restore()
-    land(instance, at=served.PREDICTED_AT + timedelta(minutes=2), run="new")
-    # The matching pass sees log positions, even with an earlier worker timestamp.
-    drain(instance, now=served.PREDICTED_AT - timedelta(days=1))
-    assert unbindable_anchors(instance) == ()
+    bind = predictions._bind
+    retried: list[object] = []
+
+    def counted(instance_arg, contract, anchor):  # type: ignore[no-untyped-def]
+        if anchor == event:
+            retried.append(anchor)
+        return bind(instance_arg, contract, anchor)
+
+    monkeypatch.setattr(predictions, "_bind", counted)
+    for minute in (2, 3):
+        land(instance, at=served.PREDICTED_AT + timedelta(minutes=minute), run=f"new-{minute}")
+        drain(instance, now=served.PREDICTED_AT)
+    assert retried == [] and len(unbindable_anchors(instance)) == 1
+    # The anchor-retry Trigger is the one log that requeues it.
+    fire_internal_triggers(instance, now=served.PREDICTED_AT + timedelta(hours=1))
+    drain(instance, now=served.PREDICTED_AT + timedelta(hours=1))
+    assert retried == [event] and unbindable_anchors(instance) == ()
     assert event in [
         item.window.event
         for item in settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1))
