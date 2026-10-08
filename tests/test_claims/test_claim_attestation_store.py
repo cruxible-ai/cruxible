@@ -201,8 +201,9 @@ def test_unknown_head_and_corrupt_marker_refuse_typed(tmp_path: Path) -> None:
 
     marker = next((store.root / "partitions").glob("*/00000000000000000001.json"))
     marker.write_bytes(marker.read_bytes().replace(b'"sequence":1', b'"sequence":2'))
+    # A process verifies each event once; a cold reader sees the corruption.
     with pytest.raises(ClaimAttestationStoreError, match="store_corrupt"):
-        store.events(at_head=receipt.recorded_head)
+        _store(tmp_path).events(at_head=receipt.recorded_head)
 
 
 def test_accelerator_is_verified_rebuilt_and_selects_reducer_frontier(
@@ -228,13 +229,12 @@ def test_accelerator_is_verified_rebuilt_and_selects_reducer_frontier(
         first_receipt.event_digest,
         second_receipt.event_digest,
     ]
-    accelerator = next((store.root / "accelerators").glob("*.json"))
-    accelerator.write_text("{}\n", encoding="utf-8")
-    assert [item[0].event_digest for item in store.fold_events()] == [
+    # The frontier is per process: a cold reader folds the same frontier.
+    assert not (store.root / "accelerators").exists()
+    assert [item[0].event_digest for item in _store(tmp_path).fold_events()] == [
         first_receipt.event_digest,
         second_receipt.event_digest,
     ]
-    assert b"playbill-claim-attestation-accelerator-v1" in accelerator.read_bytes()
 
 
 def _write_pointer(store: ClaimAttestationEvidenceStore, root_digest: str) -> None:
@@ -245,8 +245,14 @@ def _write_pointer(store: ClaimAttestationEvidenceStore, root_digest: str) -> No
 
 
 def _current_root_and_map(store: ClaimAttestationEvidenceStore):  # type: ignore[no-untyped-def]
+    """The tip root, its map object, and the full head map it stands for."""
+
     chain = store._validated_chain(store._load_pointer().root_digest)
-    return chain[-1]
+    entries = tuple(
+        ClaimAttestationHeadMapEntry(partition_digest=key, head=value)
+        for key, value in chain.heads.items()
+    )
+    return chain.tip, store._load_map(chain.tip.partition_map_digest), entries
 
 
 @pytest.mark.parametrize("mutation", ["unchanged_map", "duplicate_event"])
@@ -262,7 +268,7 @@ def test_transition_replay_refuses_repeated_event_with_unchanged_map_typed(
         verification_account=_account(attestation),
         note=None,
     )
-    current, node = _current_root_and_map(store)
+    current, node, _entries = _current_root_and_map(store)
     forged = store._published_root(
         sequence=current.sequence + 1,
         previous=current.root_digest,
@@ -282,7 +288,7 @@ def test_transition_replay_refuses_unrelated_partition_map_change_typed(
     store = _store(tmp_path)
     first = _attestation()
     store.append(attestation=first, verification_account=_account(first), note=None)
-    current, node = _current_root_and_map(store)
+    current, _node, entries = _current_root_and_map(store)
     second = _attestation(claim_id="CLM-1123456789abcdef0123456789abcdef")
 
     def crash(at: str) -> None:
@@ -295,7 +301,7 @@ def test_transition_replay_refuses_unrelated_partition_map_change_typed(
     second_marker = next(
         path
         for path in (store.root / "partitions").glob("*/00000000000000000001.json")
-        if store._load_marker(path).partition_digest != node.entries[0].partition_digest
+        if store._load_marker(path).partition_digest != entries[0].partition_digest
     )
     second_event = store._load_marker(second_marker)
     second_head = store._partition_head(second_event)
@@ -315,7 +321,7 @@ def test_transition_replay_refuses_unrelated_partition_map_change_typed(
     )
     forged_map = store._head_map(
         (
-            *node.entries,
+            *entries,
             ClaimAttestationHeadMapEntry(
                 partition_digest=second_head.partition_digest,
                 head=second_head,
@@ -359,14 +365,15 @@ def test_transition_replay_refuses_true_published_root_fork_typed(tmp_path: Path
         note=None,
     )
     full_chain = store._validated_chain(store._load_pointer().root_digest)
-    first_root, first_map = full_chain[1]
+    first_root = full_chain.roots[1]
+    first_delta = store._load_map(first_root.partition_map_digest)
     third_event = store._load_object(
         "event",
         third_receipt.event_digest,
         ClaimAttestationEvent,
     )
     assert isinstance(third_event, ClaimAttestationEvent)
-    first_heads = {item.partition_digest: item.head for item in first_map.entries}
+    first_heads = {first_delta.head.partition_digest: first_delta.head}
     first_heads[third_event.partition_digest] = store._partition_head(third_event)
     fork_map = store._head_map(
         tuple(
@@ -397,7 +404,7 @@ def test_unpublished_root_object_is_not_a_historical_read_head(tmp_path: Path) -
         verification_account=_account(attestation),
         note=None,
     )
-    current, node = _current_root_and_map(store)
+    current, node, _entries = _current_root_and_map(store)
     unpublished = store._published_root(
         sequence=current.sequence + 1,
         previous=current.root_digest,
@@ -434,24 +441,24 @@ def test_partition_tip_removes_per_append_full_scan_and_cold_fold_loads_once(
         return original_partition_events(partition_digest)
 
     monkeypatch.setattr(store, "_partition_events", counted_partition_events)
-    accelerator_size_at_100 = 0
+    map_sizes: list[int] = []
     for ordinal in range(300):
-        attestation = _attestation(attested_at=NOW + timedelta(seconds=ordinal))
+        attestation = _attestation(
+            attested_at=NOW + timedelta(seconds=ordinal),
+            # A new Claim every other append: the head map keeps growing.
+            claim_id=f"CLM-{ordinal // 2:032x}",
+        )
         store.append(
             attestation=attestation,
             verification_account=_account(attestation),
             note=None,
         )
-        if ordinal == 99:
-            accelerator_size_at_100 = sum(
-                path.stat().st_size for path in (store.root / "accelerators").glob("*.json")
-            )
+        tip = store._validated_chain(store._load_pointer().root_digest).tip
+        map_sizes.append(store._object_path("map-node", tip.partition_map_digest).stat().st_size)
     assert partition_scans == 0
-    accelerator_files = tuple((store.root / "accelerators").glob("*.json"))
-    accelerator_size_at_300 = sum(path.stat().st_size for path in accelerator_files)
-    assert [path.name for path in accelerator_files] == ["current.json"]
-    assert accelerator_size_at_100 > 0
-    assert accelerator_size_at_300 <= accelerator_size_at_100 * 4
+    # Each append writes one head, however many Claims are attested.
+    assert max(map_sizes) == min(map_sizes)
+    assert not (store.root / "accelerators").exists()
 
     reopened = _store(tmp_path)
     payload_loads = 0
@@ -467,18 +474,6 @@ def test_partition_tip_removes_per_append_full_scan_and_cold_fold_loads_once(
     assert payload_loads == 300
     assert len(reopened.fold_events()) == 300
     assert payload_loads == 300
-
-
-def test_mutable_accelerator_collects_legacy_per_root_cache_files(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    attestation = _attestation()
-    store.append(attestation=attestation, verification_account=_account(attestation), note=None)
-    legacy = store.root / "accelerators" / f"{'9' * 64}.json"
-    legacy.write_bytes(b"rebuildable legacy cache\n")
-
-    store.fold_events()
-
-    assert [path.name for path in (store.root / "accelerators").glob("*.json")] == ["current.json"]
 
 
 def test_corrupt_pointer_with_two_maximal_roots_refuses_recovery_ambiguous(

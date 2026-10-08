@@ -7,6 +7,7 @@ import os
 import stat
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -14,12 +15,11 @@ from pydantic import BaseModel, ValidationError
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
 from cruxible_client.contracts.claim_attestation_store import (
-    ClaimAttestationAccelerator,
     ClaimAttestationEvent,
     ClaimAttestationEventPayload,
+    ClaimAttestationHeadMapDelta,
     ClaimAttestationHeadMapEntry,
     ClaimAttestationHeadMapNode,
-    ClaimAttestationOutstandingMembership,
     ClaimAttestationPartitionGenesis,
     ClaimAttestationPartitionHead,
     ClaimAttestationPublishedPointer,
@@ -27,6 +27,7 @@ from cruxible_client.contracts.claim_attestation_store import (
     ClaimAttestationStoreManifest,
     claim_attestation_event_digest,
     claim_attestation_event_payload_digest,
+    claim_attestation_head_map_delta_digest,
     claim_attestation_head_map_node_digest,
     claim_attestation_partition_digest,
     claim_attestation_partition_genesis_digest,
@@ -131,6 +132,62 @@ def _replace_pointer(path: Path, content: bytes) -> None:
             temp.unlink()
 
 
+@dataclass
+class _Chain:
+    """The replay-validated published chain, extended in place as roots land.
+
+    ``heads`` is the partition-head map at the tip, kept as one dict: a
+    published transition changes one head, so extending the chain by a root
+    costs one head, never a copy of every attested Claim's.
+    """
+
+    roots: list[ClaimAttestationPublishedRoot] = field(default_factory=list)
+    index: dict[str, int] = field(default_factory=dict)
+    heads: dict[str, ClaimAttestationPartitionHead] = field(default_factory=dict)
+    root_by_event: dict[str, ClaimAttestationPublishedRoot] = field(default_factory=dict)
+    #: Each partition's published event digests, in chain order.
+    partition_events: dict[str, list[str]] = field(default_factory=dict)
+
+    @property
+    def tip(self) -> ClaimAttestationPublishedRoot:
+        return self.roots[-1]
+
+    def position(self, event_digest: str) -> int:
+        return self.index[self.root_by_event[event_digest].root_digest]
+
+
+@dataclass
+class _Frontier:
+    """What the threshold and outstanding reducers and idempotency need, at one root.
+
+    Per-process and rebuilt from the replay-validated chain on a cold start;
+    extended by each published event. Never persisted, never authority.
+    """
+
+    root_digest: str
+    #: (partition, basis, principal) -> latest event digest
+    latest: dict[tuple[str, str, str], str] = field(default_factory=dict)
+    #: (partition, principal, statement digest) -> event digest
+    idempotency: dict[tuple[str, str, str], str] = field(default_factory=dict)
+    #: new-capture events citing a Capture: every one stays outstanding
+    outstanding: set[str] = field(default_factory=set)
+
+    def add(self, event: ClaimAttestationEvent, payload: ClaimAttestationEventPayload) -> None:
+        statement = payload.attestation.statement
+        self.latest[
+            (event.partition_digest, statement.attestation_basis, statement.attesting_principal_id)
+        ] = event.event_digest
+        self.idempotency.setdefault(
+            (event.partition_digest, statement.attesting_principal_id, payload.statement_digest),
+            event.event_digest,
+        )
+        if statement.attestation_basis == "new_capture" and statement.cited_capture_digests:
+            self.outstanding.add(event.event_digest)
+
+    def selected(self) -> set[str]:
+        return set(self.latest.values()) | self.outstanding
+
+
 class ClaimAttestationEvidenceStore:
     """One-event published-root transitions with deterministic roll-forward."""
 
@@ -149,13 +206,12 @@ class ClaimAttestationEvidenceStore:
         self.instance_id = instance_id
         self.crash_hook = crash_hook
         self._poisoned = False
-        self._validated_chain_cache: (
-            tuple[tuple[ClaimAttestationPublishedRoot, ClaimAttestationHeadMapNode], ...] | None
-        ) = None
-        self._accelerator_cache: ClaimAttestationAccelerator | None = None
+        self._chain_cache: _Chain | None = None
+        self._frontier: _Frontier | None = None
         self._partition_tips_verified = False
         self._partition_tips: dict[str, ClaimAttestationEvent] = {}
-        self._recorded_root_by_event: dict[str, ClaimAttestationPublishedRoot] = {}
+        self._unpublished_checked = False
+        self._legacy_accelerators_retired = False
         self._root_children_verified = False
         self._root_children: dict[str, str] = {}
         self._event_pair_cache: dict[
@@ -231,7 +287,6 @@ class ClaimAttestationEvidenceStore:
             ):
                 (self.root / "objects" / kind / "sha256").mkdir(parents=True, mode=0o700)
             (self.root / "partitions").mkdir(mode=0o700)
-            (self.root / "accelerators").mkdir(mode=0o700)
         except OSError as exc:
             raise _error("store_corrupt", "attestation store could not be initialized") from exc
         manifest = ClaimAttestationStoreManifest(
@@ -282,6 +337,43 @@ class ClaimAttestationEvidenceStore:
             entries=ordered,
             map_digest=claim_attestation_head_map_node_digest(draft),
         )
+
+    @staticmethod
+    def _head_map_delta(
+        previous_map_digest: str, head: ClaimAttestationPartitionHead
+    ) -> ClaimAttestationHeadMapDelta:
+        draft = ClaimAttestationHeadMapDelta.model_construct(
+            tag="playbill-claim-attestation-head-map-delta-v1",
+            previous_map_digest=previous_map_digest,
+            head=head,
+            map_digest=NULL_DIGEST,
+        )
+        return ClaimAttestationHeadMapDelta(
+            previous_map_digest=previous_map_digest,
+            head=head,
+            map_digest=claim_attestation_head_map_delta_digest(draft),
+        )
+
+    def _load_map(self, digest: str) -> ClaimAttestationHeadMapNode | ClaimAttestationHeadMapDelta:
+        """A full map (stores written before the delta) or one delta transition."""
+
+        path = self._object_path("map-node", digest)
+        if path.is_symlink() or not path.is_file():
+            raise _error("store_corrupt", "attestation map-node object is missing")
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            raise _error("store_corrupt", "attestation map-node object is malformed") from exc
+        model: type[ClaimAttestationHeadMapNode] | type[ClaimAttestationHeadMapDelta] = (
+            ClaimAttestationHeadMapDelta
+            if b'"tag":"playbill-claim-attestation-head-map-delta-v1"' in raw
+            else ClaimAttestationHeadMapNode
+        )
+        value = self._load_object("map-node", digest, model)
+        assert isinstance(value, ClaimAttestationHeadMapNode | ClaimAttestationHeadMapDelta)
+        if value.map_digest != digest:
+            raise _error("store_corrupt", "attestation map-node object is misaddressed")
+        return value
 
     def _published_root(
         self,
@@ -497,83 +589,95 @@ class ClaimAttestationEvidenceStore:
             event.sequence == expected_sequence and event.previous_event_digest == expected_digest
         )
 
-    def _validated_chain(
-        self, root_digest: str
-    ) -> tuple[tuple[ClaimAttestationPublishedRoot, ClaimAttestationHeadMapNode], ...]:
-        if (
-            self._validated_chain_cache is not None
-            and self._validated_chain_cache[-1][0].root_digest == root_digest
-        ):
-            return self._validated_chain_cache
-        reversed_chain: list[ClaimAttestationPublishedRoot] = []
+    def _validated_chain(self, root_digest: str) -> _Chain:
+        """The chain ending at ``root_digest``, replay-validated.
+
+        The validated chain is kept and extended: a root that descends from its
+        tip validates only the roots after it, each one map transition (one
+        head for a delta, the whole map for a store written before deltas).
+        Anything else (a cold start, a root off another branch) validates from
+        genesis.
+        """
+
+        cache = self._chain_cache
+        if cache is not None and cache.tip.root_digest == root_digest:
+            return cache
+        pending: list[ClaimAttestationPublishedRoot] = []
         seen: set[str] = set()
-        current = root_digest
-        while current not in seen:
+        current: str | None = root_digest
+        while current is not None and (cache is None or current not in cache.index):
+            if current in seen:
+                raise _error("store_corrupt", "attestation published-root chain forks or cycles")
             seen.add(current)
             root = self._load_object("published-root", current, ClaimAttestationPublishedRoot)
             assert isinstance(root, ClaimAttestationPublishedRoot)
-            reversed_chain.append(root)
-            if root.previous_published_root_digest is None:
-                break
+            pending.append(root)
             current = root.previous_published_root_digest
+        pending.reverse()
+        if cache is not None and current is not None and current == cache.tip.root_digest:
+            chain = cache
         else:
-            raise _error("store_corrupt", "attestation published-root chain forks or cycles")
-        chain = tuple(reversed(reversed_chain))
-        if not chain or chain[0].sequence != 0:
-            raise _error("store_corrupt", "attestation published-root chain lacks genesis")
-        loaded: list[tuple[ClaimAttestationPublishedRoot, ClaimAttestationHeadMapNode]] = []
-        prior_map: dict[str, ClaimAttestationPartitionHead] = {}
-        published_events: set[str] = set()
-        recorded_roots: dict[str, ClaimAttestationPublishedRoot] = {}
-        for index, root in enumerate(chain):
-            if root.instance_id != self.instance_id or root.sequence != index:
-                raise _error("store_corrupt", "attestation published-root sequence is broken")
-            if index and root.previous_published_root_digest != chain[index - 1].root_digest:
-                raise _error("store_corrupt", "attestation published-root predecessor differs")
-            node = self._load_object(
-                "map-node", root.partition_map_digest, ClaimAttestationHeadMapNode
-            )
-            assert isinstance(node, ClaimAttestationHeadMapNode)
-            current_map = {item.partition_digest: item.head for item in node.entries}
-            if index == 0:
-                if root.event_digest is not None or current_map:
-                    raise _error("store_corrupt", "attestation genesis is not empty")
-            else:
-                assert root.event_digest is not None
-                if root.event_digest in published_events:
-                    raise _error("store_corrupt", "published attestation event is repeated")
-                published_event = self._load_object(
-                    "event", root.event_digest, ClaimAttestationEvent
+            if cache is not None and current is not None:
+                pending = [*cache.roots[: cache.index[current] + 1], *pending]
+            chain = _Chain()
+            if not pending or pending[0].sequence != 0:
+                raise _error("store_corrupt", "attestation published-root chain lacks genesis")
+        self._chain_cache = None
+        for root in pending:
+            self._extend_chain(chain, root)
+        self._chain_cache = chain
+        return chain
+
+    def _extend_chain(self, chain: _Chain, root: ClaimAttestationPublishedRoot) -> None:
+        index = len(chain.roots)
+        if root.instance_id != self.instance_id or root.sequence != index:
+            raise _error("store_corrupt", "attestation published-root sequence is broken")
+        if index and root.previous_published_root_digest != chain.tip.root_digest:
+            raise _error("store_corrupt", "attestation published-root predecessor differs")
+        node = self._load_map(root.partition_map_digest)
+        if index == 0:
+            if (
+                root.event_digest is not None
+                or not isinstance(node, ClaimAttestationHeadMapNode)
+                or node.entries
+            ):
+                raise _error("store_corrupt", "attestation genesis is not empty")
+        else:
+            assert root.event_digest is not None
+            if root.event_digest in chain.root_by_event:
+                raise _error("store_corrupt", "published attestation event is repeated")
+            event = self._load_object("event", root.event_digest, ClaimAttestationEvent)
+            assert isinstance(event, ClaimAttestationEvent)
+            marker = self._load_marker(self._chain_marker_path(event))
+            if marker != event:
+                raise _error("store_corrupt", "attestation event object and marker differ")
+            if event.instance_id != self.instance_id or not self._event_extends_map(
+                event, chain.heads
+            ):
+                raise _error(
+                    "store_corrupt",
+                    "published attestation event does not extend its partition head",
                 )
-                assert isinstance(published_event, ClaimAttestationEvent)
-                marker = self._load_marker(self._chain_marker_path(published_event))
-                if marker != published_event:
-                    raise _error("store_corrupt", "attestation event object and marker differ")
-                if published_event.instance_id != self.instance_id or not self._event_extends_map(
-                    published_event, prior_map
-                ):
-                    raise _error(
-                        "store_corrupt",
-                        "published attestation event does not extend its partition head",
-                    )
-                expected = dict(prior_map)
-                expected[published_event.partition_digest] = self._partition_head(published_event)
-                if current_map != expected:
+            head = self._partition_head(event)
+            if isinstance(node, ClaimAttestationHeadMapDelta):
+                if node.previous_map_digest != chain.tip.partition_map_digest or node.head != head:
                     raise _error("store_corrupt", "attestation published map transition differs")
-                published_events.add(root.event_digest)
-                recorded_roots[root.event_digest] = root
-            loaded.append((root, node))
-            prior_map = current_map
-        result = tuple(loaded)
-        self._validated_chain_cache = result
-        self._recorded_root_by_event = recorded_roots
-        return result
+            else:
+                expected = dict(chain.heads)
+                expected[event.partition_digest] = head
+                if {item.partition_digest: item.head for item in node.entries} != expected:
+                    raise _error("store_corrupt", "attestation published map transition differs")
+            chain.heads[event.partition_digest] = head
+            chain.root_by_event[event.event_digest] = root
+            chain.partition_events.setdefault(event.partition_digest, []).append(event.event_digest)
+        chain.roots.append(root)
+        chain.index[root.root_digest] = index
 
     def _recover_unpublished(self) -> None:
         self._ensure_partition_tips()
         pointer = self._load_pointer()
         chain = self._validated_chain(pointer.root_digest)
-        published_map = {item.partition_digest: item.head for item in chain[-1][1].entries}
+        published_map = chain.heads
         if not set(published_map).issubset(self._partition_tips):
             raise _error("store_corrupt", "published attestation partition has no durable tip")
         eligible: list[ClaimAttestationEvent] = []
@@ -590,7 +694,7 @@ class ClaimAttestationEvidenceStore:
         if len(eligible) > 1:
             raise _error("store_corrupt", "more than one unpublished attestation event exists")
         if eligible:
-            self._publish_event(eligible[0], previous_root=chain[-1][0], crash=False)
+            self._publish_event(eligible[0], previous_root=chain.tip, crash=False)
 
     def recover(self) -> None:
         with self._locked():
@@ -600,11 +704,13 @@ class ClaimAttestationEvidenceStore:
             self._load_manifest()
             self._partition_tips_verified = False
             self._partition_tips = {}
+            self._unpublished_checked = False
             self._root_children_verified = False
             self._root_children = {}
             self._load_pointer()
             self._ensure_root_children()
             self._recover_unpublished()
+            self._unpublished_checked = True
             self._poisoned = False
 
     def _ready(self) -> ClaimAttestationPublishedRoot:
@@ -618,197 +724,85 @@ class ClaimAttestationEvidenceStore:
         # recovery_ambiguous classification.
         self._load_pointer()
         self._ensure_root_children()
-        self._recover_unpublished()
+        if not self._unpublished_checked:
+            # Every durable partition tip is compared with the published map once
+            # per process (and again after `recover`): an event this process
+            # appends is published before `append` returns, and one that is not
+            # poisons the store until recovery.
+            self._recover_unpublished()
+            self._unpublished_checked = True
         pointer = self._load_pointer()
         chain = self._validated_chain(pointer.root_digest)
-        current = chain[-1][0]
-        self._verified_accelerator(chain)
-        return current
+        self._retire_legacy_accelerators()
+        self._current_frontier(chain)
+        return chain.tip
 
-    def _accelerator_path(self, root_digest: str) -> Path:
-        Sha256Value.from_tagged(root_digest)
-        return self.root / "accelerators" / "current.json"
+    def _retire_legacy_accelerators(self) -> None:
+        """Remove the accelerator files stores used to keep; idempotent, any crash point.
 
-    def _compact_accelerators(self, current: Path) -> None:
-        """Collect legacy per-root caches; accelerator bytes are never authority."""
+        They were rebuildable caches, verified against a full recomputation on
+        every cold read and rewritten whole on every append. The reducer
+        frontier now lives in process only, so the files are collected once.
+        """
 
+        if self._legacy_accelerators_retired:
+            return
         directory = self.root / "accelerators"
-        removed = False
-        for path in directory.glob("*.json"):
-            if path == current:
-                continue
+        if directory.is_symlink():
+            raise _error("store_corrupt", "stale attestation cache path is not trustworthy")
+        if directory.is_dir():
             try:
-                path.unlink()
+                for path in directory.iterdir():
+                    path.unlink()
+                directory.rmdir()
             except OSError as exc:
                 raise _error(
                     "store_corrupt", "stale attestation cache could not be collected"
                 ) from exc
-            removed = True
-        if removed:
-            _fsync_directory(directory)
+            _fsync_directory(self.root)
+        self._legacy_accelerators_retired = True
 
-    def _event_pairs_for_chain(
-        self,
-        chain: tuple[tuple[ClaimAttestationPublishedRoot, ClaimAttestationHeadMapNode], ...],
-    ) -> tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...]:
-        pairs: list[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]] = []
-        for root, _node in chain[1:]:
-            assert root.event_digest is not None
-            event = self._load_object("event", root.event_digest, ClaimAttestationEvent)
+    def _event_pair(
+        self, event_digest: str
+    ) -> tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]:
+        """One published event and its payload, verified against its marker once."""
+
+        pair = self._event_pair_cache.get(event_digest)
+        if pair is None:
+            event = self._load_object("event", event_digest, ClaimAttestationEvent)
             assert isinstance(event, ClaimAttestationEvent)
             marker = self._load_marker(self._chain_marker_path(event))
             if marker != event:
                 raise _error("store_corrupt", "attestation event object and marker differ")
             pair = (event, self._payload_for_event(event))
-            self._event_pair_cache[event.event_digest] = pair
-            pairs.append(pair)
-        return tuple(pairs)
+            self._event_pair_cache[event_digest] = pair
+        return pair
 
-    @staticmethod
-    def _build_accelerator(
-        root_digest: str,
-        pairs: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...],
-    ) -> ClaimAttestationAccelerator:
-        latest: dict[tuple[str, str, str], tuple[int, str]] = {}
-        idempotency: list[tuple[str, str, str, str]] = []
-        memberships: list[ClaimAttestationOutstandingMembership] = []
-        for event, payload in pairs:
-            statement = payload.attestation.statement
-            latest_key = (
-                event.partition_digest,
-                statement.attestation_basis,
-                statement.attesting_principal_id,
-            )
-            previous = latest.get(latest_key)
-            if previous is None or event.sequence > previous[0]:
-                latest[latest_key] = (event.sequence, event.event_digest)
-            idempotency.append(
-                (
-                    event.partition_digest,
-                    statement.attesting_principal_id,
-                    payload.statement_digest,
-                    event.event_digest,
-                )
-            )
-            if statement.attestation_basis == "new_capture":
-                memberships.extend(
-                    ClaimAttestationOutstandingMembership(
-                        claim_identity=statement.claim_identity,
-                        capture_digest=capture_digest,
-                        event_digest=event.event_digest,
-                    )
-                    for capture_digest in statement.cited_capture_digests
-                )
-        return ClaimAttestationAccelerator(
-            at_published_root_digest=root_digest,
-            latest_event_by_principal=tuple(
-                sorted((*key, value[1]) for key, value in latest.items())
-            ),
-            idempotency_entries=tuple(sorted(idempotency)),
-            outstanding_memberships=tuple(
-                sorted(
-                    memberships,
-                    key=lambda item: (
-                        item.claim_identity.qualified.encode("utf-8"),
-                        item.capture_digest.encode("ascii"),
-                        item.event_digest.encode("ascii"),
-                    ),
-                )
-            ),
-        )
+    def _frontier_through(self, chain: _Chain, position: int) -> _Frontier:
+        """The reducer frontier at the root at ``position``, folded from genesis."""
 
-    def _verified_accelerator(
-        self,
-        chain: tuple[tuple[ClaimAttestationPublishedRoot, ClaimAttestationHeadMapNode], ...],
-    ) -> ClaimAttestationAccelerator:
-        root_digest = chain[-1][0].root_digest
-        path = self._accelerator_path(root_digest)
-        self._compact_accelerators(path)
-        if (
-            self._accelerator_cache is not None
-            and self._accelerator_cache.at_published_root_digest == root_digest
-        ):
-            try:
-                if (
-                    not path.is_symlink()
-                    and path.is_file()
-                    and path.read_bytes() == _render(self._accelerator_cache)
-                ):
-                    return self._accelerator_cache
-            except OSError:
-                pass
-        pairs = self._event_pairs_for_chain(chain)
-        expected = self._build_accelerator(root_digest, pairs)
-        actual: ClaimAttestationAccelerator | None = None
-        if path.is_file() and not path.is_symlink():
-            try:
-                raw = path.read_bytes()
-                parsed = ClaimAttestationAccelerator.model_validate_json(raw)
-                if raw == _render(parsed):
-                    actual = parsed
-            except (OSError, ValidationError, ValueError):
-                actual = None
-        if actual != expected:
-            _replace_pointer(path, _render(expected))
-        self._accelerator_cache = expected
-        return expected
+        frontier = _Frontier(root_digest=chain.roots[position].root_digest)
+        for root in chain.roots[1 : position + 1]:
+            assert root.event_digest is not None
+            frontier.add(*self._event_pair(root.event_digest))
+        return frontier
 
-    @staticmethod
-    def _extend_accelerator(
-        previous: ClaimAttestationAccelerator,
-        *,
-        root_digest: str,
-        event: ClaimAttestationEvent,
-        payload: ClaimAttestationEventPayload,
-    ) -> ClaimAttestationAccelerator:
-        statement = payload.attestation.statement
-        latest = {
-            (partition, basis, principal): digest
-            for partition, basis, principal, digest in previous.latest_event_by_principal
-        }
-        latest[
-            (
-                event.partition_digest,
-                statement.attestation_basis,
-                statement.attesting_principal_id,
-            )
-        ] = event.event_digest
-        idempotency = set(previous.idempotency_entries)
-        idempotency.add(
-            (
-                event.partition_digest,
-                statement.attesting_principal_id,
-                payload.statement_digest,
-                event.event_digest,
-            )
-        )
-        memberships = list(previous.outstanding_memberships)
-        if statement.attestation_basis == "new_capture":
-            memberships.extend(
-                ClaimAttestationOutstandingMembership(
-                    claim_identity=statement.claim_identity,
-                    capture_digest=capture_digest,
-                    event_digest=event.event_digest,
-                )
-                for capture_digest in statement.cited_capture_digests
-            )
-        return ClaimAttestationAccelerator(
-            at_published_root_digest=root_digest,
-            latest_event_by_principal=tuple(
-                sorted((*key, digest) for key, digest in latest.items())
-            ),
-            idempotency_entries=tuple(sorted(idempotency)),
-            outstanding_memberships=tuple(
-                sorted(
-                    memberships,
-                    key=lambda item: (
-                        item.claim_identity.qualified.encode("utf-8"),
-                        item.capture_digest.encode("ascii"),
-                        item.event_digest.encode("ascii"),
-                    ),
-                )
-            ),
-        )
+    def _current_frontier(self, chain: _Chain) -> _Frontier:
+        """The frontier at the chain tip: extended from the kept one when it is an ancestor."""
+
+        frontier = self._frontier
+        if frontier is not None and frontier.root_digest == chain.tip.root_digest:
+            return frontier
+        start = None if frontier is None else chain.index.get(frontier.root_digest)
+        if frontier is None or start is None:
+            frontier = self._frontier_through(chain, len(chain.roots) - 1)
+        else:
+            for root in chain.roots[start + 1 :]:
+                assert root.event_digest is not None
+                frontier.add(*self._event_pair(root.event_digest))
+            frontier.root_digest = chain.tip.root_digest
+        self._frontier = frontier
+        return frontier
 
     def _publish_event(
         self,
@@ -818,20 +812,14 @@ class ClaimAttestationEvidenceStore:
         crash: bool,
     ) -> ClaimAttestationPublishedRoot:
         chain = self._validated_chain(previous_root.root_digest)
-        previous_map = chain[-1][1]
-        heads = {item.partition_digest: item.head for item in previous_map.entries}
-        if event.instance_id != self.instance_id or not self._event_extends_map(event, heads):
+        if event.instance_id != self.instance_id or not self._event_extends_map(event, chain.heads):
             raise _error(
                 "store_corrupt",
                 "attestation event does not extend the published partition head",
             )
-        heads[event.partition_digest] = self._partition_head(event)
-        node = self._head_map(
-            tuple(
-                ClaimAttestationHeadMapEntry(partition_digest=key, head=value)
-                for key, value in heads.items()
-            )
-        )
+        head = self._partition_head(event)
+        # One head and the map it extends: never a restatement of every head.
+        node = self._head_map_delta(previous_root.partition_map_digest, head)
         self._write_object("map-node", node.map_digest, node)
         root = self._published_root(
             sequence=previous_root.sequence + 1,
@@ -850,24 +838,15 @@ class ClaimAttestationEvidenceStore:
             self.root / "published.json",
             _render(ClaimAttestationPublishedPointer(root_digest=root.root_digest)),
         )
-        new_chain = (*chain, (root, node))
-        self._validated_chain_cache = new_chain
-        self._recorded_root_by_event[event.event_digest] = root
-        if (
-            self._accelerator_cache is not None
-            and self._accelerator_cache.at_published_root_digest == previous_root.root_digest
-        ):
-            payload = self._payload_for_event(event)
-            self._accelerator_cache = self._extend_accelerator(
-                self._accelerator_cache,
-                root_digest=root.root_digest,
-                event=event,
-                payload=payload,
-            )
-            _replace_pointer(
-                self._accelerator_path(root.root_digest),
-                _render(self._accelerator_cache),
-            )
+        # The transition was built from the validated tip: extend it in place.
+        chain.heads[event.partition_digest] = head
+        chain.root_by_event[event.event_digest] = root
+        chain.partition_events.setdefault(event.partition_digest, []).append(event.event_digest)
+        chain.roots.append(root)
+        chain.index[root.root_digest] = root.sequence
+        if self._frontier is not None and self._frontier.root_digest == previous_root.root_digest:
+            self._frontier.add(event, self._payload_for_event(event))
+            self._frontier.root_digest = root.root_digest
         if crash:
             self._crash("after_step4")
         return root
@@ -894,18 +873,9 @@ class ClaimAttestationEvidenceStore:
                 initialized_at=verification_account.recorded_at,
             )
             current_root = self._ready()
-            assert self._accelerator_cache is not None
-            duplicate_digest = next(
-                (
-                    event_digest
-                    for partition, principal, digest, event_digest in (
-                        self._accelerator_cache.idempotency_entries
-                    )
-                    if partition == partition_digest
-                    and principal == statement.attesting_principal_id
-                    and digest == statement_digest
-                ),
-                None,
+            assert self._frontier is not None
+            duplicate_digest = self._frontier.idempotency.get(
+                (partition_digest, statement.attesting_principal_id, statement_digest)
             )
             if duplicate_digest is not None:
                 event = self._load_object("event", duplicate_digest, ClaimAttestationEvent)
@@ -918,16 +888,8 @@ class ClaimAttestationEvidenceStore:
                     )
                 recorded = self._root_for_event(event.event_digest)
                 return self._result(event, payload, recorded, current_root)
-            assert self._validated_chain_cache is not None
-            current_map = self._validated_chain_cache[-1][1]
-            partition_head = next(
-                (
-                    item.head
-                    for item in current_map.entries
-                    if item.partition_digest == partition_digest
-                ),
-                None,
-            )
+            assert self._chain_cache is not None
+            partition_head = self._chain_cache.heads.get(partition_digest)
             previous = (
                 claim_attestation_partition_genesis_digest(partition_digest)
                 if partition_head is None
@@ -1016,18 +978,9 @@ class ClaimAttestationEvidenceStore:
                 return None
             self._load_manifest()
             current_root = self._ready()
-            assert self._accelerator_cache is not None
-            event_digest = next(
-                (
-                    candidate
-                    for partition, principal, digest, candidate in (
-                        self._accelerator_cache.idempotency_entries
-                    )
-                    if partition == partition_digest
-                    and principal == statement.attesting_principal_id
-                    and digest == statement_digest
-                ),
-                None,
+            assert self._frontier is not None
+            event_digest = self._frontier.idempotency.get(
+                (partition_digest, statement.attesting_principal_id, statement_digest)
             )
             if event_digest is not None:
                 event = self._load_object("event", event_digest, ClaimAttestationEvent)
@@ -1055,8 +1008,9 @@ class ClaimAttestationEvidenceStore:
         return value
 
     def _root_for_event(self, event_digest: str) -> ClaimAttestationPublishedRoot:
-        self._validated_chain(self._load_pointer().root_digest)
-        match = self._recorded_root_by_event.get(event_digest)
+        match = self._validated_chain(self._load_pointer().root_digest).root_by_event.get(
+            event_digest
+        )
         if match is None:
             raise _error("store_corrupt", "attestation event has no unique recorded head")
         return match
@@ -1089,8 +1043,14 @@ class ClaimAttestationEvidenceStore:
             return self._ready().root_digest
 
     def events(
-        self, *, at_head: str | None = None
+        self, *, at_head: str | None = None, partition_digest: str | None = None
     ) -> tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...]:
+        """Every published event through ``at_head`` (the current head by default).
+
+        ``partition_digest`` keeps one Claim version's events: read from that
+        partition's own list, never by walking every event in the store.
+        """
+
         with self._locked():
             if not self.root.exists():
                 if at_head is not None and at_head != self._empty_root().root_digest:
@@ -1098,27 +1058,22 @@ class ClaimAttestationEvidenceStore:
                 return ()
             self._load_manifest()
             current = self._ready()
-            target = at_head or current.root_digest
             chain = self._validated_chain(current.root_digest)
-            target_indexes = tuple(
-                index for index, (root, _node) in enumerate(chain) if root.root_digest == target
-            )
-            if len(target_indexes) != 1:
+            position = chain.index.get(at_head or current.root_digest)
+            if position is None:
                 raise _error(
                     "attestation_head_unknown",
                     "attestation head is not a replay-valid ancestor",
                 )
-            roots = chain[1 : target_indexes[0] + 1]
-            loaded: list[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]] = []
-            for root, _node in roots:
-                assert root.event_digest is not None
-                event = self._load_object("event", root.event_digest, ClaimAttestationEvent)
-                assert isinstance(event, ClaimAttestationEvent)
-                marker = self._load_marker(self._chain_marker_path(event))
-                if marker != event:
-                    raise _error("store_corrupt", "attestation event object and marker differ")
-                loaded.append((event, self._payload_for_event(event)))
-            return tuple(loaded)
+            if partition_digest is None:
+                digests = [root.event_digest for root in chain.roots[1 : position + 1]]
+            else:
+                digests = [
+                    digest
+                    for digest in chain.partition_events.get(partition_digest, ())
+                    if chain.position(digest) <= position
+                ]
+            return tuple(self._event_pair(digest) for digest in digests if digest is not None)
 
     def fold_events(
         self, *, at_head: str | None = None
@@ -1133,35 +1088,20 @@ class ClaimAttestationEvidenceStore:
             self._load_manifest()
             current = self._ready()
             chain = self._validated_chain(current.root_digest)
-            target_indexes = tuple(
-                index for index, (root, _node) in enumerate(chain) if root.root_digest == at_head
-            )
-            if at_head is None:
-                target_chain = chain
-            elif len(target_indexes) == 1:
-                target_chain = chain[: target_indexes[0] + 1]
-            else:
+            position = chain.index.get(at_head or current.root_digest)
+            if position is None:
                 raise _error(
                     "attestation_head_unknown",
                     "attestation head is not a replay-valid ancestor",
                 )
-            accelerator = self._verified_accelerator(target_chain)
-            selected = {entry[3] for entry in accelerator.latest_event_by_principal} | {
-                entry.event_digest for entry in accelerator.outstanding_memberships
-            }
-            ordered: list[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]] = []
-            for root, _node in target_chain[1:]:
-                assert root.event_digest is not None
-                if root.event_digest not in selected:
-                    continue
-                pair = self._event_pair_cache.get(root.event_digest)
-                if pair is None:
-                    event = self._load_object("event", root.event_digest, ClaimAttestationEvent)
-                    assert isinstance(event, ClaimAttestationEvent)
-                    pair = (event, self._payload_for_event(event))
-                    self._event_pair_cache[root.event_digest] = pair
-                ordered.append(pair)
-            return tuple(ordered)
+            frontier = (
+                self._current_frontier(chain)
+                if position == len(chain.roots) - 1
+                # A historical head folds its own prefix: a read of the past.
+                else self._frontier_through(chain, position)
+            )
+            selected = sorted(frontier.selected(), key=chain.position)
+            return tuple(self._event_pair(digest) for digest in selected)
 
 
 __all__ = [

@@ -37,7 +37,10 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidence
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
-from cruxible_client.contracts.claim_attestation_store import ClaimAttestationEventPayload
+from cruxible_client.contracts.claim_attestation_store import (
+    ClaimAttestationEventPayload,
+    claim_attestation_partition_digest,
+)
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV1, claim_verdict_v1_compat
 from cruxible_client.contracts.claims import (
@@ -817,11 +820,19 @@ def _evaluate_claim_attestation(
     )
     store = instance.claim_attestation_evidence_store()
     attestation_head = store.head()
+    artifact_digest = claim_artifact_digest(claim).tagged
     # The COMPLETE event history up to the head, not the fold: the fold keeps
     # each principal's latest word only, and the word that stood at an earlier
-    # observation instant may be exactly the one it dropped.
-    door_events = store.events(at_head=attestation_head)
-    artifact_digest = claim_artifact_digest(claim).tagged
+    # observation instant may be exactly the one it dropped. Only this Claim
+    # version's partition is read, never every attested Claim's.
+    door_events = store.events(
+        at_head=attestation_head,
+        partition_digest=claim_attestation_partition_digest(
+            instance_id=instance.descriptor.instance_id,
+            claim_identity=claim.identity,
+            claim_artifact_digest=artifact_digest,
+        ),
+    )
     # Temporal selection, in this order: (1) only events that had OCCURRED by
     # the observation instant -- a later word cannot erase the word that
     # stood; (2) the latest such event per principal is that principal's
