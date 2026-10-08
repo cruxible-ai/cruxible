@@ -394,8 +394,8 @@ contract and every retained matching Capture. It reads each bound window's
 resolution journal initially and whenever a settlement or overturn lands there.
 It stores whether an answer exists; reads decide whether an unanswered window
 has closed at the request's evaluation time. Unbindable anchors are retried on
-`prediction.anchor_retry` events (hourly by default) only: a new landing cannot
-restore an anchor's own record or payload. A retired or revised contract withdraws its
+`prediction.anchor_retry` events (hourly by default), and an anchor whose
+payload body is missing is retried when a new landing stores those same bytes. A retired or revised contract withdraws its
 windows. `CRUXIBLE_DISABLED_CONSUMERS=next` turns off the whole findings worker.
 Unknown names, including the former `evidence` and `prediction` names, refuse
 the setting. Enabled Lines remain a separate governed consumer.
@@ -2315,7 +2315,8 @@ last check:
 - `prediction_window_unbindable` names a ResolutionContract with a matching
   anchor Capture whose retained material no longer binds a window, with the
   refusal `code`. Restore the material, and the worker binds the window on its
-  next `prediction.anchor_retry` event; or retire the contract.
+  next `prediction.anchor_retry` event (or at once, when a landing stores the
+  missing payload body); or retire the contract.
 - `consumer_stalled` names a consumer that stopped by itself or stopped
   keeping up, with its kind in `detail.kind` and the kind's own repair.
 

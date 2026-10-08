@@ -130,8 +130,13 @@ def overturn(instance, result) -> None:  # type: ignore[no-untyped-def]
     )
 
 
-def land(instance, *, at: datetime, run: str) -> TriggerEventReference:  # type: ignore[no-untyped-def]
-    """One produced Capture landing whose contract the event selector names."""
+def land(  # type: ignore[no-untyped-def]
+    instance, *, at: datetime, run: str, observed_at: str = "2000-01-01T00:00:00Z"
+) -> TriggerEventReference:
+    """One produced Capture landing whose contract the event selector names.
+
+    Landings with the same ``observed_at`` store byte-identical payloads.
+    """
 
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
     from cruxible_core.exhaust.writer import ProcedureExhaustWriter
@@ -163,7 +168,7 @@ def land(instance, *, at: datetime, run: str) -> TriggerEventReference:  # type:
         payload={
             "tag": "playbill-procedure-produced-capture-v1",
             "capture_contract_digest": SELECTOR.capture_contract_digest,
-            "observed_at": "2000-01-01T00:00:00Z",
+            "observed_at": observed_at,
         },
     )
     return TriggerEventReference(
@@ -647,15 +652,7 @@ def test_state_an_earlier_version_wrote_is_rebuilt_with_exact_counts(tmp_path: P
         assert connection.execute("SELECT count(*) FROM windows").fetchone() == (1,)
 
 
-def test_capture_landings_never_requeue_unbindable_anchors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A landing cannot restore an anchor's own record or payload: only the Trigger retries."""
-
-    instance, event, restore = unbindable_world(tmp_path)
-    drain(instance, now=served.PREDICTED_AT)
-    assert len(unbindable_anchors(instance)) == 1
-    restore()
+def _counting_binds(monkeypatch: pytest.MonkeyPatch, event):  # type: ignore[no-untyped-def]
     bind = predictions._bind
     retried: list[object] = []
 
@@ -665,18 +662,51 @@ def test_capture_landings_never_requeue_unbindable_anchors(
         return bind(instance_arg, contract, anchor)
 
     monkeypatch.setattr(predictions, "_bind", counted)
-    for minute in (2, 3):
-        land(instance, at=served.PREDICTED_AT + timedelta(minutes=minute), run=f"new-{minute}")
-        drain(instance, now=served.PREDICTED_AT)
-    assert retried == [] and len(unbindable_anchors(instance)) == 1
-    # The anchor-retry Trigger is the one log that requeues it.
-    fire_internal_triggers(instance, now=served.PREDICTED_AT + timedelta(hours=1))
-    drain(instance, now=served.PREDICTED_AT + timedelta(hours=1))
+    return retried
+
+
+def test_a_landing_that_stores_the_missing_body_binds_the_anchor_without_a_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Payloads are content addressed: another run's landing can store the very body."""
+
+    instance, event, _restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    assert len(unbindable_anchors(instance)) == 1
+    retried = _counting_binds(monkeypatch, event)
+    land(instance, at=served.PREDICTED_AT + timedelta(minutes=2), run="new")
+    # The matching pass sees log positions, even with an earlier worker timestamp.
+    drain(instance, now=served.PREDICTED_AT - timedelta(days=1))
     assert retried == [event] and unbindable_anchors(instance) == ()
     assert event in [
         item.window.event
         for item in settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1))
     ]
+
+
+def test_landings_of_other_bodies_never_requeue_unbindable_anchors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a landing that stores an anchor's missing body retries it; others cost nothing."""
+
+    instance, event, restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    assert len(unbindable_anchors(instance)) == 1
+    restore()  # restored out of band: no landing names this body
+    retried = _counting_binds(monkeypatch, event)
+    for minute in (2, 3):
+        land(
+            instance,
+            at=served.PREDICTED_AT + timedelta(minutes=minute),
+            run=f"new-{minute}",
+            observed_at=f"2000-01-0{minute}T00:00:00Z",
+        )
+        drain(instance, now=served.PREDICTED_AT)
+    assert retried == [] and len(unbindable_anchors(instance)) == 1
+    # The anchor-retry Trigger requeues every unbindable anchor.
+    fire_internal_triggers(instance, now=served.PREDICTED_AT + timedelta(hours=1))
+    drain(instance, now=served.PREDICTED_AT + timedelta(hours=1))
+    assert retried == [event] and unbindable_anchors(instance) == ()
 
 
 def test_retry_health_reports_unprocessed_events_and_backlog(

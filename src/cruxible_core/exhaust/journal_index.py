@@ -584,6 +584,27 @@ class JournalIndex:
         row = (0 if admitted is None else admitted[0], running[0])
         return int(row[0]), int(row[1])
 
+    def payload_digests(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        event_kind: str,
+        after: int,
+        through: int,
+    ) -> tuple[str, ...]:
+        """The payload digests of one kind's records in one live-reader range, by position."""
+
+        with self.connection() as conn:
+            return tuple(
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT payload_digest FROM records "
+                    "INDEXED BY records_kind_position "
+                    "WHERE stream=? AND event_kind=? AND id>? AND id<=?",
+                    (_key(stream), event_kind, after, through),
+                )
+            )
+
     def positions(
         self, stream: JournalStreamIdentityV1, *, event_kind: str | None = None
     ) -> dict[str, Any]:
