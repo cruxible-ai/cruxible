@@ -403,6 +403,25 @@ def test_a_settle_terminal_capped_at_propose_proposes_for_the_cap(
     assert submission.mandate_digest == egress.procedure_mandate_digest
 
 
+def test_a_tier_lifted_settle_with_only_a_propose_grant_proposes_for_the_grant(
+    tmp_path: Path,
+) -> None:
+    """The caller's tier reaches settle, but no mandate grants it: the grant caps it."""
+
+    instance, root, line = settle_world(tmp_path, mandates=0, propose_mandate=True)
+    base = instance.accepted_coordinate()
+
+    state = run_settle(instance, root, line, caller_rung=3)
+
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "proposed")
+    assert egress.effective_authority == "settle"
+    assert egress.fallback_reason == "cruxible.settle.authority_capped_by_mandate_grant"
+    assert egress.proposal_id is not None and egress.accepted_git_oid is None
+    assert instance.accepted_coordinate() == base
+
+
 def test_an_observe_capped_settle_terminal_is_still_refused(tmp_path: Path) -> None:
     instance, root, line = settle_world(tmp_path, max_authority="observe")
     base = instance.accepted_coordinate()

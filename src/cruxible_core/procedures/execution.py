@@ -170,6 +170,7 @@ from cruxible_core.procedures.egress import (
     EffectiveRungTermV1,
     EffectiveRungV1,
     PreparedTerminalEgressV1,
+    SettleGrantHolderProtocol,
     TerminalAuthorityRefusal,
     TerminalEgressError,
     TerminalEgressItemV1,
@@ -4380,6 +4381,14 @@ class ProcedureExecutor:
                     f"{rung.term(rung.limiting_term).reason}",
                     node_id=node.node_id,
                 )
+        elif (
+            isinstance(node, SettleChangeSetNode)
+            and isinstance(self.egress_sink, SettleGrantHolderProtocol)
+            and not self.egress_sink.grants_settle()
+        ):
+            # A caller's tier lifted the mandate term to settle, but no live
+            # mandate grants settling: the grant caps it at propose.
+            capped_by = "mandate_grant"
         try:
             request, prepared = self._terminal_egress_request(
                 node,

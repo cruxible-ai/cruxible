@@ -59,7 +59,6 @@ from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateInvocation,
     evaluate_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.models import TERMINAL_REQUIRED_RUNGS
 from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureClaimProposalItem,
     ProcedureClaimProposalItemV1,
@@ -365,7 +364,7 @@ def select_procedure_mandate(
             ProcedureMandateInvocation(
                 procedure_identity=authority.target,
                 procedure_artifact_digest=authority.artifact_digest,
-                requested_rung=TERMINAL_REQUIRED_RUNGS[request.kind],  # type: ignore[arg-type]
+                requested_rung=request.required_rung,  # type: ignore[arg-type]
                 requested_authority=admission.hard_caps,
                 target_paths=target_paths,
                 evaluation_time=evaluation_time,
@@ -453,6 +452,14 @@ class ProposalTerminalEgressSink:
         self.accepted_mandates = dict(accepted_mandates)
         self._proposal_service = proposal_service or instance.proposal_service
         self._prepared: dict[tuple[str, str], PreparedProposal] = {}
+
+    def grants_settle(self) -> bool:
+        """Whether any live mandate this sink holds grants settle."""
+
+        return any(
+            isinstance(mandate, ProcedureMandate) and mandate.grants == "settle"
+            for mandate in self.accepted_mandates.values()
+        )
 
     # -- preparation --------------------------------------------------------
 

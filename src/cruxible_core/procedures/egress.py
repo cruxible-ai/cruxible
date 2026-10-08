@@ -623,10 +623,13 @@ def _requested_rung(request: TerminalEgressRequestV1) -> int:
 
     if request.capped_by is None:
         return TERMINAL_REQUIRED_RUNGS[request.kind]
-    if request.kind != "settle_change_set" or request.capped_by != request.limiting_term:
-        raise ValueError("only a settle terminal is capped, and only by its limiting term")
-    if request.effective_rung >= TERMINAL_REQUIRED_RUNGS["settle_change_set"]:
-        raise ValueError("a settle terminal its effective rung reaches is never capped")
+    if request.kind != "settle_change_set":
+        raise ValueError("only a settle terminal is capped")
+    # Below settle the limiting term caps it; at settle only a missing settle
+    # grant does (a caller's tier lifted the mandate term past its mandates).
+    reaches = request.effective_rung >= TERMINAL_REQUIRED_RUNGS["settle_change_set"]
+    if request.capped_by != ("mandate_grant" if reaches else request.limiting_term):
+        raise ValueError("a capped settle names its limiting term, or the absent settle grant")
     return TERMINAL_REQUIRED_RUNGS["propose_change_set"]
 
 
@@ -1018,6 +1021,13 @@ class PreparedTerminalEgressV1(_StrictEgressModel):
 
     def path_for(self, item_key: str) -> str | None:
         return next((path for key, path in self.item_paths if key == item_key), None)
+
+
+@runtime_checkable
+class SettleGrantHolderProtocol(Protocol):
+    """A sink that knows whether any live mandate it holds grants settle."""
+
+    def grants_settle(self) -> bool: ...
 
 
 @runtime_checkable
@@ -1431,6 +1441,7 @@ __all__ = [
     "EFFECTFUL_TERMINAL_KINDS",
     "TerminalEgressChildReceiptV2",
     "PreparedTerminalEgressV1",
+    "SettleGrantHolderProtocol",
     "TerminalEgressPreparerProtocol",
     "TerminalEgressRequestV1",
     "TerminalEgressRequestV2",

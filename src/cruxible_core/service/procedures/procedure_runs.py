@@ -3425,6 +3425,9 @@ class _LineTerminalEgressSink:
         self.capture = capture
         self.proposal = proposal
 
+    def grants_settle(self) -> bool:
+        return self.proposal.grants_settle()
+
     def prepare_terminal_egress(
         self,
         *,
