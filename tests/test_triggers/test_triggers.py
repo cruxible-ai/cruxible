@@ -89,24 +89,35 @@ def test_instants_passed_while_no_daemon_listened_are_skipped_not_caught_up(
 
 
 def test_a_resumed_cadence_ticks_on_its_grid_never_at_the_resume_itself() -> None:
-    from cruxible_core.triggers.cadence import timer_due
+    from cruxible_core.triggers.cadence import timer_due, timer_instants
 
     two_minutes = CadenceSchedule(interval_seconds=120)
 
-    def due(last, not_before=None):  # type: ignore[no-untyped-def]
-        return timer_due(two_minutes, accepted_at=NOW, last=last, not_before=not_before)
+    def due(last):  # type: ignore[no-untyped-def]
+        return timer_due(two_minutes, accepted_at=NOW, last=last)
+
+    def resumed_at(resume):  # type: ignore[no-untyped-def]
+        """The first instant a reader resumed at `resume` reads: at or after it."""
+
+        return next(
+            timer_instants(
+                two_minutes,
+                accepted_at=NOW,
+                after=resume - timedelta(microseconds=1),
+                through=resume + timedelta(days=1),
+            )
+        )
 
     # The chain's next grid instant after its last fire, wherever in the interval
     # that fire was dispatched.
     assert due(NOW) == NOW + timedelta(minutes=2)
     assert due(NOW + timedelta(minutes=2, seconds=7)) == NOW + timedelta(minutes=4)
-    # A resume floors the chain to the first grid instant at or after it: a Line
-    # resumed at 00:09:30 next ticks at 00:10:00, never at 00:09:30 itself.
-    resumed = NOW + timedelta(minutes=9, seconds=30)
-    assert due(NOW + timedelta(minutes=2), not_before=resumed) == NOW + timedelta(minutes=10)
+    # A resumed reader starts at the first grid instant at or after its resume:
+    # a Line resumed at 00:09:30 next ticks at 00:10:00, never at 00:09:30 itself.
+    assert resumed_at(NOW + timedelta(minutes=9, seconds=30)) == NOW + timedelta(minutes=10)
     # An instant exactly at the resume is on the grid and is the resumed range's.
     on_grid = NOW + timedelta(minutes=10)
-    assert due(NOW + timedelta(minutes=2), not_before=on_grid) == on_grid
+    assert resumed_at(on_grid) == on_grid
 
 
 def test_deadline_replacement_and_rearming_are_one_shot(tmp_path: Path) -> None:

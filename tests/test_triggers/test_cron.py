@@ -8,7 +8,7 @@ import pytest
 
 from cruxible_client.contracts.cron import CronExpressionError, parse_cron
 from cruxible_client.contracts.triggers import CronSchedule
-from cruxible_core.triggers.cadence import timer_due
+from cruxible_core.triggers.cadence import timer_due, timer_instants
 from cruxible_core.triggers.journal import InternalTrigger, evaluate_triggers
 
 MONDAY = datetime(2026, 9, 28, tzinfo=UTC)
@@ -161,15 +161,25 @@ def test_a_cron_line_tick_follows_its_last_fire_and_never_precedes_its_floor() -
     hourly = CronSchedule(expression="0 * * * *")
     noon = MONDAY.replace(hour=12)
 
-    def due(last, not_before=None):  # type: ignore[no-untyped-def]
-        return timer_due(hourly, accepted_at=noon, last=last, not_before=not_before)
+    def due(last):  # type: ignore[no-untyped-def]
+        return timer_due(hourly, accepted_at=noon, last=last)
+
+    def resumed_at(resume):  # type: ignore[no-untyped-def]
+        return next(
+            timer_instants(
+                hourly,
+                accepted_at=noon,
+                after=resume - timedelta(microseconds=1),
+                through=resume + timedelta(days=1),
+            )
+        )
 
     # The first instant after an acceptance or a fire, however long ago that was.
     assert due(noon + timedelta(minutes=30)) == noon + timedelta(hours=1)
     assert due(noon) == noon + timedelta(hours=1)
-    # A floor (an arm's start) keeps a forward-only reader from any instant before it.
-    assert due(noon, not_before=noon + timedelta(hours=5, minutes=1)) == noon + timedelta(hours=6)
-    assert due(noon, not_before=noon + timedelta(hours=5)) == noon + timedelta(hours=5)
+    # An arm's start keeps a forward-only reader from any instant before it.
+    assert resumed_at(noon + timedelta(hours=5, minutes=1)) == noon + timedelta(hours=6)
+    assert resumed_at(noon + timedelta(hours=5)) == noon + timedelta(hours=5)
 
 
 def _world(tmp_path: Path):  # type: ignore[no-untyped-def]

@@ -4,12 +4,10 @@ No Trigger fires retroactively. A timer's instants all follow the acceptance
 of the Trigger version that names them: a cadence's instants sit on its own
 grid, one interval apart from its acceptance (the first one interval after it),
 a cron schedule's are its calendar instants after acceptance, and a successor
-schedule starts again from its own acceptance. A Line occurrence chain then
-continues at the timer's next instant after the latest tick its Trigger
-delivered, by that tick's scheduled instant, never by when it ran. A floor is
-how a forward-only reader resumes: the timer's first instant at or after it,
-never the floor itself and never an instant before it; the instants it skipped
-are left for explicit evaluation.
+schedule starts again from its own acceptance. A tick is its scheduled
+instant, never when it ran. A forward-only reader resumes at the timer's first
+instant at or after its resume, never the resume itself and never an instant
+before it; the instants it skipped are left for explicit evaluation.
 """
 
 from __future__ import annotations
@@ -23,24 +21,15 @@ from cruxible_client.contracts.triggers import CadenceSchedule, CronSchedule, Tr
 _END_OF_TIME = datetime.max.replace(tzinfo=UTC)
 
 
-def timer_due(
-    schedule: TriggerSchedule,
-    *,
-    accepted_at: datetime,
-    last: datetime,
-    not_before: datetime | None = None,
-) -> datetime:
-    """The timer's first instant after ``last`` (an acceptance or a fire), at or after a floor.
+def timer_due(schedule: TriggerSchedule, *, accepted_at: datetime, last: datetime) -> datetime:
+    """The timer's first instant after ``last`` (an acceptance or a fire).
 
     The instant is one `timer_instants` yields: a cadence's grid instant from
-    its acceptance, a cron schedule's calendar instant. A floor moves the
-    instant forward to the first one at or after it, so a timer that resumes
-    later never fires off its grid at the resume itself.
+    its acceptance, a cron schedule's calendar instant.
     """
 
-    after = last if not_before is None else max(last, not_before - timedelta(microseconds=1))
     found = next(
-        timer_instants(schedule, accepted_at=accepted_at, after=after, through=_END_OF_TIME),
+        timer_instants(schedule, accepted_at=accepted_at, after=last, through=_END_OF_TIME),
         None,
     )
     if found is None:

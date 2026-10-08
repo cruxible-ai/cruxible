@@ -332,9 +332,15 @@ def _roll_over(
     whole or not at all.
     """
 
+    # The segment stops where all its matching had reached: a timed Trigger
+    # whose own matching lags its coverage (its tick held pending, or ticks it
+    # still owed) is behind it, so the restart's gap names those ticks too.
+    stops_at = min(
+        (current["evaluated_until"], *current.get("trigger_until", {}).values()), key=_instant
+    )
     stopped = dict(
         current,
-        stops_at=current["evaluated_until"],
+        stops_at=stops_at,
         stop_reason=None,
         detail="Daemon restarted; uncovered ranges require explicit evaluation.",
     )
@@ -893,7 +899,7 @@ def service_match_listening_lines(
                     "through": _positions(instance),
                     "cursors": dict(previous_cursors),
                     "done": [],
-                    "timed": [],
+                    "timed": {},
                 }
             )
             details: list[str] = []
@@ -961,7 +967,10 @@ def service_match_listening_lines(
                         scan["cursors"].pop(name, None)
                     scan["done"].append(name)
                     if _timed(trigger):
-                        scan["timed"].append(name)
+                        # How far this Trigger's own matching reached: short of
+                        # the scan for a cadence or cron Trigger that still owes
+                        # a tick there, which it never passes undelivered.
+                        scan["timed"][name] = format_datetime(result.checked_until)
             if stopped:
                 continue
             complete = all(
@@ -986,7 +995,7 @@ def service_match_listening_lines(
                     positions=scan["through"],
                     trigger_until={
                         **session.get("trigger_until", {}),
-                        **{name: scan["until"] for name in scan["timed"]},
+                        **scan["timed"],
                     },
                     # Completed scans keep generation coverage across ticks;
                     # pagination cursors have already been cleared above.

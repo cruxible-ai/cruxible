@@ -12,6 +12,7 @@ import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import chain
 from typing import Any
 
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -147,6 +148,15 @@ def _undelivered_ticks(
     or the Line's journal admitted it.
     """
 
+    instants = timer_instants(
+        trigger.trigger.schedule,
+        accepted_at=trigger_accepted_at(instance, trigger),
+        after=after,
+        through=through,
+    )
+    first = next(instants, None)
+    if first is None:
+        return
     binding = trigger_binding_for(trigger)
     delivered = _delivered_ticks(
         instance,
@@ -156,12 +166,7 @@ def _undelivered_ticks(
         after=after,
         through=through,
     )
-    for instant in timer_instants(
-        trigger.trigger.schedule,
-        accepted_at=trigger_accepted_at(instance, trigger),
-        after=after,
-        through=through,
-    ):
+    for instant in chain((first,), instants):
         occurrence, _ = _line_occurrence(
             accepted,
             evaluation_time=instant,
@@ -205,8 +210,10 @@ def service_check_line_trigger(
     Triggers are evaluated in identity order. A page that stops inside one
     Trigger's Capture range or ticks resumes there, with the cursor naming that
     Trigger; `only_trigger` limits the check to one Trigger, as an armed segment
-    does. A live listening pass (`pending_scope`) or a check with no `since`
-    reads a cadence or cron Trigger's next tick in its chain; an explicit range
+    does. A listening pass (`pending_scope`) matches a cadence or cron
+    Trigger's first tick still owed from where its own matching reached, and
+    reports how far its matching reached as `checked_until`; a check with no
+    `since` previews the tick due next in the Trigger's chain; an explicit range
     reads every tick in it, which is how time a restart skipped is recovered.
     `enqueue` says the caller records what it reads: a cursor serves only the
     mode that issued it, because an enqueueing range that completes is
@@ -324,6 +331,7 @@ def service_check_line_trigger(
     occurrences = []
     next_cursor = None
     complete = True
+    reached = until
     generation_updates: dict[str, int] = {}
     try:
         bindings: list[tuple[AcceptedTrigger, LineTriggerBinding, datetime]] = []
@@ -491,16 +499,36 @@ def service_check_line_trigger(
                     listed = instant
                 if next_cursor:
                     break
+            elif schedule_is_timed(schedule) and request.since is not None:
+                # A listening pass reads its Trigger's instants from where its
+                # own matching reached (`since`, which only moves forward) and
+                # matches the first one still owed: each tick already delivered
+                # (matched, or recorded by an evaluation) is skipped by itself,
+                # so a later tick delivered first never stands in for an earlier
+                # one. Its matching reaches only up to the next tick still owed,
+                # never past it undelivered; its segment matches that tick once
+                # its own tick is no longer pending.
+                owed = _undelivered_ticks(
+                    instance,
+                    accepted,
+                    trigger,
+                    identity=identity,
+                    after=request.since - timedelta(microseconds=1),
+                    through=until - timedelta(microseconds=1),
+                )
+                first = next(owed, None)
+                if first is not None:
+                    bindings.append((trigger, trigger_binding_for(trigger), first))
+                    following = next(owed, None)
+                    if following is not None:
+                        reached = min(reached, following)
             elif schedule_is_timed(schedule):
-                # A listening pass, or a check with no range, reads the tick due
-                # next in this Trigger's chain: the timer's first instant after
-                # the latest tick delivered to the Line, by that tick's
-                # scheduled instant (when any tick was dispatched, a recovered
-                # one included, never moves the chain), and at or after where
-                # the pass's own matching reached (`since`). A tick already
-                # pending keeps its original due instant; checks must not invent
-                # a new occurrence on every call. An armed segment
-                # (`pending_scope`) only ever resumes its own tick.
+                # A check with no range previews the tick due next in this
+                # Trigger's chain: the timer's first instant after the latest
+                # tick delivered to the Line, by that tick's scheduled instant,
+                # never when it ran. A tick already pending keeps its original
+                # due instant; checks must not invent a new occurrence on every
+                # call.
                 binding = trigger_binding_for(trigger)
                 last_tick: datetime | None = None
                 held: datetime | None = None
@@ -514,14 +542,8 @@ def service_check_line_trigger(
                         ).fetchone()
                         row = conn.execute(
                             "SELECT eligible_at FROM pending WHERE line_id=? AND trigger_id=? "
-                            "AND disposition='pending'"
-                            + (" AND session_id=?" if pending_scope is not None else "")
-                            + " ORDER BY eligible_at,occurrence_id LIMIT 1",
-                            (
-                                identity,
-                                name,
-                                *((pending_scope,) if pending_scope is not None else ()),
-                            ),
+                            "AND disposition='pending' ORDER BY eligible_at,occurrence_id LIMIT 1",
+                            (identity, name),
                         ).fetchone()
                     last_tick = None if latest is None else parse_datetime(latest)
                     held = None if row is None else parse_datetime(row[0])
@@ -531,12 +553,9 @@ def service_check_line_trigger(
                     last_tick=last_tick,
                     trigger=trigger,
                     binding=binding,
-                    not_before=request.since,
                     accepted_at=trigger_accepted_at(instance, trigger),
                 )
-                if held is not None:
-                    due = held
-                bindings.append((trigger, binding, due or now))
+                bindings.append((trigger, binding, held or due or now))
             else:
                 raise ExecutionError(f"unsupported Trigger schedule kind {schedule.kind!r}")
         for trigger, binding, eligible in bindings:
@@ -579,6 +598,7 @@ def service_check_line_trigger(
         ]
     if generation_cursors is not None:
         generation_cursors.update(generation_updates)
+    context["checked_until"] = reached
     return LineEvaluateResult(
         **context,
         status="incomplete"

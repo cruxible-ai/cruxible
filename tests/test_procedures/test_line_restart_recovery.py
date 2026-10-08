@@ -523,6 +523,118 @@ def test_recovered_ticks_dispatched_after_the_next_live_tick_never_skip_it(tmp_p
     assert line_attention(instance, now=timer.then + timedelta(seconds=2)) == ((), ())
 
 
+# --- the listener never passes a tick it still owes (review F-003) ----------
+
+
+def _recovered(instance, line, timer):  # type: ignore[no-untyped-def]
+    """Evaluate and dispatch the restart gap, leaving nothing owed before the resume."""
+
+    resumed = timer.restart + timedelta(seconds=1)
+    (gap,), _ = line_attention(instance, now=resumed)
+    _evaluate(instance, line, gap, resumed)
+    service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequest(),
+        actor=_actor(instance),
+        caller_rung=3,
+        now=resumed,
+    )
+    assert line_attention(instance, now=resumed) == ((), ())
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_a_later_tick_evaluated_first_never_stands_in_for_an_earlier_live_one(tmp_path, timer):
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    _recovered(instance, line, timer)
+    # The listener runs through the second before its next tick, then stalls,
+    # while the tick after that one is evaluated explicitly, ahead of it.
+    _match(instance, timer.next - timedelta(seconds=1), daemon_id="restarted")
+    at = timer.then + timedelta(seconds=1)
+    later = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=timer.then, until=at),
+        actor=_actor(instance),
+        now=at,
+    )
+    assert [item.eligible_at for item in later.occurrences] == [timer.then]
+
+    # The listener still matches the earlier tick it owes, and only that one.
+    matched = at + timedelta(seconds=1)
+    _match(instance, matched, daemon_id="restarted")
+    assert _queued(instance, disposition="pending") == [
+        (timer.next, True),
+        (timer.then, False),
+    ]
+    _drain_armed(instance, matched)
+    service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequest(),
+        actor=_actor(instance),
+        caller_rung=3,
+        now=matched,
+    )
+    # Each tick was delivered once, and nothing is owed through both instants.
+    assert _queued(instance) == [
+        (timer.first, True),
+        *((tick, False) for tick in timer.missed),
+        (timer.next, True),
+        (timer.then, False),
+    ]
+    assert _queued(instance, disposition="admitted") == _queued(instance)
+    assert line_attention(instance, now=matched) == ((), ())
+    # Its matching reached past both: a restart now leaves a gap only after them.
+    restarted = matched + timedelta(seconds=1)
+    _match(instance, restarted, daemon_id="again")
+    (gap,), _ = line_attention(instance, now=restarted)
+    assert timer.then < gap.since and gap.until == restarted
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_a_stalled_listener_matches_every_tick_it_owes_in_order(tmp_path, timer):
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    _recovered(instance, line, timer)
+    _match(instance, timer.next - timedelta(seconds=1), daemon_id="restarted")
+
+    # Both ticks fell due while the listener stalled: it matches the first and
+    # reaches only up to the second, which it matches once the first ran.
+    at = timer.then + timedelta(seconds=1)
+    _match(instance, at, daemon_id="restarted")
+    assert _queued(instance, disposition="pending") == [(timer.next, True)]
+    _drain_armed(instance, at)
+    _match(instance, at + timedelta(seconds=1), daemon_id="restarted")
+    assert _queued(instance, disposition="pending") == [(timer.then, True)]
+    _drain_armed(instance, at + timedelta(seconds=1))
+    assert _queued(instance, disposition="admitted")[-2:] == [
+        (timer.next, True),
+        (timer.then, True),
+    ]
+    assert line_attention(instance, now=at + timedelta(seconds=1)) == ((), ())
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_a_restart_while_the_listener_owes_ticks_leaves_them_in_the_gap(tmp_path, timer):
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    _recovered(instance, line, timer)
+    _match(instance, timer.next - timedelta(seconds=1), daemon_id="restarted")
+    at = timer.then + timedelta(seconds=1)
+    _match(instance, at, daemon_id="restarted")  # matches `next`, still owes `then`
+    assert _queued(instance, disposition="pending") == [(timer.next, True)]
+
+    # Restarted before the arm ran its tick: that tick lapses, and the gap
+    # starts where the listener's matching reached, at the tick it still owed.
+    restarted = at + timedelta(seconds=30)
+    _match(instance, restarted, daemon_id="again")
+    (gap,), _ = line_attention(instance, now=restarted)
+    assert (gap.since, gap.until) == (timer.then, restarted)
+    assert _queued(instance, disposition="lapsed") == [(timer.next, True)]
+    evaluated = _evaluate(instance, line, gap, restarted)
+    assert [item.eligible_at for item in evaluated.occurrences] == [timer.then]
+    assert line_attention(instance, now=restarted)[0] == ()
+
+
 # --- a timed page's cursor serves only its own mode (review F-002) -----------
 
 

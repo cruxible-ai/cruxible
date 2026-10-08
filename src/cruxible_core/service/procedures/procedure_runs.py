@@ -1206,7 +1206,6 @@ def _line_occurrence(
     last_tick: datetime | None = None,
     trigger: AcceptedTrigger | None = None,
     binding: LineTriggerBinding | None = None,
-    not_before: datetime | None = None,
     exact_basis: datetime | None = None,
     accepted_at: datetime | None = None,
     manual_event: TriggerEventReference | None = None,
@@ -1219,13 +1218,9 @@ def _line_occurrence(
     `last_tick`, the scheduled instant of the latest tick of its Trigger
     already delivered (when it was dispatched never counts), and never before
     the first instant after its Trigger version's acceptance (`accepted_at`):
-    no Trigger fires retroactively. `not_before` floors it for forward-only
-    matching: an arm that starts or resumes later than that tick ticks next at
-    the timer's first instant at or after its start, which stays on a
-    cadence's grid from acceptance rather than moving to the start, and the
-    instants it skipped are left for explicit evaluation. `exact_basis` names
-    a retained tick outright, for its dispatch or retry, or an evaluation of
-    that exact occurrence.
+    no Trigger fires retroactively. `exact_basis` names a tick outright: one a
+    listener or an evaluation found on the timer, or a retained tick being
+    dispatched or retried.
     """
 
     next_due = None
@@ -1257,7 +1252,6 @@ def _line_occurrence(
                     schedule,
                     accepted_at=accepted_at,
                     last=accepted_at if last_tick is None else max(last_tick, accepted_at),
-                    not_before=not_before,
                 )
             occurrence_basis = format_datetime(next_due)
         else:

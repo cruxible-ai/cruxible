@@ -1725,13 +1725,17 @@ at or after its start rather than catching up on ticks it missed (only
 grid one interval apart from its Trigger version's acceptance, a cron
 schedule's on its calendar, and enabling or resuming never moves them: nothing
 ticks at the enable or restart instant itself unless the schedule has an
-instant there. Each cadence or cron Trigger keeps its own chain: it is due at
-its schedule's next instant after the latest tick it delivered to the Line
-(matched or evaluated), whatever other Triggers aimed at the Line fired. The
-chain reads that tick's scheduled instant, never when it ran, so dispatching
-recovered ticks late never skips a live one. It is never due before the first
-instant after its Trigger version's acceptance: a new cadence ticks first one
-interval after it was accepted, a successor schedule from its own acceptance.
+instant there. Each cadence or cron Trigger keeps its own chain, whatever other
+Triggers aimed at the Line fired: the enablement matches every instant of its
+schedule from where its own matching reached, one at a time, skipping each
+tick already delivered (matched, or recorded by `evaluate`). A tick is its
+scheduled instant, never when it ran, so dispatching recovered ticks late
+never skips a live one, and a later tick evaluated first never stands in for
+an earlier one still owed. An enablement that fell behind matches the ticks
+it owes in order, never passing one undelivered. No tick is due before the
+first instant after its Trigger version's acceptance: a new cadence ticks
+first one interval after it was accepted, a successor schedule from its own
+acceptance.
 `disable` stops
 further admissions; a run already admitted keeps going, and a retired Line can
 be disabled too. Both are idempotent:
@@ -1755,7 +1759,9 @@ disable is not reported.
 A restart keeps each enablement and opens a new forward range from the
 restart: the downtime is not matched, what the previous range matched but did
 not admit stays pending, and timed ticks lapse. For each enabled Line `next`
-then shows one `line_coverage_gap` row per range its daemon never matched,
+then shows one `line_coverage_gap` row per range its daemon never matched
+(starting at the first tick a cadence or cron Trigger still owed, when its
+matching had fallen behind),
 naming the exact `cruxible line evaluate LINE --since S --until U` that covers
 it (the row leaves once an evaluation covers the range), and one
 `line_work_pending` row while work it matched before the restart, or that was
