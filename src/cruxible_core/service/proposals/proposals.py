@@ -673,6 +673,74 @@ def proposals_awaiting_approval(
     return tuple(awaiting)
 
 
+@dataclass(frozen=True)
+class ProposalAwaitingActivation:
+    """One of a principal's own open candidates whose approval requirement is met."""
+
+    proposal_id: str
+    target_ref: str
+    admitted_at: str
+    candidate_digest: str
+    approvals: int
+
+
+def proposals_awaiting_activation(
+    instance: PlaybillInstance,
+    coordinate: AcceptedCoordinate,
+    *,
+    principal_id: str,
+    ordinary_principal_ids: frozenset[str],
+) -> tuple[ProposalAwaitingActivation, ...]:
+    """The principal's own open candidates at `coordinate` that activation is next for.
+
+    Read through the open-parent locator, like ``proposals_awaiting_approval``:
+    candidates neither refused, accepted nor withdrawn whose parent is the
+    coordinate's semantic root. A candidate qualifies when it needs no approval
+    or its requirement is met, counted exactly as activation counts it. A
+    principal-lifecycle candidate is the actor's own signature to give first,
+    so it is not listed here.
+    """
+
+    evidence = instance.proposal_evidence()
+    with _bound_inventory(instance, coordinate) as bound:
+        if bound is None:
+            return ()
+        connection, sequence = bound
+        rows = _open_candidates(
+            connection,
+            sequence,
+            columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest",
+            where="candidate_parent_semantic_root=? AND actor_id=?",
+            parameters=(coordinate.semantic_root, principal_id),
+        )
+    ready = []
+    for row in rows:
+        candidate = evidence.read_candidate(row["candidate_digest"])
+        if candidate.members and all(
+            member.artifact_kind == "principal-lifecycle" for member in candidate.members
+        ):
+            continue
+        signers = {
+            submission.attestation.signer_id
+            for submission in evidence.read_approvals(row["candidate_digest"])
+        }
+        eligible = len((signers - {row["actor_id"]}) & ordinary_principal_ids)
+        if candidate.approval_requirements and (
+            eligible < candidate.approval_requirements[0].minimum_distinct_signers
+        ):
+            continue
+        ready.append(
+            ProposalAwaitingActivation(
+                proposal_id=row["proposal_id"],
+                target_ref=row["target_ref"],
+                admitted_at=timestamp(row["admitted_at_us"]),
+                candidate_digest=row["candidate_digest"],
+                approvals=eligible,
+            )
+        )
+    return tuple(ready)
+
+
 def service_resolve_playbill_proposal_selector(
     instance: PlaybillInstance,
     *,
@@ -1155,6 +1223,7 @@ __all__ = [
     "StaleProposal",
     "WhoAmIActorIdSource",
     "proposal_readmission",
+    "proposals_awaiting_activation",
     "proposals_awaiting_approval",
     "readmission_operation_digest",
     "service_list_playbill_proposals",
