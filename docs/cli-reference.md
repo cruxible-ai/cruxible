@@ -1543,6 +1543,11 @@ authorized workspace root, over the CaptureContract's selection budget, or with
 no daemon-local reader refuses `workspace_file_read_refused` and names its path
 class.
 
+A Source request's values may reference the run's input or an earlier step's
+output, but only as a whole value: `{"url": "$input.url"}` resolves, while a
+reference inside a longer string (`"https://example.org/$input.id"`) is passed
+through literally, so pass the full value in the run input.
+
 Source acquisition currently serves independent coherence. Bounded-window and
 declared-snapshot-group policies refuse before provider invocation. Actual
 captures are checked against the pinned replayability and maximum-age rules

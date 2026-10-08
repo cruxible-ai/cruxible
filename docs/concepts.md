@@ -262,6 +262,14 @@ Claim; `prediction list CLAIM` lists the accepted predictions that test that
 exact Claim. A prediction is stored as a resolution contract, so `get
 ResolutionContract:NAME` reads one.
 
+Settling is an explicit act; nothing settles a prediction on its own. Any
+accepted observation inside the window can settle it, and once the window has
+closed `next` lists the prediction as `prediction_settleable` with the settle
+command. A window that closes with no accepted observation inside it cannot
+settle (`prediction_deadline_passed`); Cruxible gives an unobserved window no
+meaning of its own, so retire the contract, or record the observation you did
+make as a revised Claim and predict again.
+
 ## Procedures, Blueprints and providers
 
 A **Procedure** is a governed, deterministic graph: it reads accepted state
