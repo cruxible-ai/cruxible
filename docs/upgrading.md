@@ -19,14 +19,14 @@ before enabling them.
 
 | Name | In 0.3.2 | Now |
 |---|---|---|
-| `cruxible init` | Initialized a config-authority instance in the project's `.cruxible/` | Bootstraps governed state (principals and genesis) on a daemon host |
-| `cruxible kit` | Installed and repinned bundled config kits | Builds, adds and removes kit releases as governed proposals |
+| `cruxible init` | Initialized a config-authority instance in the project's `.cruxible/` | Creates a daemon host when none is selected, bootstraps its governed state (owner principal, genesis) and attaches the worktree |
+| `cruxible kit` | Installed and repinned bundled config kits | Builds, pulls, adds, upgrades and removes kit releases of definitions as governed change sets |
 | `cruxible instance` | Managed config-authority instances | Decommissions a daemon-hosted instance |
 | `cruxible query` | Ran a named query from the config | Runs a compact or named query over accepted state |
-| `cruxible procedure` | Showed and withdrew config procedures | Binds, runs and measures governed Procedures |
+| `cruxible procedure` | Listed, showed, ran and withdrew config procedures | Runs and measures governed Procedures; `cruxible get Procedure:NAME` reads one |
 | `cruxible_init` (MCP) | Initialized or reloaded a config instance | Removed: setup is an operator step (`cruxible init`) |
 | `cruxible_query` (MCP) | Ran a named query | Runs a compact or named query over accepted state |
-| `.cruxible/` in a project | The 0.3 instance directory (`instance.json`, `state.db`) | The workspace directory (client custody, sources, floor); a worktree whose `.cruxible/` holds a 0.3 instance is refused until it moves aside, and so is one whose `.cruxible/` is, lies inside or holds the daemon state root (`~/.cruxible` or `CRUXIBLE_STATE_ROOT`) |
+| `.cruxible/` in a project | The 0.3 instance directory (`instance.json`, `state.db`) | The workspace directory (workspace config, source catalog, floor, block stamps); a worktree whose `.cruxible/` holds a 0.3 instance is refused until it moves aside, and so is one whose `.cruxible/` is, lies inside or holds the daemon state root (`~/.cruxible` or `CRUXIBLE_STATE_ROOT`) |
 
 ## What the compiler is
 
@@ -42,13 +42,13 @@ it was accepted under.
 
 ## Update the software
 
-1. Install the new release the same way you installed Cruxible. From a source
-   checkout, as in the [quickstart](quickstart.md), that is:
+1. Install the new release the same way you installed Cruxible:
 
    ~~~bash
-   git pull
-   uv sync --all-extras
+   pip install --upgrade cruxible     # or: uv tool upgrade cruxible
    ~~~
+
+   From a source checkout, `git pull` and `uv sync --all-packages --all-extras`.
 
    For a container, pull the new [runtime image](hosted-runtime-image.md).
 
