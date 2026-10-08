@@ -1529,18 +1529,24 @@ def provider_group() -> None:
 @json_option
 @handle_errors
 def list_provider_packages(output_json: bool) -> None:
-    """List packages from the daemon's configured provider repository."""
+    """List the Providers installed here, then the configured repository's packages."""
     result = _server_call(
         lambda client, instance_id: client.list_provider_packages(instance_id),
         command_name="cruxible provider list",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
-    else:
-        for package in result.packages:
-            click.echo(f"{package.name} {package.version}: {', '.join(package.interfaces)}")
-        if result.detail:
-            click.echo(result.detail)
+        return
+    click.echo("Installed:" if result.installed else "Installed: none")
+    for installed in result.installed:
+        package = "" if installed.package is None else f" ({installed.package} {installed.version})"
+        click.echo(f"  {installed.provider}{package}: {', '.join(installed.interfaces) or '-'}")
+    if result.packages:
+        click.echo("Provider repository:")
+    for package in result.packages:
+        click.echo(f"  {package.name} {package.version}: {', '.join(package.interfaces)}")
+    if result.detail:
+        click.echo(result.detail)
 
 
 @provider_group.command("install")

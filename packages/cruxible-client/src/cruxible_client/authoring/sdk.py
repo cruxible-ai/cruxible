@@ -4652,10 +4652,7 @@ class Procedure:
         """
         if self._artifact is None:
             reading = self._readiness()
-            if (
-                procedure_artifact_digest(reading.artifact).tagged
-                != reading.artifact_digest
-            ):
+            if procedure_artifact_digest(reading.artifact).tagged != reading.artifact_digest:
                 raise ValueError("Procedure read does not reproduce its accepted digest")
             self._artifact = reading.artifact
             self._coordinate = _coordinate(reading.coordinate)

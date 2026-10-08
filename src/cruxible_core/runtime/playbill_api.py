@@ -772,9 +772,10 @@ def playbill_ledger_publish(
 def playbill_provider_catalog(instance_id: str) -> ProviderCatalog:
     check_permission("cruxible_provider_list", instance_id=instance_id)
     manager = get_playbill_manager()
-    manager.get(instance_id)
+    instance = manager.get(instance_id)
     return _proposal_validation_boundary(
-        "provider catalog", lambda: service_provider_catalog(manager.provider_runtime_operator())
+        "provider catalog",
+        lambda: service_provider_catalog(manager.provider_runtime_operator(), instance),
     )
 
 

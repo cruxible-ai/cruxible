@@ -210,6 +210,9 @@ from cruxible_client.contracts.provider_contracts import (
     ProviderOperationContract as _ProviderOperationContractV1,
 )
 from cruxible_client.contracts.provider_installation import (
+    InstalledProvider as InstalledProvider,
+)
+from cruxible_client.contracts.provider_installation import (
     ProviderCatalog as ProviderCatalog,
 )
 from cruxible_client.contracts.provider_installation import (

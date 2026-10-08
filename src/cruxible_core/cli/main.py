@@ -468,7 +468,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "Manage governed Provider artifacts.",
         {
             "list": _command(
-                "playbill", "list_provider_packages", "List available provider packages."
+                "playbill",
+                "list_provider_packages",
+                "List installed Providers and repository packages.",
             ),
             "install": _command(
                 "playbill", "install_provider", "Install and register a provider package."

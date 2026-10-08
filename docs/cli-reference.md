@@ -896,6 +896,10 @@ cruxible provider install NAME[==VERSION] | WHEEL [--lock FILE]
   [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
+`provider list` names every live Provider installed here (the built-in
+`cruxible-builtin` included) with its package, version and the interfaces it
+implements, then the packages a configured provider repository offers.
+
 Installation requires **ADMIN**. A package name resolves through the daemon's
 configured repository when it has one. Otherwise it installs from the provider
 index: the newest final release, or exactly `==VERSION`. The first configured
