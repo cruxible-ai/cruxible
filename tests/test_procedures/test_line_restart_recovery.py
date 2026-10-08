@@ -347,3 +347,123 @@ def test_a_restarted_timed_line_ticks_next_on_its_schedule_never_at_the_restart(
     _drain_armed(instance, timer.next + timedelta(seconds=1))
     assert _queued(instance) == [(timer.first, True), (timer.next, True)]
     assert _admissions(instance) == 2
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_evaluating_a_timed_lines_restart_gap_recovers_exactly_the_ticks_it_missed(tmp_path, timer):
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    resumed = timer.restart + timedelta(seconds=1)
+    _match(instance, resumed, daemon_id="restarted")
+    (gap,), pending = line_attention(instance, now=resumed)
+    assert pending == () and gap.since < timer.missed[0] and gap.until == timer.restart
+
+    previewed = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=gap.since, until=gap.until, dry_run=True),
+        actor=None,
+        now=resumed,
+    )
+    assert previewed.status == "met"
+    assert [item.eligible_at for item in previewed.occurrences] == list(timer.missed)
+    assert all(item.dispatch_status is None for item in previewed.occurrences)
+    assert line_attention(instance, now=resumed)[0] == (gap,)  # a dry run covers nothing
+
+    evaluated = _evaluate(instance, line, gap, resumed)
+    assert [(item.eligible_at, item.pending) for item in evaluated.occurrences] == [
+        (at, True) for at in timer.missed
+    ]
+    gaps, (work,) = line_attention(instance, now=resumed)
+    assert gaps == () and work.due == 2
+    # Evaluating the range again finds nothing new and enqueues nothing twice.
+    again = _evaluate(instance, line, gap, resumed)
+    assert again.status == "not_met" and again.occurrences == ()
+
+    drained = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequest(),
+        actor=_actor(instance),
+        caller_rung=3,
+        now=resumed + timedelta(seconds=1),
+    )
+    assert [item.status for item in drained.items] == ["admitted", "admitted"]
+    assert _queued(instance, disposition="admitted") == [
+        (timer.first, True),
+        *((at, False) for at in timer.missed),
+    ]
+    assert line_attention(instance, now=resumed + timedelta(seconds=1)) == ((), ())
+
+    # The resumed arm ticks on by itself at its schedule's next instant.
+    ticked = timer.next + timedelta(seconds=1)
+    _match(instance, ticked, daemon_id="restarted")
+    _drain_armed(instance, ticked)
+    assert _queued(instance, disposition="admitted")[-1] == (timer.next, True)
+    assert _admissions(instance) == 4
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_a_timed_gap_is_covered_only_as_far_as_its_ticks_were_found(tmp_path, timer):
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    resumed = timer.restart + timedelta(seconds=1)
+    (gap,), _ = line_attention(instance, now=resumed)
+
+    def evaluate(since, until, **page):  # type: ignore[no-untyped-def]
+        return service_evaluate_line(
+            instance,
+            line.identity.name,
+            LineEvaluateRequest(since=since, until=until, **page),
+            actor=_actor(instance),
+            now=resumed,
+        )
+
+    # A range with no tick in it is covered by an empty evaluation.
+    empty = evaluate(gap.since, timer.missed[0])
+    assert empty.status == "not_met" and empty.occurrences == ()
+    (rest,), _ = line_attention(instance, now=resumed)
+    assert (rest.since, rest.until) == (timer.missed[0], gap.until)
+
+    # A page that stops before the range's last tick covers nothing...
+    first = evaluate(rest.since, rest.until, limit=1)
+    assert first.status == "incomplete" and first.cursor is not None
+    assert [item.eligible_at for item in first.occurrences] == [timer.missed[0]]
+    assert line_attention(instance, now=resumed)[0] == (rest,)
+    # ...until its cursor is followed to the end of the range.
+    last = evaluate(rest.since, rest.until, limit=1, cursor=first.cursor)
+    assert last.status == "met" and last.cursor is None
+    assert [item.eligible_at for item in last.occurrences] == [timer.missed[1]]
+    assert line_attention(instance, now=resumed)[0] == ()
+    assert [at for at, _ in _queued(instance, disposition="pending")] == list(timer.missed)
+
+
+@pytest.mark.parametrize(
+    ("timer", "after_acceptance"),
+    (
+        (TIMERS[0], (_at(-57, -30), _at(-55))),  # 15:02:30, 15:05:00
+        (TIMERS[1], (_at(-57), _at(-54))),  # 15:03, 15:06: 15:00 is the acceptance itself
+    ),
+    ids=("cadence", "cron"),
+)
+def test_a_timed_range_never_reaches_before_acceptance_or_lists_a_delivered_tick(
+    tmp_path, timer, after_acceptance
+):
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    resumed = timer.restart + timedelta(seconds=1)
+    accepted = READ_TIME - timedelta(hours=1)  # line_world accepts its Trigger at 15:00
+
+    def check(since, until):  # type: ignore[no-untyped-def]
+        return service_evaluate_line(
+            instance,
+            line.identity.name,
+            LineEvaluateRequest(since=since, until=until, dry_run=True),
+            actor=None,
+            now=resumed,
+        )
+
+    # No Trigger fires retroactively: none of its instants is at or before acceptance.
+    early = check(accepted - timedelta(minutes=5), after_acceptance[1] + timedelta(seconds=1))
+    assert [item.eligible_at for item in early.occurrences] == list(after_acceptance)
+    # From the enablement to the restart, which holds the tick the arm already
+    # ran, only the missed ones show.
+    spanning = check(READ_TIME + timedelta(seconds=10), timer.restart)
+    assert [item.eligible_at for item in spanning.occurrences] == list(timer.missed)

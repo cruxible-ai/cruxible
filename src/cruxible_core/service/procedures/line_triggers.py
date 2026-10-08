@@ -28,7 +28,7 @@ from cruxible_client.contracts.procedures.windows import (
     TriggerEventReference,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     AcceptedTrigger,
     CaptureLandingSchedule,
@@ -50,6 +50,10 @@ from cruxible_core.service.procedures.procedure_runs import (
     trigger_binding_for,
 )
 from cruxible_core.service.procedures.resolution_contracts import bind_window, capture_event_time
+from cruxible_core.triggers.cadence import timer_instants
+
+#: The cursor position of a timed Trigger's page: the last tick it listed.
+_TICK_POSITION = "tick"
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,39 @@ def _delivered_generations(
     return frozenset(delivered)
 
 
+def _delivered_ticks(
+    instance: PlaybillInstance, *, identity: str, epoch: int, trigger: str
+) -> frozenset[str]:
+    """Every occurrence of one timed Trigger already delivered to this Line.
+
+    The dispatch store keeps every tick a listener matched or an evaluation
+    enqueued, whatever became of it (pending, admitted, lapsed or closed).
+    """
+
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
+
+    if not dispatch_root(instance).exists():
+        return frozenset()
+    with LineDispatchStore(instance).locked() as conn:
+        return frozenset(
+            row[0]
+            for row in conn.execute(
+                "SELECT occurrence_id FROM pending WHERE line_id=? AND epoch=? AND trigger_id=?",
+                (identity, epoch, trigger),
+            ).fetchall()
+        )
+
+
+def _tick_after(position: list[Any]) -> datetime:
+    """The last tick a timed Trigger's earlier page listed: the next page starts after it."""
+
+    tick = position[1] if position[0] == _TICK_POSITION else None
+    instant = parse_datetime(tick) if isinstance(tick, str) else None
+    if instant is None:
+        raise ExecutionError("trigger cursor must retain its original Line, Triggers and range")
+    return instant
+
+
 def service_check_line_trigger(
     instance: PlaybillInstance,
     line: str,
@@ -111,8 +148,11 @@ def service_check_line_trigger(
     """Every occurrence the Line's live Triggers make eligible in one range.
 
     Triggers are evaluated in identity order. A page that stops inside one
-    Trigger's Capture range resumes there, with the cursor naming that Trigger;
-    `only_trigger` limits the check to one Trigger, as an armed segment does.
+    Trigger's Capture range or ticks resumes there, with the cursor naming that
+    Trigger; `only_trigger` limits the check to one Trigger, as an armed segment
+    does. A live listening pass (`pending_scope`) or a check with no `since`
+    reads a cadence or cron Trigger's next tick in its chain; an explicit range
+    reads every tick in it, which is how time a restart skipped is recovered.
     """
 
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
@@ -319,6 +359,57 @@ def service_check_line_trigger(
                 generation_updates[name] = head
                 if head > covered:
                     bindings.append((trigger, trigger_binding_for(trigger, generation=head), now))
+            elif (
+                schedule_is_timed(schedule) and request.since is not None and pending_scope is None
+            ):
+                # An explicit or historical range reads every instant of the
+                # schedule in [since, until) on this Trigger version's own
+                # timeline (a cadence's grid from its acceptance, a cron's
+                # calendar), none at or before that acceptance, that no earlier
+                # match or evaluation delivered. A page ends only after a tick
+                # it could not list, so a range is never covered past a tick
+                # not found.
+                remaining = request.limit - len(bindings)
+                if remaining <= 0:
+                    next_cursor = cursor_at(trigger, None)
+                    break
+                binding = trigger_binding_for(trigger)
+                delivered = _delivered_ticks(
+                    instance, identity=identity, epoch=accepted.line.occurrence_epoch, trigger=name
+                )
+                ticks_after = request.since - timedelta(microseconds=1)
+                if position is not None:
+                    ticks_after = max(ticks_after, _tick_after(position))
+                listed: datetime | None = None
+                for instant in timer_instants(
+                    schedule,
+                    accepted_at=trigger_accepted_at(instance, trigger),
+                    after=ticks_after,
+                    through=until - timedelta(microseconds=1),
+                ):
+                    occurrence, _ = _line_occurrence(
+                        accepted,
+                        evaluation_time=instant,
+                        prior=(),
+                        trigger=trigger,
+                        binding=binding,
+                        exact_basis=instant,
+                    )
+                    if occurrence in delivered or _line_admissions(
+                        instance, accepted, occurrence_id=occurrence
+                    ):
+                        continue
+                    if remaining == 0:
+                        assert listed is not None
+                        next_cursor = cursor_at(
+                            trigger, [_TICK_POSITION, format_datetime(listed), 0]
+                        )
+                        break
+                    bindings.append((trigger, binding, instant))
+                    remaining -= 1
+                    listed = instant
+                if next_cursor:
+                    break
             elif schedule_is_timed(schedule):
                 binding = trigger_binding_for(trigger)
                 _, due = _line_occurrence(

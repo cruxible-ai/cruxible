@@ -579,23 +579,25 @@ def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp
         now=READ_TIME - timedelta(seconds=1),
         daemon_id="daemon",
     )
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+
     _match(instance, READ_TIME)
     assert _status(instance, line, READ_TIME).pending_automatic == 1
-    lapsed_id = next(
-        item.occurrence_id
-        for item in service_evaluate_line(
-            instance,
-            line.identity.name,
-            LineEvaluateRequest(
-                since=READ_TIME - timedelta(seconds=2),
-                until=READ_TIME + timedelta(seconds=1),
-                dry_run=True,
-            ),
-            actor=None,
-            now=READ_TIME + timedelta(seconds=1),
-        ).occurrences
-        if item.dispatch_status == "pending"
+    with LineDispatchStore(instance).locked() as conn:
+        (lapsed_id,) = conn.execute("SELECT occurrence_id FROM pending").fetchone()
+    # Evaluating the range again finds nothing new: the tick is already queued.
+    rechecked = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(
+            since=READ_TIME - timedelta(seconds=2),
+            until=READ_TIME + timedelta(seconds=1),
+            dry_run=True,
+        ),
+        actor=None,
+        now=READ_TIME + timedelta(seconds=1),
     )
+    assert rechecked.status == "not_met" and rechecked.occurrences == ()
 
     restarted = READ_TIME + timedelta(seconds=120)
     for offset in (0, 60, 120):

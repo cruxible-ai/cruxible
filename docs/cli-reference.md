@@ -1764,7 +1764,12 @@ rather than silently rebound.
 
 `evaluate` checks a historical `[since, until)` range against every live
 Trigger aimed at the Line and records its matches as pending; it never runs
-anything. `--dry-run` only reports what the range makes eligible -- `met`,
+anything. A cadence or cron Trigger matches every instant of its schedule in
+the range (on its Trigger version's grid or calendar, none at or before that
+version's acceptance) that no match or evaluation already delivered, so
+evaluating a `line_coverage_gap` range finds exactly the ticks the downtime
+skipped; a `--dry-run` without `--since` reports only the tick due next.
+`--dry-run` only reports what the range makes eligible -- `met`,
 `not_met`, or `incomplete`, the exact matching events/windows (each naming its
 Trigger), and each occurrence's dispatch status (pending, admitted, rejected,
 superseded or lapsed) -- enqueues nothing, needs no range, and is a read.
