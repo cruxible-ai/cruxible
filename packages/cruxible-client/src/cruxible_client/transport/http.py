@@ -837,6 +837,25 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ProposalWithdrawResult)
 
+    def reject_proposal(
+        self,
+        instance_id: str,
+        proposal_id: str,
+        *,
+        reason: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> contracts.ProposalRejectResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/proposals/{proposal_id}/reject",
+            json={
+                "tag": "playbill-proposal-reject-request-v1",
+                "reason": reason,
+                **_change_control(dry_run, at),
+            },
+        )
+        return self._parse_model(response, contracts.ProposalRejectResult)
+
     def review_proposal(
         self,
         instance_id: str,

@@ -96,6 +96,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_proposal_withdraw": (
         "Use when an open proposal can never be activated and should leave the open inventory."
     ),
+    "cruxible_proposal_reject": (
+        "Use when you review another actor's open proposal and it should not be accepted; "
+        "the reason is recorded and the proposal leaves the open inventory."
+    ),
     "cruxible_capture_read": (
         "Use when you need verified retained Capture evidence for inspection or Claim authoring. "
         "Requires body-read permission; max_bytes bounds returned material. "

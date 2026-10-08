@@ -193,6 +193,7 @@ ordinary steps.
 | `cruxible_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
 | `cruxible_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
+| `cruxible_proposal_reject` | Reject another actor's open proposal as its reviewer, with a recorded reason | `GRAPH_WRITE` |
 
 MCP never accepts a private key as a tool argument. `cruxible_proposal_approve`
 signs client-side, in the MCP server process, with a key from

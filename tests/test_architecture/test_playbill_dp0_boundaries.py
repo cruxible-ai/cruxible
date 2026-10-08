@@ -421,6 +421,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "get_batch",
         "readmit_proposal",
         "withdraw_proposal",
+        "reject_proposal",
         "list_provider_packages",
         "install_provider",
         "build_kit",

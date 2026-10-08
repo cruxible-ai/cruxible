@@ -271,6 +271,35 @@ class ProposalWithdrawnError(ProposalAdmissionError):
         )
 
 
+class ProposalRejectedError(ProposalAdmissionError):
+    """A settlement door was asked to settle a proposal a reviewer rejected.
+
+    Rejection is the reviewer's terminal statement, recorded with its reason,
+    and every door that would settle the proposal refuses it exactly as a
+    withdrawal does.
+    """
+
+    error_code = "cruxible.proposal_rejected"
+
+    def __init__(
+        self,
+        proposal_id: str,
+        *,
+        actor_id: str,
+        reason: str,
+        rejected_at: str,
+    ) -> None:
+        self.proposal_id = proposal_id
+        self.actor_id = actor_id
+        self.reason = reason
+        self.rejected_at = rejected_at
+        super().__init__(
+            f"{self.error_code}: proposal {proposal_id} was rejected by {actor_id!r} at "
+            f"{rejected_at} ({reason}); a rejection is terminal, so author the change "
+            "again as a new proposal."
+        )
+
+
 class ProposalNotFoundError(CruxibleError):
     """A proposal selector did not resolve to immutable admission evidence."""
 
@@ -597,6 +626,7 @@ __all__ = [
     "ProposalNotFoundError",
     "ProposalSelectorAmbiguousError",
     "ProposalWithdrawnError",
+    "ProposalRejectedError",
     "ProposalIntegrityError",
     "ProjectionCoordinateError",
     "ProjectionError",

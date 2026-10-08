@@ -517,6 +517,20 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_proposal_reject(
+        instance_id: InstanceId = None,
+        *,
+        proposal_id: str,
+        reason: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
+    ) -> contracts.ProposalRejectResult:
+        """Reject one open proposal as its reviewer, recording why."""
+        return handlers.handle_playbill_reject_proposal(
+            require_instance_id(instance_id), proposal_id, reason, dry_run=dry_run, at=at
+        )
+
+    @_tool
     def cruxible_capture_read(
         instance_id: InstanceId = None, *, request: CaptureReadRequest
     ) -> CaptureRead:

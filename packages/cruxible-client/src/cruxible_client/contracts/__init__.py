@@ -678,7 +678,7 @@ class ProposalListEntry(BaseModel):
     verdict: Literal["candidate", "refused"] | None
     candidate_digest: str | None = None
     status: Literal["open", "settled", "incomplete"]
-    terminal_reason: Literal["accepted", "refused", "stale", "withdrawn"] | None = None
+    terminal_reason: Literal["accepted", "refused", "stale", "withdrawn", "rejected"] | None = None
     incomplete_reasons: tuple[
         Literal["missing_admission", "missing_evaluation", "missing_candidate"], ...
     ] = ()
@@ -725,6 +725,21 @@ class ProposalWithdrawResult(BaseModel):
     withdrawn_at: str
     already_withdrawn: bool = False
     #: The accepted coordinate the withdrawal was checked at; ``at`` pins a commit.
+    coordinate: AcceptedCoordinate | None = None
+
+
+class ProposalRejectResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-proposal-reject-result-v1"] = "playbill-proposal-reject-result-v1"
+    #: ``would_reject`` answers a preview, which recorded nothing.
+    status: Literal["rejected", "would_reject"] = "rejected"
+    proposal_id: str
+    actor_id: str
+    reason: str
+    rejected_at: str
+    already_rejected: bool = False
+    #: The accepted coordinate the rejection was checked at; ``at`` pins a commit.
     coordinate: AcceptedCoordinate | None = None
 
 

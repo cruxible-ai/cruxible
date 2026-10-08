@@ -15,6 +15,7 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
     ProposalNotFoundError,
+    ProposalRejectedError,
     ProposalSelectorAmbiguousError,
     ProposalWithdrawnError,
 )
@@ -30,6 +31,7 @@ from cruxible_core.service.proposals.proposals import (
     service_list_playbill_proposals,
     service_playbill_whoami,
     service_readmit_playbill_proposal,
+    service_reject_playbill_proposal,
     service_resolve_playbill_proposal_selector,
     service_withdraw_playbill_proposal,
 )
@@ -837,3 +839,100 @@ def test_full_principal_registry_rejects_unsigned_sql_mutation(tmp_path, monkeyp
     monkeypatch.setattr(TypedStateReader, "principal_registry", replaced)
     with pytest.raises(PrincipalIntegrityError):
         instance.accepted_principal_registry(coordinate)
+
+
+def test_a_reviewer_rejects_an_open_proposal_with_a_recorded_reason(tmp_path: Path) -> None:
+    """Rejection is the reviewer's terminal close: recorded, listed, and refused at settlement."""
+
+    instance, _owner = seed_claims(tmp_path)
+    opened = submit_query_definition_candidate(
+        instance,
+        query=work_item_query("rejected-by-review"),
+        actor_id="owner",
+        proposal_name="rejected-by-review",
+        timestamp=TIMESTAMP,
+    )
+    proposal_id = opened.proposal.admission.proposal_id
+
+    with pytest.raises(ProposalAdmissionError, match="withdraws it rather than rejecting"):
+        service_reject_playbill_proposal(
+            instance,
+            proposal_id=proposal_id,
+            actor_id="owner",
+            reason="mine to withdraw",
+            rejected_at=WITHDRAWN_AT,
+        )
+    preview = service_reject_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        actor_id="reviewer",
+        reason="the query reads the wrong field",
+        rejected_at=WITHDRAWN_AT,
+        dry_run=True,
+    )
+    assert preview.status == "would_reject"
+    assert instance.proposal_evidence().read_withdrawal(proposal_id) is None
+
+    result = service_reject_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        actor_id="reviewer",
+        reason="the query reads the wrong field",
+        rejected_at=WITHDRAWN_AT,
+    )
+
+    assert result.status == "rejected"
+    assert result.already_rejected is False
+    record = instance.proposal_evidence().read_withdrawal(proposal_id)
+    assert record is not None and record.kind == "rejected"
+    assert record.reason == "the query reads the wrong field"
+    entry = next(
+        item
+        for item in service_list_playbill_proposals(instance).entries
+        if item.proposal_id == proposal_id
+    )
+    assert entry.status == "settled"
+    assert entry.terminal_reason == "rejected"
+    again = service_reject_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        actor_id="reviewer",
+        reason="a second reason is not recorded",
+        rejected_at=WITHDRAWN_AT,
+    )
+    assert again.already_rejected is True
+    assert again.reason == "the query reads the wrong field"
+    with pytest.raises(ProposalAdmissionError, match="already rejected"):
+        service_withdraw_playbill_proposal(
+            instance,
+            proposal_id=proposal_id,
+            actor_id="owner",
+            reason="too late",
+            withdrawn_at=WITHDRAWN_AT,
+        )
+    with pytest.raises(ProposalRejectedError) as excinfo:
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=proposal_id,
+            activated_by="owner",
+        )
+    assert excinfo.value.error_code == "cruxible.proposal_rejected"
+    assert excinfo.value.actor_id == "reviewer"
+    assert "the query reads the wrong field" in str(excinfo.value)
+
+
+def test_a_withdrawal_record_without_a_kind_keeps_its_canonical_bytes(tmp_path: Path) -> None:
+    """``kind`` defaults to withdrawn and is omitted then, so retained records still verify."""
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
+
+    record = ProposalWithdrawalRecord(
+        proposal_id="sha256:" + "a" * 64,
+        actor_id="owner",
+        reason="superseded",
+        withdrawn_at=WITHDRAWN_AT,
+    )
+    assert b"kind" not in canonical_bytes(record.model_dump(mode="json"))
+    rejected = record.model_copy(update={"kind": "rejected"})
+    assert b'"kind":"rejected"' in canonical_bytes(rejected.model_dump(mode="json"))

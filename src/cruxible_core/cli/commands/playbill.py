@@ -2092,6 +2092,40 @@ def withdraw_proposal(
     echo_preview_next(result.status, result.coordinate)
 
 
+@proposal_group.command("reject")
+@click.argument("proposal_id")
+@click.option(
+    "--reason",
+    required=True,
+    help="Why this proposal should not be accepted. Recorded verbatim.",
+)
+@change_control_options
+@json_option
+@handle_errors
+def reject_proposal(
+    proposal_id: str, reason: str, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
+    """Reject another actor's open proposal as its reviewer."""
+
+    result = _server_call(
+        lambda client, instance_id: client.reject_proposal(
+            instance_id,
+            client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
+            reason=reason,
+            dry_run=dry_run,
+            at=at,
+        ),
+        command_name="cruxible proposal reject",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    already = " (already rejected)" if result.already_rejected else ""
+    click.echo(f"{result.status}  {result.proposal_id}  {result.rejected_at}{already}")
+    click.echo(f"Reason: {result.reason}")
+    echo_preview_next(result.status, result.coordinate)
+
+
 @proposal_group.command("review")
 @click.argument("proposal_id")
 @click.option("--include-body/--redacted", default=True)

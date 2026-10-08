@@ -144,6 +144,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_claim_attest": PermissionMode.GOVERNED_WRITE,
     "cruxible_proposal_readmit": PermissionMode.GOVERNED_WRITE,
     "cruxible_proposal_withdraw": PermissionMode.GOVERNED_WRITE,
+    "cruxible_proposal_reject": PermissionMode.GRAPH_WRITE,
     "cruxible_proposal_approve_submit": PermissionMode.GRAPH_WRITE,
     "cruxible_proposal_approve": PermissionMode.GRAPH_WRITE,
     "cruxible_proposal_activate": PermissionMode.GRAPH_WRITE,

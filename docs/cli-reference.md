@@ -2954,6 +2954,7 @@ cruxible proposal list [--status open|settled|incomplete] [--limit N]
   [--cursor CURSOR] [--json]
 cruxible proposal readmit PROPOSAL_ID [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal withdraw PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
+cruxible proposal reject PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
   [--workspace-root DIR] [--json]
 cruxible proposal approve PROPOSAL_ID
@@ -3008,6 +3009,17 @@ with terminal reason `withdrawn`. Only the actor who submitted a proposal may
 withdraw it; withdrawing an already-withdrawn proposal repeats the first answer
 rather than rewriting its reason, and a settled proposal refuses, because its
 outcome is not an intention to overwrite.
+
+`proposal reject` is the reviewer's side of the same ending: a reviewer
+(`graph_write`) who will not accept another actor's open or stale proposal
+rejects it with a required `--reason`. It writes the same immutable closing
+record, marked `rejected`, moves the proposal out of the open inventory with
+terminal reason `rejected`, and every settlement door (approve, activate,
+readmit) then refuses `cruxible.proposal_rejected` naming who rejected it, when,
+and why. A proposal's own actor withdraws rather than rejects; rejecting an
+already-rejected proposal repeats the first answer, and a withdrawn proposal
+cannot also be rejected. A rejection is not remembered against a later proposal
+of the same change.
 
 approve signs locally. The private-key path is not sent to the daemon.
 Activation is a daemon act and writes nothing locally; it returns the
