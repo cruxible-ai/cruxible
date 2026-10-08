@@ -1936,6 +1936,15 @@ lowered into; `--json` carries them in `terminal_egress`. Producing the
 proposal activates nothing: retrieve it with `cruxible get PROPOSAL_ID`, review
 it in the ledger, and activate it with the existing proposal verbs.
 
+An item on a many-valued ClaimType adds a value, as `write`'s `add` does: the
+values already in its slot (and any sibling item in the same slot) stay, and
+each is dispositioned `not_tested`. An item on a single-valued slot that
+already holds a value names the Claim it `revises`. Each item's rationale
+reaches the proposal: the proposal's rationale is the run that proposed it
+followed by the items' own rationales (each labelled with its Claim ID when
+there are several), shown by `proposal review --json` as `rationale` and read
+back by `get CLM-... --detail evidence` once accepted.
+
 The proposal ref is keyed on the admitted operation. A retry of the same
 operation recovers the same proposal and publishes the same receipt; other
 member bytes under the same key refuse `effectful_operation_payload_mismatch`.

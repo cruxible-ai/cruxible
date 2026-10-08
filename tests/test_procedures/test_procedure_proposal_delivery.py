@@ -1441,3 +1441,147 @@ def test_a_retained_rung_insufficient_mandate_refusal_reads_as_todays_grant_code
     assert refusal.details["codes"] == ["procedure_mandate_grant_insufficient"]
     (egress,) = again.terminal_egress
     assert egress.refusal_code == "procedure_mandate_grant_insufficient"
+
+
+# --- many-valued slots and item rationale -------------------------------------
+
+
+from cruxible_core.service.discovery.get import GetRequest, service_playbill_get  # noqa: E402
+from cruxible_core.service.proposals.review import (  # noqa: E402
+    service_review_playbill_proposal,
+)
+
+_READER = BodyAccessContext(principal_id="test", can_read_body=True)
+_DATED = "2026-09-01T00:00:00Z"
+
+
+def _many_valued_claim_type() -> ClaimType:
+    claim_type = _claim_type(capture_contract_digest(capture_contract()).tagged)
+    return claim_type.model_copy(
+        update={
+            "cardinality": "many",
+            "resolution_policy": ClaimResolutionPolicy(
+                cardinality="many", eligible_verdicts=("supported",), selector="all"
+            ),
+        }
+    )
+
+
+def _dated_item(rationale: str) -> dict[str, object]:
+    """The same slot as `item_template`, a distinct statement: it is dated."""
+
+    return item_template(
+        statement={
+            **item_template()["statement"],  # type: ignore[dict-item]
+            "effective_from": _DATED,
+        },
+        rationale=rationale,
+    )
+
+
+def _live_slot_claims(instance: PlaybillInstance) -> list[Any]:
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    claims = [
+        parse_claim(tree[path], path=path) for path in sorted(tree) if path.startswith("claims/")
+    ]
+    return [
+        claim
+        for claim in claims
+        if claim.lifecycle.state == "live"
+        and claim.statement.predicate == PREDICATE
+        and claim.statement.qualifier is None
+    ]
+
+
+def test_two_items_add_two_values_to_one_many_valued_slot(tmp_path: Path) -> None:
+    instance, owner, root, line, _procedure = proposal_world(
+        tmp_path,
+        templates=(item_template(), _dated_item("The dated reading of the same severity.")),
+        claim_type=_many_valued_claim_type(),
+    )
+
+    state = run_line(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered"
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    accept_proposal(instance, owner, inspection)
+    assert len(_live_slot_claims(instance)) == 2
+
+
+def test_one_item_adds_a_value_to_a_many_valued_slot_that_already_holds_one(
+    tmp_path: Path,
+) -> None:
+    instance, owner, root, line, _procedure = proposal_world(
+        tmp_path, claim_type=_many_valued_claim_type()
+    )
+    first = run_line(instance, root, line)
+    assert first.status == "succeeded", first.terminal
+    accept_proposal(
+        instance,
+        owner,
+        service_inspect_playbill_proposal(
+            instance, proposal_id=first.terminal_egress[0].proposal_id
+        ),
+    )
+    (existing,) = _live_slot_claims(instance)
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        fixtures.canonical_bytes({"advisory_id": "OSV-2026-0001", "severity": "critical"})
+    )
+
+    second = run_line(instance, root, line, at=NOW + timedelta(minutes=5))
+
+    assert second.status == "succeeded", second.terminal
+    (egress,) = second.terminal_egress
+    assert egress.verdict == "delivered"
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    )
+    live = _live_slot_claims(instance)
+    # The existing value stays; the new one joins it.
+    assert existing.identity.name in {claim.identity.name for claim in live}
+    assert sorted(claim.statement.object.model_dump(mode="json")["value"] for claim in live) == [
+        "critical",
+        "high",
+    ]
+
+
+def test_two_items_for_one_single_valued_slot_still_refuse(tmp_path: Path) -> None:
+    instance, _owner, root, line, _procedure = proposal_world(
+        tmp_path, templates=(item_template(), _dated_item("A contending dated value."))
+    )
+
+    state = run_line(instance, root, line)
+
+    refusal = _refusal(state)
+    assert refusal.code == "proposal_lowering_refused", refusal
+    assert refusal.details["code"] == "cruxible.authoring.existing_claim_dispositions_incomplete"
+    assert _proposal_refs(instance) == []
+
+
+def test_an_item_rationale_reaches_the_review_and_the_accepted_claims_evidence(
+    tmp_path: Path,
+) -> None:
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    reason = item_template()["rationale"]
+
+    state = run_line(instance, root, line)
+
+    (egress,) = state.terminal_egress
+    assert egress.proposal_id is not None
+    review = service_review_playbill_proposal(
+        instance, proposal_id=egress.proposal_id, access=_READER
+    )
+    assert review.rationale is not None
+    assert review.rationale.startswith("Proposed by Procedure ")
+    assert review.rationale.endswith(str(reason))
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    )
+    claim_id = egress.children[0].path.rsplit("/", 1)[-1].removesuffix(".json")
+    result = service_playbill_get(
+        instance, request=GetRequest(ref=claim_id, detail="evidence"), access=_READER
+    )
+    assert result.evidence is not None
+    assert result.evidence.rationale == review.rationale

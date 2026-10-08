@@ -12,15 +12,30 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from cruxible_client.contracts.canonical import CARD_NAMESPACE, normalize_ledger_path
-from cruxible_client.contracts.claims import ClaimArtifactAny, ClaimStatement, parse_claim
+from cruxible_client.contracts.claims import ClaimArtifactAny, parse_claim
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.persistent import PersistentMap
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.derived.derived_runtime import BoundedCache, Lease, Registry
 
 BlobLoader = Callable[[Sequence[str]], Mapping[str, bytes]]
+
+
+class ClaimPredicateKey(Protocol):
+    """What a live-Claim lookup matches on: a statement's subject and predicate.
+
+    A lowered ClaimStatement and an authored statement both carry these, so a
+    caller that has not lowered yet can still ask which Claims a slot holds.
+    """
+
+    @property
+    def subject(self) -> SemanticAddress: ...
+
+    @property
+    def predicate(self) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,7 +308,7 @@ class SnapshotTree(Mapping[str, bytes]):
     def fork(self) -> CandidateTree:
         return CandidateTree(self)
 
-    def claim_items(self, statement: ClaimStatement) -> tuple[tuple[str, bytes], ...]:
+    def claim_items(self, statement: ClaimPredicateKey) -> tuple[tuple[str, bytes], ...]:
         if self._accepted_reader is not None:
             from cruxible_core.indexes.evaluated_state import EvaluationRows
 
@@ -329,7 +344,7 @@ class SnapshotTree(Mapping[str, bytes]):
                     rows.append((path, self[path]))
         return tuple(sorted(rows))
 
-    def claims_for(self, statement: ClaimStatement) -> tuple[ClaimArtifactAny, ...]:
+    def claims_for(self, statement: ClaimPredicateKey) -> tuple[ClaimArtifactAny, ...]:
         return tuple(
             parse_claim(content, path=path) for path, content in self.claim_items(statement)
         )
@@ -354,7 +369,7 @@ _CLAIM_MATCH_LOCK = threading.Lock()
 _claim_match_bytes = 0
 
 
-def _claim_matches(path: str, content: bytes, statement: ClaimStatement) -> bool:
+def _claim_matches(path: str, content: bytes, statement: ClaimPredicateKey) -> bool:
     global _claim_match_bytes
     key = (path, content)
     with _CLAIM_MATCH_LOCK:
@@ -468,10 +483,10 @@ class CandidateTree(MutableMapping[str, bytes]):
     def fork(self) -> CandidateTree:
         return self.snapshot().fork()
 
-    def claim_items(self, statement: ClaimStatement) -> tuple[tuple[str, bytes], ...]:
+    def claim_items(self, statement: ClaimPredicateKey) -> tuple[tuple[str, bytes], ...]:
         return self.snapshot().claim_items(statement)
 
-    def claims_for(self, statement: ClaimStatement) -> tuple[ClaimArtifactAny, ...]:
+    def claims_for(self, statement: ClaimPredicateKey) -> tuple[ClaimArtifactAny, ...]:
         return self.snapshot().claims_for(statement)
 
 

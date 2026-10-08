@@ -858,6 +858,7 @@ class ProposalReview(BaseModel):
     members: list[ReviewedMember]
     governance: dict[str, Any]
     provenance: dict[str, Any]
+    rationale: str | None = None
     attestation_coverage: dict[str, Any]
     documents: list[dict[str, Any]]
     redactions: list[str]
