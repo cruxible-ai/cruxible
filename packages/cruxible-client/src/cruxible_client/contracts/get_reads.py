@@ -543,7 +543,8 @@ class GetHistory(_StrictGetModel):
     """One page of revisions, newest first; ``revision`` counts from the oldest.
 
     Each revision's value follows the summary card rule: a string over 500
-    characters is a ``TruncatedText`` preview, read whole through ``next``.
+    characters is a ``TruncatedText`` preview whose ``read_whole`` reads this
+    revision's whole value at its own generation.
     """
 
     revisions: tuple[GetRevision, ...]

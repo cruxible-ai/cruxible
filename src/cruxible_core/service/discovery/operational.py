@@ -66,7 +66,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
 from cruxible_client.contracts.procedures.windows import CaptureEventWindow, FixedWindow
-from cruxible_client.contracts.read_values import summary_value
+from cruxible_client.contracts.read_values import summary_value, whole_value_read
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
@@ -875,7 +875,10 @@ def resolution_contract_card(
         hypothesis_value=(
             None
             if hypothesis is None
-            else summary_value(_claim_value(cast(ClaimArtifactAny, hypothesis)))
+            else summary_value(
+                _claim_value(cast(ClaimArtifactAny, hypothesis)),
+                read_whole=whole_value_read(claim_id, coordinate.git_oid),
+            )
         ),
         window=window_summary(contract.window),
         rule=str(rule_kind),

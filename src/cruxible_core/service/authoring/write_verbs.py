@@ -86,7 +86,11 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.get_reads import ReadSurface
 from cruxible_client.contracts.primitives import canonical_json
-from cruxible_client.contracts.read_values import TruncatedText, summary_value
+from cruxible_client.contracts.read_values import (
+    TruncatedText,
+    summary_value,
+    whole_value_read,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_client.contracts.temporal import utc_now
@@ -1329,7 +1333,10 @@ class _Planner:
                         "subject": subject,
                         "field": name,
                         "predicate": info.predicate,
-                        "before": summary_value(present.value),
+                        "before": summary_value(
+                            present.value,
+                            read_whole=whole_value_read(present.claim_id, self.head.git_oid),
+                        ),
                         "after": summary_value(present.value),
                         "claim": present.claim_id,
                         "already_live": True,
@@ -1375,7 +1382,14 @@ class _Planner:
                 "subject": subject,
                 "field": name,
                 "predicate": info.predicate,
-                "before": summary_value(before),
+                # before is the revised Claim at the planning head; after is
+                # the value this write sent, so it names no whole read.
+                "before": summary_value(
+                    before,
+                    read_whole=None
+                    if revises is None
+                    else whole_value_read(revises, self.head.git_oid),
+                ),
                 "after": summary_value(shown_after),
                 "revises": revises,
                 "contenders_created": contenders,
@@ -1555,7 +1569,9 @@ class _Planner:
                 "subject": subject,
                 "field": name,
                 "predicate": predicate,
-                "before": summary_value(value),
+                "before": summary_value(
+                    value, read_whole=whole_value_read(claim_id, self.head.git_oid)
+                ),
                 "after": None,
                 "claim": claim_id,
                 "retired": tuple(item.artifact_identity.name for item in dependents),

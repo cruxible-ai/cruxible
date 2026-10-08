@@ -400,7 +400,8 @@ class ChangeOutcome(_StrictWriteModel):
     field: str | None = Field(default=None, exclude_if=_omit_none)
     predicate: str | None = Field(default=None, exclude_if=_omit_none)
     # The slot's value before and after, as a summary shows it: a long string is
-    # a TruncatedText preview, read whole with get(claim, detail="evidence").
+    # a TruncatedText preview: before names the read of the value it replaced;
+    # after is the value this write sent.
     before: ShownValue = None
     after: ShownValue = None
     claim: str | None = Field(

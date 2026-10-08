@@ -822,6 +822,7 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
     from cruxible_client.contracts.read_values import (
         GET_SUMMARY_TEXT_MAX_CHARS,
         TruncatedText,
+        WholeValueRead,
     )
 
     instance, _owner = seed_claims(tmp_path)
@@ -829,19 +830,24 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
     # The fixture ClaimType is an enum, so stand a long note in for its value.
     monkeypatch.setattr(get_module, "_artifact_value", lambda _claim: long_value)
     monkeypatch.setattr(get_module, "_claim_value", lambda _row: long_value)
-    cut = TruncatedText(preview=long_value[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_value))
 
     subject = _get(instance, _SUBJECT).card
     assert isinstance(subject, GetSubjectCard)
     (row,) = subject.claims
+    assert isinstance(row.claim, str)
+    head = instance.accepted_coordinate().git_oid
+    cut = TruncatedText(
+        preview=long_value[:GET_SUMMARY_TEXT_MAX_CHARS],
+        length=len(long_value),
+        read_whole=WholeValueRead(ref=row.claim, at=head),
+    )
     assert row.value == cut
     assert row.model_dump(mode="json")["value"] == {
         "truncated": True,
         "preview": long_value[:GET_SUMMARY_TEXT_MAX_CHARS],
         "length": len(long_value),
-        "read_whole": 'get(claim, detail="evidence")',
+        "read_whole": {"ref": row.claim, "detail": "evidence", "at": head},
     }
-    assert isinstance(row.claim, str)
     assert subject.next[0] == f'cruxible_get(ref="{row.claim}", detail="evidence")'
     claim = _get(instance, row.claim).card
     assert isinstance(claim, GetClaimCard) and claim.value == cut

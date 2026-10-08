@@ -441,6 +441,16 @@ class ReferenceKindError(SdkError):
     code = "cruxible.sdk.reference_kind_mismatch"
 
 
+class WholeValueUnavailable(SdkError):
+    """A preview names no exact whole read: a plain query row cell, or a write's ``after``.
+
+    Query with ``claims=True`` and pass a Claim cell's preview instead; a write's
+    ``after`` is the value the write sent.
+    """
+
+    code = "cruxible.sdk.whole_value_unavailable"
+
+
 class AbsentSubject(SdkError):
     """No Subject of this kind carries this ID at the world's coordinate."""
 
@@ -600,4 +610,5 @@ __all__ = [
     "SourceSelectionError",
     "SubjectRef",
     "TypedRef",
+    "WholeValueUnavailable",
 ]

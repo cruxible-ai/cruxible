@@ -195,7 +195,7 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from cruxible_client.contracts.get_reads import GetHistory, GetRevision
-    from cruxible_client.contracts.read_values import TruncatedText
+    from cruxible_client.contracts.read_values import TruncatedText, WholeValueRead
 
     stub = _stub(
         monkeypatch,
@@ -232,7 +232,11 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     long_row = GetSubjectClaim(
         predicate="note",
         claim="CLM-3",
-        value=TruncatedText(preview="n" * 500, length=900),
+        value=TruncatedText(
+            preview="n" * 500,
+            length=900,
+            read_whole=WholeValueRead(ref="CLM-3", at="3" * 64),
+        ),
     )
     _stub(
         monkeypatch,
@@ -257,7 +261,7 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
         "truncated": True,
         "preview": "n" * 500,
         "length": 900,
-        "read_whole": 'get(claim, detail="evidence")',
+        "read_whole": {"ref": "CLM-3", "detail": "evidence", "at": "3" * 64},
     }
     assert payload["coordinate"] == {"git_oid": "1" * 12, "generation": 7}
     assert "accepted_coordinate" not in payload

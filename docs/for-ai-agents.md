@@ -113,8 +113,11 @@ and refuses a wrong name with the nearest names. `detail` goes deeper:
 `body` by byte range. A summary -- a card, a `query` row or Claim cell,
 `world.values`, a write's before/after -- shows a string value over 500
 characters as a `TruncatedText` (`truncated: true`, `preview`, `length`,
-`read_whole`), never as the value: `get(claim, detail="evidence")` reads it
-whole (`evidence.value`), as does `proof`.
+`read_whole`), never as the value. `read_whole` is the exact read of the whole
+value, `{ref, detail: "evidence", at}` pinned to the generation the preview
+came from, so an old revision reads back as itself (`cx.read_whole(preview)` in
+the SDK); a plain `query` row cell has none (ask `claims=True`), and a write's
+`after` is the value you sent.
 Use `cx.query(name=..., params=..., receipt="full")` for a named query's replay
 receipt (the Claims each row read, paths, verdict), checking truncation before
 assuming completeness.

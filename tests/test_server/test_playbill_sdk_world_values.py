@@ -141,47 +141,70 @@ def test_values_records_each_claim_it_served(
     ]
 
 
-def test_a_long_value_is_typed_truncated_text_and_evidence_reads_it_whole(
+def test_a_long_value_is_typed_truncated_text_and_reads_whole_where_it_was_previewed(
     served: tuple[TestClient, str, str], tmp_path: Path
 ) -> None:
     """A preview is a declared type on every read that cuts it, never a loose dict.
 
-    World.values, query rows and Claim cells and the write outcome all carry the
-    same TruncatedText; a short value is unchanged; the documented read returns
-    the whole value.
+    World.values, query rows and Claim cells, get history and the write outcome
+    all carry the same TruncatedText; a short value is unchanged. A preview that
+    one Claim at one generation backs names that exact read, so it whole-reads
+    to the value it previewed even after the value was revised; the documented
+    SDK call, ``cx.read_whole(item.value)``, makes it.
     """
 
+    from cruxible_client.authoring.sdk_types import WholeValueUnavailable
     from cruxible_client.contracts.compact_query import QueryClaim
-    from cruxible_client.contracts.get_reads import GetEvidence
-    from cruxible_client.contracts.read_values import (
-        GET_SUMMARY_TEXT_MAX_CHARS,
-        TruncatedText,
-    )
+    from cruxible_client.contracts.get_reads import GetHistory
+    from cruxible_client.contracts.read_values import GET_SUMMARY_TEXT_MAX_CHARS, TruncatedText
 
     client, instance_id, _actor = served
-    pb = _sdk(client, instance_id, tmp_path)
-    long_title = "A title long enough to cut. " * 30
-    assert len(long_title) > GET_SUMMARY_TEXT_MAX_CHARS
-    written = pb.set(WI1, "title", long_title, because="Named in review.").changes[0]
-    pb.set(WI1, "status", "ready", because="Checked.")
-    cut = TruncatedText(preview=long_title[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_title))
+    cx = _sdk(client, instance_id, tmp_path)
+    first_title = "A title long enough to cut. " * 30
+    second_title = "A revised title, also long. " * 30
+    assert len(first_title) > GET_SUMMARY_TEXT_MAX_CHARS
+    first = cx.set(WI1, "title", first_title, because="Named in review.").changes[0]
+    cx.set(WI1, "status", "ready", because="Checked.")
 
-    values = {item.predicate: item for item in pb.world().values(subjects=[WI1])}
-
-    title = values[TITLE]
-    assert isinstance(title.value, TruncatedText) and title.value == cut
-    assert title.value.read_whole == 'get(claim, detail="evidence")'
+    values = {value.predicate: value for value in cx.world().values(subjects=[WI1])}
+    item = values[TITLE]
+    assert isinstance(item.value, TruncatedText)
+    assert (item.value.preview, item.value.length) == (
+        first_title[:GET_SUMMARY_TEXT_MAX_CHARS],
+        len(first_title),
+    )
+    assert item.value.read_whole is not None and item.value.read_whole.ref == item.claim
     assert values[f"{KIND}.status"].value == "ready"
-    evidence = pb.get(title.claim, detail="evidence").value
-    assert isinstance(evidence, GetEvidence) and evidence.value == long_title
+    # The documented whole-value call, exactly as documented.
+    assert cx.read_whole(item.value) == first_title
+    assert first.after is not None and isinstance(first.after, TruncatedText)
+    assert first.after.read_whole is None  # the value this write sent
 
-    page = pb.query(
+    second = cx.set(WI1, "title", second_title, because="Renamed.").changes[0]
+
+    # The earlier preview still reads back the value it previewed, not the head's.
+    assert cx.read_whole(item.value) == first_title
+    # A write's before previews the value it replaced, and reads back that value.
+    assert isinstance(second.before, TruncatedText)
+    assert cx.read_whole(second.before) == first_title
+    # An older revision's preview whole-reads to its own value.
+    history = cx.get(item.claim, detail="history").value
+    assert isinstance(history, GetHistory)
+    by_revision = {revision.revision: revision.value for revision in history.revisions}
+    assert all(isinstance(value, TruncatedText) for value in by_revision.values())
+    assert cx.read_whole(by_revision[1]) == first_title  # type: ignore[arg-type]
+    assert cx.read_whole(by_revision[2]) == second_title  # type: ignore[arg-type]
+
+    page = cx.query(
         KIND, where=[{"field": "subject_id", "eq": "wi-1"}], select=["title"], claims=True
     ).page
     (row,) = page.rows
-    assert row["title"] == cut
+    cell = row["title"]
+    assert isinstance(cell, TruncatedText) and cell.read_whole is None
+    with pytest.raises(WholeValueUnavailable):
+        cx.read_whole(cell)
     cells = row["claims"]
     assert isinstance(cells, dict)
     (claim,) = cells["title"]
-    assert isinstance(claim, QueryClaim) and claim.value == cut
-    assert written.after == cut
+    assert isinstance(claim, QueryClaim) and isinstance(claim.value, TruncatedText)
+    assert cx.read_whole(claim.value) == second_title

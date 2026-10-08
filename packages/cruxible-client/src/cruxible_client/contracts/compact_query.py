@@ -350,7 +350,8 @@ class QueryClaim(BaseModel):
 
     claim: str
     #: The value as a summary shows it: a string over 500 characters is a
-    #: TruncatedText preview; ``get(claim, detail="evidence")`` reads it whole.
+    #: TruncatedText preview whose ``read_whole`` reads it whole at the answer's
+    #: coordinate.
     value: ShownValue
     verdict: str
     status: QueryCellClaimStatus
@@ -421,9 +422,9 @@ class QueryResultRecord(BaseModel):
     """One page of a ``query`` answer: values first, flags per row.
 
     Rows are bounded by ``get``'s card rule: a string value over 500 characters
-    is a ``TruncatedText`` preview (``get(claim, detail="evidence")`` reads it
-    whole), and an exact-content value is its text, or an ``ExactContentRef``
-    when it cannot be shown as text.
+    is a ``TruncatedText`` preview, and an exact-content value is its text, or an
+    ``ExactContentRef`` when it cannot be shown as text. A row cell names no
+    whole read; with ``claims=True`` each Claim's preview does.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

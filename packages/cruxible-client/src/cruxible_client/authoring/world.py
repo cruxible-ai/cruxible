@@ -1305,7 +1305,7 @@ class World:
         resolution overturned or refused. Strings are subject kind/id addresses
         or paths and fully qualified predicates. A string value over 500
         characters is a ``TruncatedText`` (``preview``, ``length``), never the
-        value: ``cx.get(item.claim, detail="evidence").evidence.value`` reads it whole.
+        value: ``cx.read_whole(item.value)`` reads it whole at this World's coordinate.
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """

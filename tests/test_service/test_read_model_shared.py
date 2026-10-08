@@ -353,6 +353,16 @@ def _exact_get(
     )
 
 
+def _bare(value: Any) -> Any:
+    """A shown value without the whole read a get preview names (a row cell has none)."""
+
+    from cruxible_client.contracts.read_values import TruncatedText
+
+    return (
+        value.model_copy(update={"read_whole": None}) if isinstance(value, TruncatedText) else value
+    )
+
+
 def _exact_query(instance: Any, **fields: Any) -> QueryResultRecord:
     return service_playbill_query(
         instance,
@@ -390,7 +400,9 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
 
     # A long value is cut on the card by the card rule; evidence reads it whole.
     long_card = _exact_get(instance, long_ruling.claim_id).card
-    assert isinstance(long_card, GetClaimCard) and long_card.value == cut
+    assert isinstance(long_card, GetClaimCard) and _bare(long_card.value) == cut
+    assert isinstance(long_card.value, TruncatedText) and long_card.value.read_whole is not None
+    assert long_card.value.read_whole.ref == long_ruling.claim_id
     evidence = _exact_get(instance, long_ruling.claim_id, detail="evidence").evidence
     assert evidence is not None
     assert (evidence.value, evidence.content_digest) == (_LONG_RULING.decode(), long_ruling.digest)
@@ -410,7 +422,7 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
     # A long revision value is cut by the same card rule.
     long_history = _exact_get(instance, long_ruling.claim_id, detail="history").history
     assert long_history is not None
-    assert [(item.value, item.content_digest) for item in long_history.revisions] == [
+    assert [(_bare(item.value), item.content_digest) for item in long_history.revisions] == [
         (cut, long_ruling.digest)
     ]
 
@@ -435,7 +447,7 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
         card = _exact_get(instance, seeded_claim.subject).card
         assert isinstance(card, GetSubjectCard)
         assert card.claims[0].content_digest == seeded_claim.digest
-        assert card.claims[0].value == compact[seeded_claim.subject]["status"]
+        assert _bare(card.claims[0].value) == compact[seeded_claim.subject]["status"]
         assert card.claims[0].flags == tuple(compact[seeded_claim.subject]["flags"])
 
 
@@ -526,12 +538,12 @@ def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
 
     # get agrees: the card is cut the same way, evidence reads it whole.
     card = _exact_get(instance, f"{SUBJECT_KIND}/wi-44").card
-    assert isinstance(card, GetSubjectCard) and card.claims[0].value == cut
+    assert isinstance(card, GetSubjectCard) and _bare(card.claims[0].value) == cut
     assert isinstance(card.claims[0].claim, str)
     evidence = _exact_get(instance, card.claims[0].claim, detail="evidence").evidence
     assert evidence is not None and evidence.value == long_note
     history = _exact_get(instance, card.claims[0].claim, detail="history").history
-    assert history is not None and [item.value for item in history.revisions] == [cut]
+    assert history is not None and [_bare(item.value) for item in history.revisions] == [cut]
 
 
 def test_projected_exact_content_follows_the_engines_visibility_policy(

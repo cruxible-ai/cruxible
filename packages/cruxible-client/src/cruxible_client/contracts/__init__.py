@@ -228,6 +228,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderWheelObject as ProviderWheelObject,
 )
 from cruxible_client.contracts.read_values import TruncatedText as TruncatedText
+from cruxible_client.contracts.read_values import WholeValueRead as WholeValueRead
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReference as ClaimVersionReference,
 )
