@@ -58,6 +58,7 @@ from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateAny,
     ProcedureMandateInvocation,
     evaluate_procedure_mandate,
+    mandate_rung,
 )
 from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureClaimProposalItem,
@@ -346,9 +347,12 @@ def select_procedure_mandate(
 
     Every accepted mandate pinned to this Procedure artifact is evaluated with
     the same law `require_procedure_mandate` applies later. A permitted one is
-    bound (lowest digest first, so the choice is stable). If none permits, the
-    one with the fewest refusals is bound instead, so the refusal the door
-    raises names the real limiting term rather than "no mandate".
+    bound: one granting exactly the requested rung before a wider grant (a
+    proposal never leans on a settle grant while a propose grant covers it, so
+    retiring the settle grant cannot strand it), then the lowest digest, so the
+    choice is stable. If none permits, the one with the fewest refusals is
+    bound instead, so the refusal the door raises names the real limiting term
+    rather than "no mandate".
     """
 
     evaluation_time = (
@@ -357,7 +361,7 @@ def select_procedure_mandate(
         else request.prepared_at
     )
     authority = authority_procedure(admission, delegation)
-    ranked: list[tuple[int, str]] = []
+    ranked: list[tuple[int, bool, str]] = []
     for digest, mandate in sorted(accepted_mandates.items(), key=lambda item: item[0]):
         evaluation = evaluate_procedure_mandate(
             mandate,
@@ -371,10 +375,16 @@ def select_procedure_mandate(
                 accepted_mandate_digest=digest,
             ),
         )
-        ranked.append((len(evaluation.refusal_codes), digest))
+        ranked.append(
+            (
+                len(evaluation.refusal_codes),
+                mandate_rung(mandate) != request.required_rung,
+                digest,
+            )
+        )
     if not ranked:
         return None
-    return min(ranked)[1]
+    return min(ranked)[2]
 
 
 def select_settle_mandate(
@@ -565,8 +575,8 @@ class ProposalTerminalEgressSink:
                     "A terminal item lowered into no changed member.",
                     details={"item_key": item_key, "path": path},
                 )
-        # A settle capped at propose binds the mandate a proposal would: it
-        # never asks a settle grant for authority it will not use.
+        # A settle capped at propose binds the mandate a proposal would (a
+        # propose grant first): it never uses a settle grant's settle authority.
         mandate_digest = (
             select_settle_mandate(
                 request,
@@ -775,9 +785,9 @@ class ProposalTerminalEgressSink:
         or recovered delivery reports what was actually submitted -- a fallback
         stays a fallback even after it is accepted through ordinary review.
 
-        A settle the run's authority caps at propose takes the same fallback
-        without consulting any settle grant: it proposes under the mandate the
-        proposal bound, for `cruxible.settle.authority_capped_by_<term>`.
+        A settle the run's authority caps at propose takes the same fallback and
+        never uses a settle grant's settle authority: it proposes under the
+        mandate the proposal bound, for `cruxible.settle.authority_capped_by_<term>`.
         """
 
         digest = request.procedure_mandate_digest

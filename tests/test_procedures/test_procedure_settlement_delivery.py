@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,8 @@ from cruxible_client.contracts.procedure_mandates import (
     MandateClaimScope,
     MandateCondition,
     ProcedureMandate,
+    parse_procedure_mandate_any,
+    procedure_mandate_digest,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -142,6 +144,8 @@ def _condition(*, only_subject: str | None, require_claim: bool = False) -> Quer
 OWNERS: dict[Path, Any] = {}
 #: The settling Procedure of each capture-triggered world, for landing trigger Captures.
 PROCEDURES: dict[Path, Any] = {}
+#: The propose grant's digest in each world that accepts one.
+PROPOSE_GRANTS: dict[Path, str] = {}
 
 
 def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
@@ -252,20 +256,31 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         )
         members[procedure_mandate_path(mandate.identity.name)] = render_procedure_mandate(mandate)
     if propose_mandate:
-        grant = ProcedureMandate(
-            identity=ArtifactIdentity(kind="ProcedureMandate", name="propose-grant"),
-            procedure=ArtifactPin(
-                role="procedure",
-                target=with_terminal.identity,
-                artifact_digest=procedure_artifact_digest(with_terminal).tagged,
-            ),
-            grants="propose",
-            resource_ceiling=with_terminal.definition.hard_caps,
-            namespace=("claims",),
-            valid_from=datetime(2020, 1, 1, tzinfo=UTC),
-            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
-        )
+        settle_digests = [
+            procedure_mandate_digest(parse_procedure_mandate_any(content, path=path)).tagged
+            for path, content in members.items()
+            if path.startswith("procedure-mandates/")
+        ]
+        # The propose grant's digest sorts after every settle grant's, so a
+        # digest-order choice between them would pick the settle grant.
+        for day in range(256):
+            grant = ProcedureMandate(
+                identity=ArtifactIdentity(kind="ProcedureMandate", name="propose-grant"),
+                procedure=ArtifactPin(
+                    role="procedure",
+                    target=with_terminal.identity,
+                    artifact_digest=procedure_artifact_digest(with_terminal).tagged,
+                ),
+                grants="propose",
+                resource_ceiling=with_terminal.definition.hard_caps,
+                namespace=("claims",),
+                valid_from=datetime(2020, 1, 1, tzinfo=UTC),
+                expires_at=datetime(2099, 1, 1, tzinfo=UTC) + timedelta(days=day),
+            )
+            if all(procedure_mandate_digest(grant).tagged > item for item in settle_digests):
+                break
         members[procedure_mandate_path(grant.identity.name)] = render_procedure_mandate(grant)
+        PROPOSE_GRANTS[instance.root] = procedure_mandate_digest(grant).tagged
     fixtures._accept_more(instance, owner, members, name="settle-world")
     OWNERS[instance.root] = owner
     return instance, root, line
@@ -401,6 +416,26 @@ def test_a_settle_terminal_capped_at_propose_proposes_for_the_cap(
     assert submission is not None
     assert (submission.mode, submission.fallback_reason) == ("fallback", egress.fallback_reason)
     assert submission.mandate_digest == egress.procedure_mandate_digest
+
+
+def test_a_capped_settle_binds_the_propose_grant_over_a_settle_grant(tmp_path: Path) -> None:
+    """A capped settle is a proposal: it binds the propose grant, not the settle grant.
+
+    The propose grant's digest sorts last here, so a digest-order choice would
+    bind the settle grant, and retiring it would refuse a proposal the propose
+    grant still covers.
+    """
+
+    instance, root, line = settle_world(tmp_path, max_authority="propose", propose_mandate=True)
+
+    state = run_settle(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert egress.settle_outcome == "proposed"
+    assert egress.procedure_mandate_digest == PROPOSE_GRANTS[instance.root]
+    submission = _settle_submission(instance, egress)
+    assert submission is not None and submission.mandate_digest == PROPOSE_GRANTS[instance.root]
 
 
 def test_a_tier_lifted_settle_with_only_a_propose_grant_proposes_for_the_grant(
