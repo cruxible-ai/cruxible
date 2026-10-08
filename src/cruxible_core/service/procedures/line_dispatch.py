@@ -204,7 +204,7 @@ def service_evaluate_line(
         since=request.since, until=request.until, cursor=request.cursor, limit=request.limit
     )
     if request.dry_run:
-        return service_check_line_trigger(instance, line, window, now=now)
+        return service_check_line_trigger(instance, line, window, now=now, enqueue=False)
     if actor is None:
         raise ExecutionError("evaluation that enqueues requires an actor")
     return service_enqueue_line_range(instance, line, window, actor=actor, now=now)
@@ -221,7 +221,7 @@ def service_enqueue_line_range(
     """Enqueue what one range of a Line's Triggers makes eligible, and record the range."""
 
     instance.require_writable()
-    result = service_check_line_trigger(instance, line, window, now=now)
+    result = service_check_line_trigger(instance, line, window, now=now, enqueue=True)
     store = LineDispatchStore(instance)
     with store.locked() as conn:
         enqueued = _enqueue(store, conn, result, actor, now)
@@ -928,6 +928,7 @@ def service_match_listening_lines(
                     only_trigger=name,
                     generation_after=session.get("generation_start"),
                     generation_cursors=scan["cursors"],
+                    enqueue=True,
                 )
                 stop = _arm_stop(
                     session,

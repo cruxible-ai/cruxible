@@ -8,11 +8,15 @@ covered. Re-enabling does not hide a range nobody evaluated.
 
 from __future__ import annotations
 
+import base64
+import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 import pytest
 
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.line_dispatch import (
     LineDispatchRequest,
     LineEnablementPrincipal,
@@ -517,6 +521,74 @@ def test_recovered_ticks_dispatched_after_the_next_live_tick_never_skip_it(tmp_p
         (timer.then, True),
     ]
     assert line_attention(instance, now=timer.then + timedelta(seconds=2)) == ((), ())
+
+
+# --- a timed page's cursor serves only its own mode (review F-002) -----------
+
+
+def _paged(instance, line, gap, at, *, dry_run, cursor=None):  # type: ignore[no-untyped-def]
+    """One one-tick page of a gap, previewed or enqueued."""
+
+    return service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(
+            since=gap.since, until=gap.until, limit=1, cursor=cursor, dry_run=dry_run
+        ),
+        actor=None if dry_run else _actor(instance),
+        now=at,
+    )
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_a_dry_run_cursor_never_finishes_an_evaluation_that_enqueues(tmp_path, timer):
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    resumed = timer.restart + timedelta(seconds=1)
+    (gap,), _ = line_attention(instance, now=resumed)
+
+    previewed = _paged(instance, line, gap, resumed, dry_run=True)
+    assert previewed.status == "incomplete"
+    assert [item.eligible_at for item in previewed.occurrences] == [timer.missed[0]]
+    with pytest.raises(ExecutionError, match="mode"):
+        _paged(instance, line, gap, resumed, dry_run=False, cursor=previewed.cursor)
+    # Nothing was enqueued and nothing covered: the first tick is still owed.
+    assert _queued(instance, disposition="pending") == []
+    assert line_attention(instance, now=resumed)[0] == (gap,)
+    # The cursor still finishes the dry run that returned it.
+    rest = _paged(instance, line, gap, resumed, dry_run=True, cursor=previewed.cursor)
+    assert rest.status == "met"
+    assert [item.eligible_at for item in rest.occurrences] == [timer.missed[1]]
+
+    # An enqueueing page's cursor likewise never continues a dry run...
+    first = _paged(instance, line, gap, resumed, dry_run=False)
+    assert first.status == "incomplete"
+    assert [item.eligible_at for item in first.occurrences] == [timer.missed[0]]
+    with pytest.raises(ExecutionError, match="mode"):
+        _paged(instance, line, gap, resumed, dry_run=True, cursor=first.cursor)
+    # ...and finishes its own evaluation, which covers the gap only now.
+    last = _paged(instance, line, gap, resumed, dry_run=False, cursor=first.cursor)
+    assert last.status == "met" and last.cursor is None
+    assert [item.eligible_at for item in last.occurrences] == [timer.missed[1]]
+    assert [at for at, _ in _queued(instance, disposition="pending")] == list(timer.missed)
+    assert line_attention(instance, now=resumed)[0] == ()
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_an_enqueueing_cursor_cannot_skip_a_tick_no_page_enqueued(tmp_path, timer):
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    resumed = timer.restart + timedelta(seconds=1)
+    (gap,), _ = line_attention(instance, now=resumed)
+    previewed = _paged(instance, line, gap, resumed, dry_run=True)
+
+    # Rewritten to claim the enqueueing mode, the dry run's cursor still skips
+    # a tick no page enqueued, so it cannot finish the range.
+    decoded = json.loads(base64.urlsafe_b64decode(previewed.cursor or ""))
+    decoded["scope"] = ["enqueue" if part == "preview" else part for part in decoded["scope"]]
+    forged = base64.urlsafe_b64encode(canonical_bytes(decoded)).decode()
+    with pytest.raises(ExecutionError, match="no page enqueued"):
+        _paged(instance, line, gap, resumed, dry_run=False, cursor=forged)
+    assert _queued(instance, disposition="pending") == []
+    assert line_attention(instance, now=resumed)[0] == (gap,)
 
 
 # --- tick boundaries: a gap's edges, a range's edges, a successor ------------

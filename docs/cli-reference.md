@@ -1777,7 +1777,11 @@ skipped; a `--dry-run` without `--since` reports only the tick due next.
 Trigger), and each occurrence's dispatch status (pending, admitted, rejected,
 superseded or lapsed) -- enqueues nothing, needs no range, and is a read.
 Without `--dry-run`, `--since` and `--until` are required and it needs governed
-write. Follow its cursor to finish a bounded page.
+write. Follow its cursor to finish a bounded page, in the mode that returned
+it: a `--dry-run` page's cursor never continues an evaluation that enqueues
+(start that one from the range's start), and an enqueueing page refuses a
+cursor that would skip a tick no page enqueued, so a range is recorded as
+covered only once every tick in it was delivered.
 `dispatch` admits pending occurrences using the caller's current permissions
 and the ordinary Line admission checks; by default it drains every pending
 occurrence (`--limit N` stops after N). `run` and `dispatch` of a Line whose

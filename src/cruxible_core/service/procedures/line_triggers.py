@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -99,12 +100,19 @@ def _delivered_generations(
 
 
 def _delivered_ticks(
-    instance: PlaybillInstance, *, identity: str, epoch: int, trigger: str
+    instance: PlaybillInstance,
+    *,
+    identity: str,
+    epoch: int,
+    trigger: str,
+    after: datetime,
+    through: datetime,
 ) -> frozenset[str]:
-    """Every occurrence of one timed Trigger already delivered to this Line.
+    """Every occurrence of one timed Trigger in ``(after, through]`` already delivered to this Line.
 
     The dispatch store keeps every tick a listener matched or an evaluation
-    enqueued, whatever became of it (pending, admitted, lapsed or closed).
+    enqueued, whatever became of it (pending, admitted, lapsed or closed), at
+    its scheduled instant.
     """
 
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
@@ -112,13 +120,59 @@ def _delivered_ticks(
     if not dispatch_root(instance).exists():
         return frozenset()
     with LineDispatchStore(instance).locked() as conn:
+        # One +00:00 ISO form throughout, so text order is time order.
         return frozenset(
             row[0]
             for row in conn.execute(
-                "SELECT occurrence_id FROM pending WHERE line_id=? AND epoch=? AND trigger_id=?",
-                (identity, epoch, trigger),
+                "SELECT occurrence_id FROM pending WHERE line_id=? AND epoch=? AND trigger_id=? "
+                "AND eligible_at>? AND eligible_at<=?",
+                (identity, epoch, trigger, format_datetime(after), format_datetime(through)),
             ).fetchall()
         )
+
+
+def _undelivered_ticks(
+    instance: PlaybillInstance,
+    accepted: Any,
+    trigger: AcceptedTrigger,
+    *,
+    identity: str,
+    after: datetime,
+    through: datetime,
+) -> Iterator[datetime]:
+    """Every instant of a timed Trigger in ``(after, through]`` not yet delivered to the Line.
+
+    Instants sit on the Trigger version's own grid or calendar, none at or
+    before its acceptance; a tick is delivered once the dispatch store holds it
+    or the Line's journal admitted it.
+    """
+
+    binding = trigger_binding_for(trigger)
+    delivered = _delivered_ticks(
+        instance,
+        identity=identity,
+        epoch=accepted.line.occurrence_epoch,
+        trigger=trigger.trigger.identity.qualified,
+        after=after,
+        through=through,
+    )
+    for instant in timer_instants(
+        trigger.trigger.schedule,
+        accepted_at=trigger_accepted_at(instance, trigger),
+        after=after,
+        through=through,
+    ):
+        occurrence, _ = _line_occurrence(
+            accepted,
+            evaluation_time=instant,
+            trigger=trigger,
+            binding=binding,
+            exact_basis=instant,
+        )
+        if occurrence not in delivered and not _line_admissions(
+            instance, accepted, occurrence_id=occurrence
+        ):
+            yield instant
 
 
 def _tick_after(position: list[Any]) -> datetime:
@@ -144,6 +198,7 @@ def service_check_line_trigger(
     only_trigger: str | None = None,
     generation_after: int | None = None,
     generation_cursors: dict[str, Any] | None = None,
+    enqueue: bool = False,
 ) -> LineEvaluateResult:
     """Every occurrence the Line's live Triggers make eligible in one range.
 
@@ -153,6 +208,9 @@ def service_check_line_trigger(
     does. A live listening pass (`pending_scope`) or a check with no `since`
     reads a cadence or cron Trigger's next tick in its chain; an explicit range
     reads every tick in it, which is how time a restart skipped is recovered.
+    `enqueue` says the caller records what it reads: a cursor serves only the
+    mode that issued it, because an enqueueing range that completes is
+    recorded as covered whole.
     """
 
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
@@ -190,20 +248,22 @@ def service_check_line_trigger(
         until.isoformat(),
         after,
         through,
+        "enqueue" if enqueue else "preview",
     ]
     resume: tuple[str, list[Any] | None] | None = None
     if request.cursor:
         try:
             decoded = json.loads(base64.urlsafe_b64decode(request.cursor))
             if decoded["scope"] != scope:
-                raise ValueError("cursor range, Line or Triggers changed")
+                raise ValueError("cursor range, Line, Triggers or mode changed")
             position = decoded["position"]
             if position is not None and (len(position) != 3 or not isinstance(position[2], int)):
                 raise ValueError("invalid cursor position")
             resume = (decoded["trigger"], position)
         except (ValueError, KeyError, TypeError) as exc:
             raise ExecutionError(
-                "trigger cursor must retain its original Line, Triggers and range"
+                "trigger cursor must retain its original Line, Triggers and range, "
+                "and serves only the mode (dry run or enqueue) that issued it"
             ) from exc
     if not triggers:
         return LineEvaluateResult(
@@ -214,6 +274,41 @@ def service_check_line_trigger(
                 "Accept a Trigger aimed at it and enable the Line to run it automatically."
             ),
         )
+
+    explicit_range = request.since is not None and pending_scope is None
+    if enqueue and explicit_range and resume is not None:
+        # The range is covered whole once its last page lands, so every tick
+        # its cursor skips must already be delivered, whoever made the cursor.
+        assert request.since is not None
+        for trigger in triggers:
+            name = trigger.trigger.identity.qualified
+            if not schedule_is_timed(trigger.trigger.schedule) or (
+                name.encode("utf-8") > resume[0].encode("utf-8")
+            ):
+                continue
+            if name == resume[0] and resume[1] is None:
+                continue
+            skipped = (
+                _tick_after(resume[1])
+                if name == resume[0] and resume[1] is not None
+                else until - timedelta(microseconds=1)
+            )
+            missing = next(
+                _undelivered_ticks(
+                    instance,
+                    accepted,
+                    trigger,
+                    identity=identity,
+                    after=request.since - timedelta(microseconds=1),
+                    through=skipped,
+                ),
+                None,
+            )
+            if missing is not None:
+                raise ExecutionError(
+                    f"trigger cursor skips {name}'s tick at {format_datetime(missing)}, which "
+                    "no page enqueued; evaluate the range again from its start"
+                )
 
     def cursor_at(trigger: AcceptedTrigger, position: list[Any] | None) -> str:
         return base64.urlsafe_b64encode(
@@ -359,9 +454,7 @@ def service_check_line_trigger(
                 generation_updates[name] = head
                 if head > covered:
                     bindings.append((trigger, trigger_binding_for(trigger, generation=head), now))
-            elif (
-                schedule_is_timed(schedule) and request.since is not None and pending_scope is None
-            ):
+            elif schedule_is_timed(schedule) and explicit_range:
                 # An explicit or historical range reads every instant of the
                 # schedule in [since, until) on this Trigger version's own
                 # timeline (a cadence's grid from its acceptance, a cron's
@@ -369,35 +462,24 @@ def service_check_line_trigger(
                 # match or evaluation delivered. A page ends only after a tick
                 # it could not list, so a range is never covered past a tick
                 # not found.
+                assert request.since is not None
                 remaining = request.limit - len(bindings)
                 if remaining <= 0:
                     next_cursor = cursor_at(trigger, None)
                     break
                 binding = trigger_binding_for(trigger)
-                delivered = _delivered_ticks(
-                    instance, identity=identity, epoch=accepted.line.occurrence_epoch, trigger=name
-                )
                 ticks_after = request.since - timedelta(microseconds=1)
                 if position is not None:
                     ticks_after = max(ticks_after, _tick_after(position))
                 listed: datetime | None = None
-                for instant in timer_instants(
-                    schedule,
-                    accepted_at=trigger_accepted_at(instance, trigger),
+                for instant in _undelivered_ticks(
+                    instance,
+                    accepted,
+                    trigger,
+                    identity=identity,
                     after=ticks_after,
                     through=until - timedelta(microseconds=1),
                 ):
-                    occurrence, _ = _line_occurrence(
-                        accepted,
-                        evaluation_time=instant,
-                        trigger=trigger,
-                        binding=binding,
-                        exact_basis=instant,
-                    )
-                    if occurrence in delivered or _line_admissions(
-                        instance, accepted, occurrence_id=occurrence
-                    ):
-                        continue
                     if remaining == 0:
                         assert listed is not None
                         next_cursor = cursor_at(
