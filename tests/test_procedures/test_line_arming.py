@@ -665,7 +665,8 @@ def test_a_restart_after_a_real_cadence_admission_keeps_ticking(tmp_path):
     for offset in (120, 180, 240):
         _match(instance, READ_TIME + timedelta(seconds=offset), daemon_id="restarted")
 
-    # The chain's overdue tick lapsed; the resumed arm ticks from its own start.
+    # The chain's overdue tick lapsed; the resumed arm ticks on at its grid's
+    # next instant after the restart.
     assert _status(instance, line, READ_TIME + timedelta(seconds=240)).pending_automatic == 1
 
 
@@ -930,6 +931,7 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
 
 
 def test_a_line_with_two_triggers_runs_each_ones_occurrences_exactly_once(tmp_path):
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
     from tests.support.lines import line_trigger
     from tests.test_procedures.test_line_triggers import TRIGGER
 
@@ -959,11 +961,20 @@ def test_a_line_with_two_triggers_runs_each_ones_occurrences_exactly_once(tmp_pa
         f"Trigger:{ticking}",
         f"Trigger:{TRIGGER}",
     ]
+    # The cadence keeps its own grid from its acceptance: armed at 16:00:10, it
+    # first ticks at 16:01:00, never at the arm's start.
+    tick = READ_TIME + timedelta(minutes=1)
     capture(instance, procedure, at=start + timedelta(seconds=1))
     _match(instance, start + timedelta(seconds=2))
-    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+    with LineDispatchStore(instance).locked() as conn:
+        # Only the landing so far: the cadence did not tick at the arm's start.
+        assert [row[0] for row in conn.execute("SELECT trigger_id FROM pending")] == [
+            f"Trigger:{TRIGGER}"
+        ]
+    _match(instance, tick + timedelta(seconds=1))
+    (arm,) = armed_work(instance, now=tick + timedelta(seconds=1))
     result = dispatch_armed_line(
-        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=3)
+        _manager(instance), instance.descriptor.instance_id, arm, now=tick + timedelta(seconds=2)
     )
     # The first tick and the landing are two occurrences, one per Trigger.
     assert result is not None and [item.status for item in result.items] == ["admitted"] * 2
@@ -980,17 +991,17 @@ def test_a_line_with_two_triggers_runs_each_ones_occurrences_exactly_once(tmp_pa
 
     # Each Trigger keeps its own chain: the landing trigger firing again does not
     # push the cadence back, and nothing already admitted runs twice.
-    capture(instance, procedure, at=start + timedelta(seconds=30))
-    _match(instance, start + timedelta(seconds=31))
-    (arm,) = armed_work(instance, now=start + timedelta(seconds=31))
+    capture(instance, procedure, at=tick + timedelta(seconds=30))
+    _match(instance, tick + timedelta(seconds=31))
+    (arm,) = armed_work(instance, now=tick + timedelta(seconds=31))
     dispatch_armed_line(
-        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=32)
+        _manager(instance), instance.descriptor.instance_id, arm, now=tick + timedelta(seconds=32)
     )
     assert _admissions(instance) == 3
-    _match(instance, start + timedelta(seconds=63))
-    (arm,) = armed_work(instance, now=start + timedelta(seconds=63))
+    _match(instance, tick + timedelta(seconds=61))
+    (arm,) = armed_work(instance, now=tick + timedelta(seconds=61))
     ticked = dispatch_armed_line(
-        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=63)
+        _manager(instance), instance.descriptor.instance_id, arm, now=tick + timedelta(seconds=61)
     )
     assert ticked is not None and [item.status for item in ticked.items] == ["admitted"]
     assert _admissions(instance) == 4
@@ -1250,7 +1261,7 @@ def test_an_armed_cron_line_ticks_on_calendar_instants_forward_only(tmp_path):
     match_and_dispatch(READ_TIME + timedelta(minutes=5, seconds=1))
     assert ticks() == [READ_TIME + timedelta(minutes=5)]
     # An hour of daemon downtime: the instants it missed, 17:00 included, are
-    # skipped; the restarted daemon ticks from its own start, not catching up.
+    # skipped; the restarted daemon ticks at its first instant after the restart.
     match_and_dispatch(READ_TIME + timedelta(hours=1, seconds=30), daemon_id="restarted")
     assert ticks() == [READ_TIME + timedelta(minutes=5)]
     match_and_dispatch(READ_TIME + timedelta(hours=1, minutes=5, seconds=1), daemon_id="restarted")

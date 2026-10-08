@@ -1215,13 +1215,15 @@ def _line_occurrence(
 
     With no Trigger the occurrence is a manual run at its evaluation instant,
     on the exact event it was given, if any (its record digest names it).
-    A cadence or cron occurrence is the tick after the last one its Trigger
-    fired (`prior`), and never before the tick after its Trigger version's
-    acceptance (`accepted_at`): no Trigger fires retroactively. `not_before`
-    floors it for forward-only matching: an arm that starts or resumes later
-    than that tick starts ticking from its own start, never catching up.
-    `exact_basis` names a retained tick outright, for an explicit dispatch or
-    retry of that exact occurrence.
+    A cadence or cron occurrence is the timer's next instant after the last
+    one its Trigger fired (`prior`), and never before the first instant after
+    its Trigger version's acceptance (`accepted_at`): no Trigger fires
+    retroactively. `not_before` floors it for forward-only matching: an arm
+    that starts or resumes later than that tick ticks next at the timer's first
+    instant at or after its start, which stays on a cadence's grid from
+    acceptance rather than moving to the start, and the instants it skipped
+    are left for explicit evaluation. `exact_basis` names a retained tick outright, for an
+    explicit dispatch or retry, or an evaluation of that exact occurrence.
     """
 
     last = max(prior, key=lambda item: item.occurrence_evaluation_time, default=None)
@@ -1252,6 +1254,7 @@ def _line_occurrence(
                     raise ExecutionError("a timed occurrence needs its Trigger's acceptance")
                 next_due = timer_due(
                     schedule,
+                    accepted_at=accepted_at,
                     last=accepted_at
                     if last is None
                     else max(last.occurrence_evaluation_time, accepted_at),

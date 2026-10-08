@@ -160,16 +160,16 @@ def test_the_trigger_example_says_cron_is_utc_and_how_to_convert(
 def test_a_cron_line_tick_follows_its_last_fire_and_never_precedes_its_floor() -> None:
     hourly = CronSchedule(expression="0 * * * *")
     noon = MONDAY.replace(hour=12)
+
+    def due(last, not_before=None):  # type: ignore[no-untyped-def]
+        return timer_due(hourly, accepted_at=noon, last=last, not_before=not_before)
+
     # The first instant after an acceptance or a fire, however long ago that was.
-    assert timer_due(hourly, last=noon + timedelta(minutes=30)) == noon + timedelta(hours=1)
-    assert timer_due(hourly, last=noon) == noon + timedelta(hours=1)
+    assert due(noon + timedelta(minutes=30)) == noon + timedelta(hours=1)
+    assert due(noon) == noon + timedelta(hours=1)
     # A floor (an arm's start) keeps a forward-only reader from any instant before it.
-    assert timer_due(hourly, last=noon, not_before=noon + timedelta(hours=5, minutes=1)) == (
-        noon + timedelta(hours=6)
-    )
-    assert timer_due(hourly, last=noon, not_before=noon + timedelta(hours=5)) == (
-        noon + timedelta(hours=5)
-    )
+    assert due(noon, not_before=noon + timedelta(hours=5, minutes=1)) == noon + timedelta(hours=6)
+    assert due(noon, not_before=noon + timedelta(hours=5)) == noon + timedelta(hours=5)
 
 
 def _world(tmp_path: Path):  # type: ignore[no-untyped-def]

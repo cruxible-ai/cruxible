@@ -329,8 +329,9 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
         now=READ_TIME + timedelta(seconds=30),
     )
     assert checked.occurrences[0].pending
-    # The Trigger was accepted long before: the arm ticks first at its own start.
-    assert checked.occurrences[0].eligible_at == READ_TIME - timedelta(seconds=1)
+    # The Trigger was accepted long before: armed at 15:59:59, the arm ticks first
+    # at its grid's next instant, 16:00:00, never at its own start.
+    assert checked.occurrences[0].eligible_at == READ_TIME
     result = service_dispatch_line(
         instance,
         line.identity.name,

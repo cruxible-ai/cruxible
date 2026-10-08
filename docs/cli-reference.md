@@ -1719,14 +1719,19 @@ tick is the exception: it is not an event but "the Trigger is due", so when a
 Line is enabled or its enablement resumes, a tick still pending from before
 closes as `lapsed` -- retained, never run implicitly, and still runnable as
 exactly that tick with `dispatch --occurrence-id DIGEST --retry`, even after
-newer ticks ran -- and the enablement ticks on from its own start rather than
-catching up on ticks it missed. Each cadence or cron Trigger keeps its own
-chain: it is due one interval, or at the next calendar instant, after the last
-occurrence it fired, whatever other Triggers aimed at the Line fired, and never
-before the first instant after its Trigger version's acceptance: a new cadence
-ticks first one interval after it was accepted, a successor schedule from its
-own acceptance. `disable` stops further admissions; a run already admitted
-keeps going, and a retired Line can be disabled too. Both are idempotent:
+newer ticks ran -- and the enablement ticks on at its schedule's next instant
+at or after its start rather than catching up on ticks it missed (only
+`evaluate` over the missed range recovers them). A cadence's instants sit on a
+grid one interval apart from its Trigger version's acceptance, a cron
+schedule's on its calendar, and enabling or resuming never moves them: nothing
+ticks at the enable or restart instant itself unless the schedule has an
+instant there. Each cadence or cron Trigger keeps its own chain: it is due at
+its schedule's next instant after the last occurrence it fired, whatever other
+Triggers aimed at the Line fired, and never before the first instant after its
+Trigger version's acceptance: a new cadence ticks first one interval after it
+was accepted, a successor schedule from its own acceptance. `disable` stops
+further admissions; a run already admitted keeps going, and a retired Line can
+be disabled too. Both are idempotent:
 enabling a Line already enabled by the same credential at the same versions
 returns it unchanged with `outcome: already_enabled`, and disabling a stopped
 enablement returns it with `outcome: already_disabled`. Enabling under a

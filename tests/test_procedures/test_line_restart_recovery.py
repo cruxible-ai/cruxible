@@ -8,15 +8,27 @@ covered. Re-enabling does not hide a range nobody evaluated.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+import pytest
 
 from cruxible_client.contracts.line_dispatch import (
     LineDispatchRequest,
     LineEnablementPrincipal,
     LineEvaluateRequest,
 )
-from cruxible_client.contracts.triggers import CaptureLandingSchedule, GenerationAcceptedSchedule
+from cruxible_client.contracts.temporal import parse_datetime
+from cruxible_client.contracts.triggers import (
+    CadenceSchedule,
+    CaptureLandingSchedule,
+    CronSchedule,
+    GenerationAcceptedSchedule,
+    TriggerSchedule,
+)
+from cruxible_core.runtime.line_arms import dispatch_armed_line
 from cruxible_core.service.procedures.line_dispatch import (
+    armed_work,
     line_attention,
     service_disable_line,
     service_dispatch_line,
@@ -28,6 +40,7 @@ from tests.test_procedures.test_line_arming import (
     LOCAL,
     _accept_generation,
     _admissions,
+    _manager,
     _match,
 )
 from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
@@ -245,3 +258,92 @@ def test_an_accept_at_since_the_listener_already_delivered_is_not_delivered_agai
 
     assert evaluated.status == "not_met" and evaluated.occurrences == ()
     assert _pending_rows(instance) == 1
+
+
+# --- timed Triggers across a restart (forward-only resume) -------------------
+
+
+@dataclass(frozen=True)
+class _Timer:
+    """One timed Trigger's instants around a restart, all after its 15:00 acceptance."""
+
+    schedule: TriggerSchedule
+    first: datetime  # the tick the live arm ran before the downtime
+    restart: datetime
+    missed: tuple[datetime, ...]  # the instants the downtime skipped
+    next: datetime  # the resumed arm's first tick
+
+
+def _at(minutes: int, seconds: int = 0) -> datetime:
+    return READ_TIME + timedelta(minutes=minutes, seconds=seconds)
+
+
+TIMERS = (
+    # A 150 s cadence sits on its own grid from its 15:00:00 acceptance:
+    # 16:00:00, 16:02:30, 16:05:00, ... A restart at 16:08:40 is off that grid.
+    _Timer(
+        CadenceSchedule(interval_seconds=150),
+        first=_at(2, 30),
+        restart=_at(8, 40),
+        missed=(_at(5), _at(7, 30)),
+        next=_at(10),
+    ),
+    _Timer(
+        CronSchedule(expression="*/3 * * * *"),
+        first=_at(3),
+        restart=_at(10, 20),
+        missed=(_at(6), _at(9)),
+        next=_at(12),
+    ),
+)
+
+
+def _queued(instance, *, disposition=None):  # type: ignore[no-untyped-def]
+    """Every tick the dispatch store holds, as (eligible_at, matched by an arm)."""
+
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+
+    with LineDispatchStore(instance).locked() as conn:
+        rows = conn.execute(
+            "SELECT eligible_at,session_id FROM pending"
+            + ("" if disposition is None else " WHERE disposition=?")
+            + " ORDER BY eligible_at",
+            () if disposition is None else (disposition,),
+        ).fetchall()
+    return [(parse_datetime(row[0]), row[1] is not None) for row in rows]
+
+
+def _drain_armed(instance, at):  # type: ignore[no-untyped-def]
+    for arm in armed_work(instance, now=at):
+        dispatch_armed_line(_manager(instance), instance.descriptor.instance_id, arm, now=at)
+
+
+def _restarted_timed_line(tmp_path, timer: _Timer):  # type: ignore[no-untyped-def]
+    """An enabled timed Line that ran one tick, then a downtime spanning two more."""
+
+    instance, line, _procedure = line_world(tmp_path, timer.schedule)
+    start = READ_TIME + timedelta(seconds=10)
+    _enable(instance, line, start)
+    _match(instance, start + timedelta(seconds=1))
+    assert _queued(instance) == []  # nothing ticks at the enable instant
+    ran = timer.first + timedelta(seconds=1)
+    _match(instance, ran)
+    _drain_armed(instance, ran)
+    assert _queued(instance, disposition="admitted") == [(timer.first, True)]
+    # Down from here until `restart`; the restarted daemon rolls the arm over.
+    _match(instance, timer.restart, daemon_id="restarted")
+    return instance, line
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_a_restarted_timed_line_ticks_next_on_its_schedule_never_at_the_restart(tmp_path, timer):
+    instance, _line = _restarted_timed_line(tmp_path, timer)
+
+    _match(instance, timer.restart + timedelta(seconds=1), daemon_id="restarted")
+    # No tick fires at the restart instant: it is not one of the schedule's.
+    assert _queued(instance) == [(timer.first, True)]
+
+    _match(instance, timer.next + timedelta(seconds=1), daemon_id="restarted")
+    _drain_armed(instance, timer.next + timedelta(seconds=1))
+    assert _queued(instance) == [(timer.first, True), (timer.next, True)]
+    assert _admissions(instance) == 2
