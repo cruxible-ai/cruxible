@@ -198,6 +198,12 @@ Three verbs read accepted state on every surface:
   come first; `--detail` goes to `evidence`, `why`, `history`, `proof`, or a
   Document `body`.
 
+In a summary read, a text value over 500 characters is shown as a truncated
+preview that says how long the value is and names the exact read of the whole
+value (`get REF --detail evidence` at the generation it came from), so a long
+value never passes for a short one. `cx.read_whole(preview)` makes that read in
+the SDK.
+
 `since GENERATION` lists exactly what changed after a generation.
 
 ### The floor
@@ -290,10 +296,13 @@ Blueprint and bindings. `get Blueprint:NAME` lists each slot and the installed
 providers that fit it.
 
 A **ProviderInterface** is a typed contract (input, output, effect); a
-**Provider** is an installed package that implements interfaces. Every
-instance starts with the built-in `workspace.file` provider. Others install
-with `cruxible provider install`, or arrive bundled in a kit; installing grants
-no permission to run anything.
+**Provider** is an installed package that implements interfaces. An interface
+is registered once per instance by its definition, so every package
+implementing the same definition binds the same registration, and a slot typed
+by it takes any of them; a provider runs only the kinds of input it claims.
+Every instance starts with the built-in `workspace.file` provider. Others
+install with `cruxible provider install`, or arrive with a kit (bundled, or a
+default installed by name); installing grants no permission to run anything.
 
 In Python, `@procedure` from `cruxible_client.authoring.source` turns a
 decorated function into a `ProcedureSource`, compiled into the same governed
@@ -318,12 +327,16 @@ Lines are enabled, not armed:
   enables it again, which is consent to the new schedule.
 - A Line that proposes or settles changes needs a current **mandate**
   covering its Procedure, and refuses to enable without one. A settle mandate
-  names what the Line may settle on its own and what happens otherwise.
+  names what the Line may settle on its own and what happens otherwise. A
+  Procedure that settles still only proposes when its Line is capped at
+  `propose` (`max_authority`) or its only mandate grants propose, so one
+  Procedure serves a Line before and after it graduates to settling.
 - `line run` always runs one manual occurrence now, under the Line's own
   settings; it never consumes or waits on a Trigger.
-- `line evaluate` and `line dispatch` recover what automation missed, for
-  example the time a daemon was down. `next` names the exact command for each
-  gap.
+- Timed Triggers tick on their schedule's own grid. Enabling or resuming a
+  Line never runs a missed tick; `line evaluate` over the missed range records
+  every tick it skipped, and `line dispatch` runs them. `next` names the exact
+  command for each gap, for example after the daemon was down.
 
 Internal actions (floor refresh, evidence sweeps, prediction retries,
 curation detection) also run on Triggers, and need no enablement.

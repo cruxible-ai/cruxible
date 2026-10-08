@@ -55,6 +55,10 @@ cruxible authoring example procedure
 cruxible authoring example acquisition-policy     # when it has Source nodes
 ```
 
+An acquisition policy must have a rule for every Source alias the Procedure
+reads (extra rules are allowed, so one policy can serve several Procedures);
+a missing rule is refused at admission, naming the alias.
+
 Or author it in Python: a `Sequence` of steps from
 `cruxible_client.authoring.procedures`, or a function decorated with
 `@procedure` from `cruxible_client.authoring.source`. Select providers with
@@ -109,6 +113,14 @@ names what it may settle without approvals (its Claim scope and a condition
 query) and what happens otherwise (refuse, or fall back to a proposal). Review
 mandates with the user like any other governed change.
 
+To let a settling Procedure earn trust first, start its Line at
+`max_authority: propose` with a propose mandate: its settle terminal then
+proposes instead (`fallback_reason`
+`cruxible.settle.authority_capped_by_line_max_authority`), and people review
+each result. To graduate, accept a Line successor with `max_authority: settle`
+and a covering settle mandate; the Procedure is unchanged, so its track record
+carries over.
+
 ## Phase 5: Schedule and enable it
 
 ```bash
@@ -134,7 +146,7 @@ cruxible next                    # stopped enablements, coverage gaps, stalled w
 
 - After a daemon restart, time it was down is not matched: `next` shows a
   `line_coverage_gap` row with the exact `cruxible line evaluate LINE --since S
-  --until U`, which records the missed range as pending work, and
+  --until U`, which records every tick the range skipped as pending work, and
   `line_work_pending` while work waits for `cruxible line dispatch LINE`.
 - `line evaluate LINE --dry-run` shows what a range would make eligible,
   without recording anything.
