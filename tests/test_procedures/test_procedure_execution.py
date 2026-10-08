@@ -1922,13 +1922,13 @@ def test_line_v3_admission_bound_persists_manifest_not_material_values(
     reservations = ProcedureMaterialReservationStore(fixture.bodies.reservation_root)
     original_store = fixture.bodies.store
 
-    def store_after_run_reservation(content: bytes):  # type: ignore[no-untyped-def]
+    def store_after_run_reservation(content: bytes, **kwargs):  # type: ignore[no-untyped-def]
         body_digest = fixture.bodies.digest_bytes(content).tagged
         assert any(
             isinstance(item, RunMaterialReservationV1) and item.body_digest == body_digest
             for item in reservations.active_locked()
         )
-        return original_store(content)
+        return original_store(content, **kwargs)
 
     monkeypatch.setattr(fixture.bodies, "store", store_after_run_reservation)
     original_append = fixture.journal.append

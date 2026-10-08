@@ -612,7 +612,7 @@ class ReservedCaptureStore:
         self._event_kind = event_kind
         self.pending: list[RunMaterialReservationV1] = []
 
-    def store(self, content: bytes, *, journal_payload: bool = False) -> CasObjectMetadata:
+    def store(self, content: bytes) -> CasObjectMetadata:
         body_digest = self._bodies.digest_bytes(content).tagged
         reservation = make_run_reservation(
             instance_id=self._admission.instance_id,
@@ -624,7 +624,7 @@ class ReservedCaptureStore:
         )
         with self._reservations.locked():
             self._reservations.reserve_locked(reservation)
-            metadata = self._bodies.store(content, journal_payload=journal_payload)
+            metadata = self._bodies.store(content)
         if metadata.digest != reservation.body_digest:
             raise ExecutionError("reserved Capture material digest did not reproduce")
         if all(item.reservation_id != reservation.reservation_id for item in self.pending):
