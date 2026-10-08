@@ -1539,8 +1539,8 @@ def list_provider_packages(output_json: bool) -> None:
         return
     click.echo("Installed:" if result.installed else "Installed: none")
     for installed in result.installed:
-        package = "" if installed.package is None else f" ({installed.package} {installed.version})"
-        click.echo(f"  {installed.provider}{package}: {', '.join(installed.interfaces) or '-'}")
+        runs = "" if installed.package is None else f" ({installed.package} {installed.version})"
+        click.echo(f"  {installed.provider}{runs}: {', '.join(installed.interfaces) or '-'}")
     if result.packages:
         click.echo("Provider repository:")
     for package in result.packages:
