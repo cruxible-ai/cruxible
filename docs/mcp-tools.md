@@ -1,7 +1,10 @@
 # MCP tool reference
 
-The MCP surface is the governed tool set. All tools delegate to the same service core as
-HTTP and CLI.
+The MCP server (`cruxible mcp`) is a client of the daemon's HTTP API, the same
+API the CLI and the Python SDK use; every tool runs on the daemon. Tool names
+follow the CLI command path: `cruxible proposal approve` is
+`cruxible_proposal_approve`. A few tools with no CLI command keep their own
+names (`cruxible_server_info`, `cruxible_query_spec`).
 
 `CRUXIBLE_MCP_PROFILE` takes two values. `default` (or unset) advertises the
 everyday agent loop:
@@ -30,8 +33,10 @@ intent tools, `cruxible_query_spec`, `cruxible_since`,
 curation, coverage, the floor, sources, blocks, kits, Procedures, Lines, and the
 split approval pair
 `cruxible_proposal_approve_prepare` and `cruxible_proposal_approve_submit` for
-a signer outside the MCP process. Curation changes
-discoverability only; permission tiers still gate every call. There is no
+a signer outside the MCP process. `CRUXIBLE_MCP_TOOLS` (a comma-separated
+list) narrows the advertised set further to exactly those tools. Profiles and
+the list change discoverability only: the server's tier (`CRUXIBLE_MODE`, below)
+hides tools above it, and permission tiers still gate every call. There is no
 separate version tool: `cruxible_whoami` and `cruxible_server_info`
 both report the MCP adapter's package version and the daemon's (`GET /version`).
 
@@ -111,8 +116,8 @@ result or a log line.
 
 ## Which daemon operations each tool publishes
 
-`tests/goldens/playbill/served-surface-dp0b-v1.json` is the machine-readable
-inventory of the whole served surface. Its `surface.mcp_tools` rows carry
+The served-surface snapshot under `tests/goldens/playbill/` is the
+machine-readable inventory of the whole served surface. Its `surface.mcp_tools` rows carry
 `client_operations`: the daemon client operations each tool reaches, per tool.
 MCP reaches state only through the daemon, so each operation is an HTTP route,
 and that route's row in `surface.http_routes` names the facade verbs it reaches.
@@ -138,6 +143,7 @@ that starts reaching one more operation moves the pin.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_server_info` | Return the adapter and daemon versions with daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
+| `cruxible_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, whether it can author (and the repair when not), and the adapter and daemon versions | `READ_ONLY` |
 
 ## Host and providers
 
@@ -149,7 +155,7 @@ operator acts with no MCP tool.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_provider_list` | List provider packages from the configured daemon repository, each with its version and the provider interface IDs it implements | `READ_ONLY` |
-| `cruxible_provider_install` | Install exact package bytes and propose its definitions, without execution grants | `ADMIN` |
+| `cruxible_provider_install` | Install a provider package by name (from the configured repository, else the provider index) or from staged wheel and lock digests, and register its interfaces and Provider; lands at once when the approval policy requires no approval, otherwise stops at `awaiting_approval`; grants no execution permission | `ADMIN` |
 
 ## Kits
 
@@ -167,8 +173,7 @@ awaits approval). Activation and any approval stay the ordinary steps.
 | `cruxible_kit_build` | Export the definitions under owned identity prefixes as one kit release; `providers` bundles provider packages staged with `cruxible_body_store` (every Provider a carried Procedure pins must be bundled, and every carried ProviderInterface must be what a bundled wheel registers) | `READ_ONLY` |
 | `cruxible_kit_status` | List installed kits, paths edited since install, kept divergences, provenance, bundled providers with their install state, and (for registry kits) the latest available version (`offline` skips the check) | `READ_ONLY` |
 | `cruxible_kit_add` | Install or upgrade a kit by registry `reference` (the adapter pulls it) or `bundle`; always proposes, `keep`/`keep_local_edits`/`retire_dependents`/`allow_downgrade` decide divergences; lands at once when policy requires no approval; a commit stages and installs bundled providers first (`ADMIN` for the install) | `GOVERNED_WRITE` |
-| `cruxible_kit_remove` | Retire every artifact a kit installed; lands at once when policy requires no approval | `GOVERNED_WRITE` |
-| `cruxible_claim_type_upgrade` | Propose moving older ClaimTypes to v7 (identity evidence rules included), stating their revision evidence | `GOVERNED_WRITE` |
+| `cruxible_kit_remove` | Retire the definitions a kit owns (never what it only carried, nor its provider packages); a definition edited since install, or live Claims or definitions that depend on what it would retire, block it; lands at once when policy requires no approval | `GOVERNED_WRITE` |
 
 ## Documents and proposals
 
@@ -184,10 +189,12 @@ awaits approval). Activation and any approval stay the ordinary steps.
 | `cruxible_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
 | `cruxible_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
-| `cruxible_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, and the adapter and daemon versions | `READ_ONLY` |
 
-MCP never accepts a client private key. Signing occurs outside the server and
-outside the language server/MCP process.
+MCP never accepts a private key as a tool argument. `cruxible_proposal_approve`
+signs client-side, in the MCP server process, with a key from
+`CRUXIBLE_MCP_KEY_DIR`; a signer elsewhere uses `cruxible_proposal_approve_prepare`
+and `cruxible_proposal_approve_submit`. Only the public attestation reaches the
+daemon.
 
 ## Accepted reads
 
@@ -200,7 +207,7 @@ names the whole body's `body_digest`.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_capture_read` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying) | `GOVERNED_WRITE` |
+| `cruxible_capture_read` | Verify retained Capture evidence and read bounded material (`request.max_bytes` bounds it); `request.capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying) | `GOVERNED_WRITE` |
 
 ## Sources
 
@@ -225,7 +232,7 @@ The principal registry is `orient(section="principals")`; one record is
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_compiler_upgrade` | Propose an exact compiler transition; signed approval and activation use the ordinary proposal workflow. | `ADMIN` |
-| `cruxible_principal_propose` | Propose rotation, revocation, or recovery | `ADMIN` |
+| `cruxible_principal_propose` | Propose a principal registration, rotation, revocation, or recovery | `ADMIN` |
 
 ## Subjects, ClaimTypes, and Claims
 
@@ -233,11 +240,12 @@ The principal registry is `orient(section="principals")`; one record is
 |---|---|---|
 | `cruxible_claim_type_propose` | Propose a governed predicate interface | `GOVERNED_WRITE` |
 | `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
+| `cruxible_claim_type_upgrade` | Propose moving older ClaimTypes to v7 (identity evidence rules included), stating their revision evidence | `GOVERNED_WRITE` |
 | `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
 | `cruxible_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
 | `cruxible_retire` | End one live Claim, by Claim ID or by Subject and single-value field, with its dependent Claims, in one change set | `GOVERNED_WRITE` |
 | `cruxible_write` | Apply `set`, `add` (one more value in a many-valued field) and `retire` changes as one change set, accepted or refused together | `GOVERNED_WRITE` |
-| `cruxible_get` | Read one thing by any reference (Claim id or prefix, `kind/id`, predicate, `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:`/`Trigger:`/`Principal:`/`ProviderInterface:`/`SourceAcquisitionPolicy:<name>`, `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, artifact path, proposal id, or an operational reference: `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is cut to `{value, truncated: true, length}`, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why` (a Claim's verdict and law evidence, or a Subject's or Document's governance and provenance), `history` (newest first, paged by `limit` and `cursor`), `proof` (the full accepted envelope and facts, with the full `accepted_coordinate`), or `body` with a byte `range` and the whole `body_digest`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both; an all-digit `at` of 11 or fewer characters is always a generation); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
+| `cruxible_get` | Read one thing by any reference (Claim id or prefix, `kind/id` or `Subject:kind/id`, predicate, `ClaimType:`/`Document:`/`Procedure:`/`Blueprint:`/`query:`/`CaptureContract:`/`Trigger:`/`Principal:`/`ProviderInterface:`/`SourceAcquisitionPolicy:<name>`, `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, artifact path, proposal id, or an operational reference: `ProcedureRun:RUN-...`, `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is cut to `{value, truncated: true, length}`, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why` (a Claim's verdict and law evidence, or a Subject's or Document's governance and provenance), `history` (newest first, paged by `limit` and `cursor`), `proof` (the full accepted envelope and facts, with the full `accepted_coordinate`), or `body` with a byte `range` and the whole `body_digest`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both; an all-digit `at` of 11 or fewer characters is always a generation); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
 
 A proposal is not accepted state. A Claim's verdict is computed at read time
 from accepted law evidence, never carried forward from acceptance.
@@ -246,7 +254,7 @@ from accepted law evidence, never carried forward from acceptance.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_authoring_example` | Return a model-generated ClaimType/Claim/Procedure input | `READ_ONLY` |
+| `cruxible_authoring_example` | Return a template for an authoring input: Claims, Subjects, named queries, Procedures, Blueprints and instances, Lines, Triggers, mandates, acquisition and approval policies, change sets and ClaimType successions | `READ_ONLY` |
 | `cruxible_authoring_get` | Read one authoring intent | `READ_ONLY` |
 | `cruxible_authoring_list` | List the caller's in-progress intents | `READ_ONLY` |
 | `cruxible_authoring_compile` | Stage a payload as an intent (new, or revising `intent_id`) and run every check | `GOVERNED_WRITE` |
@@ -260,7 +268,7 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes | `GOVERNED_WRITE` |
 | `cruxible_block_depublish` | Release the declaration that registers one page block | `GOVERNED_WRITE` |
 
-The coordinator mints every identity, digest, base, timestamp, and proposal reference.
+The daemon mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.
 
 The flow is `compile` (or `bind`), then `rebase` or `preflight` as needed, then
@@ -270,8 +278,9 @@ prints a template for any input kind.
 
 Every payload is one tagless input, and the
 `change_set` kind carries any mix of members -- `claim`, `claim_type`,
-`claim_retirement`, `subject`, `query_definition`, `procedure`,
-`procedure_mandate`, `acquisition_policy`, `line` -- as one intent that admits
+`claim_type_succession`, `claim_retirement`, `subject`, `query_definition`,
+`procedure`, `blueprint`, `blueprint_instance`, `procedure_mandate`,
+`acquisition_policy`, `line`, `trigger` -- as one intent that admits
 or refuses whole, typed to the
 offending member index. `approval_policy` and `procedure_runtime_policy` parse
 as members but a change set refuses them; send each as its own singleton input.
@@ -285,9 +294,6 @@ needs no second tool and no second generation either.
 together. A `line` input's `parameters` is checked against its Procedure's input
 contract at authoring; its `acquisition_policy_name` is needed only when the
 Procedure has Source nodes.
-The publication tools take an `expectation_id` because a set that publishes
-several Claims owns one expectation per publishing member; an intent that owns
-exactly one may omit it.
 
 ## Procedures
 
@@ -300,12 +306,12 @@ exactly one may omit it.
 | `cruxible_line_disable` | Stop a Line admitting work on its own; admitted runs keep going. A stopped enablement returns `outcome: already_disabled`. | `GOVERNED_WRITE` |
 | `cruxible_line_run` | Run a Line once now as a manual occurrence under its own inputs, budgets, authority and mandate; it never consumes a Trigger. `event` is the event input for a Line whose Procedure takes one; an event its Triggers already admitted needs `repeat`. A Line that can propose or settle needs a mandate, an observe-only one none | `READ_ONLY` |
 | `cruxible_line_evaluate` | Evaluate a historical range (`since`, `until`) into pending work; never executes. `dry_run` only reports what the range makes eligible (a read, no range needed); enqueueing needs governed write. | `READ_ONLY` |
-| `cruxible_line_dispatch` | Admit retained pending occurrences under the current caller's authority, up to `limit` (default 100). | `READ_ONLY` |
+| `cruxible_line_dispatch` | Admit retained pending occurrences under the current caller's authority, up to `limit` (default 100) per call; follow `cursor` for more. | `READ_ONLY` |
 
 `procedure_run`, `line_run` and `line_dispatch` are read-tier only for targets
 that observe. A Procedure whose terminals can propose or settle, or a Line whose
 runs can (its Procedure's capability capped by its `max_authority`), needs
-`GOVERNED_WRITE` to run or dispatch, whichever door triggers it; the daemon
+`GOVERNED_WRITE` to run or dispatch, whichever path triggers it; the daemon
 decides this per target, and a read-only caller is refused with
 `PermissionDeniedError`.
 
@@ -317,7 +323,7 @@ themselves a governed track record; promotion remains a separate governed act.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_prediction_list` | Find governed tests of a Claim, by `claim_id` | `READ_ONLY` |
+| `cruxible_prediction_list` | Find the accepted predictions (resolution contracts) testing one Claim, by `claim` | `READ_ONLY` |
 | `cruxible_prediction_propose` | Propose a governed resolution contract whose hypothesis is a Claim ID | `GOVERNED_WRITE` |
 | `cruxible_prediction_settle` | Settle one prediction (`prediction_id`) from the Claim ID of an accepted observation (`observation`) | `GOVERNED_WRITE` |
 
@@ -379,7 +385,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_curation_accept_fixed` | Link an item to the accepted change that fixed it, by `accepted_proposal_id` or `accepted_generation` | `GOVERNED_WRITE` |
 | `cruxible_curation_suppress` | Hide an item (`scope: item`) or its lineage (`scope: lineage`) without resolving it | `GOVERNED_WRITE` |
 | `cruxible_curation_unsuppress` | Lift a suppression on an item | `GOVERNED_WRITE` |
-| `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so the daemon's delivery exports the same parts (a daemon that delivers this workspace's floor is its only writer: over its socket it delivers now, over TCP `write` refuses); `mode=status` reports whether that floor is current, stale, or absent. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref and coordinate), `current/<kind>/INDEX`, readable `documents/` and `provenance/`; digests stay in `provenance/` and the manifest. `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
+| `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so the daemon's delivery exports the same parts (a daemon that delivers this workspace's floor is its only writer: over its socket it delivers now, over TCP `write` refuses); `mode=status` reports whether that floor is current, stale, or missing. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref), `current/<kind>/INDEX`, `changes/`, `sources/`, `projections/INDEX` and `manifest.json` (see [floor](cli-reference.md#what-is-in-the-floor)). `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
 | `cruxible_coverage_resolve` | Resolve working sources against accepted state, from `observations` you built or from a workspace file selection (`files`, `ranges`, inline `grep_results` text, or `whole_working_set`) bound by the source catalog; `bindings` (`path`, `source` as `external:NAME` or `ledger:PATH`) override it path by path | `READ_ONLY` |
 
 `cruxible_next` renders each repair's `command` as the MCP tool call
@@ -418,30 +424,26 @@ recommendations. The floor export returns bytes keyed by floor path;
 materializing a directory is a client act.
 Coverage resolution takes observations -- a declared logical-source binding and
 the bytes the caller read -- rather than paths, so the daemon reads no client
-filesystem. It appends no receipt: it changes no accepted state, and the
-evidence-index, overlay, and manifest digests it returns reproduce the answer.
-
-## Seed bundles
-
-| Tool | Purpose | Permission |
-|---|---|---|
-
-Seed application stores referenced bodies and composes only existing proposal
-and authoring operations. It never approves or activates. Plan and operation
-digests are adapter-owned outputs; callers choose the bundle, label, and group.
+filesystem. It changes no accepted state, and the evidence-index, overlay, and
+manifest digests it returns reproduce the answer; it appends a consumption
+receipt only when the daemon runs with `CRUXIBLE_CONSUMPTION_RECEIPTS=on`.
 
 ## Permission tiers
 
 Read operations require read_only. CAS/proposal operations require
-governed_write. Approval submission and activation require graph_write. Host
-allocation, initialization, and principal changes require admin.
+governed_write. Approval submission and activation require graph_write.
+Principal changes, compiler upgrades and provider installs require admin.
+
+`CRUXIBLE_MODE` (`read_only`, `governed_write`, `graph_write`, or `admin`, the
+default) fixes the MCP server's own tier: tools above it are not advertised,
+and every call is capped at it.
 
 The daemon capability ceiling and bearer credential tier both apply. A
 Cruxible principal signature is an additional governance condition, not a
 replacement for transport authorization.
 
 Workspace source tools take `root_aliases` as a list of `{alias, path}` records.
-Coverage takes `bindings` as a list of `{path, source_id}` records. Duplicate aliases
+Coverage takes `bindings` as a list of `{path, source}` records. Duplicate aliases
 or paths are refused. Named-query `params` and Procedure `input` use the vocabulary
 and input contracts declared in accepted state, which the daemon validates. A `params`
 value may be `null`, which binds an optional parameter explicitly; omitting it takes the
