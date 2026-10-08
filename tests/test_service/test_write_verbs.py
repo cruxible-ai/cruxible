@@ -1343,6 +1343,49 @@ def test_set_with_expect_replaces_only_the_value_it_expected(instance: PlaybillI
     assert empty.code == "cruxible.write.slot_changed" and "holds no value" in empty.message
 
 
+def test_a_cut_value_is_never_offered_as_the_value_to_expect(instance: PlaybillInstance) -> None:
+    """A long held value shows as a preview; the repair names the read of the whole one."""
+
+    long_title = "A long title. " * 60
+    first = _write(instance, _set(WI1, "title", long_title))
+    assert first.status == "accepted", first
+
+    refusal = _refusal(_write(instance, _set(WI1, "title", "Short", expect="Other")))
+
+    assert refusal.code == "cruxible.write.slot_changed"
+    # The preview is quoted compactly, by its head and whole length.
+    assert f"({len(long_title)} chars), not 'Other' as expected" in refusal.message
+    assert "TruncatedText(" not in refusal.message and len(refusal.message) < 300
+    claim = first.changes[0].claim
+    assert refusal.repair == (
+        "Read it again; to write over what it holds now, expect its whole value, "
+        f'which get({claim}, detail="evidence") reads'
+    )
+    assert _write(instance, _set(WI1, "title", "Short", expect=long_title)).status == "accepted"
+
+
+def test_an_exact_content_marker_is_never_offered_as_the_value_to_expect(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A held value with no text to show refuses typed, naming the whole read; never a crash."""
+
+    from cruxible_client.contracts.read_values import ExactContentRef
+
+    first = _write(instance, _set(WI1, "ruling", "The ruling.\n"))
+    assert first.status == "accepted", first
+    marker = ExactContentRef(exact_content="unavailable", content_digest="sha256:" + "ab" * 32)
+    monkeypatch.setattr(write_verbs.ExactContentReader, "value", lambda *_args: marker)
+
+    refusal = _refusal(_write(instance, _set(WI1, "ruling", "Another.", expect="Other")))
+
+    assert refusal.code == "cruxible.write.slot_changed"
+    assert "holds <unavailable sha256:abababababab>, not 'Other' as expected" in refusal.message
+    assert refusal.repair == (
+        "Read it again; to write over what it holds now, expect its whole value, "
+        f'which get({first.changes[0].claim}, detail="evidence") reads'
+    )
+
+
 def test_expect_is_checked_like_a_value_before_it_is_compared(instance: PlaybillInstance) -> None:
     member = _refusal(_write(instance, _set(WI1, "status", "done", expect="dne")))
     assert member.code == "cruxible.write.value_not_member"

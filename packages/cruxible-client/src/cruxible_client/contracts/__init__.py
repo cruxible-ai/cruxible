@@ -47,6 +47,7 @@ from cruxible_client.contracts.compact_query import (
 from cruxible_client.contracts.compact_query import (
     QUERY_MAX_LIMIT as QUERY_MAX_LIMIT,
 )
+from cruxible_client.contracts.compact_query import QueryClaimValue as QueryClaimValue
 from cruxible_client.contracts.compact_query import QueryColumn as QueryColumn
 from cruxible_client.contracts.compact_query import QueryFilterContains as QueryFilterContains
 from cruxible_client.contracts.compact_query import QueryFilterEq as QueryFilterEq
@@ -226,6 +227,8 @@ from cruxible_client.contracts.provider_installation import (
 from cruxible_client.contracts.provider_installation import (
     ProviderWheelObject as ProviderWheelObject,
 )
+from cruxible_client.contracts.read_values import TruncatedText as TruncatedText
+from cruxible_client.contracts.read_values import WholeValueRead as WholeValueRead
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReference as ClaimVersionReference,
 )

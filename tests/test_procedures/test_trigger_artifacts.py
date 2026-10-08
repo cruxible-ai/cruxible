@@ -582,7 +582,11 @@ def test_an_unknown_schedule_kind_fails_loudly_everywhere_it_is_classified() -> 
         with pytest.raises(TriggerFormatError, match="unsupported Trigger schedule kind 'query'"):
             classify(future)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="not a timer"):
-        timer_due(future, last=datetime(2026, 9, 30, tzinfo=UTC))  # type: ignore[arg-type]
+        timer_due(
+            future,  # type: ignore[arg-type]
+            accepted_at=datetime(2026, 9, 29, tzinfo=UTC),
+            last=datetime(2026, 9, 30, tzinfo=UTC),
+        )
     # The wire union is discriminated: a kind it does not name is refused at parse.
     wire = json.loads(
         render_trigger(action_trigger("probe", action="evidence.sweep", interval_seconds=60))

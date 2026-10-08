@@ -431,7 +431,7 @@ has tag `cruxible-provider-runtime-operational-config-v1` and these entries:
 | `process_group_termination_timeout_seconds` | `5.0` | Child group termination and verification deadline. |
 | `deployments` | `[]` | Digest-keyed local Provider deployment records. |
 | `provider_repository` | `null` | Operator-configured provider repository used by `provider list` and name-based installs. |
-| `provider_index_urls` | `[]` | Explicit allowed package indexes and download origins, in lookup order. Without these, a transferred or repository install must supply locked dependency wheels, and an install by name uses PyPI. |
+| `provider_index_urls` | `[]` | Explicit allowed package indexes and download origins, in lookup order. Without these, an install by name and a transferred wheel resolve from PyPI, and a repository install must supply locked dependency wheels. |
 | `workspace_allowed_roots` | `[]` | Canonical absolute roots that widen `workspace.file` beyond an attached workspace; these are daemon-local authority and never come from an environment variable. The daemon state root, its trust, custody, Provider-secret, and instance substrate stay refused inside any allowed root. |
 
 Unknown entries, non-positive timing values, malformed JSON, unsafe deployment
@@ -889,12 +889,34 @@ hash the index publishes, and the environment is materialized from the lock the
 wheel embeds. With no `provider_index_urls` configured, the index is PyPI
 (`https://pypi.org/simple/`, files from `https://files.pythonhosted.org/`). A
 local wheel requires `--lock`; `--dependency` supplies local or offline locked
-dependency wheels. Local paths are read by the client and transferred through
-CAS, so this also works against a remote daemon.
+dependency wheels, and the registry dependencies the lock pins resolve by hash
+from the configured indexes, or from PyPI when none is configured. Local paths
+are read by the client and transferred through CAS, so this also works against
+a remote daemon.
 
 The shared installer prepares an exact Python environment, verifies it once,
 checks package classifiers in supervised children, and proposes the package's
 provider interfaces and Provider definition through ordinary acceptance.
+The interface contract owns its registration, not the implementation: an
+exported interface whose definition is already registered live here (an equal
+interface digest) is bound rather than registered again, and the package's
+Provider pins that exact registration whatever its classifier, so a second
+implementation of a contract installs onto the same ProviderInterface and a
+Blueprint slot typed by it takes either. A bound package claims only input
+buckets that registration proves, under the fixture ids its proofs name
+(`cruxible.provider.bucket_fixture_missing` otherwise), and runs classify through
+the deployment that hosts the registration's classifier, which must be installed
+on this daemon (`cruxible.provider.classifier_host_missing`). An occurrence admits
+only the buckets its bound implementation claims; another input is refused
+`unclaimed_bucket` before the provider runs. A different definition under the
+same interface id is proposed as a successor, which every live Provider and
+Procedure pinning the old registration must follow. Cruxible owns the `web.fetch`
+contract (definitions v2 and v3, the one `cruxible-provider-web` 0.2.x ships): a
+package implementing either registers the built-in registration of it, with its
+vocabulary, its four conformance proofs (static light, static medium, API or
+JSON, rendered) and its classifier, whatever the package itself ships, so every
+implementation binds the same ProviderInterface and claims a subset of those
+buckets.
 The registration lands at once when the approval policy requires no approval;
 otherwise it stops at proposed (`awaiting_approval`) for the ordinary review and
 activation. It returns `ready`, `awaiting_approval`, or `blocked` (a landed
@@ -923,7 +945,7 @@ and `POST /{instance}/providers/install`.
 
 ~~~text
 cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
-  --out KIT_DIR [--provider PACKAGE_DIR]... [--json]
+  --out KIT_DIR [--provider PACKAGE_DIR]... [--default-provider PACKAGE_DIR]... [--json]
 cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
   [--retire-dependents IDENTITY]... [--allow-downgrade]
   [--dry-run|--commit] [--at OID] [--json]
@@ -998,6 +1020,26 @@ instantiates them with any installed Provider of that interface. The
 compiler-seeded built-ins (`Provider:cruxible-builtin`, `ProviderInterface:
 workspace.file`) are never bundled or carried: a kit pins them as they are, and
 `add` requires this instance to hold the same seeded ones.
+
+Default providers. A kit whose Blueprints leave a slot for a contract (such as
+`web.fetch`) can name a default implementation instead of bundling one:
+`--default-provider PACKAGE_DIR` (repeatable) names a published package laid out
+as for `--provider`, with the published wheel in `dist/`. The manifest records
+the package, its exact version, the wheel and lock digests (`delivery: index`)
+and carries none of its files; the lock given must be the one the wheel embeds
+(`cruxible.kit.provider_lock_not_embedded` otherwise), because `add` installs the
+default by name and version from the daemon's provider index (PyPI unless the
+operator configured `provider_index_urls`), where its path dependencies come from
+the same index. `add` skips the install (`satisfied`) when no Procedure the kit
+carries pins the default, each of its interfaces the kit carries is live here as
+the kit carries it (the built-in `web.fetch` registration, or a package's whose classifier a
+deployment on this daemon hosts), and some live Provider implements each one; the Blueprint's slot
+then takes that Provider. Otherwise it installs the default pinned to the recorded
+wheel and lock: the index's listing must name the recorded wheel hash before the
+wheel is fetched, and the lock it embeds must match before any dependency is
+fetched or any environment prepared, so another build at the same name and
+version is refused (`cruxible.provider.index_build_differs`) with nothing
+prepared, registered or proposed.
 
 Authoring a kit that ships its provider:
 
@@ -1087,8 +1129,9 @@ everywhere. A carried ProviderInterface this instance holds differently blocks
 the change.
 
 `status` lists installed kits, the kit paths edited locally, the divergences kept
-on purpose, where each release was built, and each bundled provider package with
-its install state here (`installed`, `differs` with the installed version, or
+on purpose, where each release was built, and each provider package with its
+delivery and install state here (`installed`, `differs` with the installed
+version, `satisfied` for a default another live Provider stands in for, or
 `missing`). For a kit installed from a registry
 the client lists the repository's tags (MAJOR.MINOR.PATCH, short timeout) and
 shows the latest available version; `--offline` skips the check, and a kit from a
@@ -1100,7 +1143,7 @@ depends on what it would retire (`Refused: cruxible.change_set.incomplete_closur
 refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
 MCP: `cruxible_kit_build` (`providers` names packages staged with
-`cruxible_body_store`), `cruxible_kit_status` (with the same update check,
+`cruxible_body_store`; `delivery: index` makes one a default provider), `cruxible_kit_status` (with the same update check,
 `offline`), `cruxible_kit_add` (by registry `reference`, which the adapter pulls,
 or inline `bundle`; a commit stages its provider files) and
 `cruxible_kit_remove`. HTTP:
@@ -1532,13 +1575,17 @@ SourceAcquisitionPolicy, the CaptureContract each Source node pins, and the
 Provider closure it names. A Procedure names its policy on its own envelope,
 under the pin role `acquisition-policy` -- authored by naming the policy, the
 way a Line names its own -- and a pinned Procedure reads only that policy, so
-what anyone accepts afterwards cannot change what it does. A Procedure with no
-such pin falls back to accepted state: exactly one live SourceAcquisitionPolicy
-whose declared inputs are exactly the Procedure's Source aliases. The direct
-lane refuses `source_acquisition_policy_required` when the pinned policy does
-not declare this Procedure's Source inputs, or when no single policy applies to
-an unpinned one, and `source_acquisition_refused` when the policy's own rule
-denies a declared input; neither leaves run history behind. A read outside an
+what anyone accepts afterwards cannot change what it does. A pinned policy
+must cover the Procedure: a rule for every Source alias, extra rules allowed,
+so one policy can serve several Procedures. A Procedure with no such pin falls
+back to accepted state: exactly one live SourceAcquisitionPolicy whose declared
+inputs are exactly the Procedure's Source aliases. Both lanes refuse
+`source_acquisition_policy_required` when the pinned policy (the Procedure's
+on a direct run, the Line's on a Line run) has no rule for a Source alias,
+naming it in `uncovered_input_names`; the direct lane also refuses it when no
+single policy applies to an unpinned Procedure. `source_acquisition_refused`
+is the refusal when the policy's own rule denies a declared input; none of these
+leaves run history behind. A read outside an
 authorized workspace root, over the CaptureContract's selection budget, or with
 no daemon-local reader refuses `workspace_file_read_refused` and names its path
 class.
@@ -1738,14 +1785,26 @@ tick is the exception: it is not an event but "the Trigger is due", so when a
 Line is enabled or its enablement resumes, a tick still pending from before
 closes as `lapsed` -- retained, never run implicitly, and still runnable as
 exactly that tick with `dispatch --occurrence-id DIGEST --retry`, even after
-newer ticks ran -- and the enablement ticks on from its own start rather than
-catching up on ticks it missed. Each cadence or cron Trigger keeps its own
-chain: it is due one interval, or at the next calendar instant, after the last
-occurrence it fired, whatever other Triggers aimed at the Line fired, and never
-before the first instant after its Trigger version's acceptance: a new cadence
-ticks first one interval after it was accepted, a successor schedule from its
-own acceptance. `disable` stops further admissions; a run already admitted
-keeps going, and a retired Line can be disabled too. Both are idempotent:
+newer ticks ran -- and the enablement ticks on at its schedule's next instant
+at or after its start rather than catching up on ticks it missed (only
+`evaluate` over the missed range recovers them). A cadence's instants sit on a
+grid one interval apart from its Trigger version's acceptance, a cron
+schedule's on its calendar, and enabling or resuming never moves them: nothing
+ticks at the enable or restart instant itself unless the schedule has an
+instant there. Each cadence or cron Trigger keeps its own chain, whatever other
+Triggers aimed at the Line fired: the enablement matches every instant of its
+schedule from where its own matching reached, one at a time, skipping each
+tick already delivered (matched, or recorded by `evaluate`). A tick is its
+scheduled instant, never when it ran, so dispatching recovered ticks late
+never skips a live one, and a later tick evaluated first never stands in for
+an earlier one still owed. An enablement that fell behind matches the ticks
+it owes in order, never passing one undelivered. No tick is due before the
+first instant after its Trigger version's acceptance: a new cadence ticks
+first one interval after it was accepted, a successor schedule from its own
+acceptance.
+`disable` stops
+further admissions; a run already admitted keeps going, and a retired Line can
+be disabled too. Both are idempotent:
 enabling a Line already enabled by the same credential at the same versions
 returns it unchanged with `outcome: already_enabled`, and disabling a stopped
 enablement returns it with `outcome: already_disabled`. Enabling under a
@@ -1766,7 +1825,9 @@ disable is not reported.
 A restart keeps each enablement and opens a new forward range from the
 restart: the downtime is not matched, what the previous range matched but did
 not admit stays pending, and timed ticks lapse. For each enabled Line `next`
-then shows one `line_coverage_gap` row per range its daemon never matched,
+then shows one `line_coverage_gap` row per range its daemon never matched
+(starting at the first tick a cadence or cron Trigger still owed, when its
+matching had fallen behind),
 naming the exact `cruxible line evaluate LINE --since S --until U` that covers
 it (the row leaves once an evaluation covers the range), and one
 `line_work_pending` row while work it matched before the restart, or that was
@@ -1778,12 +1839,21 @@ rather than silently rebound.
 
 `evaluate` checks a historical `[since, until)` range against every live
 Trigger aimed at the Line and records its matches as pending; it never runs
-anything. `--dry-run` only reports what the range makes eligible -- `met`,
+anything. A cadence or cron Trigger matches every instant of its schedule in
+the range (on its Trigger version's grid or calendar, none at or before that
+version's acceptance) that no match or evaluation already delivered, so
+evaluating a `line_coverage_gap` range finds exactly the ticks the downtime
+skipped; a `--dry-run` without `--since` reports only the tick due next.
+`--dry-run` only reports what the range makes eligible -- `met`,
 `not_met`, or `incomplete`, the exact matching events/windows (each naming its
 Trigger), and each occurrence's dispatch status (pending, admitted, rejected,
 superseded or lapsed) -- enqueues nothing, needs no range, and is a read.
 Without `--dry-run`, `--since` and `--until` are required and it needs governed
-write. Follow its cursor to finish a bounded page.
+write. Follow its cursor to finish a bounded page, in the mode that returned
+it: a `--dry-run` page's cursor never continues an evaluation that enqueues
+(start that one from the range's start), and an enqueueing page refuses a
+cursor that would skip a tick no page enqueued, so a range is recorded as
+covered only once every tick in it was delivered.
 `dispatch` admits pending occurrences using the caller's current permissions
 and the ordinary Line admission checks; by default it drains every pending
 occurrence (`--limit N` stops after N). `run` and `dispatch` of a Line whose
@@ -1896,11 +1966,27 @@ with `settle_outcome: settled` and the `accepted_git_oid` it produced. The
 accepted record names the mandate digest, and replay re-derives the same
 authority from the parent state alone; the change carries no approvals.
 
+A settle terminal whose run's authority reaches propose but not settle -- a
+Line whose `max_authority` is `propose`, or a Procedure whose only mandate
+grants propose, whatever the caller's tier -- proposes instead: the same
+fallback a failing condition takes, reported `settle_outcome: proposed` with
+`fallback_reason` `cruxible.settle.authority_capped_by_<term>` and the typed
+`capped_by` naming the term that capped it (`line_max_authority`,
+`mandate_grant`, `propagated_sensitivity`). It binds the mandate a proposal
+would -- a propose grant before a settle grant, and the only mandate at
+propose when that is all there is -- and never uses a settle grant's settle
+authority, so it settles nothing. A Line graduates from proposing to settling
+with a Line successor that raises `max_authority` to `settle`, plus a covering
+settle mandate, over the same Procedure: one Procedure serves both stages, so
+its digest -- the key its track record is folded under -- does not change at
+graduation.
+
 The settle mandate is the authority: any caller permitted to run the Line
 triggers the settlement, whatever its own tier, and no caller settles without
 one. A caller's tier can raise the run's reported authority above what its
 mandate grants, but the terminal still settles only under a covering settle
-mandate. A mandate that expired or was suspended before publication
+mandate; when no live mandate grants settle at all, it proposes for
+`cruxible.settle.authority_capped_by_mandate_grant`. A mandate that expired or was suspended before publication
 refuses `settle_publication_refused`, as does a delegated candidate that no
 longer reproduces under its mandate at publication.
 
@@ -1910,7 +1996,9 @@ Each terminal is reported with the authority it needs (`required_authority`:
 reach is reported `refused_effective_authority` with the `limiting_term` that
 capped it -- the Procedure's own terminals, the Line's `max_authority`,
 propagated sensitivity, the mandate grant, or calibration -- and the run
-refuses `terminal_authority_capped_by_<term>`.
+refuses `terminal_authority_capped_by_<term>`. The one exception is a settle
+terminal capped at propose, which proposes as described above; capped below
+propose, it is refused like any other.
 
 Known limitation: a settle run submits its delegated proposal against the
 accepted head and then activates it. If another generation is accepted between

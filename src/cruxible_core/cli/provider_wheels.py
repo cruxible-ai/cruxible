@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 
-from cruxible_client.contracts.kits import KitBuildProvider
+from cruxible_client.contracts.kits import KitBuildProvider, KitProviderDelivery
 from cruxible_client.contracts.provider_installation import (
     ProviderInstallRequest,
     ProviderInstallResult,
@@ -67,14 +67,20 @@ def _transfer(client: "CruxibleClient", instance_id: str, path: Path) -> Provide
 
 
 def stage_kit_provider_directory(
-    client: "CruxibleClient", instance_id: str, directory: Path
+    client: "CruxibleClient",
+    instance_id: str,
+    directory: Path,
+    *,
+    delivery: KitProviderDelivery = "bundled",
 ) -> KitBuildProvider:
     """One provider package of a kit's source tree, staged for ``kit build``.
 
     The directory is the package's project: its ``pyproject.toml`` names it, its
     ``uv.lock`` is the lock it was built with, and ``dist/`` holds its built wheel
     plus the wheel of each dependency the lock names by path (``uv build --wheel
-    --out-dir dist`` for each). The kit bundles those bytes, never the source.
+    --out-dir dist`` for each). A bundled package's bytes travel in the kit, never
+    the source; an ``index`` default's travel nowhere: the build reads them to
+    record the published build the consumer installs by name.
     """
 
     try:
@@ -97,6 +103,7 @@ def stage_kit_provider_directory(
     if not root:
         raise ConfigError(f"{directory / 'dist'} holds no wheel of {name}; run uv build --wheel")
     return KitBuildProvider(
+        delivery=delivery,
         wheel=_transfer(client, instance_id, root[0]),
         lock_digest=client.store_body(instance_id, lock.read_bytes()).digest,
         dependencies=tuple(

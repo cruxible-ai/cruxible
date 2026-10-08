@@ -68,6 +68,7 @@ from cruxible_client.authoring.sdk_types import (
     SourceSelectionError,
     SubjectRef,
     TypedRef,
+    WholeValueUnavailable,
 )
 from cruxible_client.authoring.selectors import (
     EvidenceSelection,
@@ -197,7 +198,6 @@ from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import (
     GET_BATCH_MAX_REFS,
     ByteRange,
-    ExactContentRef,
     GetBatchRequest,
     GetDetail,
     GetProcedureCard,
@@ -229,6 +229,7 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
+from cruxible_client.contracts.read_values import ExactContentRef, TruncatedText
 from cruxible_client.contracts.records import Record, RecordConstructor
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReference,
@@ -3819,6 +3820,34 @@ class Cruxible:
             )
         return KnowledgeCard(kind, identity, _get_coordinate(result), value)
 
+    def read_whole(self, preview: TruncatedText) -> object:
+        """The whole value a ``TruncatedText`` previews, read exactly where it was previewed.
+
+        Makes the preview's own ``read_whole`` read -- ``get(ref, detail="evidence",
+        at=...)`` at the generation the preview came from -- so an older revision
+        or a value since replaced returns the value that was previewed, never the
+        head's. Raises ``WholeValueUnavailable`` for a preview that names no read.
+
+        Next: compare it, or write it back with ``expect=``.
+        """
+
+        read = preview.read_whole
+        if read is None:
+            raise WholeValueUnavailable(
+                "this preview names no exact whole read; query with claims=True and pass "
+                "a Claim cell's preview"
+            )
+        result = self._client.get(
+            self._instance_id,
+            request=GetRequest(ref=read.ref, detail=read.detail, at=read.at, surface="sdk"),
+        )
+        if result.evidence is None:  # pragma: no cover - evidence always answers a Claim
+            raise WholeValueUnavailable(f"get({read.ref!r}) answered no evidence")
+        value: object = result.evidence.value
+        if isinstance(value, Mapping) and "exact_content" in value:
+            value = ExactContentRef.model_validate(value)
+        return value
+
     def _get(
         self,
         ref: str,
@@ -4840,7 +4869,8 @@ class ProcedureRun:
 
         A settle terminal reports `settle_outcome`: `settled` with the
         `accepted_git_oid`, or `proposed` with its `proposal_id` and
-        `fallback_reason`.
+        `fallback_reason`; `capped_by` names the term when the run's authority
+        capped it at propose.
 
         Next: ``cx.proposal(egress.proposal_id).review()`` for a proposed settle.
         """

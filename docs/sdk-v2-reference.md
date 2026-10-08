@@ -932,8 +932,11 @@ mandate's pinned condition query for each target, and either accepts the change
 with no candidate approvals or follows the mandate's declared fallback (an
 ordinary proposal, or a refusal). The run's terminal egress reports
 `settle_outcome` as `settled` with the `accepted_git_oid`, or `proposed` with the
-`fallback_reason`. The Sequence step is `SettleChangeSet(name,
-candidate_templates=...)`.
+`fallback_reason`. A run whose authority reaches propose but not settle (a Line
+capped at `propose`, or a propose-only mandate) proposes instead, for
+`cruxible.settle.authority_capped_by_<term>`, so the same Procedure serves a
+Line before and after it graduates to settle. The Sequence step is
+`SettleChangeSet(name, candidate_templates=...)`.
 
 ### `halt`
 

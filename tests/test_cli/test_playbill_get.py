@@ -194,11 +194,8 @@ def test_other_cards_print_names_whole_and_nested_rows_readably(
 def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from cruxible_client.contracts.get_reads import (
-        GetHistory,
-        GetRevision,
-        GetTruncatedText,
-    )
+    from cruxible_client.contracts.get_reads import GetHistory, GetRevision
+    from cruxible_client.contracts.read_values import TruncatedText, WholeValueRead
 
     stub = _stub(
         monkeypatch,
@@ -235,7 +232,11 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     long_row = GetSubjectClaim(
         predicate="note",
         claim="CLM-3",
-        value=GetTruncatedText(value="n" * 500, length=900),
+        value=TruncatedText(
+            preview="n" * 500,
+            length=900,
+            read_whole=WholeValueRead(ref="CLM-3", at="3" * 64),
+        ),
     )
     _stub(
         monkeypatch,
@@ -256,7 +257,12 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     assert summary.exit_code == 0, summary.output
     assert "(900 chars; --detail evidence for all)" in summary.output
     payload = json.loads(as_json.output)
-    assert payload["card"]["claims"][0]["value"]["truncated"] is True
+    assert payload["card"]["claims"][0]["value"] == {
+        "truncated": True,
+        "preview": "n" * 500,
+        "length": 900,
+        "read_whole": {"ref": "CLM-3", "detail": "evidence", "at": "3" * 64},
+    }
     assert payload["coordinate"] == {"git_oid": "1" * 12, "generation": 7}
     assert "accepted_coordinate" not in payload
 
@@ -264,10 +270,8 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
 def test_exact_content_prints_as_text_and_a_marker_says_why_when_it_cannot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from cruxible_client.contracts.get_reads import (
-        ExactContentRef,
-        GetEvidence,
-    )
+    from cruxible_client.contracts.get_reads import GetEvidence
+    from cruxible_client.contracts.read_values import ExactContentRef
 
     digest = "sha256:" + "ab" * 32
     card = GetSubjectCard(

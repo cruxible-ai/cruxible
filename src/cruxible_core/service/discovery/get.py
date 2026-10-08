@@ -92,16 +92,15 @@ from cruxible_client.contracts.get_reads import (
     GetSubjectCard,
     GetSubjectClaim,
     GetTriggerCard,
-    GetTruncatedText,
     ReadFlag,
     ReadSurface,
-    summary_value,
 )
 from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.query.definitions import QueryDefinition
+from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
@@ -832,7 +831,7 @@ def _value_was_cut(
 ) -> bool:
     if surface == "cli":
         return get_value_display(value, width=width).truncated
-    if isinstance(value, GetTruncatedText):
+    if isinstance(value, TruncatedText):
         return True
     return isinstance(value, list | tuple) and any(
         _value_was_cut(item, surface=surface, width=width) for item in value
@@ -974,7 +973,7 @@ def _claim_card(
         predicate=short_field_name(statement.predicate, subject_kind, accepted_predicates),
         predicate_full=statement.predicate,
         qualifier=statement.qualifier,
-        value=summary_value(value),
+        value=summary_value(value, read_whole=whole_value_read(name, coordinate.git_oid)),
         content_digest=content_digest,
         verdict=verdict,
         status=status,
@@ -983,7 +982,10 @@ def _claim_card(
         contenders=tuple(
             GetContender(
                 claim=item.claim_id,
-                value=summary_value(contender_values[item.claim_id][0]),
+                value=summary_value(
+                    contender_values[item.claim_id][0],
+                    read_whole=whole_value_read(item.claim_id, coordinate.git_oid),
+                ),
                 content_digest=contender_values[item.claim_id][1],
                 verdict=item.verdict,
             )
@@ -1075,7 +1077,15 @@ def _subject_card(
             )
         listed = many or len(values) > 1
         claims_shown = tuple(item.claim_id for item in shown)
-        displayed_value = summary_value(values if listed else values[0])
+        reads = [whole_value_read(item, coordinate.git_oid) for item in claims_shown]
+        displayed_value = (
+            [
+                summary_value(value, read_whole=read)
+                for value, read in zip(values, reads, strict=True)
+            ]
+            if listed
+            else summary_value(values[0], read_whole=reads[0])
+        )
         if listed and surface == "cli" and _value_was_cut(displayed_value, surface=surface):
             evidence_steps.extend(_render_get(surface, item, "evidence") for item in claims_shown)
         entries.append(
@@ -1765,7 +1775,8 @@ def _revision(
         else history.read_generation_record(entry.sequence, instance.blob_at)
     )
     value, content_digest = (None, None) if entry.value is None else entry.value()
-    cut_value = summary_value(value)
+    # The revision's own generation, so the whole read returns this revision's value.
+    cut_value = summary_value(value, read_whole=whole_value_read(ref, generation.git_oid))
     return GetRevision(
         revision=entry.revision,
         sequence=entry.sequence,

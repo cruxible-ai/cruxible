@@ -35,6 +35,8 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
+from pydantic import BaseModel
+
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
@@ -84,11 +86,15 @@ from cruxible_client.contracts.errors import (
     SettlementIntegrityError,
     WriteRefusalError,
 )
-from cruxible_client.contracts.get_reads import (
-    ReadSurface,
-    summary_value,
-)
+from cruxible_client.contracts.get_display import exact_content_marker_text
+from cruxible_client.contracts.get_reads import ReadSurface
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.read_values import (
+    ExactContentRef,
+    TruncatedText,
+    summary_value,
+    whole_value_read,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_client.contracts.temporal import utc_now
@@ -353,10 +359,34 @@ def _brief(value: object) -> str:
     return text if len(text) <= _BRIEF_MAX else f"{text[: _BRIEF_MAX - 1]}\u2026"
 
 
+def _not_whole(value: object) -> bool:
+    """Whether a shown value is, or holds, something other than the value itself.
+
+    A ``TruncatedText`` preview or an ``ExactContentRef`` marker: neither is a
+    value to expect, so a refusal names the read of the whole value instead.
+    """
+
+    return isinstance(value, TruncatedText | ExactContentRef) or (
+        isinstance(value, list) and any(_not_whole(item) for item in value)
+    )
+
+
+def _brief_shown(value: object) -> str:
+    """A shown value as a refusal quotes it: a preview by its head and length."""
+
+    if isinstance(value, TruncatedText):
+        return f"{_brief(value.preview)} ({value.length} chars)"
+    if isinstance(value, ExactContentRef):
+        return exact_content_marker_text(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_brief_shown(item) for item in value) + "]"
+    return repr(value)
+
+
 def _value_key(value: object) -> str:
     """One value's comparison key: ``1``, ``true`` and ``"1"`` stay distinct."""
 
-    return canonical_json(value)
+    return canonical_json(value.model_dump(mode="json") if isinstance(value, BaseModel) else value)
 
 
 # -- planning ------------------------------------------------------------------------
@@ -616,20 +646,27 @@ class _Planner:
         now = (
             "holds no value"
             if not current
-            else f"holds {current[0]!r}"
+            else f"holds {_brief_shown(current[0])}"
             if len(current) == 1
-            else f"holds {current!r}"
+            else f"holds {_brief_shown(current)}"
         )
         expected = [summary_value(value) for value in wanted.values()]
         spelled = expected[0] if isinstance(expect, str | int | float | bool) else expected
         repair_value: object = None if not current else current[0] if len(current) == 1 else current
+        # A preview or a marker is never a value to expect: name the whole read.
+        cut = [
+            item.claim_id for item, shown in zip(live, current, strict=True) if _not_whole(shown)
+        ]
         raise _refuse(
             "cruxible.write.slot_changed",
-            f"{label} {now}, not {spelled!r} as expected",
+            f"{label} {now}, not {_brief_shown(spelled)} as expected",
             change=index,
             candidates=tuple(item.claim_id for item in live),
             repair=(
-                "Read it again; to write over what it holds now, expect "
+                "Read it again; to write over what it holds now, expect its whole value, "
+                f'which get({cut[0]}, detail="evidence") reads'
+                if cut
+                else "Read it again; to write over what it holds now, expect "
                 + ("[]" if repair_value is None else json.dumps(repair_value))
             ),
             field_path=f"changes[{index}].expect",
@@ -1318,7 +1355,10 @@ class _Planner:
                         "subject": subject,
                         "field": name,
                         "predicate": info.predicate,
-                        "before": summary_value(present.value),
+                        "before": summary_value(
+                            present.value,
+                            read_whole=whole_value_read(present.claim_id, self.head.git_oid),
+                        ),
                         "after": summary_value(present.value),
                         "claim": present.claim_id,
                         "already_live": True,
@@ -1364,7 +1404,14 @@ class _Planner:
                 "subject": subject,
                 "field": name,
                 "predicate": info.predicate,
-                "before": summary_value(before),
+                # before is the revised Claim at the planning head; after is
+                # the value this write sent, so it names no whole read.
+                "before": summary_value(
+                    before,
+                    read_whole=None
+                    if revises is None
+                    else whole_value_read(revises, self.head.git_oid),
+                ),
                 "after": summary_value(shown_after),
                 "revises": revises,
                 "contenders_created": contenders,
@@ -1544,7 +1591,9 @@ class _Planner:
                 "subject": subject,
                 "field": name,
                 "predicate": predicate,
-                "before": summary_value(value),
+                "before": summary_value(
+                    value, read_whole=whole_value_read(claim_id, self.head.git_oid)
+                ),
                 "after": None,
                 "claim": claim_id,
                 "retired": tuple(item.artifact_identity.name for item in dependents),

@@ -16,6 +16,7 @@ from cruxible_client.contracts.provider_interfaces import (
     ProviderInterfaceRegistrationV1,
     provider_bucket_fixture_digest,
 )
+from cruxible_client.contracts.providers import ProviderImplementationRecord, ProviderV2
 from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_DIGESTS
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_FIXTURES,
@@ -24,7 +25,7 @@ from cruxible_core.governance.seed_artifacts.workspace_file import (
 )
 from cruxible_core.providers.web_fetch import (
     WEB_FETCH_FIXTURES,
-    WEB_FETCH_INTERFACE_DIGEST,
+    WEB_FETCH_INTERFACE_DIGESTS,
     WebFetchBucketClassifier,
 )
 
@@ -232,18 +233,61 @@ def install_compiler_owned_provider_classifier(
 ) -> ProviderBucketClassifierInstallation | None:
     """Install the compiler-owned double for an interface that has one."""
 
-    if accepted.registration.interface_digest == WEB_FETCH_INTERFACE_DIGEST:
+    # A package registration carries its own classifier code instead.
+    if isinstance(accepted.registration, ProviderInterfaceRegistration):
+        return None
+    # Every web.fetch revision core owns shares one vocabulary and proof menu.
+    if accepted.registration.interface_digest in WEB_FETCH_INTERFACE_DIGESTS:
         return PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(accepted, WebFetchBucketClassifier())
-    # Both workspace.file revisions read the same host-owned bytes; a package
-    # registration carries its own classifier code instead.
-    if accepted.registration.interface_digest not in WORKSPACE_FILE_INTERFACE_DIGESTS or isinstance(
-        accepted.registration, ProviderInterfaceRegistration
-    ):
+    # Both workspace.file revisions read the same host-owned bytes.
+    if accepted.registration.interface_digest not in WORKSPACE_FILE_INTERFACE_DIGESTS:
         return None
     return PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(
         accepted,
         WorkspaceFileBucketClassifier(),
     )
+
+
+def admitted_bucket_selectors(
+    provider: ProviderV2,
+    implementation: ProviderImplementationRecord,
+    registration: ProviderInterfaceRegistrationV1,
+) -> tuple[str, ...]:
+    """The input buckets one bound implementation admits: what it claims, as proven.
+
+    A registration proves the buckets of every implementation bound onto it, so
+    its proof menu can be wider than what this implementation declared; an input
+    in a bucket the implementation did not claim is refused before it runs, as
+    the provider runtime refuses it.
+    """
+
+    declared = next(
+        (
+            item
+            for item in provider.runtime_artifact.manifest.implementations
+            if item.interface_id == implementation.interface_id
+            and item.interface_digest == implementation.interface_digest
+            and item.entrypoint == implementation.entrypoint
+        ),
+        None,
+    )
+    proven = {proof.selector for proof in registration.conformance_proofs}
+    claimed = (
+        ()
+        if declared is None
+        else tuple(
+            sorted(
+                (item for item in set(declared.declared_input_buckets) if item in proven),
+                key=str.encode,
+            )
+        )
+    )
+    if not claimed:
+        raise ExecutionError(
+            f"accepted Provider implementation {implementation.implementation_digest} claims "
+            "no input bucket its interface registration proves"
+        )
+    return claimed
 
 
 # The built-in workspace.file registration is the same compiler-owned bytes in
@@ -259,6 +303,7 @@ __all__ = [
     "ProviderBucketClassifierRegistry",
     "PROVIDER_BUCKET_CLASSIFIER_REGISTRY",
     "ProviderClassifierInstallationRefused",
+    "admitted_bucket_selectors",
     "core_provider_bucket_conformance_fixtures",
     "install_compiler_owned_provider_classifier",
 ]

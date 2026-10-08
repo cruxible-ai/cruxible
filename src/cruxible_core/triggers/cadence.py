@@ -1,50 +1,47 @@
 """Timer arithmetic shared by internal triggers and Line admission.
 
 No Trigger fires retroactively. A timer's instants all follow the acceptance
-of the Trigger version that names them: a cadence's first instant is its
-acceptance plus one interval, a cron schedule's first is its first calendar
-instant after acceptance, and a successor schedule starts again from its own
-acceptance. A Line occurrence chain then continues from the last occurrence its
-Trigger fired; a floor is how a forward-only reader resumes, never catching up
-on instants before it.
+of the Trigger version that names them: a cadence's instants sit on its own
+grid, one interval apart from its acceptance (the first one interval after it),
+a cron schedule's are its calendar instants after acceptance, and a successor
+schedule starts again from its own acceptance. A tick is its scheduled
+instant, never when it ran. A forward-only reader resumes at the timer's first
+instant at or after its resume, never the resume itself and never an instant
+before it; the instants it skipped are left for explicit evaluation.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from cruxible_client.contracts.cron import parse_cron
 from cruxible_client.contracts.triggers import CadenceSchedule, CronSchedule, TriggerSchedule
 
+_END_OF_TIME = datetime.max.replace(tzinfo=UTC)
 
-def timer_due(
-    schedule: TriggerSchedule, *, last: datetime, not_before: datetime | None = None
-) -> datetime:
-    """The first instant after ``last`` (an acceptance or a fire), never before a floor.
 
-    A cadence is due one interval after ``last``, or at the floor if that is later;
-    a cron schedule at its first calendar instant after ``last`` and at or after
-    the floor.
+def timer_due(schedule: TriggerSchedule, *, accepted_at: datetime, last: datetime) -> datetime:
+    """The timer's first instant after ``last`` (an acceptance or a fire).
+
+    The instant is one `timer_instants` yields: a cadence's grid instant from
+    its acceptance, a cron schedule's calendar instant.
     """
 
-    if isinstance(schedule, CadenceSchedule):
-        due = last + timedelta(seconds=schedule.interval_seconds)
-        return due if not_before is None else max(due, not_before)
-    if isinstance(schedule, CronSchedule):
-        spec = parse_cron(schedule.expression)
-        floor = last if not_before is None else max(last, not_before - timedelta(microseconds=1))
-        found = spec.next_after(floor)
-        if found is None:
-            raise ValueError(f"cron expression {schedule.expression!r} never fires")
-        return found
-    raise ValueError(f"Trigger schedule kind {schedule.kind!r} is not a timer")
+    found = next(
+        timer_instants(schedule, accepted_at=accepted_at, after=last, through=_END_OF_TIME),
+        None,
+    )
+    if found is None:
+        assert isinstance(schedule, CronSchedule)
+        raise ValueError(f"cron expression {schedule.expression!r} never fires")
+    return found
 
 
 def timer_instants(
     schedule: TriggerSchedule, *, accepted_at: datetime, after: datetime, through: datetime
 ) -> Iterator[datetime]:
-    """Every instant of a timer in ``(after, through]``, in order.
+    """Every instant of a timer in ``(after, through]``, in order, none at or before acceptance.
 
     A cadence's instants sit on its own grid, one interval apart from its
     acceptance; skipping some never moves the ones after them.

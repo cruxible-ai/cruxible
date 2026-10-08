@@ -28,6 +28,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureTerminalEgress,
 )
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
+from cruxible_client.contracts.read_values import ShownValue
 
 #: A Capture handle is ``CAP-`` plus at least this many hex digits of its digest.
 CAPTURE_HANDLE_HEX = 12
@@ -218,7 +219,8 @@ class GetResolutionContractCard(_StrictOperationalModel):
     contract: str
     lifecycle: str
     hypothesis: str
-    hypothesis_value: Any = None
+    # The hypothesis Claim's value as a summary shows it (TruncatedText when long).
+    hypothesis_value: ShownValue = None
     window: str
     rule: str
     state: Literal["open", "settleable", "resolved", "unbound", "not_observed"]

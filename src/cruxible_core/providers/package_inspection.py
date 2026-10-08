@@ -19,7 +19,8 @@ from cruxible_client.contracts.provider_interfaces import (
     render_provider_interface,
 )
 from cruxible_client.contracts.repairs import RepairOperation
-from cruxible_core.errors import RequestRefusedError
+from cruxible_core.errors import ConfigError, RequestRefusedError
+from cruxible_core.providers.package_index import embedded_lock
 from cruxible_core.providers.package_materialization import (
     package_preparation_errors,
     resolve_provider_package,
@@ -59,13 +60,16 @@ def inspect_provider_package(
     wheel: tuple[str, bytes],
     lock: bytes,
     dependencies: tuple[tuple[str, bytes], ...] = (),
+    embedded_lock_required: bool = False,
 ) -> InspectedProviderPackage:
     """The manifest entry for one wheel, its lock and its path-sourced dependency wheels.
 
     The lock's root must be this wheel's distribution at its version. Every other
     package the lock names by path (a first-party sibling such as the provider
     runtime, until it resolves from an index) must come as a wheel; registry
-    packages resolve by name at install time and are never bundled.
+    packages resolve by name at install time and are never bundled. A package a
+    consumer installs by name (``embedded_lock_required``) materializes from the
+    lock its wheel embeds, so the lock given must be exactly that one.
     """
 
     with tempfile.TemporaryDirectory(prefix="cruxible-kit-provider-") as temporary:
@@ -84,6 +88,18 @@ def inspect_provider_package(
                 document = PackageRegistrationDocumentV1.model_validate(bundle.export_document())
             locked = toolchain("resolution").load_uv_lock(lock_path)
             dependency_pins = tuple(wheels.wheel_pin(path) for path in dependency_paths)
+        if embedded_lock_required:
+            try:
+                embedded = embedded_lock(wheel_path)
+            except ConfigError as exc:
+                raise _refuse("cruxible.kit.provider_lock_not_embedded", str(exc)) from exc
+            if embedded != lock:
+                raise _refuse(
+                    "cruxible.kit.provider_lock_not_embedded",
+                    f"the lock given for {pin.filename} is not the one the wheel embeds; an "
+                    "index default installs by name from that embedded lock, so name the "
+                    "package directory whose uv.lock the published wheel was built with",
+                )
     if document.governed_definitions:
         raise _refuse(
             "cruxible.kit.provider_carries_definitions",

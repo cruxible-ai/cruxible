@@ -100,8 +100,13 @@ Read with three verbs, cheapest first:
    `Blueprint:`, `Line:`, `Trigger:`, `Principal:`, `ProviderInterface:`,
    `query:`, a proposal ID. Values come first; `detail` goes deeper:
    `evidence`, `why`, `history` (newest first, paged), `proof`, or a Document
-   `body` by byte range. A summary cuts a long string to 500 characters and
-   marks it truncated; `evidence` and `proof` read it whole.
+   `body` by byte range. In a summary (a card, a `query` row or Claim cell,
+   `world.values`, a write's before and after), a string over 500 characters
+   is a `TruncatedText` (`truncated`, `preview`, `length`, `read_whole`), never
+   the value. `read_whole` is the exact read of the whole value,
+   `{ref, detail: "evidence", at}` pinned to the generation the preview came
+   from (`cx.read_whole(preview)` in the SDK); a plain `query` row cell has
+   none (ask with `claims`), and a write's `after` is the value you sent.
 
 The floor is for orientation and grep and is eventually current. Right after
 a write, read exact values with `get` or `query`. `since(GENERATION)` lists
@@ -375,11 +380,22 @@ through ambient filesystem or network access. Before it can run, accepted state
 must hold the Provider and its interface, the CaptureContract the node pins,
 and the SourceAcquisitionPolicy that governs the read. Name that policy when
 you author the Procedure (or on the Line); the Procedure then reads only that
-policy. A missing or ambiguous policy refuses
-`source_acquisition_policy_required`; a rule that denies an input refuses
-`source_acquisition_refused`; a path outside an authorized workspace root or
-over the CaptureContract's selection budget refuses
+policy, so a policy someone else accepts later cannot change what it does. A
+named policy must cover the Procedure: a rule for every Source alias, extra
+rules allowed, so one policy can serve several Procedures. A Procedure authored
+without one falls back to the one live policy whose declared inputs are exactly
+its Source aliases. A named policy with no rule for an alias (named in
+`uncovered_input_names`), or a missing or ambiguous fallback, refuses
+`source_acquisition_policy_required` at admission; a rule that denies an input
+refuses `source_acquisition_refused`; a path outside an authorized workspace
+root or over the CaptureContract's selection budget refuses
 `workspace_file_read_refused`. None of these leave partial run history.
+A Source request value may reference the run input or an earlier step only as
+a whole value (`{"url": "$input.url"}`), never inside a longer string.
+
+Each Source occurrence retains its acquisition evidence and Capture; cite the
+retained evidence, not a retelling. `cx.capture(ref)` reads a retained body and
+never refetches the source.
 
 ### Measurements and readings
 

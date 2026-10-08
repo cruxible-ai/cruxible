@@ -260,6 +260,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     AcquisitionInputOutcomeV1,
     TerminalItemDependencyManifestV1,
 )
+from cruxible_core.providers.provider_classifiers import admitted_bucket_selectors
 from cruxible_core.providers.provider_local_runtime import (
     ProviderLocalRuntimeRefused,
     translate_provider_budget,
@@ -1123,12 +1124,12 @@ def _trigger_admissions(
     accepted_line: AcceptedLineSpec,
     trigger: ArtifactIdentity,
 ) -> tuple[ProcedureRunAdmissionV5, ...]:
-    """The latest occurrence one Trigger fired on this Line: its cadence chain.
+    """The latest occurrence one Trigger fired on this Line.
 
-    A Line's admissions interleave every Trigger aimed at it, so a cadence counts
-    from the last occurrence its own Trigger fired, found by the Trigger each
-    admission's binding names. Only records past the last read are parsed; a
-    restart rebuilds the chain from the retained journal.
+    A Line's admissions interleave every Trigger aimed at it, so a Trigger's
+    own latest is found by the Trigger each admission's binding names. Only
+    records past the last read are parsed; a restart rebuilds it from the
+    retained journal.
     """
 
     journal, _root = _journal(instance)
@@ -1203,10 +1204,9 @@ def _line_occurrence(
     accepted_line: AcceptedLineSpec,
     *,
     evaluation_time: datetime,
-    prior: tuple[ProcedureRunAdmissionV5, ...],
+    last_tick: datetime | None = None,
     trigger: AcceptedTrigger | None = None,
     binding: LineTriggerBinding | None = None,
-    not_before: datetime | None = None,
     exact_basis: datetime | None = None,
     accepted_at: datetime | None = None,
     manual_event: TriggerEventReference | None = None,
@@ -1215,16 +1215,15 @@ def _line_occurrence(
 
     With no Trigger the occurrence is a manual run at its evaluation instant,
     on the exact event it was given, if any (its record digest names it).
-    A cadence or cron occurrence is the tick after the last one its Trigger
-    fired (`prior`), and never before the tick after its Trigger version's
-    acceptance (`accepted_at`): no Trigger fires retroactively. `not_before`
-    floors it for forward-only matching: an arm that starts or resumes later
-    than that tick starts ticking from its own start, never catching up.
-    `exact_basis` names a retained tick outright, for an explicit dispatch or
-    retry of that exact occurrence.
+    A cadence or cron occurrence is the timer's next instant after
+    `last_tick`, the scheduled instant of the latest tick of its Trigger
+    already delivered (when it was dispatched never counts), and never before
+    the first instant after its Trigger version's acceptance (`accepted_at`):
+    no Trigger fires retroactively. `exact_basis` names a tick outright: one a
+    listener or an evaluation found on the timer, or a retained tick being
+    dispatched or retried.
     """
 
-    last = max(prior, key=lambda item: item.occurrence_evaluation_time, default=None)
     next_due = None
     if trigger is None:
         kind = "manual"
@@ -1252,10 +1251,8 @@ def _line_occurrence(
                     raise ExecutionError("a timed occurrence needs its Trigger's acceptance")
                 next_due = timer_due(
                     schedule,
-                    last=accepted_at
-                    if last is None
-                    else max(last.occurrence_evaluation_time, accepted_at),
-                    not_before=not_before,
+                    accepted_at=accepted_at,
+                    last=accepted_at if last_tick is None else max(last_tick, accepted_at),
                 )
             occurrence_basis = format_datetime(next_due)
         else:
@@ -1413,11 +1410,10 @@ def _plan_external_occurrences(
             interface_digest=registration.interface_digest,
             vocabulary_digest=registration.vocabulary_digest,
             classifier_digest=registration.classifier_digest,
-            accepted_bucket_selectors=tuple(
-                sorted(
-                    (item.selector for item in registration.conformance_proofs),
-                    key=str.encode,
-                )
+            # What the bound implementation claims, not every bucket the
+            # registration proves for the implementations bound onto it.
+            accepted_bucket_selectors=admitted_bucket_selectors(
+                provider.provider, implementation, registration
             ),
         )
         produces_capture = isinstance(node, SourceNode)
@@ -1527,6 +1523,34 @@ def _source_input_names(accepted: AcceptedProcedure) -> tuple[str, ...]:
     )
 
 
+def _policy_coverage_refusal(
+    policy: SourceAcquisitionPolicy,
+    input_names: tuple[str, ...],
+) -> SourceAcquisitionPolicyRequired | None:
+    """The refusal when a pinned policy does not COVER a run's Source inputs.
+
+    One law for both lanes: a pinned SourceAcquisitionPolicy governs a run when
+    every Source alias of its Procedure has a rule. Extra rules are allowed, so
+    one policy can serve every Procedure whose aliases it names (a kit ships one
+    policy, not one per alias set). The refusal names each uncovered alias.
+    """
+
+    declared = tuple(rule.input_name for rule in policy.inputs)
+    uncovered = tuple(name for name in input_names if name not in declared)
+    if not uncovered:
+        return None
+    return SourceAcquisitionPolicyRequired(
+        f"{SourceAcquisitionPolicyRequired.code}: the pinned SourceAcquisitionPolicy "
+        f"{policy.identity.name!r} has no rule for the Source input(s) {list(uncovered)}",
+        details={
+            "required_input_names": list(input_names),
+            "declared_input_names": list(declared),
+            "uncovered_input_names": list(uncovered),
+            "pinned_policy_identity": policy.identity.qualified,
+        },
+    )
+
+
 def _accepted_capture_contracts(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -1616,6 +1640,9 @@ def _direct_acquisition_policy(
     governed separately, and accepting an unrelated policy cannot take a running
     Procedure offline.
 
+    A pinned policy must COVER the Procedure's Source aliases (a rule for each;
+    extra rules allowed), the same law the Line lane applies to its own pin.
+
     Resolve-from-accepted-state is the FALLBACK, for a Procedure authored before
     the pin existed or without one: exactly one live SourceAcquisitionPolicy
     whose declared inputs are exactly this Procedure's Source aliases. Zero or
@@ -1641,19 +1668,9 @@ def _direct_acquisition_policy(
                     "pinned_policy_digest": pin.artifact_digest,
                 },
             )
-        declared = tuple(rule.input_name for rule in pinned.inputs)
-        if declared != input_names:
-            raise SourceAcquisitionPolicyRequired(
-                f"{SourceAcquisitionPolicyRequired.code}: the pinned SourceAcquisitionPolicy "
-                f"declares {list(declared)}, not this Procedure's Source inputs "
-                f"{list(input_names)}",
-                details={
-                    "required_input_names": list(input_names),
-                    "declared_input_names": list(declared),
-                    "pinned_policy_identity": pin.target.qualified,
-                    "matching_policy_digests": [],
-                },
-            )
+        refusal = _policy_coverage_refusal(pinned, input_names)
+        if refusal is not None:
+            raise refusal
         return pin.artifact_digest, pinned
     covering = tuple(
         item
@@ -1695,8 +1712,8 @@ def _plan_selection_decision(
     serve: the acceptance law never tied a Line's policy to its Procedure's
     Source aliases, so scoring the miss here would turn accepted, already
     running Lines -- every Source-free one included -- into run-time refusals.
-    The direct lane refuses that mismatch where it belongs, at admission, when
-    the pinned policy's declared inputs are not the Procedure's Source aliases.
+    A Source alias with NO rule is the opposite miss, and both lanes refuse it
+    where it belongs, at admission (`_policy_coverage_refusal`).
     """
 
     sources = {
@@ -1996,6 +2013,15 @@ def _fold_terminal_egress(
             "accepted_git_oid": receipt.get("accepted_git_oid"),
             "fallback_reason": receipt.get("fallback_reason"),
         }
+    # The cap is the journaled request's: the prepared record carries it, and
+    # every later record of the node keeps it.
+    request = payload.get("request")
+    capped_term = request.get("capped_by") if isinstance(request, dict) else None
+    capped_by = (
+        SERVED_AUTHORITY_TERMS[cast(Any, capped_term)]
+        if isinstance(capped_term, str)
+        else (None if current is None else current.capped_by)
+    )
     if isinstance(receipt, dict):
         proposal_id = (
             receipt.get("proposal_id") if isinstance(receipt.get("proposal_id"), str) else None
@@ -2071,6 +2097,7 @@ def _fold_terminal_egress(
         settle_outcome=cast(Any, settle.get("settle_outcome")),
         accepted_git_oid=cast(Any, settle.get("accepted_git_oid")),
         fallback_reason=cast(Any, settle.get("fallback_reason")),
+        capped_by=capped_by,
     )
 
 
@@ -2881,14 +2908,15 @@ def _plan_direct_external_run(
             return refuse(
                 code="source_acquisition_policy_required",
                 message=(
-                    "A direct Source run requires an accepted SourceAcquisitionPolicy declaring "
-                    "this Procedure's Source inputs."
+                    "A direct Source run requires an accepted SourceAcquisitionPolicy with a "
+                    "rule for each of this Procedure's Source inputs."
                 ),
                 details={
                     **cast(dict[str, object], exc.details),
                     "repair": (
-                        "Pin a SourceAcquisitionPolicy on the Procedure, or accept exactly one "
-                        "whose inputs are this Procedure's Source aliases."
+                        "Pin a SourceAcquisitionPolicy with a rule for each Source alias on the "
+                        "Procedure, or accept exactly one whose inputs are this Procedure's "
+                        "Source aliases."
                     ),
                 },
             )
@@ -3407,6 +3435,9 @@ class _LineTerminalEgressSink:
         self.capture = capture
         self.proposal = proposal
 
+    def grants_settle(self) -> bool:
+        return self.proposal.grants_settle()
+
     def prepare_terminal_egress(
         self,
         *,
@@ -3441,7 +3472,6 @@ def service_run_playbill_line(
     expected_line_artifact_digest: str | None = None,
     expected_trigger_artifact_digest: str | None = None,
     expected_trigger_pins: dict[str, str] | None = None,
-    explicit_occurrence: bool = False,
     trigger_fire: TriggerFire | None = None,
 ) -> ProcedureRunStateV2:
     instance.require_writable()
@@ -3466,7 +3496,6 @@ def service_run_playbill_line(
             expected_line_artifact_digest=expected_line_artifact_digest,
             expected_trigger_artifact_digest=expected_trigger_artifact_digest,
             expected_trigger_pins=expected_trigger_pins,
-            explicit_occurrence=explicit_occurrence,
             trigger_fire=trigger_fire,
         )
 
@@ -3486,7 +3515,6 @@ def _run_playbill_line(
     expected_line_artifact_digest: str | None = None,
     expected_trigger_artifact_digest: str | None = None,
     expected_trigger_pins: dict[str, str] | None = None,
-    explicit_occurrence: bool = False,
     trigger_fire: TriggerFire | None = None,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
@@ -3802,11 +3830,8 @@ def _run_playbill_line(
     ):
         raise ExecutionError("Line and resolution contract must bind the same observation window")
     is_timed = schedule is not None and schedule_is_timed(schedule)
-    prior = (
-        _trigger_admissions(instance, accepted_line, trigger.trigger.identity)
-        if trigger is not None and is_timed
-        else ()
-    )
+    if is_timed and occurrence_basis_time is None:
+        raise ExecutionError("a timed Trigger fire names the exact tick it dispatches")
     cadence_basis = (
         min(occurrence_basis_time, evaluation_time)
         if occurrence_basis_time is not None and is_timed
@@ -3833,15 +3858,13 @@ def _run_playbill_line(
     occurrence_id, next_due = _line_occurrence(
         accepted_line,
         evaluation_time=cadence_basis or evaluation_time,
-        prior=prior,
         trigger=trigger,
         binding=trigger_binding,
         manual_event=event if trigger is None else None,
-        # A retained tick is validated against the same calculation that queued
-        # it: automatically, as the chain's next tick floored at its own due
-        # instant; explicitly, as exactly the tick it names.
-        not_before=None if explicit_occurrence else cadence_basis,
-        exact_basis=cadence_basis if explicit_occurrence else None,
+        # A retained tick is admitted as exactly the tick it names, automatically
+        # or explicitly: its identity is its scheduled instant, so when it is
+        # dispatched never moves which later ticks are due.
+        exact_basis=cadence_basis,
         accepted_at=trigger_accepted_at(instance, trigger)
         if trigger is not None and is_timed
         else None,
@@ -3945,6 +3968,31 @@ def _run_playbill_line(
             code="artifact_binding_mismatch",
             message="The Line's pinned acquisition policy is not accepted at this coordinate.",
             details={"repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Line."},
+        )
+    uncovered = (
+        None
+        if line_policy is None
+        else _policy_coverage_refusal(line_policy, _source_input_names(accepted))
+    )
+    if uncovered is not None:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="source_acquisition_policy_required",
+            message=(
+                "A Line's Source run requires its pinned SourceAcquisitionPolicy to have a "
+                "rule for each of this Procedure's Source inputs."
+            ),
+            details={
+                **cast(dict[str, object], uncovered.details),
+                "repair": (
+                    "Succeed the Line with a SourceAcquisitionPolicy that has a rule for each "
+                    "Source alias."
+                ),
+            },
         )
     landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
     if isinstance(accepted_line.line, LineSpec) and accepted_line.line.trigger_input is not None:

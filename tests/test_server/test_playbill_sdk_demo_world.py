@@ -204,12 +204,12 @@ def _accepted_claims(pb: Cruxible, predicate: str) -> list[str]:
     """Every accepted Claim of ``predicate`` across the demo's two Subject kinds."""
 
     return [
-        entry["claim"]
+        entry.claim
         for kind in ("secops.policy", "secops.service")
         for row in pb.query(kind, select=[predicate], claims=True, limit=500).rows
         for entries in (row.get("claims") or {}).values()
         for entry in entries
-        if entry["status"] == "accepted"
+        if entry.status == "accepted"
     ]
 
 
