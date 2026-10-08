@@ -57307,6 +57307,24 @@
                 "default": null,
                 "title": "Candidate Digest"
               },
+              "capped_by": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "procedure_terminal_capability",
+                      "line_max_authority",
+                      "propagated_sensitivity",
+                      "mandate_grant"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Capped By"
+              },
               "children": {
                 "default": [],
                 "items": {
@@ -58484,6 +58502,32 @@
             "title": "Candidate Digest"
           }
         },
+        "capped_by": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "capped_by",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "procedure_terminal_capability",
+                  "line_max_authority",
+                  "propagated_sensitivity",
+                  "mandate_grant"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capped By"
+          }
+        },
         "children": {
           "default": [],
           "default_json_serializable": true,
@@ -58916,6 +58960,24 @@
             ],
             "default": null,
             "title": "Candidate Digest"
+          },
+          "capped_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "procedure_terminal_capability",
+                  "line_max_authority",
+                  "propagated_sensitivity",
+                  "mandate_grant"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capped By"
           },
           "children": {
             "default": [],
@@ -64685,7 +64747,7 @@
           },
           "TruncatedText": {
             "additionalProperties": false,
-            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` names the read that returns\nthe whole value: ``get`` on the Claim this value belongs to (the ``claim``\nbeside it) with ``detail=\"evidence\"``, whose ``evidence.value`` is the value.",
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
             "properties": {
               "length": {
                 "exclusiveMinimum": 500,
@@ -64697,10 +64759,15 @@
                 "type": "string"
               },
               "read_whole": {
-                "const": "get(claim, detail=\"evidence\")",
-                "default": "get(claim, detail=\"evidence\")",
-                "title": "Read Whole",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WholeValueRead"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "truncated": {
                 "const": true,
@@ -64714,6 +64781,33 @@
               "length"
             ],
             "title": "TruncatedText",
+            "type": "object"
+          },
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
             "type": "object"
           }
         },
@@ -81985,7 +82079,7 @@
           },
           "TruncatedText": {
             "additionalProperties": false,
-            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` names the read that returns\nthe whole value: ``get`` on the Claim this value belongs to (the ``claim``\nbeside it) with ``detail=\"evidence\"``, whose ``evidence.value`` is the value.",
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
             "properties": {
               "length": {
                 "exclusiveMinimum": 500,
@@ -81997,10 +82091,15 @@
                 "type": "string"
               },
               "read_whole": {
-                "const": "get(claim, detail=\"evidence\")",
-                "default": "get(claim, detail=\"evidence\")",
-                "title": "Read Whole",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WholeValueRead"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "truncated": {
                 "const": true,
@@ -82015,10 +82114,37 @@
             ],
             "title": "TruncatedText",
             "type": "object"
+          },
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
+            "type": "object"
           }
         },
         "additionalProperties": false,
-        "description": "One page of a ``query`` answer: values first, flags per row.\n\nRows are bounded by ``get``'s card rule: a string value over 500 characters\nis a ``TruncatedText`` preview (``get(claim, detail=\"evidence\")`` reads it\nwhole), and an exact-content value is its text, or an ``ExactContentRef``\nwhen it cannot be shown as text.",
+        "description": "One page of a ``query`` answer: values first, flags per row.\n\nRows are bounded by ``get``'s card rule: a string value over 500 characters\nis a ``TruncatedText`` preview, and an exact-content value is its text, or an\n``ExactContentRef`` when it cannot be shown as text. A row cell names no\nwhole read; with ``claims=True`` each Claim's preview does.",
         "properties": {
           "capped": {
             "default": [],
@@ -89007,17 +89133,22 @@
           }
         },
         "read_whole": {
-          "default": "get(claim, detail=\"evidence\")",
+          "default": null,
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "read_whole",
           "required": false,
           "schema": {
-            "const": "get(claim, detail=\"evidence\")",
-            "default": "get(claim, detail=\"evidence\")",
-            "title": "Read Whole",
-            "type": "string"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WholeValueRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "truncated": {
@@ -89036,8 +89167,37 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
-        "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` names the read that returns\nthe whole value: ``get`` on the Claim this value belongs to (the ``claim``\nbeside it) with ``detail=\"evidence\"``, whose ``evidence.value`` is the value.",
+        "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
         "properties": {
           "length": {
             "exclusiveMinimum": 500,
@@ -89049,10 +89209,15 @@
             "type": "string"
           },
           "read_whole": {
-            "const": "get(claim, detail=\"evidence\")",
-            "default": "get(claim, detail=\"evidence\")",
-            "title": "Read Whole",
-            "type": "string"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WholeValueRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "truncated": {
             "const": true,
@@ -89490,6 +89655,76 @@
         "credential_label",
         "credential_permission_mode",
         "principal_registration_status"
+      ]
+    },
+    "WholeValueRead": {
+      "fields": {
+        "at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": true,
+          "schema": {
+            "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+            "title": "At",
+            "type": "string"
+          }
+        },
+        "detail": {
+          "default": "evidence",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "const": "evidence",
+            "default": "evidence",
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "ref": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "ref",
+          "required": true,
+          "schema": {
+            "title": "Ref",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+        "properties": {
+          "at": {
+            "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+            "title": "At",
+            "type": "string"
+          },
+          "detail": {
+            "const": "evidence",
+            "default": "evidence",
+            "title": "Detail",
+            "type": "string"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "at"
+        ],
+        "title": "WholeValueRead",
+        "type": "object"
+      },
+      "required_fields": [
+        "at",
+        "ref"
       ]
     },
     "WindowCloseSchedule": {
