@@ -67,6 +67,7 @@ nav:
       - Architecture: architecture.md
       - Modeling state: modeling-state.md
       - For AI agents: for-ai-agents.md
+      - Kits: kits.md
   - Reference:
       - SDK v2 proposal: sdk-v2-reference.md
       - CLI reference: cli-reference.md
