@@ -348,6 +348,66 @@ def test_another_installed_implementation_satisfies_the_default(
             pass
 
 
+@pytest.mark.parametrize("changed", ["wheel", "lock"])
+def test_an_index_serving_another_build_of_the_default_is_refused_before_anything_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_checkout: ProviderCheckout,
+    changed: str,
+) -> None:
+    """Review F-001: the default's wheel and embedded lock are checked against the
+    kit's digests before the index's build is prepared, probed, registered or
+    proposed (the wheel from the index listing, the lock before any dependency is
+    fetched), so a substituted build leaves no deployment, proposal or Provider."""
+
+    from cruxible_client.contracts.kits import KitBundle as Bundle
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from cruxible_core.service.procedures import provider_installation as service
+
+    opened, default, _alternative = _worlds(tmp_path, monkeypatch, provider_checkout)
+    publisher, consumer = next(opened)
+    try:
+        _install(publisher, default)
+        _author(publisher)
+        release = _build_with_default(publisher, default)
+        document = release.model_dump(mode="json")
+        document["manifest"]["providers"][0][changed]["sha256"] = "sha256:" + "0" * 64
+        other = Bundle.model_validate(document)
+
+        def unreachable(**arguments: Any) -> Any:
+            raise AssertionError("another build was prepared")
+
+        monkeypatch.setattr(service, "prepare_provider_package", unreachable)
+        fetched: list[str] = []
+        real_fetch = service.fetch_release
+
+        def fetch(release: Any, *args: Any) -> bytes:
+            fetched.append(release.name)
+            return real_fetch(release, *args)
+
+        monkeypatch.setattr(service, "fetch_release", fetch)
+        operator = get_playbill_manager().provider_runtime_operator()
+        deployments = operator.config.deployments
+        before = _tree(consumer)
+        proposals = playbill_api.playbill_list_proposals(consumer.instance_id).entries
+
+        with pytest.raises(RequestRefusedError) as refused:
+            _add(consumer, other, dry_run=False)
+
+        assert refused.value.error_code == "cruxible.provider.index_build_differs"
+        # The wheel is refused on its listing; the lock once the wheel is in custody.
+        assert fetched == ([] if changed == "wheel" else ["fetch-default"])
+        assert get_playbill_manager().provider_runtime_operator().config.deployments == (
+            deployments
+        )
+        assert _tree(consumer) == before
+        assert "providers/fetch-default.json" not in before
+        assert playbill_api.playbill_list_proposals(consumer.instance_id).entries == proposals
+    finally:
+        for _ in opened:
+            pass
+
+
 def test_a_default_implementing_an_uncarried_interface_is_still_satisfied(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
 ) -> None:

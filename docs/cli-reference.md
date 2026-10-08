@@ -1026,9 +1026,12 @@ the same index. `add` skips the install (`satisfied`) when no Procedure the kit
 carries pins the default, each of its interfaces the kit carries is live here as
 the kit carries it (the built-in `web.fetch` registration, or a package's whose classifier a
 deployment on this daemon hosts), and some live Provider implements each one; the Blueprint's slot
-then takes that Provider. Otherwise it installs the default and verifies the
-fetched build against the recorded wheel and lock (`cruxible.kit.provider_not_installed`
-when the index served another build).
+then takes that Provider. Otherwise it installs the default pinned to the recorded
+wheel and lock: the index's listing must name the recorded wheel hash before the
+wheel is fetched, and the lock it embeds must match before any dependency is
+fetched or any environment prepared, so another build at the same name and
+version is refused (`cruxible.provider.index_build_differs`) with nothing
+prepared, registered or proposed.
 
 Authoring a kit that ships its provider:
 

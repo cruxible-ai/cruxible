@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import tomllib
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -171,8 +171,45 @@ def _index_transport(index_urls: tuple[str, ...]) -> ArtifactTransport:
     )
 
 
+@dataclass(frozen=True)
+class ExpectedProviderBuild:
+    """The exact build an install by name must fetch, as a kit's default names it.
+
+    ``wheel_sha256`` and ``lock_sha256`` are tagged digests of the published wheel
+    and of the lock it embeds. The index's listing is checked before anything is
+    fetched and the embedded lock before any dependency is fetched or any
+    environment prepared, so another build at the same name and version runs no
+    code here, registers no deployment and proposes nothing.
+    """
+
+    wheel_sha256: str
+    lock_sha256: str
+
+
+def _refuse_unexpected_build(package: str, what: str, served: str, expected: str) -> None:
+    if served == expected:
+        return
+    raise RequestRefusedError(
+        "cruxible.provider.index_build_differs",
+        f"the provider index serves {package} with {what} {served[:19]}, not the build "
+        f"expected ({expected[:19]}); nothing was prepared, registered or proposed",
+        repair=HandEditRepair(
+            hand_edit=HandEditInstruction(
+                target="provider_index_urls in the daemon's provider runtime configuration",
+                required_change=(
+                    "Point the provider index at one that serves the published build the "
+                    "kit names, or rebuild the kit against the build this index serves."
+                ),
+            )
+        ),
+    )
+
+
 def _index_source_files(
-    release: IndexRelease, index_urls: tuple[str, ...], custody: Path
+    release: IndexRelease,
+    index_urls: tuple[str, ...],
+    custody: Path,
+    expected: ExpectedProviderBuild | None = None,
 ) -> tuple[Path, Path, tuple[Path, ...]]:
     transport = _index_transport(index_urls)
     wheel = custody / release.filename
@@ -180,6 +217,11 @@ def _index_source_files(
     lock = custody / "uv.lock"
     _write(lock, embedded_lock(wheel))
     locked = toolchain("resolution").load_uv_lock(lock)
+    if expected is not None:
+        # Before any sibling is fetched or any environment prepared.
+        _refuse_unexpected_build(
+            release.name, "an embedded lock", locked.lock_sha256, expected.lock_sha256
+        )
     # The lock names the provider's first-party siblings (its runtime) by path.
     # Each comes from the index that listed the provider, at its locked version.
     dependencies = []
@@ -199,10 +241,11 @@ def _source_files(
     request: ProviderInstallRequest,
     custody: Path,
     release: IndexRelease | None,
+    expected: ExpectedProviderBuild | None = None,
 ) -> tuple[Path, Path, tuple[Path, ...]]:
     enforce_customer_code_execution_supported()
     if release is not None:
-        return _index_source_files(release, _index_urls(operator), custody)
+        return _index_source_files(release, _index_urls(operator), custody, expected)
     if request.package is None:
         assert request.wheel is not None and request.lock_digest is not None
         access = BodyAccessContext(principal_id="provider-installation", can_read_body=True)
@@ -519,6 +562,7 @@ def service_install_provider(
     request: ProviderInstallRequest,
     actor_id: str,
     timestamp: str,
+    expected_build: ExpectedProviderBuild | None = None,
 ) -> ProviderInstallResult:
     """Install one package and propose its registration (lands if the policy allows).
 
@@ -526,7 +570,8 @@ def service_install_provider(
     registry dependencies from custody and the operator's configured indexes, or
     from the default index, PyPI, when none is configured, as an install by name
     does. A configured repository's checkout keeps to its configured indexes.
-    The lock's hashes pin every dependency either way.
+    The lock's hashes pin every dependency either way. ``expected_build`` pins an
+    install by name (a kit's default provider) to one published wheel and lock.
     """
 
     instance.require_writable()
@@ -551,7 +596,14 @@ def service_install_provider(
                 request.version,
                 _index_transport(_index_urls(operator)),
             )
+        if expected_build is not None:
+            # The index's listing names the wheel's hash: refuse before fetching it.
+            _refuse_unexpected_build(
+                release.name, "a wheel", "sha256:" + release.sha256, expected_build.wheel_sha256
+            )
         source = {"index": release.index_url, "wheel": release.filename, "sha256": release.sha256}
+    if expected_build is not None and release is None:
+        raise ConfigError("an expected build pins only an install by name from a provider index")
     identifier = "sha256:" + canonical_digest(
         "playbill-provider-installation-request-v1",
         {
@@ -590,6 +642,7 @@ def service_install_provider(
                 source,
                 release,
                 confirm_head=mode.confirm_head,
+                expected_build=expected_build,
             )
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
@@ -700,6 +753,7 @@ def _install_locked(
     release: IndexRelease | None,
     *,
     confirm_head: Callable[[str], None],
+    expected_build: ExpectedProviderBuild | None = None,
 ) -> ProviderInstallResult:
     prepared_path = directory / "prepared.json"
     rewrite_prepared = False
@@ -728,6 +782,15 @@ def _install_locked(
         ):
             configured = published
             rewrite_prepared = True
+        if expected_build is not None:
+            # A retained preparation of this listing: its lock is the one checked.
+            assert provider.runtime_artifact.local_env is not None
+            _refuse_unexpected_build(
+                provider.identity.name,
+                "an embedded lock",
+                provider.runtime_artifact.local_env.lock_sha256,
+                expected_build.lock_sha256,
+            )
         deployment = operator._deployment(configured)
         if request.reverify:
             verified = verify_provider_installation(provider, deployment)
@@ -742,7 +805,7 @@ def _install_locked(
         custody.mkdir(exist_ok=True, mode=0o700)
         with package_preparation_errors():
             wheel, lock_path, dependencies = _source_files(
-                instance, operator, request, custody, release
+                instance, operator, request, custody, release, expected_build
             )
             if (
                 release is None

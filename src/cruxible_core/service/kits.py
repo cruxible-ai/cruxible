@@ -17,7 +17,7 @@ import dataclasses
 import functools
 import json
 from collections.abc import Callable, Iterator, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
@@ -107,6 +107,7 @@ from cruxible_core.providers.package_inspection import (
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
+from cruxible_core.service.procedures.provider_installation import ExpectedProviderBuild
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 
 # Definition families an owned artifact may pin. A pin into any other family is
@@ -1161,9 +1162,18 @@ def _transition(installed: str | None, release: str) -> KitTransition:
     return "upgrade" if after > before else "downgrade" if after < before else "reinstall"
 
 
-#: Installs one bundled provider package through the ordinary transfer install
-#: (the API layer checks the install permission before it runs).
-ProviderInstaller = Callable[[ProviderInstallRequest], ProviderInstallResult]
+class ProviderInstaller(Protocol):
+    """Installs one provider package through the ordinary install (the API layer
+    checks the install permission before it runs); ``expected_build`` pins an
+    install by name to the published wheel and lock a kit's default names."""
+
+    def __call__(
+        self,
+        request: ProviderInstallRequest,
+        *,
+        expected_build: ExpectedProviderBuild | None = None,
+    ) -> ProviderInstallResult: ...
+
 
 _ProviderState = Literal["installed", "differs", "missing", "retired"]
 
@@ -1416,23 +1426,31 @@ def _install_providers(
     # The files were read from the body store already (_inspect_staged).
     by_id = {step.provider_id: index for index, step in enumerate(steps)}
     for provider in missing:
-        result = install(
-            ProviderInstallRequest(
-                package=provider.package, version=provider.version, dry_run=False
-            )
-            if provider.delivery == "index"
-            else ProviderInstallRequest(
-                wheel=ProviderWheelObject(
-                    filename=provider.wheel.filename, digest=provider.wheel.sha256
+        if provider.delivery == "index":
+            # Another build at the same name and version is refused before any of
+            # it is fetched past its listing, prepared, registered or proposed.
+            result = install(
+                ProviderInstallRequest(
+                    package=provider.package, version=provider.version, dry_run=False
                 ),
-                lock_digest=provider.lock.sha256,
-                dependencies=tuple(
-                    ProviderWheelObject(filename=item.filename, digest=item.sha256)
-                    for item in provider.dependencies
+                expected_build=ExpectedProviderBuild(
+                    wheel_sha256=provider.wheel.sha256, lock_sha256=provider.lock.sha256
                 ),
-                dry_run=False,
             )
-        )
+        else:
+            result = install(
+                ProviderInstallRequest(
+                    wheel=ProviderWheelObject(
+                        filename=provider.wheel.filename, digest=provider.wheel.sha256
+                    ),
+                    lock_digest=provider.lock.sha256,
+                    dependencies=tuple(
+                        ProviderWheelObject(filename=item.filename, digest=item.sha256)
+                        for item in provider.dependencies
+                    ),
+                    dry_run=False,
+                )
+            )
         index = by_id[provider.provider_id]
         if result.registered:
             update: dict[str, object] = {"action": "install", "detail": result.detail}

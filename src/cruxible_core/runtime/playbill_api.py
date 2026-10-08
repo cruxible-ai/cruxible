@@ -265,6 +265,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_procedure,
 )
 from cruxible_core.service.procedures.provider_installation import (
+    ExpectedProviderBuild,
     service_install_provider,
     service_provider_catalog,
 )
@@ -833,7 +834,9 @@ def playbill_kit_status(instance_id: str) -> KitStatus:
 def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResult:
     check_permission("cruxible_kit_add", instance_id=instance_id)
 
-    def install(provider: ProviderInstallRequest) -> ProviderInstallResult:
+    def install(
+        request: ProviderInstallRequest, *, expected_build: ExpectedProviderBuild | None = None
+    ) -> ProviderInstallResult:
         # A kit's provider installs like any other: the same permission and
         # hosted-execution gate as provider install.
         check_permission("cruxible_provider_install", instance_id=instance_id)
@@ -842,9 +845,10 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
         return service_install_provider(
             manager.get(instance_id),
             operator=manager.provider_runtime_operator(),
-            request=provider,
+            request=request,
             actor_id=_actor_id(instance_id),
             timestamp=canonical_candidate_timestamp(utc_now()),
+            expected_build=expected_build,
         )
 
     with change_entry(request.dry_run, "derived"):
