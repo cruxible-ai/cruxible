@@ -423,6 +423,26 @@ class SettlementIntegrityError(CruxibleError):
     """A candidate, change set, generation, or root correspondence failed."""
 
 
+class SettlementEvidenceUnproven(SettlementIntegrityError):
+    """A pending candidate cites a Capture no daemon run is recorded producing.
+
+    Settlement judges what a candidate cites for the first time under the law in
+    force, not the law it was admitted under: an admission recorded before
+    production proof existed is not an accepted citation.
+    """
+
+    error_code = "cruxible.proposal.capture_production_unproven"
+
+    def __init__(self, paths: tuple[str, ...]) -> None:
+        self.paths = paths
+        super().__init__(
+            f"{self.error_code}: {', '.join(paths)} newly cite a Capture with no daemon "
+            "record of the run that produced it, so this proposal cannot be activated. "
+            "Readmit it (cruxible proposal readmit) to see each refused citation at the "
+            "current head, then resubmit the change citing a Capture a run produced."
+        )
+
+
 class ReplayCheckpointError(CruxibleError):
     """A local replay checkpoint is missing, stale, or does not reproduce the ledger."""
 
@@ -606,6 +626,7 @@ __all__ = [
     "ReadRefusalError",
     "ReplayCheckpointError",
     "SemanticDeltaLimitError",
+    "SettlementEvidenceUnproven",
     "SettlementIntegrityError",
     "SubjectFormatError",
     "SubjectNotFoundError",

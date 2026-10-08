@@ -127,3 +127,34 @@ def journal_produced_capture(
         expected_head=head,
         fencing_token="test-writer",
     )
+
+
+def admit_as_before_production_proof(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Admit every Capture as the daemon did before production proof existed.
+
+    Every journal context vouches that a run produced whatever Capture it is
+    asked about, and v1 envelopes are judged the old way: what a proposal
+    admitted by the vulnerable build looked like.
+    """
+
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_client.contracts.cas_contracts import BodyAccessContext
+    from cruxible_core.exhaust.producer_receipts import JournalProducerReceiptResolver
+
+    access = BodyAccessContext(principal_id="test-before-proof", can_read_body=True)
+
+    def vouched(
+        self: JournalProducerReceiptResolver, capture_digest: str, *, run_id: str
+    ) -> tuple[CaptureProductionRecord, ...]:
+        envelope = parse_capture_envelope(self._bodies.read(capture_digest, access=access))
+        return (
+            CaptureProductionRecord(
+                capture_digest=capture_digest,
+                capture_contract_digest=envelope.capture_contract_digest,
+                run_id=run_id,
+                receipt_digest=None,
+            ),
+        )
+
+    monkeypatch.setattr(JournalProducerReceiptResolver, "produced_capture", vouched)
+    admit_legacy_v1_citations(monkeypatch)

@@ -1644,6 +1644,9 @@ class _MemberContext:
     used_expansions: set[str]
     acceptance_laws: AcceptanceLawRegistry
     historical_law_coordinate: tuple[str, str] | None
+    #: Recovery re-deriving a generation main already holds. Settling a pending
+    #: candidate is not this: what it cites for the first time still needs proof.
+    replaying_accepted: bool = False
 
     def accepted_coordinate(self) -> AcceptedCoordinate:
         return AcceptedCoordinate.from_internal(self.current)
@@ -2749,9 +2752,9 @@ def _verified_attestation_member(context: _MemberContext) -> _MemberVerdict:
         historical_capture_contract=historical_capture_contract_resolver(
             context.historical_artifact_provider, s.referent_coordinate
         ),
-        # New evidence needs daemon proof a run produced it; a replay of an
-        # accepted acceptance re-judges what was already admitted.
-        require_production_proof=context.historical_law_coordinate is None,
+        # New evidence needs daemon proof a run produced it, at admission and
+        # again at settlement; only recovery of accepted state re-derives it.
+        require_production_proof=not context.replaying_accepted,
     )
     digest = attestation_artifact_digest(value).tagged
     return _accepted(
@@ -3017,9 +3020,10 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             installed.coordinate in {CLAIM_LAW_V2_REVISION_8, CLAIM_LAW_V3_REVISION_10}
         ),
         # A Capture cited for the first time needs daemon proof a run produced
-        # it. Settlement and recovery replay an acceptance under its recorded
-        # law coordinate; what that acceptance admitted stays admitted.
-        require_new_citation_proof=context.historical_law_coordinate is None,
+        # it, at admission and again at settlement: an admission recorded under
+        # an earlier law is not an accepted citation. Only recovery of a
+        # generation main already holds re-derives it without the proof.
+        require_new_citation_proof=not context.replaying_accepted,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -3954,6 +3958,7 @@ def _evaluate_scoped_members(
     principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
     | None,
     historical_law_coordinates: Mapping[str, tuple[str, str]],
+    replaying_accepted: bool,
     retained_tree: Callable[[str], Mapping[str, bytes]] | None,
     claim_law_provider: ClaimLawEvidenceProvider | None,
     attestation_principal_provider: AttestationPrincipalProvider | None,
@@ -4244,6 +4249,7 @@ def _evaluate_scoped_members(
                 used_expansions=used_expansions,
                 acceptance_laws=acceptance_laws,
                 historical_law_coordinate=historical_law_coordinates.get(path),
+                replaying_accepted=replaying_accepted,
             )
         )
         diagnostics.extend(verdict.diagnostics)
@@ -4605,6 +4611,7 @@ def evaluate_proposal_tree(
     replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] | None = None,
     acceptance_laws: AcceptanceLawRegistry = ACCEPTANCE_LAWS,
     historical_law_coordinates: Mapping[str, tuple[str, str]] | None = None,
+    replaying_accepted: bool = False,
     candidate_card_renderer_digest: str | None = None,
     principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
     | None = None,
@@ -4632,6 +4639,11 @@ def evaluate_proposal_tree(
     Otherwise the state is built from scratch. All paths reach the same candidate:
     the carried state is a cache of derivations, never a source of them. Laws,
     bodies, approvals and current-coordinate query facts are never cached here.
+
+    `replaying_accepted` is only for recovery, re-deriving a generation main
+    already holds: Captures it cites were admitted when it was accepted, so they
+    are not held again to the production proof a new citation needs. Settling a
+    pending candidate is not a replay, whatever law coordinates it carries.
     """
 
     candidate_tree = (
@@ -4739,6 +4751,7 @@ def evaluate_proposal_tree(
             replay_claim_admission_accounts=replay_claim_admission_accounts,
             acceptance_laws=acceptance_laws,
             historical_law_coordinates=historical_law_coordinates or {},
+            replaying_accepted=replaying_accepted,
             retained_tree=retained_tree,
             claim_law_provider=claim_law_provider,
             attestation_principal_provider=attestation_principal_provider,

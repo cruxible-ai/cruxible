@@ -41,6 +41,7 @@ from cruxible_client.contracts.captures import (
     verify_capture,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.errors import SettlementEvidenceUnproven
 from cruxible_client.contracts.providers import provider_digest
 from cruxible_client.contracts.source_references import (
     CasSourceReference,
@@ -55,7 +56,10 @@ from cruxible_core.procedures.egress import TerminalEgressReceiptV2
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._p2b1_support import accepted_provider
-from tests.support.capture_receipts import admit_legacy_v1_citations
+from tests.support.capture_receipts import (
+    admit_as_before_production_proof,
+    admit_legacy_v1_citations,
+)
 from tests.test_authoring.p2b4_unit1.test_live_capture_consumers import (
     ProducedCaptures,
     acquisition_demo,  # noqa: F401 - the fixture the producer world needs
@@ -501,8 +505,12 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
     instance.refresh()
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate() == instance.accepted_coordinate()
-    # A proposal submitted before is re-judged at accept as it was admitted.
-    _activate(instance, submitted_before)
+    # A proposal admitted before is not an accepted citation: settlement holds
+    # what it cites for the first time to the law in force, and names the repair.
+    with pytest.raises(SettlementEvidenceUnproven) as refused:
+        _activate(instance, submitted_before)
+    assert refused.value.error_code == "cruxible.proposal.capture_production_unproven"
+    assert "readmit" in str(refused.value) and "resubmit" in str(refused.value)
     instance.refresh()
     # A new citation of the same envelope is refused.
     assert _preflight_codes(
@@ -528,3 +536,95 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
     _activate(instance, submitted)
     instance.refresh()
     assert coordinator.status(revised.intent_id, actor=_ACTOR).state == "accepted"
+
+
+def test_a_pending_forged_citation_admitted_before_the_fix_is_refused_at_settlement(
+    world: ProducedCaptures, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.accepted_attestations import (
+        attestation_path,
+        render_accepted_attestation,
+    )
+    from cruxible_client.contracts.claim_attestations import (
+        claim_attestation_v2_envelope_digest,
+    )
+    from cruxible_core.proposals.settlement import ChangeActorBinding
+    from tests.core_support._support import client_material
+    from tests.test_claims.test_claim_attestation_service import _request
+    from tests.test_ledger.test_activation import _sign
+
+    instance = world.instance
+    source_capture, terminal_capture = _genuine(world)
+    # A genuine accepted Claim for the attestation to attest.
+    coordinator = _coordinator(instance)
+    genuine = coordinator.create(
+        actor=_ACTOR,
+        payload=_citing(source_capture, qualifier="attested"),
+        canonical_timestamp="2026-09-02T14:00:00.000000Z",
+    ).intent
+    _activate(instance, coordinator.submit(genuine.intent_id, actor=_ACTOR))
+    instance.refresh()
+    forged = _store_envelope(
+        instance,
+        _over_attacker_bytes(instance, _envelope(instance, terminal_capture), b'{"pending":1}'),
+    )
+
+    with monkeypatch.context() as before:
+        admit_as_before_production_proof(before)
+        # A Claim citing the forgery, admitted by the vulnerable build.
+        claim_intent = coordinator.create(
+            actor=_ACTOR,
+            payload=_citing(forged, qualifier="pending-forgery"),
+            canonical_timestamp="2026-09-02T14:01:00.000000Z",
+        ).intent
+        pending_claim = coordinator.submit(claim_intent.intent_id, actor=_ACTOR)
+        assert pending_claim.status.proposal_id is not None
+        # A new-capture attestation citing the forgery, admitted the same way.
+        attestation = _request(
+            instance,
+            world.owner,
+            genuine.semantic_identity,
+            tmp_path,
+            basis="new_capture",
+            captures=(forged,),
+            attested_at=datetime(2026, 9, 2, 14, 2, tzinfo=UTC),
+        ).attestation
+        base = instance.accepted_coordinate()
+        tree = instance.tree_at(base.git_oid)
+        tree[attestation_path(claim_attestation_v2_envelope_digest(attestation))] = (
+            render_accepted_attestation(attestation)
+        )
+        pending_attestation = instance.proposal_service().submit(
+            actor=_ACTOR,
+            request=ProposalAdmissionRequest(
+                target_ref="refs/proposals/owner/pending-forged-attestation",
+                proposed_base_oid=base.git_oid,
+            ),
+            candidate_tree=tree,
+            timestamp="2026-09-02T14:03:00.000000Z",
+        )
+        assert pending_attestation.candidate is not None, pending_attestation.evaluation
+
+    # After the upgrade neither settles.
+    with pytest.raises(SettlementEvidenceUnproven):
+        _activate(instance, pending_claim)
+    assert pending_attestation.evaluation.evaluated_tree_oid is not None
+    with pytest.raises(SettlementEvidenceUnproven):
+        instance.prepare_generation(
+            base=base,
+            candidate_tree=instance.proposal_tree(
+                pending_attestation.evaluation.evaluated_tree_oid
+            ),
+            candidate=pending_attestation.candidate,
+            approvals=(
+                _sign(
+                    client_material(instance.root.parent, instance),
+                    pending_attestation.candidate.candidate_digest,
+                    base.semantic_root,
+                ),
+            ),
+            actor_binding=ChangeActorBinding(actor_id="owner"),
+            proposal_actor_id="owner",
+            sequence=len(instance.accepted_history()),
+        )
+    assert instance.accepted_coordinate() == base  # nothing was accepted

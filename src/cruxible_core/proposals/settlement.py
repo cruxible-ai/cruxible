@@ -49,7 +49,10 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import ProducerReceiptResolverProtocol
 from cruxible_client.contracts.documents import BodyVerifierProtocol
-from cruxible_client.contracts.errors import SettlementIntegrityError
+from cruxible_client.contracts.errors import (
+    SettlementEvidenceUnproven,
+    SettlementIntegrityError,
+)
 from cruxible_client.contracts.governance import (
     ActivationPolicy,
     ApprovalRequirement,
@@ -719,6 +722,15 @@ class VerifiedGenerationBundle:
         )
 
 
+#: The refusals a first citation of an unproduced Capture earns, Claim and attestation.
+_UNPROVEN_CAPTURE_CODES = frozenset(
+    {
+        "cruxible.claim.capture_production_unproven",
+        "cruxible.claim_attestation.capture_production_unproven",
+    }
+)
+
+
 def prepare_generation(
     ledger: GitLedger,
     *,
@@ -789,6 +801,17 @@ def prepare_generation(
             for member in candidate.members
         },
     )
+    unproven = tuple(
+        sorted(
+            {
+                item.subject.artifact_path if item.subject is not None else "candidate"
+                for item in reevaluated.diagnostics
+                if item.code in _UNPROVEN_CAPTURE_CODES
+            }
+        )
+    )
+    if unproven:
+        raise SettlementEvidenceUnproven(unproven)
     if reevaluated.candidate is None or reevaluated.diagnostics or reevaluated.state is None:
         raise SettlementIntegrityError("candidate no longer passes its accepted laws")
     if reevaluated.tree != candidate_tree:

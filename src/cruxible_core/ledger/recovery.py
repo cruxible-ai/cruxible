@@ -663,6 +663,7 @@ def _verify_successor(
             )
             for member in candidate.members
         },
+        replaying_accepted=True,
     )
     reproduced = reevaluated.candidate
     if reproduced is None or reevaluated.diagnostics or reevaluated.state is None:
