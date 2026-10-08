@@ -248,9 +248,9 @@ cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port POR
   [--capability-ceiling TIER] [--bootstrap-secret-file PATH]
 cruxible server install-service [--state-root DIR] [--socket PATH | --host HOST --port PORT]
   [--capability-ceiling TIER] [--auth|--no-auth] [--print] [--replace]
-cruxible server status [--json]
-cruxible server restart [--no-wait] [--timeout SECONDS] [--json]
-cruxible server stop [--timeout SECONDS] [--json]
+cruxible server status [--state-root DIR] [--json]
+cruxible server restart [--no-wait] [--timeout SECONDS] [--state-root DIR] [--json]
+cruxible server stop [--timeout SECONDS] [--state-root DIR] [--json]
 ~~~
 
 server start is the long-running daemon process and does not connect to an
@@ -275,7 +275,9 @@ daemon holds the state-root lock it writes the secret owner-only (0600) to
 `<state-root>/daemon/bootstrap-secret`, and prints only that path. An in-place
 restart keeps the same secret. `server status`, `server restart` and
 `server stop` use that file by default when no `CRUXIBLE_SERVER_BEARER_TOKEN` is
-set, so a local restart needs no credential typed in. The secret is never sent:
+set, so a local restart needs no credential typed in; for a daemon started with
+`--state-root DIR`, pass the same `--state-root DIR` (the default is
+`CRUXIBLE_STATE_ROOT`, else `~/.cruxible`). The secret is never sent:
 each such request carries a MAC keyed by the secret over its method, path,
 body digest, a fresh nonce, a timestamp and the daemon's unpredictable boot id
 (read from the live lock record), and the daemon accepts it only if the boot id
