@@ -219,6 +219,9 @@
   "/api/v1/{instance_id}/proposals/{proposal_id}/readmit": {
     "POST": "ProposalReadmitResult"
   },
+  "/api/v1/{instance_id}/proposals/{proposal_id}/reject": {
+    "POST": "ProposalRejectResult"
+  },
   "/api/v1/{instance_id}/proposals/{proposal_id}/review": {
     "POST": "ProposalReview"
   },
