@@ -988,3 +988,137 @@ def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
         (marker,) = [item for item in many if isinstance(item, ExactContentRef)]
         assert marker.exact_content == "binary"
         assert all(row["flags"] == [] for row in answer.rows)
+
+
+def test_only_subject_references_lose_their_prefix_in_a_projection(tmp_path: Path) -> None:
+    """Review F-004: a literal that starts with "Subject:" is shown exactly.
+
+    A many-valued string literal holding "Subject:literal data" and a genuine
+    many-valued Subject reference are projected by a spec and by a named query.
+    The literal is unchanged and the references read kind/id, both exactly as
+    compact mode shows them.
+    """
+
+    from datetime import UTC, timedelta
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+    from cruxible_client.contracts.claim_types import (
+        claim_type_digest,
+        claim_type_path,
+        parse_claim_type,
+        render_claim_type,
+    )
+    from cruxible_client.contracts.query.grammar import (
+        QueryClaimValueRef,
+        QueryProjection,
+        QueryProjectionField,
+        QuerySubjectFieldRef,
+    )
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._candidate_support import submit_query_definition_candidate
+    from tests.core_support._knowledge_loop_support import TIMESTAMP, accept_proposal
+    from tests.core_support._write_support import (
+        KIND,
+        OWNER,
+        _claim_type,
+        caller,
+        seed_write_surface,
+    )
+
+    instance, owner = seed_write_surface(tmp_path)
+    notes = _claim_type("notes", literal_schema={"type": "string"}, cardinality="many")
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[claim_type_path(notes.predicate)] = render_claim_type(notes)
+    proposed = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/notes-field",
+            proposed_base_oid=instance.accepted_coordinate().git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-09-29T11:59:30.000000Z",
+    )
+    assert proposed.candidate is not None, proposed.evaluation
+    service_activate_playbill_proposal(
+        instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+    )
+    changes = [
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "notes", "value": "Subject:literal data"},
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "notes", "value": "plain"},
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "governs", "value": f"{KIND}/wi-2"},
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "governs", "value": f"{KIND}/wi-3"},
+    ]
+    written = service_playbill_write(
+        instance,
+        request=WriteRequest.model_validate({"because": "Recorded.", "changes": changes}),
+        caller=caller(),
+    )
+    assert written.refusal is None, written.refusal
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+
+    def pin(field: str) -> ArtifactPin:
+        path = claim_type_path(f"{KIND}.{field}")
+        accepted = parse_claim_type(tree[path], path=path)
+        return ArtifactPin(
+            role="claim-type",
+            target=accepted.identity,
+            artifact_digest=claim_type_digest(accepted).tagged,
+        )
+
+    query = work_item_query("project.notes-and-governs").model_copy(
+        update={
+            "projection": QueryProjection(
+                fields=(
+                    QueryProjectionField(
+                        name="governs",
+                        value=QueryClaimValueRef(binding="item", predicate=f"{KIND}.governs"),
+                    ),
+                    QueryProjectionField(
+                        name="item_id",
+                        value=QuerySubjectFieldRef(binding="item", field="subject_id"),
+                    ),
+                    QueryProjectionField(
+                        name="notes",
+                        value=QueryClaimValueRef(binding="item", predicate=f"{KIND}.notes"),
+                    ),
+                )
+            ),
+            "pins": tuple(
+                sorted(
+                    (pin("governs"), pin("notes")),
+                    key=lambda item: item.target.qualified.encode("utf-8"),
+                )
+            ),
+            "identity": ArtifactIdentity(kind="QueryDefinition", name="project.notes-and-governs"),
+        }
+    )
+    accept_proposal(
+        instance,
+        owner,
+        submit_query_definition_candidate(
+            instance,
+            query=query,
+            actor_id="owner",
+            proposal_name="notes-and-governs",
+            timestamp=TIMESTAMP,
+        ),
+    )
+    later = datetime.now(UTC) + timedelta(minutes=1)
+
+    def row_of(**fields: Any) -> dict[str, Any]:
+        result = service_playbill_query(
+            instance, request=QueryRequest.model_validate({"evaluation_time": later, **fields})
+        )
+        return next(row for row in result.rows if row.get("subject_id", row.get("item_id")) == "wi-1")
+
+    compact = row_of(kind=KIND, select=["notes", "governs"])
+    assert sorted(compact["notes"]) == ["Subject:literal data", "plain"]
+    assert sorted(compact["governs"]) == [f"{KIND}/wi-2", f"{KIND}/wi-3"]
+    spec = QueryDefinitionSpec.model_validate({**query.model_dump(mode="json"), "pins": []})
+    for projected in (row_of(spec=spec), row_of(name="project.notes-and-governs")):
+        assert sorted(projected["notes"]) == sorted(compact["notes"])
+        assert sorted(projected["governs"]) == sorted(compact["governs"])

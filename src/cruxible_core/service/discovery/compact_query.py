@@ -1963,6 +1963,10 @@ def _engine_answer(
     # A projected exact-content field reads as text too, from the live values of
     # the slot it projects, with its digests beside it.
     exact_fields: dict[str, tuple[QueryClaimValueRef, str]] = {}
+    # Fields whose values are Subject references, by their typed reference and
+    # the predicate's declared object kind: only these read as kind/id. A
+    # literal that happens to start with "Subject:" is shown exactly.
+    subject_fields: set[str] = set()
     if projection is not None:
         for projected_field in projection.fields:
             ref = projected_field.value
@@ -1971,6 +1975,8 @@ def _engine_answer(
             info = vocabulary.predicates.get(ref.predicate)
             if info is not None and info.value_type == "exact_content":
                 exact_fields[_out(projected_field.name)] = (ref, info.cardinality)
+            if info is not None and info.value_type == "subject":
+                subject_fields.add(_out(projected_field.name))
     candidates = list(result.rows)
     keys = [
         (
@@ -2011,12 +2017,15 @@ def _engine_answer(
         for out, row in zip(rendered, rows, strict=True):
             flags = out.pop("flags")
             for projected in row.fields:
+                key = _out(projected.name)
                 value = projected.value if projected.state == "present" else None
-                out[_out(projected.name)] = (
-                    [_subject_value(item) for item in value]
-                    if isinstance(value, list)
-                    else _subject_value(value)
-                )
+                if key in subject_fields:
+                    value = (
+                        [_subject_value(item) for item in value]
+                        if isinstance(value, list)
+                        else _subject_value(value)
+                    )
+                out[key] = value
             states = {_out(projected.name): projected.state for projected in row.fields}
             for key, (ref, cardinality) in exact_fields.items():
                 path = _subject_path_of(row, ref.binding)
@@ -2072,7 +2081,11 @@ def _engine_answer(
 
 
 def _subject_value(value: object) -> object:
-    """A projected Subject reference as compact mode shows it: kind/id."""
+    """A projected Subject reference as compact mode shows it: kind/id.
+
+    Only for values of a Subject-object predicate: the caller decides that from
+    the projection's typed reference, never from the string's spelling.
+    """
 
     if isinstance(value, str) and value.startswith("Subject:"):
         return value.removeprefix("Subject:")
