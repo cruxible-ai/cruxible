@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -204,7 +204,7 @@ def service_evaluate_line(
         since=request.since, until=request.until, cursor=request.cursor, limit=request.limit
     )
     if request.dry_run:
-        return service_check_line_trigger(instance, line, window, now=now)
+        return service_check_line_trigger(instance, line, window, now=now, enqueue=False)
     if actor is None:
         raise ExecutionError("evaluation that enqueues requires an actor")
     return service_enqueue_line_range(instance, line, window, actor=actor, now=now)
@@ -221,7 +221,7 @@ def service_enqueue_line_range(
     """Enqueue what one range of a Line's Triggers makes eligible, and record the range."""
 
     instance.require_writable()
-    result = service_check_line_trigger(instance, line, window, now=now)
+    result = service_check_line_trigger(instance, line, window, now=now, enqueue=True)
     store = LineDispatchStore(instance)
     with store.locked() as conn:
         enqueued = _enqueue(store, conn, result, actor, now)
@@ -324,17 +324,32 @@ def _roll_over(
     actor: GovernedActorContext,
     now: datetime,
     daemon_id: str,
+    timed: Iterable[str],
 ) -> dict[str, Any]:
     """End a segment and open its successor in one transition.
 
     Two transitions could be interrupted between them, leaving an arm with no
     active segment that still reports itself armed. One record either lands
     whole or not at all.
+
+    The segment stops where all its matching had reached: a timed Trigger
+    (`timed`) whose own matching lags the segment's coverage (its tick held
+    pending, or ticks it still owed) is behind it, so the restart's gap names
+    those ticks too. One with no recorded reach is read from the segment's
+    start, as its matching is (`_segment_request`).
     """
 
+    reached = current.get("trigger_until", {})
+    stops_at = min(
+        (
+            current["evaluated_until"],
+            *(reached.get(name, current["starts_at"]) for name in timed),
+        ),
+        key=_instant,
+    )
     stopped = dict(
         current,
-        stops_at=current["evaluated_until"],
+        stops_at=stops_at,
         stop_reason=None,
         detail="Daemon restarted; uncovered ranges require explicit evaluation.",
     )
@@ -860,6 +875,11 @@ def service_match_listening_lines(
                     actor=actor,
                     now=now,
                     daemon_id=daemon_id,
+                    timed=(
+                        trigger.trigger.identity.qualified
+                        for trigger in triggers
+                        if _timed(trigger)
+                    ),
                 )
             continue
         with line_arm_boundary(instance.root, session["line_id"]), store.locked() as conn:
@@ -893,7 +913,7 @@ def service_match_listening_lines(
                     "through": _positions(instance),
                     "cursors": dict(previous_cursors),
                     "done": [],
-                    "timed": [],
+                    "timed": {},
                 }
             )
             details: list[str] = []
@@ -928,6 +948,7 @@ def service_match_listening_lines(
                     only_trigger=name,
                     generation_after=session.get("generation_start"),
                     generation_cursors=scan["cursors"],
+                    enqueue=True,
                 )
                 stop = _arm_stop(
                     session,
@@ -960,7 +981,10 @@ def service_match_listening_lines(
                         scan["cursors"].pop(name, None)
                     scan["done"].append(name)
                     if _timed(trigger):
-                        scan["timed"].append(name)
+                        # How far this Trigger's own matching reached: short of
+                        # the scan for a cadence or cron Trigger that still owes
+                        # a tick there, which it never passes undelivered.
+                        scan["timed"][name] = format_datetime(result.checked_until)
             if stopped:
                 continue
             complete = all(
@@ -973,10 +997,13 @@ def service_match_listening_lines(
                 and scan["cursors"] == previous_cursors
                 and scan["through"] == session["positions"]
                 and detail == session.get("detail")
+                and scan["timed"].keys() <= session.get("trigger_until", {}).keys()
                 and now - evaluated_until < _IDLE_COVERAGE_INTERVAL
             ):
                 # Pending transitions have already landed independently. Time-only
-                # progress can wait; event progress and partial scans cannot.
+                # progress can wait (a Trigger's recorded reach only lags, which
+                # is conservative); event progress, partial scans and a timed
+                # Trigger's first reach cannot.
                 continue
             session["detail"] = detail
             if complete:
@@ -985,7 +1012,7 @@ def service_match_listening_lines(
                     positions=scan["through"],
                     trigger_until={
                         **session.get("trigger_until", {}),
-                        **{name: scan["until"] for name in scan["timed"]},
+                        **scan["timed"],
                     },
                     # Completed scans keep generation coverage across ticks;
                     # pagination cursors have already been cleared above.
@@ -1345,7 +1372,6 @@ def service_dispatch_line(
                             expected_line_artifact_digest=data["line_artifact_digest"],
                             expected_trigger_artifact_digest=data.get("trigger_artifact_digest"),
                             expected_trigger_pins=pinned_trigger_pins,
-                            explicit_occurrence=session_id is None,
                         )
                         # The journal, not the execution response, establishes admission.
                         admitted = next(
@@ -1374,14 +1400,6 @@ def service_dispatch_line(
                                 }:
                                     status = "rejected"
                                 elif refusal.code == "line_binding_superseded":
-                                    status = "superseded"
-                                elif (
-                                    refusal.code == "occurrence_id_mismatch"
-                                    and session_id is not None
-                                ):
-                                    # An intervening admission moved the cadence
-                                    # chain past this tick. It stays retryable;
-                                    # closing it lets the arm match the next one.
                                     status = "superseded"
                             else:
                                 detail = "No durable admission was produced."

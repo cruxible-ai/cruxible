@@ -121,6 +121,9 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         # A closed prediction window its own resolution journal has not answered.
         "prediction_settleable",
         "prediction_window_unbindable",
+        # Enabled Lines report restart coverage gaps and queued work.
+        "line_coverage_gap",
+        "line_work_pending",
     }
     assert set(get_args(NextRepairOperation)) == {
         "cruxible.authoring.example",
@@ -147,4 +150,5 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "cruxible.line.dispatch",
         "cruxible.prediction.settle",
         "hand_edit",
+        "cruxible.line.evaluate",
     }

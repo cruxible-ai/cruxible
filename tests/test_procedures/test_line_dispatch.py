@@ -329,8 +329,9 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
         now=READ_TIME + timedelta(seconds=30),
     )
     assert checked.occurrences[0].pending
-    # The Trigger was accepted long before: the arm ticks first at its own start.
-    assert checked.occurrences[0].eligible_at == READ_TIME - timedelta(seconds=1)
+    # The Trigger was accepted long before: armed at 15:59:59, the arm ticks first
+    # at its grid's next instant, 16:00:00, never at its own start.
+    assert checked.occurrences[0].eligible_at == READ_TIME
     result = service_dispatch_line(
         instance,
         line.identity.name,
@@ -879,7 +880,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
             kind="capture_landing", trigger=trigger.trigger.identity, event=event
         )
         occurrence_id, _ = _line_occurrence(
-            accepted, evaluation_time=READ_TIME, prior=(), trigger=trigger, binding=binding
+            accepted, evaluation_time=READ_TIME, trigger=trigger, binding=binding
         )
         occurrence_ids.append(occurrence_id)
         # Seed retained pending work with a bad reference, modeling a damaged or

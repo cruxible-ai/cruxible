@@ -5612,7 +5612,11 @@ def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: b
     help="Only report what the range makes eligible; enqueue nothing (no range needed).",
 )
 @click.option("--limit", default=100, type=click.IntRange(1, 256), help="Occurrences per page.")
-@click.option("--cursor", default=None, help="Continue an incomplete page of the same range.")
+@click.option(
+    "--cursor",
+    default=None,
+    help="Continue an incomplete page of the same range, in the same --dry-run mode.",
+)
 @json_option
 @handle_errors
 def evaluate_line(
