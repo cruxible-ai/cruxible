@@ -1585,3 +1585,79 @@ def test_an_item_rationale_reaches_the_review_and_the_accepted_claims_evidence(
     )
     assert result.evidence is not None
     assert result.evidence.rationale == review.rationale
+
+
+# --- the run's deadline holds inside the terminal ------------------------------
+
+
+from cruxible_core.service.procedures import procedure_runs as procedure_runs_module  # noqa: E402
+
+_HOUR_NS = 3_600 * 10**9
+
+
+def _skewable_clock(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """The executor's monotonic clock, plus whatever a test adds to it."""
+
+    import time
+
+    skew = {"ns": 0}
+    monkeypatch.setattr(
+        procedure_runs_module._DeterministicClock,
+        "monotonic_ns",
+        lambda self: time.monotonic_ns() + skew["ns"],
+    )
+    return skew
+
+
+def test_a_terminal_out_of_time_after_preparation_delivers_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preparing a large terminal past the deadline refuses before the proposal door."""
+
+    skew = _skewable_clock(monkeypatch)
+    original = delivery_module.ProposalTerminalEgressSink.prepare_terminal_egress
+
+    def slow_prepare(self, **kwargs):  # type: ignore[no-untyped-def]
+        prepared = original(self, **kwargs)
+        skew["ns"] += _HOUR_NS
+        return prepared
+
+    monkeypatch.setattr(
+        delivery_module.ProposalTerminalEgressSink, "prepare_terminal_egress", slow_prepare
+    )
+    instance, _owner, root, line, _procedure = proposal_world(tmp_path)
+
+    state = run_line(instance, root, line)
+
+    assert state.status == "operational_failed"
+    assert state.terminal is not None
+    assert "wall_clock_exhausted" in state.terminal.model_dump_json(), state.terminal
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "refused" and egress.refusal_code == "wall_clock_exhausted"
+    assert egress.proposal_id is None
+    assert _proposal_refs(instance) == []
+
+
+def test_a_terminal_delivered_after_the_deadline_still_reports_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once delivered, the run reports what happened: its proposal, not a timeout."""
+
+    skew = _skewable_clock(monkeypatch)
+    original = delivery_module.ProposalTerminalEgressSink.deliver_terminal_egress
+
+    def slow_deliver(self, **kwargs):  # type: ignore[no-untyped-def]
+        receipt = original(self, **kwargs)
+        skew["ns"] += _HOUR_NS
+        return receipt
+
+    monkeypatch.setattr(
+        delivery_module.ProposalTerminalEgressSink, "deliver_terminal_egress", slow_deliver
+    )
+    instance, _owner, root, line, _procedure = proposal_world(tmp_path)
+
+    state = run_line(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered" and egress.proposal_id is not None

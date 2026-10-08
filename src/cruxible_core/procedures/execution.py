@@ -3307,10 +3307,18 @@ class ProcedureExecutor:
         *,
         started_ns: int,
         node_id: str,
+        wall_clock: bool = True,
     ) -> None:
+        """Refuse a run past any declared budget.
+
+        ``wall_clock=False`` after a terminal node: its deadline was checked
+        inside the terminal, before anything was delivered, and a run whose
+        effect was delivered must not then report that it ran out of time.
+        """
+
         elapsed_us = (self.clock.monotonic_ns() - started_ns) // 1000
         state.wall_clock_microseconds = max(state.wall_clock_microseconds, elapsed_us)
-        if elapsed_us > admission.budget.wall_clock.microseconds:
+        if wall_clock and elapsed_us > admission.budget.wall_clock.microseconds:
             raise _BudgetExceeded(
                 "wall_clock",
                 limit=admission.budget.wall_clock.microseconds,
@@ -3375,6 +3383,9 @@ class ProcedureExecutor:
                     state,
                     started_ns=started_ns,
                     node_id=node.node_id,
+                    wall_clock=not isinstance(
+                        node, CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode
+                    ),
                 )
                 self._append_event(
                     admission,
@@ -4408,6 +4419,25 @@ class ProcedureExecutor:
                 {**payload, "verdict": "refused", "refusal_code": refusal.refusal.code},
             )
             raise refusal from exc
+        # Preparation (lowering every item) is where a large terminal spends its
+        # time. The run's deadline is enforced here, before the prepared record
+        # and before delivery, so a run out of time delivers nothing: its
+        # report and the proposal door never disagree.
+        elapsed_us = (self.clock.monotonic_ns() - state.run_started_monotonic_ns) // 1000
+        state.wall_clock_microseconds = max(state.wall_clock_microseconds, elapsed_us)
+        if elapsed_us > admission.budget.wall_clock.microseconds:
+            self._append_event(
+                admission,
+                records,
+                "terminal_egress",
+                {**payload, "verdict": "refused", "refusal_code": "wall_clock_exhausted"},
+            )
+            raise _BudgetExceeded(
+                "wall_clock",
+                limit=admission.budget.wall_clock.microseconds,
+                observed=elapsed_us,
+                node_id=node.node_id,
+            )
         effectful = isinstance(request, TerminalEgressRequestV2) and request.kind in {
             "propose_change_set",
             "settle_change_set",

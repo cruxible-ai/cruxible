@@ -1969,6 +1969,11 @@ followed by the items' own rationales (each labelled with its Claim ID when
 there are several), shown by `proposal review --json` as `rationale` and read
 back by `get CLM-... --detail evidence` once accepted.
 
+The run's wall-clock budget is enforced inside the terminal, after its items
+are prepared and before anything is delivered: a run out of time ends
+`wall_clock_exhausted` with the terminal refused for that code and no
+proposal. A terminal that delivered is not then reported as out of time.
+
 The proposal ref is keyed on the admitted operation. A retry of the same
 operation recovers the same proposal and publishes the same receipt; other
 member bytes under the same key refuse `effectful_operation_payload_mismatch`.
