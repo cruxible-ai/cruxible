@@ -1025,10 +1025,11 @@ class _IndexedReading:
 class _ReadingPartitionIndex:
     """Parsed readings of one partition, extended incrementally by journal prefix.
 
-    Keyed per process on (instance root, partition). A later request re-reads
-    the verified record list (the backend's own authority) and parses only the
-    records beyond the cached prefix, provided every cached record digest still
-    matches; any divergence rebuilds from the authoritative bytes.
+    Keyed per process on (instance root, partition). A later request reads
+    only the verified records beyond the cached prefix, provided the retained
+    record at the prefix's last sequence still carries the cached digest (the
+    hash chain makes it commit to every earlier record); any divergence
+    rebuilds from the authoritative bytes.
     """
 
     digests: tuple[str, ...]
@@ -1065,16 +1066,35 @@ def reading_partition_index(
     # describes exactly the partition prefix that head commits: an append
     # keyed on this head is a compare-and-set against what was indexed.
     head = journal.read_head(stream, partition_id)
-    records = journal.all_records(stream, partition_id)[: head.sequence]
-    digests = tuple(stored.record_digest for stored in records)
     key = (str(instance.root), partition_id)
     cached = memo_get(_reading_index_memo, key)
-    start = 0
     entries: list[_IndexedReading] = []
-    if cached is not None and digests[: len(cached.digests)] == cached.digests:
-        start = len(cached.digests)
-        entries.extend(cached.entries)
-    for stored in records[start:]:
+    prefix: tuple[str, ...] = ()
+    if cached is not None and 0 < len(cached.digests) <= head.sequence:
+        # The chain makes the cached last record's digest commit to the whole
+        # cached prefix: when the retained record at that sequence still
+        # carries it, only the suffix past it is read.
+        last = journal.select_records(
+            stream,
+            partition_id=partition_id,
+            first_sequence=len(cached.digests),
+            last_sequence=len(cached.digests),
+        )
+        if len(last) == 1 and last[0].record_digest == cached.digests[-1]:
+            prefix = cached.digests
+            entries.extend(cached.entries)
+    records = (
+        journal.select_records(
+            stream,
+            partition_id=partition_id,
+            first_sequence=len(prefix) + 1,
+            last_sequence=head.sequence,
+        )
+        if prefix
+        else journal.all_records(stream, partition_id)[: head.sequence]
+    )
+    digests = prefix + tuple(stored.record_digest for stored in records)
+    for stored in records:
         if stored.record.event_kind != "procedure_reading":
             continue
         entries.append(_parse_reading(instance, stored))
@@ -1309,16 +1329,23 @@ def service_measure_playbill_procedure(
         # reservation store), scoped to the event kinds those journals carry:
         # recovery releases every active lease a scan does not reference, so
         # a lease this scan cannot speak for is left to the writer that can.
-        recovery_records = tuple(
-            stored
-            for backend, scanned_stream in ((journal, stream), (receipt_backend, _receipt_stream))
-            for partition_id in backend.partition_ids(scanned_stream)
-            for stored in backend.all_records(scanned_stream, partition_id)
-        )
+        # Each open lease is matched through the payload index of both journals:
+        # the records naming its body, never every retained record.
         ProcedureMaterialReservationStore(
             instance.body_store().reservation_root
         ).recover_run_material(
-            recovery_records,
+            lambda reservation: tuple(
+                stored
+                for backend, scanned_stream in (
+                    (journal, stream),
+                    (receipt_backend, _receipt_stream),
+                )
+                for stored in backend.select_records(
+                    scanned_stream,
+                    event_kind=reservation.intended_event_kind,
+                    payload_digest=reservation.body_digest,
+                )
+            ),
             bodies=instance.body_store(),
             intended_event_kinds=_RECOVERED_EVENT_KINDS,
         )

@@ -524,6 +524,23 @@ class JournalIndex:
             len(rows) > limit,
         )
 
+    def running(
+        self, stream: JournalStreamIdentityV1, *, page_size: int = 256
+    ) -> Iterator[RunLocator]:
+        """Every run still running, newest admission first, paged from the open-run set.
+
+        A run that finishes while the caller works through a page (recovery
+        finalizing it) never moves the keyset, so nothing repeats or is skipped.
+        """
+
+        after: RunLocatorKey | None = None
+        while True:
+            page, more = self.run_locators(stream, limit=page_size, running_only=True, after=after)
+            yield from page
+            if not more or not page:
+                return
+            after = page[-1].key
+
     def run_ids_with_prefix(
         self, stream: JournalStreamIdentityV1, prefix: str, *, limit: int
     ) -> tuple[str, ...]:

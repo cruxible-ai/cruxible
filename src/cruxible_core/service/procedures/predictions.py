@@ -196,47 +196,46 @@ def _terminal_record(
             "Terminal run investigated a different contract or window.",
         )
     journal, stream = _journal(instance, independent=False)
-    for partition in journal.partition_ids(stream):
-        for stored in journal.all_records(stream, partition):
-            record = stored.record
-            if stored.record_digest != evidence.terminal_record_digest:
-                continue
+    # Only the run's own terminal records are candidates: a digest naming any
+    # other record (another kind or run) matches none of them and refuses.
+    for stored in journal.select_records(
+        stream, run_id=evidence.run_id, event_kind="terminal_egress"
+    ):
+        record = stored.record
+        if stored.record_digest != evidence.terminal_record_digest:
+            continue
+        if record.procedure_artifact_digest != state.procedure_artifact_digest:
+            break
+        payload = parse_journal_payload(
+            instance.body_store().read(
+                record.payload_digest,
+                access=BodyAccessContext(
+                    principal_id="playbill-prediction-settlement",
+                    can_read_body=True,
+                ),
+            )
+        )
+        if isinstance(payload, dict) and payload.get("verdict") == "delivered":
+            receipt_payload = payload.get("receipt")
             if (
-                record.event_kind != "terminal_egress"
-                or record.run_id != evidence.run_id
-                or record.procedure_artifact_digest != state.procedure_artifact_digest
+                not isinstance(receipt_payload, dict)
+                or receipt_payload.get("tag") != "playbill-terminal-egress-receipt-v4"
             ):
                 break
-            payload = parse_journal_payload(
-                instance.body_store().read(
-                    record.payload_digest,
-                    access=BodyAccessContext(
-                        principal_id="playbill-prediction-settlement",
-                        can_read_body=True,
-                    ),
-                )
-            )
-            if isinstance(payload, dict) and payload.get("verdict") == "delivered":
-                receipt_payload = payload.get("receipt")
-                if (
-                    not isinstance(receipt_payload, dict)
-                    or receipt_payload.get("tag") != "playbill-terminal-egress-receipt-v4"
-                ):
-                    break
-                try:
-                    receipt = TerminalEgressReceiptV4.model_validate(receipt_payload)
-                except ValidationError:
-                    break
-                # Only a settle terminal that actually settled counts; its
-                # fallback proposal settled nothing.
-                if (
-                    receipt.run_id == evidence.run_id
-                    and payload.get("node_id") == receipt.node_id
-                    and payload.get("kind") == receipt.kind
-                    and receipt.outcome == "settled"
-                ):
-                    return stored
-            break
+            try:
+                receipt = TerminalEgressReceiptV4.model_validate(receipt_payload)
+            except ValidationError:
+                break
+            # Only a settle terminal that actually settled counts; its
+            # fallback proposal settled nothing.
+            if (
+                receipt.run_id == evidence.run_id
+                and payload.get("node_id") == receipt.node_id
+                and payload.get("kind") == receipt.kind
+                and receipt.outcome == "settled"
+            ):
+                return stored
+        break
     raise _refuse(
         "settlement_evidence_mismatch",
         "Terminal evidence is not one delivered, settled settle_change_set record under the "
@@ -259,13 +258,14 @@ def _append_settlement(
     resolution: ProcedureResolutionV2,
 ) -> ProcedureResolutionV2:
     journal, stream = _journal(instance)
-    all_records = tuple(
-        stored
-        for partition in journal.partition_ids(stream)
-        for stored in journal.all_records(stream, partition)
-    )
+    # Each open lease is checked against the records naming its body only (the
+    # payload index), never the whole resolution journal.
     ProcedureMaterialReservationStore(instance.body_store().reservation_root).recover_run_material(
-        all_records,
+        lambda reservation: journal.select_records(
+            stream,
+            event_kind=reservation.intended_event_kind,
+            payload_digest=reservation.body_digest,
+        ),
         bodies=instance.body_store(),
     )
     partition = resolution_contract_partition_id(activation)
