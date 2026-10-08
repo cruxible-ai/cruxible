@@ -908,13 +908,13 @@ on this daemon (`cruxible.provider.classifier_host_missing`). An occurrence admi
 only the buckets its bound implementation claims; another input is refused
 `unclaimed_bucket` before the provider runs. A different definition under the
 same interface id is proposed as a successor, which every live Provider and
-Procedure pinning the old registration must follow. Core owns the `web.fetch`
+Procedure pinning the old registration must follow. Cruxible owns the `web.fetch`
 contract (definitions v2 and v3, the one `cruxible-provider-web` 0.2.x ships): a
-package implementing either registers core's registration of it, with core's
+package implementing either registers the built-in registration of it, with its
 vocabulary, its four conformance proofs (static light, static medium, API or
-JSON, rendered) and core's classifier, whatever the package itself ships, so
-every implementation binds the same ProviderInterface and claims a subset of
-those buckets.
+JSON, rendered) and its classifier, whatever the package itself ships, so every
+implementation binds the same ProviderInterface and claims a subset of those
+buckets.
 The registration lands at once when the approval policy requires no approval
 (`ready`); otherwise it stops at proposed (`awaiting_approval`) for the ordinary
 review and activation. It returns `ready`, `awaiting_approval`, or `blocked`,
@@ -940,7 +940,7 @@ and `POST /{instance}/providers/install`.
 
 ~~~text
 cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
-  --out KIT_DIR [--provider PACKAGE_DIR]... [--json]
+  --out KIT_DIR [--provider PACKAGE_DIR]... [--default-provider PACKAGE_DIR]... [--json]
 cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
   [--retire-dependents IDENTITY]... [--allow-downgrade]
   [--dry-run|--commit] [--at OID] [--json]
@@ -1012,6 +1012,23 @@ instantiates them with any installed Provider of that interface. The
 compiler-seeded built-ins (`Provider:cruxible-builtin`, `ProviderInterface:
 workspace.file`) are never bundled or carried: a kit pins them as they are, and
 `add` requires this instance to hold the same seeded ones.
+
+Default providers. A kit whose Blueprints leave a slot for a contract (such as
+`web.fetch`) can name a default implementation instead of bundling one:
+`--default-provider PACKAGE_DIR` (repeatable) names a published package laid out
+as for `--provider`, with the published wheel in `dist/`. The manifest records
+the package, its exact version, the wheel and lock digests (`delivery: index`)
+and carries none of its files; the lock given must be the one the wheel embeds
+(`cruxible.kit.provider_lock_not_embedded` otherwise), because `add` installs the
+default by name and version from the daemon's provider index (PyPI unless the
+operator configured `provider_index_urls`), where its path dependencies come from
+the same index. `add` skips the install (`satisfied`) when no Procedure the kit
+carries pins the default, each of its interfaces is live here as the kit carries
+it (the built-in `web.fetch` registration, or a package's whose classifier a
+deployment on this daemon hosts), and some live Provider implements each one; the Blueprint's slot
+then takes that Provider. Otherwise it installs the default and verifies the
+fetched build against the recorded wheel and lock (`cruxible.kit.provider_not_installed`
+when the index served another build).
 
 Authoring a kit that ships its provider:
 
@@ -1100,8 +1117,9 @@ everywhere. A carried ProviderInterface this instance holds differently blocks
 the change.
 
 `status` lists installed kits, the kit paths edited locally, the divergences kept
-on purpose, where each release was built, and each bundled provider package with
-its install state here (`installed`, `differs` with the installed version, or
+on purpose, where each release was built, and each provider package with its
+delivery and install state here (`installed`, `differs` with the installed
+version, `satisfied` for a default another live Provider stands in for, or
 `missing`). For a kit installed from a registry
 the client lists the repository's tags (MAJOR.MINOR.PATCH, short timeout) and
 shows the latest available version; `--offline` skips the check, and a kit from a
@@ -1113,7 +1131,7 @@ definitions, blocks it. Removing a kit that is not installed
 refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
 MCP: `cruxible_kit_build` (`providers` names packages staged with
-`cruxible_body_store`), `cruxible_kit_status` (with the same update check,
+`cruxible_body_store`; `delivery: index` makes one a default provider), `cruxible_kit_status` (with the same update check,
 `offline`), `cruxible_kit_add` (by registry `reference`, which the adapter pulls,
 or inline `bundle`; a commit stages its provider files) and
 `cruxible_kit_remove`. HTTP:

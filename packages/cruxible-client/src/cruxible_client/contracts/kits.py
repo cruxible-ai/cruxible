@@ -161,16 +161,29 @@ class KitProviderFile(_Strict):
         return _digest(value)
 
 
+#: How ``kit add`` obtains a provider package: ``bundled`` (the kit carries its
+#: wheel, lock and path-dependency wheels) or ``index`` (a default provider: the
+#: kit names its published package and exact version, installed by name from the
+#: daemon's provider index when no Provider here implements its interfaces).
+KitProviderDelivery = Literal["bundled", "index"]
+
+
 class KitProvider(_Strict):
-    """One provider package a kit bundles: its built wheel and the uv lock it was
+    """One provider package a kit names: its built wheel and the uv lock it was
     built with, plus the wheels of the first-party dependencies that lock names by
     path. Registry dependencies are never bundled: the daemon resolves them by
     name from its provider index (PyPI unless the operator configured one),
     pinned by the lock's hashes.
 
-    ``kit add`` installs it before the kit's definitions, through the ordinary
+    A bundled package (the default delivery) is carried as those files; ``kit
+    add`` installs it before the kit's definitions, through the ordinary
     transfer install, so the Provider and ProviderInterfaces it registers are the
-    ones the kit's Procedures and Blueprints pin.
+    ones the kit's Procedures and Blueprints pin. An ``index`` package is the
+    kit's default implementation of its interfaces: the kit carries no file of
+    it, ``kit add`` installs ``package`` at exactly ``version`` by name (its lock
+    is the one the wheel embeds, its path dependencies come from the same index)
+    unless another live Provider here already implements every one of its
+    interfaces, and ``wheel`` and ``lock`` name the published build it verifies.
     """
 
     provider_id: str
@@ -181,6 +194,9 @@ class KitProvider(_Strict):
     dependencies: tuple[KitProviderFile, ...] = ()
     #: The ProviderInterfaces the package registers.
     interfaces: tuple[str, ...] = ()
+    delivery: KitProviderDelivery = Field(
+        default="bundled", exclude_if=lambda value: value == "bundled"
+    )
 
     @field_validator("wheel")
     @classmethod
@@ -202,12 +218,28 @@ class KitProvider(_Strict):
     def _interfaces(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return _sorted_unique(value, label="provider interfaces")
 
+    @model_validator(mode="after")
+    def _index_entry(self) -> KitProvider:
+        if self.delivery == "index" and (self.dependencies or not self.interfaces):
+            raise ValueError(
+                "a default provider names the interfaces it implements and no dependency "
+                "files: its path dependencies come from the index that serves it"
+            )
+        return self
+
     def files(self) -> tuple[KitProviderFile, ...]:
+        """The files the kit carries for this package (none for an index default)."""
+
+        if self.delivery == "index":
+            return ()
         return (self.wheel, self.lock, *self.dependencies)
 
 
 def _provider_files(providers: tuple[KitProvider, ...]) -> dict[str, str]:
-    """Every bundled file name -> its sha256; one name never holds two contents."""
+    """Every bundled file name -> its sha256; one name never holds two contents.
+
+    An index default carries no file, so it names none here.
+    """
 
     files: dict[str, str] = {}
     for provider in providers:
@@ -270,7 +302,8 @@ class KitManifest(_Strict):
     # Identity prefixes this kit defines, each ending in a dot (``dev.``).
     owns: tuple[str, ...]
     artifacts: tuple[KitArtifact, ...]
-    #: Provider packages the kit bundles (wheel and lock), sorted by provider id.
+    #: Provider packages the kit names, sorted by provider id: bundled ones (wheel
+    #: and lock carried) and index defaults (installed by name and version).
     providers: tuple[KitProvider, ...] = Field(default=(), exclude_if=lambda value: not value)
     provenance: KitProvenance | None = None
 
@@ -508,13 +541,21 @@ class KitReceipt(_Strict):
 
 
 class KitBuildProvider(_Strict):
-    """A provider package to bundle, staged in the body store: the built wheel, the
-    uv lock it was built with, and the wheels of the dependencies that lock names
-    by path (``provider install WHEEL --lock FILE`` takes the same three)."""
+    """A provider package to name in the kit, staged in the body store: the built
+    wheel, the uv lock it was built with, and the wheels of the dependencies that
+    lock names by path (``provider install WHEEL --lock FILE`` takes the same three).
+
+    ``delivery`` ``index`` makes it the kit's default provider: the kit records
+    the package, version, wheel and lock digests and carries none of the files,
+    and ``kit add`` installs it by name from the consumer's provider index when no
+    Provider there implements its interfaces. The staged wheel must be the
+    published build and the lock the one it embeds.
+    """
 
     wheel: ProviderWheelObject
     lock_digest: str
     dependencies: tuple[ProviderWheelObject, ...] = ()
+    delivery: KitProviderDelivery = "bundled"
 
     @field_validator("lock_digest")
     @classmethod
@@ -634,11 +675,15 @@ class KitPathPlan(_Strict):
 
 KitTransition = Literal["install", "upgrade", "downgrade", "reinstall"]
 
-#: What a kit change does with one bundled provider: ``unchanged`` (this build
+#: What a kit change does with one provider package: ``unchanged`` (this build
 #: is installed), ``install`` (installed and registered now), ``would_install``
 #: (a preview), ``awaiting_approval`` (its install proposal needs approval),
-#: ``blocked`` (a different build of it is installed, or its install refused).
-KitProviderAction = Literal["unchanged", "install", "would_install", "awaiting_approval", "blocked"]
+#: ``satisfied`` (an index default not installed: another live Provider here
+#: implements its interfaces), ``blocked`` (a different build of it is
+#: installed, or its install refused).
+KitProviderAction = Literal[
+    "unchanged", "install", "would_install", "awaiting_approval", "satisfied", "blocked"
+]
 
 
 class KitProviderStep(_Strict):
@@ -694,9 +739,11 @@ class KitChangeResult(_Strict):
 KitUpdateCheck = Literal["not_checked", "checked", "offline", "local_source", "unavailable"]
 
 
-#: A bundled provider here: ``installed`` (this build is the live Provider),
-#: ``differs`` (another build of it is), ``missing`` (none is live).
-KitProviderInstallState = Literal["installed", "differs", "missing"]
+#: A kit's provider package here: ``installed`` (this build is the live
+#: Provider), ``differs`` (another build of it is), ``satisfied`` (an index
+#: default that is not: another live Provider implements its interfaces),
+#: ``missing`` (none is live).
+KitProviderInstallState = Literal["installed", "differs", "satisfied", "missing"]
 
 
 class KitProviderStatus(_Strict):
@@ -704,6 +751,7 @@ class KitProviderStatus(_Strict):
     package: str
     version: str
     wheel_sha256: str
+    delivery: KitProviderDelivery = "bundled"
     state: KitProviderInstallState
     #: The live Provider's package version, when another build of it is installed.
     installed_version: str | None = None

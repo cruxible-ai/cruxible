@@ -809,10 +809,24 @@ def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildRe
     )
 
 
+def _classifier_hosted(classifier_digest: str) -> bool:
+    """Whether a verified deployment on this daemon hosts a package classifier."""
+
+    return any(
+        item.classifier_digest == classifier_digest
+        for deployment in get_playbill_manager().provider_runtime_operator().config.deployments
+        if deployment.installation_verification is not None
+        for item in deployment.classifier_installations
+    )
+
+
 def playbill_kit_status(instance_id: str) -> KitStatus:
     check_permission("cruxible_kit_status", instance_id=instance_id)
     return _proposal_validation_boundary(
-        "kit status", lambda: service_kit_status(get_playbill_manager().get(instance_id))
+        "kit status",
+        lambda: service_kit_status(
+            get_playbill_manager().get(instance_id), classifier_hosted=_classifier_hosted
+        ),
     )
 
 
@@ -842,6 +856,7 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
                 actor_id=_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 install_provider=install,
+                classifier_hosted=_classifier_hosted,
             ),
         )
 
