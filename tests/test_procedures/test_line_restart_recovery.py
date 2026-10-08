@@ -635,6 +635,87 @@ def test_a_restart_while_the_listener_owes_ticks_leaves_them_in_the_gap(tmp_path
     assert line_attention(instance, now=restarted)[0] == ()
 
 
+@dataclass(frozen=True)
+class _HeldTimer:
+    """A timed Line whose first tick, matched inside the idle checkpoint, stays pending."""
+
+    schedule: TriggerSchedule
+    start: datetime  # enabled
+    held: datetime  # the first pass, under a minute in: matches `queued`
+    queued: datetime
+    checkpoint: datetime  # a later pass, past the idle interval, while `queued` waits
+    restart: datetime
+    unqueued: tuple[datetime, ...]  # every tick from `queued` to the restart nothing matched
+
+
+HELD_TIMERS = (
+    # A 20 s cadence from 15:00 ticks on :00, :20 and :40 of each minute.
+    _HeldTimer(
+        CadenceSchedule(interval_seconds=20),
+        start=_at(0, 10),
+        held=_at(0, 21),
+        queued=_at(0, 20),
+        checkpoint=_at(1, 15),
+        restart=_at(1, 20),
+        unqueued=(_at(0, 40), _at(1)),
+    ),
+    _HeldTimer(
+        CronSchedule(expression="* * * * *"),
+        start=_at(0, 59),
+        held=_at(1, 1),
+        queued=_at(1),
+        checkpoint=_at(4),
+        restart=_at(5, 1),
+        unqueued=(_at(2), _at(3), _at(4), _at(5)),
+    ),
+)
+
+
+def _held_through_a_checkpoint(tmp_path, timer: _HeldTimer):  # type: ignore[no-untyped-def]
+    instance, line, _procedure = line_world(tmp_path, timer.schedule)
+    _enable(instance, line, timer.start)
+    _match(instance, timer.held)
+    assert _queued(instance, disposition="pending") == [(timer.queued, True)]
+    _match(instance, timer.checkpoint)  # its coverage advances; the tick still waits
+    return instance, line
+
+
+@pytest.mark.parametrize("timer", HELD_TIMERS, ids=("cadence", "cron"))
+def test_a_first_tick_held_through_a_checkpoint_leaves_every_owed_tick_in_the_gap(tmp_path, timer):
+    instance, line = _held_through_a_checkpoint(tmp_path, timer)
+    _match(instance, timer.restart, daemon_id="restarted")
+
+    # The gap starts where the Trigger's own matching reached, before every
+    # tick it had not matched, however far the segment's coverage advanced.
+    (gap,), _ = line_attention(instance, now=timer.restart)
+    assert timer.queued < gap.since <= timer.unqueued[0] and gap.until == timer.restart
+    evaluated = _evaluate(instance, line, gap, timer.restart)
+    assert [item.eligible_at for item in evaluated.occurrences] == list(timer.unqueued)
+    assert _queued(instance, disposition="lapsed") == [(timer.queued, True)]
+    assert line_attention(instance, now=timer.restart)[0] == ()
+
+
+@pytest.mark.parametrize("timer", HELD_TIMERS, ids=("cadence", "cron"))
+def test_a_segment_with_no_recorded_reach_gaps_from_its_start(tmp_path, timer):
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+
+    instance, line = _held_through_a_checkpoint(tmp_path, timer)
+    # A segment that recorded no reach for its timed Trigger, as one written
+    # before reaches were kept, is read from its start, as its matching is.
+    store = LineDispatchStore(instance)
+    with store.locked() as conn:
+        (payload,) = conn.execute("SELECT payload FROM sessions WHERE active=1").fetchone()
+        session = json.loads(payload)
+        session.pop("trigger_until")
+        store.append(conn, "coverage", session, actor=_actor(instance), now=timer.checkpoint)
+    _match(instance, timer.restart, daemon_id="restarted")
+
+    (gap,), _ = line_attention(instance, now=timer.restart)
+    assert (gap.since, gap.until) == (timer.start, timer.restart)
+    evaluated = _evaluate(instance, line, gap, timer.restart)
+    assert [item.eligible_at for item in evaluated.occurrences] == list(timer.unqueued)
+
+
 # --- a timed page's cursor serves only its own mode (review F-002) -----------
 
 

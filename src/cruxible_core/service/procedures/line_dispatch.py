@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -324,19 +324,28 @@ def _roll_over(
     actor: GovernedActorContext,
     now: datetime,
     daemon_id: str,
+    timed: Iterable[str],
 ) -> dict[str, Any]:
     """End a segment and open its successor in one transition.
 
     Two transitions could be interrupted between them, leaving an arm with no
     active segment that still reports itself armed. One record either lands
     whole or not at all.
+
+    The segment stops where all its matching had reached: a timed Trigger
+    (`timed`) whose own matching lags the segment's coverage (its tick held
+    pending, or ticks it still owed) is behind it, so the restart's gap names
+    those ticks too. One with no recorded reach is read from the segment's
+    start, as its matching is (`_segment_request`).
     """
 
-    # The segment stops where all its matching had reached: a timed Trigger
-    # whose own matching lags its coverage (its tick held pending, or ticks it
-    # still owed) is behind it, so the restart's gap names those ticks too.
+    reached = current.get("trigger_until", {})
     stops_at = min(
-        (current["evaluated_until"], *current.get("trigger_until", {}).values()), key=_instant
+        (
+            current["evaluated_until"],
+            *(reached.get(name, current["starts_at"]) for name in timed),
+        ),
+        key=_instant,
     )
     stopped = dict(
         current,
@@ -866,6 +875,11 @@ def service_match_listening_lines(
                     actor=actor,
                     now=now,
                     daemon_id=daemon_id,
+                    timed=(
+                        trigger.trigger.identity.qualified
+                        for trigger in triggers
+                        if _timed(trigger)
+                    ),
                 )
             continue
         with line_arm_boundary(instance.root, session["line_id"]), store.locked() as conn:
@@ -983,10 +997,13 @@ def service_match_listening_lines(
                 and scan["cursors"] == previous_cursors
                 and scan["through"] == session["positions"]
                 and detail == session.get("detail")
+                and scan["timed"].keys() <= session.get("trigger_until", {}).keys()
                 and now - evaluated_until < _IDLE_COVERAGE_INTERVAL
             ):
                 # Pending transitions have already landed independently. Time-only
-                # progress can wait; event progress and partial scans cannot.
+                # progress can wait (a Trigger's recorded reach only lags, which
+                # is conservative); event progress, partial scans and a timed
+                # Trigger's first reach cannot.
                 continue
             session["detail"] = detail
             if complete:
