@@ -6,22 +6,29 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 **GitHub:** https://github.com/cruxible-ai/cruxible
 
-Cruxible is governed state for AI agents: deterministic proposals,
-signed approvals, provenance, reproducible accepted generations, and receipts.
-The core contains no LLM.
+Cruxible is hard state for AI agents: typed, governed, durable state that
+humans and agents share. Values are Claims about Subjects under ClaimTypes;
+every change is a proposal checked deterministically, accepted under an
+approval policy with signed approvals, and recorded in a Git ledger whose
+generations have reproducible coordinates. Procedures and Lines automate work
+over that state. No LLM runs inside Cruxible.
+
+User documentation lives in `docs/` (start at `docs/index.md`); the Python SDK
+reference is `packages/cruxible-client/README.md`; agent skills are in
+`skills/`.
 
 ## Commands
 
 ```bash
-# Install dependencies
+# Install dependencies (both workspace packages, all extras)
 uv sync --all-packages --all-extras
 
 # Run the full suite in parallel (pytest-xdist; CI and scripts/ci_parity.sh run it this way).
 # --dist loadfile keeps each file on one worker, so module-scoped fixtures build once.
 uv run pytest -n auto --dist loadfile
 
-# Run tests serially (small selections, debugging)
-uv run pytest
+# Run a selection serially
+uv run pytest tests/test_claims -v
 
 # Provider-runtime tests need a cruxible-providers checkout, as in CI; without
 # CRUXIBLE_PROVIDERS_CHECKOUT they skip (see CONTRIBUTING.md)
@@ -31,20 +38,23 @@ uv pip install "$CRUXIBLE_PROVIDERS_CHECKOUT/packages/cruxible-provider-runtime"
 # Run Docker image tests (requires Docker)
 CRUXIBLE_RUN_DOCKER_TESTS=1 uv run pytest tests/test_image -m docker
 
-# Run single test file
-uv run pytest tests/test_claims/test_claims.py -v
-
-# Lint
+# Lint, format, type check
 uv run ruff check src packages/cruxible-client/src tests
-
-# Format
 uv run ruff format src packages/cruxible-client/src tests
-
-# Type check
 uv run mypy src packages/cruxible-client/src
+
+# Regenerate a pinned surface after an intentional change, then review the diff
+uv run python scripts/update_playbill_served_surface.py
+uv run python scripts/update_client_contract_snapshot.py
+uv run python scripts/update_http_surface_snapshot.py
+uv run python scripts/update_authoring_wire_catalog.py
 
 # Everything CI runs, locally, before a push
 scripts/ci_parity.sh
+
+# Run the daemon and CLI from the checkout
+uv run cruxible server start --socket ~/.cruxible/run/daemon.sock
+uv run cruxible init
 ```
 
 ## Git Conventions
@@ -143,92 +153,129 @@ forever, including by the frozen verifiers of retired formats.
 
 ## Architecture
 
-### Four Surfaces, One Service Layer
+### One daemon, three clients
 
-All interfaces delegate to the shared service layer. Never duplicate orchestration logic in handlers or transports.
-
-```
-SDK (cruxible_client.authoring) ─┐
-MCP (mcp/)                       ├──▶ service/<domain>/ ──▶ domain packages (ledger, claims, procedures, evidence, ...)
-CLI (cli/)                       │
-HTTP (server/)                  ─┘
-```
-
-- **SDK** (`packages/cruxible-client/`) — typed contracts, HTTP transport, and agent-oriented authoring/reading adapters.
-- **MCP** (`mcp/`) — FastMCP tools delegating through the same runtime/client surfaces.
-- **CLI** (`cli/`) — Click commands; Cruxible commands live in `cli/commands/playbill.py`.
-- **HTTP** (`server/`) — FastAPI routes with bearer-token authentication.
-
-### Service layer (`service/<domain>/`)
-
-The source of truth for served orchestration. It is organized by concern:
-
-- claims/evidence/proposals and proposal review;
-- coverage, discovery, search, since, and the deterministic floor;
-- procedure authoring/execution and `next` repair rows;
-- operational curation and audit worklists.
-
-Service functions accept a `PlaybillInstance` and return typed Pydantic results.
-
-### Cruxible instance and accepted state
-
-`PlaybillInstance` in `runtime/instance.py` manages the daemon-owned repository and stores:
+The daemon (`cruxible server start`, `server/`) is the only process that
+touches accepted state. It serves an HTTP API over a Unix socket or TCP. The
+CLI (`cli/`), the MCP server (`mcp/`) and the Python SDK
+(`packages/cruxible-client/`) are all clients of that API.
 
 ```
-<managed-root>/
-  instance.json       # instance descriptor
-  ledger.git/         # accepted and proposal trees
-  cas/                # content-addressed bodies
-  exhaust/            # journals, proposal evidence, and operational stores
-  projections/        # rebuildable served indexes
-  credentials/        # daemon signing custody
-  leases/             # local writer leases
+CLI (cli/)                    ─┐
+MCP server (mcp/)              ├─HTTP─▶ routes (server/routes/) ─▶ runtime facade (runtime/playbill_api.py)
+SDK (packages/cruxible-client) ┘                                   ─▶ service/<domain>/ ─▶ domain packages
 ```
 
-The signed generation ledger and accepted Git tree are authority. Projections,
-file floors, and operational stores are derived or explicitly non-governed.
+- **HTTP** (`server/`): FastAPI routes with bearer-token auth (off by default on
+  a Unix socket, required on TCP), the state-root lock, credentials, and the
+  host registry.
+- **Runtime facade** (`runtime/playbill_api.py`): translates wire contracts and
+  delegates to the service layer; `runtime/instance.py` (`PlaybillInstance`)
+  manages one instance's managed root.
+- **Service layer** (`service/<domain>/`): the single home for served
+  orchestration (authoring, claims, evidence, proposals, procedures, discovery
+  and reads, floor, kits). Never duplicate orchestration in a route, a handler
+  or a CLI command.
+- **CLI** (`cli/commands/`): Click commands that call the daemon through the
+  SDK's `CruxibleClient`.
+- **MCP** (`mcp/`): FastMCP tools named after their CLI paths
+  (`cruxible_proposal_approve`), each a daemon client call; `curation.py`
+  defines the default and full profiles.
+- **SDK** (`packages/cruxible-client/`): typed contracts
+  (`cruxible_client.contracts`), the HTTP transport (`CruxibleClient`), and the
+  agent-facing `Cruxible` SDK with World, authoring drafts and handles.
 
-### Procedure system (`procedures/`)
+Client-side work stays on the client and sends the daemon bytes, never paths:
+source compilation, file-evidence observation, projection-block stamps, floor
+writes, and approval signing with a principal's private key.
 
-Procedure definitions are versioned node graphs (graph formats 3 to 6) and
-execute deterministically. Admission binds inputs and coordinates before execution;
-the exhaust journal records node outcomes, dependency manifests, effects, and
-typed terminal egress receipts. Line specs add recurring triggers and retained
-line-grained track records through accepted exhaust promotions.
+### Accepted state
 
-### Key Design Decisions
+Each instance's managed root under the daemon state root
+(`<state-root>/instances/<id>/`) holds:
 
-- **Zero LLM dependencies.** Purely deterministic runtime. Codex provides all intelligence via MCP tools.
-- **Pydantic for contracts and receipts.** Canonical values reject ambiguous encodings.
-- **Git plus signed ledgers for governed authority.** SQLite indexes and operational stores do not replace the accepted tree.
-- **Content-addressed bodies and deterministic projection.** Served reads reproduce from accepted coordinates.
-- **Pointer-model knowledge.** Claims bind ordinary source substrates; the ledger remains the singular truth plane.
+```
+instance.json   # instance descriptor
+ledger.git/     # accepted generations, proposals, and their Git notes
+cas/            # content-addressed bodies
+exhaust/        # journals, triggers, proposal evidence, operational stores
+projections/    # rebuildable served indexes
+credentials/    # daemon signing custody
+leases/         # local writer leases
+```
 
-### Permission Modes
+The signed generation ledger is authority; every accepted generation has a
+coordinate (Git OID, semantic root, generation root, compiler digest).
+Indexes, the workspace floor and projection blocks are derived and
+rebuildable. The compiler (`compiler/`) is the pinned, versioned
+interpretation of the ledger; adopting a new compiler revision is a governed
+proposal.
 
-MCP tools are gated by `CRUXIBLE_MODE` env var. Four cumulative tiers
-(`ADMIN ⊃ GRAPH_WRITE ⊃ GOVERNED_WRITE ⊃ READ_ONLY`), defined as
-`PermissionMode` in `runtime/permissions.py`:
+### Semantic families
 
-| Mode | Env value | Tools |
-|------|-----------|-------|
-| `READ_ONLY` | `read_only` | Cruxible reads, receipted query runs, coverage, curation/audit reads |
-| `GOVERNED_WRITE` | `governed_write` | READ_ONLY + authoring/proposal and attributed operational actions |
-| `GRAPH_WRITE` | `graph_write` | GOVERNED_WRITE + approving and activating proposals |
-| `ADMIN` | `admin` (default) | Instance/principal lifecycle and published-state trust boundaries |
+Domain packages own the artifact kinds and their acceptance laws: `claims/`
+(Subjects, ClaimTypes, Claims, attestations), `evidence/` (Captures and
+CaptureContracts), `documents/`, `query/` (named queries), `procedures/`
+(graph-format-6 Procedures, Blueprints, Lines, measurements), `providers/`
+(ProviderInterfaces, Providers, installation and the built-in
+`workspace.file`), `triggers/`, `governance/` (principals, approval policy,
+genesis seeds), `curation/`, `coverage/` and `floor/`. `consumers/` runs the
+daemon's background workers (floor delivery, the `next` findings worker, and
+enabled Lines), driven by Triggers and accepted generations; curation
+detection runs as the `curation.detect` internal action.
 
-- Audit logging uses structlog to stderr.
+### Two write lanes
 
-### Error Handling
+Values change through the write verbs (`set`, `add`, `retire`, `write`), which
+lower into an ordinary authoring change set and accept it when the approval
+policy and the caller's tier allow. Definitions go through authoring
+(`authoring submit`, staged intents). ClaimTypes keep their own `claim-type`
+group, because changing vocabulary disposes dependent Claims.
 
-All errors inherit from `CoreError` in `errors.py`. Cruxible wire and execution
-refusals are typed in `cruxible_client.contracts.errors`.
+### Key design decisions
 
-### Test Organization
+- **Zero LLM dependencies.** Deterministic runtime; agents supply judgment
+  through MCP, the CLI and the SDK, and providers supply contracted
+  computation.
+- **Pydantic for contracts and receipts.** Canonical values reject ambiguous
+  encodings; new surfaces are typed models and discriminated unions, never
+  loose dicts.
+- **Git plus signed ledgers for governed authority.** SQLite indexes and
+  operational stores never replace the accepted tree.
+- **Frozen format tags.** Stored and served format tags keep their
+  `playbill-*-vN` spelling, because digests and signatures cover them; public
+  names say Cruxible.
 
-Tests mirror domain ownership under `tests/test_ledger`, `test_claims`,
-`test_procedures`, `test_indexes`, and the other domain directories, plus `test_client`,
-`test_server`, `test_cli`, and `test_mcp`. `tests/test_architecture` and
-`tests/test_guardrails` pin DP-0 boundaries, public snapshots, and contract
-catalogs. Golden journal-corpus tests are intentionally expensive and should
-only run when their dispatch explicitly permits them.
+### Permission tiers
+
+Four cumulative tiers (`ADMIN ⊃ GRAPH_WRITE ⊃ GOVERNED_WRITE ⊃ READ_ONLY`),
+defined as `PermissionMode` in `runtime/permissions.py`, with the tier of
+every MCP tool in `TOOL_PERMISSIONS`:
+
+| Tier | Env value | Allows |
+|------|-----------|--------|
+| `READ_ONLY` | `read_only` | Reads, queries, coverage, work queues |
+| `GOVERNED_WRITE` | `governed_write` | Also authoring, proposals, value writes, attestations, Line enablement |
+| `GRAPH_WRITE` | `graph_write` | Also approving and activating proposals |
+| `ADMIN` | `admin` (default) | Also credentials, hosts, principals, compiler upgrades, provider installs, ledger mirrors |
+
+A bearer credential carries a tier; `--capability-ceiling` (or `CRUXIBLE_MODE`)
+caps the daemon, and `CRUXIBLE_MODE` caps an MCP server. Principals (governed
+signing keys) are separate from credentials: they attribute acts and sign
+approvals. Audit logging uses structlog to stderr.
+
+### Error handling
+
+All errors inherit from `CoreError` in `errors.py`. Wire and execution refusals
+are typed in `cruxible_client.contracts.errors`, with codes
+`cruxible.<family>.<name>`, and every refusal names its repair.
+
+### Test organization
+
+Tests mirror domain ownership under `tests/test_<domain>/` (`test_claims`,
+`test_procedures`, `test_ledger`, ...), plus `test_client`, `test_server`,
+`test_cli` and `test_mcp`; shared fixtures live in `tests/core_support/`.
+`tests/test_architecture` and `tests/test_guardrails` pin boundaries, public
+snapshots, contract catalogs, the reference docs and the public vocabulary.
+Golden journal-corpus tests under `tests/goldens/` are intentionally expensive
+and should only run when a change touches what they pin.

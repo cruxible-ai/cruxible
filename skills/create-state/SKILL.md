@@ -1,229 +1,190 @@
 ---
 name: create-state
-description: Create a new Cruxible state from raw domain data through staged graph, workflow, query, and review-loop design.
+description: Model a new domain in Cruxible - decide what is typed state and what stays prose, define Subject kinds and ClaimTypes, catalogue sources, seed values with evidence, and add named queries and projection blocks - in reviewed stages.
 ---
 
 # Create State
 
-Use this skill when a user wants to turn new data into a usable Cruxible state.
-You are authoring a **Crux** — the governed, executable artifact of the user's
-domain knowledge — so treat every stage below as artifact construction, not
-config editing: what you produce will be reviewed, versioned, and relied on by
-other agents.
+Use this skill when a user wants a domain's knowledge in Cruxible: typed,
+governed values that people and agents share, each with evidence and history.
+You are building the vocabulary and the first accepted state, so every stage
+below ends in something the user can review.
 
-If the source files are messy, run `prepare-data` first.
+This skill is for:
 
-Work in stages. Do not try to design the graph, workflows, queries, and review loop all at once.
+- turning a domain (a team's work, a security inventory, a set of decisions) into Subjects and ClaimTypes
+- choosing what to keep as prose in files and cite, rather than store as values
+- seeding the first values with evidence that `next` can keep honest
+- adding the named queries and rendered tables people will read
 
-## Generated config views
+If the inputs are messy files, run `prepare-data` first. If a kit already
+models the domain, use `adopt-kit` instead and come back here only for what the
+kit lacks.
 
-Do not rely on YAML alone when drafting or reviewing a state. At each major
-config checkpoint, generate canonical views from the config and use those
-views as the review surface.
+Work in stages. Do not define vocabulary, load values and build views in one
+pass.
 
-Use inline output for fast review when the agent harness can render Mermaid:
-
-```bash
-uv run cruxible config views --config config.yaml --view all
-```
-
-Also update durable README marker blocks so CLI and non-GUI harnesses can
-inspect the same generated views:
+## Phase 0: Connect and orient
 
 ```bash
-uv run cruxible config views --config config.yaml --update-readme README.md
+cruxible whoami        # who you are on this instance, and whether you can author
+cruxible orient        # kinds, artifacts, attention, next commands
 ```
 
-If the config uses `extends`, render the runtime composed view for
-onboarding/review surfaces:
+On MCP, `cruxible_whoami` and `cruxible_orient`. Creating an instance is
+operator work (`cruxible server start`, then `cruxible init` in the
+repository); if there is none, ask the user to run it. If `whoami` says you
+cannot author, stop and surface its repair.
+
+If the instance already holds vocabulary, read it before adding any:
+`cruxible orient --kind KIND` for each kind, and `cruxible orient --section
+claim_types`. Reuse what exists.
+
+## Phase 1: Decide what is state
+
+For each kind of information the user has, decide where it lives.
+
+Make it **typed state** when the system must do something with it: ask across
+items (filter, count, sort), enforce a vocabulary (an enum, a link that must
+resolve), check consistency across links, coordinate concurrent writers, keep
+per-field history, or drive behavior (`next` rows, Lines, stale blocks).
+
+Keep it **prose in a file** when it is read and revised whole: rationale,
+trade-offs, narrative, guides, meeting notes, anything that would need an
+invented schema only to store text.
+
+The usual answer is a **hybrid**: the prose stays in a Markdown file, and a few
+typed values are extracted from it with a citation of the passage. When the
+prose changes, `next` reports the citation as drifted.
+
+Then sketch the model:
+
+- **Subject kinds**: dotted names (`project.task`, `sec.package`). A kind is
+  worth having when people start from it, link to it, or review it on its own.
+- **IDs**: stable for the real thing (a source system's identifier, a slug),
+  never a mutable title.
+- **Fields**, one ClaimType each: the predicate (`project.task.status`), the
+  value (a literal with a JSON schema, an `enum` for a closed set, a reference
+  to another Subject, or exact content), one value or many, the roles writers
+  use (`observation` for what was seen, `normative` for what should be), and
+  the evidence that should support a value.
+- **Sources**: which files will be cited, and under what catalog name.
+
+Present the model as a table (kind, ID rule, field, value type, cardinality,
+evidence) and get the user's confirmation before writing anything.
+
+## Phase 2: Define the vocabulary
+
+Start from the template and preview before proposing:
 
 ```bash
-uv run cruxible config views --config config.yaml --runtime --view all
-uv run cruxible config views --config config.yaml --runtime --update-readme README.md
+cruxible claim-type propose --template            # a complete example input
+cruxible claim-type propose --name add-task-status --input - --dry-run <<'EOF'
+{ ...one ClaimType... }
+EOF
 ```
 
-Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is code-owned
-structural output from the config. Authored prose may explain intent,
-tradeoffs, open questions, and operating guidance, but it must not replace or
-contradict the generated structural view. Do not hand-author alternate Mermaid
-diagrams when a generated view exists.
+Each ClaimType input names `predicate`, `allowed_subject_kinds`,
+`object_kind`, `literal_schema` (for literals), `cardinality`,
+`permitted_roles`, `evidence_admission_policy`, `admission_policy` and
+`resolution_policy`. Also give:
 
-When iterating the config toward its final shape, explicitly direct the user to
-the generated README views as the primary way to understand the current system.
-The YAML remains the execution source of truth, but the README's generated
-ontology, workflow, governed relationship, and query sections are the review
-surface for human decisions. Before asking the user to approve graph shape,
-workflow sequencing, governed boundaries, or query surfaces, update the README
-marker blocks and point them to the relevant generated section.
+- `description` (and `member_descriptions` for an enum), so `orient` and other
+  agents know what the field means;
+- `default_role`, so writers need not pass `--role`;
+- evidence rules naming what supports a value: the writer's own words are
+  `CaptureContract:playbill.coordinator-self-source-v1`; a catalogued file
+  named `NAME` is `CaptureContract:playbill.foreign-source.NAME`, listed in
+  `anticipated_source_ids` until something cites it.
 
-## Phase 1: Understand the domain shape
-
-Before writing config:
-
-1. inspect the source files
-2. identify entity types and likely primary keys
-   - a primary key is the stable property that uniquely identifies one real entity across reloads and updates
-   - prefer durable source IDs or external identifiers
-   - avoid names, titles, or other mutable text unless there is no better identifier
-   - if no good primary key exists, stop and design one before continuing
-   - if a concept may need to be a future query or traversal surface, model it as its own entity instead of leaving it as a property
-   - if users may need to start from it, fan out from it, relate other things to it, or review it independently over time, it is usually better modeled as an entity
-3. identify deterministic relationships between entities that can be loaded directly from the source data
-4. identify any obvious bad states that should remain invalid across future ingests, refreshes, and graph updates, and should later become constraints or quality checks
-   - do not invent constraints just to fill the slot
-   - if there are no clear durable invalid states yet, leave this empty for now
-5. identify the major user-facing query and use-case categories the state should eventually support
-6. summarize the structural model for user confirmation
-
-Use a concrete summary:
-
-- entity type
-- likely primary key column
-- key properties
-- source file
-- relationship name
-- from -> to
-- how it gets populated
-- notes or ambiguities
-
-Keep this phase focused on domain shape. Do not jump ahead to workflow design unless the user raises it.
-
-## Write Step A: Write the base graph config
-
-Write only the minimum needed for the base graph:
-
-- `entity_types`
-- `relationships`
-- obvious `constraints`
-- minimal `contracts` only if clearly required
-
-Do not spend time on named queries, review loops, or advanced workflows yet.
-
-After writing the base graph config, render at least the ontology view inline.
-If the state has a README, add or update the ontology marker block there too.
-Use this as the graph-shape checkpoint before moving on.
-
-## Phase 2: Validate the base graph config
-
-Use the real CLI to validate:
+Propose one ClaimType, then activate it before proposing the next: a proposal
+is checked against the state it was proposed on, so one made before another
+was activated goes stale and needs `cruxible proposal readmit`. Under the
+default self-approval policy:
 
 ```bash
-cruxible validate --config config.yaml
+cruxible proposal list --status open
+cruxible get PROPOSAL_ID                  # status, changes, refusal diagnostics
+cruxible proposal activate PROPOSAL_ID
 ```
 
-Then initialize the instance. If you are connected to a governed daemon (server mode), use:
+When the instance requires independent approval, follow
+`../_shared/references/governance-flow.md`.
+
+Changing a ClaimType later disposes the Claims that use it, so it goes through
+`cruxible claim-type migrate`, never a quiet redefinition. Get the vocabulary
+reviewed now.
+
+## Phase 3: Catalogue the sources
+
+List each file you will cite in `.cruxible/sources.yaml`:
+
+```yaml
+catalog_kind: portable
+entries:
+  - name: standup
+    locator: notes/standup.md
+```
+
+A `name` and a `locator` are enough to cite a file. Make an entry a Document
+(add `document_id`, `document_kind`, `title`, `media_type`,
+`governance_scope`) only when the file's exact wording is itself governed, such
+as a policy; then `cruxible sources propose --source NAME --name PROPOSAL`
+proposes each revision.
+
+## Phase 4: Seed the values
+
+Write values with the value verbs. Preview a batch first, then write it:
 
 ```bash
-cruxible init --config config.yaml
+cruxible write - --dry-run <<'EOF'
+{"because": "Initial load from the planning spreadsheet.",
+ "changes": [
+   {"op": "set", "subject": "project.task/ship-v1", "field": "owner", "value": "grace"},
+   {"op": "set", "subject": "project.task/ship-v1", "field": "status", "value": "open"}
+ ]}
+EOF
 ```
 
-The daemon manages the instance directory. Do **not** pass `--root-dir .` or create a local `.cruxible/` directory when running in server mode — the daemon owns instance state.
+- `set` replaces a single-value field and adds a missing Subject of a known
+  kind; `add` appends to a many-valued field; `retire` ends a value.
+- Cite files where values came from them:
+  `cruxible set KIND/ID FIELD VALUE --because "..." --evidence-file "PATH#ANCHOR"`
+  (or a `file` evidence entry in a `write` change).
+- Read each change's verdict. A value written with evidence the ClaimType does
+  not admit is accepted as `uncovered` with a warning; fix the evidence rule or
+  the citation rather than ignoring it.
+- `cruxible write --schema` prints the payload schema. On MCP, `cruxible_set`
+  and `cruxible_write`.
 
-If you are working locally without a daemon (developer mode only):
+## Phase 5: Queries and views
+
+Add the named queries the user will ask repeatedly. Start from a template and
+check before submitting:
 
 ```bash
-cruxible init --config config.yaml --root-dir .
+cruxible authoring example query-claims-by-type
+cruxible authoring submit QUERY.json --dry-run
+cruxible authoring submit QUERY.json --and-activate
+cruxible query --name NAME
 ```
 
-At this stage, the goal is not to design or run the full operational loading path yet. The goal is to confirm that the base graph definition is coherent enough to proceed.
+For a table or list people read in a page, use a rendered projection block:
+write `<!-- cruxible:block:ID -->` and `<!-- /cruxible:block:ID -->` in a
+catalogued page, then `cruxible block repin SOURCE ID --query
+QueryDefinition:NAME --render`. For a summary only prose can give, write the
+prose between the markers and repin with `--claim CLM-…` for each Claim it
+summarizes. Both are reported by `next` when their backing state moves.
 
-Stop on validation or init errors. Do not continue with a broken base config.
-
-## Phase 3: Understand the operational workflows
-
-Once the base graph shape is defined and validated, figure out how this state is built and maintained over time.
-
-Start with the operating loop, not the config nouns. Ask:
-
-1. where does new data come from?
-2. what repeatable steps turn raw inputs into graph state?
-3. which steps are deterministic and repeatable?
-4. which steps require judgment, matching, or review?
-5. what should be automatically committed versus proposed for review?
-6. summarize the workflow plan for user confirmation
-
-Keep this phase focused on operations. Ask only the workflow questions needed to understand refresh cadence, automatic rebuilds, proposal-vs-direct-apply boundaries, and where review is required.
-
-Then translate those answers into Cruxible terms:
-
-- `artifacts`: input files, bundles, or external data sources the workflow depends on
-- `providers`: reusable logic, model calls, or external processing steps
-- `contracts`: structured workflow input and output shapes
-- `workflows`: repeatable procedures that build, refresh, or propose graph state
-- `canonical` workflows: workflows whose results are written directly into state instead of first becoming reviewable proposals. Use this only for deterministic or otherwise highly trusted operations that are safe to commit without a proposal/review step.
-
-At the end of this phase, separate the workflow plan into two buckets:
-
-- canonical workflows to design now
-- judgment-based workflows that should become reviewable proposals later
-
-For the later judgment-based workflows, define the task and the expected input/output shape now, but defer detailed provider and proposal-workflow design until after the graph and query surfaces are clearer.
-
-## Write Step B: Add workflow machinery
-
-Fully design the canonical workflow path now. Extend the config with:
-
-- `artifacts`
-- `contracts`
-- `providers` needed for deterministic or otherwise trusted steps
-- deterministic `workflows`
-
-For judgment-based tasks that will need model judgment, matching, ranking, or review:
-
-- add only the base `contracts` needed to describe their task input and output shapes
-- do not build the provider-backed proposal workflows yet
-- do not mark these tasks `canonical`
-
-Do not introduce Cruxible workflow machinery just because the schema allows it.
-
-After adding workflow machinery, render the workflow pipeline and workflow
-summary inline. If the state has a README, update the generated workflow marker
-blocks there too. The user should be able to review the sequence, each stage's
-input context, the produced state or proposal, and provider provenance without
-mentally parsing the YAML.
-
-## Phase 4: Build and inspect the state for the first time
-
-After workflow config changes:
+## Phase 6: Verify and hand off
 
 ```bash
-cruxible validate --config config.yaml
-cruxible config reload --config config.yaml
-cruxible lock
+cruxible orient --kind KIND                 # fields and counts as others will see them
+cruxible query KIND --select a,b --claims   # values with flags
+cruxible get KIND/ID --detail why           # evidence and provenance of one value
+cruxible next                               # should hold nothing unexpected
+cruxible stub --out world.pyi               # if the user works in Python
 ```
 
-Use `cruxible plan --workflow <workflow_name>` when you need to inspect the compiled workflow before running it.
-
-Then run every canonical build or refresh workflow you defined in Step B, in dependency order:
-
-```bash
-cruxible run --workflow <workflow_name> --apply
-```
-
-This is the first real population step. Use it to build or refresh the state through the full canonical workflow path you designed in Step B.
-
-Do not run judgment-based or proposal workflows in this phase. This phase is only for the workflows that are safe to apply directly to the state.
-
-Re-check the state with:
-
-```bash
-cruxible stats
-cruxible sample --type <EntityType> --limit 5
-cruxible inspect entity --type <EntityType> --id <entity_id>
-```
-
-## Shared Governance Flow
-
-After Phase 4, read and follow:
-
-- `../_shared/references/governance-flow.md`
-
-That shared reference is the source of truth for the remaining flow after the canonical layer is in place. Some phases inside it are conditional, but the reference itself is not optional once you move past Phase 4.
-
-When following it from `create-state`, use Phases 1-4 of this skill as the earlier loopback points for graph shape, canonical workflow design, and canonical state build questions.
-
-After adding governed relationships, named queries, feedback profiles, outcome
-profiles, or decision policies, rerender the full default config view bundle
-inline and update README marker blocks if present. Use the ontology, workflow
-summary, governed relationship table, query map, and query catalog together as
-the final structural review surface before hand-off.
+Then follow `../_shared/references/governance-flow.md` for the approval
+policy, agent principals and the final handoff.

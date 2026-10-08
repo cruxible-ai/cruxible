@@ -196,9 +196,7 @@ goes through the typed seam in `runtime/execution_policy.py`:
 `implementation_digest` doing the isolating, and its `capabilities` -- and
 `registered_isolated_executors()` reports what this process has. Cruxible registers
 none, so `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` cannot re-enable execution
-today; setting it to `docker` previously unlocked spawning the Provider directly
-on the host, which is the opposite of what the name promised (maintainer ruling
-2026-09-03). The variable remains the selector: it names which REGISTERED
+today. The variable is the selector: it names which REGISTERED
 backend to use, and a value naming an unregistered backend refuses with that
 backend named in the detail.
 
@@ -214,7 +212,7 @@ container = "my_executor_package:ContainerExecutor"
 
 The daemon iterates that group ONCE at start, before it serves anything, loads
 each object — a class is constructed with no arguments; an instance is taken as
-it is — and registers what it publishes. This is the road for an out-of-tree
+it is — and registers what it publishes. This is the path for an out-of-tree
 executor; a distribution that is installed but does not advertise here is not
 registered, because a backend nothing declares is a backend nothing audited.
 `register_isolated_executor()` remains the in-process seam for an embedded host

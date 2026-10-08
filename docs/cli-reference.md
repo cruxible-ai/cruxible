@@ -1,6 +1,8 @@
 # CLI reference
 
-The public CLI has four top-level command groups.
+Every `cruxible` command, grouped as `cruxible --help` lists them. Run any
+command with `--help` for its exact options; `--json` gives machine-readable
+output.
 
 ## Global options
 
@@ -51,10 +53,10 @@ before retrying.
 
 Every argument that takes a one-off payload also accepts `-` to read it from
 stdin, so a heredoc or a pipe works and nothing lands on disk: `write -`,
-`authoring compile -`, `authoring bind --payload-file -`, `claim-type propose
---input -`, `claim-type migrate -`, `predict -`, `settle --request -`,
-`resolution-contracts --request -`, `query --spec -`, `coverage resolve
---grep-results -`, the Procedure and Line request, input, `--at`,
+`authoring compile -`, `authoring submit -`, `authoring bind --payload-file -`,
+`claim-type propose --input -`, `claim-type migrate -`, `prediction propose -`,
+`prediction settle --request -`, `query --spec -`, `coverage resolve
+--grep-results -`, `coverage resolve --bindings -`, the Procedure and Line input, `--at`,
 `--resolution-contract` and `--trigger-event` files, access profiles and
 cursors, and `body store -`. One command reads stdin for one argument; a second
 `-` is refused. Real artifacts stay files: Procedure source, signed source
@@ -73,9 +75,9 @@ it under `remembered_instance_ignored`. `context connect` stores the socket's
 realpath:
 
 ~~~text
-cruxible context connect
+cruxible context connect [--server-url URL | --server-socket PATH] [--instance-id ID]
 cruxible context use [INSTANCE_ID] [--principal ID]
-cruxible context show
+cruxible context show [--json]
 cruxible context clear
 ~~~
 
@@ -130,8 +132,7 @@ repair derived files a crash left behind, the preview refuses
 `cruxible.preview.recovery_pending` instead of writing them; an ordinary read
 (`cruxible orient`) reopens it, and the preview then runs.
 
-Which operations preview follows one principle (the maintainer's ruling):
-an operation previews when its effect is derived -- computed by the server
+Which operations preview follows one principle: an operation previews when its effect is derived -- computed by the server
 from more than its input -- or when it cannot be undone or reaches outside the
 daemon and its effect is not already shown to the caller. An operation whose
 full effect is determined by its input and that writes nothing when refused is
@@ -149,47 +150,44 @@ exempt. By that principle these are exempt:
   floor is a pure function of the accepted coordinate), it is idempotent, and
   it writes only the derived, regenerable `.cruxible/floor`.
 
-Exempt in v1 as well, by the maintainer's earlier scope ruling:
+Also exempt:
 
 - the exhaust paths -- `prediction settle`, `prediction propose`, `procedure run` and
-  `procedure measure`, and `line evaluate`, `line dispatch` and `line run` --
-  append observations to the instance's exhaust and need a separate
-  dry-run-execution feature;
+  `procedure measure`, and `line dispatch` and `line run` -- append
+  observations to the instance's exhaust; there is no dry run of an execution
+  (`line evaluate --dry-run` is an eligibility read, not a dry run of
+  dispatch);
 - client-local writes -- `context connect`, `context use`, `context clear`,
-  `kit build`, `kit pull` and `hook` -- change only the caller's own
-  configuration or output files;
+  `kit build` and `kit pull` -- change only the caller's own configuration or
+  output files;
 - `init` (genesis) and `server stop` / `server restart`, which have no
   coordinate to preview against.
 
-`provider install --dry-run` is a labelled v1 exception: it validates and
-writes nothing, but it does not prepare the package, check deployment
+`provider install --dry-run` is narrower: it validates and writes nothing, but it does not prepare the package, check deployment
 readiness or (for a package not yet prepared) evaluate its registration. Its
 outcome says so: `preview_scope: validation_only` and `not_run` naming those
 steps, with the coordinate it evaluated at.
 
 ## credential
 
-Credentials and principals are different things. A credential is a daemon
-bearer token: it authorizes transport (which endpoints a request may reach, at
-which permission tier) and, when the daemon runs with auth, says which principal
-the request acts as. A principal is a governed signing key registered in the
-instance's ledger (`cruxible init`, `cruxible principal add`): it is who
-authors, approves and is attributed, and its approvals are signed with its
-private key, never with a token. With auth off there are no credentials to
-speak of and the principal ID is a claim of identity; with auth on each
-credential is bound to one principal. Revoking a principal revokes its
-credentials; rotating a credential never changes the principal.
+A credential is a daemon bearer token; a principal is a governed signing key
+in the instance's ledger. [Principals and
+credentials](concepts.md#principals-and-credentials) explains the difference.
+With auth on, each credential is bound to one principal; revoking a principal
+revokes its credentials, and rotating a credential never changes the
+principal.
 
 Manage runtime bearer credentials:
 
 ~~~text
-cruxible credential claim-bootstrap [--secret-file PATH] [--dry-run] [--json]
+cruxible credential claim-bootstrap [--secret-file PATH] [--dry-run|--commit] [--at OID] [--json]
 cruxible credential mint --principal-id ID --mode TIER [--key-dir DIR] [--label TEXT]
   [--dry-run|--commit] [--at OID] [--json]
 cruxible credential list [--json]
 cruxible credential rotate CREDENTIAL_ID [--key-dir DIR] [--dry-run|--commit] [--at OID] [--json]
 cruxible credential revoke CREDENTIAL_ID [--dry-run|--commit] [--at OID] [--json]
-cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--dry-run] [--json]
+cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--label TEXT]
+  [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 The bootstrap secret is claimable once per host: each host on a daemon claims
@@ -247,14 +245,18 @@ permission refusal names the tier it needs and what that tier allows.
 
 ~~~text
 cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port PORT] [--auth]
-cruxible server install-service [SERVER-START FLAGS] [--print] [--replace]
-cruxible server status
-cruxible server restart
+  [--capability-ceiling TIER] [--bootstrap-secret-file PATH]
+cruxible server install-service [--state-root DIR] [--socket PATH | --host HOST --port PORT]
+  [--capability-ceiling TIER] [--auth|--no-auth] [--print] [--replace]
+cruxible server status [--json]
+cruxible server restart [--no-wait] [--timeout SECONDS] [--json]
 cruxible server stop [--timeout SECONDS] [--json]
 ~~~
 
 server start is the long-running daemon process and does not connect to an
-existing server.
+existing server. `--capability-ceiling` (default `CRUXIBLE_MODE`, else
+`admin`) fixes the highest tier any request may reach on this daemon; no
+bearer credential can exceed it.
 
 Auth depends on the transport. A Unix-socket daemon defaults to auth off and
 prints one line saying so when it starts: every process that can reach its
@@ -460,15 +462,18 @@ identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 The daemon's internal schedules are governed Trigger artifacts
 (`triggers/<name>.json`) aimed at an internal action, not daemon-local
 configuration. Internal actions are registered in code (`evidence.sweep`,
-`prediction.anchor_retry`, `floor.refresh`); a Trigger aimed at one takes a
+`prediction.anchor_retry`, `floor.refresh`, `curation.detect`); a Trigger aimed
+at one takes a
 `cadence`, `cron`, or `generation_accepted` schedule. Capture-landing and
 window-close schedules for internal actions are
 not supported yet (`cruxible.trigger.schedule_unsupported_for_action`), and an
 action name that is not registered is refused at acceptance
 (`cruxible.trigger.action_unknown`). A new
-instance is initialized with `evidence-sweep` (daily) and
-`prediction-anchor-retry` (hourly); change a schedule, add a Trigger, or retire
-one through an ordinary proposal. `cruxible next` reports unscheduled findings
+instance is initialized with `evidence-sweep` (daily),
+`prediction-anchor-retry` (hourly), `floor-refresh` and `curation-detect`
+(both on accepted generations); change a schedule, add a Trigger, or retire
+one through an ordinary proposal. Internal-action Triggers need no
+enablement. `cruxible next` reports unscheduled findings
 actions, and an unscheduled floor action when workspace delivery is enabled.
 
 No Trigger fires retroactively. A timer fires each of its instants once, all of
@@ -503,7 +508,7 @@ and a `floor export` over the local socket asks it to deliver immediately, while
 one over TCP refuses rather than write a second copy (the registration route
 answers `delivers_here` for the caller's workspace root without echoing the
 daemon's path). Workspaces the daemon does not deliver to (a remote daemon,
-delivery off, MCP library mode) pull the floor with `floor export`, MCP
+or delivery off) pull the floor with `floor export`, MCP
 `cruxible_floor_export mode=write`, or SDK `cx.refresh_workspace()`. Both writers create `.cruxible/floor/.gitignore` containing
 `*`, which ignores the entire floor, including itself, in Git. It is local metadata
 outside the accepted floor manifest and survives delta applies and full repairs.
@@ -570,10 +575,11 @@ the local daemon on `~/.cruxible/run/daemon.sock` or starts one (see
 ## host and workspace
 
 ~~~text
-cruxible host create [--instance-id ID] [--workspace DIR] [--replace] [--dry-run]
-cruxible host show INSTANCE [--json]
+cruxible host create [--instance-id ID] [--workspace DIR] [--replace]
+  [--dry-run|--commit] [--at DIGEST] [--json]
+cruxible host show INSTANCE_ID [--json]
 cruxible workspace attach [--instance-id ID] [--replace] [--no-floor-delivery]
-  [--dry-run|--commit] [--at DIGEST]
+  [--dry-run|--commit] [--at DIGEST] [--json]
 cruxible workspace detach [--instance-id ID] [--dry-run|--commit] [--at DIGEST] [--json]
 ~~~
 
@@ -631,9 +637,9 @@ first one released; nothing governed changes, the host keeps its ledger and
 every read it has ever served, and it stops being the host of this directory.
 It requires the same local socket for the same reason attaching does. The
 instance's own ADMIN credential or the bootstrap secret may detach it. It refuses
-while the host still registers published blocks in that worktree, because
+while the host still registers projection blocks in that worktree, because
 detaching under them leaves a page carrying markers no host owns: depublish
-those blocks (`cruxible block depublish`) or retire their backing Claims first.
+those blocks (`cruxible block depublish`) first.
 
 ## init
 
@@ -647,7 +653,7 @@ cruxible init [--key-dir DIR]
   [--profile local|cloud]
   [--workspace DIR] [--replace]
   [--object-format sha1|sha256]
-  [--mirror-url URL]
+  [--mirror-url URL] [--json]
 ~~~
 
 With no instance selected, init first creates a host (as `host create` does),
@@ -674,8 +680,7 @@ mode 0700; an existing one must already exclude group and other access. An optio
 second ordinary principal; pair it with `--require-independent-approval` to make
 one non-creator approval mandatory. Local key directories provide attribution
 and repository hygiene, not a security boundary. Organization review normally
-rides branch protection/CODEOWNERS on the state repository; real custody
-separation belongs at the parked Cloud broker/leasing seam. The optional
+rides branch protection/CODEOWNERS on the state repository. The optional
 recovery key remains lifecycle-only.
 
 All target, topology, principal, and custody-path checks run before key
@@ -693,15 +698,15 @@ fetches accepted state as `cruxible-ledger/accepted` and open proposals as
 compare them, never check them out or merge them to admit governed state.
 
 Explicit `--workspace DIR` over TCP writes only the client-local URL binding.
-An instance initialized without daemon registration cannot acquire one later;
-archive and rebuild an attached host through the local socket when ledger-ref
-advertisement is required.
+An instance initialized without daemon registration can register a worktree
+later: `cruxible workspace attach` over the local socket attaches an initialized
+host in place.
 
 The ledger's Git object format follows `--object-format`: with no flag it
 inherits an attached workspace's format, and with no workspace it is `sha1`.
 SHA-1 is the default because common Git viewers do not recognize a SHA-256
-repository, and a ledger nobody can open is not evidence anyone can read
-(maintainer ruling, 2026-09-03). An explicit `--object-format` that contradicts
+repository, and a ledger nobody can open is not evidence anyone can read. An
+explicit `--object-format` that contradicts
 the attached workspace refuses with the typed
 `cruxible.init.object_format_conflict` before any state is written; instances
 already initialized keep their pinned format forever. The
@@ -739,15 +744,18 @@ is `cx.capture(digest)`; its `.ref` can be passed to Claim authoring as `support
 ## body
 
 ~~~text
-cruxible body store PATH
+cruxible body store PATH|- [--json]
 ~~~
 
-Stores exact bytes in inert CAS and prints their digest.
+Stores exact bytes in inert CAS and prints their digest. Use it for Document
+bytes that are not a catalogued workspace file (`document propose` then names
+the digest) and for staging provider files; a catalogued file goes through
+`sources propose`.
 
 ## instance
 
 ~~~text
-cruxible instance decommission --reason TEXT [--dry-run|--commit] [--at OID]
+cruxible instance decommission --reason TEXT [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 Decommissioning is the terminal lifecycle state of one governed instance. It
@@ -755,7 +763,7 @@ stamps the reason, instant, and actor on the instance descriptor, so a daemon
 restart replays the same state. Every further governed write refuses with the
 typed `cruxible.instance.decommissioned` error naming the reason and the repair;
 reads keep serving at the accepted coordinate, `next` reports the terminal state,
-and `search --mode orient` marks the orientation decommissioned.
+and `cruxible orient` marks the instance decommissioned.
 
 Nothing is deleted. Every accepted generation, receipt, and body stays exactly
 where it is, and archiving or erasing the directory afterwards is the operator's
@@ -795,7 +803,7 @@ git fetch origin refs/settled/archive:refs/settled/archive
 Local legacy archive refs are folded into the single ref before deletion.
 An old mirror or saved mirror state with per-proposal archive refs is refused.
 Bind a freshly created mirror at a new URL to start a clean publication snapshot;
-this batch does not migrate remote state.
+Cruxible does not migrate remote state.
 The archive has fixed-size publication metadata, while its retained objects and
 ancestry grow with history. It is retention metadata, not accepted-state authority.
 
@@ -809,12 +817,6 @@ evaluated candidate, which is what a digest names and what a name does not: the
 same `<actor>/<name>` ref carries a different candidate after every
 resubmission. So `git diff cruxible-ledger/accepted...cruxible-ledger/proposals/<proposal-id>`
 takes the digest that `proposal list` and `proposal review` print.
-
-Re-keying that branch to `<actor>/<name>` is a deprecate-then-remove candidate,
-not a rename: the workspace advertisement fetches that refspec, so it is a
-shipped surface. It would also
-have to answer what a resubmitted proposal's branch means, which the digest
-answers by construction. Nothing schedules it today.
 
 The publisher captures exact object IDs and pushes them atomically. `main`
 always fast-forwards. Updates and deletions of known review refs use explicit
@@ -915,15 +917,18 @@ vocabulary, its four conformance proofs (static light, static medium, API or
 JSON, rendered) and its classifier, whatever the package itself ships, so every
 implementation binds the same ProviderInterface and claims a subset of those
 buckets.
-The registration lands at once when the approval policy requires no approval
-(`ready`); otherwise it stops at proposed (`awaiting_approval`) for the ordinary
-review and activation. It returns `ready`, `awaiting_approval`, or `blocked`,
-with per-operation missing requirements. `--control-domain` names the control
+The registration lands at once when the approval policy requires no approval;
+otherwise it stops at proposed (`awaiting_approval`) for the ordinary review and
+activation. It returns `ready`, `awaiting_approval`, or `blocked` (a landed
+registration whose runtime requirements are missing is `blocked`, with
+per-operation missing requirements), and `would_install` for `--dry-run`, which
+a local wheel refuses. `--control-domain` names the control
 domain the Provider definition records (default `operator`); `--at OID` commits
 only if accepted state is still the coordinate a preview answered at.
 Installation requires the current compiler; an instance on an older one runs
-`cruxible compiler upgrade` first. Missing browser resources remain explicit; Python extras do not
-install browsers. Credentials, grants, and invocation remain separate.
+`cruxible compiler upgrade` first. Installing grants nothing: credentials,
+grants, and invocation remain separate. A package that exports the built-in
+`workspace.file` is refused: it is built in on every new instance.
 
 Retries reuse the prepared installation and an open registration proposal.
 Package updates create a new environment and preserve earlier deployments.
@@ -958,8 +963,8 @@ Distributed, a kit is an OCI artifact (`application/vnd.cruxible.kit.v1`): the
 manifest is its config blob and the artifacts (with any bundled provider files
 under `providers/`) are one deterministic, uncompressed tar layer, so rebuilding a
 release gives the same manifest digest.
-There is no public publishing in v1: official kits are published by internal
-release tooling, which never moves an existing version tag to different content.
+There is no `kit push`: official kits are published by Cruxible's release
+tooling, which never moves an existing version tag to different content.
 `pull` fetches and verifies a kit into a kit directory (or, with `--layout`, an OCI image
 layout for offline transfer) without installing it. Every blob is checked
 against its digest, a digest reference must match the manifest pulled, and blobs
@@ -972,7 +977,10 @@ credentials come from `CRUXIBLE_REGISTRY_USERNAME` and
 that host. Every other registry is contacted anonymously, a registry token is
 never sent to another origin (such as an upload location), and nothing is sent
 over a downgraded scheme. The client does all fetching: the daemon receives only the verified
-bundle, and the receipt records the source pinned to its manifest digest.
+bundle. The receipt records where it came from: a registry reference pinned to
+its manifest digest, a layout with its digest, or a directory's name (`--source`
+records another origin, such as the registry reference a directory was pulled
+from, so `kit status` can check it for updates).
 
 A kit is one release of definitions: ClaimTypes, CaptureContracts,
 QueryDefinitions, SourceAcquisitionPolicies, Procedures, Blueprints and the
@@ -989,8 +997,8 @@ that registers it, so `remove` never retires one.
 
 Provider packages. A kit ships the provider its own Procedures run on (for
 example a domain parser) as the package's built wheel, the uv lock it was built
-with, and the wheel of each dependency that lock names by path (such as
-`cruxible-provider-runtime` while it is unpublished); registry dependencies are
+with, and the wheel of each dependency that lock names by path; registry
+dependencies are
 never bundled and resolve by name, pinned by the lock's hashes, from the daemon's
 provider index (PyPI unless the operator configured `provider_index_urls`). The
 kit never carries source. `--provider PACKAGE_DIR` (repeatable) names a package
@@ -1104,7 +1112,8 @@ is installed; while an install awaits approval the result is
 is activated proposes the definitions. A commit first reads the staged files
 (metadata only), refuses `cruxible.kit.provider_manifest_mismatch` unless they
 reproduce the manifest, and refuses what the current state already decides
-(ownership overlap, a disallowed downgrade, a carried interface held
+(ownership overlap, a definition another installed kit owns or holds, a pinned
+built-in held differently, a disallowed downgrade, a carried interface held
 differently) before installing anything; after installing it refuses
 `cruxible.kit.provider_not_installed` unless every bundled Provider is live. A
 package already installed from the same wheel, lock and dependency closure is
@@ -1129,8 +1138,8 @@ shows the latest available version; `--offline` skips the check, and a kit from 
 directory or layout shows its local source. Installing an update stays explicit:
 `kit add REFERENCE:VERSION`. `remove` retires what a kit owns (never what it only
 carries, and never a bundled provider, which stays installed); a path edited
-since install, or the dependency closure while live Claims depend on those
-definitions, blocks it. Removing a kit that is not installed
+since install blocks it, and so does any live Claim or definition that still
+depends on what it would retire (`Refused: cruxible.change_set.incomplete_closure`). Removing a kit that is not installed
 refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
 MCP: `cruxible_kit_build` (`providers` names packages staged with
@@ -1146,7 +1155,8 @@ SDK: `read_kit_directory`, `write_kit_directory` and `stage_kit_providers` in
 ## document
 
 ~~~text
-cruxible document propose --envelope FILE --name NAME [--dry-run|--commit] [--at OID]
+cruxible document propose --envelope FILE|- --name NAME [--dry-run|--commit] [--at OID] [--json]
+cruxible document propose --example document
 ~~~
 
 `document propose` is the only Document subcommand; Documents are read through
@@ -1177,10 +1187,10 @@ section nothing answers "what touches this package" from the object side.
 
 ~~~text
 cruxible claim-type propose --template
-cruxible claim-type propose --input FILE --name NAME [--dry-run|--commit] [--at OID]
-cruxible claim-type migrate REQUEST_FILE
+cruxible claim-type propose --input FILE|- --name NAME [--dry-run|--commit] [--at OID] [--json]
+cruxible claim-type migrate REQUEST_FILE|- [--json]
 cruxible claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate]
-  [--dry-run|--commit] [--at OID]
+  [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 Read the accepted ClaimTypes with `cruxible orient --section
@@ -1197,11 +1207,11 @@ evidence captured under every accepted version of those contracts, so improving
 a contract through a compatible successor needs no ClaimType change. Replace
 `anticipated_source_ids` with the logical source used by `authoring bind`;
 the source-intent lint then names the deterministic foreign-source
-CaptureContract to place in the rule. Flow-A binding carries that exact
-contract into the governed Claim candidate, so accepting the bound Claim accepts
-the contract and gives the rule a shipped evidence producer. The dormant
-direct-self-asserted constant has no production producer or acceptance surface
-and is not a template prerequisite. The input command lowers the tagless form
+CaptureContract to place in the rule. An anchored binding (`authoring bind`,
+or `--evidence-file` on a write) carries that exact contract into the governed
+Claim candidate, so accepting the bound Claim accepts the contract and gives the
+rule an evidence producer. The writer's own words are admitted by naming
+`CaptureContract:playbill.coordinator-self-source-v1`. The input command lowers the tagless form
 and returns nonblocking policy/source lint beside the proposal. The optional,
 sorted `anticipated_source_ids` input supplies
 source-specific repair suggestions without entering the governed ClaimType.
@@ -1217,7 +1227,7 @@ the `claim_type_succession` change-set member under `cruxible authoring`, which
 lands the succession in the same generation as the Claims that speak the new
 vocabulary and adds one disposition the operator form has no use for --
 `re_author`, whose successor is a sibling Claim member of the same set. Both
-roads build their candidate with the same function, so neither can drift from
+paths build their candidate with the same function, so neither can drift from
 the other's law.
 
 Every ClaimType authoring path writes ClaimType v7 with identity evidence rules:
@@ -1270,8 +1280,8 @@ version; the refusal names them.
 ## claim
 
 ~~~text
-cruxible claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
-  [--valid-until TS]
+cruxible claim attest CLAIM_ID --support|--contradict|--unsure [--note TEXT]
+  [--valid-until TS] [--json]
 cruxible claim recover-attestation
 ~~~
 
@@ -1289,8 +1299,7 @@ source handles it was computed from, `--detail history` its revisions, and
 under `artifacts.claims`.
 
 Claims are written through `cruxible set`, `add`, `retire` and `write`, or authored
-through `cruxible authoring submit`/`compile`; the retired direct v1 proposal
-commands are not a second writer. `cruxible retire` retires a Claim with its
+through `cruxible authoring submit`/`compile`. `cruxible retire` retires a Claim with its
 complete dependent Claim closure in one change set. When a Claim shares anything
 with a retired Claim, `get CLM-... --detail why` also carries a
 `retirement_context` section. It is review context, not queue work, so `next` does not
@@ -1317,20 +1326,21 @@ event forward and refuses rather than choosing between ambiguous histories.
 ## authoring
 
 ~~~text
-cruxible authoring submit PAYLOAD [--dry-run] [--and-activate]
-cruxible authoring submit --intent-id INTENT_ID [PAYLOAD] [--and-activate]
+cruxible authoring submit PAYLOAD|- [--dry-run] [--and-activate] [--brief] [--json]
+cruxible authoring submit --intent-id INTENT_ID [PAYLOAD|-] [--dry-run] [--and-activate]
+  [--brief] [--json]
 cruxible authoring example [NAME]
 cruxible authoring example claim-cite-supporting-evidence
   --attestation-claim-id CLAIM_ID --capture-digest DIGEST
-cruxible authoring compile PAYLOAD [--intent-id INTENT_ID]
+cruxible authoring compile PAYLOAD|- [--intent-id INTENT_ID] [--json]
 cruxible authoring bind --file PATH --anchor TEXT [--occurrence N]
   [--window-lines N] [--workspace-root DIR]
-  --payload-file CLAIM_STUB
-cruxible authoring preflight INTENT_ID
-cruxible authoring rebase INTENT_ID
-cruxible authoring status INTENT_ID
-cruxible authoring get INTENT_ID
-cruxible authoring list
+  --payload-file CLAIM_STUB|- [--json]
+cruxible authoring preflight INTENT_ID [--brief] [--json]
+cruxible authoring rebase INTENT_ID [--json]
+cruxible authoring status INTENT_ID [--json]
+cruxible authoring get INTENT_ID [--json]
+cruxible authoring list [--json]
 ~~~
 
 PAYLOAD is a tagless authoring input file, or `-` for stdin. `authoring submit
@@ -1352,7 +1362,7 @@ entry (`name` and `locator`) is enough.
 
 A Claim input names the Claim it revises with `revises`, a Claim ID; omit it
 to state a new Claim. `authoring example claim-revision` prints one. The three
-attestation-door examples (`claim-cite-supporting-evidence`,
+attestation examples (`claim-cite-supporting-evidence`,
 `claim-adjudicate-contradicting-evidence`, `claim-adjudicate-unreviewed-evidence`)
 revise the Claim named by `--attestation-claim-id` to cite the Capture named by
 `--capture-digest`, and require both.
@@ -1376,9 +1386,10 @@ the detector stays silent (`consumption_observation_gap`) until a receipt is
 written, then counts zero use only from that point.
 
 One authoring intent is one changeset. The tagless `change_set` input carries
-any mix of members -- `claim`, `claim_type`, `claim_retirement`, `subject`,
-`query_definition`, `procedure`, `procedure_mandate`, `acquisition_policy`,
-`line` -- and the whole intent
+any mix of members -- `claim`, `claim_type`, `claim_type_succession`,
+`claim_retirement`, `subject`, `query_definition`, `procedure`, `blueprint`,
+`blueprint_instance`, `procedure_mandate`, `acquisition_policy`, `line`,
+`trigger` -- and the whole intent
 lowers once, proposes once and admits or refuses together, typed to the member
 index that offends. `approval_policy` and `procedure_runtime_policy` are the
 two exceptions: the member union parses either, but a change set carrying one
@@ -1408,7 +1419,7 @@ ordinary case of a statement that stood under a shape a later ruling replaced)
 or `re_author` (a sibling Claim member of the same set, naming that
 Claim again under the successor, named by `successor_claim_id`). The standalone
 route's fourth, deprecated word `invalidation` parses here and refuses typed,
-naming `cruxible claim-type migrate` as the road that still tolerates
+naming `cruxible claim-type migrate` as the command that still tolerates
 it. A successor that changes `object_kind` refuses `successor`
 for any live Claim dependent. `cruxible claim-type migrate` is the
 operator form of the same law and builds its candidate with the same code.
@@ -1467,8 +1478,8 @@ all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
 `subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
 `--follow field:alias` hops forward along one of KIND's Subject-valued predicates;
 `--follow-in field:alias` hops backwards along another kind's predicate whose values
-name KIND's Subjects (for example `query dev.roadmap_item --follow-in
-dev.batch.delivers:batch` lists which batches deliver each item). Both repeat and
+name KIND's Subjects (for example `query project.task --follow-in
+project.release.includes:release` lists which releases include each task). Both repeat and
 mix, in command-line order. A reverse field is the predicate's full name, or its
 name after the pointing kind's prefix;
 `orient --kind KIND` lists the predicates that point at KIND as `incoming`. Either
@@ -1489,10 +1500,10 @@ and `--receipt full` adds its replay receipt (`receipt.replay`: the Claims each
 row read, traversal paths, bound parameters, verdict, and the
 `playbill-query-execution-receipt-v1` whose digests replay it).
 
-Author named queries through `cruxible authoring compile`, then submit the intent
-and review/accept its proposal.
-The SDK equivalent is `cx.query_definition(definition=QueryDefinitionInput(...)).prepare()`, followed
-by the normal intent submission and approval flow. `cx.changes().query_definition(...)`
+Author named queries with a `query_definition` input through `cruxible authoring
+submit` (or `compile` for a staged intent), then review and accept its proposal.
+The SDK equivalent is `cx.query_definition(definition=QueryDefinitionInput(...)).submit()`,
+followed by the normal approval flow. `cx.changes().query_definition(...)`
 includes a query in a changeset. Omitted ClaimType pins resolve against the intent
 base or sibling definitions; explicit pins remain assertions. SDK `vocabulary=`
 accepts World ClaimType references and retains their stale-reference checks.
@@ -1530,7 +1541,8 @@ separate from freeform prose; sync does not render Markdown or HTML.
 ## procedure
 
 ~~~text
-cruxible procedure run NAME INPUT_FILE --evaluation-time TS
+cruxible procedure run NAME INPUT_FILE|- [--evaluation-time TS] [--at FILE|-]
+  [--resolution-contract FILE|-] [--trigger-event FILE|-] [--json]
 cruxible procedure measure NAME [--run-id RUN_ID] [--measurement NAME]...
   [--evaluation-time TS] [--at FILE] [--json]
 cruxible procedure readings NAME [--run-id RUN_ID] [--measurement NAME]... [--subject-grain G]
@@ -1578,6 +1590,11 @@ authorized workspace root, over the CaptureContract's selection budget, or with
 no daemon-local reader refuses `workspace_file_read_refused` and names its path
 class.
 
+A Source request's values may reference the run's input or an earlier step's
+output, but only as a whole value: `{"url": "$input.url"}` resolves, while a
+reference inside a longer string (`"https://example.org/$input.id"`) is passed
+through literally, so pass the full value in the run input.
+
 Source acquisition currently serves independent coherence. Bounded-window and
 declared-snapshot-group policies refuse before provider invocation. Actual
 captures are checked against the pinned replayability and maximum-age rules
@@ -1589,10 +1606,11 @@ bytes became; `--json` carries both in `source_observations`. A direct Source
 run is identified by its evaluation instant, so re-running at the same instant
 replays the retained observation rather than reading the source again.
 
-`readiness` names open slots or unsupported nodes before execution. `bind`
-proposes a same-identity Procedure successor with exact accepted pins; it never
-mutates the accepted Procedure in place. Runs append replay-verifiable journal
-records and `status` reconstructs the one-read run state from those records.
+`get Procedure:NAME` names the unsupported nodes behind its `runnable` answer
+before anything runs. Runs append replay-verifiable journal records, and
+`cruxible get ProcedureRun:RUN-…` reads a run's state, outcomes and terminal
+detail from those records. `--at FILE` binds the run to an accepted coordinate:
+it runs only while the Procedure is still current there.
 
 ### Measurements and readings
 
@@ -1603,12 +1621,12 @@ is that generation's signed acceptance instant, `check_at` and `expires_at`
 are that instant plus the declaration's `check_after` and `expires_after`.
 Nothing restarts the window per run or per poll.
 
-`measure` is the due/pending/resume door. It evaluates at an explicit
+`measure` evaluates due measurements, and resumes pending ones. It evaluates at an explicit
 OBSERVATION instant (`--evaluation-time`, default now) and coordinate (`--at`,
 default the current head), which are distinct from the activation coordinate
 and from a run's admission coordinate. Before `check_at` a measurement reports
 `pending`; at or after `expires_at` with no standing answer it reports
-`expired`; neither writes anything. Inside the window the door gathers real
+`expired`; neither writes anything. Inside the window `measure` gathers real
 evidence -- the exact accepted QueryDefinition run with the declared
 parameters and budgets and its receipt retained, the statement's verdict at
 that instant with the observation retained as its own journal record (which
@@ -1744,7 +1762,8 @@ token. Runs use the enabling caller's credential, which the daemon rechecks
 before every admission: a revoked credential, one moved to another instance, or
 one no longer permitted to dispatch stops the enablement with that reason
 (`credential_revoked`, `credential_scope_changed`, `permission_insufficient`,
-`credential_unbound`). The accepted standing of the principal the enablement
+`credential_unbound`); an enablement made with auth off stops
+(`authentication_changed`) when the daemon later requires auth. The accepted standing of the principal the enablement
 acts as is rechecked too: a credential's bound principal, or on an auth-off
 daemon the principal the enabling request claimed, that is no longer active
 stops it (`principal_inactive`) and revokes that principal's credentials; an
@@ -1910,7 +1929,7 @@ name one in its own closure, produced or admitted -- so a computed interpretatio
 ClaimType's evidence admission policy, never an attested observation and never
 a self-asserted one. The items are lowered through the same change-set
 authoring every surface uses, the exact live ProcedureMandate is evaluated
-against the paths lowering actually changed, and the proposal door is called
+against the paths lowering actually changed, and the proposal is submitted
 once. The run reports, per terminal, the proposal id, the exact candidate
 digest, the operation key, the mandate bound, and the Claim path each item
 lowered into; `--json` carries them in `terminal_egress`. Producing the
@@ -1920,8 +1939,8 @@ it in the ledger, and activate it with the existing proposal verbs.
 The proposal ref is keyed on the admitted operation. A retry of the same
 operation recovers the same proposal and publishes the same receipt; other
 member bytes under the same key refuse `effectful_operation_payload_mismatch`.
-A run that dies between preparing its egress and receiving the door's receipt
-is resolved at daemon startup through the same door and finalized as
+A run that dies between preparing its egress and receiving the proposal's
+receipt is resolved at daemon startup through the same path and finalized as
 `terminal_egress_recovered` with the receipt on its run state. An item that is
 not a Claim proposal item refuses `proposal_item_invalid`; one whose closure
 reached no Capture, or more than one, refuses `proposal_item_evidence_missing`
@@ -2029,8 +2048,8 @@ evidence. Terminal-backed settlement additionally requires one delivered
 `settled`; one that fell back to a proposal does not qualify. It records
 the activation and resolution in operational exhaust; it does not create or
 mutate Claims. A failed attempt or an unevaluable
-observation does not settle the hypothesis as false. Effectful terminal nodes
-remain disabled in the public Procedure runner. The `prediction_settleable` row
+observation does not settle the hypothesis as false. A direct `procedure run`
+never runs effectful terminals; they run only on a Line. The `prediction_settleable` row
 in `cruxible next` renders `cruxible prediction settle RSC-...`; add
 `--observation CLAIM_ID`.
 
@@ -2053,7 +2072,7 @@ cruxible block detach PATH... [--workspace-root DIR] [--dry-run|--commit] [--at 
 cruxible block depublish SOURCE_ID BLOCK_ID [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
-Blocks are authored and stamped; nothing regenerates them. The workflow: write
+Blocks are stamped, and nothing regenerates them on its own. The workflow: write
 the markers and the prose (or `repin --render` for a rendered table or list),
 `repin` to stamp, let `next` or `block sync` report a block stale or dirty,
 re-check it and repin; `block detach` and `block depublish` when its backings
@@ -2063,7 +2082,7 @@ backings, writes the marker and then declares the block to the instance.
 table of the result Subjects and their projected fields, or a bulleted list of
 Subjects when the query projects none, and `_No rows._` when it returns none.
 
-### The two roads a governed passage takes
+### Two kinds of governed passage
 
 A page is a **source**. Its bytes are captured, its capture is evidence, and a
 passage of it can be cited like any other evidence. What a page holds is one of
@@ -2073,15 +2092,17 @@ A **source block** is ordinary prose the author wrote, made governed by a Claim
 that cites its span. There is no marker: write the passage, capture the page
 through `cruxible sources compile` / `propose`, and author the Claim citing the
 span it states -- `copied_from` when the passage states the value verbatim,
-`supported_by` when it rests on the passage as evidence. This is the road for
+`supported_by` when it rests on the passage as evidence. This is the kind for
 "the page says this, and here is the Claim that stands behind it".
 
-A **projection block** is agent-authored prose HELD TO an explicit list of
-accepted Claims and artifacts, marked in the file by a marker pair and declared
-with `block repin`. **Nothing renders it.** The body is git-tracked text the
-agent writes; what the marker commits to is which accepted state the passage is
-accountable for, and `cruxible next` and `block sync` prove that state has not
-moved under it. This is the road for "this table reflects these Claims".
+A **projection block** is a passage HELD TO an explicit list of accepted
+Claims, artifacts and queries, marked in the file by a marker pair and declared
+with `block repin`. The body is git-tracked text: prose an author writes, or a
+table or list `repin --render` writes from the block's one named query. What the
+marker commits to is which accepted state the passage is accountable for, and
+`cruxible next` and `block sync` prove that state has not moved under it. This
+is the kind for "this table reflects these Claims". Authored and rendered
+blocks are governed the same way; nothing rewrites either on its own.
 
 Evidence never comes from a projection window. A citation of any role and any
 origin whose span lies inside a stamped block refuses --
@@ -2127,11 +2148,9 @@ the author's declaration after reviewing the prose, not proof that arbitrary
 prose follows logically from its backings. Ordinary repin preserves the body;
 the SDK can install explicitly supplied reviewed body bytes.
 
-There is no SDK option that publishes a Claim as its own page text. `publish_to`
-was that road and it is gone: it minted a block whose one backing was the
-publishing Claim itself, which is a source block projected as its own
-projection -- the overlap the two-block-kinds law refuses; a Claim payload has
-no field for it.
+No authoring option publishes a Claim as its own page text: a block whose one
+backing was the Claim it states would be a source block projected as its own
+projection, the overlap the two kinds never allow.
 
 On MCP the same adapter runs in the MCP server process:
 `cruxible_block_repin` takes the block and its page (`file`,
@@ -2200,11 +2219,10 @@ since that preview.
 ### Depublishing
 
 `block depublish SOURCE_ID BLOCK_ID` releases the registration that demands a
-block's frame, whichever road declared it. Every projection block is registered
-with the instance -- a `block repin` records a declaration, and an instance that
-published under the retired road folds its bound publications -- and `cruxible
-next` reports a registered block whose marker is no longer in the file as
-blocking, correctly, until the block is meant to be gone. Depublishing is what
+block's frame. Every block `block repin` declared is registered with the
+instance, and `cruxible next` reports a registered block whose marker is no
+longer in the file as blocking, correctly, until the block is meant to be
+gone. Depublishing is what
 says so, and the blocking row names this verb.
 
 The registration is protocol state and says nothing about what a block CONTAINS:
@@ -2212,11 +2230,10 @@ it records that this instance stands behind this marker. It is also the identity
 `workspace detach` refuses on, so a worktree cannot move out from under markers
 a host still owns.
 
-It edits no page and retires no Claim. Strip the markers (`block detach`,
-or by hand), retire the backing Claim through the ordinary retirement road if
-the statement is also being withdrawn, and depublish when the block itself is
-not coming back. A registration whose backing Claim is already retired no longer
-demands its frame, so a retirement alone clears the row without this verb.
+It edits no page and retires no Claim. Retire the backing Claim with an
+ordinary retirement if the statement is also being withdrawn, depublish when
+the block itself is not coming back, and strip the markers (`block detach`, or
+by hand).
 
 **Depublishing is one of two steps: the marker still has to leave the page.**
 The verb touches the registration and nothing in the workspace. There is no
@@ -2231,7 +2248,7 @@ or by hand and it clears.
 ## next
 
 ~~~text
-cruxible next [--evaluation-time TS] [--access-profile FILE]
+cruxible next [--evaluation-time TS] [--access-profile FILE|-]
   [--expiring-within P7D] [--workspace-root DIR] [--delta DIGEST]
   [--limit N] [--cursor CURSOR] [--brief | --json]
 ~~~
@@ -2258,7 +2275,9 @@ carries their exact hand-edit entry shapes.
 The result's `status` reports the environment the queue was read in, beside the
 work rather than as rows: `instance` (active or decommissioned; decommissioned
 sets `blocking`), `floor`, `ledger_mirror`, `provider_lane`,
-`procedure_catalog`, `compiler`, and `line_dispatch`. Each facet carries a
+`procedure_catalog`, `compiler`, `line_dispatch`, `consumers` (the daemon's
+workers and enabled Lines) and `triggers` (whether a live Trigger schedules
+every internal action). Each facet carries a
 `state`, and a `repair` while it needs attention. The CLI prints facets that
 need attention before the rows.
 
@@ -2422,10 +2441,11 @@ cruxible curation accept-fixed ITEM_ID
   [--attribution-ref REF]... [--dry-run|--commit] [--at OID] [--json]
 cruxible curation suppress ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT
-  --scope item|lineage [--until-generation N] [--attribution-ref REF]... [--json]
+  --scope item|lineage [--until-generation N] [--attribution-ref REF]...
+  [--dry-run|--commit] [--at OID] [--json]
 cruxible curation unsuppress ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT [--suppression EVENT_ID]
-  [--attribution-ref REF]... [--json]
+  [--attribution-ref REF]... [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 Detection runs on its own: the `curation.detect` internal action, fired by the
@@ -2558,9 +2578,9 @@ its verb (`set`, `add`, `retire`; MCP `cruxible_set` and `cruxible_retire`; SDK
 `.set`, `.add` and `.retire`, then `.write()`): atomic, one proposal under a
 review policy, one generation, one `because`, one preview. Each is applied
 under the approval policy, accepting in the same call when it and your tier
-allow. Definitions go through authoring instead (`cruxible authoring compile`
-and `submit`; SDK `cx.changes(rationale=...)`): an intent you compile and
-preflight, a proposal, then review and activation. ClaimTypes keep their own
+allow. Definitions go through authoring instead (`cruxible authoring submit`,
+or `compile` for a staged intent; SDK `cx.changes(rationale=...)`): every check
+up front, a proposal, then review and activation. ClaimTypes keep their own
 `claim-type` group, because changing vocabulary disposes the Claims that
 depend on it.
 
@@ -2568,15 +2588,21 @@ depend on it.
 
 ~~~text
 cruxible get REF [--detail summary|evidence|why|history|proof|body]
-  [--range START:END] [--limit N] [--cursor C] [--at GIT_OID]
+  [--range START:END] [--output FILE] [--limit N] [--cursor C] [--at GIT_OID]
   [--evaluation-time TS] [--json]
 ~~~
 
 Reads one thing by any reference form you have seen: `CLM-...` (or a unique
 prefix of at least four hex digits), `kind/id` or `Subject:kind/id`, a
 predicate (full, or a leaf unique across kinds) or `ClaimType:<predicate>`,
-`Document:<name>`, `Procedure:<name>`, `query:<name>`, `CaptureContract:<name>`,
-an artifact path, or a proposal id or prefix. Operational things resolve too:
+`Document:<name>`, `Procedure:<name>`, `Blueprint:<name>` (each open slot
+with its interface and the installed providers that fit it), `query:<name>`,
+`CaptureContract:<name>`, `Trigger:<name>`, `Principal:<id>`,
+`ProviderInterface:<name>`, `SourceAcquisitionPolicy:<name>`,
+`ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, an artifact path,
+or a proposal id or prefix (a proposal's status, and for a refusal its code,
+message and repair). Operational things resolve too: `ProcedureRun:RUN-…` (or
+the bare run id) answers a run's state, outcomes and terminal detail;
 `Line:<name>` (or the Line identity digest `next` names a due Line by, in full
 or as a 12+ hex prefix) answers the Line's Procedure, its schedule kinds, each
 Trigger aimed at it by name and version (with the `get Trigger:<name>` that
@@ -2598,7 +2624,7 @@ live). `orient` marks its runs, lines and predictions sections, and its map's
 enablement attention and run counts, the same way. `--detail` picks the depth:
 `summary` (default) prints a values-first card -- a Subject's Claims as an
 aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
-`contradicted`, `unsure_hold`) -- `evidence` lists a Claim's captures by
+`contradicted`, `uncovered`, `unsure_hold`) -- `evidence` lists a Claim's captures by
 CaptureContract name and version, its attestations and rationale, `why` and
 `proof` print today's explanation and full envelope, `history` lists revisions
 newest first with values and who changed them (`--limit`, default 20, per page;
@@ -2712,7 +2738,7 @@ orientation has moved.
 
 ~~~text
 cruxible since GENERATION [--max-rows N] [--max-bytes N]
-  [--access-profile FILE] [--cursor FILE] [--json]
+  [--access-profile FILE|-] [--cursor FILE|-] [--json]
 ~~~
 
 Returns signed accepted ChangeSet members in `(GENERATION, pinned head]` order.
@@ -2745,12 +2771,12 @@ verdicts and act.
 1. **Grep.** `grep -rn "some text" .cruxible/floor/current`.
 2. **Read the header.** Every `current/` file starts with one line naming its
    ref and the generation it last changed, for example
-   `# dev.roadmap_item/surface-pass  kind=dev.roadmap_item  changed gen 412`.
-3. **Get the ref for live verdicts.** `cruxible get dev.roadmap_item/surface-pass`.
+   `# project.task/ship-v1  kind=project.task  changed gen 412`.
+3. **Get the ref for live verdicts.** `cruxible get project.task/ship-v1`.
    The floor shows accepted values and no verdicts; `orient` says how many
    generations behind the head the floor is.
-4. **Write with the verbs.** `cruxible set dev.roadmap_item/surface-pass
-   adoption_state adopted --because "…"`.
+4. **Write with the verbs.** `cruxible set project.task/ship-v1
+   status done --because "…"`.
 
 An agent without a shell searches the values with
 `cruxible query --contains "some text"` (`cruxible_query`
@@ -2780,10 +2806,10 @@ A `current/` file is a strict subset of YAML, so it both greps line by line and
 parses with any YAML reader:
 
 ~~~yaml
-# project.work_item/wi-1  kind=project.work_item  changed gen 5
+# project.work_item/item-1  kind=project.work_item  changed gen 5
 governs:
-  - project.work_item/wi-2  # CLM-985cd53c0dc20d4eb15481d8980bf35c
-  - project.work_item/wi-3  # CLM-b5d5f511045eb94131d21f2a59595484
+  - project.work_item/item-2  # CLM-985cd53c0dc20d4eb15481d8980bf35c
+  - project.work_item/item-3  # CLM-b5d5f511045eb94131d21f2a59595484
 measured: 3  # CLM-714a14a1891fef7eb464b69de3a4e2c6
 ruling: |  # CLM-ca6f1cf4aa8db970935fe9792c07b509
   Rulings are text.
@@ -2791,7 +2817,7 @@ ruling: |  # CLM-ca6f1cf4aa8db970935fe9792c07b509
 status: ready  # CLM-ee98966ed497f1b629f44bf4eb686cb5
 title: "Tidy the CLI: part #1"  # CLM-77795e37bc864490c35f2c603f2a12d6
 incoming:
-  - governs <- project.work_item/wi-4  # CLM-0f3a…
+  - governs <- project.work_item/item-4  # CLM-0f3a…
 ~~~
 
 - Fields use the same short names `orient` advertises and `query` resolves.
@@ -2829,7 +2855,7 @@ whole.
 
 The daemon keeps a rebuildable floor index on each instance and advances it by
 the ledger diff. `floor export` and every refresh send the generation and
-renderer of the floor the workspace holds to `POST /floor/delta`,
+renderer of the floor the workspace holds to `POST /{instance}/floor/delta`,
 which answers with a delta (or the whole floor, for a missing, newer or
 foreign base). One shared apply verifies the base and head manifest digests
 and the bytes actually installed before writing anything (a hand-edited,
@@ -2855,15 +2881,16 @@ observation no longer reports the floor as `missing` after a successful export:
   "tag": "playbill-coverage-workspace-config-v2",
   "floor_output": {
     "tag": "playbill-floor-output-v1",
-    "format": "playbill-floor-export-v5",
+    "format": "playbill-floor-export-v6",
     "include": ["discovery"]
   }
 }
 ~~~
 
-`include` is present only for a floor exported `--with-discovery`. A profile an
-earlier build recorded at an older format is refused until
-`floor export --force` rewrites it. `manifest.json` inventories and digests the
+`include` is present only for a floor exported `--with-discovery`. A profile
+recorded at an older floor format (v2 or v5) is still read and refreshes to the
+current format; any other format or tag is refused until `floor export --force`
+rewrites it. `manifest.json` inventories and digests the
 exact rendered bytes, so repeated exports at one accepted coordinate remain
 byte-identical.
 
@@ -2871,9 +2898,9 @@ byte-identical.
 
 ~~~text
 cruxible coverage resolve
-  [--bind PATH=PLANE:IDENTITY]... [--bindings FILE] [--root DIR]
+  [--bind PATH=PLANE:IDENTITY]... [--bindings FILE|-] [--root DIR]
   [--file PATH]... [--range PATH:START-END]...
-  [--grep-results FILE] [--all] [--view cards|manifest] [--brief] [--json]
+  [--grep-results FILE|-] [--all] [--view cards|manifest] [--brief] [--json]
 ~~~
 
 resolve answers what the working files you just read or changed have to do with
@@ -2908,22 +2935,21 @@ manifest cache, and appends a consumption receipt when the daemon runs with
 `CRUXIBLE_CONSUMPTION_RECEIPTS=on`.
 
 `.cruxible/coverage.json` holds the workspace's instance, transport and floor
-profile only; it carries no path rules (the Claude Code hook that read them is
-gone). A harness that owns its tool executor embeds the vendor-neutral
+profile only; it carries no path rules. A harness that owns its tool executor embeds the vendor-neutral
 middleware in `cruxible_core.coverage.middleware` and passes its own rules.
 
 ## proposal
 
 ~~~text
 cruxible proposal list [--status open|settled|incomplete] [--limit N]
-  [--cursor CURSOR]
-cruxible proposal readmit PROPOSAL_ID
-cruxible proposal withdraw PROPOSAL_ID --reason TEXT
+  [--cursor CURSOR] [--json]
+cruxible proposal readmit PROPOSAL_ID [--dry-run|--commit] [--at OID] [--json]
+cruxible proposal withdraw PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
-  [--workspace-root DIR]
+  [--workspace-root DIR] [--json]
 cruxible proposal approve PROPOSAL_ID
-  --signer-id ID --key FILE [--yes]
-cruxible proposal activate PROPOSAL_ID
+  [--signer-id ID] --key FILE [--yes] [--json]
+cruxible proposal activate PROPOSAL_ID [--brief] [--json]
 cruxible get PROPOSAL_ID [--detail proof]
 ~~~
 
@@ -2960,9 +2986,9 @@ governed rebase and returns a fresh, idempotent proposal without changing the ol
 proposal evidence. It refuses `cruxible.proposal.readmit_already_accepted` when
 the change is in accepted state -- the proposal itself was accepted, or its
 readmission was (`context.accepted_as`) -- and `cruxible.proposal.readmit_not_stale`
-for an open or refused proposal. A stale generated ClaimType dependency-closure migration is not
-byte-rebased because its dependent inventory may have changed; rerun ClaimType
-migration preflight and submit at the current head instead.
+for an open or refused proposal. A stale ClaimType migration is not
+byte-rebased because its dependent inventory may have changed; run
+`cruxible claim-type migrate` again at the current head instead.
 
 `proposal withdraw` is the terminal statement for the opposite case: an open (or
 stale) proposal that will never be activated, because a hard limit refuses its
@@ -3030,9 +3056,10 @@ runs the same diff against `origin/main`; see [ledger](#ledger) for what the mir
 ~~~text
 cruxible principal add PRINCIPAL_ID --key-dir DIR [--signer-key PATH]
   [--mode governed_write] [--kind ordinary] [--name NAME] [--dry-run|--commit] [--at OID] [--json]
-cruxible principal rotate ...
-cruxible principal revoke ...
-cruxible principal recover ...
+cruxible principal rotate PRINCIPAL_ID --key-dir DIR --name NAME [--dry-run|--commit] [--at OID] [--json]
+cruxible principal revoke PRINCIPAL_ID --name NAME [--dry-run|--commit] [--at OID] [--json]
+cruxible principal recover PRINCIPAL_ID --key-dir DIR --name NAME [--dry-run|--commit] [--at OID] [--json]
+cruxible whoami [--json]
 ~~~
 
 The principal registry is read with `cruxible orient --section
@@ -3083,7 +3110,8 @@ cruxible sources check [--catalog FILE] [--local-catalog FILE] [--root DIR]
 cruxible sources compile --output FILE [--catalog FILE] [--local-catalog FILE]
   [--root DIR] [--root-alias NAME=PATH]... [--json]
 cruxible sources propose --source NAME --name NAME [--bundle FILE]
-  [--catalog FILE] [--root DIR] [--dry-run|--commit] [--at OID] [--json]
+  [--catalog FILE] [--local-catalog FILE] [--root DIR] [--root-alias NAME=PATH]...
+  [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 The source catalog (`.cruxible/sources.yaml` or `sources.yaml`, plus an optional
@@ -3112,7 +3140,8 @@ with --help for its exact options.
 
 ## compiler
 
-`cruxible compiler upgrade --to DIGEST --name NAME [--dry-run]` creates an admin-only
+`cruxible compiler upgrade --to DIGEST --name NAME [--dry-run|--commit] [--at OID] [--json]`
+creates an admin-only
 proposal bound to the exact accepted head and target compiler. Review it, sign
 through `cruxible proposal approve`, then use
 `cruxible proposal activate`. Activation validates the full target

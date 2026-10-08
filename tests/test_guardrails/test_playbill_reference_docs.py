@@ -76,10 +76,14 @@ def test_mkdocs_navigation_names_only_live_documents() -> None:
     assert removed_products.isdisjoint(linked)
 
 
-def test_readme_identifies_the_breaking_playbill_development_surface() -> None:
-    text = (ROOT / "README.md").read_text(encoding="utf-8").lower()
-    assert "playbill" in text
-    assert "breaking" in text
-    assert "family 1" in text
-    assert "claims" in text
-    assert "procedures" in text
+def test_readme_introduces_the_served_surface() -> None:
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    for command in ("cruxible init", "cruxible orient", "cruxible server start", "cruxible mcp"):
+        assert command in text
+    for verb in ("`orient`", "`query`", "`get`", "`set`", "`write`", "`authoring`"):
+        assert verb in text
+    lowered = text.lower()
+    for concept in ("claim", "subject", "procedure", "line", "kit", "principal", "credential"):
+        assert concept in lowered
+    assert "playbill" not in lowered
+    assert "<!-- mcp-name: io.github.cruxible-ai/cruxible-core -->" in text

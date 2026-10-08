@@ -8,8 +8,9 @@
   "excludeFolders": [],
   "excludeFiles": [],
   "rules": [
-    "Setup is an operator step on the CLI: cruxible init creates the host and bootstraps its first principal; MCP has no setup tools",
-    "Write Claims and Procedures with cruxible_authoring_compile followed by cruxible_authoring_submit; the returned status names every remaining approval and activation step",
+    "Setup is an operator step on the CLI: cruxible server start, then cruxible init in a Git repository; MCP has no setup tools",
+    "Read with cruxible_orient (the map), cruxible_query (rows of values with flags) and cruxible_get (one thing by reference); grep the floor under .cruxible/floor/current/ to find things by name",
+    "Change values with cruxible_set, cruxible_retire or cruxible_write; author definitions (Subjects, queries, Procedures, Lines, Triggers, policies) with cruxible_authoring_submit; ClaimTypes go through cruxible_claim_type_propose and cruxible_claim_type_migrate",
     "A proposal is not accepted state and an approval is not activation; read accepted coordinates as state and candidate coordinates as provisional",
     "Search for an existing Subject or Claim before minting an adjacent concept",
     "Record contradiction as negative evidence rather than only a new positive inverse",

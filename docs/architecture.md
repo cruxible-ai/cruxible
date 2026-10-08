@@ -62,41 +62,58 @@ challenge. Activation independently re-verifies the candidate and advances by
 compare-and-set, so concurrent settlement cannot silently overwrite a newer
 generation.
 
+## Surfaces
+
+The daemon (`cruxible server start`) is the only process that touches
+accepted state. It serves an HTTP API over a Unix socket or TCP. The CLI, the
+MCP server (`cruxible mcp`) and the Python SDK (`cruxible-client`) are all
+clients of that API; none of them holds state of its own. Work that needs the
+client's files happens on the client and sends the daemon bytes, never paths:
+compiling catalogued sources, quoting a cited passage, stamping projection
+blocks, and signing approvals with a private key.
+
+Background work runs inside the daemon as consumers driven by Triggers:
+delivering the floor to a registered workspace after each accepted generation,
+detecting curation patterns, and running enabled Lines.
+
 ## Keys and credentials
 
-Runtime bearer credentials authenticate API transport and impose a capability
-ceiling. Cruxible principals represent governance authority. Their Ed25519
+Runtime bearer credentials authenticate transport and cap what a caller may do
+with a tier. Cruxible principals represent governance authority. Their Ed25519
 private keys stay with the client; the ledger stores public keys and key
 history. A separate daemon key signs ledger mechanics. Recovery authority can
-repair principal state but cannot approve ordinary content.
+repair principal state but cannot approve ordinary content. See [Principals and
+credentials](concepts.md#principals-and-credentials).
 
-## Documents, Claims, and Procedures
+## Semantic families
 
-Documents are implemented first. Their bodies remain outside the ledger while a
-small canonical envelope is governed.
+The ledger holds typed artifacts, each checked by its own law at acceptance:
 
-Claims and Procedures are the target semantic families:
-
-- a Claim governs a typed proposition about one or more subjects;
-- a ClaimAttestationV1 records support, contradiction, or uncertainty without
-  silently changing the Claim;
-- a Procedure governs a deterministic, bounded way of acting, including its
-  contracts, pins, and track record.
-
-A deterministic compiler may extract one or many candidate Claims from a
-Document. Only selected candidates need be proposed. Whole-document governance
-is therefore a useful bootstrap and source boundary, not the final ontology.
+- Subjects, ClaimTypes and Claims: the typed values, their vocabulary, and
+  attestations that support, contradict or hold them unsure without silently
+  changing them;
+- Documents: whole files governed by exact bytes, with bodies in
+  content-addressed storage and a small envelope in the ledger;
+- CaptureContracts and Captures: what retained evidence must look like, and
+  the evidence itself;
+- QueryDefinitions: named queries;
+- Procedures and Blueprints: deterministic graphs with pinned providers, and
+  their skeletons with open slots; ProviderInterfaces and Providers;
+- Lines, Triggers and ProcedureMandates: when Procedures run and what they may
+  propose or settle;
+- ResolutionContracts (predictions), the approval policy, the Procedure runtime
+  policy, source acquisition policies, and principals.
 
 ## Hot and cold paths
 
-High-rate systems should append exhaust to a fast event stream. A slower
-assembler selects, compiles, and proposes governed objects to the ledger. The
-event stream records what happened; the ledger records what has been accepted.
-Neither is a shadow copy of the other.
+High-rate activity (Procedure runs, attempts, intermediate results) is
+retained as operational exhaust, outside the ledger. Procedures and Lines
+select from it and propose governed objects to the ledger. The exhaust records
+what happened; the ledger records what has been accepted. Neither is a shadow
+copy of the other.
 
-Scaling work is demand-gated. Initial cloud witnesses can be ordinary VMs with
-Git and SQLite. Query accelerators or graph databases may later project accepted
-state, but they remain disposable indexes.
+Indexes, search engines or graph databases that accelerate reads are
+projections of accepted state and can be rebuilt from it.
 
 ## Repository ownership
 

@@ -7,216 +7,120 @@
   </a>
 </p>
 
-# Cruxible development core
+# Cruxible
 
-> This branch is an intentionally breaking development line. The former
-> config-authority, mutable graph product, bundled kits, snapshots, and state
-> distribution interfaces have been removed. Do not treat it as a compatible
-> release of the old Cruxible line.
+Cruxible is hard state for AI agents: typed, governed, durable state that
+humans and agents share. Every value is a Claim about a Subject, under a
+ClaimType that says what the value may be and what evidence backs it. Every
+change is proposed, checked deterministically, accepted under the instance's
+approval policy, and recorded in a signed Git ledger, so every answer can say
+where it came from and at which accepted coordinate.
 
-Cruxible is a governed state substrate for humans and AI agents. It makes
-accepted state behave like reviewed code: proposals are deterministic,
-approvals bind to exact bytes, activation is compare-and-set, and every accepted
-generation has a reproducible coordinate.
-
-The strategic unit is not a database row or an entire prose document. It is a
-semantic subject—ultimately a Claim or a Procedure—whose provenance, governance,
-attestations, and history can be explained at an exact accepted coordinate.
-Documents are the first implemented family and the source container from which
-more granular subjects will be compiled.
-
-No LLM runs inside the engine. Models and humans propose, review, and query;
+No LLM runs inside Cruxible. Agents and people propose, review and query;
 Cruxible validates and settles deterministically.
 
-## What exists today
+## What it does
 
-Family 1 is implemented end to end for governed Documents:
+- **Reads in three verbs.** `orient` maps an instance (its Subject kinds,
+  fields, artifacts, and what needs attention), `query` answers a question as
+  rows of values with verdict flags, and `get` reads one thing by any
+  reference, values first. The floor, a directory of plain files the daemon
+  keeps current, makes the same state greppable.
+- **Writes in two lanes.** Values change with `set`, `add`, `retire` and
+  `write` (several changes as one atomic change set), accepted at once when
+  the approval policy allows. Definitions (Subjects, named queries,
+  Procedures, Lines, Triggers, policies) go through `authoring`, which reports
+  every refusal before anything is proposed. ClaimTypes keep their own
+  `claim-type` group, because changing vocabulary decides what happens to
+  every Claim that uses it.
+- **Evidence you can check.** A Claim can cite a passage of a catalogued
+  workspace file; when the file changes, `next` reports the citation as
+  drifted. A whole file can also be governed as a Document.
+- **Governed review.** Proposals are frozen candidates. Approvals are Ed25519
+  signatures made with client-held keys over the exact candidate. Activation
+  advances accepted state by compare-and-set.
+- **Procedures and Lines.** A Procedure is a governed, deterministic graph
+  that reads state and calls pinned providers. Run as a Line, it can also
+  retain evidence and propose or settle changes; a Line runs on its Triggers
+  once a principal enables it, and on demand with `line run`.
+- **Kits.** Definitions travel between instances as kit releases, installed
+  and upgraded as one reviewed change set.
 
-- exact body bytes live in content-addressed storage (CAS);
-- compact envelopes live in a daemon-owned Git ledger;
-- proposals freeze candidates before review;
-- approvals are Ed25519 signatures created with client-held private keys;
-- activation verifies approvals and advances accepted state atomically;
-- SQLite projections are rebuildable indexes, not ground truth;
-- history and explanation bind results to Git OID, semantic root, generation
-  root, and compiler digest;
-- local source catalogs compile declared files into path-free exact-byte bundles.
+## Install
 
-Claims and native Procedures are the next implementation program. The
-old Procedure, workflow, query, graph, receipt, and SQLite modules remain only as
-an explicit donor island while their deterministic behavior and goldens are
-transplanted. They are not served by the public Cruxible API.
-
-See [Architecture](docs/architecture.md).
-
-## The lifecycle
-
-~~~text
-local bytes ──store──> inert CAS object
-                         │
-semantic envelope ──propose──> frozen candidate
-                                │
-                         inspect / review
-                                │
-                    client-held key signs challenge
-                                │
-                           verify approval
-                                │
-                          activate by CAS
-                                │
-                    accepted Git generation
-                                │
-               projection / query / explain / history
-~~~
-
-CAS presence is not acceptance. A proposal is not accepted state. A signature
-does not itself activate anything. These distinctions keep storage,
-intent, judgment, and settlement from collapsing into a second source of truth.
-
-## Authority model
-
-The Git ledger is accepted authority. CAS stores referenced bytes. SQLite and
-rendered files are disposable projections that can be rebuilt from the ledger
-and pinned compiler. External systems remain authoritative for their own data:
-Cruxible records governed semantic references, observations, proposals, and
-attestations without copying entire tables or pretending to replace the source.
-
-Every accepted read names a coordinate:
-
-- Git OID: exact accepted ledger tree;
-- semantic root: digest of governed meaning;
-- generation root: digest of the accepted generation;
-- compiler digest: exact deterministic interpretation.
-
-A hot event stream can later capture high-rate exhaust while the ledger
-settles governed objects at a slower rate. That event stream is evidence and
-input, not a competing accepted-state authority.
-
-## Public surface
-
-The currently registered CLI commands are deliberately small:
-
-~~~text
-cruxible context
-cruxible credential
-cruxible
-cruxible server
-~~~
-
-Cruxible exposes host allocation, initialization, body storage, Document
-proposal/review/approval/activation, principal governance, source compilation,
-accepted reads, history, and explanation. HTTP, MCP, CLI, and the Python client
-delegate to the same Cruxible service core.
-
-The old entity/relationship mutation, config reload, kit install, workflow,
-snapshot, overlay, feedback, decision, and state-distribution commands are
-absent by design.
-
-## Developer quickstart
-
-Requirements: Python 3.11+, Git, and uv.
+Requirements: Python 3.11+ and Git.
 
 ~~~bash
-git clone https://github.com/cruxible-ai/cruxible
-cd cruxible
-uv sync --all-extras
-uv run pytest -q tests/test_playbill tests/test_architecture/test_playbill_dp0_boundaries.py
+pip install cruxible        # or: uv tool install cruxible
 ~~~
 
-Start a local daemon in one shell. A Unix-socket daemon runs with auth off and
-says so when it starts: every process of your OS user is equally trusted. (A TCP
-daemon refuses to start without `--auth`.)
+The package installs the `cruxible` CLI, the daemon, the MCP server, and the
+`cruxible-client` Python SDK.
+
+## Start
+
+Start a daemon on a Unix socket. A socket daemon runs with auth off and says
+so: every process of your OS user is equally trusted. A TCP daemon refuses to
+start without `--auth`.
 
 ~~~bash
-uv run cruxible server start \
-  --socket /tmp/cruxible-run/daemon.sock \
-  --state-root /tmp/cruxible-dev
+cruxible server start --socket ~/.cruxible/run/daemon.sock
 ~~~
 
-In another shell, create a host and make yourself its owner in one command. No
-bootstrap secret is needed locally:
+In another shell, inside the Git repository you want to work in:
 
 ~~~bash
-export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-run/daemon.sock
-
-uv run cruxible init
-uv run cruxible orient
+export CRUXIBLE_SERVER_SOCKET=~/.cruxible/run/daemon.sock
+cruxible init
+cruxible orient
 ~~~
 
-With no instance selected, `init` creates the host and selects it. You become
-the owner under your OS username (`--principal-id ID` picks another), with a
-client-held key under `~/.config/cruxible/keys/` (`--key-dir DIR` picks
-another), outside the workspace and the daemon state root. The CLI remembers
-the owner's settings and acts as the owner from then on. The init command
-prints each generated private-key path and sends only public
-principal records to the daemon. The one-key form is a complete solo setup with
-self-approval allowed. Add `--reviewer-key-dir DIR
---require-independent-approval` to opt into a second ordinary principal and
-creator-excluded approval from genesis. See the [Quickstart](docs/quickstart.md)
-for a complete Document proposal and activation.
+With no instance selected, `cruxible init` creates a host on the daemon,
+makes you its owner under your OS username with a key kept under
+`~/.config/cruxible/keys/`, attaches the repository as its workspace, and
+remembers all of it, so later commands need no flags or environment. The
+[Quickstart](docs/quickstart.md) continues from here: define vocabulary, write
+values with evidence, read them back, review a change, and render a table
+into a page.
 
 An MCP client launches `cruxible mcp` (`uvx cruxible mcp` from the registry
-listing). Every tool runs on a daemon: give the server `CRUXIBLE_SERVER_SOCKET`
-in its `env` block to use the one above, or leave it unset and the server reuses
-the local daemon on `~/.cruxible/run/daemon.sock`, starting one there when none
-answers. See [MCP tools](docs/mcp-tools.md#the-daemon).
+listing). Every tool runs on a daemon: the server uses `CRUXIBLE_SERVER_SOCKET`
+from its `env` block, or reuses the local daemon on
+`~/.cruxible/run/daemon.sock`, starting one there when none answers. See
+[MCP tools](docs/mcp-tools.md#the-daemon).
 
-## Security boundaries
+## Credentials and principals
 
-Runtime bearer credentials and Cruxible principals solve different problems:
-
-- bearer credentials authorize transport operations and carry a capability tier;
-- Cruxible principals identify and attribute governed acts at exact coordinates;
-- on an auth-off Unix-socket daemon, the configured principal ID
-  (`CRUXIBLE_PRINCIPAL_ID`) is a claim of identity, not authentication: every
-  process of the same OS user is equally trusted. Approvals are still signed
-  with the principal's private key;
-- repository branch protection and CODEOWNERS supply organizational review;
-- local key directories support attribution and repository hygiene, not a
-  security boundary; actual custody separation belongs at the Cloud
-  broker/leasing seam;
-- the daemon has a separate instance-specific key for ledger mechanics;
-- source compilation happens client-side, so the daemon never dereferences a
-  client filesystem path.
-
-## Destructive convergence status
-
-Completed in the current development line:
-
-- isolated the governed served core;
-- removed legacy CLI, HTTP, MCP, and client operations;
-- removed canonical views, blueprints, bindings, decisions, feedback, installs,
-  snapshots, state transport, telemetry, UI assets, and working sets;
-- removed first-party kit bundles and packaged kit distribution;
-- retained frozen Procedure digests, query goldens, and a byte-identical compact
-  config fixture for parity work.
-
-Temporarily retained donors include Procedure/workflow/query/graph behavior,
-receipt construction, attestation and resolution semantics, provider execution,
-and the old instance/SQLite harness. Their removal batches are pinned by the
-donor manifest and architecture tests.
-
-## Verification
-
-The minimum Cruxible gate is:
-
-~~~bash
-uv run pytest -q tests/test_playbill tests/test_architecture/test_playbill_dp0_boundaries.py
-uv run mypy src/cruxible_core src/cruxible_core/service
-uv run ruff check src packages/cruxible-client/src tests
-~~~
-
-The full legacy suite is not a compatibility target during destructive
-convergence, but retained donor tests must continue to collect and the frozen
-oracles must not drift.
+A credential (`cruxible credential`) is a daemon bearer token with a tier; a
+principal (`cruxible principal`) is a governed signing key that attributes
+acts and signs approvals, and its private key never leaves the client. On an
+auth-off socket daemon the principal ID a process sends is a claim of
+identity, not authentication. [Principals and
+credentials](docs/concepts.md#principals-and-credentials) explains both.
 
 ## Documentation
 
 - [Quickstart](docs/quickstart.md)
 - [Concepts](docs/concepts.md)
-- [Architecture](docs/architecture.md)
+- [Modeling state](docs/modeling-state.md)
+- [For AI agents](docs/for-ai-agents.md)
+- [Kits](docs/kits.md)
 - [CLI reference](docs/cli-reference.md)
-- [MCP reference](docs/mcp-tools.md)
+- [MCP tools](docs/mcp-tools.md)
+- [Python SDK](packages/cruxible-client/README.md)
+- [Upgrading](docs/upgrading.md)
+
+## Develop
+
+~~~bash
+git clone https://github.com/cruxible-ai/cruxible
+cd cruxible
+uv sync --all-packages --all-extras
+uv run pytest -n auto --dist loadfile
+~~~
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the provider-runtime tests, lint,
+format and type checks.
 
 Apache-2.0 licensed.
 

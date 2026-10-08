@@ -1,53 +1,121 @@
 # Operating Cruxible as an AI agent
 
-Cruxible is designed so first-order discovery is cheap and exact. Start with
-the orient map, refs and values. Go deeper into evidence, governance and
-history with `get`'s `detail` only when the task requires it.
+Cruxible is built so an agent's first reads are cheap and exact: a map, then
+values with flags, then one thing in depth only when the task needs it. Writes
+are governed: an agent proposes, and the instance's approval policy decides
+what is accepted.
+
+## Connect
+
+**MCP.** An MCP client launches `cruxible mcp` (`uvx cruxible mcp` from the
+registry listing). Every tool runs on a daemon; the server is only its client.
+
+~~~json
+{
+  "mcpServers": {
+    "cruxible": {
+      "command": "uvx",
+      "args": ["cruxible", "mcp"],
+      "env": {
+        "CRUXIBLE_SERVER_SOCKET": "/home/me/.cruxible/run/daemon.sock",
+        "CRUXIBLE_INSTANCE_ID": "inst_…",
+        "CRUXIBLE_PRINCIPAL_ID": "agent-b"
+      }
+    }
+  }
+}
+~~~
+
+Without a socket or URL the server reuses the local daemon on
+`~/.cruxible/run/daemon.sock`, starting one when none answers. Without
+`CRUXIBLE_INSTANCE_ID` it uses the instance the workspace's
+`.cruxible/coverage.json` binds. `CRUXIBLE_PRINCIPAL_ID` names the principal
+the agent acts as; on a daemon with auth, `CRUXIBLE_SERVER_BEARER_TOKEN`
+carries its credential. `cruxible principal add NAME --key-dir DIR` writes
+exactly these settings to `DIR/cruxible.env`. Setup itself (starting a
+daemon, `cruxible init`, adding principals) is operator work on the CLI; MCP
+has no setup tools. See [MCP tools](mcp-tools.md) for every variable.
+
+The `default` profile advertises 13 tools, the everyday loop: `orient`,
+`query`, `get`, `next`, `set`, `retire`, `write`, `proposal_list`,
+`proposal_review`, `proposal_approve`, `proposal_activate`, `whoami` and
+`server_info` (each prefixed `cruxible_`). Set `CRUXIBLE_MCP_PROFILE=full` for
+the rest: authoring, ClaimTypes, Procedures, Lines, predictions, sources,
+coverage, blocks, curation, kits and providers. Profiles change what is
+advertised; the credential's tier still gates every call.
+
+**CLI.** The same operations, with `--json` for structured output. After
+`cruxible init` or `cruxible context use`, commands need no flags.
+
+**Python.** `cruxible-client` is the SDK:
+
+~~~python
+from cruxible_client import Cruxible
+
+cx = Cruxible.connect()          # remembered context, or connect(target=..., instance=...)
+print(cx.world().describe())     # the verbs and the vocabulary
+~~~
 
 ## Operating rules
 
-1. Treat accepted coordinates as state and candidate coordinates as provisional.
-2. Store bytes before proposing an envelope, but never describe CAS presence as
-   acceptance.
-3. Review the frozen candidate before asking a human or another agent to sign.
-4. Never request, transmit, or place a principal private key in a repository.
-5. Use `get(ref, detail="why")` for governance/provenance context; do not infer
-   authority from presentation metadata.
-6. Grep the floor or `query` for an existing Subject or Claim before minting an
-   adjacent concept.
-7. Record contradiction as negative evidence instead of creating only a new
-   positive inverse.
-8. Treat diagnostic actions as links to governed proposal operations, never as
-   mutation authority.
+1. Treat accepted coordinates as state and proposals as provisional. A
+   proposal is not accepted state, and an approval is not activation.
+2. Read before you write: grep the floor or `query` for an existing Subject or
+   Claim before minting an adjacent one.
+3. Record contradiction as evidence against a Claim (`claim attest
+   --contradict`, or the value you observed) rather than an inverse concept.
+4. Cite where a value came from. Your own words are the default evidence; a
+   catalogued file passage or a Capture is checkable.
+5. Review the exact candidate before you ask anyone to sign it.
+6. Never request, transmit, or place a private key in a repository or a tool
+   argument.
+7. Treat a repair a diagnostic names as an invitation to a governed
+   operation, never as authority.
+8. Handle each typed result: a write can be refused, a proposal can go stale,
+   an activation can lose a race. Stop and surface the refusal rather than
+   retrying blindly.
 
-## Discovery ladder
+## Read
 
 Read with three verbs, cheapest first:
 
-1. `orient` maps the instance: each Subject kind with its predicates, artifact
-   and Claim counts, who you are, what needs attention, and the next calls;
-   `orient(kind=K)` widens one kind and `orient(section=S)` pages one family
-   (documents, queries, interfaces, principals, policies, runs, ...);
-2. to find something by name, grep the floor (`.cruxible/floor/`, which
-   `cruxible floor export` writes) and take the ref a hit names;
-   without a shell, `query(contains=...)` searches Claim values;
-3. `query` answers a question as rows of values with verdict flags: a Subject
-   kind with `where`, `select` and `follow`, or a named query;
-4. `get` reads one thing by any reference, values first; `detail` goes deeper
-   only when needed: `evidence`, `why`, `history`, `proof`, or a Document
-   `body` by byte range.
+1. **orient** maps the instance: each Subject kind with its fields, artifact
+   and Claim counts, who you are, what needs attention, and the next calls.
+   `orient(kind=K)` widens one kind; `orient(section=S)` pages one family
+   (documents, procedures, claim_types, queries, interfaces, runs, lines,
+   captures, predictions, mandates, principals, policies, ...).
+2. **Find by name**: grep the floor. `.cruxible/floor/current/<kind>/<id>.yaml`
+   holds one Subject per file, its first line names its reference, and `get`
+   reads that reference live. Without a shell, `query(contains=...)` searches
+   every Claim value.
+3. **query** answers a question as rows of values with flags: a kind with
+   `where`, `select`, `follow` and `order_by`; a named query with `name` and
+   `params`; or, for what compact filters cannot say, a full query spec
+   (`cruxible_query_spec`, `cruxible query --spec`). Rows carry `flags`
+   (`stale`, `contested`, `contradicted`, `uncovered`, `unsure_hold`); a
+   truncated page carries `next_cursor`. A wrong kind, field or enum member
+   refuses with the nearest valid names instead of answering empty.
+4. **get** reads one thing by any reference you have seen: a Claim ID or
+   prefix, `kind/id`, a predicate, `ClaimType:`, `Document:`, `Procedure:`,
+   `Blueprint:`, `Line:`, `Trigger:`, `Principal:`, `ProviderInterface:`,
+   `query:`, a proposal ID. Values come first; `detail` goes deeper:
+   `evidence`, `why`, `history` (newest first, paged), `proof`, or a Document
+   `body` by byte range. In a summary (a card, a `query` row or Claim cell,
+   `world.values`, a write's before and after), a string over 500 characters
+   is a `TruncatedText` (`truncated`, `preview`, `length`, `read_whole`), never
+   the value. `read_whole` is the exact read of the whole value,
+   `{ref, detail: "evidence", at}` pinned to the generation the preview came
+   from (`cx.read_whole(preview)` in the SDK); a plain `query` row cell has
+   none (ask with `claims`), and a write's `after` is the value you sent.
 
-This avoids loading an entire structured graph into context merely to answer a
-local question. Stable subject identities, ClaimType contracts, Procedure
-contracts, and recall-only tags are the intended “double-click” points.
+The floor is for orientation and grep and is eventually current. Right after
+a write, read exact values with `get` or `query`. `since(GENERATION)` lists
+exactly what changed after a generation.
 
-## The world is typed
+### The typed world (SDK)
 
-Prefer typed references where the SDK offers them. `cx.world()` reads the
-accepted vocabulary and hands it back as objects, so names and constrained
-values come from the daemon's accepted ontology. APIs that accept canonical
-addresses still support strings; typed references additionally carry their
-observed coordinate:
+`cx.world()` reads the accepted vocabulary and hands it back as objects, so
+names and constrained values come from the daemon's accepted ontology:
 
 ~~~python
 w = cx.world()
@@ -56,531 +124,318 @@ w.sec.package.cryptography              # SubjectRef, by attribute
 w.sec.vulnerability["cve-2026-69247"]   # SubjectRef, by index for any ID
 w.sec.vuln.affects_package              # ClaimTypeRef for that predicate
 w.sec.vuln.severity.high                # a value only this predicate admits
-w.sec.vuln.severity.cardinality         # object_kind, cardinality, permitted_roles,
-                                        # allowed_object_subject_kinds, referent_sensitivity
+w.sec.vuln.severity.cardinality         # object_kind, cardinality, permitted_roles, ...
 ~~~
 
-`print(w.describe())` lists the verbs that act on the world -- `cx.orient()`,
-`cx.query(...)`, `cx.get(ref)`, grepping the exported floor, and the writes --
-then every Subject kind with its fields. `w.kinds` and `w.predicates` answer as
-attributes or as calls (`w.kinds()`), `dir(cruxible_client)` lists every public
-name, every public SDK member's docstring ends by naming the next call
-(`help(cx.query)`), and refs print short: `SubjectRef('sec.package/click' @
-0123456789ab)`.
-
-Dotted kinds nest, so `w.sec.package` and `w.dev.batch` are namespaces on the
-same tree as the predicates. A Subject that does not exist refuses `AbsentSubject`
-naming the kind, the ID and the coordinate; an enum member that does not exist
-refuses naming every member the literal schema admits; a non-enum schema
-validates its constructor before the wire, so `w.dev.batch.landed_at("...")`
-refuses a 39-character digest here rather than after a proposal. A value minted
-under one ClaimType refuses under another, naming both.
+Dotted kinds nest, so `w.sec.package` and `w.project.task` are namespaces on the
+same tree as the predicates. A Subject that does not exist refuses
+`AbsentSubject`; an enum member that does not exist refuses naming every
+member; a value checks its schema before it reaches the wire. Where an accepted
+name is not a Python identifier (a keyword, a hyphen, a collision with a
+member), reach it by index: `w.kind("project.class")`,
+`w.claim_type("sec.vuln.import")`, `w.sec.vulnerability["cve-2026-69247"]`.
 
 Reading back goes through the same objects:
 
 ~~~python
 vulnerability = w.sec.vulnerability["cve-2026-69247"]
-vulnerability.affects_package   # tuple[ClaimView, ...] -- live Claims under that predicate
+vulnerability.affects_package   # tuple[ClaimView, ...]: live Claims under that predicate
 vulnerability.claims            # every live Claim about this Subject
-vulnerability.explain()         # the governance and provenance context
+vulnerability.explain()         # governance and provenance context
 ~~~
 
-On a live client, `cx.world()` selects current accepted state; on `cx.at(coordinate)`
-it selects that fixed coordinate. Each World owns a pinned reading context and
-remains readable when the live client advances. This does not make old references
-current for authoring: preparation still checks the references against its base.
+World fields return every live contender for a Subject and predicate;
+cardinality-one metadata never silently picks a winner. `world.values(subjects=...,
+predicates=...)` returns values and verdicts without full Claim views, and
+`w.<ns>.<kind>.where(field=value).select("field")` is the typed form of
+`cx.query(kind, where=[...], select=[...])`. A World is pinned to the
+coordinate it was read at and stays readable when the live client advances.
 
-World fields return all live Claim contenders for the selected Subject and
-predicate. Cardinality-one metadata does not turn a field into a scalar or
-silently pick a winning Claim. Each Claim retains its identity, revision, value,
-verdict, and evidence references. Use `world.prefetch(subjects=(...),
-predicates=(...), max_claims=...)` to populate complete, bounded selections.
-When you only need values and verdicts -- a status table, a checklist, a view --
-use `world.values(subjects=(...), predicates=(...))`: one `query` per Subject
-kind that returns each live Claim's subject, predicate, Claim ID, value,
-verdict, status and role without full Claim views. The CLI
-(`cruxible query KIND --select P --claims`) and MCP
-(`cruxible_query` with `claims: true`) expose the same read for every
-Subject of one kind; `status` adds Claims resolution overturned or refused, or
-retired ones.
-To read one thing you have a reference to, use `get`: `cx.get(ref,
-detail=...)`, `cruxible get REF`, or `cruxible_get`. It takes
-any reference form you have seen (a Claim id or prefix, `kind/id`, a predicate,
-`Document:<name>`, `Principal:<id>`, `ProviderInterface:<name>`, a proposal id,
-...), answers values first with verdict flags,
-and refuses a wrong name with the nearest names. `detail` goes deeper:
-`evidence`, `why`, `history` (newest first, paged), `proof`, or a Document
-`body` by byte range. A summary -- a card, a `query` row or Claim cell,
-`world.values`, a write's before/after -- shows a string value over 500
-characters as a `TruncatedText` (`truncated: true`, `preview`, `length`,
-`read_whole`), never as the value. `read_whole` is the exact read of the whole
-value, `{ref, detail: "evidence", at}` pinned to the generation the preview
-came from, so an old revision reads back as itself (`cx.read_whole(preview)` in
-the SDK); a plain `query` row cell has none (ask `claims=True`), and a write's
-`after` is the value you sent.
-Use `cx.query(name=..., params=..., receipt="full")` for a named query's replay
-receipt (the Claims each row read, paths, verdict), checking truncation before
-assuming completeness.
-To ask any question over accepted state in one call, use `query`: MCP
-`cruxible_query`, CLI `cruxible query KIND --where 'f=v'`, SDK
-`cx.query(kind, where=[{"field": ..., "eq": ...}], select=[...])` or the typed
-`w.<ns>.<kind>.where(field=value, other__ne=value).select("field")`. Rows lead
-with values and carry `flags` (`stale`, `contested`, `contradicted`,
-`unsure_hold`); a truncated page carries `next_cursor`. A wrong kind, field or
-enum member refuses with the nearest valid names instead of answering empty.
+`cruxible stub --out world.pyi` writes the vocabulary as closed Python types,
+stamped with its coordinate, so an editor or a model completes real names
+instead of `Any`. Regenerate it after any activation that changes vocabulary.
 
-`cx.world()` reads vocabulary, not Subjects. The current first Subject access
-loads the Subject listing; ordinary uncached field reads page the relevant Claim
-listing and load the matching live Claim views. Prefetch uses the batch reader.
-An incomplete or non-advancing selection refuses instead of masquerading as a
-complete answer.
+## Write values
 
-Where a name the daemon accepted is not a name Python can spell -- a segment
-that is a keyword, a Subject ID with a hyphen, a predicate leaf that collides
-with a member, an enum member that collides with a structure field -- the fixed
-surface wins attribute access and the accepted name is reached by index:
-`w.kind("dev.class")`, `w.claim_type("sec.vuln.import")`,
-`w.sec.vulnerability["cve-2026-69247"]`, `vulnerability["sec.vuln.claims"]` and
-`w.sec.vuln.severity("cardinality")`. Where a dotted name is BOTH a predicate
-and a Subject kind -- which the vocabulary above happens not to contain -- the
-predicate wins attribute access and the kind is reached as `w.kind("dev.batch")`
-or as that predicate's own `.as_kind`.
+Values change in the value lane: one change with its verb, several changes
+that must land together with `write`.
 
-`cruxible stub --out world.pyi` writes the world down as types,
-stamped with the coordinate it was read at, so an editor and a model both
-complete the real vocabulary instead of `Any`. The generated classes are closed,
-so a misspelled kind, Subject, predicate or enum member is a type error rather
-than `Any`; the header says how to bind the runtime object to them. Regenerate
-it after every activation; a stub types one coordinate and carries no authority
-over the next.
+| | One change | Several, atomically |
+|---|---|---|
+| MCP | `cruxible_set`, `cruxible_retire` | `cruxible_write` (`set`, `add`, `retire` changes) |
+| CLI | `cruxible set`, `add`, `retire` | `cruxible write FILE` or `write -` |
+| SDK | `cx.set(...)`, `cx.retire(...)`, `w.<kind>[id].set(because=..., field=value)` | `cx.changes(because=...)` then `.set`, `.add`, `.retire`, `.write()` |
 
-## Write lifecycle
+~~~python
+from cruxible_client.contracts.write import FileEvidence
 
-One authoring intent is one changeset. `cx.claim(...)` authors exactly one
-Claim; `cx.changes(rationale=...)` opens a changeset that `.claim(...)`,
-`.claim_type(...)`, `.subject(...)` and `.retire(...)` write into, and
-`.submit()` compiles the whole set as one intent and submits it in one request.
-`.prepare()` compiles and preflights without submitting, for when you want the
-diagnostics before a proposal exists; `.submit()` returns the same diagnostics
-on a refused intent, so it is the default. `.subject(...)` and
-`.claim_type(...)` return a ref to what they define, usable as `subject=`,
-`predicate=` or `value=` in that same set, so a set that defines a Subject and
-says something about it never retypes the address:
+outcome = cx.set("project.task/ship-v1", "status", "doing",
+                 because="Standup says Grace started.",
+                 evidence=FileEvidence(file="notes/standup.md#Grace is starting"))
+
+batch = cx.changes(because="Planning for the week.", subject="project.task/ship-v1")
+batch.set("owner", "grace").set("status", "open")
+outcome = batch.write()
+~~~
+
+Each write proposes one change set and accepts it in the same call when the
+approval policy and your tier allow it; otherwise the outcome says
+`awaiting approval` and names who may approve it and the exact call. A
+refusal names the change, the code, the nearest valid names and a repair.
+Check each change's verdict and the warnings: a value written with evidence
+the ClaimType does not admit is accepted as `uncovered`, and says so.
+
+- `because` is required; it is the reason and the default evidence.
+- `dry_run` runs every check and writes nothing.
+- `accept="never"` (`--no-accept`) stops at a proposal.
+- A write refuses if the field changed since the coordinate you read at;
+  `expect` compares by value instead, and `at` names the coordinate.
+- Several sibling changes to one single-value slot cannot land in one set:
+  merge them, or split the set.
+
+## Write definitions
+
+Definitions go through the authoring lane: Subjects, named queries,
+Procedures, Blueprints, Lines, Triggers, mandates, acquisition policies, the
+approval policy, and Claims that need a role, evidence or an effective period
+the value verbs do not express.
+
+- **MCP** (full profile): `cruxible_authoring_submit` with a `payload` checks
+  and submits in one call; `cruxible_authoring_compile` stages a durable
+  intent you can revise (`intent_id`), `preflight`, `rebase` and submit;
+  `cruxible_authoring_status` says what still separates it from acceptance;
+  `cruxible_authoring_list` and `cruxible_authoring_get` find unfinished work.
+  `cruxible_authoring_example` prints a template for every input kind.
+- **CLI**: `cruxible authoring submit -` (or `PAYLOAD`), `--dry-run` for every
+  refusal without saving anything, `--and-activate` to settle at once when no
+  approval is needed. `cruxible authoring example NAME` lists the templates.
+- **SDK**: `cx.changes(rationale=...)` opens a change set that `.claim(...)`,
+  `.subject(...)`, `.query_definition(...)`, `.procedure(...)`, `.line(...)`,
+  `.trigger(...)`, `.claim_type(...)`, `.retire(...)` and the other members
+  write into; `.submit()` compiles the whole set as one intent and submits it,
+  returning the diagnostics on a refusal, and `.prepare()` checks without
+  submitting.
 
 ~~~python
 draft = cx.changes(rationale="Name the package this advisory affects.")
-package = draft.subject(w.sec.package.define("click"))       # a ref, in this set
+package = draft.subject(w.sec.package.define("click"))       # a ref, usable in this set
 draft.claim(
     subject=w.sec.vulnerability["cve-2026-69247"],
     predicate=w.sec.vuln.affects_package,
-    value=package,                                           # the same set defines it
+    value=package,
     role="observation",
     rationale="The advisory names this package.",
     self_source="affects: click\n",
-    supported_by=None, copied_from=None, qualifier=None,
-    effective_period=None, revises=None, dispositions={},
-    subject_definition=None, claim_type_definition=None,
 )
 intent = draft.submit()
 ~~~
 
-Such a ref asserts no reference expectation, because the artifact it names does
-not exist at the coordinate yet; the set lowers definitions before the members
-that read them. The set lowers once,
-proposes once and generates once, and it admits or refuses whole -- one
-malformed member refuses the intent, typed to that member's index. A Claim in
-the set may read a Subject or ClaimType the same set defines. Two sibling Claims
-contending for one cardinality-one slot cannot be authored in a single set at
-all: dispositioning one needs the other's Claim ID, which the daemon mints only
-at create from the already-frozen payload, so that refusal asks you to merge the
-two decisions or split the set rather than to add a disposition. There is no
-member ceiling in the model; how many changed members one daemon receives in a
-single submission is that operator's admission bound.
+A change set lowers once, proposes once and generates once, and is admitted
+or refused whole; one malformed member refuses the intent, typed to that
+member's index. A member may read a Subject or ClaimType the same set
+defines. The `rationale` becomes the candidate commit's message, so say why the
+set exists.
 
-No member of a set publishes itself into a page. Writing a Claim's own body back
-into the source it was authored from is the overlap the two-block-kinds law
-refuses, and the `publish_to` option that did it is gone; a passage that states a
-Claim is a source block (write the prose, capture the page, cite the span), and a
-passage that reflects several accepted Claims is a projection block declared with
-`cruxible block repin`.
+### Evolving vocabulary
 
-### Evolving vocabulary in one generation
+ClaimTypes keep their own group because changing vocabulary disposes the
+Claims that depend on it: `cruxible claim-type propose` (MCP
+`cruxible_claim_type_propose`) defines or revises one, and `cruxible claim-type
+migrate` (MCP `cruxible_claim_type_migrate`) succeeds one and decides each
+dependent Claim's fate in the same change set.
 
-Needing a new distinction is an epistemic move, and "I need this distinction,
-and here is everything it changes" is one decision, so it is one generation.
-`ChangeSetDraft.succeed_claim_type(successor, dependents=[...])` succeeds an
-accepted ClaimType inside the same set as the Claims that speak the new
-vocabulary. The successor is a whole ClaimType that names the predecessor by
-identity and pins its exact current digest; a ClaimType with no predecessor is
-a definition, and `.claim_type(...)` carries that instead.
+Inside an SDK change set, `ChangeSetDraft.succeed_claim_type(successor,
+dependents=[...])` does the same alongside the Claims that speak the new
+vocabulary, so "I need this distinction, and here is everything it changes"
+lands as one generation. The successor names its predecessor and pins its
+current digest; `dependents` must be exactly the predecessor's dependent
+closure, and an inexact one refuses
+`cruxible.authoring.claim_type_succession_closure_incomplete` naming every
+required dependent. Each dependent takes one disposition:
 
-Members lower in dependency order -- definitions, then successions, then the
-Claims that read them, then retirements -- and `dependents` must be the exact
-reverse-pin closure of the predecessor over the tree at that point: the accepted
-tree as this set's own definition members left it, read at their staged bytes
-rather than the accepted ones. A sibling Claim is never a dependent. It lowers
-after the succession, under the SUCCESSOR vocabulary, and lands as an ordinary
-member of the same generation. Defining a ClaimType and succeeding it in one set
-is not expressible either -- both members author the same artifact path, so the
-set refuses `cruxible.authoring.change_set_member_path_collision` naming the two.
-An inexact closure refuses
-`cruxible.authoring.claim_type_succession_closure_incomplete`, whose repair
-names every required dependent by identity -- a dependent carries no digest of
-its own, so the digest each required row also reports is a read, not something
-to copy back. Four dispositions, spelled
-by the SDK helpers `carry`, `rescind`, `retire` and `re_author`:
+| Helper | What the dependent becomes |
+|---|---|
+| `carry(claim)` | Re-pinned to the successor, otherwise unchanged. |
+| `rescind(claim)` | Retired as `was-rescinded`, keeping the statement it was accepted with. |
+| `retire(claim, reason=..., effective_until=...)` | An attributed retirement (`was-wrong`, `was-rescinded`, or `superseded`). |
+| `re_author(claim)` | Said again by a sibling Claim member of the same set (`revises=` that Claim), under the successor. |
 
-| Helper | Wire disposition | What the dependent becomes |
-|---|---|---|
-| `carry(claim)` | `successor` | Re-pinned to the successor, otherwise unchanged. |
-| `rescind(claim)` | `retire` + reason `was-rescinded` | A tombstone that keeps the exact statement it was accepted with, under the vocabulary it was accepted under. |
-| `retire(claim, reason=..., effective_until=...)` | `retire` | An attributed retirement, landing with the succession. `was-wrong` for a false statement, `was-rescinded` for withdrawn authority, `superseded` for a statement that stood under a shape a later ruling replaced. |
-| `re_author(claim)` | `re_author` | Said again by a sibling Claim member of the same set, lowered under the successor. |
+A successor that changes `object_kind` refuses `carry` for any live dependent;
+rescind, retire or re-author those. A re-authored Claim keeps its identity and
+slot. The deprecated `invalidation` disposition is refused inside a change set
+(`cruxible.authoring.claim_type_succession_disposition_deprecated`); say
+`retire` with a reason.
 
-The standalone route knows a fourth word, `invalidation`, deprecated there and
-answered with a warning. A change set parses it and always refuses typed --
-`cruxible.authoring.claim_type_succession_disposition_deprecated`, whose repair
-names both roads -- because lowering has no warning channel, so admitting the
-word would coerce it silently. Say `retire` with a reason, or take the
-succession to `cruxible claim-type migrate`.
+## Evidence
 
-A re-authored dependent keeps its own identity, its slot -- the Subject it is
-about and the predicate it speaks -- and its exact predecessor digest: the
-sibling member is that Claim revised (`revises=` the same Claim ID), stated
-under the new vocabulary, which is why `explain` on the re-authored Claim still
-names what it succeeds. A sibling that moves the Subject refuses; a re-authoring
-says the same thing again, it does not say it about something else. The sibling
-is named once, by `successor_claim_id` -- the Claim ID it revises, which is the
-dependent's own, and what `re_author(claim)` writes. A sibling that does not exist, lowers under
-another ClaimType, or revises another Claim refuses
-`cruxible.authoring.claim_type_succession_re_author_invalid`, naming both member
-indices and the Claim ID the dependent requires.
+- **Own words**: every write's `because` (or a Claim's `self_source`).
+- **A file passage**: catalogue the file in `.cruxible/sources.yaml` (a
+  `name` and a `locator` suffice) and cite `PATH#ANCHOR`: `--evidence-file`
+  on the CLI, `{"kind": "file", "file": "PATH#ANCHOR"}` as `evidence` on MCP
+  `cruxible_set`, `FileEvidence` on SDK writes, or `cx.file(path).anchor(...)`
+  as `supported_by` or `copied_from` on an authored Claim. The client reads the
+  file and sends what it observed; the daemon never reads workspace files.
+  When the passage changes, `next` reports `citation_drifted`.
+- **A Capture**: retained evidence, cited by handle (`CAP-…`) or as the newest
+  verified Capture of a CaptureContract about the Subject. `cx.capture(ref)`
+  and `cruxible capture read` read a retained body; they never refetch the
+  source.
+- **Attestation**: `cruxible claim attest CLAIM_ID --support|--contradict|--unsure`
+  (MCP `cruxible_claim_attest`) signs that you examined the exact Claim.
 
-A successor that changes `object_kind` refuses `carry` for any live Claim
-dependent: its object no longer says what the ClaimType now means, so each such
-dependent must be rescinded, retired or re-authored. Tombstones are exempt --
-a retired Claim keeps the shape it was accepted with.
+A passage inside a projection block is never evidence; cite the Claim it
+reflects. `coverage resolve` (MCP `cruxible_coverage_resolve`) answers what
+files you read or changed have to do with accepted state, including `grep -n`
+output.
 
-Evidence admission policies ride the successor: a dependent carried to a
-successor with a stricter policy is re-graded under that policy, not refused, so
-the succession lands and the re-grading is visible in the dependent's admission
-accounts afterwards. A successor whose policy admits no accepted capture
-contract is linted on both roads: preflight carries the same
-`cruxible.claim_type.evidence_policy_admits_no_accepted_contract` warning
-`cruxible claim-type migrate` reports, in the result's `lint`, as a
-warning rather than a refusal.
-
-`cruxible claim-type migrate` remains the operator form of the same
-law -- one succession, no siblings to re-author. Both roads build the candidate
-with the same function, so `carry` and `retire` produce the same bytes whichever
-road authored them. `re_author` has no operator analogue by design: the
-standalone route cannot carry a live Claim through an object-kind change, so
-there it can only rescind and mint a new lineage, and the identity does not
-survive. Saying a committed Claim again, in place, under a new vocabulary is
-what the change set adds.
-
-The 2026-09-02 `sec.vuln.affects_package` migration -- a literal-valued
-ClaimType becoming subject-valued, which took three generations days apart --
-is one set:
-
-~~~python
-edges = cx.changes(rationale="Name the package instead of spelling it.")
-for work_item, claim in affected:                      # each existing Claim
-    edges.claim(
-        subject=work_item,
-        predicate="sec.vuln.affects_package",
-        value=package_ref,                             # a SubjectRef now
-        role="observation",
-        rationale="The advisory names this package.",
-        revises=claim,                                 # keeps the identity
-        self_source=advisory_line,
-        supported_by=None, copied_from=None, qualifier=None,
-        effective_period=None, dispositions={},
-        subject_definition=None, claim_type_definition=None,
-    )
-edges.succeed_claim_type(
-    subject_valued_affects_package,                    # pins the current digest
-    dependents=[re_author(claim) for _, claim in affected]
-             + [rescind(claim) for claim in never_true],
-)
-intent = edges.prepare()
-~~~
-
-One generation: the tombstones, the re-authored edges and any Claim the set
-states fresh under the successor all land together, and `next` reports nothing
-outstanding about the vocabulary afterwards.
-
-Subject-valued Claims are typed relationships, not string literals. Pass an accepted
-`SubjectRef` -- `w.sec.package.cryptography` is one -- or a canonical
-`<subject-kind>/<subject-id>` address as `Cruxible.claim(value=...)`; preflight refuses a missing endpoint with the
-`propose_subject` repair and refuses endpoint kinds outside the accepted ClaimType.
-
-For Documents:
-
-~~~text
-store body -> propose envelope -> inspect/review -> prepare challenge
--> sign locally -> submit public attestation -> activate
-~~~
-
-Do not combine stages. A proposal can be refused. Optional or candidate-required
-approvals may become stale. Activation can lose a compare-and-set race. Handle
-each typed result rather than assuming success.
-
-## Reviewing a proposal
+## Review a proposal
 
 The ledger is Git, so review is Git. The daemon fetches its own refs into the
-attached workspace on every proposal, so a reviewer diffs the candidate against
-accepted state with standard tooling:
+attached workspace on every proposal, so a reviewer diffs the candidate
+against accepted state with ordinary tooling:
 
 ~~~text
 git diff cruxible-ledger/accepted...cruxible-ledger/proposals/<proposal-id>
 ~~~
 
-The candidate commit's message is the change set's own summary -- what it does,
-then one line per member -- and the daemon's records are attached to the SAME
-commit the branch points at, as Git notes read by name (`git notes
---ref=refs/notes/playbill-eval show cruxible-ledger/proposals/<proposal-id>`; from a
-clone of the mirror, `git fetch origin '+refs/notes/*:refs/notes/*'` first): `refs/notes/playbill-eval` carries the admission and the
+The branch name is the proposal ID without its `sha256:` prefix; `cruxible
+proposal review ID` prints the exact command. The candidate commit's message
+is the change set's own summary. The daemon's records are Git notes on the
+same commit: `refs/notes/playbill-eval` carries the admission and the
 evaluation verdict with every diagnostic behind a refusal, and
-`refs/notes/playbill-approval` carries the canonical approval list with each
-signer's own attestation. Nothing parses those messages; every fact an agent
-should act on is in `proposal review --json` or in the notes.
+`refs/notes/playbill-approval` the approvals with each signer's attestation
+(`git notes --ref=refs/notes/playbill-eval show
+cruxible-ledger/proposals/<proposal-id>`). Nothing parses those messages;
+every fact an agent should act on is in `proposal review --json`, in `get
+PROPOSAL_ID`, or in the notes.
 
-Distinct proposal admissions can share one Git commit, including submissions
-within the same second. Its evaluation note then contains canonical
-admission/evaluation pairs ordered by proposal ID; its approval note retains
-all distinct signed candidate payloads. Match the proposal and candidate digest
-when reviewing. Activation verifies the complete group on the original and
-materialized review aliases. Reconciliation can restore absent notes or valid
-incomplete groups after a crash; edited or unrelated records remain a refusal.
+An agent with no attached workspace reads the same refs from the ledger
+mirror: `orient --json` carries `mirror_url` when the instance publishes to
+one. Clone it; `origin/main` is accepted state and
+`origin/proposals/<proposal-id>` the candidate, and `git fetch origin
+'+refs/notes/*:refs/notes/*'` fetches the notes. Local acceptance does not
+imply the mirror has it yet: before a remote review, run `cruxible ledger
+publish --json` and require `published_sequence >= wait_sequence`.
 
-`proposal review` without `--json` prints the pointer and the note refs rather
-than re-rendering the change set.
+Approval signs locally and sends only the public signature. `cruxible proposal
+approve` and `cruxible_proposal_approve` do it in one call; the MCP tool signs
+with a key from the server's `CRUXIBLE_MCP_KEY_DIR`, and passing the reviewed
+`candidate_digest` makes it refuse a candidate that changed since you read it.
+A signer outside the MCP process uses the full-profile pair
+`cruxible_proposal_approve_prepare` (the exact statement to sign) and
+`cruxible_proposal_approve_submit` (the public attestation).
 
-The proposal ref in that diff is keyed by proposal DIGEST, not by actor and
-name: an actor's own transport ref `refs/proposals/<actor>/<name>` is extended
-by every resubmission, while the branch a reviewer reads projects exactly one
-evaluated candidate. Use the id `proposal list` prints.
+## Work queues
 
-An agent with no attached workspace reads the same refs from the ledger mirror.
-`orient --json` carries `mirror_url` when the instance publishes to
-one; clone that, and
-`origin/main` is accepted state while `origin/proposals/<proposal-id>` is the
-candidate. Local write completion does not imply remote visibility. Before a
-remote review, run `cruxible ledger publish --json` and require non-null
-`wait_sequence` with `published_sequence >= wait_sequence`; retry or inspect
-`detail` if the bounded wait is unacknowledged. The background publisher combines
-pending work and reports it in the `ledger_mirror` facet of `cruxible next`'s
-`status` (`publishing` while in flight, `behind` after a failure). Publication receipts name the exact acknowledged ref snapshot.
+- `next` lists what is wrong or waiting on you, each row with its exact
+  repair: drifted or stale evidence, uncovered Claims, stale proposals to
+  readmit, stale projection blocks, Line gaps, compiler upgrades, consumers
+  that stalled. Work it top down.
+- `audit` ranks Claims worth verifying (full profile).
+- `curation list` lists ontology-maintenance patterns; each takes one ruling:
+  `overrule`, `suppress`, `unsuppress`, or `accept-fixed` (full profile).
 
-The change set's own summary reaches that commit only if a door carried one.
-`cx.changes(rationale="...")` and the `rationale` field on the tagless
-change-set input both send it, and the daemon writes it as the candidate
-commit's subject. Say why the set exists; what it does is already the roll
-underneath.
+## Procedures and Lines
 
-## Source alignment
+A Procedure is authored like any definition. The SDK offers three forms, all
+producing graph-format-6 definitions:
 
-Local files do not enter the event stream automatically. The source catalog
-(`.cruxible/sources.yaml`) declares which files are indexed and the one name
-each goes by, for evidence, coverage and `next` alike; a `name` and `locator`
-suffice to cite a file. sources check validates current alignment without
-writing. sources compile emits a frozen path-free bundle. sources propose
-proposes one catalogued Document's file as its next revision (compiling first
-unless given a bundle), and is the repair `next` names when a Document's file
-was modified.
+- `ProcedureInput`, the raw definition;
+- `Sequence` from `cruxible_client.authoring.procedures`, a typed step list
+  (StateTap, Source, Call, Transform, Project, Guard, EmitCapture,
+  ProposeChangeSet, SettleChangeSet, Halt) with `.preview()` before
+  submitting;
+- `ProcedureSource`: a function decorated with `@procedure` from
+  `cruxible_client.authoring.source`, compiled into the same graph; see the
+  [source authoring reference](sdk-v2-reference.md).
 
-CI may run check/compile as a lint, but acceptance still requires an explicit
-proposal and activation, plus any candidate-committed approval requirements.
+Every provider a Procedure calls is pinned to one exact implementation;
+`cx.provider_interface(interface, provider=...)` selects one. A definition
+that leaves provider slots open is a Blueprint, which never runs:
+`get Blueprint:NAME` lists each slot with the installed providers that fit,
+and a `blueprint_instance` input binds them into an ordinary Procedure
+(`cruxible authoring example blueprint-instance`).
 
-## Procedures
+`get Procedure:NAME` says how a Procedure runs: directly, only as a Line, or
+not at all. A direct run is `cruxible procedure run NAME INPUT`,
+`cruxible_procedure_run`, or `cx.accepted_procedure(name).run(input=...)`.
+Terminals that retain a Capture, propose a change set or settle one act only
+on a Line.
 
-The implemented authoring API accepts a `ProcedureInput` or a typed `Sequence`
-from `cruxible_client.authoring.procedures`. Sequence supports blueprint-first
-composition, accepted provider selection with `cx.provider_interface(...)`,
-immutable `.bind(...)`, and a structured `.preview()` before preparation.
-`cx.procedure(definition=blueprint).prepare()` uses the same authoring lifecycle
-as other definitions. Preview does not invoke providers or grant authority.
-See the [SDK reference](../packages/cruxible-client/README.md#procedure-composition-and-execution)
-for constructors, a complete local example, and execution methods.
+A Line runs a Procedure under its own parameters, budgets, authority ceiling
+and acquisition policy:
 
-| Surface | Supported behavior |
-|---|---|
-| Sequence / ProcedureInput authoring | StateTap, Source, graph-v5 Call, Transform, Project, Guard, EmitCapture, ProposeChangeSet, SettleChangeSet, Halt; bounded Repeat through ProcedureInput. |
-| Direct Procedure run | State reads, acquisition, contracted Calls on graph v5, deterministic computation, routing, bounded Repeat, and Halt. |
-| Accepted Line occurrence | The same execution machinery plus authorized EmitCapture, ProposeChangeSet and SettleChangeSet terminal paths; SettleChangeSet needs one covering settle ProcedureMandate. |
-| Not served by this SDK authoring surface | PostInbox, despite its presence in graph contracts. |
+- `line run` (`cx.line(name).run()`) runs one manual occurrence now; it never
+  consumes a Trigger. Pass `event` when the Procedure takes one.
+- Triggers do nothing until the Line is enabled (`line enable`,
+  `cx.line(name).enable()`), which needs governed write even for a Line that
+  only observes. Enabling pins the Line and Trigger versions; any change to
+  either stops it until it is enabled again.
+- A Line that proposes or settles needs a covering mandate.
+- `line evaluate` and `line dispatch` recover what automation missed; `next`
+  names the exact command for each gap.
 
-Terminals end their path and cannot have successors. Capture emission retains
-evidence; it does not assert or accept a Claim. Proposal emission submits through
-governed authoring; it does not approve or accept the proposal. Direct readiness
-can report capture/proposal terminals as unsupported because those require the
-Line lane. Use `cx.line(name).run(...)` for one manual run of an accepted, authorized
-Line, and `cx.line(name).enable()` so its Triggers run it.
+A Source node reads through an accepted Provider under accepted authority, not
+through ambient filesystem or network access. Before it can run, accepted state
+must hold the Provider and its interface, the CaptureContract the node pins,
+and the SourceAcquisitionPolicy that governs the read. Name that policy when
+you author the Procedure (or on the Line); the Procedure then reads only that
+policy, so a policy someone else accepts later cannot change what it does. A
+named policy must cover the Procedure: a rule for every Source alias, extra
+rules allowed, so one policy can serve several Procedures. A Procedure authored
+without one falls back to the one live policy whose declared inputs are exactly
+its Source aliases. A named policy with no rule for an alias (named in
+`uncovered_input_names`), or a missing or ambiguous fallback, refuses
+`source_acquisition_policy_required` at admission; a rule that denies an input
+refuses `source_acquisition_refused`; a path outside an authorized workspace
+root or over the CaptureContract's selection budget refuses
+`workspace_file_read_refused`. None of these leave partial run history.
+A Source request value may reference the run input or an earlier step only as
+a whole value (`{"url": "$input.url"}`), never inside a longer string.
 
-Retained Python source works today: decorate a function with `@procedure` from
-`cruxible_client.authoring.source` to get a `ProcedureSource`, then
-`preview(world=...)` or `build(world=...)` it. The
-[SDK v2 reference proposal](sdk-v2-reference.md) also describes further forms
-(typed field reads inside Procedures, branch-value merging, composition); check
-the current SDK reference before relying on one of those.
-
-A `source` node reads through an accepted Provider under accepted authority,
-not through ambient filesystem access. Before it can run, accepted state must
-hold the Provider and its interface registration, the CaptureContract the node
-pins, and the SourceAcquisitionPolicy that governs the read. Name that policy
-when you author the Procedure: it becomes an `acquisition-policy` pin on the
-Procedure envelope, closure-checked at acceptance, and a pinned Procedure reads
-only that policy -- so another team accepting a policy of their own cannot
-change what yours does. A pinned policy (the Procedure's, or a Line's) must
-cover the Procedure: a rule for every Source alias, extra rules allowed, so one
-policy can serve several Procedures. A Procedure authored without the pin falls
-back to accepted state, which requires exactly one live SourceAcquisitionPolicy
-whose declared inputs are exactly that Procedure's Source aliases; prefer the
-pin. A pinned policy with no rule for a Source alias (named in
-`uncovered_input_names`), and a missing or ambiguous policy for an unpinned
-Procedure, are both the typed refusal `source_acquisition_policy_required`; a
-rule that denies a declared input is `source_acquisition_refused`; a path
-outside an authorized workspace root, one over the CaptureContract's selection
-budget, or a daemon with no local reader is `workspace_file_read_refused` with
-its path class. None of these leave partial
-run history.
-
-Served Source runs currently support independent acquisition coherence. Policies
-requiring a bounded window or a declared snapshot group refuse before source
-reads or provider invocation. Each produced capture must satisfy permitted
-replayability and maximum age; an ineligible capture follows the policy’s
-failure behavior and cannot become a selected run output.
-
-A Line names its policy on the LineSpec instead, under the same pin role. Both
-lanes plan through one planner, and that planner scores only the inputs the
-graph actually plans an occurrence for: a policy may declare an input a given
-Procedure does not serve, and whether such an input ever arrives is reported by
-the read, not guessed before it.
-
-Each successful Source occurrence retains its acquisition evidence and capture
-references. Receipt details depend on the provider: a workspace-file read and a
-web fetch do not describe the same source substrate. Cite the retained evidence,
-not an agent's later retelling. `cx.capture(digest)` reads the retained body under
-the current access rules; it never refetches the external source.
-
-Use the run ID to read retained execution status (`run.refresh()` in the SDK).
-A new `.run()` is an invocation, not a general-purpose historical replay API.
-StateTaps bind their reads at admission; they do not perform arbitrary dynamic
-queries using outputs from later nodes. Source requests can depend on earlier
-runtime outputs. A completed run is not itself a measurement verdict.
+Each Source occurrence retains its acquisition evidence and Capture; cite the
+retained evidence, not a retelling. `cx.capture(ref)` reads a retained body and
+never refetches the source.
 
 ### Measurements and readings
 
 A Procedure may declare measurements: an accepted query with an expectation, a
-Claim statement's acceptable verdicts, or the ClaimAttestations on a statement.
-The generation that accepts the Procedure ACTIVATES them, and the window
-(`check_after`, `expires_after`) runs from that acceptance instant, never from a
-run or a poll. Evaluating is a separate, explicit step, so delayed measurements
-complete after the run that they will credit has returned:
+Claim statement's acceptable verdicts, or the attestations on a statement. The
+generation that accepts the Procedure activates them, and the window
+(`check_after`, `expires_after`) runs from that acceptance. Evaluating is a
+separate, explicit step:
 
 ~~~python
 proc = cx.accepted_procedure("release-guard")
-run = proc.run(input=proc.input(release="2.4.0"))  # execution outcome: run.status
+run = proc.run(input=proc.input(release="2.4.0"))
 
-batch = proc.measure(run=run)             # observation instant = pb's clock
-batch["rollout-healthy"].status           # "pending" | "expired" | "resolved"
-batch["rollout-healthy"].reading_status   # "no_resolution" | "recorded" | "replayed"
-                                          # | "grain_not_occurred" | "run_not_final"
-
-# Later, once check_after has elapsed: the same call is the resume.
-batch = proc.measure(run=run)
-outcome = batch["rollout-healthy"]
-outcome.verdict, outcome.resolution_id, outcome.reading_id
-batch = proc.measure(run=run)             # retry: "replayed", same reading id
+batch = proc.measure(run=run)             # evaluated at this connection's clock
+batch["rollout-healthy"].status           # "pending" | "open" | "expired" | "resolved"
+batch["rollout-healthy"].reading_status   # "recorded", "replayed", "no_resolution", ...
 
 page = proc.readings(measurements=("rollout-healthy",), limit=50)   # read-only
-page.contracts[0].resolution              # standing answer + journal record digest
-while page.cursor:                        # the cursor carries page 1's observation
-    page = proc.readings(measurements=("rollout-healthy",), limit=50, cursor=page.cursor)
 ~~~
 
-The same loop from nothing, declaring the measurement it later evaluates:
-
-~~~python
-from cruxible_client.authoring.inputs import ProcedureInput
-
-definition: ProcedureInput = ...          # graph, carried schemas, and activation policy
-# Authoring references name accepted dependencies; the daemon binds exact pins.
-measurement = {
-    "name": "rows-present",
-    "subject_grain": "procedure_unit",
-    "measurement": {
-        "kind": "accepted_query",
-        "query": {
-            "kind": "accepted",
-            "role": "query",
-            "target": "QueryDefinition:release-rows",
-        },
-        "expect": {"min_count": 1},
-    },
-    "check_after": {"microseconds": 0},
-    "expires_after": {"microseconds": 86_400_000_000},
-}
-definition = definition.model_copy(update={
-    "definition": {**definition.definition, "measurements": [measurement]},
-    "activation_policy": "abort",
-})
-draft = cx.procedure(definition=definition)
-# ... submit and approve the change set as usual; acceptance activates the window
-proc = cx.accepted_procedure("release-guard")
-run = proc.run()
-batch = proc.measure(run=run)             # "resolved" + "recorded" once due
-batch = proc.measure(run=run)             # fresh request attribution: "replayed"
-~~~
-
-A pending measurement reports and writes nothing; an expired one reports and
-writes nothing; only a due one gathers evidence and resolves. The standing
-resolution governs every later call until it is overturned -- a later
-`measure` reports the standing answer, it does not evaluate fresh evidence --
-and a reading is minted only for the grain the named run really reached: a
-succeeded unit, a node that fired and succeeded, an arm the guard actually
-selected. A retry is any later call by the same principal: the per-request
-attribution the SDK re-mints is not part of the reading, the retained record
-keeps its original attribution, and two concurrent calls land one reading. A
-completed run does not satisfy a measurement, and a failed run does not
-contradict one; the verdict comes from the evidence. Resolutions and readings
-are operational exhaust in the Procedure journal, not accepted state, and grant
-no authority.
-
-## MCP and CLI
-
-The MCP tool set mirrors the same service core as CLI and
-HTTP. Use MCP for structured agent calls and CLI for human-readable review or
-local key custody.
-
-The default MCP profile is curated around the write-side loop. Use the `full`
-profile only when work requires lower-level document, Claim, ClaimType, or other
-diagnostic surfaces that the default catalog intentionally hides.
-
-Approval signs locally and sends only the public attestation:
-
-- prepare_approval obtains the exact challenge;
-- the client signs it with a local key;
-- submit_approval sends only the public attestation.
-
-The CLI command cruxible proposal approve and the MCP tool
-cruxible_proposal_approve perform those steps in one call without exposing the
-key to the daemon; the MCP tool signs with a key from the server's
-CRUXIBLE_MCP_KEY_DIR. prepare_approval and submit_approval stay in the full
-MCP profile for a signer outside the MCP process.
+A pending or expired measurement reports and writes nothing; a due one gathers
+evidence and resolves, and the standing resolution answers every later call
+until it is overturned. A reading is minted only for the grain the run really
+reached. A completed run does not satisfy a measurement, and a failed one does
+not contradict it; the verdict comes from the evidence. Resolutions and
+readings are operational records, not accepted state. The CLI forms are
+`cruxible procedure measure` and `cruxible procedure readings`.
 
 ## Fail closed
 
 Stop and surface the typed refusal when:
 
-- the accepted parent changed;
-- the candidate digest or compiler digest differs;
-- a candidate-committed approval requirement is unsatisfied;
-- a principal-lifecycle transition lacks the lifecycle actor's own signature;
-- a principal is revoked or outside its authority;
+- the accepted head moved under a write or a proposal (`readmit` or rebase,
+  then decide again);
+- a candidate or compiler digest differs from the one you reviewed;
+- an approval requirement is unsatisfied;
+- a principal is revoked, inactive, or outside its authority;
 - a source file escapes its declared root or is a symlink;
-- a requested proof detail is not implemented;
-- a coordinate is provisional when accepted state was requested.
+- a requested detail is not served;
+- a coordinate is provisional where accepted state was requested.
 
-Recovery is a governed principal operation, not a bypass for ordinary approval.
+Recovery is a governed principal operation, not a bypass for ordinary
+approval.

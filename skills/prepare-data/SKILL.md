@@ -1,149 +1,112 @@
 ---
 name: prepare-data
-description: Profile and prepare raw source files before modeling or loading them into Cruxible; validate keys, grain, joins, and transformation needs, then produce a concrete readiness report.
+description: Profile and prepare raw source files before modeling them in Cruxible; check identifiers, grain, joins and cleaning needs, decide what becomes typed values and what stays cited prose, and produce a concrete readiness report.
 ---
 
 # Prepare Data
 
-Use this skill before `create-state`, and before `overlay-and-fit` whenever local source files need to be loaded into an overlay.
+Use this skill before `create-state`, or before seeding values into an
+instance a kit set up (`adopt-kit`), whenever local source files need to be
+understood first.
 
-Cruxible validates, loads, and evaluates. File cleaning and transforms are external.
+Cruxible validates and governs what is written to it; cleaning and transforms
+happen outside it.
 
-This skill is about source-data preparation only:
+This skill is for:
 
 - profiling files
-- validating keys and joins
+- validating identifiers and joins
 - checking grain and cardinality
 - identifying cleaning and transform work
-- producing cleaned files or a preparation plan
+- producing cleaned files, or a preparation plan, and a mapping onto Subjects and fields
 
-It is not for cross-dataset matching or governed relationship design. Those happen later in the state-building flow.
+It is not for designing the vocabulary itself; that happens in `create-state`.
 
-Use your own tools freely here: Python, Polars, SQL, spreadsheets, or shell tooling. The goal is to hand the later skills source files that are understood, defensible, and ready.
-
-## Workflow
+Use your own tools freely here: Python, Polars, SQL, spreadsheets, or shell
+tools. The goal is to hand the next skill files that are understood,
+defensible, and ready to load.
 
 ## Phase 1: Inventory the files
 
 For each file, identify:
 
-- what the file appears to represent
-- whether it looks like an entity source, deterministic relationship source, reference file, or unknown source
-- what its likely row grain is
-- what other files it seems to join to
+- what it appears to represent;
+- whether it looks like a list of things (a likely Subject kind), a list of
+  links between things (a likely Subject-valued field), reference data, prose
+  that should stay a file and be cited, or something unclear;
+- its likely row grain;
+- what other files it seems to join to.
 
-Do not assume the target state shape is already known. This skill is part of discovering it.
+Do not assume the target model is already known. This skill is part of
+discovering it.
 
 ## Phase 2: Profile each file
 
-For every source file, inspect:
+For every file, inspect row count, columns, types, null counts, sample rows, and
+schema inconsistencies across files of the same kind. Do not stop at one-line
+summaries: the point is to understand what loading would actually consume.
 
-- row count
-- columns
-- dtypes
-- null counts
-- sample rows
-- obvious schema inconsistencies across files of the same kind
+## Phase 3: Validate identifiers and joins
 
-Do not stop at one-line summaries. The point is to understand what later modeling and loading work would actually consume.
+For files that list things:
 
-## Phase 3: Validate entity keys and relationship joins
+- duplicate identifiers;
+- null or empty identifiers;
+- whitespace, prefix garbage or sentinel values in identifiers;
+- whether the grain really is one row per thing.
 
-For likely entity files, check:
+Cruxible addresses a Subject as `kind/id`, so the identifier must be stable for
+the real thing across reloads. Prefer a source system's durable identifier; do
+not use a mutable name or title. If there is no good identifier, stop and design
+one.
 
-- duplicate primary keys
-- null or empty IDs
-- whitespace, prefix garbage, or sentinel values in IDs
-- whether the file grain is really one row per entity
+For files that link things:
 
-For likely deterministic relationship files, check:
+- both ends' identifier columns exist;
+- each end actually resolves against the file that lists it;
+- duplicate links;
+- whether the grain is one row per link.
 
-- source and target key columns exist
-- foreign keys actually resolve against the referenced entity files
-- duplicate `(from, to, relationship_type)` rows
-- whether the file grain is really one row per relationship
-
-Across files, check:
-
-- shared join columns exist where expected
-- values actually overlap
-- types are compatible
-- normalization work is needed before joins can succeed
+Across files: shared join columns exist, values overlap, types are compatible,
+and normalization needed before joins succeed.
 
 ## Phase 4: Identify cleaning and transform needs
 
-Look for:
+Look for junk rows, placeholders and test records, empty rows, repeated rows
+caused by a secondary dimension, text normalization and encoding problems, and
+embedded dates, identifiers or structured values worth extracting.
 
-- junk rows
-- placeholders and test records
-- all-null or effectively empty rows
-- repeated rows caused by a secondary dimension
-- text normalization issues
-- encoding issues
-- embedded dates, IDs, or structured values worth extracting
+Check values against what a field will accept: a column that should become an
+enum needs its distinct values listed and normalized; a numeric or date column
+needs a consistent format.
 
-Keep preparation scoped to what reliable downstream modeling and loading will actually need. Do not over-clean for its own sake.
+Keep preparation scoped to what reliable loading needs. Do not over-clean.
 
-## Phase 5: Summarize modeling implications
+## Phase 5: Map onto Subjects and fields
 
-After the files are profiled and cleaned enough to reason about them, summarize what they imply:
+Summarize what the files imply, as a draft for `create-state` to confirm:
 
-- likely entity-like record types
-- likely deterministic relationship sources
-- likely join keys across files
-- obvious ambiguous areas that will need user clarification later
-- obvious column rename, normalization, or reshape requirements
-- whether cross-dataset matching will likely be needed later
+- likely Subject kinds and their identifier columns;
+- likely fields per kind, with value type (text, enum, number, date, a link to
+  another kind), and whether a Subject holds one value or many;
+- which files or columns are prose to keep in files and cite (`--evidence-file`)
+  rather than store as values;
+- where each value's evidence will come from: the loader's own statement, a
+  catalogued file, or a retained capture;
+- ambiguities that need the user.
 
-If a draft config or draft state model already exists, you may compare against it here as a consistency check. Do not treat that as the starting assumption for this skill.
-
-## Phase 6: Produce the preparation result
-
-End with a concrete result, not just observations.
+If vocabulary already exists in the instance (`cruxible orient`, `cruxible
+orient --kind KIND`), compare against it and note mismatches.
 
 ## Output
 
 Report:
 
 - `readiness`: `ready` | `ready_with_warnings` | `blocked`
-- `source_inventory`
-- `blocking_issues`
-- `warnings`
-- `cleaned_files`
-- `transform_lineage`
-- `required_transforms`
-- `join_or_key_risks`
-- `loading_readiness_by_surface`
-- `likely_modeling_implications`
-- `open_questions`
-- `recommended_next_step`
-
-`source_inventory` should capture, for each file:
-
-- file path
-- guessed role
-- row grain
-- likely join keys
-- whether it looks loader-ready, transform-needed, or unclear
-
-`transform_lineage` should capture, for each cleaned file:
-
-- source file
-- transform summary
-- columns renamed, dropped, or derived
-- rows removed and why
-
-`loading_readiness_by_surface` should separate:
-
-- likely entity loading readiness
-- likely deterministic relationship loading readiness
-- likely later matching or governed need
-
-`open_questions` should capture true source ambiguity that the agent should not guess past.
-
-`recommended_next_step` should usually be one of:
-
-- start `create-state`
-- continue `overlay-and-fit`
-- clean specific files first
-- clarify ambiguous source semantics with the user before modeling further
+- `source_inventory`: per file, its path, role, row grain, identifier and join columns, and whether it is load-ready, needs transforms, or is unclear
+- `blocking_issues` and `warnings`
+- `cleaned_files` and `transform_lineage`: per cleaned file, its source, the transform, columns renamed, dropped or derived, and rows removed and why
+- `subject_and_field_mapping`: the draft from Phase 5
+- `files_to_cite`: files that stay prose, with a proposed catalog name each
+- `open_questions`: real source ambiguity not to guess past
+- `recommended_next_step`: usually `create-state`, `adopt-kit`, cleaning specific files first, or clarifying source semantics with the user

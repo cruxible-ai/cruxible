@@ -1,195 +1,438 @@
-# Cruxible developer quickstart
+# Quickstart
 
-This quickstart targets the breaking Cruxible development branch.
+This walk-through starts a daemon, creates an instance, defines a little
+vocabulary, writes and reads values, cites a file as evidence, reviews a
+change, and renders a table into a page. It takes about fifteen minutes.
 
 ## Install
 
-Requirements are Python 3.11+, Git, and uv.
+Requirements: Python 3.11+ and Git.
 
 ~~~bash
-uv sync --all-extras
+pip install cruxible        # or: uv tool install cruxible
 ~~~
 
-## Start the daemon
+From a source checkout, run `uv sync --all-packages --all-extras` and prefix
+the commands below with `uv run`.
 
-In shell one:
+## Start a daemon
+
+The daemon owns accepted state. Start it in its own shell:
 
 ~~~bash
-uv run cruxible server start \
-  --socket /tmp/cruxible-run/daemon.sock \
-  --state-root /tmp/cruxible-dev
+cruxible server start --socket ~/.cruxible/run/daemon.sock
 ~~~
 
-A Unix-socket daemon runs with auth off and says so in one line when it starts:
-every process of your OS user is equally trusted, so no bearer token is needed
-locally. A TCP daemon refuses to start without `--auth`. The daemon binds the
-socket with mode 0600 in a directory it creates with mode 0700. It refuses to
-start unless the socket's directory is yours and owner-only, and no ancestor
-lets another user replace it (a sticky root-owned `/tmp` is fine; a socket
-directly in `/tmp` is not).
+It keeps its state under `~/.cruxible` (`--state-root` picks another
+directory). A Unix-socket daemon runs with auth off and says so in one line
+when it starts: every process of your OS user is equally trusted, so no bearer
+token is needed locally. A TCP daemon refuses to start without `--auth`. The
+daemon binds the socket owner-only and refuses a socket directory another user
+could replace. `cruxible server install-service` installs it as a user
+service instead.
 
-In shell two:
+## Create an instance
+
+In a second shell, inside a Git repository (a new one is fine):
 
 ~~~bash
-export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-run/daemon.sock
+mkdir tasks && cd tasks && git init
+export CRUXIBLE_SERVER_SOCKET=~/.cruxible/run/daemon.sock
+cruxible init
 ~~~
 
-Create a host and make yourself its owner in one command. With no instance
-selected, `init` allocates a daemon-owned host, selects it and initializes it;
-when run inside a Git worktree, the local socket also lets the daemon attach
-that exact workspace:
+With no instance selected, `init` creates a host on the daemon, initializes
+it, and attaches this repository as its workspace. You become the owner under
+your OS username (`--principal-id ID` picks another), with a private key
+generated under `~/.config/cruxible/keys/` (`--key-dir DIR` picks another),
+outside the repository and the daemon's state. The CLI remembers the daemon,
+the instance and your principal, so later commands need no flags or
+environment.
+
+The new instance allows self-approval: you can approve and activate your own
+changes. `--require-independent-approval` (with `--reviewer-key-dir DIR` for a
+second principal) makes every governed change need an approval from someone
+other than its author.
 
 ~~~bash
-uv run cruxible init
+cruxible orient
 ~~~
 
-You become the owner under your OS username (`--principal-id ID` picks another),
-with a key generated under `~/.config/cruxible/keys/` (`--key-dir DIR` picks
-another), outside the repository and the daemon state root. Init writes the
-owner's settings file and the CLI remembers it, so later commands act as the
-owner without any export (`cruxible context use --principal ID` switches). An
-SDK session or MCP server loads the same file (`set -a; . DIR/cruxible.env;
-set +a`) or sets `CRUXIBLE_PRINCIPAL_ID`; the daemon attributes writes to that
-principal after checking it is registered and active. With auth off this is a claim of identity, not
-authentication: every process of your OS user is equally trusted. Approvals
-are still signed with the principal's private key.
+`orient` is the map of an instance: its Subject kinds, artifacts, who you are,
+and what needs attention. It is nearly empty for now.
 
-The private key remains in its client custody directory; the daemon receives
-only its public ordinary-principal record. Local key directories provide
-attribution and repository hygiene, not a security boundary. To opt into an
-independent in-daemon approval requirement, add both
-`--reviewer-key-dir /tmp/cruxible-reviewer` and
-`--require-independent-approval`. Organization review normally rides the state
-repository's branch protection and CODEOWNERS policy. Real custody separation
-belongs at the parked Cloud broker/leasing seam.
+## Define vocabulary
 
-## Govern a Document
-
-Create a body:
+Values in Cruxible are Claims about Subjects. A Subject is a thing, named
+`kind/id` (`project.task/write-docs`). A ClaimType defines one field of a
+kind: what values it admits, how many a Subject may hold, and which evidence
+supports a value. Define two fields for tasks:
 
 ~~~bash
-printf '# Demo policy\n\nExact governed bytes.\n' > /tmp/demo-policy.md
-BODY_DIGEST="$(uv run cruxible body store /tmp/demo-policy.md)"
-~~~
-
-Create an envelope at /tmp/demo-envelope.json, substituting the entire
-`BODY_DIGEST_FROM_PREVIOUS_COMMAND` value with the printed digest:
-
-~~~json
+cruxible claim-type propose --name add-task-owner --input - <<'EOF'
 {
-  "identity": "document:demo-policy",
-  "document_kind": "policy",
-  "title": "Demo policy",
-  "media_type": "text/markdown",
-  "body_digest": "BODY_DIGEST_FROM_PREVIOUS_COMMAND",
-  "governance_scope": ["project:demo"],
-  "lifecycle": {"revision": 1}
+  "predicate": "project.task.owner",
+  "description": "Who is doing the task.",
+  "allowed_subject_kinds": ["project.task"],
+  "object_kind": "literal",
+  "literal_schema": {"type": "string"},
+  "cardinality": "one",
+  "permitted_roles": ["observation"],
+  "default_role": "observation",
+  "evidence_admission_policy": {"rules": [{
+    "rule_id": "own-words-or-standup",
+    "claim_roles": ["observation"],
+    "capture_contracts": [
+      "CaptureContract:playbill.coordinator-self-source-v1",
+      "CaptureContract:playbill.foreign-source.standup"
+    ],
+    "evidence_kinds": ["self_asserted"],
+    "admission": "direct",
+    "subject_binding": "exact_claim_subject"
+  }]},
+  "admission_policy": {},
+  "resolution_policy": {"cardinality": "one", "eligible_verdicts": ["supported"],
+                        "selector": "only_contender"},
+  "anticipated_source_ids": ["standup"]
 }
+EOF
 ~~~
 
-Propose it:
+The evidence rule admits two kinds of evidence: the writer's own words (the
+`--because` text every write carries) and passages of a workspace file you
+will catalogue as `standup`. The two contract names are fixed identifiers;
+`anticipated_source_ids` lets the rule name the `standup` source before
+anything has cited it.
+
+The command printed a proposal: a frozen candidate checked against the
+current accepted state, not yet accepted itself. Find it, read it, and
+activate it:
 
 ~~~bash
-uv run cruxible document propose \
-  --envelope /tmp/demo-envelope.json \
-  --name add-demo-policy \
-  --json
+cruxible proposal list --status open
+cruxible get PROPOSAL_ID
+cruxible proposal activate PROPOSAL_ID
 ~~~
 
-Copy the proposal ID from the response, then review and activate:
+Activation advances accepted state by compare-and-set. A proposal is checked
+against the state it was proposed on, so one proposed before another was
+activated becomes stale; `cruxible next` lists it and `cruxible proposal
+readmit` checks it again at the new state. Propose the second field now, with
+an enumerated value:
 
 ~~~bash
-uv run cruxible proposal review PROPOSAL_ID
-uv run cruxible proposal activate PROPOSAL_ID
+cruxible claim-type propose --name add-task-status --input - <<'EOF'
+{
+  "predicate": "project.task.status",
+  "description": "Where the task stands.",
+  "allowed_subject_kinds": ["project.task"],
+  "object_kind": "literal",
+  "literal_schema": {"type": "string", "enum": ["open", "doing", "done"]},
+  "cardinality": "one",
+  "permitted_roles": ["observation"],
+  "default_role": "observation",
+  "evidence_admission_policy": {"rules": [{
+    "rule_id": "own-words-or-standup",
+    "claim_roles": ["observation"],
+    "capture_contracts": [
+      "CaptureContract:playbill.coordinator-self-source-v1",
+      "CaptureContract:playbill.foreign-source.standup"
+    ],
+    "evidence_kinds": ["self_asserted"],
+    "admission": "direct",
+    "subject_binding": "exact_claim_subject"
+  }]},
+  "admission_policy": {},
+  "resolution_policy": {"cardinality": "one", "eligible_verdicts": ["supported"],
+                        "selector": "only_contender"},
+  "anticipated_source_ids": ["standup"]
+}
+EOF
 ~~~
 
-Read accepted state and its explanation:
+Activate it the same way:
 
 ~~~bash
-uv run cruxible orient --section documents
-uv run cruxible get Document:demo-policy
-uv run cruxible get Document:demo-policy --detail body
-uv run cruxible get Document:demo-policy --detail why
-uv run cruxible get Document:demo-policy --detail history
+cruxible proposal list --status open
+cruxible proposal activate PROPOSAL_ID
 ~~~
 
-Storing body bytes was inert. Proposing created a frozen candidate. A voluntary
-non-creator approval, when supplied, signs exactly that candidate. Only
-activation changed accepted state.
+`--dry-run` on `claim-type propose` runs every check without proposing.
+Vocabulary has its own command group because changing a ClaimType decides what
+happens to every Claim that uses it (see `cruxible claim-type migrate`).
+
+## Write values
+
+~~~bash
+cruxible set project.task/write-docs status doing --because "Started the docs today."
+~~~
+
+~~~text
+accepted (generation 3, 1d0c6e2a9b41)
+  set project.task/write-docs status: doing  [CLM-…; verdict supported]
+  + subject project.task/write-docs
+~~~
+
+`set` replaced the field's value (there was none), created the Subject because
+its kind is known, and accepted the change at once because the approval
+policy lets you. `--because` is required: it says why, and it is the default
+evidence. `verdict supported` means the evidence is admitted by the
+ClaimType's rule.
+
+Several changes that belong together go in one `write`, accepted or refused as
+a whole. Every payload argument accepts `-` for standard input, so nothing
+lands on disk:
+
+~~~bash
+cruxible write - <<'EOF'
+{"because": "Planning for the week.",
+ "changes": [
+   {"op": "set", "subject": "project.task/write-docs", "field": "owner", "value": "ada"},
+   {"op": "set", "subject": "project.task/ship-v1", "field": "owner", "value": "grace"},
+   {"op": "set", "subject": "project.task/ship-v1", "field": "status", "value": "open"}
+ ]}
+EOF
+~~~
+
+`cruxible write --schema` prints the payload schema. `cruxible retire
+project.task/ship-v1 status --because "..."` ends a value, and `add` adds one
+more value to a field whose ClaimType allows many.
+
+## Read
+
+Three verbs read accepted state:
+
+~~~bash
+cruxible orient                                   # the map, now with project.task
+cruxible query project.task --select owner,status
+cruxible query project.task --where owner=ada
+cruxible get project.task/write-docs
+cruxible get project.task/write-docs --detail why
+~~~
+
+~~~text
+subject                  owner  status  flags
+project.task/ship-v1     grace  open    -
+project.task/write-docs  ada    doing   -
+~~~
+
+`query` answers with rows of values; `flags` marks a value that is stale,
+contested, contradicted, uncovered, or held as unsure. `get` reads one thing
+by any reference you have seen (a `kind/id`, a Claim ID, `ClaimType:NAME`, a
+proposal ID) and goes deeper with `--detail`: `evidence`, `why`, `history`,
+`proof`.
+
+The daemon also keeps the floor current: plain files under
+`.cruxible/floor/`, one per Subject, for orientation and grep.
+
+~~~bash
+grep -r ada .cruxible/floor/current/
+~~~
+
+~~~text
+.cruxible/floor/current/project.task/write-docs.yaml:owner: ada  # CLM-…
+~~~
+
+Each file's first line names its reference, which `get` reads live. The floor
+follows accepted state shortly after each change; read exact values right
+after a write with `get` or `query`.
+
+## Cite a file
+
+A value can rest on a passage of a file in your workspace. Catalogue the file
+in `.cruxible/sources.yaml`, which gives it the stable name the evidence rule
+above admits:
+
+~~~bash
+mkdir -p notes
+printf '# Standup\n\n- ship-v1: Grace is starting on it today.\n' > notes/standup.md
+cat > .cruxible/sources.yaml <<'EOF'
+catalog_kind: portable
+entries:
+  - name: standup
+    locator: notes/standup.md
+EOF
+git add notes .cruxible/sources.yaml && git commit -m "Standup notes"
+
+cruxible set project.task/ship-v1 status doing \
+  --because "Standup says Grace started." \
+  --evidence-file "notes/standup.md#Grace is starting on it today"
+~~~
+
+`--evidence-file PATH#ANCHOR` cites the text found once in the file. The
+quoted passage is retained with the Claim. Now change the file:
+
+~~~bash
+sed -i.bak 's/Grace is starting on it today/Grace is blocked on review/' notes/standup.md
+cruxible next
+~~~
+
+~~~text
+repair  citation_drifted  Claim:CLM-…  next=cruxible.claim.retire
+  repair: cruxible retire CLM-…
+~~~
+
+`next` is the repair queue: everything that is wrong or waiting on you, each
+row with the operation that repairs it. Here the passage the Claim cites is
+gone, so the Claim needs a decision: retire it, as the row suggests, or set the
+value again citing the new text.
+
+## Review a change
+
+`--no-accept` stops a write at a proposal, as it would stop for anyone when
+the approval policy requires an independent approval:
+
+~~~bash
+cruxible set project.task/ship-v1 owner ada --because "Reassigned." --no-accept
+~~~
+
+~~~text
+awaiting approval (generation 5, …)
+  set project.task/ship-v1 owner: grace -> ada  [CLM-…; verdict supported]
+proposal: sha256:… (ready_to_activate)
+~~~
+
+Review it, approve it with your key, and activate it:
+
+~~~bash
+cruxible proposal review PROPOSAL_ID
+cruxible proposal approve PROPOSAL_ID --yes
+cruxible proposal activate PROPOSAL_ID
+~~~
+
+`proposal review` prints how to diff the candidate against accepted state with
+plain Git in this workspace (`git diff
+cruxible-ledger/accepted...cruxible-ledger/proposals/…`) and where the
+daemon's evaluation and approval records are. `proposal approve` signs the
+exact candidate with your private key on this machine and sends only the
+signature. Activation then advances accepted state by compare-and-set.
+
+## Render a table into a page
+
+A projection block is a passage of a workspace page that reflects accepted
+state and carries a stamp of what it reflects. A rendered block is the output
+of a named query. First accept the named query:
+
+~~~bash
+cruxible authoring submit - --and-activate --brief <<'EOF'
+{"kind": "query_definition",
+ "query_definition": {
+   "identity": {"kind": "QueryDefinition", "name": "project.task_status"},
+   "description": "Every task with its owner and status.",
+   "entry": {"binding": "task", "subject_kinds": ["project.task"]},
+   "projection": {"fields": [
+     {"name": "owner", "value": {"kind": "claim_value", "binding": "task", "predicate": "project.task.owner"}},
+     {"name": "status", "value": {"kind": "claim_value", "binding": "task", "predicate": "project.task.status"}}
+   ]},
+   "result_binding": "task",
+   "result_shape": "subject",
+   "result_cardinality": "many",
+   "dedupe": "subject",
+   "evaluation_policy": {"visible_verdicts": ["supported"], "visible_currency": ["current"],
+                         "conflict_behavior": "surface_conflicts",
+                         "requires_accepted_coordinate": true,
+                         "requires_explicit_evaluation_time": true},
+   "default_budgets": {"max_results": 100, "max_traversal_depth": 0},
+   "maximum_budgets": {"max_results": 1000, "max_traversal_depth": 0}
+ }}
+EOF
+cruxible query --name project.task_status
+~~~
+
+`authoring` is the lane for definitions (named queries, Subjects, Procedures,
+Lines, Triggers, policies). `authoring submit --dry-run` returns every refusal
+without saving anything, and `cruxible authoring example` lists a template for
+each kind.
+
+Then write a page with an empty block, catalogue it, and stamp it:
+
+~~~bash
+printf '# Status\n\n<!-- cruxible:block:tasks -->\n<!-- /cruxible:block:tasks -->\n' > notes/status.md
+cat >> .cruxible/sources.yaml <<'EOF'
+  - name: status-page
+    locator: notes/status.md
+EOF
+cruxible block repin status-page tasks --query QueryDefinition:project.task_status --render
+cat notes/status.md
+~~~
+
+~~~text
+# Status
+
+<!-- cruxible:block:tasks:ref:… -->
+| subject | owner | status |
+|---|---|---|
+| Subject:project.task/ship-v1 | ada | doing |
+| Subject:project.task/write-docs | ada | doing |
+<!-- /cruxible:block:tasks -->
+~~~
+
+When the state behind the block moves, `cruxible next` and `cruxible block
+sync --all` report it stale; repin it to refresh it. Blocks can also hold prose
+you write yourself, stamped against the Claims it summarizes; see
+[Projection blocks](declared-blocks.md).
 
 ## Add a propose-only agent
 
 A propose-only agent authors and proposes but cannot approve or activate. That
-limit is a credential tier, so it needs a daemon with auth. Start the daemon
-with `--auth` instead:
+limit is a credential tier, so it needs a daemon with auth. Start one with its
+own state root:
 
 ~~~bash
-uv run cruxible server start \
-  --socket /tmp/cruxible-run/daemon.sock \
-  --state-root /tmp/cruxible-dev --auth
+cruxible server start --auth --state-root ~/.cruxible-team \
+  --socket ~/.cruxible-team/run/daemon.sock
 ~~~
 
-The daemon never prints its bootstrap secret. It writes it owner-only (0600) to
-`<state-root>/daemon/bootstrap-secret`, and `server status`, `restart` and
-`stop` read it from there when they talk to this daemon, so a local restart
-needs no credential typed in. Allocate the host with it, claim the one-time
-operator credential, then initialize: init makes you the owner and mints your
-own admin credential into your settings file:
+The daemon never prints its bootstrap secret; it writes it owner-only to
+`<state-root>/daemon/bootstrap-secret`. In another shell, in a new repository,
+allocate a host with the secret, claim the host's one-time admin credential,
+and initialize with it:
 
 ~~~bash
-export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-run/daemon.sock
-SECRET_FILE=/tmp/cruxible-dev/daemon/bootstrap-secret
-CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$SECRET_FILE")" \
-  uv run cruxible host create --instance-id inst_demo
-uv run cruxible credential claim-bootstrap --secret-file "$SECRET_FILE"
-export CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed>
-uv run cruxible init --key-dir /tmp/cruxible-owner --principal-id me
-set -a; . /tmp/cruxible-owner/cruxible.env; set +a
+mkdir team && cd team && git init
+export CRUXIBLE_SERVER_SOCKET=~/.cruxible-team/run/daemon.sock
+SECRET_FILE=~/.cruxible-team/daemon/bootstrap-secret
+CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$SECRET_FILE")" cruxible host create
+cruxible credential claim-bootstrap --secret-file "$SECRET_FILE"
+CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed> cruxible init
 ~~~
 
-Add the agent in one command. `--signer-key` defaults to your own key from the
-settings you just loaded, so the registration is proposed, approved by you, and
-activated, and the agent's `governed_write` credential is minted:
+`init` makes you the owner and mints your own credential into your settings,
+which the CLI remembers. Add the agent in one command: it proposes the
+registration, approves and activates it with your key, and mints the agent's
+`governed_write` credential into the agent's own settings file:
 
 ~~~bash
-uv run cruxible principal add agent-b --key-dir /tmp/agent-b
+cruxible principal add agent-b --key-dir ~/agents/agent-b
 ~~~
 
-Hand the agent its directory. It loads its settings and acts as `agent-b`:
+Hand the agent `~/agents/agent-b/cruxible.env`: a shell or an MCP server loads
+it (`set -a; . ~/agents/agent-b/cruxible.env; set +a`). On this machine the CLI
+can switch to it:
 
 ~~~bash
-set -a; . /tmp/agent-b/cruxible.env; set +a
-uv run cruxible whoami        # agent-b, governed_write
-uv run cruxible document propose --envelope /tmp/demo-envelope.json \
-  --name agent-b-change
-uv run cruxible proposal activate PROPOSAL_ID   # refused: needs graph_write
+cruxible context use --principal agent-b
+cruxible whoami                                   # agent-b, governed_write
+cruxible claim-type propose --name add-task-owner --input owner.json
+cruxible proposal activate PROPOSAL_ID            # refused: needs graph_write
+cruxible context use --principal YOUR_ID
+cruxible proposal activate PROPOSAL_ID
 ~~~
 
-You review, approve, and activate the agent's proposal under your own settings.
-With auth off (the default socket daemon) the same `principal add` registers
-the agent and writes its settings without a credential, but every process of
-your OS user is equally trusted, so nothing stops a process from loading your
-settings instead; the principal ID is a claim, not a boundary.
+(`owner.json` is the owner ClaimType from earlier, saved to a file.) You
+review, approve and activate what the agent proposes under your own settings.
+With auth off, the same `principal add` registers the agent and writes its
+settings without a credential, but every process of your OS user is equally
+trusted, so nothing stops a process from loading your settings instead: the
+principal ID is a claim, not a boundary.
 
-## Source catalogs
+## Next
 
-For local or external files, author a portable catalog and optional ignored
-local overlay. Compilation is client-side:
-
-~~~bash
-uv run cruxible sources check
-uv run cruxible sources propose --source design --name revise-design
-~~~
-
-Both discover `.cruxible/sources.yaml`. Use sources check for read-only alignment
-validation and sources propose to propose one catalogued Document's file;
-`sources compile --output FILE` freezes a path-free bundle that `sources propose
---bundle FILE` submits as written. The daemon never dereferences a client path.
-
-## Verify the branch
-
-~~~bash
-uv run pytest -q tests/test_ledger tests/test_claims tests/test_procedures tests/test_architecture
-uv run mypy src
-uv run ruff check src packages/cruxible-client/src tests
-~~~
+- [Concepts](concepts.md): the model behind what you just did.
+- [Modeling state](modeling-state.md): what to make a Subject, a ClaimType, or
+  a file.
+- [For AI agents](for-ai-agents.md): connect an agent over MCP or the Python
+  SDK.
+- [Kits](kits.md): install vocabulary, queries and Procedures someone else
+  built.
+- [CLI reference](cli-reference.md).
