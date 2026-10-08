@@ -372,6 +372,60 @@ sync --all` report it stale; repin it to refresh it. Blocks can also hold prose
 you write yourself, stamped against the Claims it summarizes; see
 [Projection blocks](declared-blocks.md).
 
+## Add a propose-only agent
+
+A propose-only agent authors and proposes but cannot approve or activate. That
+limit is a credential tier, so it needs a daemon with auth. Start one with its
+own state root:
+
+~~~bash
+cruxible server start --auth --state-root ~/.cruxible-team \
+  --socket ~/.cruxible-team/run/daemon.sock
+~~~
+
+The daemon never prints its bootstrap secret; it writes it owner-only to
+`<state-root>/daemon/bootstrap-secret`. In another shell, in a new repository,
+allocate a host with the secret, claim the host's one-time admin credential,
+and initialize with it:
+
+~~~bash
+mkdir team && cd team && git init
+export CRUXIBLE_SERVER_SOCKET=~/.cruxible-team/run/daemon.sock
+SECRET_FILE=~/.cruxible-team/daemon/bootstrap-secret
+CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$SECRET_FILE")" cruxible host create
+cruxible credential claim-bootstrap --secret-file "$SECRET_FILE"
+CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed> cruxible init
+~~~
+
+`init` makes you the owner and mints your own credential into your settings,
+which the CLI remembers. Add the agent in one command: it proposes the
+registration, approves and activates it with your key, and mints the agent's
+`governed_write` credential into the agent's own settings file:
+
+~~~bash
+cruxible principal add agent-b --key-dir ~/agents/agent-b
+~~~
+
+Hand the agent `~/agents/agent-b/cruxible.env`: a shell or an MCP server loads
+it (`set -a; . ~/agents/agent-b/cruxible.env; set +a`). On this machine the CLI
+can switch to it:
+
+~~~bash
+cruxible context use --principal agent-b
+cruxible whoami                                   # agent-b, governed_write
+cruxible claim-type propose --name add-task-owner --input owner.json
+cruxible proposal activate PROPOSAL_ID            # refused: needs graph_write
+cruxible context use --principal YOUR_ID
+cruxible proposal activate PROPOSAL_ID
+~~~
+
+(`owner.json` is the owner ClaimType from earlier, saved to a file.) You
+review, approve and activate what the agent proposes under your own settings.
+With auth off, the same `principal add` registers the agent and writes its
+settings without a credential, but every process of your OS user is equally
+trusted, so nothing stops a process from loading your settings instead: the
+principal ID is a claim, not a boundary.
+
 ## Next
 
 - [Concepts](concepts.md): the model behind what you just did.
