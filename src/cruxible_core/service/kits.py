@@ -108,7 +108,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
 from cruxible_core.service.procedures.provider_installation import ExpectedProviderBuild
-from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+from cruxible_core.service.proposals.proposals import open_proposal_at_target
 
 # Definition families an owned artifact may pin. A pin into any other family is
 # authority, binding or state, which a kit cannot carry, so the build refuses.
@@ -1099,14 +1099,7 @@ def _submit(
         },
     )
     target = f"refs/proposals/{actor_id}/kit-{kit_id}-{suffix[:32]}"
-    pending = next(
-        (
-            item
-            for item in service_list_playbill_proposals(instance, status="open").entries
-            if item.target_ref == target
-        ),
-        None,
-    )
+    pending = open_proposal_at_target(instance, target)
     if pending is not None:
         # The same change is already proposed: a commit returns it, and a
         # preview says the commit would.

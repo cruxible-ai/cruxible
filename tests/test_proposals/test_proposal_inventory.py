@@ -27,6 +27,8 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.proposals.proposals import (
+    open_proposal_at_target,
+    open_proposal_count,
     service_list_playbill_proposals,
     service_playbill_whoami,
     service_readmit_playbill_proposal,
@@ -106,6 +108,14 @@ def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Pa
     assert service_list_playbill_proposals(instance, status="open").entries == (
         by_id[opened.proposal.admission.proposal_id],
     )
+    # The locator reads answer exactly as the listing does, without listing.
+    assert open_proposal_count(instance) == 1
+    for entry in result.entries:
+        found = open_proposal_at_target(instance, entry.target_ref)
+        assert found == (entry if entry.status == "open" else None)
+        (admission,) = instance.proposal_evidence().admissions_at_target(entry.target_ref)
+        assert admission.proposal_id == entry.proposal_id
+    assert open_proposal_at_target(instance, "refs/proposals/owner/never-submitted") is None
 
 
 def test_whoami_binds_transport_identity_to_current_principal_registry(tmp_path: Path) -> None:

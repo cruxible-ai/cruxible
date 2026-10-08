@@ -314,6 +314,23 @@ class ProposalEvidenceStore:
             raise ProposalIntegrityError("proposal admission lookup names another admission")
         return record
 
+    def admissions_at_target(self, target_ref: str) -> tuple[ProposalAdmissionRecord, ...]:
+        """The admissions submitted under one exact target ref, through its locator.
+
+        A dedupe by target ref reads these, never every admission retained.
+        """
+
+        if self.index is not None:
+            return tuple(
+                self._read_located(
+                    row, "admission", ProposalAdmissionRecord, render=admission_bytes
+                )
+                for row in self.index.rows(
+                    self, "target_ref=? AND admission_path IS NOT NULL", (target_ref,)
+                )
+            )
+        return tuple(item for item in self.list_admissions() if item.target_ref == target_ref)
+
     def list_admissions(self) -> tuple[ProposalAdmissionRecord, ...]:
         """List canonical admissions in stable evidence-filename order."""
 

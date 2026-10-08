@@ -96,7 +96,7 @@ from cruxible_core.service.list_pages import (
     list_snapshot,
     page_after_boundary,
 )
-from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+from cruxible_core.service.proposals.proposals import open_proposal_count
 from cruxible_core.service.read_refusals import (
     ReadRefusalError,
     nearest,
@@ -637,7 +637,7 @@ def _attention(
             "the daemon's consumer loop is not running here: enabled Lines do not admit their "
             "own work and worker findings do not advance until a daemon runs it"
         )
-    open_proposals = len(service_list_playbill_proposals(instance, status="open").entries)
+    open_proposals = open_proposal_count(instance)
     return (
         OrientAttention(
             next_items=total,
