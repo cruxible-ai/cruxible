@@ -80,6 +80,7 @@ from cruxible_client.contracts.claim_attestations import (
 )
 from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
 from cruxible_client.contracts.codes import normalize_code
+from cruxible_client.contracts.compact_query import QueryClaim
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
@@ -5185,11 +5186,13 @@ def query_group(
         return
     click.echo(render_query_table(result))
     for row in result.rows if with_claims else ():
-        for column, entries in (row.get("claims") or {}).items():
-            for entry in entries:
+        cells = row.get("claims") or {}
+        for column, entries in cells.items() if isinstance(cells, dict) else ():
+            for entry in entries if isinstance(entries, list) else ():
+                claim = QueryClaim.model_validate(entry)
                 click.echo(
-                    f"claim {row.get('subject', '')} {column}: {entry['claim']} "
-                    f"{entry['status']} {entry['verdict']} {entry['role']}"
+                    f"claim {row.get('subject', '')} {column}: {claim.claim} "
+                    f"{claim.status} {claim.verdict} {claim.role}"
                 )
     if result.truncated and result.next_cursor is not None:
         again = _without_cursor(ctx.meta.get("playbill_query_args", []))

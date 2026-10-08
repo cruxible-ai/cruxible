@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,8 @@ from cruxible_client.contracts.procedure_mandates import (
     MandateClaimScope,
     MandateCondition,
     ProcedureMandate,
+    parse_procedure_mandate_any,
+    procedure_mandate_digest,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -36,6 +38,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import SettleChangeSetNode
 from cruxible_client.contracts.query.definitions import (
+    CLAIM_TYPE_PIN_ROLE,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_digest,
@@ -44,6 +47,7 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_client.contracts.query.grammar import (
     QueryBudgets,
+    QueryClaimValueRef,
     QueryComparisonFilter,
     QueryEntry,
     QueryLiteralRef,
@@ -54,6 +58,7 @@ from cruxible_client.contracts.query.grammar import (
     QuerySubjectFieldRef,
 )
 from cruxible_client.contracts.subjects import render_subject, subject_path
+from cruxible_core.procedures.egress import TerminalEgressReceiptV4
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
     service_run_playbill_line,
@@ -70,7 +75,11 @@ from tests.test_procedures.test_procedure_proposal_delivery import (
 )
 
 
-def _condition(*, only_subject: str | None) -> QueryDefinition:
+def _condition(*, only_subject: str | None, require_claim: bool = False) -> QueryDefinition:
+    """The settle condition; `require_claim` also projects the not-yet-accepted Claim."""
+
+    claim_type = _claim_type(capture_contract_digest(capture_contract()).tagged)
+
     return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="security.settle-condition"),
         entry=QueryEntry(
@@ -98,6 +107,16 @@ def _condition(*, only_subject: str | None) -> QueryDefinition:
                     name="id",
                     value=QuerySubjectFieldRef(binding="advisory", field="subject_id"),
                 ),
+                *(
+                    (
+                        QueryProjectionField(
+                            name="severity",
+                            value=QueryClaimValueRef(binding="advisory", predicate=PREDICATE),
+                        ),
+                    )
+                    if require_claim
+                    else ()
+                ),
             )
         ),
         parameters=(QueryParameterDeclaration(name="advisory_id", value_type="string"),),
@@ -108,6 +127,17 @@ def _condition(*, only_subject: str | None) -> QueryDefinition:
         ),
         default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
+        pins=(
+            (
+                ArtifactPin(
+                    role=CLAIM_TYPE_PIN_ROLE,
+                    target=claim_type.identity,
+                    artifact_digest=claim_type_digest(claim_type).tagged,
+                ),
+            )
+            if require_claim
+            else ()
+        ),
     )
 
 
@@ -115,15 +145,20 @@ def _condition(*, only_subject: str | None) -> QueryDefinition:
 OWNERS: dict[Path, Any] = {}
 #: The settling Procedure of each capture-triggered world, for landing trigger Captures.
 PROCEDURES: dict[Path, Any] = {}
+#: The propose grant's digest in each world that accepts one.
+PROPOSE_GRANTS: dict[Path, str] = {}
 
 
-def settle_world(  # type: ignore[no-untyped-def]
+def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     tmp_path: Path,
     *,
     only_subject: str | None = None,
     fallback: str = "propose",
     mandates: int = 1,
     capture_triggered: bool = False,
+    max_authority: str = "settle",
+    propose_mandate: bool = False,
+    require_claim: bool = False,
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
@@ -148,7 +183,7 @@ def settle_world(  # type: ignore[no-untyped-def]
         }
     )
     line = fixtures._served_line(with_terminal, policy).model_copy(
-        update={"max_authority": "settle"}
+        update={"max_authority": max_authority}
     )
     trigger_members: dict[str, bytes] = {}
     if capture_triggered:
@@ -177,7 +212,7 @@ def settle_world(  # type: ignore[no-untyped-def]
         ] = render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
         PROCEDURES[root] = with_terminal
     claim_type = _claim_type(capture_contract_digest(capture_contract()).tagged)
-    query = _condition(only_subject=only_subject)
+    query = _condition(only_subject=only_subject, require_claim=require_claim)
     members: dict[str, bytes] = {
         **trigger_members,
         procedure_path(fixtures.PROCEDURE_NAME): render_procedure(with_terminal),
@@ -216,27 +251,55 @@ def settle_world(  # type: ignore[no-untyped-def]
                     artifact_digest=query_definition_digest(query).tagged,
                 ),
                 binding_parameter="advisory_id",
-                required_fields=("id",),
+                required_fields=("id", "severity") if require_claim else ("id",),
                 fallback=fallback,  # type: ignore[arg-type]
             ),
         )
         members[procedure_mandate_path(mandate.identity.name)] = render_procedure_mandate(mandate)
+    if propose_mandate:
+        settle_digests = [
+            procedure_mandate_digest(parse_procedure_mandate_any(content, path=path)).tagged
+            for path, content in members.items()
+            if path.startswith("procedure-mandates/")
+        ]
+        # The propose grant's digest sorts after every settle grant's, so a
+        # digest-order choice between them would pick the settle grant.
+        for day in range(256):
+            grant = ProcedureMandate(
+                identity=ArtifactIdentity(kind="ProcedureMandate", name="propose-grant"),
+                procedure=ArtifactPin(
+                    role="procedure",
+                    target=with_terminal.identity,
+                    artifact_digest=procedure_artifact_digest(with_terminal).tagged,
+                ),
+                grants="propose",
+                resource_ceiling=with_terminal.definition.hard_caps,
+                namespace=("claims",),
+                valid_from=datetime(2020, 1, 1, tzinfo=UTC),
+                expires_at=datetime(2099, 1, 1, tzinfo=UTC) + timedelta(days=day),
+            )
+            if all(procedure_mandate_digest(grant).tagged > item for item in settle_digests):
+                break
+        members[procedure_mandate_path(grant.identity.name)] = render_procedure_mandate(grant)
+        PROPOSE_GRANTS[instance.root] = procedure_mandate_digest(grant).tagged
     fixtures._accept_more(instance, owner, members, name="settle-world")
     OWNERS[instance.root] = owner
     return instance, root, line
 
 
-def run_settle(instance, root, line, *, caller_rung: int = 3):  # type: ignore[no-untyped-def]
+def run_settle(  # type: ignore[no-untyped-def]
+    instance, root, line, *, caller_rung: int = 3, now: datetime = fixtures.NOW
+):
     identity_digest = line_identity_digest(line.identity)
     return service_run_playbill_line(
         instance,
         path_identity_digest=identity_digest,
         request=LineRunRequest(line=identity_digest, occurrence_id=None, evaluation_time=None),
-        actor_context=fixtures._actor(instance).model_copy(update={"timestamp": fixtures.NOW}),
+        actor_context=fixtures._actor(instance).model_copy(update={"timestamp": now}),
         caller_rung=caller_rung,
         provider_runtime_operator=fixtures._Operator(fixtures._WorkspaceInvoker()),  # type: ignore[arg-type]
         workspace_file_reader=fixtures._reader(instance, root),
-        daemon_clock=fixtures._TestClock(fixtures.NOW),
+        daemon_clock=fixtures._TestClock(now),
     )
 
 
@@ -258,6 +321,10 @@ def test_a_true_condition_settles_the_claim_into_accepted_state(tmp_path: Path) 
     )
     head = instance.accepted_coordinate()
     assert head != base and egress.accepted_git_oid == head.git_oid
+    # An uncapped settle carries no cap, and its receipt keeps its bytes.
+    assert egress.capped_by is None
+    (delivered,) = [item for item in _egress_records(instance, state) if "receipt" in item]
+    assert "capped_by" not in delivered["receipt"]
     (path,) = egress.target_paths
     claim = parse_claim(instance.tree_at(head.git_oid)[path], path=path)
     assert claim.statement.predicate == PREDICATE
@@ -290,6 +357,200 @@ def test_a_false_condition_without_fallback_refuses_before_any_proposal(tmp_path
         for record in instance.proposal_evidence().list_admissions()
         if "/procedure-" in record.target_ref
     ]
+
+
+def test_an_incomplete_condition_still_falls_back_for_its_own_reason(tmp_path: Path) -> None:
+    """The authority cap is a new fallback reason; the condition's own stay as they were."""
+
+    # The condition requires the very Claim being settled, absent at the parent.
+    instance, root, line = settle_world(tmp_path, require_claim=True)
+    base = instance.accepted_coordinate()
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert egress.settle_outcome == "proposed" and egress.accepted_git_oid is None
+    assert egress.fallback_reason == "cruxible.settle.condition_incomplete"
+    assert egress.effective_authority == "settle"
+    assert instance.accepted_coordinate() == base
+
+
+# --- a settle terminal the run's authority caps at propose proposes instead ----
+
+
+def _egress_records(instance, state):  # type: ignore[no-untyped-def]
+    """This run's terminal_egress journal payloads, in order."""
+
+    import cruxible_core.service.procedures.procedure_runs as service
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    journal, _root = service._journal(instance)  # noqa: SLF001
+    stream = service._stream(instance)  # noqa: SLF001
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    return [
+        parse_journal_payload(
+            instance.body_store().read(stored.record.payload_digest, access=access)
+        )
+        for partition_id in journal.partition_ids(stream)
+        for stored in journal.all_records(stream, partition_id)
+        if stored.record.event_kind == "terminal_egress" and stored.record.run_id == state.run_id
+    ]
+
+
+def _settle_submission(instance, egress):  # type: ignore[no-untyped-def]
+    return instance.proposal_evidence().read_admission(egress.proposal_id).settle_submission
+
+
+@pytest.mark.parametrize(
+    ("max_authority", "caller_rung", "term"),
+    [("propose", 3, "line_max_authority"), ("settle", 2, "mandate_grant")],
+    ids=["line-capped", "mandate-capped"],
+)
+def test_a_settle_terminal_capped_at_propose_proposes_for_the_cap(
+    tmp_path: Path, max_authority: str, caller_rung: int, term: str
+) -> None:
+    """The same fallback a failing condition takes, for the cap, naming its term.
+
+    Only a propose grant is accepted, so nothing here could settle: the run
+    proposes under that grant and never asks a settle mandate for authority.
+    """
+
+    instance, root, line = settle_world(
+        tmp_path, max_authority=max_authority, mandates=0, propose_mandate=True
+    )
+    base = instance.accepted_coordinate()
+
+    state = run_settle(instance, root, line, caller_rung=caller_rung)
+
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert (egress.kind, egress.verdict, egress.settle_outcome) == (
+        "settle_change_set",
+        "delivered",
+        "proposed",
+    )
+    assert egress.fallback_reason == f"cruxible.settle.authority_capped_by_{term}"
+    assert (egress.required_authority, egress.effective_authority, egress.limiting_term) == (
+        "settle",
+        "propose",
+        term,
+    )
+    assert egress.proposal_id is not None and egress.accepted_git_oid is None
+    assert instance.accepted_coordinate() == base
+    submission = _settle_submission(instance, egress)
+    assert submission is not None
+    assert (submission.mode, submission.fallback_reason) == ("fallback", egress.fallback_reason)
+    assert submission.mandate_digest == egress.procedure_mandate_digest
+    # The cap is typed on the served egress and on the journaled receipt.
+    assert egress.capped_by == term
+    (delivered,) = [item for item in _egress_records(instance, state) if "receipt" in item]
+    assert TerminalEgressReceiptV4.model_validate(delivered["receipt"]).capped_by == term
+
+
+def test_a_capped_settle_binds_the_propose_grant_over_a_settle_grant(tmp_path: Path) -> None:
+    """A capped settle is a proposal: it binds the propose grant, not the settle grant.
+
+    The propose grant's digest sorts last here, so a digest-order choice would
+    bind the settle grant, and retiring it would refuse a proposal the propose
+    grant still covers.
+    """
+
+    instance, root, line = settle_world(tmp_path, max_authority="propose", propose_mandate=True)
+
+    state = run_settle(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert egress.settle_outcome == "proposed"
+    assert egress.procedure_mandate_digest == PROPOSE_GRANTS[instance.root]
+    submission = _settle_submission(instance, egress)
+    assert submission is not None and submission.mandate_digest == PROPOSE_GRANTS[instance.root]
+
+
+def test_a_tier_lifted_settle_with_only_a_propose_grant_proposes_for_the_grant(
+    tmp_path: Path,
+) -> None:
+    """The caller's tier reaches settle, but no mandate grants it: the grant caps it."""
+
+    instance, root, line = settle_world(tmp_path, mandates=0, propose_mandate=True)
+    base = instance.accepted_coordinate()
+
+    state = run_settle(instance, root, line, caller_rung=3)
+
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "proposed")
+    assert egress.effective_authority == "settle"
+    assert egress.fallback_reason == "cruxible.settle.authority_capped_by_mandate_grant"
+    assert egress.capped_by == "mandate_grant"
+    assert egress.proposal_id is not None and egress.accepted_git_oid is None
+    assert instance.accepted_coordinate() == base
+
+
+def test_an_observe_capped_settle_terminal_is_still_refused(tmp_path: Path) -> None:
+    instance, root, line = settle_world(tmp_path, max_authority="observe")
+    base = instance.accepted_coordinate()
+
+    state = run_settle(instance, root, line)
+
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "terminal_authority_capped_by_line_max_authority"
+    egress = _egress(state)
+    assert (egress.verdict, egress.effective_authority, egress.limiting_term) == (
+        "refused_effective_authority",
+        "observe",
+        "line_max_authority",
+    )
+    assert egress.proposal_id is None
+    assert instance.accepted_coordinate() == base
+
+
+def test_graduating_the_line_to_settle_keeps_the_procedure_and_settles(tmp_path: Path) -> None:
+    """One Procedure across graduation: its digest, the track record's key, never changes.
+
+    Before graduation the propose-capped Line proposes; its successor capped at
+    settle settles under the covering settle mandate, through the same artifact.
+    """
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest
+    from tests.core_support._candidate_support import submit_member_candidate
+    from tests.core_support._knowledge_loop_support import accept_proposal
+
+    instance, root, line = settle_world(tmp_path, max_authority="propose")
+    capped = run_settle(instance, root, line)
+    assert capped.status == "succeeded", capped.terminal
+    assert _egress(capped).settle_outcome == "proposed"
+    assert _egress(capped).fallback_reason == (
+        "cruxible.settle.authority_capped_by_line_max_authority"
+    )
+
+    graduated = line.model_copy(
+        update={
+            "max_authority": "settle",
+            "lifecycle": line.lifecycle.model_copy(
+                update={"predecessor_digest": line_spec_digest(line).tagged}
+            ),
+        }
+    )
+    inspection = submit_member_candidate(
+        instance,
+        members={line_spec_path(graduated.identity.name): render_line_spec(graduated)},
+        actor_id="owner",
+        proposal_name="graduate-line",
+        proposal_family="procedure",
+        timestamp="2026-09-12T11:50:00.000000Z",
+    )
+    accept_proposal(instance, OWNERS[instance.root], inspection)
+
+    settled = run_settle(instance, root, graduated, now=fixtures.NOW + timedelta(minutes=5))
+
+    assert settled.status == "succeeded", settled.terminal
+    egress = _egress(settled)
+    assert egress.settle_outcome == "settled"
+    assert egress.accepted_git_oid == instance.accepted_coordinate().git_oid
+    assert settled.procedure_artifact_digest == capped.procedure_artifact_digest
 
 
 def test_two_covering_mandates_refuse_as_ambiguous(tmp_path: Path) -> None:
@@ -464,7 +725,22 @@ def test_a_fallback_accepted_by_ordinary_review_is_still_reported_as_proposed(
     assert "cruxible.settle.condition_false" in _fallback_codes(second)
 
 
-def test_a_crashed_fallback_recovers_its_proposal_as_proposed(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("world", "reason"),
+    [
+        ({"only_subject": "someone-else"}, "cruxible.settle.condition_false"),
+        (
+            {"max_authority": "propose", "mandates": 0, "propose_mandate": True},
+            "cruxible.settle.authority_capped_by_line_max_authority",
+        ),
+    ],
+    ids=["condition", "authority-capped"],
+)
+def test_a_crashed_fallback_recovers_its_proposal_as_proposed(
+    tmp_path: Path, monkeypatch, world: dict[str, Any], reason: str
+) -> None:
+    """Recovery re-drives the journaled request, the capped one included, to the same proposal."""
+
     from datetime import timedelta
 
     from cruxible_core.procedures import terminal_services
@@ -472,7 +748,7 @@ def test_a_crashed_fallback_recovers_its_proposal_as_proposed(tmp_path: Path, mo
     from cruxible_core.service.procedures.procedure_runs import service_get_playbill_procedure_run
     from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
 
-    instance, root, line = settle_world(tmp_path, only_subject="someone-else")
+    instance, root, line = settle_world(tmp_path, **world)
     crashed = {"value": False}
     original_submit = terminal_services.ProposalTerminalAdapter.submit
     original_append = ProcedureExecutor._append_event
@@ -508,7 +784,7 @@ def test_a_crashed_fallback_recovers_its_proposal_as_proposed(tmp_path: Path, mo
     (egress,) = service_get_playbill_procedure_run(instance, run_id=run_id).terminal_egress
     assert egress.settle_outcome == "proposed" and egress.accepted_git_oid is None
     assert egress.proposal_id == admitted.proposal_id
-    assert "cruxible.settle.condition_false" in _fallback_codes(egress)
+    assert reason in _fallback_codes(egress)
 
 
 def test_a_settled_delivery_finds_its_generation_without_walking_history(
@@ -683,3 +959,66 @@ def test_a_delegated_settle_that_lost_its_race_says_readmit_routes_it_for_approv
         "readmit_to_route_the_delegated_settle_for_approval_or_withdraw_it"
     )
     assert row.repair.command == f"cruxible proposal readmit {pending.proposal_id}"
+
+
+# --- the capped request's own law (review F-006) -------------------------------
+
+
+def _prepared_request(tmp_path: Path, **world: Any):  # type: ignore[no-untyped-def]
+    from cruxible_core.procedures.egress import TerminalEgressRequestV2
+
+    tmp_path.mkdir()
+    instance, root, line = settle_world(tmp_path, **world)
+    state = run_settle(instance, root, line)
+    (prepared,) = [
+        item for item in _egress_records(instance, state) if item.get("verdict") == "prepared"
+    ]
+    return TerminalEgressRequestV2.model_validate(prepared["request"])
+
+
+def _rekeyed(request: Any, **update: Any):  # type: ignore[no-untyped-def]
+    """The request with ``update`` applied and its operation key recomputed, validated."""
+
+    from cruxible_core.procedures.egress import TerminalEgressRequestV2, terminal_operation_key
+
+    changed = request.model_copy(update=update)
+    changed = changed.model_copy(update={"operation_key": terminal_operation_key(changed)})
+    return TerminalEgressRequestV2.model_validate(changed.model_dump(mode="python"))
+
+
+def test_a_capped_settle_request_names_exactly_the_cap_its_rung_allows(tmp_path: Path) -> None:
+    from pydantic import ValidationError
+
+    from cruxible_core.procedures.egress import TerminalEgressRequestV2
+
+    capped = _prepared_request(
+        tmp_path / "capped", max_authority="propose", mandates=0, propose_mandate=True
+    )
+    assert (capped.capped_by, capped.limiting_term, capped.effective_rung) == (
+        "line_requested_rung",
+        "line_requested_rung",
+        2,
+    )
+    assert (capped.required_rung, capped.granted_operation) == (2, "propose_change_set")
+    plain = _prepared_request(tmp_path / "plain")
+    assert (plain.capped_by, plain.effective_rung, plain.required_rung) == (None, 3, 3)
+    as_propose = {"required_rung": 2, "granted_operation": "propose_change_set"}
+
+    # Below settle, only the limiting term caps it.
+    with pytest.raises(ValidationError, match="names its limiting term"):
+        _rekeyed(capped, capped_by="propagated_sensitivity")
+    # At the settle rung, only the absent settle grant caps it.
+    with pytest.raises(ValidationError, match="names its limiting term"):
+        _rekeyed(plain, capped_by="line_requested_rung", **as_propose)
+    assert _rekeyed(plain, capped_by="mandate_grant", **as_propose).capped_by == "mandate_grant"
+    # A capped settle asks for propose authority, never settle.
+    with pytest.raises(ValidationError, match="required rung disagrees"):
+        _rekeyed(capped, required_rung=3, granted_operation="activate_change_set")
+    # Only a settle terminal is capped.
+    with pytest.raises(ValidationError, match="only a settle terminal is capped"):
+        _rekeyed(capped, kind="propose_change_set")
+    # The cap is part of the operation: dropping it without a new key refuses.
+    stale = capped.model_dump(mode="python")
+    stale.pop("capped_by")
+    with pytest.raises(ValidationError, match="required rung disagrees"):
+        TerminalEgressRequestV2.model_validate(stale)

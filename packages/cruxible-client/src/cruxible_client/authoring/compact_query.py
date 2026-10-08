@@ -36,6 +36,7 @@ from cruxible_client.contracts.compact_query import (
     query_filter,
 )
 from cruxible_client.contracts.get_display import exact_content_marker_text
+from cruxible_client.contracts.read_values import ExactContentRef, TruncatedText
 from cruxible_client.contracts.temporal import format_datetime
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -166,13 +167,14 @@ _CELL_WIDTH = 60
 def _cell(value: object) -> str:
     if value is None:
         return "-"
+    if isinstance(value, ExactContentRef):
+        return exact_content_marker_text(value)
+    if isinstance(value, TruncatedText):
+        # A preview always reads as cut, however short the shown part is.
+        text = " ".join(value.preview.split())
+        return (text if len(text) < _CELL_WIDTH else text[: _CELL_WIDTH - 1]) + "…"
     if isinstance(value, BaseModel):
         value = value.model_dump(mode="json")
-    if isinstance(value, Mapping) and "exact_content" in value and "content_digest" in value:
-        return exact_content_marker_text(value)
-    if isinstance(value, Mapping) and value.get("truncated") is True and "value" in value:
-        text = " ".join(str(value["value"]).split())
-        return (text if len(text) < _CELL_WIDTH else text[: _CELL_WIDTH - 1]) + "…"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, list | tuple):

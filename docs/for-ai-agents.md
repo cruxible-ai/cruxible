@@ -110,8 +110,14 @@ any reference form you have seen (a Claim id or prefix, `kind/id`, a predicate,
 ...), answers values first with verdict flags,
 and refuses a wrong name with the nearest names. `detail` goes deeper:
 `evidence`, `why`, `history` (newest first, paged), `proof`, or a Document
-`body` by byte range. A summary cuts a long string value to 500 characters and
-marks it `truncated`; `evidence` and `proof` read it whole.
+`body` by byte range. A summary -- a card, a `query` row or Claim cell,
+`world.values`, a write's before/after -- shows a string value over 500
+characters as a `TruncatedText` (`truncated: true`, `preview`, `length`,
+`read_whole`), never as the value. `read_whole` is the exact read of the whole
+value, `{ref, detail: "evidence", at}` pinned to the generation the preview
+came from, so an old revision reads back as itself (`cx.read_whole(preview)` in
+the SDK); a plain `query` row cell has none (ask `claims=True`), and a write's
+`after` is the value you sent.
 Use `cx.query(name=..., params=..., receipt="full")` for a named query's replay
 receipt (the Claims each row read, paths, verdict), checking truncation before
 assuming completeness.
@@ -426,15 +432,18 @@ pins, and the SourceAcquisitionPolicy that governs the read. Name that policy
 when you author the Procedure: it becomes an `acquisition-policy` pin on the
 Procedure envelope, closure-checked at acceptance, and a pinned Procedure reads
 only that policy -- so another team accepting a policy of their own cannot
-change what yours does. A Procedure authored without the pin falls back to
-accepted state, which requires exactly one live SourceAcquisitionPolicy whose
-declared inputs are exactly that Procedure's Source aliases; prefer the pin. A
-pinned policy that does not declare this Procedure's Source inputs, and a
-missing or ambiguous policy for an unpinned one, are both the typed refusal
-`source_acquisition_policy_required`; a rule that denies a declared input is
-`source_acquisition_refused`; a path outside an authorized workspace root, one
-over the CaptureContract's selection budget, or a daemon with no local reader is
-`workspace_file_read_refused` with its path class. None of these leave partial
+change what yours does. A pinned policy (the Procedure's, or a Line's) must
+cover the Procedure: a rule for every Source alias, extra rules allowed, so one
+policy can serve several Procedures. A Procedure authored without the pin falls
+back to accepted state, which requires exactly one live SourceAcquisitionPolicy
+whose declared inputs are exactly that Procedure's Source aliases; prefer the
+pin. A pinned policy with no rule for a Source alias (named in
+`uncovered_input_names`), and a missing or ambiguous policy for an unpinned
+Procedure, are both the typed refusal `source_acquisition_policy_required`; a
+rule that denies a declared input is `source_acquisition_refused`; a path
+outside an authorized workspace root, one over the CaptureContract's selection
+budget, or a daemon with no local reader is `workspace_file_read_refused` with
+its path class. None of these leave partial
 run history.
 
 Served Source runs currently support independent acquisition coherence. Policies

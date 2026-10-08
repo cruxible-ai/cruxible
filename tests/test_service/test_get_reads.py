@@ -819,9 +819,10 @@ def test_a_proposal_is_read_only_at_the_current_head(world: dict[str, Any]) -> N
 def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_client.contracts.get_reads import (
+    from cruxible_client.contracts.read_values import (
         GET_SUMMARY_TEXT_MAX_CHARS,
-        GetTruncatedText,
+        TruncatedText,
+        WholeValueRead,
     )
 
     instance, _owner = seed_claims(tmp_path)
@@ -829,18 +830,24 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
     # The fixture ClaimType is an enum, so stand a long note in for its value.
     monkeypatch.setattr(get_module, "_artifact_value", lambda _claim: long_value)
     monkeypatch.setattr(get_module, "_claim_value", lambda _row: long_value)
-    cut = GetTruncatedText(value=long_value[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_value))
 
     subject = _get(instance, _SUBJECT).card
     assert isinstance(subject, GetSubjectCard)
     (row,) = subject.claims
+    assert isinstance(row.claim, str)
+    head = instance.accepted_coordinate().git_oid
+    cut = TruncatedText(
+        preview=long_value[:GET_SUMMARY_TEXT_MAX_CHARS],
+        length=len(long_value),
+        read_whole=WholeValueRead(ref=row.claim, at=head),
+    )
     assert row.value == cut
     assert row.model_dump(mode="json")["value"] == {
-        "value": long_value[:GET_SUMMARY_TEXT_MAX_CHARS],
         "truncated": True,
+        "preview": long_value[:GET_SUMMARY_TEXT_MAX_CHARS],
         "length": len(long_value),
+        "read_whole": {"ref": row.claim, "detail": "evidence", "at": head},
     }
-    assert isinstance(row.claim, str)
     assert subject.next[0] == f'cruxible_get(ref="{row.claim}", detail="evidence")'
     claim = _get(instance, row.claim).card
     assert isinstance(claim, GetClaimCard) and claim.value == cut
@@ -855,9 +862,9 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
 
 
 def test_summary_value_cuts_only_long_strings() -> None:
-    from cruxible_client.contracts.get_reads import (
+    from cruxible_client.contracts.read_values import (
         GET_SUMMARY_TEXT_MAX_CHARS,
-        GetTruncatedText,
+        TruncatedText,
         summary_value,
     )
 
@@ -865,8 +872,43 @@ def test_summary_value_cuts_only_long_strings() -> None:
     assert summary_value(edge) == edge
     assert summary_value(["ready", 3, {"k": edge + "y"}]) == ["ready", 3, {"k": edge + "y"}]
     assert summary_value([edge + "y"]) == [
-        GetTruncatedText(value=edge, length=GET_SUMMARY_TEXT_MAX_CHARS + 1)
+        TruncatedText(preview=edge, length=GET_SUMMARY_TEXT_MAX_CHARS + 1)
     ]
+
+
+def test_a_cut_value_round_trips_as_truncated_text_and_short_values_stay_themselves() -> None:
+    """The wire carries a declared preview; parsing it back never yields a loose dict."""
+
+    from cruxible_client.contracts.compact_query import QueryClaimValue
+    from cruxible_client.contracts.read_values import (
+        ExactContentRef,
+        TruncatedText,
+        summary_value,
+    )
+
+    item = QueryClaimValue(
+        claim="CLM-1",
+        value=summary_value("y" * 900),
+        verdict="supported",
+        status="accepted",
+        role="observation",
+        subject="project.work_item/wi-1",
+        predicate="project.work_item.note",
+    )
+    again = QueryClaimValue.model_validate_json(item.model_dump_json())
+    assert isinstance(again.value, TruncatedText)
+    assert (again.value.preview, again.value.length) == ("y" * 500, 900)
+
+    marker = ExactContentRef(exact_content="binary", content_digest="sha256:" + "a" * 64)
+    for shown in ("ready", 3, 1.5, True, None, ["a", 2], {"$decimal": "0.1"}, marker):
+        wire = item.model_copy(update={"value": shown}).model_dump_json()
+        parsed = QueryClaimValue.model_validate_json(wire).value
+        assert parsed == shown and type(parsed) is type(shown)
+    listed = QueryClaimValue.model_validate_json(
+        item.model_copy(update={"value": summary_value(["short", "z" * 600])}).model_dump_json()
+    ).value
+    assert isinstance(listed, list) and listed[0] == "short"
+    assert isinstance(listed[1], TruncatedText) and listed[1].length == 600
 
 
 def test_subject_rows_name_the_claim_behind_each_value(world: dict[str, Any]) -> None:

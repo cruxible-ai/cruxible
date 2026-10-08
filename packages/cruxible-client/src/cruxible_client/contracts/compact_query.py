@@ -29,12 +29,14 @@ from datetime import datetime
 from typing import Annotated, Any, ClassVar, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, field_validator
+from typing_extensions import TypeAliasType
 
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import ClaimQueryResult, QueryExecutionReceipt
+from cruxible_client.contracts.read_values import ExactContentRef, ShownValue, TruncatedText
 
 QUERY_DEFAULT_LIMIT = 50
 QUERY_MAX_LIMIT = 500
@@ -347,7 +349,10 @@ class QueryClaim(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     claim: str
-    value: Any
+    #: The value as a summary shows it: a string over 500 characters is a
+    #: TruncatedText preview whose ``read_whole`` reads it whole at the answer's
+    #: coordinate.
+    value: ShownValue
     verdict: str
     status: QueryCellClaimStatus
     role: ClaimRole
@@ -359,6 +364,16 @@ class QueryClaimValue(QueryClaim):
 
     subject: str
     predicate: str
+
+
+#: One row entry of a query page: a column's value as a summary shows it (a
+#: TruncatedText preview when long), the row's ``subject``/``flags``, or, under
+#: ``claims=True``, ``claims`` -- each column's Claims, typed.
+QueryCell = TypeAliasType(
+    "QueryCell",
+    "TruncatedText | ExactContentRef | str | bool | int | float | None | list[QueryCell]"
+    " | dict[str, list[QueryClaim]] | dict[str, Any]",
+)
 
 
 class QueryColumn(BaseModel):
@@ -407,9 +422,9 @@ class QueryResultRecord(BaseModel):
     """One page of a ``query`` answer: values first, flags per row.
 
     Rows are bounded by ``get``'s card rule: a string value over 500 characters
-    is cut to ``{value, truncated: true, length}`` (``get(detail="evidence")``
-    reads it whole), and an exact-content value is its text, or a typed marker
-    when it cannot be shown as text.
+    is a ``TruncatedText`` preview, and an exact-content value is its text, or an
+    ``ExactContentRef`` when it cannot be shown as text. A row cell names no
+    whole read; with ``claims=True`` each Claim's preview does.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -417,7 +432,7 @@ class QueryResultRecord(BaseModel):
     tag: Literal["playbill-query-page-v1"] = "playbill-query-page-v1"
     kind: str | None = None
     columns: tuple[QueryColumn, ...]
-    rows: tuple[dict[str, Any], ...]
+    rows: tuple[dict[str, QueryCell], ...]
     truncated: bool = False
     next_cursor: str | None = None
     capped: tuple[str, ...] = ()
@@ -432,6 +447,7 @@ __all__ = [
     "QUERY_MAX_LIMIT",
     "QUERY_MAX_SELECT",
     "QUERY_FILTER_OPERATORS",
+    "QueryCell",
     "QueryClaim",
     "QueryClaimValue",
     "QueryColumn",

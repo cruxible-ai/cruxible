@@ -210,10 +210,7 @@ def test_follow_order_falls_back_when_the_raw_arguments_disagree() -> None:
 
 def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
     from cruxible_client.authoring.compact_query import render_query_table
-    from cruxible_client.contracts.get_reads import (
-        ExactContentRef,
-        GetTruncatedText,
-    )
+    from cruxible_client.contracts.read_values import ExactContentRef, TruncatedText
 
     digest = "sha256:" + "cd" * 32
     page = contracts.QueryResultRecord(
@@ -224,7 +221,7 @@ def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
             {
                 "subject": "legal.case/b",
                 "subject_id": "b",
-                "ruling": GetTruncatedText(value="Reversed " * 60, length=900),
+                "ruling": TruncatedText(preview="Reversed " * 60, length=900),
                 "flags": [],
             },
             {

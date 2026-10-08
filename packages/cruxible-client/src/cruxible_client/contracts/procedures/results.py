@@ -1098,6 +1098,9 @@ class ProcedureTerminalEgress(_StrictResultModel):
     settle_outcome: Literal["settled", "proposed"] | None = None
     accepted_git_oid: str | None = None
     fallback_reason: str | None = None
+    # A settle terminal the run's authority capped at propose: the term that
+    # capped it. Its request asked for propose authority only.
+    capped_by: ServedAuthorityTerm | None = None
 
     @field_validator("operation_key", "procedure_mandate_digest", "candidate_digest")
     @classmethod
@@ -1134,6 +1137,10 @@ class ProcedureTerminalEgress(_StrictResultModel):
             raise ValueError("only a settled outcome names its accepted generation")
         if (self.verdict in {"refused", "failed"}) != (self.refusal_code is not None):
             raise ValueError("a refused or failed egress carries exactly its refusal code")
+        if self.capped_by is not None and (
+            self.kind != "settle_change_set" or self.settle_outcome == "settled"
+        ):
+            raise ValueError("only a settle terminal that did not settle is capped")
         return self
 
 

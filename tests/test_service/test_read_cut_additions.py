@@ -171,10 +171,11 @@ def test_query_cells_show_the_slot_answer_and_name_each_claims_status(tmp_path: 
         claims=True,
     ).rows
     assert sorted(row["status"]) == ["blocked", "ready"]
-    cell = {item["value"]: item for item in row["claims"]["status"]}
-    assert cell["ready"]["claim"] == winner and cell["ready"]["status"] == "accepted"
-    assert cell["blocked"]["status"] in {"overturned", "refused"}
-    assert {item["role"] for item in cell.values()} <= {"normative", "observation"}
+    # Each cell's Claims are typed QueryClaim entries, not loose dicts.
+    cell = {item.value: item for item in row["claims"]["status"]}
+    assert cell["ready"].claim == winner and cell["ready"].status == "accepted"
+    assert cell["blocked"].status in {"overturned", "refused"}
+    assert {item.role for item in cell.values()} <= {"normative", "observation"}
 
     # Only the set-aside ones.
     (row,) = _query(
@@ -201,13 +202,13 @@ def test_query_lists_retired_claims_by_status(world: PlaybillInstance) -> None:
     ).rows
     assert row["title"] == "Old"
     (claim,) = row["claims"]["title"]
-    assert claim == {
-        "claim": title[0],
-        "value": "Old",
-        "verdict": "retired",
-        "status": "retired",
-        "role": claim["role"],
-    }
+    assert (claim.claim, claim.value, claim.verdict, claim.status, claim.qualifier) == (
+        title[0],
+        "Old",
+        "retired",
+        "retired",
+        None,
+    )
 
 
 def test_query_flags_show_an_uncovered_verdict(world: PlaybillInstance) -> None:

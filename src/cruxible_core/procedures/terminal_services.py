@@ -27,6 +27,7 @@ from cruxible_core.procedures.egress import (
     TerminalEgressRequestV2,
     require_procedure_mandate,
     require_procedure_mandate_at_head,
+    served_capped_by,
 )
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
@@ -311,6 +312,7 @@ def settle_terminal_receipt(
         procedure_mandate_digest=request.procedure_mandate_digest,
         accepted_git_oid=accepted_git_oid,
         fallback_reason=fallback_reason,
+        capped_by=served_capped_by(request),
     )
 
 

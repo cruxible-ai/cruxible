@@ -1563,13 +1563,17 @@ SourceAcquisitionPolicy, the CaptureContract each Source node pins, and the
 Provider closure it names. A Procedure names its policy on its own envelope,
 under the pin role `acquisition-policy` -- authored by naming the policy, the
 way a Line names its own -- and a pinned Procedure reads only that policy, so
-what anyone accepts afterwards cannot change what it does. A Procedure with no
-such pin falls back to accepted state: exactly one live SourceAcquisitionPolicy
-whose declared inputs are exactly the Procedure's Source aliases. The direct
-lane refuses `source_acquisition_policy_required` when the pinned policy does
-not declare this Procedure's Source inputs, or when no single policy applies to
-an unpinned one, and `source_acquisition_refused` when the policy's own rule
-denies a declared input; neither leaves run history behind. A read outside an
+what anyone accepts afterwards cannot change what it does. A pinned policy
+must cover the Procedure: a rule for every Source alias, extra rules allowed,
+so one policy can serve several Procedures. A Procedure with no such pin falls
+back to accepted state: exactly one live SourceAcquisitionPolicy whose declared
+inputs are exactly the Procedure's Source aliases. Both lanes refuse
+`source_acquisition_policy_required` when the pinned policy (the Procedure's
+on a direct run, the Line's on a Line run) has no rule for a Source alias,
+naming it in `uncovered_input_names`; the direct lane also refuses it when no
+single policy applies to an unpinned Procedure. `source_acquisition_refused`
+is the refusal when the policy's own rule denies a declared input; none of these
+leaves run history behind. A read outside an
 authorized workspace root, over the CaptureContract's selection budget, or with
 no daemon-local reader refuses `workspace_file_read_refused` and names its path
 class.
@@ -1943,11 +1947,27 @@ with `settle_outcome: settled` and the `accepted_git_oid` it produced. The
 accepted record names the mandate digest, and replay re-derives the same
 authority from the parent state alone; the change carries no approvals.
 
+A settle terminal whose run's authority reaches propose but not settle -- a
+Line whose `max_authority` is `propose`, or a Procedure whose only mandate
+grants propose, whatever the caller's tier -- proposes instead: the same
+fallback a failing condition takes, reported `settle_outcome: proposed` with
+`fallback_reason` `cruxible.settle.authority_capped_by_<term>` and the typed
+`capped_by` naming the term that capped it (`line_max_authority`,
+`mandate_grant`, `propagated_sensitivity`). It binds the mandate a proposal
+would -- a propose grant before a settle grant, and the only mandate at
+propose when that is all there is -- and never uses a settle grant's settle
+authority, so it settles nothing. A Line graduates from proposing to settling
+with a Line successor that raises `max_authority` to `settle`, plus a covering
+settle mandate, over the same Procedure: one Procedure serves both stages, so
+its digest -- the key its track record is folded under -- does not change at
+graduation.
+
 The settle mandate is the authority: any caller permitted to run the Line
 triggers the settlement, whatever its own tier, and no caller settles without
 one. A caller's tier can raise the run's reported authority above what its
 mandate grants, but the terminal still settles only under a covering settle
-mandate. A mandate that expired or was suspended before publication
+mandate; when no live mandate grants settle at all, it proposes for
+`cruxible.settle.authority_capped_by_mandate_grant`. A mandate that expired or was suspended before publication
 refuses `settle_publication_refused`, as does a delegated candidate that no
 longer reproduces under its mandate at publication.
 
@@ -1957,7 +1977,9 @@ Each terminal is reported with the authority it needs (`required_authority`:
 reach is reported `refused_effective_authority` with the `limiting_term` that
 capped it -- the Procedure's own terminals, the Line's `max_authority`,
 propagated sensitivity, the mandate grant, or calibration -- and the run
-refuses `terminal_authority_capped_by_<term>`.
+refuses `terminal_authority_capped_by_<term>`. The one exception is a settle
+terminal capped at propose, which proposes as described above; capped below
+propose, it is refused like any other.
 
 Known limitation: a settle run submits its delegated proposal against the
 accepted head and then activates it. If another generation is accepted between

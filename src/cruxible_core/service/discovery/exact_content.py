@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from cruxible_client.contracts.claims import ExactContentClaimObject
 from cruxible_client.contracts.errors import CruxibleError
-from cruxible_client.contracts.get_reads import ExactContentRef
+from cruxible_client.contracts.read_values import ExactContentRef
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
 

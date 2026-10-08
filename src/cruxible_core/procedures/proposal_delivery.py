@@ -58,8 +58,8 @@ from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateAny,
     ProcedureMandateInvocation,
     evaluate_procedure_mandate,
+    mandate_rung,
 )
-from cruxible_client.contracts.procedures.models import TERMINAL_REQUIRED_RUNGS
 from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureClaimProposalItem,
     ProcedureClaimProposalItemV1,
@@ -75,6 +75,7 @@ from cruxible_core.procedures.egress import (
     TerminalEgressReceiptV1,
     TerminalEgressRequestV1,
     TerminalEgressRequestV2,
+    settle_authority_capped_reason,
 )
 from cruxible_core.procedures.nested import ProcedureDelegation, authority_procedure
 from cruxible_core.procedures.terminal_dependencies import (
@@ -346,9 +347,12 @@ def select_procedure_mandate(
 
     Every accepted mandate pinned to this Procedure artifact is evaluated with
     the same law `require_procedure_mandate` applies later. A permitted one is
-    bound (lowest digest first, so the choice is stable). If none permits, the
-    one with the fewest refusals is bound instead, so the refusal the door
-    raises names the real limiting term rather than "no mandate".
+    bound: one granting exactly the requested rung before a wider grant (a
+    proposal never leans on a settle grant while a propose grant covers it, so
+    retiring the settle grant cannot strand it), then the lowest digest, so the
+    choice is stable. If none permits, the one with the fewest refusals is
+    bound instead, so the refusal the door raises names the real limiting term
+    rather than "no mandate".
     """
 
     evaluation_time = (
@@ -357,24 +361,30 @@ def select_procedure_mandate(
         else request.prepared_at
     )
     authority = authority_procedure(admission, delegation)
-    ranked: list[tuple[int, str]] = []
+    ranked: list[tuple[int, bool, str]] = []
     for digest, mandate in sorted(accepted_mandates.items(), key=lambda item: item[0]):
         evaluation = evaluate_procedure_mandate(
             mandate,
             ProcedureMandateInvocation(
                 procedure_identity=authority.target,
                 procedure_artifact_digest=authority.artifact_digest,
-                requested_rung=TERMINAL_REQUIRED_RUNGS[request.kind],  # type: ignore[arg-type]
+                requested_rung=request.required_rung,  # type: ignore[arg-type]
                 requested_authority=admission.hard_caps,
                 target_paths=target_paths,
                 evaluation_time=evaluation_time,
                 accepted_mandate_digest=digest,
             ),
         )
-        ranked.append((len(evaluation.refusal_codes), digest))
+        ranked.append(
+            (
+                len(evaluation.refusal_codes),
+                mandate_rung(mandate) != request.required_rung,
+                digest,
+            )
+        )
     if not ranked:
         return None
-    return min(ranked)[1]
+    return min(ranked)[2]
 
 
 def select_settle_mandate(
@@ -452,6 +462,14 @@ class ProposalTerminalEgressSink:
         self.accepted_mandates = dict(accepted_mandates)
         self._proposal_service = proposal_service or instance.proposal_service
         self._prepared: dict[tuple[str, str], PreparedProposal] = {}
+
+    def grants_settle(self) -> bool:
+        """Whether any live mandate this sink holds grants settle."""
+
+        return any(
+            isinstance(mandate, ProcedureMandate) and mandate.grants == "settle"
+            for mandate in self.accepted_mandates.values()
+        )
 
     # -- preparation --------------------------------------------------------
 
@@ -557,6 +575,8 @@ class ProposalTerminalEgressSink:
                     "A terminal item lowered into no changed member.",
                     details={"item_key": item_key, "path": path},
                 )
+        # A settle capped at propose binds the mandate a proposal would (a
+        # propose grant first): it never uses a settle grant's settle authority.
         mandate_digest = (
             select_settle_mandate(
                 request,
@@ -567,7 +587,7 @@ class ProposalTerminalEgressSink:
                 candidate_tree=lowered.proposed_tree,
                 delegation=self.delegation,
             )
-            if request.kind == "settle_change_set"
+            if request.kind == "settle_change_set" and request.capped_by is None
             else select_procedure_mandate(
                 request,
                 admission=admission,
@@ -764,43 +784,58 @@ class ProposalTerminalEgressSink:
         submission mode is retained on the proposal's admission, so a repeated
         or recovered delivery reports what was actually submitted -- a fallback
         stays a fallback even after it is accepted through ordinary review.
+
+        A settle the run's authority caps at propose takes the same fallback and
+        never uses a settle grant's settle authority: it proposes under the
+        mandate the proposal bound, for `cruxible.settle.authority_capped_by_<term>`.
         """
 
         digest = request.procedure_mandate_digest
-        mandate = None if digest is None else self.accepted_mandates.get(digest)
-        if not isinstance(mandate, ProcedureMandate) or mandate.condition is None:
-            raise ProposalDeliveryRefused(
-                "settle_mandate_missing",
-                "The settle terminal's bound mandate is no longer an accepted settle grant.",
-            )
-        assert digest is not None
+        assert digest is not None  # an effectful request binds its mandate
+        mandate: ProcedureMandate | None = None
+        if request.capped_by is None:
+            found = self.accepted_mandates.get(digest)
+            if not isinstance(found, ProcedureMandate) or found.condition is None:
+                raise ProposalDeliveryRefused(
+                    "settle_mandate_missing",
+                    "The settle terminal's bound mandate is no longer an accepted settle grant.",
+                )
+            mandate = found
         result = existing
         if result is None:
-            head = self.instance.accepted_coordinate()
-            issues = delegated_authority_issues(
-                mandate_digest=digest,
-                scope=request.target_paths,
-                current_tree=self.instance.tree_at(head.git_oid),
-                candidate_tree=prepared.candidate_tree,
-                current=head,
-                timestamp=canonical_candidate_timestamp(request.evaluation_time),
-                facts=self.instance._accepted_query_facts(self.instance, head),
-            )
-            codes = sorted({code for code, _message in issues})
-            if issues and mandate.condition.fallback == "refuse":
-                raise ProposalDeliveryRefused(
-                    "settle_condition_refused",
-                    "The settle mandate does not authorize this change and declares no "
-                    "proposal fallback.",
-                    details={"codes": codes, "messages": [m for _code, m in issues]},
+            if request.capped_by is not None:
+                submission = ProposalSettleSubmission(
+                    mode="fallback",
+                    mandate_digest=digest,
+                    fallback_reason=settle_authority_capped_reason(request.capped_by),
                 )
-            submission = (
-                ProposalSettleSubmission(
-                    mode="fallback", mandate_digest=digest, fallback_reason=", ".join(codes)
+            else:
+                assert mandate is not None and mandate.condition is not None  # checked above
+                head = self.instance.accepted_coordinate()
+                issues = delegated_authority_issues(
+                    mandate_digest=digest,
+                    scope=request.target_paths,
+                    current_tree=self.instance.tree_at(head.git_oid),
+                    candidate_tree=prepared.candidate_tree,
+                    current=head,
+                    timestamp=canonical_candidate_timestamp(request.evaluation_time),
+                    facts=self.instance._accepted_query_facts(self.instance, head),
                 )
-                if issues
-                else ProposalSettleSubmission(mode="delegated", mandate_digest=digest)
-            )
+                codes = sorted({code for code, _message in issues})
+                if issues and mandate.condition.fallback == "refuse":
+                    raise ProposalDeliveryRefused(
+                        "settle_condition_refused",
+                        "The settle mandate does not authorize this change and declares no "
+                        "proposal fallback.",
+                        details={"codes": codes, "messages": [m for _code, m in issues]},
+                    )
+                submission = (
+                    ProposalSettleSubmission(
+                        mode="fallback", mandate_digest=digest, fallback_reason=", ".join(codes)
+                    )
+                    if issues
+                    else ProposalSettleSubmission(mode="delegated", mandate_digest=digest)
+                )
             result = adapter.submit(
                 request=request,
                 admission=admission,
@@ -820,6 +855,14 @@ class ProposalTerminalEgressSink:
                 item_paths=prepared.item_paths,
                 accepted_git_oid=None,
                 fallback_reason=settle.fallback_reason,
+            )
+        if mandate is None:
+            # A capped settle only ever submits its fallback; a delegated
+            # proposal under its operation key is another operation's.
+            raise ProposalDeliveryRefused(
+                "effectful_operation_payload_mismatch",
+                "The operation key names a delegated settlement, not this capped proposal.",
+                details={"proposal_id": result.admission.proposal_id},
             )
         if result.candidate is None:
             raise ProposalDeliveryRefused(
