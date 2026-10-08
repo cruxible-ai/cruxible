@@ -64504,6 +64504,297 @@
         "filename"
       ]
     },
+    "QueryClaimValue": {
+      "fields": {
+        "claim": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim",
+          "required": true,
+          "schema": {
+            "title": "Claim",
+            "type": "string"
+          }
+        },
+        "predicate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "predicate",
+          "required": true,
+          "schema": {
+            "title": "Predicate",
+            "type": "string"
+          }
+        },
+        "qualifier": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "qualifier",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Qualifier"
+          }
+        },
+        "role": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "role",
+          "required": true,
+          "schema": {
+            "enum": [
+              "normative",
+              "observation",
+              "environment_binding",
+              "derivation"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "accepted",
+              "conflicted",
+              "overturned",
+              "refused",
+              "retired"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "subject": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject",
+          "required": true,
+          "schema": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "value": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "value",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ShownValue"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "title": "Verdict",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ExactContentRef": {
+            "additionalProperties": false,
+            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "exact_content": {
+                "enum": [
+                  "binary",
+                  "unavailable"
+                ],
+                "title": "Exact Content",
+                "type": "string"
+              },
+              "length": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Length"
+              }
+            },
+            "required": [
+              "exact_content",
+              "content_digest"
+            ],
+            "title": "ExactContentRef",
+            "type": "object"
+          },
+          "ShownValue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/ShownValue"
+                },
+                "type": "array"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "TruncatedText": {
+            "additionalProperties": false,
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` names the read that returns\nthe whole value: ``get`` on the Claim this value belongs to (the ``claim``\nbeside it) with ``detail=\"evidence\"``, whose ``evidence.value`` is the value.",
+            "properties": {
+              "length": {
+                "exclusiveMinimum": 500,
+                "title": "Length",
+                "type": "integer"
+              },
+              "preview": {
+                "title": "Preview",
+                "type": "string"
+              },
+              "read_whole": {
+                "const": "get(claim, detail=\"evidence\")",
+                "default": "get(claim, detail=\"evidence\")",
+                "title": "Read Whole",
+                "type": "string"
+              },
+              "truncated": {
+                "const": true,
+                "default": true,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "preview",
+              "length"
+            ],
+            "title": "TruncatedText",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One Claim's value with the Subject and predicate its cell sits in.",
+        "properties": {
+          "claim": {
+            "title": "Claim",
+            "type": "string"
+          },
+          "predicate": {
+            "title": "Predicate",
+            "type": "string"
+          },
+          "qualifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Qualifier"
+          },
+          "role": {
+            "enum": [
+              "normative",
+              "observation",
+              "environment_binding",
+              "derivation"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "conflicted",
+              "overturned",
+              "refused",
+              "retired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/ShownValue"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim",
+          "value",
+          "verdict",
+          "status",
+          "role",
+          "subject",
+          "predicate"
+        ],
+        "title": "QueryClaimValue",
+        "type": "object"
+      },
+      "required_fields": [
+        "claim",
+        "predicate",
+        "role",
+        "status",
+        "subject",
+        "value",
+        "verdict"
+      ]
+    },
     "QueryColumn": {
       "fields": {
         "cardinality": {
@@ -74717,7 +75008,9 @@
           "required": true,
           "schema": {
             "items": {
-              "additionalProperties": true,
+              "additionalProperties": {
+                "$ref": "#/$defs/QueryCell"
+              },
               "type": "object"
             },
             "title": "Rows",
@@ -76542,6 +76835,43 @@
             "title": "CorroborationRequirement",
             "type": "object"
           },
+          "ExactContentRef": {
+            "additionalProperties": false,
+            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "exact_content": {
+                "enum": [
+                  "binary",
+                  "unavailable"
+                ],
+                "title": "Exact Content",
+                "type": "string"
+              },
+              "length": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Length"
+              }
+            },
+            "required": [
+              "exact_content",
+              "content_digest"
+            ],
+            "title": "ExactContentRef",
+            "type": "object"
+          },
           "ExhaustTapNode": {
             "additionalProperties": false,
             "properties": {
@@ -78318,6 +78648,109 @@
               "max_traversal_depth"
             ],
             "title": "QueryBudgets",
+            "type": "object"
+          },
+          "QueryCell": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/QueryCell"
+                },
+                "type": "array"
+              },
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/$defs/QueryClaim"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "QueryClaim": {
+            "additionalProperties": false,
+            "description": "One Claim behind a cell value: ``rows[i].claims[column]`` lists them.\n\n``status`` tells a slot's winner (``accepted``) from the Claims resolution\nset aside (``overturned``, ``refused``) and from contenders it left\nunresolved (``conflicted``); ``verdict`` is the Claim's own evidence\nverdict (``retired`` for a withdrawn Claim). ``get(claim)`` reads it.",
+            "properties": {
+              "claim": {
+                "title": "Claim",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "role": {
+                "enum": [
+                  "normative",
+                  "observation",
+                  "environment_binding",
+                  "derivation"
+                ],
+                "title": "Role",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "accepted",
+                  "conflicted",
+                  "overturned",
+                  "refused",
+                  "retired"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/ShownValue"
+              },
+              "verdict": {
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim",
+              "value",
+              "verdict",
+              "status",
+              "role"
+            ],
+            "title": "QueryClaim",
             "type": "object"
           },
           "QueryClaimPresenceFilter": {
@@ -80877,6 +81310,41 @@
             "title": "SettleChangeSetNode",
             "type": "object"
           },
+          "ShownValue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/ShownValue"
+                },
+                "type": "array"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "SourceClaimType": {
             "additionalProperties": false,
             "properties": {
@@ -81514,10 +81982,43 @@
             ],
             "title": "TransformShapeItemsSpec",
             "type": "object"
+          },
+          "TruncatedText": {
+            "additionalProperties": false,
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` names the read that returns\nthe whole value: ``get`` on the Claim this value belongs to (the ``claim``\nbeside it) with ``detail=\"evidence\"``, whose ``evidence.value`` is the value.",
+            "properties": {
+              "length": {
+                "exclusiveMinimum": 500,
+                "title": "Length",
+                "type": "integer"
+              },
+              "preview": {
+                "title": "Preview",
+                "type": "string"
+              },
+              "read_whole": {
+                "const": "get(claim, detail=\"evidence\")",
+                "default": "get(claim, detail=\"evidence\")",
+                "title": "Read Whole",
+                "type": "string"
+              },
+              "truncated": {
+                "const": true,
+                "default": true,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "preview",
+              "length"
+            ],
+            "title": "TruncatedText",
+            "type": "object"
           }
         },
         "additionalProperties": false,
-        "description": "One page of a ``query`` answer: values first, flags per row.\n\nRows are bounded by ``get``'s card rule: a string value over 500 characters\nis cut to ``{value, truncated: true, length}`` (``get(detail=\"evidence\")``\nreads it whole), and an exact-content value is its text, or a typed marker\nwhen it cannot be shown as text.",
+        "description": "One page of a ``query`` answer: values first, flags per row.\n\nRows are bounded by ``get``'s card rule: a string value over 500 characters\nis a ``TruncatedText`` preview (``get(claim, detail=\"evidence\")`` reads it\nwhole), and an exact-content value is its text, or an ``ExactContentRef``\nwhen it cannot be shown as text.",
         "properties": {
           "capped": {
             "default": [],
@@ -81571,7 +82072,9 @@
           },
           "rows": {
             "items": {
-              "additionalProperties": true,
+              "additionalProperties": {
+                "$ref": "#/$defs/QueryCell"
+              },
               "type": "object"
             },
             "title": "Rows",
@@ -88478,6 +88981,96 @@
         "record_digest",
         "run_id",
         "sequence"
+      ]
+    },
+    "TruncatedText": {
+      "fields": {
+        "length": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "length",
+          "required": true,
+          "schema": {
+            "exclusiveMinimum": 500,
+            "title": "Length",
+            "type": "integer"
+          }
+        },
+        "preview": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "preview",
+          "required": true,
+          "schema": {
+            "title": "Preview",
+            "type": "string"
+          }
+        },
+        "read_whole": {
+          "default": "get(claim, detail=\"evidence\")",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "read_whole",
+          "required": false,
+          "schema": {
+            "const": "get(claim, detail=\"evidence\")",
+            "default": "get(claim, detail=\"evidence\")",
+            "title": "Read Whole",
+            "type": "string"
+          }
+        },
+        "truncated": {
+          "default": true,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "const": true,
+            "default": true,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` names the read that returns\nthe whole value: ``get`` on the Claim this value belongs to (the ``claim``\nbeside it) with ``detail=\"evidence\"``, whose ``evidence.value`` is the value.",
+        "properties": {
+          "length": {
+            "exclusiveMinimum": 500,
+            "title": "Length",
+            "type": "integer"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "string"
+          },
+          "read_whole": {
+            "const": "get(claim, detail=\"evidence\")",
+            "default": "get(claim, detail=\"evidence\")",
+            "title": "Read Whole",
+            "type": "string"
+          },
+          "truncated": {
+            "const": true,
+            "default": true,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "preview",
+          "length"
+        ],
+        "title": "TruncatedText",
+        "type": "object"
+      },
+      "required_fields": [
+        "length",
+        "preview"
       ]
     },
     "WhoAmI": {
