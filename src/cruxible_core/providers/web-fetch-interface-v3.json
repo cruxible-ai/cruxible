@@ -1,0 +1,196 @@
+{
+  "interface_id": "web.fetch",
+  "version": 3,
+  "effect_class": "external_read",
+  "contracts": {
+    "input": {
+      "fields": {
+        "url": {
+          "type": "string"
+        },
+        "logical_source": {
+          "type": "string",
+          "optional": true,
+          "default": "web.response"
+        },
+        "render": {
+          "type": "bool",
+          "optional": true,
+          "default": false
+        },
+        "max_bytes": {
+          "type": "integer",
+          "optional": true,
+          "default": 262144
+        },
+        "credential_ref": {
+          "type": "string",
+          "optional": true
+        },
+        "credential_header": {
+          "type": "string",
+          "optional": true,
+          "default": "authorization"
+        },
+        "paced": {
+          "type": "bool",
+          "optional": true,
+          "default": false
+        },
+        "extract": {
+          "type": "bool",
+          "optional": true,
+          "default": true
+        },
+        "expected_format": {
+          "type": "string",
+          "optional": true,
+          "default": "auto",
+          "enum": [
+            "auto",
+            "html",
+            "json",
+            "csv",
+            "text",
+            "bytes"
+          ]
+        }
+      },
+      "allow_extra": false
+    },
+    "output": "playbill-provider-result-to-external-capture-v1",
+    "material": {
+      "allow_extra": false,
+      "fields": {
+        "input_bucket": {
+          "type": "string"
+        },
+        "retrieved": {
+          "type": "json",
+          "json_schema": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "final_url": {
+                "type": "string"
+              },
+              "status_code": {
+                "type": "integer"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "byte_count": {
+                "type": "integer"
+              },
+              "body_sha256": {
+                "type": "string"
+              },
+              "body_base64": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "packaged-recording",
+                  "network"
+                ]
+              },
+              "renderer": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "url",
+              "final_url",
+              "status_code",
+              "headers",
+              "byte_count",
+              "body_sha256",
+              "body_base64",
+              "source",
+              "renderer"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "derived": {
+          "type": "json",
+          "json_schema": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "engine": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "metadata": {
+                "type": "object"
+              },
+              "assembled_document": {
+                "type": "object",
+                "properties": {
+                  "assembly": {
+                    "type": "string"
+                  },
+                  "engine": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "byte_count": {
+                    "type": "integer"
+                  },
+                  "sha256": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "assembly",
+                  "engine",
+                  "byte_count",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "kind",
+              "engine",
+              "text",
+              "metadata"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "refusals": [
+    "provider_declined",
+    "unresolved_secret_ref",
+    "environment_divergence",
+    "cross_origin_credentialed_redirect",
+    "unsupported_redirect_scheme",
+    "redirect_limit"
+  ]
+}

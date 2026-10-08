@@ -908,7 +908,13 @@ on this daemon (`cruxible.provider.classifier_host_missing`). An occurrence admi
 only the buckets its bound implementation claims; another input is refused
 `unclaimed_bucket` before the provider runs. A different definition under the
 same interface id is proposed as a successor, which every live Provider and
-Procedure pinning the old registration must follow.
+Procedure pinning the old registration must follow. Core owns the `web.fetch`
+contract (definitions v2 and v3, the one `cruxible-provider-web` 0.2.x ships): a
+package implementing either registers core's registration of it, with core's
+vocabulary, its four conformance proofs (static light, static medium, API or
+JSON, rendered) and core's classifier, whatever the package itself ships, so
+every implementation binds the same ProviderInterface and claims a subset of
+those buckets.
 The registration lands at once when the approval policy requires no approval
 (`ready`); otherwise it stops at proposed (`awaiting_approval`) for the ordinary
 review and activation. It returns `ready`, `awaiting_approval`, or `blocked`,

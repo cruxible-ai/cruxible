@@ -36,6 +36,7 @@ from cruxible_client.contracts.providers import (
     provider_expected_implementation_records,
     provider_manifest_digest,
 )
+from cruxible_core.providers.web_fetch import core_owned_interface_registration
 
 
 class _Strict(BaseModel):
@@ -85,8 +86,17 @@ class PackageRegistrationDocumentV1(_Strict):
                 raise ValueError("runtime requirement does not match a declared implementation")
         return self
 
-    def interface_registrations(self) -> tuple[ProviderInterfaceRegistration, ...]:
-        result = []
+    def interface_registrations(self) -> tuple[ProviderInterfaceRegistrationV1, ...]:
+        """The registration installing this package proposes for each exported interface.
+
+        A definition core owns (``web.fetch``) registers as core's registration of
+        it, whatever vocabulary, classifier and fixtures the package ships: the
+        contract, not the implementation, owns the ProviderInterface, so every
+        implementation of it binds the same artifact and core classifies its
+        runs. Any other definition registers as the package exports it.
+        """
+
+        result: list[ProviderInterfaceRegistrationV1] = []
         for exported in sorted(self.interfaces, key=lambda item: item.interface_id.encode()):
             implementation = next(
                 item
@@ -103,11 +113,17 @@ class PackageRegistrationDocumentV1(_Strict):
                 raise ValueError("package definition and implementation disagree")
             interface_bytes = canonical_bytes(definition).hex()
             read_provider_operation_contract(interface_bytes)
+            if set(implementation.bucket_conformance) != set(implementation.declared_input_buckets):
+                raise ValueError("each declared selector must have a fixture")
+            core = core_owned_interface_registration(exported.interface_digest)
+            if core is not None:
+                if core.interface_bytes_hex != interface_bytes:
+                    raise ValueError("package definition differs from core's under its digest")
+                result.append(core)
+                continue
             fixtures = {fixture.fixture_id: fixture for fixture in exported.fixtures}
             if len(fixtures) != len(exported.fixtures):
                 raise ValueError("package fixtures must have unique identities")
-            if set(implementation.bucket_conformance) != set(implementation.declared_input_buckets):
-                raise ValueError("each declared selector must have a fixture")
             proofs = []
             for selector, fixture_id in sorted(implementation.bucket_conformance.items()):
                 if fixture_id not in fixtures:

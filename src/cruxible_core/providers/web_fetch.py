@@ -1,13 +1,23 @@
 """Frozen web.fetch interface inputs and classifier, mirrored against the adapter.
 
+Core owns the ``web.fetch`` contract: each definition revision it knows (v2, and
+v3 as ``cruxible-provider-web`` 0.2.x ships it) has one compiler-owned
+registration, with core's vocabulary, conformance fixtures and classifier. A
+package implementing one of these definitions installs onto that registration
+(``PackageRegistrationDocumentV1.interface_registrations``), so any
+implementation of the contract binds the same ProviderInterface artifact and a
+Blueprint slot typed by it takes any of them.
+
 This is compiler-owned conformance data, not an installed Provider or a grant.
 A deployment still accepts its own exact implementation and runtime closure.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from importlib.resources import files
+from typing import TYPE_CHECKING, Any, Final
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
@@ -26,7 +36,8 @@ from cruxible_client.contracts.provider_interfaces import (
 if TYPE_CHECKING:
     from cruxible_core.providers.provider_local_runtime import ProviderSpawnDeadline
 
-WEB_FETCH_INTERFACE_PREIMAGE = {
+#: The v2 operation definition, as core first froze it.
+WEB_FETCH_INTERFACE_V2_DEFINITION: dict[str, Any] = {
     "contracts": {
         "input": {
             "allow_extra": False,
@@ -65,9 +76,34 @@ WEB_FETCH_INTERFACE_PREIMAGE = {
     ],
     "version": 2,
 }
-WEB_FETCH_INTERFACE_DIGEST = (
+WEB_FETCH_INTERFACE_V2_DIGEST = (
     "sha256:9769f47abc5ac2dae6d6c623a9f9abf01afde699de48768a755f40a0334a1ade"
 )
+_INTERFACE_DOMAIN: Final = "cruxible.interface.stub.v1"
+#: The v3 operation definition, byte-for-byte the package's
+#: ``contracts/web.fetch.json`` (cruxible-provider-web 0.2.x); its canonical bytes
+#: reproduce ``WEB_FETCH_INTERFACE_DIGEST`` (checked at import).
+WEB_FETCH_INTERFACE_DEFINITION: dict[str, Any] = json.loads(
+    files("cruxible_core.providers").joinpath("web-fetch-interface-v3.json").read_bytes()
+)
+WEB_FETCH_INTERFACE_DIGEST = (
+    "sha256:f09e1553b05d72a9e58ed3a260417c41992ccd34b2f2541958c5733723ac2121"
+)
+#: Interface digest -> the definition revision core owns under it.
+_DEFINITIONS: Mapping[str, Mapping[str, Any]] = {
+    WEB_FETCH_INTERFACE_V2_DIGEST: WEB_FETCH_INTERFACE_V2_DEFINITION,
+    WEB_FETCH_INTERFACE_DIGEST: WEB_FETCH_INTERFACE_DEFINITION,
+}
+#: Every web.fetch definition core owns a registration of.
+WEB_FETCH_INTERFACE_DIGESTS = frozenset(_DEFINITIONS)
+if any(
+    provider_external_interface_definition_digest(
+        canonical_bytes(dict(definition)).hex(), domain=_INTERFACE_DOMAIN
+    )
+    != digest
+    for digest, definition in _DEFINITIONS.items()
+):  # pragma: no cover - import-time guard on checked-in bytes
+    raise RuntimeError("a web.fetch interface definition drifted from its frozen digest")
 WEB_FETCH_VOCABULARY = ProviderBucketVocabulary.model_validate(
     {
         "description": "Retrieve the content of a single web resource. Buckets "
@@ -249,7 +285,17 @@ def classify_web_fetch(payload: Mapping[str, Any]) -> Mapping[str, str] | None:
     }
 
 
-def web_fetch_interface_registration() -> ProviderInterfaceRegistrationV1:
+def web_fetch_interface_registration(
+    interface_digest: str = WEB_FETCH_INTERFACE_DIGEST,
+) -> ProviderInterfaceRegistrationV1:
+    """Core's registration of one web.fetch definition revision (v3 by default).
+
+    Every revision shares the vocabulary, the four conformance proofs and so the
+    classifier digest: the proof menu is fixed, and changing it would be a
+    successor every pin must follow. An implementation claims a subset of it.
+    """
+
+    definition = _DEFINITIONS[interface_digest]
     proofs = tuple(
         sorted(
             (
@@ -265,15 +311,15 @@ def web_fetch_interface_registration() -> ProviderInterfaceRegistrationV1:
         )
     )
     proof_digest = provider_bucket_fixture_set_digest(proofs)
-    content = canonical_bytes(WEB_FETCH_INTERFACE_PREIMAGE).hex()
+    content = canonical_bytes(dict(definition)).hex()
     vocabulary = canonical_bytes(WEB_FETCH_VOCABULARY.model_dump(mode="json")).hex()
     return ProviderInterfaceRegistrationV1(
         identity=ArtifactIdentity(kind="ProviderInterface", name="web.fetch"),
         interface_id="web.fetch",
         interface_bytes_hex=content,
-        interface_digest_domain="cruxible.interface.stub.v1",
+        interface_digest_domain=_INTERFACE_DOMAIN,
         interface_digest=provider_external_interface_definition_digest(
-            content, domain="cruxible.interface.stub.v1"
+            content, domain=_INTERFACE_DOMAIN
         ),
         vocabulary_bytes_hex=vocabulary,
         vocabulary_digest=provider_bucket_vocabulary_digest(vocabulary),
@@ -288,6 +334,16 @@ def web_fetch_interface_registration() -> ProviderInterfaceRegistrationV1:
         conformance_proofs=proofs,
         effect_class="external_read",
     )
+
+
+def core_owned_interface_registration(
+    interface_digest: str,
+) -> ProviderInterfaceRegistrationV1 | None:
+    """Core's registration of a definition it owns, or None for any other digest."""
+
+    if interface_digest not in WEB_FETCH_INTERFACE_DIGESTS:
+        return None
+    return web_fetch_interface_registration(interface_digest)
 
 
 class WebFetchBucketClassifier:

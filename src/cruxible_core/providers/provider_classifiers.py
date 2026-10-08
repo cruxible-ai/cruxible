@@ -25,7 +25,7 @@ from cruxible_core.governance.seed_artifacts.workspace_file import (
 )
 from cruxible_core.providers.web_fetch import (
     WEB_FETCH_FIXTURES,
-    WEB_FETCH_INTERFACE_DIGEST,
+    WEB_FETCH_INTERFACE_DIGESTS,
     WebFetchBucketClassifier,
 )
 
@@ -233,13 +233,14 @@ def install_compiler_owned_provider_classifier(
 ) -> ProviderBucketClassifierInstallation | None:
     """Install the compiler-owned double for an interface that has one."""
 
-    if accepted.registration.interface_digest == WEB_FETCH_INTERFACE_DIGEST:
+    # A package registration carries its own classifier code instead.
+    if isinstance(accepted.registration, ProviderInterfaceRegistration):
+        return None
+    # Every web.fetch revision core owns shares one vocabulary and proof menu.
+    if accepted.registration.interface_digest in WEB_FETCH_INTERFACE_DIGESTS:
         return PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(accepted, WebFetchBucketClassifier())
-    # Both workspace.file revisions read the same host-owned bytes; a package
-    # registration carries its own classifier code instead.
-    if accepted.registration.interface_digest not in WORKSPACE_FILE_INTERFACE_DIGESTS or isinstance(
-        accepted.registration, ProviderInterfaceRegistration
-    ):
+    # Both workspace.file revisions read the same host-owned bytes.
+    if accepted.registration.interface_digest not in WORKSPACE_FILE_INTERFACE_DIGESTS:
         return None
     return PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(
         accepted,

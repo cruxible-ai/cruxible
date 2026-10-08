@@ -40,7 +40,11 @@ from cruxible_client.contracts.providers import (
     render_provider,
 )
 from cruxible_client.transport.http import CruxibleClient
-from cruxible_core.providers.web_fetch import WEB_FETCH_SELECTORS, web_fetch_interface_registration
+from cruxible_core.providers.web_fetch import (
+    WEB_FETCH_INTERFACE_V2_DIGEST,
+    WEB_FETCH_SELECTORS,
+    web_fetch_interface_registration,
+)
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.core_support._p2b1_support import provider_v2
 from tests.core_support._pc_c_support import capture_contract
@@ -153,9 +157,9 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
         from cruxible_provider_runtime.provider_api import ProviderRunContext
         from cruxible_provider_web.interfaces import FETCH_PREIMAGE
 
-        from cruxible_core.providers.web_fetch import WEB_FETCH_INTERFACE_PREIMAGE
+        from cruxible_core.providers.web_fetch import WEB_FETCH_INTERFACE_DEFINITION
 
-        assert FETCH_PREIMAGE == WEB_FETCH_INTERFACE_PREIMAGE
+        assert FETCH_PREIMAGE == WEB_FETCH_INTERFACE_DEFINITION
         result = web.WebFetch()(
             ProviderRunContext(
                 run_id="sdk-acquisition",
@@ -178,7 +182,13 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
     http, instance_id, reviewer = playbill_http
     manager = get_playbill_manager()
     instance = manager.get(instance_id)
-    registration = web_fetch_interface_registration()
+    # The substituted protocol output is the v2 shape; the adapter's carries the
+    # captured material v3 declares.
+    registration = (
+        web_fetch_interface_registration()
+        if adapter
+        else web_fetch_interface_registration(WEB_FETCH_INTERFACE_V2_DIGEST)
+    )
     provider = web_provider(registration)
     contract = capture_contract().model_copy(
         update={

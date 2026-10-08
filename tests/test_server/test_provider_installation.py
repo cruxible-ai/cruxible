@@ -453,6 +453,21 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
         for row in installed.operations
         for item in row.missing_requirements
     )
+    # Core owns web.fetch: the package installs onto core's registration of the
+    # definition it ships, and core classifies its runs; the deployment hosts
+    # only the package's classifier for search.web.
+    from cruxible_client.contracts.provider_interfaces import render_provider_interface
+    from cruxible_core.providers.web_fetch import web_fetch_interface_registration
+
+    instance = get_playbill_manager().get(instance_id)
+    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+    assert tree["provider-interfaces/web.fetch.json"] == render_provider_interface(
+        web_fetch_interface_registration()
+    )
+    (deployment,) = get_playbill_manager().provider_runtime_operator().config.deployments
+    assert [item.classifier_identity for item in deployment.classifier_installations] == [
+        "search.web.input"
+    ]
     pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
     base = capture_contract()
     contract = base.model_copy(
