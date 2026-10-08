@@ -1123,12 +1123,12 @@ def _trigger_admissions(
     accepted_line: AcceptedLineSpec,
     trigger: ArtifactIdentity,
 ) -> tuple[ProcedureRunAdmissionV5, ...]:
-    """The latest occurrence one Trigger fired on this Line: its cadence chain.
+    """The latest occurrence one Trigger fired on this Line.
 
-    A Line's admissions interleave every Trigger aimed at it, so a cadence counts
-    from the last occurrence its own Trigger fired, found by the Trigger each
-    admission's binding names. Only records past the last read are parsed; a
-    restart rebuilds the chain from the retained journal.
+    A Line's admissions interleave every Trigger aimed at it, so a Trigger's
+    own latest is found by the Trigger each admission's binding names. Only
+    records past the last read are parsed; a restart rebuilds it from the
+    retained journal.
     """
 
     journal, _root = _journal(instance)
@@ -1203,10 +1203,9 @@ def _line_occurrence(
     accepted_line: AcceptedLineSpec,
     *,
     evaluation_time: datetime,
-    prior: tuple[ProcedureRunAdmissionV5, ...],
+    last_tick: datetime | None = None,
     trigger: AcceptedTrigger | None = None,
     binding: LineTriggerBinding | None = None,
-    not_before: datetime | None = None,
     exact_basis: datetime | None = None,
     accepted_at: datetime | None = None,
     manual_event: TriggerEventReference | None = None,
@@ -1215,16 +1214,15 @@ def _line_occurrence(
 
     With no Trigger the occurrence is a manual run at its evaluation instant,
     on the exact event it was given, if any (its record digest names it).
-    A cadence or cron occurrence is the tick after the last one its Trigger
-    fired (`prior`), and never before the tick after its Trigger version's
-    acceptance (`accepted_at`): no Trigger fires retroactively. `not_before`
-    floors it for forward-only matching: an arm that starts or resumes later
-    than that tick starts ticking from its own start, never catching up.
-    `exact_basis` names a retained tick outright, for an explicit dispatch or
-    retry of that exact occurrence.
+    A cadence or cron occurrence is the timer's next instant after
+    `last_tick`, the scheduled instant of the latest tick of its Trigger
+    already delivered (when it was dispatched never counts), and never before
+    the first instant after its Trigger version's acceptance (`accepted_at`):
+    no Trigger fires retroactively. `exact_basis` names a tick outright: one a
+    listener or an evaluation found on the timer, or a retained tick being
+    dispatched or retried.
     """
 
-    last = max(prior, key=lambda item: item.occurrence_evaluation_time, default=None)
     next_due = None
     if trigger is None:
         kind = "manual"
@@ -1252,10 +1250,8 @@ def _line_occurrence(
                     raise ExecutionError("a timed occurrence needs its Trigger's acceptance")
                 next_due = timer_due(
                     schedule,
-                    last=accepted_at
-                    if last is None
-                    else max(last.occurrence_evaluation_time, accepted_at),
-                    not_before=not_before,
+                    accepted_at=accepted_at,
+                    last=accepted_at if last_tick is None else max(last_tick, accepted_at),
                 )
             occurrence_basis = format_datetime(next_due)
         else:
@@ -3463,7 +3459,6 @@ def service_run_playbill_line(
     expected_line_artifact_digest: str | None = None,
     expected_trigger_artifact_digest: str | None = None,
     expected_trigger_pins: dict[str, str] | None = None,
-    explicit_occurrence: bool = False,
     trigger_fire: TriggerFire | None = None,
 ) -> ProcedureRunStateV2:
     instance.require_writable()
@@ -3488,7 +3483,6 @@ def service_run_playbill_line(
             expected_line_artifact_digest=expected_line_artifact_digest,
             expected_trigger_artifact_digest=expected_trigger_artifact_digest,
             expected_trigger_pins=expected_trigger_pins,
-            explicit_occurrence=explicit_occurrence,
             trigger_fire=trigger_fire,
         )
 
@@ -3508,7 +3502,6 @@ def _run_playbill_line(
     expected_line_artifact_digest: str | None = None,
     expected_trigger_artifact_digest: str | None = None,
     expected_trigger_pins: dict[str, str] | None = None,
-    explicit_occurrence: bool = False,
     trigger_fire: TriggerFire | None = None,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
@@ -3824,11 +3817,8 @@ def _run_playbill_line(
     ):
         raise ExecutionError("Line and resolution contract must bind the same observation window")
     is_timed = schedule is not None and schedule_is_timed(schedule)
-    prior = (
-        _trigger_admissions(instance, accepted_line, trigger.trigger.identity)
-        if trigger is not None and is_timed
-        else ()
-    )
+    if is_timed and occurrence_basis_time is None:
+        raise ExecutionError("a timed Trigger fire names the exact tick it dispatches")
     cadence_basis = (
         min(occurrence_basis_time, evaluation_time)
         if occurrence_basis_time is not None and is_timed
@@ -3855,15 +3845,13 @@ def _run_playbill_line(
     occurrence_id, next_due = _line_occurrence(
         accepted_line,
         evaluation_time=cadence_basis or evaluation_time,
-        prior=prior,
         trigger=trigger,
         binding=trigger_binding,
         manual_event=event if trigger is None else None,
-        # A retained tick is validated against the same calculation that queued
-        # it: automatically, as the chain's next tick floored at its own due
-        # instant; explicitly, as exactly the tick it names.
-        not_before=None if explicit_occurrence else cadence_basis,
-        exact_basis=cadence_basis if explicit_occurrence else None,
+        # A retained tick is admitted as exactly the tick it names, automatically
+        # or explicitly: its identity is its scheduled instant, so when it is
+        # dispatched never moves which later ticks are due.
+        exact_basis=cadence_basis,
         accepted_at=trigger_accepted_at(instance, trigger)
         if trigger is not None and is_timed
         else None,

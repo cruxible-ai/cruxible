@@ -1723,14 +1723,26 @@ tick is the exception: it is not an event but "the Trigger is due", so when a
 Line is enabled or its enablement resumes, a tick still pending from before
 closes as `lapsed` -- retained, never run implicitly, and still runnable as
 exactly that tick with `dispatch --occurrence-id DIGEST --retry`, even after
-newer ticks ran -- and the enablement ticks on from its own start rather than
-catching up on ticks it missed. Each cadence or cron Trigger keeps its own
-chain: it is due one interval, or at the next calendar instant, after the last
-occurrence it fired, whatever other Triggers aimed at the Line fired, and never
-before the first instant after its Trigger version's acceptance: a new cadence
-ticks first one interval after it was accepted, a successor schedule from its
-own acceptance. `disable` stops further admissions; a run already admitted
-keeps going, and a retired Line can be disabled too. Both are idempotent:
+newer ticks ran -- and the enablement ticks on at its schedule's next instant
+at or after its start rather than catching up on ticks it missed (only
+`evaluate` over the missed range recovers them). A cadence's instants sit on a
+grid one interval apart from its Trigger version's acceptance, a cron
+schedule's on its calendar, and enabling or resuming never moves them: nothing
+ticks at the enable or restart instant itself unless the schedule has an
+instant there. Each cadence or cron Trigger keeps its own chain, whatever other
+Triggers aimed at the Line fired: the enablement matches every instant of its
+schedule from where its own matching reached, one at a time, skipping each
+tick already delivered (matched, or recorded by `evaluate`). A tick is its
+scheduled instant, never when it ran, so dispatching recovered ticks late
+never skips a live one, and a later tick evaluated first never stands in for
+an earlier one still owed. An enablement that fell behind matches the ticks
+it owes in order, never passing one undelivered. No tick is due before the
+first instant after its Trigger version's acceptance: a new cadence ticks
+first one interval after it was accepted, a successor schedule from its own
+acceptance.
+`disable` stops
+further admissions; a run already admitted keeps going, and a retired Line can
+be disabled too. Both are idempotent:
 enabling a Line already enabled by the same credential at the same versions
 returns it unchanged with `outcome: already_enabled`, and disabling a stopped
 enablement returns it with `outcome: already_disabled`. Enabling under a
@@ -1751,7 +1763,9 @@ disable is not reported.
 A restart keeps each enablement and opens a new forward range from the
 restart: the downtime is not matched, what the previous range matched but did
 not admit stays pending, and timed ticks lapse. For each enabled Line `next`
-then shows one `line_coverage_gap` row per range its daemon never matched,
+then shows one `line_coverage_gap` row per range its daemon never matched
+(starting at the first tick a cadence or cron Trigger still owed, when its
+matching had fallen behind),
 naming the exact `cruxible line evaluate LINE --since S --until U` that covers
 it (the row leaves once an evaluation covers the range), and one
 `line_work_pending` row while work it matched before the restart, or that was
@@ -1763,12 +1777,21 @@ rather than silently rebound.
 
 `evaluate` checks a historical `[since, until)` range against every live
 Trigger aimed at the Line and records its matches as pending; it never runs
-anything. `--dry-run` only reports what the range makes eligible -- `met`,
+anything. A cadence or cron Trigger matches every instant of its schedule in
+the range (on its Trigger version's grid or calendar, none at or before that
+version's acceptance) that no match or evaluation already delivered, so
+evaluating a `line_coverage_gap` range finds exactly the ticks the downtime
+skipped; a `--dry-run` without `--since` reports only the tick due next.
+`--dry-run` only reports what the range makes eligible -- `met`,
 `not_met`, or `incomplete`, the exact matching events/windows (each naming its
 Trigger), and each occurrence's dispatch status (pending, admitted, rejected,
 superseded or lapsed) -- enqueues nothing, needs no range, and is a read.
 Without `--dry-run`, `--since` and `--until` are required and it needs governed
-write. Follow its cursor to finish a bounded page.
+write. Follow its cursor to finish a bounded page, in the mode that returned
+it: a `--dry-run` page's cursor never continues an evaluation that enqueues
+(start that one from the range's start), and an enqueueing page refuses a
+cursor that would skip a tick no page enqueued, so a range is recorded as
+covered only once every tick in it was delivered.
 `dispatch` admits pending occurrences using the caller's current permissions
 and the ordinary Line admission checks; by default it drains every pending
 occurrence (`--limit N` stops after N). `run` and `dispatch` of a Line whose
