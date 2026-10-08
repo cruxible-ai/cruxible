@@ -583,7 +583,7 @@ class ProposalTerminalEgressSink:
                 admission=admission,
                 accepted_mandates=self.accepted_mandates,
                 target_paths=target_paths,
-                base_tree=self.instance.tree_at(request.accepted_coordinate.git_oid),
+                base_tree=self.instance.immutable_tree_at(request.accepted_coordinate.git_oid),
                 candidate_tree=lowered.proposed_tree,
                 delegation=self.delegation,
             )
@@ -815,11 +815,14 @@ class ProposalTerminalEgressSink:
                 issues = delegated_authority_issues(
                     mandate_digest=digest,
                     scope=request.target_paths,
-                    current_tree=self.instance.tree_at(head.git_oid),
+                    current_tree=self.instance.immutable_tree_at(head.git_oid),
                     candidate_tree=prepared.candidate_tree,
                     current=head,
                     timestamp=canonical_candidate_timestamp(request.evaluation_time),
-                    facts=self.instance._accepted_query_facts(self.instance, head),
+                    facts=lambda predicates: self.instance._accepted_query_facts(
+                        self.instance, head, predicates=predicates
+                    ),
+                    mandate_name=mandate.identity.name,
                 )
                 codes = sorted({code for code, _message in issues})
                 if issues and mandate.condition.fallback == "refuse":

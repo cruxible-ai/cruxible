@@ -803,6 +803,36 @@ def test_a_settled_delivery_finds_its_generation_without_walking_history(
     assert _egress(state).settle_outcome == "settled"
 
 
+def test_a_settle_reads_condition_facts_for_its_predicates_only(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The condition is decided over the predicates its query reads, never every live Claim,
+    and over lazily read trees, never two whole materialized ones."""
+
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    instance, root, line = settle_world(tmp_path)
+    built = PlaybillInstance._accepted_query_facts
+    asked: list[object] = []
+
+    def scoped(source, coordinate, *, predicates=None):  # type: ignore[no-untyped-def]
+        asked.append(predicates)
+        return built(source, coordinate, predicates=predicates)
+
+    def no_materialized_tree(self, oid):  # type: ignore[no-untyped-def]
+        raise AssertionError("settle delivery materialized a whole accepted tree")
+
+    monkeypatch.setattr(PlaybillInstance, "_accepted_query_facts", staticmethod(scoped))
+    monkeypatch.setattr(PlaybillInstance, "tree_at", no_materialized_tree)
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    assert _egress(state).settle_outcome == "settled"
+    # Every build (delivery, then the proposal's own replay) asks for exactly the
+    # predicates the condition query reads.
+    expected = _condition(only_subject=None).referenced_predicates
+    assert asked and all(predicates == expected for predicates in asked), asked
+
+
 @pytest.mark.parametrize(
     ("only_subject", "outcome"), [(None, "settled"), ("someone-else", "proposed")]
 )

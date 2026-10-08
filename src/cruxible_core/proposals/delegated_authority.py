@@ -9,7 +9,7 @@ so a recorded settlement reproduces from the parent state and the record alone.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -21,6 +21,7 @@ from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateError,
     parse_procedure_mandate_any,
     procedure_mandate_digest,
+    procedure_mandate_path,
 )
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
@@ -53,12 +54,31 @@ def _issue(code: str, message: str) -> tuple[str, str]:
     return f"cruxible.settle.{code}", message
 
 
-def _mandate_by_digest(tree: Mapping[str, bytes], digest: str) -> ProcedureMandate | None:
-    for path in sorted(tree):
-        if not path.startswith(MANDATE_PREFIX):
+#: Accepted Claim facts for exactly the predicates one condition query reads.
+QueryFactsForPredicates = Callable[[tuple[str, ...]], ClaimQueryFactsV1]
+
+
+def _mandate_by_digest(
+    tree: Mapping[str, bytes], digest: str, *, name: str | None = None
+) -> ProcedureMandate | None:
+    """The mandate at ``tree`` with ``digest``: one read when its name is known.
+
+    A digest fixes the mandate's bytes and so its path; ``name`` (from a copy
+    of the same mandate) only says where to look, and the bytes there must
+    still carry the digest.
+    """
+
+    paths = (
+        (procedure_mandate_path(name),)
+        if name is not None
+        else tuple(path for path in tree if path.startswith(MANDATE_PREFIX))
+    )
+    for path in paths:
+        content = tree.get(path)
+        if content is None:
             continue
         try:
-            mandate = parse_procedure_mandate_any(tree[path], path=path)
+            mandate = parse_procedure_mandate_any(content, path=path)
         except ProcedureMandateError:
             continue
         if procedure_mandate_digest(mandate).tagged == digest:
@@ -141,15 +161,18 @@ def delegated_authority_issues(
     candidate_tree: Mapping[str, bytes],
     current: AcceptedProjectionCoordinate,
     timestamp: str,
-    facts: ClaimQueryFactsV1 | None,
+    facts: QueryFactsForPredicates | None,
+    mandate_name: str | None = None,
 ) -> tuple[tuple[str, str], ...]:
     """Every reason the named mandate does not authorize this change set; empty if it does.
 
     Everything is read from the parent state: a candidate can never make itself
     eligible. False, missing, conflicting, truncated or ambiguous facts refuse.
+    ``facts`` builds the parent's Claim facts for the predicates the condition
+    query reads; ``mandate_name`` reads the mandate from its one path.
     """
 
-    mandate = _mandate_by_digest(current_tree, mandate_digest)
+    mandate = _mandate_by_digest(current_tree, mandate_digest, name=mandate_name)
     if mandate is None:
         return (
             _issue(
@@ -240,7 +263,7 @@ def condition_issues(
     current_tree: Mapping[str, bytes],
     current: AcceptedProjectionCoordinate,
     evaluated_at: datetime,
-    facts: ClaimQueryFactsV1 | None,
+    facts: QueryFactsForPredicates | None,
 ) -> tuple[tuple[str, str], ...]:
     """Evaluate the pinned condition query for every target at the parent state."""
 
@@ -261,7 +284,8 @@ def condition_issues(
                 "The pinned condition query is not accepted at the parent.",
             ),
         )
-    if facts is None or facts.coordinate != current:
+    query_facts = None if facts is None else facts(definition.referenced_predicates)
+    if query_facts is None or query_facts.coordinate != current:
         return (
             _issue(
                 "condition_incomplete",
@@ -274,7 +298,7 @@ def condition_issues(
     for target in targets:
         result = evaluate_claim_query(
             accepted,
-            facts=facts,
+            facts=query_facts,
             coordinate=current,
             evaluation_time=evaluated_at,
             parameters={
