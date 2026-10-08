@@ -58,21 +58,51 @@ def _issue(code: str, message: str) -> tuple[str, str]:
 QueryFactsForPredicates = Callable[[tuple[str, ...]], ClaimQueryFactsV1]
 
 
+def _mandate_paths_by_digest(tree: Mapping[str, bytes], digest: str) -> tuple[str, ...] | None:
+    """Where a mandate with ``digest`` can be in ``tree``, from its accepted projection.
+
+    An accepted tree carries a reader for the projection it stands on; that
+    projection's ``procedure_mandates`` rows plus every mandate path edited on
+    top of it are the only places the digest can be. ``None`` when the tree has
+    no reader (cold source-only ingress): the caller scans the mandate prefix.
+    """
+
+    reader = getattr(tree, "_accepted_reader", None)
+    if reader is None:
+        return None
+    with reader() as projection:
+        paths = {
+            str(row[0])
+            for row in projection.typed.connection.execute(
+                "SELECT path FROM procedure_mandates WHERE artifact_digest=?", (digest,)
+            )
+        }
+    node: object | None = tree
+    while node is not None:
+        edits = getattr(node, "_edits", None) or {}
+        paths.update(path for path in edits if path.startswith(MANDATE_PREFIX))
+        node = getattr(node, "_parent", None)
+    return tuple(sorted(paths))
+
+
 def _mandate_by_digest(
     tree: Mapping[str, bytes], digest: str, *, name: str | None = None
 ) -> ProcedureMandate | None:
-    """The mandate at ``tree`` with ``digest``: one read when its name is known.
+    """The mandate at ``tree`` with ``digest``, read from the paths it can be at.
 
     A digest fixes the mandate's bytes and so its path; ``name`` (from a copy
-    of the same mandate) only says where to look, and the bytes there must
-    still carry the digest.
+    of the same mandate) or the tree's accepted projection says where to look,
+    and the bytes there must still carry the digest. Only a tree with neither
+    scans the mandate prefix.
     """
 
     paths = (
         (procedure_mandate_path(name),)
         if name is not None
-        else tuple(path for path in tree if path.startswith(MANDATE_PREFIX))
+        else _mandate_paths_by_digest(tree, digest)
     )
+    if paths is None:
+        paths = tuple(path for path in tree if path.startswith(MANDATE_PREFIX))
     for path in paths:
         content = tree.get(path)
         if content is None:
