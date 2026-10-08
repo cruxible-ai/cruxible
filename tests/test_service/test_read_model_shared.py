@@ -383,7 +383,9 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
     ruling, long_ruling, binary = seeded["wi-42"], seeded["wi-long"], seeded["wi-bin"]
     text = _RULING.decode()
     cut = TruncatedText(
-        preview=_LONG_RULING.decode()[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(_LONG_RULING)
+        truncated=True,
+        preview=_LONG_RULING.decode()[:GET_SUMMARY_TEXT_MAX_CHARS],
+        length=len(_LONG_RULING),
     )
     marker = ExactContentRef(
         exact_content="binary", content_digest=binary.digest, length=len(_BINARY)
@@ -521,7 +523,9 @@ def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
             timestamp="2026-08-16T20:10:00.000000Z",
         ),
     )
-    cut = TruncatedText(preview=long_note[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_note))
+    cut = TruncatedText(
+        truncated=True, preview=long_note[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_note)
+    )
 
     rows = {
         row["subject_id"]: row

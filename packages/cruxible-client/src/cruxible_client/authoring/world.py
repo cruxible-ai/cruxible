@@ -1306,6 +1306,7 @@ class World:
         or paths and fully qualified predicates. A string value over 500
         characters is a ``TruncatedText`` (``preview``, ``length``), never the
         value: ``cx.read_whole(item.value)`` reads it whole at this World's coordinate.
+        An object value is a ``ShownObject`` whose ``object`` is the value, whole.
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """

@@ -221,7 +221,7 @@ def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
             {
                 "subject": "legal.case/b",
                 "subject_id": "b",
-                "ruling": TruncatedText(preview="Reversed " * 60, length=900),
+                "ruling": TruncatedText(truncated=True, preview="Reversed " * 60, length=900),
                 "flags": [],
             },
             {

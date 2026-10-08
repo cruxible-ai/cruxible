@@ -2507,10 +2507,14 @@ def service_playbill_query(
     page = tuple(answer.candidates[start : start + request.limit])
     truncated = start + len(page) < len(answer.candidates)
     # Every row is bounded by get's card rule: a string over 500 characters is
-    # a TruncatedText preview. A row cell names no whole read (no one Claim
-    # backs it); claims=True gives each cell's Claims with theirs.
-    rows = [
-        {key: value if key == "flags" else summary_value(value) for key, value in row.items()}
+    # a TruncatedText preview and an object value a ShownObject. A row cell
+    # names no whole read (no one Claim backs it); claims=True gives each
+    # cell's Claims with theirs, already shown.
+    rows: list[dict[str, Any]] = [
+        {
+            key: value if key in {"flags", "claims"} else summary_value(value)
+            for key, value in row.items()
+        }
         for row in answer.render(page)
     ]
     if served_claims is not None:

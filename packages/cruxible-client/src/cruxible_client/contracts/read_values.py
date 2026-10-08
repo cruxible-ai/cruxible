@@ -4,13 +4,20 @@ Summary reads (``get`` cards, ``query`` rows and cells, ``World.values``, write
 outcomes) bound each value: a string over ``GET_SUMMARY_TEXT_MAX_CHARS``
 characters is cut to a :class:`TruncatedText`, a declared preview that can never
 be mistaken for the value, and an exact-content value with no text to show is an
-:class:`ExactContentRef`. Every other value is itself. ``ShownValue`` is that
-typed union. A preview names the exact read of its whole value
-(:class:`WholeValueRead`) whenever one Claim at one accepted generation backs it.
+:class:`ExactContentRef`. An object value is a :class:`ShownObject`, shown whole.
+Every other value is itself. ``ShownValue`` is that typed union. A preview names
+the exact read of its whole value (:class:`WholeValueRead`) whenever one Claim
+at one accepted generation backs it.
+
+No JSON object in a shown value is ever a bare value: it is a marker, which
+carries its required discriminator (``truncated``, ``exact_content``), or an
+object value wrapped as ``{"object": {...}}``. A Claim whose value is an object
+shaped like a marker therefore reads back as that object, never as a marker.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -54,7 +61,7 @@ class TruncatedText(_StrictReadValueModel):
     each Claim's preview; a write's ``after`` is the value the write sent.
     """
 
-    truncated: Literal[True] = True
+    truncated: Literal[True]
     preview: str
     length: int = Field(gt=GET_SUMMARY_TEXT_MAX_CHARS)
     read_whole: WholeValueRead | None = Field(default=None, exclude_if=_omit_none)
@@ -77,30 +84,63 @@ class ExactContentRef(_StrictReadValueModel):
     length: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
 
 
+class ShownObject(_StrictReadValueModel):
+    """An object value, shown whole: ``object`` is the value itself, never cut.
+
+    The wrapper is what keeps an object value from reading as a marker: an
+    object Claim holding ``{"preview": "cover", "length": 600}`` is shown as
+    ``{"object": {"preview": "cover", "length": 600}}`` and reads back as that
+    object. Nothing inside ``object`` is interpreted.
+    """
+
+    object: dict[str, Any]
+
+
 #: A value as a summary read shows it: a TruncatedText preview of a long string,
-#: an ExactContentRef marker, or the value itself (a list element-wise). The
-#: value is a string so the alias can name itself.
+#: an ExactContentRef marker, a ShownObject for an object value, or the value
+#: itself (a list element-wise). The value is a string so the alias can name itself.
 ShownValue = TypeAliasType(
     "ShownValue",
-    "TruncatedText | ExactContentRef | str | bool | int | float | None"
-    " | list[ShownValue] | dict[str, Any]",
+    "TruncatedText | ExactContentRef | ShownObject | str | bool | int | float | None"
+    " | list[ShownValue]",
 )
 
 
 def summary_value(value: Any, *, read_whole: WholeValueRead | None = None) -> ShownValue:
-    """A value as a summary read shows it: long strings cut, lists element-wise.
+    """A value as a summary read shows it: long strings cut, objects wrapped, lists element-wise.
 
     ``read_whole`` is the exact read of the value a cut preview names, when one
-    Claim at one generation backs it.
+    Claim at one generation backs it. A marker already shown stays itself.
     """
 
     if isinstance(value, str) and len(value) > GET_SUMMARY_TEXT_MAX_CHARS:
         return TruncatedText(
-            preview=value[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(value), read_whole=read_whole
+            truncated=True,
+            preview=value[:GET_SUMMARY_TEXT_MAX_CHARS],
+            length=len(value),
+            read_whole=read_whole,
         )
     if isinstance(value, list | tuple):
         return [summary_value(item, read_whole=read_whole) for item in value]
+    if isinstance(value, Mapping):
+        return ShownObject(object=dict(value))
     return value  # type: ignore[no-any-return]
+
+
+def shown_plain(value: object) -> object:
+    """A shown value as plain JSON data: an object value unwrapped, a marker as its wire form.
+
+    For quoting a shown value in text; never parse the result back as a
+    ``ShownValue``.
+    """
+
+    if isinstance(value, ShownObject):
+        return value.object
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, list | tuple):
+        return [shown_plain(item) for item in value]
+    return value
 
 
 def whole_value_read(claim: str, git_oid: str) -> WholeValueRead:
@@ -112,9 +152,11 @@ def whole_value_read(claim: str, git_oid: str) -> WholeValueRead:
 __all__ = [
     "GET_SUMMARY_TEXT_MAX_CHARS",
     "ExactContentRef",
+    "ShownObject",
     "ShownValue",
     "TruncatedText",
     "WholeValueRead",
+    "shown_plain",
     "summary_value",
     "whole_value_read",
 ]
