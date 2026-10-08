@@ -424,6 +424,64 @@ def test_a_package_binding_a_live_registration_claims_only_what_it_proves(
     assert [item["provider_identity"] for item in entry["providers"]] == ["Provider:local-call"]
 
 
+def test_reinstalling_the_registrant_of_a_retained_web_fetch_registration_hosts_it(
+    installer_http, tmp_path, provider_checkout, monkeypatch
+):
+    """Review F-002: state from before core owned web.fetch can hold a package's own
+    v3 registration. On a daemon with no deployment or prepared install left,
+    reinstalling that exact package binds the retained registration and hosts its
+    classifier again -- the repair classifier_host_missing names -- rather than
+    comparing against core's registration it would propose on a fresh instance."""
+
+    from cruxible_client.contracts.provider_interfaces import (
+        ProviderInterfaceRegistration,
+        parse_provider_interface,
+    )
+    from cruxible_core.providers import package_registration
+    from tests.support.provider_installation import build_web_fetch_alternative
+
+    http, instance_id, _reviewer = installer_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = http
+    runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
+    wheel, lock = build_web_fetch_alternative(tmp_path, provider_checkout.repository)
+    path = "provider-interfaces/web.fetch.json"
+    manager = get_playbill_manager()
+    instance = manager.get(instance_id)
+
+    def held() -> bytes:
+        return instance.immutable_tree_at(instance.accepted_coordinate().git_oid)[path]
+
+    with monkeypatch.context() as earlier:
+        # The installer before core owned the contract registered the package's own.
+        earlier.setattr(
+            package_registration, "core_owned_interface_registration", lambda digest: None
+        )
+        first = install_provider_wheel(
+            client, instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
+        )
+    assert first.status == "ready", first
+    retained = parse_provider_interface(held(), path=path)
+    assert isinstance(retained, ProviderInterfaceRegistration)
+
+    # A fresh daemon over the same accepted state: no deployment, no prepared install.
+    (instance.root / "exhaust" / "provider-installations").rename(
+        instance.root / "exhaust" / "earlier-installations"
+    )
+    operator = manager.provider_runtime_operator()
+    monkeypatch.setattr(operator, "config", operator.config.model_copy(update={"deployments": ()}))
+
+    again = install_provider_wheel(
+        client, instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
+    )
+    assert again.status == "ready" and again.registered, again
+    assert parse_provider_interface(held(), path=path) == retained
+    (deployment,) = manager.provider_runtime_operator().config.deployments
+    assert [item.classifier_digest for item in deployment.classifier_installations] == [
+        retained.classifier_digest
+    ]
+
+
 def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     installer_http, tmp_path, provider_checkout
 ):

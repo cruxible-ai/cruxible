@@ -98,78 +98,99 @@ class PackageRegistrationDocumentV1(_Strict):
 
         result: list[ProviderInterfaceRegistrationV1] = []
         for exported in sorted(self.interfaces, key=lambda item: item.interface_id.encode()):
-            implementation = next(
-                item
-                for item in self.manifest.implementations
-                if item.interface_id == exported.interface_id
-            )
-            definition = exported.definition
-            if (
-                definition.get("interface_id") != exported.interface_id
-                or implementation.interface_digest != exported.interface_digest
-                or implementation.side_effects
-                != (definition.get("effect_class") == "external_mutation")
-            ):
-                raise ValueError("package definition and implementation disagree")
-            interface_bytes = canonical_bytes(definition).hex()
-            read_provider_operation_contract(interface_bytes)
-            if set(implementation.bucket_conformance) != set(implementation.declared_input_buckets):
-                raise ValueError("each declared selector must have a fixture")
+            interface_bytes = self._checked_definition(exported)
             core = core_owned_interface_registration(exported.interface_digest)
-            if core is not None:
-                if core.interface_bytes_hex != interface_bytes:
-                    raise ValueError("package definition differs from core's under its digest")
-                result.append(core)
+            if core is None:
+                result.append(self._package_registration(exported, interface_bytes))
                 continue
-            fixtures = {fixture.fixture_id: fixture for fixture in exported.fixtures}
-            if len(fixtures) != len(exported.fixtures):
-                raise ValueError("package fixtures must have unique identities")
-            proofs = []
-            for selector, fixture_id in sorted(implementation.bucket_conformance.items()):
-                if fixture_id not in fixtures:
-                    raise ValueError("conformance proof names a missing fixture")
-                fixture = fixtures[fixture_id]
-                proofs.append(
-                    ProviderBucketConformanceFixtureProof(
-                        selector=selector,
-                        fixture_id=fixture_id,
-                        fixture_digest=provider_bucket_fixture_digest(fixture),
-                        measured_bucket_id=fixture.measured_bucket_id,
-                    )
-                )
-            fixture_set_digest = provider_bucket_fixture_set_digest(tuple(proofs))
-            vocabulary = exported.vocabulary.model_dump(mode="json")
-            vocabulary["status"] = "accepted"
-            vocabulary_bytes = canonical_bytes(vocabulary).hex()
-            result.append(
-                ProviderInterfaceRegistration(
-                    identity=ArtifactIdentity(kind="ProviderInterface", name=exported.interface_id),
-                    interface_id=exported.interface_id,
-                    interface_bytes_hex=interface_bytes,
-                    interface_digest_domain="cruxible.interface.stub.v1",
-                    interface_digest=exported.interface_digest,
-                    vocabulary_bytes_hex=vocabulary_bytes,
-                    vocabulary_digest=provider_bucket_vocabulary_digest(vocabulary_bytes),
-                    classifier_identity=exported.classifier_identity,
-                    classifier_version=exported.classifier_version,
-                    classifier_code=exported.classifier_code,
-                    classifier_digest=provider_package_classifier_digest(
-                        classifier_identity=exported.classifier_identity,
-                        classifier_version=exported.classifier_version,
-                        conformance_fixture_set_digest=fixture_set_digest,
-                        code=exported.classifier_code,
-                    ),
-                    conformance_fixture_set_digest=fixture_set_digest,
-                    conformance_proofs=tuple(proofs),
-                    conformance_fixtures=tuple(
-                        sorted(exported.fixtures, key=lambda item: item.fixture_id.encode())
-                    ),
-                    effect_class="none"
-                    if definition["effect_class"] == "pure"
-                    else definition["effect_class"],
+            if core.interface_bytes_hex != interface_bytes:
+                raise ValueError("package definition differs from core's under its digest")
+            result.append(core)
+        return tuple(result)
+
+    def package_registration(self, interface_id: str) -> ProviderInterfaceRegistration:
+        """The registration this package itself exports for one interface, classifier
+        and fixtures included, even for a definition core owns: what an earlier
+        install of it registered, so it can host that registration's classifier."""
+
+        exported = next(item for item in self.interfaces if item.interface_id == interface_id)
+        return self._package_registration(exported, self._checked_definition(exported))
+
+    def _checked_definition(self, exported: PackageInterfaceExportV1) -> str:
+        """The exported definition's canonical bytes, once it agrees with its implementation."""
+
+        implementation = next(
+            item
+            for item in self.manifest.implementations
+            if item.interface_id == exported.interface_id
+        )
+        definition = exported.definition
+        if (
+            definition.get("interface_id") != exported.interface_id
+            or implementation.interface_digest != exported.interface_digest
+            or implementation.side_effects
+            != (definition.get("effect_class") == "external_mutation")
+        ):
+            raise ValueError("package definition and implementation disagree")
+        interface_bytes = canonical_bytes(definition).hex()
+        read_provider_operation_contract(interface_bytes)
+        if set(implementation.bucket_conformance) != set(implementation.declared_input_buckets):
+            raise ValueError("each declared selector must have a fixture")
+        return interface_bytes
+
+    def _package_registration(
+        self, exported: PackageInterfaceExportV1, interface_bytes: str
+    ) -> ProviderInterfaceRegistration:
+        implementation = next(
+            item
+            for item in self.manifest.implementations
+            if item.interface_id == exported.interface_id
+        )
+        fixtures = {fixture.fixture_id: fixture for fixture in exported.fixtures}
+        if len(fixtures) != len(exported.fixtures):
+            raise ValueError("package fixtures must have unique identities")
+        proofs = []
+        for selector, fixture_id in sorted(implementation.bucket_conformance.items()):
+            if fixture_id not in fixtures:
+                raise ValueError("conformance proof names a missing fixture")
+            fixture = fixtures[fixture_id]
+            proofs.append(
+                ProviderBucketConformanceFixtureProof(
+                    selector=selector,
+                    fixture_id=fixture_id,
+                    fixture_digest=provider_bucket_fixture_digest(fixture),
+                    measured_bucket_id=fixture.measured_bucket_id,
                 )
             )
-        return tuple(result)
+        fixture_set_digest = provider_bucket_fixture_set_digest(tuple(proofs))
+        vocabulary = exported.vocabulary.model_dump(mode="json")
+        vocabulary["status"] = "accepted"
+        vocabulary_bytes = canonical_bytes(vocabulary).hex()
+        effect_class = exported.definition["effect_class"]
+        return ProviderInterfaceRegistration(
+            identity=ArtifactIdentity(kind="ProviderInterface", name=exported.interface_id),
+            interface_id=exported.interface_id,
+            interface_bytes_hex=interface_bytes,
+            interface_digest_domain="cruxible.interface.stub.v1",
+            interface_digest=exported.interface_digest,
+            vocabulary_bytes_hex=vocabulary_bytes,
+            vocabulary_digest=provider_bucket_vocabulary_digest(vocabulary_bytes),
+            classifier_identity=exported.classifier_identity,
+            classifier_version=exported.classifier_version,
+            classifier_code=exported.classifier_code,
+            classifier_digest=provider_package_classifier_digest(
+                classifier_identity=exported.classifier_identity,
+                classifier_version=exported.classifier_version,
+                conformance_fixture_set_digest=fixture_set_digest,
+                code=exported.classifier_code,
+            ),
+            conformance_fixture_set_digest=fixture_set_digest,
+            conformance_proofs=tuple(proofs),
+            conformance_fixtures=tuple(
+                sorted(exported.fixtures, key=lambda item: item.fixture_id.encode())
+            ),
+            effect_class="none" if effect_class == "pure" else effect_class,
+        )
 
     def provider_definition(
         self,

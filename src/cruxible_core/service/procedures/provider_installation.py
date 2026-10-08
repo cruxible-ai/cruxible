@@ -836,17 +836,19 @@ def _install_locked(
         bindings = _interface_bindings(
             instance.immutable_tree_at(instance.accepted_coordinate().git_oid), document
         )
-        for own, (registration, _live) in zip(
-            document.interface_registrations(), bindings, strict=True
-        ):
-            # Core classifies a registration it owns. A live registration this
-            # package did not build is classified by the deployment that hosts it,
-            # so only this package's own classifier is re-proven and hosted here.
-            if (
-                not isinstance(registration, ProviderInterfaceRegistration)
-                or not isinstance(own, ProviderInterfaceRegistration)
-                or own.classifier_digest != registration.classifier_digest
-            ):
+        for registration, _live in bindings:
+            # Core classifies a registration it owns. A live package registration
+            # is classified by the deployment that hosts it: this package re-proves
+            # and hosts it exactly when it carries that classifier -- its own new
+            # registration, or one it registered earlier (even for a definition
+            # core now owns, which it would no longer propose).
+            if not isinstance(registration, ProviderInterfaceRegistration):
+                continue
+            try:
+                own = document.package_registration(registration.interface_id)
+            except ValueError:
+                continue
+            if own.classifier_digest != registration.classifier_digest:
                 continue
             installations.append(
                 registry.install(
