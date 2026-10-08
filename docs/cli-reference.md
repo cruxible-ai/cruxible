@@ -1557,9 +1557,11 @@ nodes behind that answer. Procedures are graph format 6 and pin every Provider
 exactly; open slots belong only to a Blueprint. The direct lane runs `state_tap`,
 `state_claim`, `transform`, `project`, `guard`, `repeat`, `select`, `constant`,
 `return`, `invoke`, `halt`, `source` and `call` nodes. The effectful terminals --
-`emit_capture`, `post_inbox`, `propose_change_set`, `settle_change_set` -- run
+`emit_capture`, `propose_change_set`, `settle_change_set` -- run
 only as a Line: a direct invocation carries no requested authority, no
-occurrence, and no mandate coordinate, and none is fabricated for it.
+occurrence, and no mandate coordinate, and none is fabricated for it. No lane
+delivers a `post_inbox` terminal yet, so a Procedure ending in one reports
+`unsupported`.
 
 A **Blueprint** is the same definition with interface-typed Provider slots left
 open (`cruxible authoring example blueprint`); it is accepted but never runs.

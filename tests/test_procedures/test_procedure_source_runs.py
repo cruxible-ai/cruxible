@@ -518,7 +518,7 @@ def test_source_is_served_on_the_direct_lane_and_terminals_only_on_a_line() -> N
     assert "source" in DIRECT_NODE_KINDS
     # Terminals and post_inbox stay dark on the direct lane.
     assert DIRECT_NODE_KINDS.isdisjoint({"emit_capture", "post_inbox", "propose_change_set"})
-    assert {"emit_capture", "post_inbox", "propose_change_set"} <= LINE_NODE_KINDS
+    assert {"emit_capture", "propose_change_set"} <= LINE_NODE_KINDS
 
 
 def test_the_sdk_authors_a_source_node(tmp_path: Path) -> None:
