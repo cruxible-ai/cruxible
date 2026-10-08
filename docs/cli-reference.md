@@ -2466,11 +2466,15 @@ request, or by a caller who is not a registered principal (an auth-off daemon's 
 `--key` with the path to your signing key: it stays in your own custody and the
 daemon never learns where. Your approval closes the row. So does another
 signer's approval that meets the requirement first, because the candidate then
-needs activation, not more approval.
+needs activation, not more approval. A compiler upgrade settles only with at
+least one signed approval, even under a policy that asks for none, so while it
+carries no signature it is a `proposal_awaiting_approval` row for every active
+ordinary principal, its author included, whose signature settlement would count.
 
 A `proposal_awaiting_activation` row is one of your own open candidates whose
 parent is the coordinate's semantic root and that needs no approval, or whose
-approval requirement other signers have met: activation is all it waits on.
+approval requirement other signers have met (and, for a compiler upgrade,
+that carries a signature): activation is all it waits on.
 "Your" is the same authenticated caller; nobody else's queue lists it. The
 repair is `cruxible proposal activate PROPOSAL_ID`, which closes the row. Your
 candidate still waiting on others' approval is listed in their queues as

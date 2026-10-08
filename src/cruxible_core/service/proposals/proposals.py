@@ -10,6 +10,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import ProposalDigest
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
@@ -612,6 +613,24 @@ class ProposalAwaitingApproval:
     eligible_approvals: int
 
 
+def _signature_required_unsigned(
+    candidate: CandidateRecordAnyVersion,
+    signers: set[str],
+    ordinary_principal_ids: frozenset[str],
+) -> bool:
+    """Whether settlement still needs a signature the approval policy does not ask for.
+
+    A compiler upgrade settles only with at least one signed client approval,
+    whatever the approval policy says (settlement refuses "compiler upgrade
+    requires a signed client approval"). Under a policy with no independent
+    requirement, the creator's own signature counts, as settlement counts it.
+    """
+
+    return any(member.artifact_kind == "compiler-upgrade" for member in candidate.members) and not (
+        signers & ordinary_principal_ids
+    )
+
+
 def proposals_awaiting_approval(
     instance: PlaybillInstance,
     coordinate: AcceptedCoordinate,
@@ -626,7 +645,9 @@ def proposals_awaiting_approval(
     is what stands between them and activation. A candidate qualifies while its
     approval requirement is unmet -- counted exactly as activation counts it,
     over distinct active ordinary signers other than its creator -- and this
-    principal is such a signer who has not signed it yet.
+    principal is such a signer who has not signed it yet. A compiler upgrade
+    also qualifies while it carries no signature at all (settlement requires
+    one even when the policy does not), and then its creator may give it.
     `ordinary_principal_ids` is the coordinate's active ordinary registry.
     """
 
@@ -641,23 +662,28 @@ def proposals_awaiting_approval(
             connection,
             sequence,
             columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest",
-            where="candidate_parent_semantic_root=? AND actor_id!=?",
-            parameters=(coordinate.semantic_root, principal_id),
+            where="candidate_parent_semantic_root=?",
+            parameters=(coordinate.semantic_root,),
         )
     awaiting = []
     for row in rows:
         candidate = evidence.read_candidate(row["candidate_digest"])
-        if not candidate.approval_requirements:
-            continue
         signers = {
             submission.attestation.signer_id
             for submission in evidence.read_approvals(row["candidate_digest"])
         }
         if principal_id in signers:
             continue
-        eligible = len((signers - {row["actor_id"]}) & ordinary_principal_ids)
-        minimum = candidate.approval_requirements[0].minimum_distinct_signers
-        if eligible >= minimum:
+        if candidate.approval_requirements:
+            if row["actor_id"] == principal_id:
+                continue  # The creator never counts toward an independent requirement.
+            eligible = len((signers - {row["actor_id"]}) & ordinary_principal_ids)
+            minimum = candidate.approval_requirements[0].minimum_distinct_signers
+            if eligible >= minimum:
+                continue
+        elif _signature_required_unsigned(candidate, signers, ordinary_principal_ids):
+            eligible, minimum = 0, 1
+        else:
             continue
         awaiting.append(
             ProposalAwaitingApproval(
@@ -698,7 +724,8 @@ def proposals_awaiting_activation(
     coordinate's semantic root. A candidate qualifies when it needs no approval
     or its requirement is met, counted exactly as activation counts it. A
     principal-lifecycle candidate is the actor's own signature to give first,
-    so it is not listed here.
+    and a compiler upgrade with no signature yet needs one before settlement,
+    so neither is listed here until then.
     """
 
     evidence = instance.proposal_evidence()
@@ -728,6 +755,9 @@ def proposals_awaiting_activation(
         if candidate.approval_requirements and (
             eligible < candidate.approval_requirements[0].minimum_distinct_signers
         ):
+            continue
+        if _signature_required_unsigned(candidate, signers, ordinary_principal_ids):
+            # Settlement needs a signature first: the approval row offers it.
             continue
         ready.append(
             ProposalAwaitingActivation(
