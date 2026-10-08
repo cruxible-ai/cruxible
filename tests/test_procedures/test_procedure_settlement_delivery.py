@@ -959,3 +959,66 @@ def test_a_delegated_settle_that_lost_its_race_says_readmit_routes_it_for_approv
         "readmit_to_route_the_delegated_settle_for_approval_or_withdraw_it"
     )
     assert row.repair.command == f"cruxible proposal readmit {pending.proposal_id}"
+
+
+# --- the capped request's own law (review F-006) -------------------------------
+
+
+def _prepared_request(tmp_path: Path, **world: Any):  # type: ignore[no-untyped-def]
+    from cruxible_core.procedures.egress import TerminalEgressRequestV2
+
+    tmp_path.mkdir()
+    instance, root, line = settle_world(tmp_path, **world)
+    state = run_settle(instance, root, line)
+    (prepared,) = [
+        item for item in _egress_records(instance, state) if item.get("verdict") == "prepared"
+    ]
+    return TerminalEgressRequestV2.model_validate(prepared["request"])
+
+
+def _rekeyed(request: Any, **update: Any):  # type: ignore[no-untyped-def]
+    """The request with ``update`` applied and its operation key recomputed, validated."""
+
+    from cruxible_core.procedures.egress import TerminalEgressRequestV2, terminal_operation_key
+
+    changed = request.model_copy(update=update)
+    changed = changed.model_copy(update={"operation_key": terminal_operation_key(changed)})
+    return TerminalEgressRequestV2.model_validate(changed.model_dump(mode="python"))
+
+
+def test_a_capped_settle_request_names_exactly_the_cap_its_rung_allows(tmp_path: Path) -> None:
+    from pydantic import ValidationError
+
+    from cruxible_core.procedures.egress import TerminalEgressRequestV2
+
+    capped = _prepared_request(
+        tmp_path / "capped", max_authority="propose", mandates=0, propose_mandate=True
+    )
+    assert (capped.capped_by, capped.limiting_term, capped.effective_rung) == (
+        "line_requested_rung",
+        "line_requested_rung",
+        2,
+    )
+    assert (capped.required_rung, capped.granted_operation) == (2, "propose_change_set")
+    plain = _prepared_request(tmp_path / "plain")
+    assert (plain.capped_by, plain.effective_rung, plain.required_rung) == (None, 3, 3)
+    as_propose = {"required_rung": 2, "granted_operation": "propose_change_set"}
+
+    # Below settle, only the limiting term caps it.
+    with pytest.raises(ValidationError, match="names its limiting term"):
+        _rekeyed(capped, capped_by="propagated_sensitivity")
+    # At the settle rung, only the absent settle grant caps it.
+    with pytest.raises(ValidationError, match="names its limiting term"):
+        _rekeyed(plain, capped_by="line_requested_rung", **as_propose)
+    assert _rekeyed(plain, capped_by="mandate_grant", **as_propose).capped_by == "mandate_grant"
+    # A capped settle asks for propose authority, never settle.
+    with pytest.raises(ValidationError, match="required rung disagrees"):
+        _rekeyed(capped, required_rung=3, granted_operation="activate_change_set")
+    # Only a settle terminal is capped.
+    with pytest.raises(ValidationError, match="only a settle terminal is capped"):
+        _rekeyed(capped, kind="propose_change_set")
+    # The cap is part of the operation: dropping it without a new key refuses.
+    stale = capped.model_dump(mode="python")
+    stale.pop("capped_by")
+    with pytest.raises(ValidationError, match="required rung disagrees"):
+        TerminalEgressRequestV2.model_validate(stale)
