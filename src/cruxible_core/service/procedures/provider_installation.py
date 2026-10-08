@@ -821,10 +821,13 @@ def _install_locked(
             ),
         )
     # Before the deployment is registered: an interface built into this
-    # instance is never re-registered from a package, and a package classifier
-    # a registration names has a host on this daemon.
-    _refuse_built_in_interfaces(instance, document, instance.accepted_coordinate().git_oid)
+    # instance is never re-registered from a package, a package classifier a
+    # registration names has a host on this daemon, and the Provider claims only
+    # what the registrations it binds prove.
+    base = instance.accepted_coordinate()
+    _refuse_built_in_interfaces(instance, document, base.git_oid)
     _refuse_unhosted_classifiers(instance, operator, document, configured)
+    candidate_tree, changed = _definition_changes(instance, document, provider, base.git_oid)
     operator.register_deployment(configured)
     if rewrite_prepared:
         _write(
@@ -837,8 +840,6 @@ def _install_locked(
                 }
             ),
         )
-    base = instance.accepted_coordinate()
-    candidate_tree, changed = _definition_changes(instance, document, provider, base.git_oid)
     proposal_id = candidate_digest = None
     registered = not changed
     activation_blocked = False

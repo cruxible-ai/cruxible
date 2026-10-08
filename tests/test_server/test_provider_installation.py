@@ -409,8 +409,10 @@ def test_a_package_binding_a_live_registration_claims_only_what_it_proves(
             client, instance_id, wheel=renamed, lock=renamed_lock, dependency_wheels=(runtime,)
         )
     assert "cruxible.provider.bucket_fixture_missing" in str(unproven.value)
-
+    # Refused before its deployment is registered.
     operator = get_playbill_manager().provider_runtime_operator()
+    assert len(operator.config.deployments) == 1
+
     monkeypatch.setattr(operator, "config", operator.config.model_copy(update={"deployments": ()}))
     other, other_lock = build_local_call(tmp_path, repository, name="other-call", increment=2)
     with pytest.raises(Exception) as unhosted:
