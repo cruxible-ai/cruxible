@@ -281,7 +281,12 @@ class _AcceptedQueryFactsRead:
         self._source_tree = source_tree
         self._predicates = predicates
         self._claim_paths: tuple[str, ...] = ()
+        # Whether ``_claim_paths`` holds live Claims only: a retired build reads
+        # the retired ones when it is first asked for.
+        self._claim_paths_live_only = False
         self._subject_paths: tuple[str, ...] = ()
+        # Whether ``_subject_paths`` holds only the admitted kinds' Subjects.
+        self._subject_paths_by_kind = False
         self._history: ClaimReadHistoryIndex | None = None
         self._attestations: dict[tuple[str, str], list[ClaimAttestation]] = {}
         self._claims: dict[str, ClaimArtifactAny] = {}
@@ -304,12 +309,31 @@ class _AcceptedQueryFactsRead:
         named = {row.subject_path for row in rows} | {
             row.object_subject_path for row in rows if row.object_subject_path is not None
         }
-        reachable = tuple(
-            path
-            for path in self._subject_paths
-            if path in named
-            or (path.startswith(SUBJECT_PATH_PREFIX) and _subject_kind_of_path(path) in admitted)
-        )
+        if self._subject_paths_by_kind:
+            # ``_subject_paths`` holds every accepted Subject of an admitted kind;
+            # a named Subject of another kind is read only if it is accepted.
+            tree = self._tree
+            assert tree is not None
+            reachable = tuple(
+                sorted(
+                    set(self._subject_paths)
+                    | {
+                        path
+                        for path in named
+                        if path.startswith(SUBJECT_PATH_PREFIX) and path in tree
+                    },
+                    key=lambda item: item.encode("utf-8"),
+                )
+            )
+        else:
+            reachable = tuple(
+                path
+                for path in self._subject_paths
+                if path in named
+                or (
+                    path.startswith(SUBJECT_PATH_PREFIX) and _subject_kind_of_path(path) in admitted
+                )
+            )
         if self._source_tree is None and self._context is not None:
             self._context.prefetch(reachable)
         return reachable
@@ -338,22 +362,24 @@ class _AcceptedQueryFactsRead:
                 self._context = context
                 self._tree = self._source_tree if self._source_tree is not None else context.tree
                 with self._instance.bind_accepted_projection(self._coordinate) as projection:
-                    if self._predicates is None:
-                        self._claim_paths = tuple(
-                            row.path for row in projection.typed.envelopes(kind="claim")
+                    self._claim_paths = _claim_paths(
+                        projection.typed.connection,
+                        predicates=self._predicates,
+                        live_only=not include_retired,
+                    )
+                    self._claim_paths_live_only = not include_retired
+                    # A scoped query over accepted bytes reaches Subjects by its
+                    # entry kinds (plus those its Claims name): select those
+                    # kinds, not every Subject's envelope.
+                    self._subject_paths_by_kind = (
+                        self._scoped_subject_kinds is not None and self._source_tree is None
+                    )
+                    self._subject_paths = (
+                        _subject_paths_of_kinds(
+                            projection.typed.connection, self._scoped_subject_kinds or ()
                         )
-                    else:
-                        self._claim_paths = tuple(
-                            row[0]
-                            for row in projection.typed.connection.execute(
-                                "SELECT path FROM claims WHERE predicate IN ("
-                                + ",".join("?" for _ in self._predicates)
-                                + ") ORDER BY path",
-                                self._predicates,
-                            )
-                        )
-                    self._subject_paths = tuple(
-                        row.path for row in projection.typed.envelopes(kind="subject")
+                        if self._subject_paths_by_kind
+                        else tuple(row.path for row in projection.typed.envelopes(kind="subject"))
                     )
                     for value in projection.typed.claim_attestations(
                         current_claims_only=True, claim_predicates=self._predicates
@@ -367,16 +393,16 @@ class _AcceptedQueryFactsRead:
                         ).append(value)
                     type_sql = (
                         "SELECT DISTINCT t.path FROM claims c "
-                        "JOIN claim_types t ON t.identity=c.claim_type_identity"
+                        "JOIN claim_types t ON t.identity=c.claim_type_identity WHERE 1"
                     )
                     type_values: tuple[str, ...] = ()
                     if self._predicates is not None:
                         type_sql += (
-                            " WHERE c.predicate IN ("
-                            + ",".join("?" for _ in self._predicates)
-                            + ")"
+                            " AND c.predicate IN (" + ",".join("?" for _ in self._predicates) + ")"
                         )
                         type_values = self._predicates
+                    if not include_retired:
+                        type_sql += " AND c.lifecycle='live'"
                     type_paths = tuple(
                         row[0] for row in projection.typed.connection.execute(type_sql, type_values)
                     )
@@ -403,6 +429,14 @@ class _AcceptedQueryFactsRead:
                             ),
                             [],
                         ).append(value)
+        elif include_retired and self._claim_paths_live_only:
+            # The first build read live Claims only; this one needs the retired.
+            assert isinstance(self._instance, PlaybillInstance)
+            with self._instance.bind_accepted_projection(self._coordinate) as projection:
+                self._claim_paths = _claim_paths(
+                    projection.typed.connection, predicates=self._predicates, live_only=False
+                )
+            self._claim_paths_live_only = False
         tree = self._tree
         if self._history is None:
             self._history = _claim_read_history_index(self._instance, coordinate=self._coordinate)
@@ -488,6 +522,42 @@ class _AcceptedQueryFactsRead:
         )
         self._results[include_retired] = result
         return result
+
+
+def _claim_paths(
+    connection: Any, *, predicates: tuple[str, ...] | None, live_only: bool
+) -> tuple[str, ...]:
+    """Accepted Claim paths of the predicates (all when None), live ones when ``live_only``."""
+
+    where = ["1"]
+    values: list[str] = []
+    if predicates is not None:
+        where.append("predicate IN (" + ",".join("?" for _ in predicates) + ")")
+        values.extend(predicates)
+    if live_only:
+        where.append("lifecycle='live'")
+    return tuple(
+        str(row[0])
+        for row in connection.execute(
+            "SELECT path FROM claims WHERE " + " AND ".join(where) + " ORDER BY path", values
+        )
+    )
+
+
+def _subject_paths_of_kinds(connection: Any, kinds: tuple[str, ...]) -> tuple[str, ...]:
+    """Accepted Subject paths of the given kinds: one path-index range per kind."""
+
+    paths: list[str] = []
+    for kind in sorted(set(kinds)):
+        prefix = f"{SUBJECT_PATH_PREFIX}{kind}/"
+        paths.extend(
+            str(row[0])
+            for row in connection.execute(
+                "SELECT path FROM subjects WHERE path>=? AND path<? ORDER BY path",
+                (prefix, prefix[:-1] + chr(ord("/") + 1)),
+            )
+        )
+    return tuple(paths)
 
 
 def _subject_kind_of_path(path: str) -> str:

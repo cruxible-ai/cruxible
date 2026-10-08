@@ -141,3 +141,61 @@ def test_new_readers_and_public_builds_observe_changed_capture_availability(tmp_
     assert query.build_accepted_query_facts(instance, coordinate=coordinate) == after
     store.store(original)
     assert query.build_accepted_query_facts(instance, coordinate=coordinate) == before
+
+
+def test_a_live_build_never_reads_retired_claims_and_a_scoped_one_selects_subjects_by_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live facts select live Claims only; a served query's facts select its Subject kinds.
+
+    The retired head is not prefetched or parsed for a live build, a later retired
+    build of the same reader still answers as a fresh one, and the scoped build's
+    Subjects are its entry kinds' plus those its Claims name.
+    """
+
+    from tests.core_support._retirement_support import retire_claim
+
+    instance, owner = seed_claims(tmp_path)
+    coordinate = instance.accepted_coordinate()
+    tree = instance.tree_at(coordinate.git_oid)
+    retired_path = sorted(path for path in tree if path.startswith("claims/"))[0]
+    retired = parse_claim(tree[retired_path], path=retired_path)
+    retire_claim(instance, owner, retired.identity.name)
+    coordinate = instance.accepted_coordinate()
+    whole_live = query.build_accepted_query_facts(instance, coordinate=coordinate)
+    whole_all = query.build_accepted_query_facts(
+        instance, coordinate=coordinate, include_retired=True
+    )
+    assert retired_path in {row.accepted.path for row in whole_all.claims}
+
+    parsed: list[str] = []
+    original = query.parse_claim
+
+    def counted(content, *, path, **kwargs):  # type: ignore[no-untyped-def]
+        parsed.append(path)
+        return original(content, path=path, **kwargs)
+
+    monkeypatch.setattr(query, "parse_claim", counted)
+    reader = query._AcceptedQueryFactsRead(instance, coordinate=coordinate)
+    assert reader.build() == whole_live
+    assert retired_path not in parsed
+    assert reader.build(include_retired=True) == whole_all
+
+    predicate = retired.statement.predicate
+    kinds = {path.split("/")[1] for path in tree if path.startswith("subjects/")}
+    for entry_kinds in (tuple(sorted(kinds)), ("absent.kind",)):
+        scoped = query.build_accepted_query_facts(
+            instance, coordinate=coordinate, predicates=(predicate,), subject_kinds=entry_kinds
+        )
+        named = {row.subject_path for row in scoped.claims} | {
+            row.object_subject_path for row in scoped.claims if row.object_subject_path
+        }
+        expected = {
+            subject.path
+            for subject in whole_live.subjects
+            if subject.path.split("/")[1] in entry_kinds or subject.path in named
+        }
+        assert {subject.path for subject in scoped.subjects} == expected
+        if entry_kinds == ("absent.kind",):
+            # Only the Subjects its Claims name: none of another kind is read.
+            assert expected == {item for item in named if item in tree}
