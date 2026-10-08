@@ -1908,15 +1908,16 @@ A settle terminal whose run's authority reaches propose but not settle -- a
 Line whose `max_authority` is `propose`, or a Procedure whose only mandate
 grants propose, whatever the caller's tier -- proposes instead: the same
 fallback a failing condition takes, reported `settle_outcome: proposed` with
-`fallback_reason` `cruxible.settle.authority_capped_by_<term>` naming the term
-that capped it
-(`line_max_authority`, `mandate_grant`, `propagated_sensitivity`). It binds the
-mandate a proposal would -- a propose grant before a settle grant, and the only
-mandate at propose when that is all there is -- and never uses a settle
-grant's settle authority, so it settles nothing. A Line graduates from proposing to settling with a Line successor
-that raises `max_authority` to `settle`, plus a covering settle mandate, over
-the same Procedure: one Procedure serves both stages, so its digest -- the key
-its track record is folded under -- does not change at graduation.
+`fallback_reason` `cruxible.settle.authority_capped_by_<term>` and the typed
+`capped_by` naming the term that capped it (`line_max_authority`,
+`mandate_grant`, `propagated_sensitivity`). It binds the mandate a proposal
+would -- a propose grant before a settle grant, and the only mandate at
+propose when that is all there is -- and never uses a settle grant's settle
+authority, so it settles nothing. A Line graduates from proposing to settling
+with a Line successor that raises `max_authority` to `settle`, plus a covering
+settle mandate, over the same Procedure: one Procedure serves both stages, so
+its digest -- the key its track record is folded under -- does not change at
+graduation.
 
 The settle mandate is the authority: any caller permitted to run the Line
 triggers the settlement, whatever its own tier, and no caller settles without

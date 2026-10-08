@@ -4869,7 +4869,8 @@ class ProcedureRun:
 
         A settle terminal reports `settle_outcome`: `settled` with the
         `accepted_git_oid`, or `proposed` with its `proposal_id` and
-        `fallback_reason`.
+        `fallback_reason`; `capped_by` names the term when the run's authority
+        capped it at propose.
 
         Next: ``cx.proposal(egress.proposal_id).review()`` for a proposed settle.
         """

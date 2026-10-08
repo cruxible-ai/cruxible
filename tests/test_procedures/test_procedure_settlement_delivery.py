@@ -58,6 +58,7 @@ from cruxible_client.contracts.query.grammar import (
     QuerySubjectFieldRef,
 )
 from cruxible_client.contracts.subjects import render_subject, subject_path
+from cruxible_core.procedures.egress import TerminalEgressReceiptV4
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
     service_run_playbill_line,
@@ -320,6 +321,10 @@ def test_a_true_condition_settles_the_claim_into_accepted_state(tmp_path: Path) 
     )
     head = instance.accepted_coordinate()
     assert head != base and egress.accepted_git_oid == head.git_oid
+    # An uncapped settle carries no cap, and its receipt keeps its bytes.
+    assert egress.capped_by is None
+    (delivered,) = [item for item in _egress_records(instance, state) if "receipt" in item]
+    assert "capped_by" not in delivered["receipt"]
     (path,) = egress.target_paths
     claim = parse_claim(instance.tree_at(head.git_oid)[path], path=path)
     assert claim.statement.predicate == PREDICATE
@@ -372,6 +377,26 @@ def test_an_incomplete_condition_still_falls_back_for_its_own_reason(tmp_path: P
 # --- a settle terminal the run's authority caps at propose proposes instead ----
 
 
+def _egress_records(instance, state):  # type: ignore[no-untyped-def]
+    """This run's terminal_egress journal payloads, in order."""
+
+    import cruxible_core.service.procedures.procedure_runs as service
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    journal, _root = service._journal(instance)  # noqa: SLF001
+    stream = service._stream(instance)  # noqa: SLF001
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    return [
+        parse_journal_payload(
+            instance.body_store().read(stored.record.payload_digest, access=access)
+        )
+        for partition_id in journal.partition_ids(stream)
+        for stored in journal.all_records(stream, partition_id)
+        if stored.record.event_kind == "terminal_egress" and stored.record.run_id == state.run_id
+    ]
+
+
 def _settle_submission(instance, egress):  # type: ignore[no-untyped-def]
     return instance.proposal_evidence().read_admission(egress.proposal_id).settle_submission
 
@@ -416,6 +441,10 @@ def test_a_settle_terminal_capped_at_propose_proposes_for_the_cap(
     assert submission is not None
     assert (submission.mode, submission.fallback_reason) == ("fallback", egress.fallback_reason)
     assert submission.mandate_digest == egress.procedure_mandate_digest
+    # The cap is typed on the served egress and on the journaled receipt.
+    assert egress.capped_by == term
+    (delivered,) = [item for item in _egress_records(instance, state) if "receipt" in item]
+    assert TerminalEgressReceiptV4.model_validate(delivered["receipt"]).capped_by == term
 
 
 def test_a_capped_settle_binds_the_propose_grant_over_a_settle_grant(tmp_path: Path) -> None:
@@ -453,6 +482,7 @@ def test_a_tier_lifted_settle_with_only_a_propose_grant_proposes_for_the_grant(
     assert (egress.verdict, egress.settle_outcome) == ("delivered", "proposed")
     assert egress.effective_authority == "settle"
     assert egress.fallback_reason == "cruxible.settle.authority_capped_by_mandate_grant"
+    assert egress.capped_by == "mandate_grant"
     assert egress.proposal_id is not None and egress.accepted_git_oid is None
     assert instance.accepted_coordinate() == base
 

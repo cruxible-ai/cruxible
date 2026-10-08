@@ -139,6 +139,12 @@ def settle_authority_capped_reason(term: EffectiveRungTermV1) -> str:
     return f"{SETTLE_AUTHORITY_CAPPED}_by_{SERVED_AUTHORITY_TERMS[term]}"
 
 
+def served_capped_by(request: TerminalEgressRequestV1) -> ServedAuthorityTerm | None:
+    """The served name of the term that capped a settle request, if one did."""
+
+    return None if request.capped_by is None else SERVED_AUTHORITY_TERMS[request.capped_by]
+
+
 #: Below rung 0 there is no governed egress at all.  A term reaches this value
 #: only by refusing to interpret something, never by grading it.
 NO_TERMINAL_EGRESS = -1
@@ -963,6 +969,10 @@ class TerminalEgressReceiptV4(TerminalEgressReceiptV3):
     procedure_mandate_digest: str
     accepted_git_oid: str | None = None
     fallback_reason: str | None = None
+    #: The term that capped a settle at propose, from its request.
+    capped_by: ServedAuthorityTerm | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("procedure_mandate_digest")
     @classmethod
@@ -978,6 +988,8 @@ class TerminalEgressReceiptV4(TerminalEgressReceiptV3):
             raise ValueError("only a settled outcome names its accepted generation")
         if settled == (self.fallback_reason is not None):
             raise ValueError("only a fallback proposal carries the reason it did not settle")
+        if settled and self.capped_by is not None:
+            raise ValueError("a capped settle never settles")
         return self
 
 
@@ -1228,6 +1240,7 @@ def verify_terminal_egress_receipt(
         if request.kind == "settle_change_set" and (
             not isinstance(receipt, TerminalEgressReceiptV4)
             or receipt.procedure_mandate_digest != request.procedure_mandate_digest
+            or receipt.capped_by != served_capped_by(request)
         ):
             raise TerminalEgressError("settle egress must report under its exact mandate")
     elif isinstance(request, TerminalEgressRequestV2):
@@ -1457,6 +1470,7 @@ __all__ = [
     "procedure_producer_receipt_digest",
     "producer_receipt_for_request",
     "require_procedure_mandate",
+    "served_capped_by",
     "settle_authority_capped_reason",
     "terminal_operation_key",
 ]

@@ -2013,6 +2013,15 @@ def _fold_terminal_egress(
             "accepted_git_oid": receipt.get("accepted_git_oid"),
             "fallback_reason": receipt.get("fallback_reason"),
         }
+    # The cap is the journaled request's: the prepared record carries it, and
+    # every later record of the node keeps it.
+    request = payload.get("request")
+    capped_term = request.get("capped_by") if isinstance(request, dict) else None
+    capped_by = (
+        SERVED_AUTHORITY_TERMS[cast(Any, capped_term)]
+        if isinstance(capped_term, str)
+        else (None if current is None else current.capped_by)
+    )
     if isinstance(receipt, dict):
         proposal_id = (
             receipt.get("proposal_id") if isinstance(receipt.get("proposal_id"), str) else None
@@ -2088,6 +2097,7 @@ def _fold_terminal_egress(
         settle_outcome=cast(Any, settle.get("settle_outcome")),
         accepted_git_oid=cast(Any, settle.get("accepted_git_oid")),
         fallback_reason=cast(Any, settle.get("fallback_reason")),
+        capped_by=capped_by,
     )
 
 
