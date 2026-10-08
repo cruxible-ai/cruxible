@@ -1661,3 +1661,144 @@ def test_a_terminal_delivered_after_the_deadline_still_reports_success(
     assert state.status == "succeeded", state.terminal
     (egress,) = state.terminal_egress
     assert egress.verdict == "delivered" and egress.proposal_id is not None
+
+
+# --- revisions move Claims between many-valued slots (review F-003) ------------
+
+
+def _revising_line(instance, owner, procedure, templates):  # type: ignore[no-untyped-def]
+    """Accept a second Procedure, Line and mandate whose terminal carries ``templates``."""
+
+    from cruxible_client.contracts.acquisition_policies import parse_acquisition_policy
+
+    source, shape, terminal = procedure.definition.nodes
+    assert isinstance(terminal, ProposeChangeSetNode)
+    definition = procedure.definition.model_copy(
+        update={
+            "name": "osv-advisory-revise",
+            "nodes": (
+                source,
+                shape,
+                terminal.model_copy(update={"candidate_templates": templates}),
+            ),
+        }
+    )
+    revising = procedure.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="Procedure", name="osv-advisory-revise"),
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+        }
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    (policy_path,) = (path for path in tree if path.startswith("source-acquisition-policies/"))
+    policy = parse_acquisition_policy(tree[policy_path], path=policy_path)
+    line = _line(revising, policy).model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="Line", name="advisory-revise"),
+            "max_authority": RUNG_AUTHORITY[2],
+        }
+    )
+    mandate = fixtures._line_mandate(revising).model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ProcedureMandate", name="advisory-revise-mandate")
+        }
+    )
+    fixtures._accept_more(
+        instance,
+        owner,
+        {
+            procedure_path(revising.identity.name): render_procedure(revising),
+            line_spec_path(line.identity.name): render_line_spec(line),
+            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+        },
+        name="revising-line",
+    )
+    return line
+
+
+def _two_values(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """A many-valued slot holding two accepted Claims, high and critical, lowest ID first."""
+
+    instance, owner, root, line, procedure = proposal_world(
+        tmp_path, claim_type=_many_valued_claim_type()
+    )
+    for minutes, severity in ((0, "high"), (5, "critical")):
+        (root / fixtures.RELATIVE_PATH).write_bytes(
+            fixtures.canonical_bytes({"advisory_id": "OSV-2026-0001", "severity": severity})
+        )
+        state = run_line(instance, root, line, at=NOW + timedelta(minutes=minutes))
+        assert state.status == "succeeded", state.terminal
+        accept_proposal(
+            instance,
+            owner,
+            service_inspect_playbill_proposal(
+                instance, proposal_id=state.terminal_egress[0].proposal_id
+            ),
+        )
+    first, second = sorted(claim.identity.name for claim in _live_slot_claims(instance))
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        fixtures.canonical_bytes({"advisory_id": "OSV-2026-0001", "severity": "low"})
+    )
+    return instance, owner, root, procedure, first, second
+
+
+def _revision(claim_id: str, *, qualifier: str | None, dated: bool = False) -> dict[str, object]:
+    statement = {**item_template()["statement"], "qualifier": qualifier}  # type: ignore[dict-item]
+    if dated:
+        statement["effective_from"] = _DATED
+    return item_template(statement=statement, revises=claim_id, rationale=f"Restate {claim_id}.")
+
+
+def _slots(instance: PlaybillInstance) -> dict[str, str | None]:
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    claims = [
+        parse_claim(tree[path], path=path) for path in sorted(tree) if path.startswith("claims/")
+    ]
+    return {
+        claim.identity.name: claim.statement.qualifier
+        for claim in claims
+        if claim.lifecycle.state == "live" and claim.statement.predicate == PREDICATE
+    }
+
+
+def test_two_revisions_move_two_claims_into_one_many_valued_slot(tmp_path: Path) -> None:
+    instance, owner, root, procedure, first, second = _two_values(tmp_path)
+    line = _revising_line(
+        instance,
+        owner,
+        procedure,
+        (_revision(first, qualifier="new"), _revision(second, qualifier="new", dated=True)),
+    )
+
+    state = run_line(instance, root, line, at=NOW + timedelta(minutes=10))
+
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered"
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    )
+    assert _slots(instance) == {first: "new", second: "new"}
+
+
+def test_a_revision_moving_a_claim_out_leaves_the_slot_it_left(tmp_path: Path) -> None:
+    """The first revision moves out of the slot before the second is lowered into it."""
+
+    instance, owner, root, procedure, first, second = _two_values(tmp_path)
+    line = _revising_line(
+        instance,
+        owner,
+        procedure,
+        (_revision(first, qualifier="new"), _revision(second, qualifier=None)),
+    )
+
+    state = run_line(instance, root, line, at=NOW + timedelta(minutes=10))
+
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered"
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    )
+    assert _slots(instance) == {first: "new", second: None}
