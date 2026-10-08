@@ -50,7 +50,7 @@ This document does not silently remove an existing operation.
 | Existing surface | v2 contract |
 |---|---|
 | [Connection and state contexts](../packages/cruxible-client/README.md#connection-and-state-context) | Unchanged: instance selection, credentials, snapshots, refresh, connection ownership. |
-| [Knowledge authoring](../packages/cruxible-client/README.md#knowledge-authoring) and [changesets](../packages/cruxible-client/README.md#changesetdraft) | Same governed definitions and lifecycle. Structured Claim literals gain contract-derived record construction; existing scalar/enum vocabulary remains. |
+| [Knowledge authoring](../packages/cruxible-client/README.md#knowledge-authoring) and [changesets](../packages/cruxible-client/README.md#api-changesetdraft) | Same governed definitions and lifecycle. Structured Claim literals gain contract-derived record construction; existing scalar/enum vocabulary remains. |
 | [Reads and discovery](../packages/cruxible-client/README.md#reads-and-discovery) | Same query evaluator and discovery/read operations. Typed query binding, parameters, results, and receipts wrap those contracts. |
 | [World and typed values](../packages/cruxible-client/README.md#world-and-typed-values) | Existing host reads remain. Compiled source receives a symbolic view of this same ontology, specified below. |
 | [Drafts, intents, proposals, approvals](../packages/cruxible-client/README.md#drafts-intents-proposals-and-approvals) | Same prepare, submit, review, approve, and accept distinctions. |
