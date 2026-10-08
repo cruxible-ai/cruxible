@@ -426,15 +426,18 @@ pins, and the SourceAcquisitionPolicy that governs the read. Name that policy
 when you author the Procedure: it becomes an `acquisition-policy` pin on the
 Procedure envelope, closure-checked at acceptance, and a pinned Procedure reads
 only that policy -- so another team accepting a policy of their own cannot
-change what yours does. A Procedure authored without the pin falls back to
-accepted state, which requires exactly one live SourceAcquisitionPolicy whose
-declared inputs are exactly that Procedure's Source aliases; prefer the pin. A
-pinned policy that does not declare this Procedure's Source inputs, and a
-missing or ambiguous policy for an unpinned one, are both the typed refusal
-`source_acquisition_policy_required`; a rule that denies a declared input is
-`source_acquisition_refused`; a path outside an authorized workspace root, one
-over the CaptureContract's selection budget, or a daemon with no local reader is
-`workspace_file_read_refused` with its path class. None of these leave partial
+change what yours does. A pinned policy (the Procedure's, or a Line's) must
+cover the Procedure: a rule for every Source alias, extra rules allowed, so one
+policy can serve several Procedures. A Procedure authored without the pin falls
+back to accepted state, which requires exactly one live SourceAcquisitionPolicy
+whose declared inputs are exactly that Procedure's Source aliases; prefer the
+pin. A pinned policy with no rule for a Source alias (named in
+`uncovered_input_names`), and a missing or ambiguous policy for an unpinned
+Procedure, are both the typed refusal `source_acquisition_policy_required`; a
+rule that denies a declared input is `source_acquisition_refused`; a path
+outside an authorized workspace root, one over the CaptureContract's selection
+budget, or a daemon with no local reader is `workspace_file_read_refused` with
+its path class. None of these leave partial
 run history.
 
 Served Source runs currently support independent acquisition coherence. Policies

@@ -1527,6 +1527,34 @@ def _source_input_names(accepted: AcceptedProcedure) -> tuple[str, ...]:
     )
 
 
+def _policy_coverage_refusal(
+    policy: SourceAcquisitionPolicy,
+    input_names: tuple[str, ...],
+) -> SourceAcquisitionPolicyRequired | None:
+    """The refusal when a pinned policy does not COVER a run's Source inputs.
+
+    One law for both lanes: a pinned SourceAcquisitionPolicy governs a run when
+    every Source alias of its Procedure has a rule. Extra rules are allowed, so
+    one policy can serve every Procedure whose aliases it names (a kit ships one
+    policy, not one per alias set). The refusal names each uncovered alias.
+    """
+
+    declared = tuple(rule.input_name for rule in policy.inputs)
+    uncovered = tuple(name for name in input_names if name not in declared)
+    if not uncovered:
+        return None
+    return SourceAcquisitionPolicyRequired(
+        f"{SourceAcquisitionPolicyRequired.code}: the pinned SourceAcquisitionPolicy "
+        f"{policy.identity.name!r} has no rule for the Source input(s) {list(uncovered)}",
+        details={
+            "required_input_names": list(input_names),
+            "declared_input_names": list(declared),
+            "uncovered_input_names": list(uncovered),
+            "pinned_policy_identity": policy.identity.qualified,
+        },
+    )
+
+
 def _accepted_capture_contracts(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -1616,6 +1644,9 @@ def _direct_acquisition_policy(
     governed separately, and accepting an unrelated policy cannot take a running
     Procedure offline.
 
+    A pinned policy must COVER the Procedure's Source aliases (a rule for each;
+    extra rules allowed), the same law the Line lane applies to its own pin.
+
     Resolve-from-accepted-state is the FALLBACK, for a Procedure authored before
     the pin existed or without one: exactly one live SourceAcquisitionPolicy
     whose declared inputs are exactly this Procedure's Source aliases. Zero or
@@ -1641,19 +1672,9 @@ def _direct_acquisition_policy(
                     "pinned_policy_digest": pin.artifact_digest,
                 },
             )
-        declared = tuple(rule.input_name for rule in pinned.inputs)
-        if declared != input_names:
-            raise SourceAcquisitionPolicyRequired(
-                f"{SourceAcquisitionPolicyRequired.code}: the pinned SourceAcquisitionPolicy "
-                f"declares {list(declared)}, not this Procedure's Source inputs "
-                f"{list(input_names)}",
-                details={
-                    "required_input_names": list(input_names),
-                    "declared_input_names": list(declared),
-                    "pinned_policy_identity": pin.target.qualified,
-                    "matching_policy_digests": [],
-                },
-            )
+        refusal = _policy_coverage_refusal(pinned, input_names)
+        if refusal is not None:
+            raise refusal
         return pin.artifact_digest, pinned
     covering = tuple(
         item
@@ -1695,8 +1716,8 @@ def _plan_selection_decision(
     serve: the acceptance law never tied a Line's policy to its Procedure's
     Source aliases, so scoring the miss here would turn accepted, already
     running Lines -- every Source-free one included -- into run-time refusals.
-    The direct lane refuses that mismatch where it belongs, at admission, when
-    the pinned policy's declared inputs are not the Procedure's Source aliases.
+    A Source alias with NO rule is the opposite miss, and both lanes refuse it
+    where it belongs, at admission (`_policy_coverage_refusal`).
     """
 
     sources = {
@@ -2881,14 +2902,15 @@ def _plan_direct_external_run(
             return refuse(
                 code="source_acquisition_policy_required",
                 message=(
-                    "A direct Source run requires an accepted SourceAcquisitionPolicy declaring "
-                    "this Procedure's Source inputs."
+                    "A direct Source run requires an accepted SourceAcquisitionPolicy with a "
+                    "rule for each of this Procedure's Source inputs."
                 ),
                 details={
                     **cast(dict[str, object], exc.details),
                     "repair": (
-                        "Pin a SourceAcquisitionPolicy on the Procedure, or accept exactly one "
-                        "whose inputs are this Procedure's Source aliases."
+                        "Pin a SourceAcquisitionPolicy with a rule for each Source alias on the "
+                        "Procedure, or accept exactly one whose inputs are this Procedure's "
+                        "Source aliases."
                     ),
                 },
             )
@@ -3945,6 +3967,31 @@ def _run_playbill_line(
             code="artifact_binding_mismatch",
             message="The Line's pinned acquisition policy is not accepted at this coordinate.",
             details={"repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Line."},
+        )
+    uncovered = (
+        None
+        if line_policy is None
+        else _policy_coverage_refusal(line_policy, _source_input_names(accepted))
+    )
+    if uncovered is not None:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="source_acquisition_policy_required",
+            message=(
+                "A Line's Source run requires its pinned SourceAcquisitionPolicy to have a "
+                "rule for each of this Procedure's Source inputs."
+            ),
+            details={
+                **cast(dict[str, object], uncovered.details),
+                "repair": (
+                    "Succeed the Line with a SourceAcquisitionPolicy that has a rule for each "
+                    "Source alias."
+                ),
+            },
         )
     landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
     if isinstance(accepted_line.line, LineSpec) and accepted_line.line.trigger_input is not None:

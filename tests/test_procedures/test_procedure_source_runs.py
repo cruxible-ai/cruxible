@@ -363,12 +363,13 @@ def _policy(
     name: str = "advisory-reads",
     requirement: str = "required",
     on_failure: str = "refuse",
+    extra_inputs: tuple[str, ...] = (),
 ) -> SourceAcquisitionPolicy:
     return SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name),
-        inputs=(
+        inputs=tuple(
             InputAcquisitionRule(
-                input_name=input_name,
+                input_name=declared,
                 requirement=cast(Any, requirement),
                 permitted_replayability=("attested_only", "exact"),
                 max_age=CanonicalDuration(microseconds=3_600_000_000),
@@ -376,7 +377,8 @@ def _policy(
                 on_stale=cast(Any, on_failure),
                 on_oversized=cast(Any, on_failure),
                 on_conflict="preserve",
-            ),
+            )
+            for declared in sorted({input_name, *extra_inputs}, key=lambda n: n.encode("utf-8"))
         ),
         coherence=IndependentCoherence(),
     )
@@ -1300,9 +1302,67 @@ def test_a_pinned_policy_declaring_other_inputs_refuses_at_admission(tmp_path: P
     assert state.terminal.code == "source_acquisition_policy_required"
     assert state.terminal.details["required_input_names"] == [SOURCE_ALIAS]
     assert state.terminal.details["declared_input_names"] == ["other-input"]
+    assert state.terminal.details["uncovered_input_names"] == [SOURCE_ALIAS]
     assert state.terminal.repair is not None
     assert invoker.spawn_calls == 0
     assert not journal_root.exists()
+
+
+def test_a_pinned_policy_with_extra_rules_covers_the_procedure(tmp_path: Path) -> None:
+    """A policy COVERS a Procedure when each Source alias has a rule; extras are allowed."""
+
+    instance, _owner, _procedure, root, policy_artifact = _world(
+        tmp_path,
+        policy=_policy(extra_inputs=("other-input",)),
+        pin_policy=True,
+    )
+    assert [rule.input_name for rule in policy_artifact.inputs] == [SOURCE_ALIAS, "other-input"]
+
+    state, invoker = _run(instance, root)
+
+    assert state.status == "succeeded", state.terminal
+    assert invoker.spawn_calls == 1
+    assert _admission(instance, state).acquisition_policy_digest == (
+        acquisition_policy_digest(policy_artifact).tagged
+    )
+
+
+# --- the same coverage law, on the Line lane ---------------------------------
+
+
+def test_a_line_policy_with_extra_rules_covers_the_procedure(tmp_path: Path) -> None:
+    """The Line lane applies the direct lane's law: a covering policy runs."""
+
+    instance, root, line = _line_world(tmp_path, policy=_policy(extra_inputs=("other-input",)))
+
+    state, invoker = _run_line(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    assert invoker.spawn_calls == 1
+
+
+def test_a_line_policy_without_a_rule_for_a_source_alias_refuses_at_admission(
+    tmp_path: Path,
+) -> None:
+    """The same typed refusal as the direct lane, naming the uncovered alias, before any read."""
+
+    instance, root, line = _line_world(tmp_path, policy=_policy(input_name="other-input"))
+
+    state, invoker = _run_line(instance, root, line)
+
+    assert state.status == "admission_refused", state.terminal
+    assert isinstance(state.terminal, ProcedureAdmissionRefusal)
+    assert state.terminal.code == "source_acquisition_policy_required"
+    assert state.terminal.details["required_input_names"] == [SOURCE_ALIAS]
+    assert state.terminal.details["declared_input_names"] == ["other-input"]
+    assert state.terminal.details["uncovered_input_names"] == [SOURCE_ALIAS]
+    assert state.terminal.details["pinned_policy_identity"] == (
+        "SourceAcquisitionPolicy:advisory-reads"
+    )
+    assert state.terminal.repair is not None
+    assert state.run_id is None
+    assert invoker.spawn_calls == 0
+    assert _admitted_run_ids(instance) == []
 
 
 def test_a_procedure_pinning_an_absent_policy_is_refused_at_acceptance(tmp_path: Path) -> None:
@@ -1555,19 +1615,25 @@ def test_a_crash_between_the_read_receipt_and_the_capture_leaves_no_half_capture
     assert observation.capture_digest is None
 
 
-def _admitted_run_id(instance: PlaybillInstance) -> str:
-    """The one run id this instance's procedure journal bound."""
+def _admitted_run_ids(instance: PlaybillInstance) -> list[str]:
+    """Every run id this instance's procedure journal bound."""
 
     import cruxible_core.service.procedures.procedure_runs as service
 
     journal, _root = service._journal(instance)  # noqa: SLF001
     stream = service._stream(instance)  # noqa: SLF001
-    run_ids = [
+    return [
         stored.record.run_id
         for partition_id in journal.partition_ids(stream)
         for stored in journal.all_records(stream, partition_id)
         if stored.record.event_kind == "admission_bound" and stored.record.run_id is not None
     ]
+
+
+def _admitted_run_id(instance: PlaybillInstance) -> str:
+    """The one run id this instance's procedure journal bound."""
+
+    run_ids = _admitted_run_ids(instance)
     assert len(run_ids) == 1, run_ids
     return run_ids[0]
 
