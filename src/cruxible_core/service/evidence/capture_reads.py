@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal
 
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
@@ -26,7 +27,10 @@ from cruxible_client.contracts.source_references import (
     SourceHandle,
 )
 from cruxible_core.errors import PermissionDeniedError
+from cruxible_core.exhaust import LocalJournalBackend
+from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.procedures.execution import procedure_line_journal_stream
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import service_open_playbill_source
 from cruxible_core.storage.cas import BodyAccessContext
@@ -296,7 +300,6 @@ def retained_captures(
     *,
     budget: int,
     hex_prefix: str = "",
-    contract_digests: Collection[str] | None = None,
     nearest: int = 0,
 ) -> RetainedCaptureInventory:
     """The Captures the instance holds whose digest starts with ``hex_prefix``.
@@ -304,24 +307,17 @@ def retained_captures(
     Cited or not: a Capture is retained as soon as it is stored. At most
     ``budget`` stored objects are examined; when the store holds more under the
     prefix the inventory is incomplete and says so, and callers refuse rather
-    than treat a partial inventory as the whole. ``contract_digests`` keeps only
-    Captures under those contract versions, judged from each object's leading
-    bytes before it is read in full. ``nearest`` passes on that many digests
-    sharing the longest prefix with ``hex_prefix``. Nothing here is verified;
-    ``verify_accepted_capture`` verifies what a caller keeps.
+    than treat a partial inventory as the whole. ``nearest`` passes on that many
+    digests sharing the longest prefix with ``hex_prefix``. Nothing here is
+    verified; ``verify_accepted_capture`` verifies what a caller keeps.
     """
 
     store = instance.body_store()
     scan = store.scan(hex_prefix, budget=budget, nearest=nearest)
-    wanted = (
-        None if contract_digests is None else {item.encode("ascii") for item in contract_digests}
-    )
     found: list[RetainedCapture] = []
     for digest in scan.digests:
         head = store.peek(digest, _HEAD_LENGTH)
         if not head.startswith(_ENVELOPE_HEAD):
-            continue
-        if wanted is not None and head[len(_ENVELOPE_HEAD) :] not in wanted:
             continue
         try:
             envelope = parse_capture_envelope(store.read(digest, access=_INVENTORY_ACCESS))
@@ -334,6 +330,81 @@ def retained_captures(
 
 
 _INVENTORY_ACCESS = BodyAccessContext(principal_id="playbill-capture-inventory", can_read_body=True)
+#: How many produced-Capture records one journal page reads.
+_JOURNAL_PAGE = 256
+_END_OF_TIME = datetime.max.replace(tzinfo=UTC)
+
+
+def contract_captures(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    *,
+    contract_digests: Collection[str],
+    budget: int,
+) -> RetainedCaptureInventory:
+    """The Captures under these contract versions, located by index, never by a CAS walk.
+
+    Two indexes name them: the accepted projection's ``captures`` table (every
+    Capture an accepted Claim or attestation cites at ``coordinate``) and the
+    journal's produced-Capture selectors (every Capture a run is recorded
+    producing, cited or not). A Capture neither names -- bytes stored outside a
+    run and cited by nothing -- is not evidence a new citation may use. At most
+    ``budget`` Captures are read; past it the inventory is incomplete and says
+    so. Nothing here is verified; ``verify_accepted_capture`` verifies what a
+    caller keeps.
+    """
+
+    versions = tuple(dict.fromkeys(contract_digests))
+    digests: dict[str, None] = {}
+    if versions:
+        marks = ",".join("?" for _ in versions)
+        with instance.bind_accepted_projection(coordinate) as projection:
+            for (digest,) in projection.typed.connection.execute(
+                f"SELECT capture_digest FROM captures WHERE contract_digest IN ({marks}) "
+                "ORDER BY capture_digest",
+                versions,
+            ):
+                digests[str(digest)] = None
+    store = instance.body_store()
+    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    complete = True
+    if journal_root.exists() and versions:
+        journal = LocalJournalBackend(journal_root)
+        stream = procedure_line_journal_stream(instance.descriptor.instance_id)
+        for version in versions:
+            cursor: tuple[str, str, int] | None = None
+            while len(digests) <= budget:
+                records, cursor, projected = journal.index.captures(
+                    stream,
+                    bodies=store,
+                    contract_digest=version,
+                    since=None,
+                    until=_END_OF_TIME,
+                    limit=_JOURNAL_PAGE,
+                    cursor=cursor,
+                )
+                if not projected:
+                    continue  # the selector index projected one more batch; ask again
+                for stored in records:
+                    payload = parse_journal_payload(
+                        store.read(stored.record.payload_digest, access=_INVENTORY_ACCESS)
+                    )
+                    produced = payload.get("capture_digest") if isinstance(payload, dict) else None
+                    if isinstance(produced, str):
+                        digests[produced] = None
+                if cursor is None:
+                    break
+    if len(digests) > budget:
+        complete = False
+    found: list[RetainedCapture] = []
+    for digest in list(digests)[:budget]:
+        try:
+            envelope = parse_capture_envelope(store.read(digest, access=_INVENTORY_ACCESS))
+        except (CruxibleError, ValueError):
+            continue
+        found.append(RetainedCapture(digest=digest, envelope=envelope))
+    return RetainedCaptureInventory(captures=tuple(found), complete=complete)
+
 
 #: How many stored objects one handle lookup examines in its shard.
 CAPTURE_HANDLE_SCAN_BUDGET = 65_536

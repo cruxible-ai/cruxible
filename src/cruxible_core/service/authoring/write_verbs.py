@@ -151,8 +151,8 @@ _MAX_CANDIDATES = 8
 # How many of a contract's Captures about the Subject, newest first, are tried
 # for the newest one that verifies.
 _MAX_CONTRACT_CAPTURES = 32
-# How many stored objects one contract lookup examines for its Captures.
-_CONTRACT_SCAN_BUDGET = 16_384
+# How many of a contract's Captures one contract lookup reads.
+_CONTRACT_CAPTURE_BUDGET = 16_384
 _CONTRACT_QUALIFIER = "CaptureContract:"
 
 
@@ -1094,7 +1094,7 @@ class _Planner:
         from cruxible_core.service.evidence.capture_reads import (
             CaptureReadInvalid,
             RetainedCapture,
-            retained_captures,
+            contract_captures,
             verify_accepted_capture,
         )
 
@@ -1128,15 +1128,16 @@ class _Planner:
                     (subject_path_value, *versions),
                 )
             }
-        # Every retained Capture of the contract counts, cited or not.
-        inventory = retained_captures(
-            self.instance, budget=_CONTRACT_SCAN_BUDGET, contract_digests=versions
+        # Every Capture of the contract counts, cited or not: one an accepted
+        # Claim cites, or one a run is recorded producing. Both are indexed.
+        inventory = contract_captures(
+            self.instance, self.head, contract_digests=versions, budget=_CONTRACT_CAPTURE_BUDGET
         )
         if not inventory.complete:
             raise _refuse(
                 "cruxible.write.capture_scan_exhausted",
-                f"the newest Capture of {bare} about {subject} was not found: the body "
-                "store holds more objects than one lookup examines",
+                f"the newest Capture of {bare} about {subject} was not found: the "
+                "contract has more Captures than one lookup reads",
                 change=index,
                 repair="Cite the Capture by its CAP- handle or its full sha256 digest",
                 field_path=path,

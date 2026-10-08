@@ -37,7 +37,7 @@ from tests.core_support._write_support import (
     report_evidence,
     seed_write_surface,
 )
-from tests.support.capture_receipts import admit_legacy_v1_citations
+from tests.support.capture_receipts import admit_legacy_v1_citations, journal_produced_capture
 
 WI1 = f"{KIND}/wi-1"
 WI2 = f"{KIND}/wi-2"
@@ -760,7 +760,8 @@ def _record_capture(
 
     The reader stores the record as a canonical value; with ``exact`` the same
     record is also stored as exact bytes, which a Claim can cite, and that one
-    is answered.
+    is answered. Each is journaled as a run's produced Capture, which is how a
+    lookup by contract finds a Capture no Claim cites.
     """
 
     from cruxible_core.evidence.source_readers import (
@@ -807,7 +808,16 @@ def _record_capture(
         ),
         store=instance.body_store(),
     )
+    contract_digest = acquired.envelope.capture_contract_digest
+    recorded_at = NOW if observed_at is None else observed_at
     if not exact:
+        journal_produced_capture(
+            instance,
+            acquired.capture_digest,
+            contract_digest=contract_digest,
+            run_id=f"record-run-{subject_id}-canonical-{recorded_at.timestamp():.0f}",
+            recorded_at=recorded_at,
+        )
         return str(acquired.capture_digest)
     # The reader commits the record as a canonical value, which a Claim cannot
     # map a byte span onto; the same record committed as exact bytes can be cited.
@@ -824,7 +834,15 @@ def _record_capture(
         "materialization": "cas",
     }
     envelope = type(acquired.envelope).model_validate(exact)
-    return store.store(render_capture_envelope(envelope)).digest
+    held = store.store(render_capture_envelope(envelope)).digest
+    journal_produced_capture(
+        instance,
+        held,
+        contract_digest=contract_digest,
+        run_id=f"record-run-{subject_id}-exact-{recorded_at.timestamp():.0f}",
+        recorded_at=recorded_at,
+    )
+    return held
 
 
 def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subject(
@@ -893,6 +911,37 @@ def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
     )
     assert preview.status == "would_accept", preview
     assert "cruxible.write.newer_capture_not_citable" in {item.code for item in preview.warnings}
+
+
+def test_contract_evidence_reads_indexes_not_the_body_store(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lookup by contract never walks the CAS: its size is not the lookup's limit."""
+
+    from cruxible_client.contracts.write import capture_handle
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
+    contract, provider_artifact = _seed_record_source(instance)
+    held = _record_capture(instance, contract, provider_artifact, WI1)
+
+    def no_scan(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a contract lookup walked the body store")
+
+    monkeypatch.setattr(ContentAddressedBodyStore, "scan", no_scan)
+    by_contract = {"kind": "contract", "contract": contract.identity.name}
+    outcome = _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_contract})
+    assert outcome.status == "accepted", outcome
+    assert outcome.changes[0].capture == capture_handle(held)
+
+    # Its budget counts the contract's own Captures, not the objects stored.
+    _record_capture(instance, contract, provider_artifact, WI2)
+    _record_capture(instance, contract, provider_artifact, WI3)
+    monkeypatch.setattr(write_verbs, "_CONTRACT_CAPTURE_BUDGET", 2)
+    crowded = _refusal(
+        _write(instance, _set(WI2, "recorded_status", "ready") | {"evidence": by_contract})
+    )
+    assert crowded.code == "cruxible.write.capture_scan_exhausted"
 
 
 def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(

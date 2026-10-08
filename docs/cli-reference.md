@@ -2538,7 +2538,9 @@ records a run producing it; otherwise the write refuses
 `cruxible.authoring.capture_production_unproven` (or
 `capture_v1_citation_refused` for a version-1 envelope). `--evidence-contract NAME` cites the newest verified Capture of
 that CaptureContract about SUBJECT, cited or not: one an accepted Claim on
-SUBJECT cites, or whose own source names SUBJECT; with none it refuses
+SUBJECT cites, or whose own source names SUBJECT. The lookup reads the
+accepted Captures and the ones runs are recorded producing, never the whole
+body store; with none it refuses
 `cruxible.write.contract_capture_not_found`. Only a Capture committed as exact
 bytes can back a Claim: when the newest is a canonical value (as the external
 record reader commits records) it refuses `contract_capture_not_citable`
