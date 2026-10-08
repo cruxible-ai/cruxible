@@ -5157,7 +5157,7 @@ def _follow_order(
 def _follow_entry(spec: str, option: str) -> dict[str, str]:
     field, _, alias = spec.partition(":")
     if not field or not alias:
-        example = "dev.batch.delivers:batch" if option == "--follow-in" else "closed_by:batch"
+        example = "project.task.part_of:task" if option == "--follow-in" else "closed_by:batch"
         raise click.BadParameter(
             f"{spec!r} is not field:alias, for example {example}", param_hint=option
         )
@@ -5188,7 +5188,7 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     multiple=True,
     help=(
         "Follow a relation backwards (repeatable): field:alias, another kind's predicate "
-        "that points at KIND, e.g. dev.batch.delivers:batch."
+        "that points at KIND, e.g. project.task.part_of:task."
     ),
 )
 @click.option("--order-by", "order_fields", multiple=True, help="Order: f or -f (repeatable).")

@@ -322,7 +322,8 @@ def register_tools(
         *,
         request: KitRemoveRequest,
     ) -> KitChangeResult:
-        """Propose retiring every artifact a kit installed; activation is separate."""
+        """Retire every artifact a kit installed: lands at once when the approval policy
+        requires no approval, otherwise it stops at proposed (previews by default)."""
         return handlers.handle_playbill_kit_remove(require_instance_id(instance_id), request)
 
     @_tool
@@ -446,7 +447,7 @@ def register_tools(
         *,
         kind: Annotated[
             str | None,
-            Field(description="One Subject kind to read in full, e.g. 'dev.roadmap_item'."),
+            Field(description="One Subject kind to read in full, e.g. 'project.work_item'."),
         ] = None,
         section: Annotated[
             contracts.OrientSection | None,
@@ -759,7 +760,7 @@ def register_tools(
             Field(ge=1, description="The 1-based anchor occurrence when it is not unique."),
         ] = None,
     ) -> contracts.AuthoringPreflightResult:
-        """Bind one exact workspace anchor and compile the derived Flow-A observation."""
+        """Bind one exact workspace anchor as evidence and compile the Claim it observes."""
         return handlers.handle_playbill_authoring_bind(
             require_instance_id(instance_id),
             source_path=source_path,
@@ -933,7 +934,8 @@ def register_tools(
             Field(
                 description=(
                     "Any reference you have seen: CLM-… (or a unique prefix), kind/id, "
-                    "a predicate, ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, "
+                    "a predicate, ClaimType:/Document:/Procedure:/Blueprint:/query:/"
+                    "CaptureContract:<name>, "
                     "an artifact path, a proposal id or prefix, or an operational reference: "
                     "Line:<name> (or the Line identity digest next names), CAP-<12+ hex> or "
                     "Capture:<digest>, ResolutionContract:<name>, Mandate:<name>."
@@ -1718,7 +1720,7 @@ def register_tools(
                 description=(
                     "bytes/write: opt-in floor parts. 'discovery' adds the discovery cards "
                     "(subjects/, claim-types/, procedures/, coverage-manifest.json) to the "
-                    "grep-first current/, documents/ and provenance/."
+                    "grep-first current/, changes/ and README."
                 )
             ),
         ] = None,

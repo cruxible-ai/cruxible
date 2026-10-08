@@ -192,7 +192,7 @@ def test_follow_in_follows_a_relation_backwards_in_command_line_order(
     for bad in ("dev.batch.delivers", ":batch"):
         refused = _run("dev.roadmap_item", "--follow-in", bad)
         assert refused.exit_code != 0
-        assert "field:alias" in refused.output and "dev.batch.delivers:batch" in refused.output
+        assert "field:alias" in refused.output and "project.task.part_of:task" in refused.output
         assert "--follow-in" in refused.output
     assert len(stub.requests) == 1
 

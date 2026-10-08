@@ -150,7 +150,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_authoring_bind": (
         "Use when one exact anchor in a configured workspace file is the evidence for a "
-        "Flow-A Claim."
+        "Claim you are authoring."
     ),
     "cruxible_authoring_preflight": (
         "Use when you need a complete binding check of an existing authoring intent."
@@ -211,8 +211,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_query": (
         "Use to answer any question over accepted state in one call. Compact: kind "
-        '(e.g. "dev.roadmap_item") with where filters such as '
-        '{"field": "adoption_state", "eq": "adopted"} (also ne, lt, lte, gt, gte, in, '
+        '(e.g. "project.work_item") with where filters such as '
+        '{"field": "status", "eq": "ready"} (also ne, lt, lte, gt, gte, in, '
         "exists, contains), select, follow and order_by; contains alone searches every "
         "Claim value; kind ClaimType or Procedure lists definitions, kind Trigger or Line "
         "lists Triggers (name, schedule, target) and Lines (enabled, triggers). Or pass a "

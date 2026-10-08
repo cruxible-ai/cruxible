@@ -633,7 +633,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "bind": _command(
                 "playbill",
                 "bind_authoring_selection",
-                "Bind a Flow-A selection and compile it.",
+                "Bind a workspace anchor as evidence and compile the Claim.",
             ),
             "preflight": _command(
                 "playbill",

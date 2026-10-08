@@ -1,4 +1,4 @@
-"""Authenticated graph-v3 admission and log-sufficient Procedure execution."""
+"""Authenticated Procedure admission and log-sufficient Procedure execution."""
 
 from __future__ import annotations
 
@@ -3525,7 +3525,7 @@ class ProcedureExecutor:
             self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
             return None
         if isinstance(node, SourceNode):
-            self._run_source_v4(node, admission=admission, state=state, records=records)
+            self._run_source(node, admission=admission, state=state, records=records)
             return None
         if isinstance(node, ExhaustTapNode):
             if node.as_ not in state.outputs:
@@ -3689,7 +3689,7 @@ class ProcedureExecutor:
             AliasProvenanceV1(whole=extra) if current is None else current.merged(extra)
         )
 
-    def _run_source_v4(
+    def _run_source(
         self,
         node: SourceNode,
         *,

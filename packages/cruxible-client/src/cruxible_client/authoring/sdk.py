@@ -1226,8 +1226,8 @@ class ChangeSetDraft:
     def claim_type(self, definition: ClaimTypeDraft | ClaimType) -> PendingClaimTypeRef:
         """Define one whole ClaimType inside this changeset, and return a ref.
 
-        Succeeding an accepted ClaimType stays on `/claim-types/proposals`,
-        where the migration a succession demands is decided.
+        Succeeding an accepted ClaimType is ``succeed_claim_type``, which settles
+        the dependents a succession demands in the same set.
 
         The ref it returns is usable as `predicate=` in the same set, and
         carries the object kind the definition declares so a Claim under it
