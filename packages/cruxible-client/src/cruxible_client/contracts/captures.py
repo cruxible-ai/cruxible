@@ -1090,13 +1090,61 @@ class ProcedureProducerReceiptProtocol(Protocol):
     def capture_contract_digest(self) -> str: ...
 
 
-class ProducerReceiptResolverProtocol(Protocol):
-    """Resolve only receipts validated against daemon journal authority."""
+@dataclass(frozen=True)
+class CaptureProductionRecord:
+    """A daemon journal record naming one Capture a run produced, exactly.
 
-    def __call__(
+    A Source acquisition the run selected records ``produced_capture`` with the
+    Capture digest, its contract digest and the invocation receipt; a delivered
+    ``emit_capture`` terminal names each child Capture with the terminal's
+    producer receipt. ``run_id`` only locates the record; the proof is the
+    exact digests it names.
+    """
+
+    capture_digest: str
+    capture_contract_digest: str
+    run_id: str
+    #: The producer receipt the record binds the Capture to, when it names one.
+    receipt_digest: str | None
+
+
+class ProducerReceiptResolverProtocol(Protocol):
+    """Resolve only receipts and production records the daemon journal holds."""
+
+    def producer_receipt(
         self,
         digest: str,
-    ) -> ProviderProducerReceiptResolution | ProcedureProducerReceiptProtocol | None: ...
+        *,
+        run_id: str,
+    ) -> ProviderProducerReceiptResolution | ProcedureProducerReceiptProtocol | None:
+        """The receipt with this digest; ``run_id`` locates the run that recorded it."""
+        ...
+
+    def produced_capture(
+        self,
+        capture_digest: str,
+        *,
+        run_id: str,
+    ) -> tuple[CaptureProductionRecord, ...]:
+        """Every daemon record naming this exact Capture digest as produced."""
+        ...
+
+
+CaptureProductionGap = Literal["no_production_record", "v1_envelope"]
+
+
+class CaptureProductionUnproven(CaptureFormatError):
+    """A Capture cited as new evidence has no daemon proof that a run produced it.
+
+    ``no_production_record``: no journal record names the exact Capture digest
+    (bytes stored outside a run, or a Source read the acquisition rule did not
+    select). ``v1_envelope``: a version-1 envelope under a contract that is not
+    self-asserted carries no producer receipt, so nothing can prove it.
+    """
+
+    def __init__(self, reason: CaptureProductionGap, message: str) -> None:
+        super().__init__(message)
+        self.reason: CaptureProductionGap = reason
 
 
 @dataclass(frozen=True)
@@ -2552,8 +2600,17 @@ def verify_capture(
     ledger_resolver: LedgerMaterialResolverProtocol | None = None,
     producer_artifact_digests: Mapping[str, str] | None = None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
+    require_production_proof: bool = True,
 ) -> CaptureEnvelopeV1 | CaptureEnvelope:
-    """Replay one envelope and every proof available for its source kind."""
+    """Replay one envelope and every proof available for its source kind.
+
+    ``require_production_proof`` is the check for a Capture cited as new
+    evidence: a v2 envelope must be named, digest for digest, by a daemon
+    journal record of the run that produced it, and a v1 envelope must be
+    under a self-asserted contract, since it carries no producer receipt. Only
+    a citation the accepted state already carries (an inherited citation, or a
+    replay of an accepted acceptance) is verified without it.
+    """
 
     CasDigest.from_tagged(digest)
     content = store.read(
@@ -2583,6 +2640,12 @@ def verify_capture(
                 raise CaptureFormatError("Capture producer does not resolve at its exact digest")
         else:
             raise CaptureFormatError("Capture executable is neither its contract nor producer")
+        if require_production_proof and not capture_contract_is_self_asserted(contract):
+            raise CaptureProductionUnproven(
+                "v1_envelope",
+                "a version-1 Capture under a contract that is not self-asserted carries no "
+                "producer receipt, so it cannot be cited as new evidence",
+            )
     elif (
         executable != envelope.producer
         or producer_artifact_digests is None
@@ -2596,7 +2659,20 @@ def verify_capture(
                 "Capture producer receipt resolver is unavailable for "
                 f"{envelope.producer_receipt_digest}"
             )
-        resolved_receipt = producer_receipt_resolver(envelope.producer_receipt_digest)
+        run_id = envelope.run_coordinate.run_id
+        if require_production_proof and not any(
+            record.capture_digest == digest
+            and record.capture_contract_digest == envelope.capture_contract_digest
+            and record.receipt_digest in (None, envelope.producer_receipt_digest)
+            for record in producer_receipt_resolver.produced_capture(digest, run_id=run_id)
+        ):
+            raise CaptureProductionUnproven(
+                "no_production_record",
+                f"no daemon run recorded producing Capture {digest}",
+            )
+        resolved_receipt = producer_receipt_resolver.producer_receipt(
+            envelope.producer_receipt_digest, run_id=run_id
+        )
         if resolved_receipt is None:
             raise CaptureFormatError(
                 f"Capture producer receipt is unavailable: {envelope.producer_receipt_digest}"
@@ -2861,6 +2937,9 @@ __all__ = [
     "FOREIGN_SOURCE_SUBJECT_MAPPING",
     "CAPTURE_COMPONENTS",
     "CaptureProductionEvidence",
+    "CaptureProductionGap",
+    "CaptureProductionRecord",
+    "CaptureProductionUnproven",
     "DirectCaptureBuildResult",
     "DirectByteSpanSelection",
     "DirectClaimSelection",

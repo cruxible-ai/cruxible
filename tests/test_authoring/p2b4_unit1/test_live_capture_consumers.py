@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import tests.core_support._p2b1_support as p2b1_support
+from cruxible_client.contracts.acquisition_policies import InputAcquisitionRule
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayload,
     ClaimDependencyDrafts,
@@ -16,6 +19,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
+    CaptureContract,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -123,9 +127,37 @@ def acquisition_demo(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(p2b1_support, "interface_registration", _acquisition_registration)
 
 
-def test_both_v2_producer_arms_verify_through_every_live_production_consumer(
-    tmp_path: Path, acquisition_demo: None
-) -> None:
+@dataclass(frozen=True)
+class ProducedCaptures:
+    """An instance whose accepted Procedure ran once and journaled what it produced."""
+
+    instance: PlaybillInstance
+    owner: object
+    contract: CaptureContract
+    records: tuple[Any, ...]
+    payloads: tuple[Any, ...]
+    run_id: str
+
+    def payload(self, event_kind: str) -> dict[str, Any]:
+        kinds = [stored.record.event_kind for stored in self.records]
+        value = self.payloads[kinds.index(event_kind)]
+        assert isinstance(value, dict)
+        return value
+
+
+def run_capture_producers(
+    tmp_path: Path,
+    *,
+    rule: InputAcquisitionRule | None = None,
+    include_terminal: bool = True,
+) -> ProducedCaptures:
+    """Accept a Source Procedure under an admitting ClaimType and run it once.
+
+    The Source acquisition journals ``produced_capture`` when its rule selects
+    the read; with ``include_terminal`` an ``emit_capture`` terminal emits a v2
+    Procedure Capture of the same result.
+    """
+
     instance, owner = _instance(tmp_path)
     contract = capture_contract()
     contract_digest = capture_contract_digest(contract).tagged
@@ -162,7 +194,8 @@ def test_both_v2_producer_arms_verify_through_every_live_production_consumer(
     runtime_root.mkdir()
     accepted, prepared, fixture, policy, _contract = _source_fixture(
         runtime_root,
-        include_terminal=True,
+        include_terminal=include_terminal,
+        rule=rule,
     )
     interface = accepted_interface()
     provider = accepted_provider()
@@ -226,8 +259,25 @@ def test_both_v2_producer_arms_verify_through_every_live_production_consumer(
             producer_binding_digest=accepted.artifact_digest,
         ),
     ).execute(prepared, accepted)
-    assert result.status == "succeeded"
+    if include_terminal and rule is None:
+        assert result.status == "succeeded"
     records, payloads = _payloads(prepared, fixture)
+    return ProducedCaptures(
+        instance=instance,
+        owner=owner,
+        contract=contract,
+        records=tuple(records),
+        payloads=tuple(payloads),
+        run_id=prepared.admission.run_id,
+    )
+
+
+def test_both_v2_producer_arms_verify_through_every_live_production_consumer(
+    tmp_path: Path, acquisition_demo: None
+) -> None:
+    produced_world = run_capture_producers(tmp_path)
+    instance, owner = produced_world.instance, produced_world.owner
+    records, payloads = produced_world.records, produced_world.payloads
     kinds = [stored.record.event_kind for stored in records]
     produced = payloads[kinds.index("produced_capture")]
     terminal = payloads[kinds.index("terminal_egress")]

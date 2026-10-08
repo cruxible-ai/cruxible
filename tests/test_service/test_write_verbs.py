@@ -37,6 +37,7 @@ from tests.core_support._write_support import (
     report_evidence,
     seed_write_surface,
 )
+from tests.support.capture_receipts import admit_legacy_v1_citations
 
 WI1 = f"{KIND}/wi-1"
 WI2 = f"{KIND}/wi-2"
@@ -827,10 +828,11 @@ def _record_capture(
 
 
 def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subject(
-    instance: PlaybillInstance,
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from cruxible_client.contracts.write import capture_handle
 
+    admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
     contract, provider_artifact = _seed_record_source(instance)
     held = _record_capture(instance, contract, provider_artifact, WI1)
     assert held not in _accepted_capture_digests(instance)
@@ -848,10 +850,11 @@ def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subje
 
 
 def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
-    instance: PlaybillInstance,
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only a canonical-value record: a refusal naming it, never 'capture it first'."""
 
+    admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
     from datetime import timedelta
 
     from cruxible_client.contracts.write import capture_handle

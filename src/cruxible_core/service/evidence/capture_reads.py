@@ -10,6 +10,7 @@ from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequ
 from cruxible_client.contracts.captures import (
     CaptureContract,
     CaptureEnvelopeAny,
+    ProducerReceiptResolverProtocol,
     classify_capture_reuse,
     parse_capture_envelope,
     verify_capture,
@@ -25,7 +26,6 @@ from cruxible_client.contracts.source_references import (
     SourceHandle,
 )
 from cruxible_core.errors import PermissionDeniedError
-from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import service_open_playbill_source
@@ -193,13 +193,17 @@ def verify_accepted_capture(
     digest: str,
     *,
     access: BodyAccessContext,
+    captures: ProducerReceiptResolverProtocol | None = None,
 ) -> VerifiedCapture | CaptureUnavailableReason:
     """Verify one retained Capture against the contract accepted at ``coordinate``.
 
     Answers why it is unavailable when its bytes, its contract at the coordinate
     or its committed body are missing; raises ``CaptureReadInvalid`` when it is
     present but does not verify, and ``cruxible.capture.not_a_capture`` when the
-    bytes are not a Capture envelope at all.
+    bytes are not a Capture envelope at all. A Capture no accepted Claim cites at
+    the coordinate is held to what a new citation is: daemon proof that a run
+    produced it. ``captures`` is the caller's verification context, shared by
+    every Capture one request verifies.
     """
 
     store = instance.body_store()
@@ -220,6 +224,12 @@ def verify_accepted_capture(
             path = projection.citations.capture_contract_path(envelope.capture_contract_digest)
             if path is None:
                 return "contract_not_at_coordinate"
+            cited = (
+                projection.typed.connection.execute(
+                    "SELECT 1 FROM captures WHERE capture_digest=?", (digest,)
+                ).fetchone()
+                is not None
+            )
             row = projection.typed.connection.execute(
                 "SELECT identity FROM capture_contracts WHERE path=? AND artifact_digest=?",
                 (path, envelope.capture_contract_digest),
@@ -247,11 +257,10 @@ def verify_accepted_capture(
             contract=contract,
             ledger_resolver=_LedgerResolver(instance),
             producer_artifact_digests=producers,
-            producer_receipt_resolver=local_producer_receipt_resolver(
-                exhaust_root=instance.root / instance.descriptor.storage.exhaust,
-                instance_id=instance.descriptor.instance_id,
-                bodies=store,
+            producer_receipt_resolver=(
+                instance.capture_verification_context() if captures is None else captures
             ),
+            require_production_proof=not cited,
         )
     except CaptureReadInvalid:
         raise
@@ -404,7 +413,9 @@ def resolve_capture_handle(
     if len(inventory.captures) > CAPTURE_HANDLE_MAX_VERIFIED:
         return CaptureHandleExhausted("verify_limit")
     uncited = [item.digest for item in inventory.captures if item.digest not in cited]
-    check = verified or (lambda digest: _verifies(instance, coordinate, digest))
+    if verified is None:
+        captures = instance.capture_verification_context()
+    check = verified or (lambda digest: _verifies(instance, coordinate, digest, captures))
     found = sorted(cited | {digest for digest in uncited if check(digest)})
     if len(found) == 1:
         return CaptureHandleResolved(found[0])
@@ -414,12 +425,17 @@ def resolve_capture_handle(
 
 
 def _verifies(
-    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, digest: str
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    digest: str,
+    captures: ProducerReceiptResolverProtocol,
 ) -> bool:
     """Whether a retained Capture verifies against its contract accepted at ``coordinate``."""
 
     try:
-        verified = verify_accepted_capture(instance, coordinate, digest, access=_INVENTORY_ACCESS)
+        verified = verify_accepted_capture(
+            instance, coordinate, digest, access=_INVENTORY_ACCESS, captures=captures
+        )
     except (CaptureReadInvalid, ReadRefusalError, CruxibleError, ValueError):
         return False
     return not isinstance(verified, str)

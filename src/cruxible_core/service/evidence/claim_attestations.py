@@ -24,7 +24,6 @@ from cruxible_core.evidence.attestation_verification import (
     verify_attestation_admission,
     verify_attestation_referent,
 )
-from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import _claim_law_evidence
@@ -90,11 +89,7 @@ def service_append_claim_attestation(
             if statement.attestation_basis == "new_capture"
             else None
         ),
-        producer_receipt_resolver=local_producer_receipt_resolver(
-            exhaust_root=instance.root / instance.descriptor.storage.exhaust,
-            instance_id=instance.descriptor.instance_id,
-            bodies=instance.body_store(),
-        ),
+        producer_receipt_resolver=instance.capture_verification_context(),
         historical_capture_contract=lambda digest: instance.accepted_capture_contract_version(
             AcceptedCoordinate.from_internal(referent), digest
         ),

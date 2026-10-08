@@ -460,6 +460,8 @@ class _Planner:
         self.plan = _Plan()
         self._subject_exists: dict[str, bool] = {}
         self._verified: dict[str, bool] = {}
+        # One Capture verification context for the whole write.
+        self.captures = instance.capture_verification_context()
         self._read_sequence: int | None = None
 
     # -- accepted state ----------------------------------------------------------
@@ -972,7 +974,11 @@ class _Planner:
         if digest not in self._verified:
             try:
                 verified = verify_accepted_capture(
-                    self.instance, self.head, digest, access=_VALUE_READ_ACCESS
+                    self.instance,
+                    self.head,
+                    digest,
+                    access=_VALUE_READ_ACCESS,
+                    captures=self.captures,
                 )
             except (CaptureReadInvalid, ReadRefusalError, CruxibleError, ValueError):
                 self._verified[digest] = False
@@ -1158,7 +1164,11 @@ class _Planner:
         for item in bound[:_MAX_CONTRACT_CAPTURES]:
             try:
                 verified = verify_accepted_capture(
-                    self.instance, self.head, item.digest, access=_VALUE_READ_ACCESS
+                    self.instance,
+                    self.head,
+                    item.digest,
+                    access=_VALUE_READ_ACCESS,
+                    captures=self.captures,
                 )
             except (CaptureReadInvalid, ReadRefusalError):
                 continue

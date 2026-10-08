@@ -26,6 +26,7 @@ from cruxible_client.contracts.workspace_file import (
     SourceReadReceipt,
 )
 from tests.core_support.p2b4_unit1._support import digest, provider_capture_fixture
+from tests.support.capture_receipts import StaticReceipts, produced_by_run
 
 
 def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
@@ -132,10 +133,15 @@ def test_workspace_capture_commits_and_replays_both_receipts(tmp_path) -> None: 
             producer_artifact_digests={
                 fixture.producer.qualified: fixture.receipt.provider_artifact_digest
             },
-            producer_receipt_resolver=lambda _digest: ProviderProducerReceiptResolution(
-                receipt=fixture.receipt,
-                occurrence=fixture.occurrence,
-                source_read_receipt=source_read,
+            producer_receipt_resolver=StaticReceipts(
+                {
+                    built.envelope.producer_receipt_digest: ProviderProducerReceiptResolution(
+                        receipt=fixture.receipt,
+                        occurrence=fixture.occurrence,
+                        source_read_receipt=source_read,
+                    )
+                },
+                produced=(produced_by_run(built),),
             ),
         )
         == built.envelope

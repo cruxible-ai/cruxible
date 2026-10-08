@@ -16,6 +16,8 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    FOREIGN_SOURCE_PROVENANCE_RULE,
+    CaptureContract,
     CaptureRunCoordinateV1,
     DirectByteSpanSelection,
     InputReceiptSetManifest,
@@ -23,6 +25,7 @@ from cruxible_client.contracts.captures import (
     build_derived_cas_capture,
     build_direct_claim_selection_capture,
     build_working_selection_capture,
+    capture_component_pin,
     capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
@@ -319,6 +322,20 @@ def test_raw_proposal_rechecks_claim_bound_capture_scope_after_lowering_is_bypas
     }
 
 
+def _self_asserted(contract: CaptureContract) -> CaptureContract:
+    """The same contract under the registered proposer-asserted provenance rule."""
+
+    rule = capture_component_pin("provenance-rule", FOREIGN_SOURCE_PROVENANCE_RULE)
+    pins = (*(pin for pin in contract.pins if pin.role != "provenance-rule"), rule)
+    return CaptureContract.model_validate(
+        {
+            **contract.model_dump(mode="python"),
+            "provenance_rule_digest": rule.artifact_digest,
+            "pins": tuple(sorted(pins, key=lambda item: (item.role, item.target.qualified))),
+        }
+    )
+
+
 @pytest.mark.parametrize(
     ("grade", "expected_code"),
     [
@@ -332,7 +349,11 @@ def test_existing_capture_shareability_and_admission_refusals_are_reachable(
     expected_code: str,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
-    contract = capture_contract(name=f"test.{grade}-capture-v1", epistemic_grade=grade)
+    # A proposer-asserted contract: a version-1 envelope under any other is
+    # refused as new evidence before shareability is judged.
+    contract = _self_asserted(
+        capture_contract(name=f"test.{grade}-capture-v1", epistemic_grade=grade)
+    )
     _seed_claim_surface(instance, owner, contract=contract)
     run = CaptureRunCoordinateV1(
         run_kind="watcher",

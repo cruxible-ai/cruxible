@@ -41,6 +41,7 @@ from cruxible_client.contracts.captures import (
     CaptureContract,
     CaptureEnvelopeAny,
     CaptureObjectStoreProtocol,
+    CaptureProductionUnproven,
     LedgerMaterialResolverProtocol,
     ProducerReceiptResolverProtocol,
     capture_contract_digest,
@@ -1770,6 +1771,7 @@ def evaluate_claim_law(
     allow_claim_type_retirement_shape_exemption: bool = False,
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
     claim_type_v7_semantics: bool = False,
+    require_new_citation_proof: bool = True,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
 
@@ -1791,6 +1793,12 @@ def evaluate_claim_law(
       unchanged statement keeps accruing evidence, as under `accumulate`.
     - `captured` refuses a new Claim or revision with no admitted Capture under a
       declared contract; `none` records the Claim's own origin as support.
+
+    With `require_new_citation_proof`, a Capture cited for the first time (not
+    inherited unchanged from the accepted predecessor) must carry daemon proof
+    that a run produced it: a journal record naming its exact digest, and no
+    version-1 envelope under a contract that is not self-asserted. A replay of
+    an already-accepted acceptance passes False, so accepted state stays valid.
     """
 
     try:
@@ -2294,6 +2302,10 @@ def evaluate_claim_law(
         # The envelope names its exact contract digest, which verification
         # requires to match; only contracts with that digest can verify it.
         named = _named_capture_contract(capture_store, capture_digest_value)
+        require_proof = (
+            require_new_citation_proof and capture_digest_value not in inherited_captures
+        )
+        production_gap: CaptureProductionUnproven | None = None
         if (
             named
             and named not in contracts_by_digest
@@ -2310,12 +2322,23 @@ def evaluate_claim_law(
                     ledger_resolver=ledger_resolver,
                     producer_artifact_digests=known_producer_digests,
                     producer_receipt_resolver=producer_receipt_resolver,
+                    require_production_proof=require_proof,
                 )
+            except CaptureProductionUnproven as exc:
+                production_gap = exc
+                continue
             except (FormatError, ValueError):
                 continue
             envelope = candidate_envelope
             resolved_contract = contract_candidate
             break
+        if (envelope is None or resolved_contract is None) and production_gap is not None:
+            return _diagnostic(
+                "cruxible.claim.capture_production_unproven",
+                "A newly cited Capture has no daemon proof that a run produced it: "
+                + str(production_gap),
+                path=path,
+            )
         if envelope is None or resolved_contract is None:
             return _diagnostic(
                 "cruxible.claim.capture_unverified",

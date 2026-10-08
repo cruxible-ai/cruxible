@@ -2749,6 +2749,9 @@ def _verified_attestation_member(context: _MemberContext) -> _MemberVerdict:
         historical_capture_contract=historical_capture_contract_resolver(
             context.historical_artifact_provider, s.referent_coordinate
         ),
+        # New evidence needs daemon proof a run produced it; a replay of an
+        # accepted acceptance re-judges what was already admitted.
+        require_production_proof=context.historical_law_coordinate is None,
     )
     digest = attestation_artifact_digest(value).tagged
     return _accepted(
@@ -3013,6 +3016,10 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         claim_type_v7_semantics=(
             installed.coordinate in {CLAIM_LAW_V2_REVISION_8, CLAIM_LAW_V3_REVISION_10}
         ),
+        # A Capture cited for the first time needs daemon proof a run produced
+        # it. Settlement and recovery replay an acceptance under its recorded
+        # law coordinate; what that acceptance admitted stays admitted.
+        require_new_citation_proof=context.historical_law_coordinate is None,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))

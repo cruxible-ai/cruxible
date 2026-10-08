@@ -2532,7 +2532,11 @@ is `--because` as self evidence; `--evidence-file` cites text found once in a
 catalogued workspace file, read on this side, and `--capture` an existing
 Capture by its sha256 digest or its handle `CAP-<12+ hex>` (a digest prefix
 unique among the verified Captures the instance holds, cited or not; ambiguous
-or unknown handles refuse with the nearest handles). `--evidence-contract NAME` cites the newest verified Capture of
+or unknown handles refuse with the nearest handles). A Capture under a
+daemon-fetched contract verifies for a new citation only when the journal
+records a run producing it; otherwise the write refuses
+`cruxible.authoring.capture_production_unproven` (or
+`capture_v1_citation_refused` for a version-1 envelope). `--evidence-contract NAME` cites the newest verified Capture of
 that CaptureContract about SUBJECT, cited or not: one an accepted Claim on
 SUBJECT cites, or whose own source names SUBJECT; with none it refuses
 `cruxible.write.contract_capture_not_found`. Only a Capture committed as exact

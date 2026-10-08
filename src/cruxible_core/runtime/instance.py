@@ -94,7 +94,10 @@ from cruxible_core.derived.derived_state import (
     advance_accepted_tree,
 )
 from cruxible_core.derived.memo import memo_get, memo_put
-from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
+from cruxible_core.exhaust.producer_receipts import (
+    LocalProducerReceiptResolver,
+    local_producer_receipt_resolver,
+)
 from cruxible_core.governance.keys import (
     ALLOWED_SIGNERS_FILE,
     DAEMON_PRIVATE_KEY_FILE,
@@ -623,6 +626,7 @@ class PlaybillInstance:
                 exhaust_root=paths["exhaust"],
                 instance_id=descriptor.instance_id,
                 bodies=bodies,
+                full_journal=True,
             ),
             query_facts_builder=cls._accepted_query_facts,
             checkpoint_directory=cls._checkpoint_directory(managed_root),
@@ -1377,10 +1381,23 @@ class PlaybillInstance:
             path=path, contract=contract, artifact_digest=contract_digest
         )
 
+    def capture_verification_context(self) -> LocalProducerReceiptResolver:
+        """One request's Capture verification context over this daemon's journal.
+
+        Pass the same context to every verification one request makes: it reads
+        each cited run's journal records once and keeps every answer, so N Claims
+        citing one Capture verify it with one journal lookup.
+        """
+
+        return local_producer_receipt_resolver(
+            exhaust_root=self._validated_paths(self.root, self.descriptor.storage)["exhaust"],
+            instance_id=self.descriptor.instance_id,
+            bodies=self.body_store(),
+        )
+
     def proposal_service(self) -> ProposalService:
         """Bind PB-C proposal evaluation to authenticated main and inert storage."""
 
-        paths = self._validated_paths(self.root, self.descriptor.storage)
         # Through `body_store()`, so a preview evaluates against the bodies it holds
         # in memory exactly as a submission does against the ones it stored.
         bodies = self.body_store()
@@ -1401,11 +1418,7 @@ class PlaybillInstance:
             active_principal_provider=self.require_accepted_principal,
             current_coordinate=self.accepted_coordinate,
             promotion_verifier=self._promotion_verifier,
-            producer_receipt_resolver=local_producer_receipt_resolver(
-                exhaust_root=paths["exhaust"],
-                instance_id=self.descriptor.instance_id,
-                bodies=bodies,
-            ),
+            producer_receipt_resolver=self.capture_verification_context(),
             query_facts_provider=lambda coordinate, *, predicates=None: self._accepted_query_facts(
                 self, coordinate, predicates=predicates
             ),
@@ -2176,6 +2189,7 @@ class PlaybillInstance:
                 exhaust_root=paths["exhaust"],
                 instance_id=self.descriptor.instance_id,
                 bodies=bodies,
+                full_journal=True,
             ),
             query_facts_builder=self._accepted_query_facts,
             checkpoint_directory=self._checkpoint_directory(self.root),
@@ -2256,11 +2270,7 @@ class PlaybillInstance:
             sequence=sequence,
             mandate_digest=mandate_digest,
             promotion_verifier=self._promotion_verifier,
-            producer_receipt_resolver=local_producer_receipt_resolver(
-                exhaust_root=self._validated_paths(self.root, self.descriptor.storage)["exhaust"],
-                instance_id=self.descriptor.instance_id,
-                bodies=self.body_store(),
-            ),
+            producer_receipt_resolver=self.capture_verification_context(),
             query_facts_provider=lambda coordinate, *, predicates=None: self._accepted_query_facts(
                 self, coordinate, predicates=predicates
             ),
