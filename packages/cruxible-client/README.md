@@ -623,7 +623,7 @@ refresh_workspace(
 ) -> api.FloorRefreshResult
 ```
 
-Pulls the configured floor, at the accepted head unless `at` pins a coordinate, and reports refreshed/failed/not_configured. It is the SDK's pull for setups the daemon does not deliver to (a remote daemon, delivery off, MCP library mode).
+Pulls the configured floor, at the accepted head unless `at` pins a coordinate, and reports refreshed/failed/not_configured. It is the SDK's pull for setups the daemon does not deliver to (a remote daemon, or delivery off).
 
 **Conditions and effects:** Writes client workspace files; does not advance the reading context or check/repin projection blocks. A daemon delivering this workspace's floor is its only writer: over the local socket it writes now (head only); over TCP the refresh reports `failed` instead of writing a second copy.
 
