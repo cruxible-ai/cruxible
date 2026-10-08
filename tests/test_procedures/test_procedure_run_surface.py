@@ -422,7 +422,6 @@ def test_daemon_derives_manual_and_capture_occurrences() -> None:
     first, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         manual_line,
         evaluation_time=READ_TIME,
-        prior=(),
     )
     assert first.startswith("sha256:")
     assert next_due is None
@@ -454,12 +453,11 @@ def test_daemon_derives_manual_and_capture_occurrences() -> None:
         kind="capture_landing", trigger=trigger.trigger.identity, event=ref
     )
     first = procedure_run_service._line_occurrence(
-        manual_line, evaluation_time=READ_TIME, prior=(), trigger=trigger, binding=binding
+        manual_line, evaluation_time=READ_TIME, trigger=trigger, binding=binding
     )
     later = procedure_run_service._line_occurrence(
         manual_line,
         evaluation_time=READ_TIME + timedelta(days=1),
-        prior=(),
         trigger=trigger,
         binding=binding,
     )
@@ -470,7 +468,7 @@ def test_daemon_derives_manual_and_capture_occurrences() -> None:
     )
     assert (
         procedure_run_service._line_occurrence(
-            manual_line, evaluation_time=READ_TIME, prior=(), trigger=trigger, binding=other
+            manual_line, evaluation_time=READ_TIME, trigger=trigger, binding=other
         )[0]
         != first[0]
     )
@@ -485,14 +483,14 @@ def test_daemon_derives_manual_and_capture_occurrences() -> None:
     twin_binding = binding.model_copy(update={"trigger": twin.trigger.identity})
     assert (
         procedure_run_service._line_occurrence(
-            manual_line, evaluation_time=READ_TIME, prior=(), trigger=twin, binding=twin_binding
+            manual_line, evaluation_time=READ_TIME, trigger=twin, binding=twin_binding
         )[0]
         != first[0]
     )
     # A binding names the Trigger it came from; another Trigger's binding refuses.
     with pytest.raises(ExecutionError, match="exact tick"):
         procedure_run_service._line_occurrence(
-            manual_line, evaluation_time=READ_TIME, prior=(), trigger=trigger, binding=twin_binding
+            manual_line, evaluation_time=READ_TIME, trigger=trigger, binding=twin_binding
         )
 
 
@@ -533,22 +531,18 @@ def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree
     first, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
         evaluation_time=accepted_at + timedelta(minutes=5),
-        prior=(),
         trigger=trigger,
         binding=binding,
         accepted_at=accepted_at,
     )
     assert next_due == accepted_at + timedelta(hours=1)
 
+    # The chain continues from the last delivered tick's scheduled instant.
     ticked = accepted_at + timedelta(hours=1)
-    prior = SimpleNamespace(
-        occurrence_evaluation_time=ticked,
-        bound_coordinate=SimpleNamespace(git_oid="9" * 40),
-    )
     _early, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
         evaluation_time=ticked + timedelta(minutes=30),
-        prior=(prior,),  # type: ignore[arg-type]
+        last_tick=ticked,
         trigger=trigger,
         binding=binding,
         accepted_at=accepted_at,
@@ -558,7 +552,7 @@ def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree
     second, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
         evaluation_time=ticked + timedelta(hours=1),
-        prior=(prior,),  # type: ignore[arg-type]
+        last_tick=ticked,
         trigger=trigger,
         binding=binding,
         accepted_at=accepted_at,
@@ -641,7 +635,6 @@ def test_a_caller_cannot_walk_the_cadence_by_advancing_the_claimed_instant(
     inside = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
         evaluation_time=READ_TIME,
-        prior=(),
         trigger=trigger,
         binding=procedure_run_service.trigger_binding_for(trigger),
         accepted_at=READ_TIME - timedelta(hours=1),
@@ -668,12 +661,10 @@ def test_a_window_line_has_fixed_boundary_even_when_dispatch_is_late(tmp_path: P
     binding = procedure_run_service.trigger_binding_for(
         trigger, window=bind_observation_window(window)
     )
-    prior = SimpleNamespace(occurrence_evaluation_time=READ_TIME + timedelta(hours=6))
     results = [
         procedure_run_service._line_occurrence(
             line,
             evaluation_time=at,
-            prior=(prior,),
             trigger=trigger,
             binding=binding,
         )
@@ -1711,7 +1702,6 @@ def test_a_replayed_occurrence_refuses_instead_of_running_twice(
     occurrence_id, _next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
         evaluation_time=READ_TIME,
-        prior=(),
     )
     _admitted_line_service(
         monkeypatch,
