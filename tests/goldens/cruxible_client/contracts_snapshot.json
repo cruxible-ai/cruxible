@@ -127,6 +127,7 @@
         "projection_marker_invalid",
         "proposal_stale",
         "proposal_awaiting_approval",
+        "proposal_awaiting_activation",
         "mandate_expiring",
         "consumer_stalled",
         "line_coverage_gap",
@@ -156,6 +157,7 @@
         "cruxible.sources.propose",
         "cruxible.proposal.readmit",
         "cruxible.proposal.approve",
+        "cruxible.proposal.activate",
         "cruxible.compiler.upgrade",
         "cruxible.line.enable",
         "cruxible.line.evaluate",
@@ -881,6 +883,18 @@
                 "additionalProperties": true,
                 "title": "Provenance",
                 "type": "object"
+              },
+              "rationale": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rationale"
               },
               "redactions": {
                 "items": {
@@ -21240,6 +21254,124 @@
         "workspace_advertisement"
       ]
     },
+    "InstalledProvider": {
+      "fields": {
+        "interfaces": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "interfaces",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Interfaces",
+            "type": "array"
+          }
+        },
+        "package": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "package",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Package"
+          }
+        },
+        "provider": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider",
+          "required": true,
+          "schema": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "version": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "version",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One live Provider at the accepted head: what is installed here, and what it implements.",
+        "properties": {
+          "interfaces": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Interfaces",
+            "type": "array"
+          },
+          "package": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Package"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
+        "required": [
+          "provider",
+          "interfaces"
+        ],
+        "title": "InstalledProvider",
+        "type": "object"
+      },
+      "required_fields": [
+        "interfaces",
+        "provider"
+      ]
+    },
     "InstanceDecommissionResult": {
       "fields": {
         "coordinate": {
@@ -25537,6 +25669,7 @@
               "projection_marker_invalid",
               "proposal_stale",
               "proposal_awaiting_approval",
+              "proposal_awaiting_activation",
               "mandate_expiring",
               "consumer_stalled",
               "line_coverage_gap",
@@ -25746,6 +25879,7 @@
                   "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
+                  "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
@@ -25815,6 +25949,7 @@
                   "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
+                  "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
@@ -25917,6 +26052,7 @@
               "projection_marker_invalid",
               "proposal_stale",
               "proposal_awaiting_approval",
+              "proposal_awaiting_activation",
               "mandate_expiring",
               "consumer_stalled",
               "line_coverage_gap",
@@ -26188,6 +26324,7 @@
                   "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
+                  "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
@@ -26257,6 +26394,7 @@
                   "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
+                  "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
@@ -26446,6 +26584,7 @@
               "projection_marker_invalid",
               "proposal_stale",
               "proposal_awaiting_approval",
+              "proposal_awaiting_activation",
               "mandate_expiring",
               "consumer_stalled",
               "line_coverage_gap",
@@ -26651,6 +26790,7 @@
                   "projection_marker_invalid",
                   "proposal_stale",
                   "proposal_awaiting_approval",
+                  "proposal_awaiting_activation",
                   "mandate_expiring",
                   "consumer_stalled",
                   "line_coverage_gap",
@@ -26752,6 +26892,7 @@
                   "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
+                  "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
@@ -26821,6 +26962,7 @@
                   "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
+                  "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
@@ -26933,6 +27075,7 @@
               "projection_marker_invalid",
               "proposal_stale",
               "proposal_awaiting_approval",
+              "proposal_awaiting_activation",
               "mandate_expiring",
               "consumer_stalled",
               "line_coverage_gap",
@@ -27061,6 +27204,7 @@
               "cruxible.sources.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
+              "cruxible.proposal.activate",
               "cruxible.compiler.upgrade",
               "cruxible.line.enable",
               "cruxible.line.evaluate",
@@ -27126,6 +27270,7 @@
               "cruxible.sources.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
+              "cruxible.proposal.activate",
               "cruxible.compiler.upgrade",
               "cruxible.line.enable",
               "cruxible.line.evaluate",
@@ -27218,6 +27363,7 @@
               "cruxible.sources.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
+              "cruxible.proposal.activate",
               "cruxible.compiler.upgrade",
               "cruxible.line.enable",
               "cruxible.line.evaluate",
@@ -27429,6 +27575,7 @@
               "cruxible.sources.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
+              "cruxible.proposal.activate",
               "cruxible.compiler.upgrade",
               "cruxible.line.enable",
               "cruxible.line.evaluate",
@@ -27823,6 +27970,7 @@
                   "projection_marker_invalid",
                   "proposal_stale",
                   "proposal_awaiting_approval",
+                  "proposal_awaiting_activation",
                   "mandate_expiring",
                   "consumer_stalled",
                   "line_coverage_gap",
@@ -27981,6 +28129,7 @@
                   "projection_marker_invalid",
                   "proposal_stale",
                   "proposal_awaiting_approval",
+                  "proposal_awaiting_activation",
                   "mandate_expiring",
                   "consumer_stalled",
                   "line_coverage_gap",
@@ -28083,6 +28232,7 @@
                   "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
+                  "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
@@ -28152,6 +28302,7 @@
                   "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
+                  "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
@@ -28702,6 +28853,7 @@
                   "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
+                  "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
@@ -28771,6 +28923,7 @@
                   "cruxible.sources.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
+                  "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
@@ -36786,6 +36939,16 @@
             "$ref": "#/$defs/ProcedureArtifact"
           }
         },
+        "artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Artifact Digest",
+            "type": "string"
+          }
+        },
         "coordinate": {
           "has_default": false,
           "has_default_factory": false,
@@ -36814,16 +36977,6 @@
             "additionalProperties": true,
             "title": "Next Operation",
             "type": "object"
-          }
-        },
-        "procedure_artifact_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "procedure_artifact_digest",
-          "required": true,
-          "schema": {
-            "title": "Procedure Artifact Digest",
-            "type": "string"
           }
         },
         "procedure_identity": {
@@ -41642,6 +41795,10 @@
           "artifact": {
             "$ref": "#/$defs/ProcedureArtifact"
           },
+          "artifact_digest": {
+            "title": "Artifact Digest",
+            "type": "string"
+          },
           "coordinate": {
             "$ref": "#/$defs/AcceptedCoordinate"
           },
@@ -41653,10 +41810,6 @@
             "additionalProperties": true,
             "title": "Next Operation",
             "type": "object"
-          },
-          "procedure_artifact_digest": {
-            "title": "Procedure Artifact Digest",
-            "type": "string"
           },
           "procedure_identity": {
             "additionalProperties": true,
@@ -41689,7 +41842,7 @@
         "required": [
           "coordinate",
           "procedure_identity",
-          "procedure_artifact_digest",
+          "artifact_digest",
           "definition_digest",
           "artifact",
           "runnable",
@@ -41701,10 +41854,10 @@
       },
       "required_fields": [
         "artifact",
+        "artifact_digest",
         "coordinate",
         "definition_digest",
         "next_operation",
-        "procedure_artifact_digest",
         "procedure_identity",
         "runnable",
         "unsupported_nodes"
@@ -61090,7 +61243,8 @@
                       "accepted",
                       "refused",
                       "stale",
-                      "withdrawn"
+                      "withdrawn",
+                      "rejected"
                     ],
                     "type": "string"
                   },
@@ -61346,7 +61500,8 @@
                   "accepted",
                   "refused",
                   "stale",
-                  "withdrawn"
+                  "withdrawn",
+                  "rejected"
                 ],
                 "type": "string"
               },
@@ -61480,7 +61635,8 @@
                   "accepted",
                   "refused",
                   "stale",
-                  "withdrawn"
+                  "withdrawn",
+                  "rejected"
                 ],
                 "type": "string"
               },
@@ -61870,6 +62026,217 @@
         "tag"
       ]
     },
+    "ProposalRejectResult": {
+      "fields": {
+        "actor_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_id",
+          "required": true,
+          "schema": {
+            "title": "Actor Id",
+            "type": "string"
+          }
+        },
+        "already_rejected": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "already_rejected",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Already Rejected",
+            "type": "boolean"
+          }
+        },
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "rejected_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rejected_at",
+          "required": true,
+          "schema": {
+            "title": "Rejected At",
+            "type": "string"
+          }
+        },
+        "status": {
+          "default": "rejected",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "default": "rejected",
+            "enum": [
+              "rejected",
+              "would_reject"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-proposal-reject-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-proposal-reject-result-v1",
+            "default": "playbill-proposal-reject-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "already_rejected": {
+            "default": false,
+            "title": "Already Rejected",
+            "type": "boolean"
+          },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "rejected_at": {
+            "title": "Rejected At",
+            "type": "string"
+          },
+          "status": {
+            "default": "rejected",
+            "enum": [
+              "rejected",
+              "would_reject"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-proposal-reject-result-v1",
+            "default": "playbill-proposal-reject-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "actor_id",
+          "reason",
+          "rejected_at"
+        ],
+        "title": "ProposalRejectResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "actor_id",
+        "proposal_id",
+        "reason",
+        "rejected_at"
+      ]
+    },
     "ProposalReview": {
       "fields": {
         "attestation_coverage": {
@@ -62047,6 +62414,26 @@
             "additionalProperties": true,
             "title": "Provenance",
             "type": "object"
+          }
+        },
+        "rationale": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "rationale",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rationale"
           }
         },
         "redactions": {
@@ -62470,6 +62857,18 @@
             "title": "Provenance",
             "type": "object"
           },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rationale"
+          },
           "redactions": {
             "items": {
               "type": "string"
@@ -62821,6 +63220,22 @@
             "title": "Detail"
           }
         },
+        "installed": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "installed",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/InstalledProvider"
+            },
+            "title": "Installed",
+            "type": "array"
+          }
+        },
         "packages": {
           "default": [],
           "default_json_serializable": true,
@@ -62854,6 +63269,53 @@
       },
       "json_schema": {
         "$defs": {
+          "InstalledProvider": {
+            "additionalProperties": false,
+            "description": "One live Provider at the accepted head: what is installed here, and what it implements.",
+            "properties": {
+              "interfaces": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Interfaces",
+                "type": "array"
+              },
+              "package": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package"
+              },
+              "provider": {
+                "title": "Provider",
+                "type": "string"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Version"
+              }
+            },
+            "required": [
+              "provider",
+              "interfaces"
+            ],
+            "title": "InstalledProvider",
+            "type": "object"
+          },
           "ProviderPackageSummary": {
             "additionalProperties": false,
             "properties": {
@@ -62883,6 +63345,7 @@
           }
         },
         "additionalProperties": false,
+        "description": "Installed Providers, then the packages the configured repository offers.",
         "properties": {
           "detail": {
             "anyOf": [
@@ -62895,6 +63358,14 @@
             ],
             "default": null,
             "title": "Detail"
+          },
+          "installed": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/InstalledProvider"
+            },
+            "title": "Installed",
+            "type": "array"
           },
           "packages": {
             "default": [],
@@ -64710,6 +65181,22 @@
             "title": "ExactContentRef",
             "type": "object"
           },
+          "ShownObject": {
+            "additionalProperties": false,
+            "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
+            "properties": {
+              "object": {
+                "additionalProperties": true,
+                "title": "Object",
+                "type": "object"
+              }
+            },
+            "required": [
+              "object"
+            ],
+            "title": "ShownObject",
+            "type": "object"
+          },
           "ShownValue": {
             "anyOf": [
               {
@@ -64717,6 +65204,9 @@
               },
               {
                 "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "$ref": "#/$defs/ShownObject"
               },
               {
                 "type": "string"
@@ -64735,10 +65225,6 @@
                   "$ref": "#/$defs/ShownValue"
                 },
                 "type": "array"
-              },
-              {
-                "additionalProperties": true,
-                "type": "object"
               },
               {
                 "type": "null"
@@ -64771,12 +65257,12 @@
               },
               "truncated": {
                 "const": true,
-                "default": true,
                 "title": "Truncated",
                 "type": "boolean"
               }
             },
             "required": [
+              "truncated",
               "preview",
               "length"
             ],
@@ -78753,6 +79239,9 @@
                 "$ref": "#/$defs/ExactContentRef"
               },
               {
+                "$ref": "#/$defs/ShownObject"
+              },
+              {
                 "type": "string"
               },
               {
@@ -78777,10 +79266,6 @@
                   },
                   "type": "array"
                 },
-                "type": "object"
-              },
-              {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -81404,6 +81889,22 @@
             "title": "SettleChangeSetNode",
             "type": "object"
           },
+          "ShownObject": {
+            "additionalProperties": false,
+            "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
+            "properties": {
+              "object": {
+                "additionalProperties": true,
+                "title": "Object",
+                "type": "object"
+              }
+            },
+            "required": [
+              "object"
+            ],
+            "title": "ShownObject",
+            "type": "object"
+          },
           "ShownValue": {
             "anyOf": [
               {
@@ -81411,6 +81912,9 @@
               },
               {
                 "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "$ref": "#/$defs/ShownObject"
               },
               {
                 "type": "string"
@@ -81429,10 +81933,6 @@
                   "$ref": "#/$defs/ShownValue"
                 },
                 "type": "array"
-              },
-              {
-                "additionalProperties": true,
-                "type": "object"
               },
               {
                 "type": "null"
@@ -82103,12 +82603,12 @@
               },
               "truncated": {
                 "const": true,
-                "default": true,
                 "title": "Truncated",
                 "type": "boolean"
               }
             },
             "required": [
+              "truncated",
               "preview",
               "length"
             ],
@@ -89152,15 +89652,12 @@
           }
         },
         "truncated": {
-          "default": true,
-          "default_json_serializable": true,
-          "has_default": true,
+          "has_default": false,
           "has_default_factory": false,
           "json_name": "truncated",
-          "required": false,
+          "required": true,
           "schema": {
             "const": true,
-            "default": true,
             "title": "Truncated",
             "type": "boolean"
           }
@@ -89221,12 +89718,12 @@
           },
           "truncated": {
             "const": true,
-            "default": true,
             "title": "Truncated",
             "type": "boolean"
           }
         },
         "required": [
+          "truncated",
           "preview",
           "length"
         ],
@@ -89235,7 +89732,8 @@
       },
       "required_fields": [
         "length",
-        "preview"
+        "preview",
+        "truncated"
       ]
     },
     "WhoAmI": {

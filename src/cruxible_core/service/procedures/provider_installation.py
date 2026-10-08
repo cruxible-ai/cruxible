@@ -22,6 +22,7 @@ from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
+    InstalledProvider,
     ProviderCatalog,
     ProviderInstallRequest,
     ProviderInstallResult,
@@ -115,7 +116,34 @@ def _repository_projects(operator: ProviderRuntimeOperator) -> dict[str, Path]:
     return result
 
 
-def service_provider_catalog(operator: ProviderRuntimeOperator) -> ProviderCatalog:
+def installed_providers(instance: PlaybillInstance) -> tuple[InstalledProvider, ...]:
+    """Every live Provider at the accepted head, by name, with what it implements."""
+
+    installed = []
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        rows = tuple(projection.typed.envelopes(kind="provider"))
+        contents = {row.path: projection.typed.member_bytes(row.path) for row in rows}
+    for path in sorted(contents, key=lambda item: item.encode("utf-8")):
+        provider = parse_provider(contents[path], path=path)
+        if provider.lifecycle.state != "live":
+            continue
+        distribution = getattr(getattr(provider, "runtime_artifact", None), "distribution", None)
+        installed.append(
+            InstalledProvider(
+                provider=provider.identity.name,
+                package=None if distribution is None else distribution.name,
+                version=None if distribution is None else distribution.version,
+                interfaces=tuple(
+                    sorted({item.interface_id for item in getattr(provider, "implementations", ())})
+                ),
+            )
+        )
+    return tuple(installed)
+
+
+def _repository_packages(operator: ProviderRuntimeOperator) -> tuple[ProviderPackageSummary, ...]:
+    """The packages the configured provider repository offers, by name."""
+
     packages = []
     for name, path in _repository_projects(operator).items():
         descriptors = tuple(path.glob("src/*/registration.json"))
@@ -134,8 +162,17 @@ def service_provider_catalog(operator: ProviderRuntimeOperator) -> ProviderCatal
                 interfaces=tuple(sorted(bundle.definitions)),
             )
         )
+    return tuple(sorted(packages, key=lambda item: item.name))
+
+
+def service_provider_catalog(
+    operator: ProviderRuntimeOperator, instance: PlaybillInstance
+) -> ProviderCatalog:
+    """The Providers installed here, then the packages the configured repository offers."""
+
     return ProviderCatalog(
-        packages=tuple(sorted(packages, key=lambda item: item.name)),
+        installed=installed_providers(instance),
+        packages=_repository_packages(operator),
         detail=None
         if operator.config.provider_repository
         else "No provider repository configured; packages install by name from the provider "
@@ -259,7 +296,7 @@ def _source_files(
             tuple(custody / item.filename for item in request.dependencies),
         )
     projects = _repository_projects(operator)
-    if request.package not in {item.name for item in service_provider_catalog(operator).packages}:
+    if request.package not in {item.name for item in _repository_packages(operator)}:
         raise ConfigError("provider package is not in the configured repository")
     project = projects[request.package]
     lock = custody / "uv.lock"
@@ -585,7 +622,17 @@ def service_install_provider(
     release = None
     if request.package and operator.config.provider_repository is not None:
         if request.version is not None:
-            raise ConfigError("a configured provider repository installs its checkout version")
+            raise ConfigError(
+                "a configured provider repository installs its checkout version, never an "
+                "exact release"
+                + (
+                    "; a kit's default provider names one, so install the repository's build "
+                    "with provider install first (the kit's default is then satisfied) or add "
+                    "the kit on a daemon without provider_repository"
+                    if expected_build is not None
+                    else ""
+                )
+            )
         with package_preparation_errors():
             source = _repository_fingerprint(operator, request.package)
     elif request.package:

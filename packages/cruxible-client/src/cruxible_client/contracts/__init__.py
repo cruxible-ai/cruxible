@@ -210,6 +210,9 @@ from cruxible_client.contracts.provider_contracts import (
     ProviderOperationContract as _ProviderOperationContractV1,
 )
 from cruxible_client.contracts.provider_installation import (
+    InstalledProvider as InstalledProvider,
+)
+from cruxible_client.contracts.provider_installation import (
     ProviderCatalog as ProviderCatalog,
 )
 from cruxible_client.contracts.provider_installation import (
@@ -325,6 +328,7 @@ NextReason: TypeAlias = Literal[
     "projection_marker_invalid",
     "proposal_stale",
     "proposal_awaiting_approval",
+    "proposal_awaiting_activation",
     "mandate_expiring",
     "consumer_stalled",
     "line_coverage_gap",
@@ -348,6 +352,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.sources.propose",
     "cruxible.proposal.readmit",
     "cruxible.proposal.approve",
+    "cruxible.proposal.activate",
     "cruxible.compiler.upgrade",
     "cruxible.line.enable",
     "cruxible.line.evaluate",
@@ -678,7 +683,7 @@ class ProposalListEntry(BaseModel):
     verdict: Literal["candidate", "refused"] | None
     candidate_digest: str | None = None
     status: Literal["open", "settled", "incomplete"]
-    terminal_reason: Literal["accepted", "refused", "stale", "withdrawn"] | None = None
+    terminal_reason: Literal["accepted", "refused", "stale", "withdrawn", "rejected"] | None = None
     incomplete_reasons: tuple[
         Literal["missing_admission", "missing_evaluation", "missing_candidate"], ...
     ] = ()
@@ -725,6 +730,21 @@ class ProposalWithdrawResult(BaseModel):
     withdrawn_at: str
     already_withdrawn: bool = False
     #: The accepted coordinate the withdrawal was checked at; ``at`` pins a commit.
+    coordinate: AcceptedCoordinate | None = None
+
+
+class ProposalRejectResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-proposal-reject-result-v1"] = "playbill-proposal-reject-result-v1"
+    #: ``would_reject`` answers a preview, which recorded nothing.
+    status: Literal["rejected", "would_reject"] = "rejected"
+    proposal_id: str
+    actor_id: str
+    reason: str
+    rejected_at: str
+    already_rejected: bool = False
+    #: The accepted coordinate the rejection was checked at; ``at`` pins a commit.
     coordinate: AcceptedCoordinate | None = None
 
 
@@ -858,6 +878,7 @@ class ProposalReview(BaseModel):
     members: list[ReviewedMember]
     governance: dict[str, Any]
     provenance: dict[str, Any]
+    rationale: str | None = None
     attestation_coverage: dict[str, Any]
     documents: list[dict[str, Any]]
     redactions: list[str]
@@ -1288,7 +1309,7 @@ class ProcedureReadiness(BaseModel):
     )
     coordinate: AcceptedCoordinate
     procedure_identity: dict[str, Any]
-    procedure_artifact_digest: str
+    artifact_digest: str
     definition_digest: str
     artifact: _ProcedureArtifact
     runnable: ProcedureRunnable

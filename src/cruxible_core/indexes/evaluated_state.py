@@ -14,11 +14,10 @@ from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from cruxible_client.contracts.candidates import DependencyProofReference
 from cruxible_client.contracts.canonical import canonical_bytes, file_digest, is_candidate_card_path
-from cruxible_client.contracts.claims import ClaimStatement
 from cruxible_client.contracts.documents import DocumentArtifactAdapter
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.claims.closure import (
@@ -32,6 +31,9 @@ from cruxible_core.claims.closure import (
 from cruxible_core.indexes.claims.claim_subject_index import ClaimSubjectIndex
 from cruxible_core.indexes.typed_sqlite import insert_members
 from cruxible_core.indexes.typed_state import OWNER_BY_KIND, OWNER_CODECS, insert_owners, schema_sql
+
+if TYPE_CHECKING:
+    from cruxible_core.derived.derived_state import ClaimPredicateKey
 
 T = TypeVar("T")
 
@@ -307,7 +309,7 @@ class EvaluationRows:
         )
         return tuple((row[0], self.source_bytes(row[0])) for row in paths)
 
-    def claim_items(self, statement: ClaimStatement) -> tuple[tuple[str, bytes], ...]:
+    def claim_items(self, statement: ClaimPredicateKey) -> tuple[tuple[str, bytes], ...]:
         subject = statement.subject
         paths = self.connection.execute(
             f"SELECT path FROM {self.table('claims')} WHERE subject_path=? AND predicate=? AND subject_selector_scheme=? AND subject_selector_value=? AND lifecycle='live' ORDER BY path",

@@ -235,8 +235,12 @@ def _get_client() -> CruxibleClient | None:
     return client
 
 
-def _get_lifecycle_client() -> DaemonLifecycleClient | None:
-    """An unchecked client whose interface only permits lifecycle endpoints."""
+def _get_lifecycle_client(state_root: Path | None = None) -> DaemonLifecycleClient | None:
+    """An unchecked client whose interface only permits lifecycle endpoints.
+
+    ``state_root`` is where the local daemon keeps its bootstrap secret, when it
+    is not the configured one (``server start --state-root``).
+    """
     obj = _root_ctx_obj()
     server_url = obj.get("server_url")
     server_socket = obj.get("server_socket")
@@ -249,7 +253,9 @@ def _get_lifecycle_client() -> DaemonLifecycleClient | None:
     key = (
         None
         if token is not None
-        else _local_operator_key(server_url=server_url, server_socket=server_socket)
+        else _local_operator_key(
+            server_url=server_url, server_socket=server_socket, state_root=state_root
+        )
     )
     client = DaemonLifecycleClient(
         base_url=server_url,
@@ -263,7 +269,7 @@ def _get_lifecycle_client() -> DaemonLifecycleClient | None:
 
 
 def _local_operator_key(
-    *, server_url: str | None, server_socket: str | None
+    *, server_url: str | None, server_socket: str | None, state_root: Path | None = None
 ) -> LocalOperatorKey | None:
     """The bootstrap secret and boot id of the local daemon this command targets.
 
@@ -278,11 +284,14 @@ def _local_operator_key(
     from cruxible_core.server.bootstrap_secret import read_local_operator_key
     from cruxible_core.server.config import get_server_state_root
 
-    try:
-        state_root = get_server_state_root()
-    except CoreError:
-        return None
-    return read_local_operator_key(state_root, server_url=server_url, server_socket=server_socket)
+    if state_root is None:
+        try:
+            state_root = get_server_state_root()
+        except CoreError:
+            return None
+    return read_local_operator_key(
+        state_root.expanduser().resolve(), server_url=server_url, server_socket=server_socket
+    )
 
 
 def _current_cli_context() -> CliContextState:

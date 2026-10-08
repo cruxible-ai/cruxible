@@ -6,8 +6,9 @@ from cruxible_core.errors import ConfigError
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_provider_list": (
-        "Use when you need to discover available provider packages: each package's name, "
-        "version and the provider interface IDs it implements."
+        "Use when you need to know which Providers are installed here (each with its package, "
+        "version and the interface IDs it implements) and which packages the configured "
+        "provider repository offers."
     ),
     "cruxible_provider_install": (
         "Use when you want to install a provider package by name (from the configured "
@@ -96,6 +97,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_proposal_withdraw": (
         "Use when an open proposal can never be activated and should leave the open inventory."
     ),
+    "cruxible_proposal_reject": (
+        "Use when you review another actor's open proposal and it should not be accepted; "
+        "the reason is recorded and the proposal leaves the open inventory."
+    ),
     "cruxible_capture_read": (
         "Use when you need verified retained Capture evidence for inspection or Claim authoring. "
         "Requires body-read permission; max_bytes bounds returned material. "
@@ -145,7 +150,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_authoring_bind": (
         "Use when one exact anchor in a configured workspace file is the evidence for a "
-        "Flow-A Claim."
+        "Claim you are authoring."
     ),
     "cruxible_authoring_preflight": (
         "Use when you need a complete binding check of an existing authoring intent."
@@ -206,8 +211,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_query": (
         "Use to answer any question over accepted state in one call. Compact: kind "
-        '(e.g. "dev.roadmap_item") with where filters such as '
-        '{"field": "adoption_state", "eq": "adopted"} (also ne, lt, lte, gt, gte, in, '
+        '(e.g. "project.work_item") with where filters such as '
+        '{"field": "status", "eq": "ready"} (also ne, lt, lte, gt, gte, in, '
         "exists, contains), select, follow and order_by; contains alone searches every "
         "Claim value; kind ClaimType or Procedure lists definitions, kind Trigger or Line "
         "lists Triggers (name, schedule, target) and Lines (enabled, triggers). Or pass a "
@@ -272,12 +277,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "prediction id and the observation's Claim ID."
     ),
     "cruxible_curation_list": (
-        "List the curation patterns detection recorded (detection runs on its own on accepted "
-        "generations); a pure read. Each item carries the latest_event_digest the rulings "
+        "Beta: detection runs only when a curation-detect Trigger is authored. "
+        "List the curation patterns detection recorded; a pure read. Each item carries the "
+        "latest_event_digest the rulings "
         "need; detection says when it last ran, inactive_detectors which detectors cannot run. "
         "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
     ),
     "cruxible_curation_observe": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
         "Record this workspace's declared blocks for block-churn detection, which needs the "
         "workspace the daemon never reads."
     ),
@@ -286,17 +293,21 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "This read records completed coverage but never recommends or executes a repair."
     ),
     "cruxible_curation_overrule": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
         "Use when a detected pattern does not apply here: closes the item permanently, and the "
         "pattern is never raised again."
     ),
     "cruxible_curation_accept_fixed": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
         "Use after an accepted change fixed an item: name it by accepted_proposal_id or "
         "accepted_generation; it must touch the item's subject or evidence."
     ),
     "cruxible_curation_suppress": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
         "Hide an item (scope item) or its whole lineage (scope lineage) without resolving it."
     ),
     "cruxible_curation_unsuppress": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
         "Lift a suppression on an item, so what it hid is listed again."
     ),
     "cruxible_since": (

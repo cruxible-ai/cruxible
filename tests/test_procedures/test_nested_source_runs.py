@@ -220,10 +220,14 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
     from cruxible_core.service.procedures.nested_runs import ServedNestedProcedureRunner
 
     monkeypatch.setattr(ServedNestedProcedureRunner, "run", forbidden)
+    # The same evaluation instant is the same run: a direct run without one
+    # evaluates at its admission instant, so the replay names the first's.
     replay = service_run_playbill_procedure(
         instance,
         name="parent",
-        request=ProcedureRunRequest(input={"positive": positive}),
+        request=ProcedureRunRequest(
+            input={"positive": positive}, evaluation_time=result.evaluation_time
+        ),
         actor_context=actor,
     )
     assert replay.run_id == result.run_id

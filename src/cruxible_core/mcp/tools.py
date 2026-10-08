@@ -226,7 +226,7 @@ def register_tools(
     def cruxible_provider_list(
         instance_id: InstanceId = None,
     ) -> ProviderCatalog:
-        """List provider packages in the configured repository: name, version, interface IDs."""
+        """List installed Providers, then the configured repository's packages, with interfaces."""
         return handlers.handle_playbill_provider_catalog(require_instance_id(instance_id))
 
     @_tool
@@ -322,7 +322,8 @@ def register_tools(
         *,
         request: KitRemoveRequest,
     ) -> KitChangeResult:
-        """Propose retiring every artifact a kit installed; activation is separate."""
+        """Retire every artifact a kit installed: lands at once when the approval policy
+        requires no approval, otherwise it stops at proposed (previews by default)."""
         return handlers.handle_playbill_kit_remove(require_instance_id(instance_id), request)
 
     @_tool
@@ -446,7 +447,7 @@ def register_tools(
         *,
         kind: Annotated[
             str | None,
-            Field(description="One Subject kind to read in full, e.g. 'dev.roadmap_item'."),
+            Field(description="One Subject kind to read in full, e.g. 'project.work_item'."),
         ] = None,
         section: Annotated[
             contracts.OrientSection | None,
@@ -513,6 +514,20 @@ def register_tools(
     ) -> contracts.ProposalWithdrawResult:
         """Retire one open proposal that will never be activated."""
         return handlers.handle_playbill_withdraw_proposal(
+            require_instance_id(instance_id), proposal_id, reason, dry_run=dry_run, at=at
+        )
+
+    @_tool
+    def cruxible_proposal_reject(
+        instance_id: InstanceId = None,
+        *,
+        proposal_id: str,
+        reason: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
+    ) -> contracts.ProposalRejectResult:
+        """Reject one open proposal as its reviewer, recording why."""
+        return handlers.handle_playbill_reject_proposal(
             require_instance_id(instance_id), proposal_id, reason, dry_run=dry_run, at=at
         )
 
@@ -745,7 +760,7 @@ def register_tools(
             Field(ge=1, description="The 1-based anchor occurrence when it is not unique."),
         ] = None,
     ) -> contracts.AuthoringPreflightResult:
-        """Bind one exact workspace anchor and compile the derived Flow-A observation."""
+        """Bind one exact workspace anchor as evidence and compile the Claim it observes."""
         return handlers.handle_playbill_authoring_bind(
             require_instance_id(instance_id),
             source_path=source_path,
@@ -919,7 +934,8 @@ def register_tools(
             Field(
                 description=(
                     "Any reference you have seen: CLM-… (or a unique prefix), kind/id, "
-                    "a predicate, ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, "
+                    "a predicate, ClaimType:/Document:/Procedure:/Blueprint:/query:/"
+                    "CaptureContract:<name>, "
                     "an artifact path, a proposal id or prefix, or an operational reference: "
                     "Line:<name> (or the Line identity digest next names), CAP-<12+ hex> or "
                     "Capture:<digest>, ResolutionContract:<name>, Mandate:<name>."
@@ -1704,7 +1720,7 @@ def register_tools(
                 description=(
                     "bytes/write: opt-in floor parts. 'discovery' adds the discovery cards "
                     "(subjects/, claim-types/, procedures/, coverage-manifest.json) to the "
-                    "grep-first current/, documents/ and provenance/."
+                    "grep-first current/, changes/ and README."
                 )
             ),
         ] = None,

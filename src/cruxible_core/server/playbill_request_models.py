@@ -271,6 +271,13 @@ class ProposalWithdrawRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
+class ProposalRejectRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-proposal-reject-request-v1"] = "playbill-proposal-reject-request-v1"
+    reason: str = Field(min_length=1, max_length=1_000)
+    dry_run: DryRun = None
+    at: PreviewAt = None
+
+
 class NextRequestV1(_StrictPlaybillRequest):
     tag: Literal["playbill-next-request-v1"] = "playbill-next-request-v1"
     at: AcceptedCoordinate | None = None

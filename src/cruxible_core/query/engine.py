@@ -323,6 +323,8 @@ class _Row:
 class _Value:
     state: QueryValueState
     value: object = None
+    #: A many-valued field's values, in canonical order; ``value`` is their list.
+    many: tuple[object, ...] | None = None
 
 
 _ABSENT = _Value(state="absent")
@@ -383,6 +385,11 @@ class _Evaluator:
                 item.model_dump(mode="json") if isinstance(item, ExactContentClaimObject) else value
             )
             distinct[canonical_bytes(identity)] = value
+        if any(claim.row.cardinality == "many" for claim in claims):
+            # A many-valued field's Claims are its values: the field projects
+            # as their list, in canonical order, and never conflicts.
+            values = tuple(distinct[key] for key in sorted(distinct))
+            return _Value(state="present", value=list(values), many=values)
         if len(distinct) == 1:
             return _Value(state="present", value=next(iter(distinct.values())))
         subject = self._backend.subject(subject_path)
@@ -449,7 +456,14 @@ class _Evaluator:
         resolved = self.resolve(row, ref)
         if resolved.state != "present":
             return None
-        coerced = coerce_query_value(resolved.value, value_type)
+        value = resolved.value
+        if resolved.many is not None:
+            # A comparison reads one value: a many-valued field holding exactly
+            # one compares as it; several have no single value to compare.
+            if len(resolved.many) != 1:
+                return None
+            value = resolved.many[0]
+        coerced = coerce_query_value(value, value_type)
         if not coerced.ok:
             raise _refuse(
                 VALUE_TYPE_MISMATCH,

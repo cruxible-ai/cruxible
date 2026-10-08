@@ -271,6 +271,35 @@ class ProposalWithdrawnError(ProposalAdmissionError):
         )
 
 
+class ProposalRejectedError(ProposalAdmissionError):
+    """A settlement door was asked to settle a proposal a reviewer rejected.
+
+    Rejection is the reviewer's terminal statement, recorded with its reason,
+    and every door that would settle the proposal refuses it exactly as a
+    withdrawal does.
+    """
+
+    error_code = "cruxible.proposal_rejected"
+
+    def __init__(
+        self,
+        proposal_id: str,
+        *,
+        actor_id: str,
+        reason: str,
+        rejected_at: str,
+    ) -> None:
+        self.proposal_id = proposal_id
+        self.actor_id = actor_id
+        self.reason = reason
+        self.rejected_at = rejected_at
+        super().__init__(
+            f"{self.error_code}: proposal {proposal_id} was rejected by {actor_id!r} at "
+            f"{rejected_at} ({reason}); a rejection is terminal, so author the change "
+            "again as a new proposal."
+        )
+
+
 class ProposalNotFoundError(CruxibleError):
     """A proposal selector did not resolve to immutable admission evidence."""
 
@@ -377,6 +406,26 @@ class ProposalReadmitNotStale(ProposalAdmissionError):
         super().__init__(
             f"{self.error_code}: only a stale proposal may be readmitted; proposal "
             f"{proposal_id} is {status}: {repair}"
+        )
+
+
+class ProposalStale(ProposalAdmissionError):
+    """Activation refused: accepted state moved since the proposal was evaluated.
+
+    A stale proposal cannot settle where it stands. Its author readmits it,
+    which rebases the same authored change onto the current head as a new
+    proposal to review, or withdraws it.
+    """
+
+    error_code = "cruxible.proposal.stale"
+
+    def __init__(self, proposal_id: str) -> None:
+        self.proposal_id = proposal_id
+        super().__init__(
+            f"{self.error_code}: proposal {proposal_id} is stale: accepted state moved "
+            "since it was evaluated, so it cannot be activated where it stands; repair: "
+            f"`cruxible proposal readmit {proposal_id}` rebases it onto the current head as "
+            f"a new proposal to review (or `cruxible proposal withdraw {proposal_id}`)"
         )
 
 
@@ -597,6 +646,8 @@ __all__ = [
     "ProposalNotFoundError",
     "ProposalSelectorAmbiguousError",
     "ProposalWithdrawnError",
+    "ProposalRejectedError",
+    "ProposalStale",
     "ProposalIntegrityError",
     "ProjectionCoordinateError",
     "ProjectionError",

@@ -295,6 +295,24 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["lint"]["warnings"] == [warning]
 
+    # Without --json the same answer is a few human lines, not JSON.
+    human = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "claim-type",
+            "propose",
+            "--input",
+            str(payload),
+        ],
+    )
+    assert human.exit_code == 0, human.output
+    assert not human.stdout.lstrip().startswith("{")
+    assert "lint: cruxible.claim_type.anticipated_source_contract_omitted" in human.stdout
+
 
 def test_cli_claim_type_template_is_complete_model_generated_and_local(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(

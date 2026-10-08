@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import difflib
+import json
 import keyword
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -36,7 +37,7 @@ from cruxible_client.contracts.compact_query import (
     query_filter,
 )
 from cruxible_client.contracts.get_display import exact_content_marker_text
-from cruxible_client.contracts.read_values import ExactContentRef, TruncatedText
+from cruxible_client.contracts.read_values import ExactContentRef, ShownObject, TruncatedText
 from cruxible_client.contracts.temporal import format_datetime
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -173,6 +174,8 @@ def _cell(value: object) -> str:
         # A preview always reads as cut, however short the shown part is.
         text = " ".join(value.preview.split())
         return (text if len(text) < _CELL_WIDTH else text[: _CELL_WIDTH - 1]) + "…"
+    if isinstance(value, ShownObject):
+        value = json.dumps(value.object, ensure_ascii=False, sort_keys=True)
     if isinstance(value, BaseModel):
         value = value.model_dump(mode="json")
     if isinstance(value, bool):

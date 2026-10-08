@@ -240,6 +240,15 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
     calls = 0
 
     class StubClient:
+        def show_host(self, instance_id: str) -> contracts.HostInspection:
+            return contracts.HostInspection(
+                instance_id=instance_id,
+                managed_root=None,
+                workspace_root=None,
+                compatibility="uninitialized",
+                writable=False,
+            )
+
         def init(
             self,
             instance_id: str,
@@ -305,10 +314,12 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
     assert not marker.exists()
     assert calls == 2
 
+    # Init already ran for this custody: refused, with the ways forward, before
+    # anything is written or sent.
     refused_reuse = CliRunner().invoke(cli, args)
-    assert refused_reuse.exit_code == 1
-    assert "already initialized" in refused_reuse.output
-    assert "without this init's retry marker" in refused_reuse.output
+    assert refused_reuse.exit_code == 2
+    assert "so init already ran for it; nothing was written" in refused_reuse.output
+    assert "cruxible context clear" in refused_reuse.output
     assert calls == 2
 
 

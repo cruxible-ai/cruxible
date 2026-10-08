@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
@@ -77,6 +77,11 @@ class ClaimFactRowV1(_StrictQueryBackendModel):
     attestations: tuple[ClaimAttestationEvidence, ...] = ()
     referent_current: bool = True
     resolved_authority_basis: tuple[str, ...] = ()
+    #: The Claim's ClaimType cardinality: a ``many`` field's Claims are its
+    #: values, never contenders. Omitted when ``one``.
+    cardinality: Literal["one", "many"] = Field(
+        default="one", exclude_if=lambda value: value == "one"
+    )
 
     @field_validator("resolved_authority_basis")
     @classmethod

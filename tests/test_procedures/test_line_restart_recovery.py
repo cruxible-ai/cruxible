@@ -22,7 +22,7 @@ from cruxible_client.contracts.line_dispatch import (
     LineEnablementPrincipal,
     LineEvaluateRequest,
 )
-from cruxible_client.contracts.temporal import parse_datetime
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     CadenceSchedule,
     CaptureLandingSchedule,
@@ -933,3 +933,31 @@ def test_a_successor_accepted_mid_gap_recovers_and_ticks_on_its_own_schedule(
         (next_tick, True),
     ]
     assert line_attention(instance, now=at) == ((), ())
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_a_late_dispatched_tick_records_the_ticks_instant_as_its_occurrence(tmp_path, timer):
+    """A tick run late happened at its tick: occurrence_evaluation_time is that instant."""
+
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+    from cruxible_core.service.procedures.procedure_runs import (
+        service_get_playbill_procedure_run,
+    )
+
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    _recovered(instance, line, timer)
+    _match(instance, timer.next - timedelta(seconds=1), daemon_id="restarted")
+    late = timer.then + timedelta(seconds=1)
+    _match(instance, late, daemon_id="restarted")
+    _drain_armed(instance, late)
+
+    with LineDispatchStore(instance).locked() as conn:
+        (run_id,) = conn.execute(
+            "SELECT run_id FROM pending WHERE eligible_at=? AND disposition='admitted'",
+            (format_datetime(timer.next),),
+        ).fetchone()
+    state = service_get_playbill_procedure_run(instance, run_id=run_id)
+    assert state.receipt is not None
+    assert state.receipt.occurrence_evaluation_time == timer.next
+    # The run itself was admitted, and acted, at the daemon's later instant.
+    assert state.evaluation_time == late

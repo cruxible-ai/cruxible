@@ -91,7 +91,9 @@ from cruxible_client.contracts.get_reads import ReadSurface
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.read_values import (
     ExactContentRef,
+    ShownObject,
     TruncatedText,
+    shown_plain,
     summary_value,
     whole_value_read,
 )
@@ -378,6 +380,8 @@ def _brief_shown(value: object) -> str:
         return f"{_brief(value.preview)} ({value.length} chars)"
     if isinstance(value, ExactContentRef):
         return exact_content_marker_text(value)
+    if isinstance(value, ShownObject):
+        return repr(value.object)
     if isinstance(value, list):
         return "[" + ", ".join(_brief_shown(item) for item in value) + "]"
     return repr(value)
@@ -667,7 +671,7 @@ class _Planner:
                 f'which get({cut[0]}, detail="evidence") reads'
                 if cut
                 else "Read it again; to write over what it holds now, expect "
-                + ("[]" if repair_value is None else json.dumps(repair_value))
+                + ("[]" if repair_value is None else json.dumps(shown_plain(repair_value)))
             ),
             field_path=f"changes[{index}].expect",
         )

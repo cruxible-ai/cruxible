@@ -11,8 +11,8 @@ format, not by habit, and is allowlisted by pattern:
 - versioned dotted identifiers (law ids, capture contract and component pins,
   curation detector ids) and the persisted unversioned capture identities and
   taint labels;
-- ledger Git names (``refs/notes/playbill-*``, mirror pins, lock files, the
-  ``playbill-daemon`` committer) and the legacy-detection file names;
+- ledger Git names (``refs/notes/playbill-*``, mirror pins, lock files) and the
+  legacy-detection file names (the ledger's committer is ``cruxible-daemon``);
 - the ConsumptionOperation literals inside hash-chained consumption receipts.
 
 Docs may also name internal paths (``tests/...``, ``benchmarks/playbill_*``,
@@ -57,8 +57,6 @@ FROZEN = re.compile(
             r"refs/notes/playbill-[a-z]+",
             r"refs/playbill-mirror-pins",
             r"playbill-(?:activation|notes|generations-in-flight)\.lock",
-            r"playbill-daemon",
-            r"daemon@playbill\.invalid",
             r"playbill-(?:gen|eval|approval)\b",
             r"playbill-v1",
             r"playbill\.(?:%s)(?![a-z_.])"

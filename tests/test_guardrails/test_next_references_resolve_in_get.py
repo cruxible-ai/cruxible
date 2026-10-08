@@ -55,6 +55,7 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace"]] = {
     "projection_marker_invalid": "workspace",
     "proposal_stale": "get",
     "proposal_awaiting_approval": "get",
+    "proposal_awaiting_activation": "get",
     "mandate_expiring": "get",
     "consumer_stalled": "get",
     "evidence_unavailable": "get",

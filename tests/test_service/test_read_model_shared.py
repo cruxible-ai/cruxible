@@ -383,7 +383,9 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
     ruling, long_ruling, binary = seeded["wi-42"], seeded["wi-long"], seeded["wi-bin"]
     text = _RULING.decode()
     cut = TruncatedText(
-        preview=_LONG_RULING.decode()[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(_LONG_RULING)
+        truncated=True,
+        preview=_LONG_RULING.decode()[:GET_SUMMARY_TEXT_MAX_CHARS],
+        length=len(_LONG_RULING),
     )
     marker = ExactContentRef(
         exact_content="binary", content_digest=binary.digest, length=len(_BINARY)
@@ -521,7 +523,9 @@ def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
             timestamp="2026-08-16T20:10:00.000000Z",
         ),
     )
-    cut = TruncatedText(preview=long_note[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_note))
+    cut = TruncatedText(
+        truncated=True, preview=long_note[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_note)
+    )
 
     rows = {
         row["subject_id"]: row
@@ -901,3 +905,222 @@ def test_an_oid_outside_accepted_history_cannot_resolve(
         with pytest.raises(ReadRefusalError) as refused:
             resolve_read_coordinate(instance, at)
         assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
+
+
+def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-001: a projected many-valued exact-content field is every selected value.
+
+    A spec and a named query project the field as a list -- a singleton too,
+    binary markers included -- holding exactly what compact mode shows, never
+    only its first value as a scalar.
+    """
+
+    from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
+    from cruxible_client.contracts.policies import ClaimResolutionPolicy
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+    from cruxible_client.contracts.read_values import ExactContentRef
+    from tests.core_support import _exact_content_support as support
+    from tests.core_support._candidate_support import submit_query_definition_candidate
+    from tests.core_support._knowledge_loop_support import TIMESTAMP, accept_proposal
+    from tests.core_support._support import initialize_local
+
+    original = support._claim_type
+    monkeypatch.setattr(
+        support,
+        "_claim_type",
+        lambda: original().model_copy(
+            update={
+                "cardinality": "many",
+                "resolution_policy": ClaimResolutionPolicy(
+                    cardinality="many", eligible_verdicts=("supported",), selector="all"
+                ),
+            }
+        ),
+    )
+    instance, owner = initialize_local(tmp_path)
+    seeded = support.seed_exact_content_into(
+        instance, owner, {"wi-42": b"first ruling", "wi-one": b"the only ruling"}
+    )
+    support.add_exact_claim(
+        instance,
+        owner,
+        "wi-42",
+        _BINARY,
+        claim_id="CLM-" + "9" * 32,
+        existing=(seeded["wi-42"].claim_id,),
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = claim_type_path(support.EXACT_PREDICATE)
+    claim_type = parse_claim_type(tree[path], path=path)
+    query = work_item_query("project.exact.many", claim_type=claim_type)
+    accept_proposal(
+        instance,
+        owner,
+        submit_query_definition_candidate(
+            instance,
+            query=query,
+            actor_id="owner",
+            proposal_name="exact-many-query",
+            timestamp=TIMESTAMP,
+        ),
+    )
+
+    def by_subject(rows: Any, key: str) -> dict[str, Any]:
+        return {row.get("subject_id", row.get("item_id")): row[key] for row in rows}
+
+    compact = by_subject(
+        _exact_query(instance, kind=support.EXACT_KIND, select=["status"]).rows, "status"
+    )
+    spec = QueryDefinitionSpec.model_validate({**query.model_dump(mode="json"), "pins": []})
+    projected = _exact_query(instance, spec=spec)
+    named = _exact_query(instance, name="project.exact.many")
+    (status_column,) = (item for item in projected.columns if item.name == "status")
+    assert status_column.cardinality == "many"
+    for answer in (projected, named):
+        rows = by_subject(answer.rows, "status")
+        assert rows["wi-one"] == ["the only ruling"] == compact["wi-one"]
+        many = rows["wi-42"]
+        assert isinstance(many, list) and len(many) == 2
+        assert many == compact["wi-42"]
+        assert "first ruling" in many
+        (marker,) = [item for item in many if isinstance(item, ExactContentRef)]
+        assert marker.exact_content == "binary"
+        assert all(row["flags"] == [] for row in answer.rows)
+
+
+def test_only_subject_references_lose_their_prefix_in_a_projection(tmp_path: Path) -> None:
+    """Review F-004: a literal that starts with "Subject:" is shown exactly.
+
+    A many-valued string literal holding "Subject:literal data" and a genuine
+    many-valued Subject reference are projected by a spec and by a named query.
+    The literal is unchanged and the references read kind/id, both exactly as
+    compact mode shows them.
+    """
+
+    from datetime import UTC, timedelta
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+    from cruxible_client.contracts.claim_types import (
+        claim_type_digest,
+        claim_type_path,
+        parse_claim_type,
+        render_claim_type,
+    )
+    from cruxible_client.contracts.query.grammar import (
+        QueryClaimValueRef,
+        QueryProjection,
+        QueryProjectionField,
+        QuerySubjectFieldRef,
+    )
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._candidate_support import submit_query_definition_candidate
+    from tests.core_support._knowledge_loop_support import TIMESTAMP, accept_proposal
+    from tests.core_support._write_support import (
+        KIND,
+        OWNER,
+        _claim_type,
+        caller,
+        seed_write_surface,
+    )
+
+    instance, owner = seed_write_surface(tmp_path)
+    notes = _claim_type("notes", literal_schema={"type": "string"}, cardinality="many")
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[claim_type_path(notes.predicate)] = render_claim_type(notes)
+    proposed = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/notes-field",
+            proposed_base_oid=instance.accepted_coordinate().git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-09-29T11:59:30.000000Z",
+    )
+    assert proposed.candidate is not None, proposed.evaluation
+    service_activate_playbill_proposal(
+        instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+    )
+    changes = [
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "notes", "value": "Subject:literal data"},
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "notes", "value": "plain"},
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "governs", "value": f"{KIND}/wi-2"},
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "governs", "value": f"{KIND}/wi-3"},
+    ]
+    written = service_playbill_write(
+        instance,
+        request=WriteRequest.model_validate({"because": "Recorded.", "changes": changes}),
+        caller=caller(),
+    )
+    assert written.refusal is None, written.refusal
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+
+    def pin(field: str) -> ArtifactPin:
+        path = claim_type_path(f"{KIND}.{field}")
+        accepted = parse_claim_type(tree[path], path=path)
+        return ArtifactPin(
+            role="claim-type",
+            target=accepted.identity,
+            artifact_digest=claim_type_digest(accepted).tagged,
+        )
+
+    query = work_item_query("project.notes-and-governs").model_copy(
+        update={
+            "projection": QueryProjection(
+                fields=(
+                    QueryProjectionField(
+                        name="governs",
+                        value=QueryClaimValueRef(binding="item", predicate=f"{KIND}.governs"),
+                    ),
+                    QueryProjectionField(
+                        name="item_id",
+                        value=QuerySubjectFieldRef(binding="item", field="subject_id"),
+                    ),
+                    QueryProjectionField(
+                        name="notes",
+                        value=QueryClaimValueRef(binding="item", predicate=f"{KIND}.notes"),
+                    ),
+                )
+            ),
+            "pins": tuple(
+                sorted(
+                    (pin("governs"), pin("notes")),
+                    key=lambda item: item.target.qualified.encode("utf-8"),
+                )
+            ),
+            "identity": ArtifactIdentity(kind="QueryDefinition", name="project.notes-and-governs"),
+        }
+    )
+    accept_proposal(
+        instance,
+        owner,
+        submit_query_definition_candidate(
+            instance,
+            query=query,
+            actor_id="owner",
+            proposal_name="notes-and-governs",
+            timestamp=TIMESTAMP,
+        ),
+    )
+    later = datetime.now(UTC) + timedelta(minutes=1)
+
+    def row_of(**fields: Any) -> dict[str, Any]:
+        result = service_playbill_query(
+            instance, request=QueryRequest.model_validate({"evaluation_time": later, **fields})
+        )
+        return next(
+            row for row in result.rows if row.get("subject_id", row.get("item_id")) == "wi-1"
+        )
+
+    compact = row_of(kind=KIND, select=["notes", "governs"])
+    assert sorted(compact["notes"]) == ["Subject:literal data", "plain"]
+    assert sorted(compact["governs"]) == [f"{KIND}/wi-2", f"{KIND}/wi-3"]
+    spec = QueryDefinitionSpec.model_validate({**query.model_dump(mode="json"), "pins": []})
+    for projected in (row_of(spec=spec), row_of(name="project.notes-and-governs")):
+        assert sorted(projected["notes"]) == sorted(compact["notes"])
+        assert sorted(projected["governs"]) == sorted(compact["governs"])

@@ -8,6 +8,7 @@ select) and what the service records about the Claims it served.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -208,3 +209,129 @@ def test_a_long_value_is_typed_truncated_text_and_reads_whole_where_it_was_previ
     (claim,) = cells["title"]
     assert isinstance(claim, QueryClaim) and isinstance(claim.value, TruncatedText)
     assert cx.read_whole(claim.value) == second_title
+
+
+#: Object values shaped like the summary markers: each must read back as itself.
+MARKER_SHAPED = {
+    "wi-1": {"preview": "cover", "length": 600},
+    "wi-2": {"preview": "cover", "length": 600, "truncated": True},
+    "wi-3": {"exact_content": "binary", "content_digest": "sha256:" + "a" * 64},
+}
+
+
+def _accept_object_field(instance: PlaybillInstance, *, actor_id: str) -> None:
+    base = instance.accepted_coordinate()
+    tree = instance.tree_at(base.git_oid)
+    claim_type = _claim_type("meta", literal_schema={"type": "object"})
+    tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id=actor_id),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/{actor_id}/object-field",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-09-29T11:59:30.000000Z",
+    )
+    assert proposed.candidate is not None, proposed.evaluation
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposed.admission.proposal_id, activated_by=actor_id
+    )
+    assert receipt.status == "accepted"
+
+
+def test_object_values_shaped_like_markers_read_back_as_themselves(
+    served: tuple[TestClient, str, str], tmp_path: Path
+) -> None:
+    """A marker-shaped object Claim is never a TruncatedText or ExactContentRef.
+
+    Through the summary model, the HTTP/SDK round trip, get's card and its CLI
+    rendering, a compact query row and Claim cell, and ``World.values``.
+    """
+
+    from cruxible_client.contracts.compact_query import QueryClaim
+    from cruxible_client.contracts.get_display import get_value_display
+    from cruxible_client.contracts.get_reads import GetClaimCard, GetRequest
+    from cruxible_client.contracts.read_values import ShownObject, summary_value
+
+    client, instance_id, actor = served
+    _accept_object_field(get_playbill_manager().get(instance_id), actor_id=actor)
+    pb = _sdk(client, instance_id, tmp_path)
+    instance = get_playbill_manager().get(instance_id)
+    claims: dict[str, str] = {}
+    for subject, value in MARKER_SHAPED.items():
+        # The write verbs take scalar values; an object Claim is authored whole.
+        submitted = pb.claim(
+            subject=f"{KIND}/{subject}",
+            predicate=f"{KIND}.meta",
+            value=value,
+            role="observation",
+            rationale="Recorded.",
+            self_source="Recorded.",
+        ).submit()
+        proposal_id = submitted.proposal.proposal_id
+        receipt = service_activate_playbill_proposal(
+            instance, proposal_id=proposal_id, activated_by=actor
+        )
+        assert receipt.status == "accepted"
+        pb.refresh()
+        (claim,) = (
+            item.claim
+            for item in pb.world().values(subjects=[f"{KIND}/{subject}"])
+            if item.predicate == f"{KIND}.meta"
+        )
+        claims[subject] = claim
+
+    for subject, value in MARKER_SHAPED.items():
+        shown = ShownObject(object=value)
+        # Model construction and a JSON round trip.
+        row = QueryClaim(
+            claim=claims[subject],
+            value=summary_value(value),
+            verdict="supported",
+            status="accepted",
+            role="observation",
+        )
+        assert row.value == shown
+        assert QueryClaim.model_validate_json(row.model_dump_json()).value == shown
+        assert row.model_dump(mode="json")["value"] == {"object": value}
+        # The SDK's Claim view holds the value itself.
+        assert pb.get(claims[subject]).value.value == value
+        # get's card over HTTP, and its CLI rendering.
+        card = pb._client.get(  # noqa: SLF001
+            instance_id, request=GetRequest(ref=claims[subject])
+        ).card
+        assert isinstance(card, GetClaimCard) and card.value == shown
+        rendered = get_value_display(card.model_dump(mode="json")["value"])
+        assert not rendered.truncated and "chars;" not in rendered.text
+        assert json.loads(rendered.text) == value
+    # A query row cell and its Claim cells.
+    page = pb.query(KIND, select=["meta"], claims=True).page
+    by_subject = {row["subject_id"]: row for row in page.rows}
+    for subject, value in MARKER_SHAPED.items():
+        assert by_subject[subject]["meta"] == ShownObject(object=value)
+        (cell,) = by_subject[subject]["claims"]["meta"]
+        assert cell.value == ShownObject(object=value)
+    # World.values.
+    values = pb.world().values(subjects=[f"{KIND}/{subject}" for subject in MARKER_SHAPED])
+    meta = {item.subject: item.value for item in values if item.predicate == f"{KIND}.meta"}
+    assert meta == {
+        f"{KIND}/{subject}": ShownObject(object=value) for subject, value in MARKER_SHAPED.items()
+    }
+
+
+def test_a_marker_shaped_object_without_its_discriminator_is_never_a_marker() -> None:
+    """Construction from a bare object refuses rather than reading it as a marker."""
+
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.compact_query import QueryClaim
+
+    with pytest.raises(ValidationError):
+        QueryClaim(
+            claim="CLM-" + "a" * 32,
+            value={"preview": "cover", "length": 600},  # type: ignore[arg-type]
+            verdict="supported",
+            status="accepted",
+            role="observation",
+        )

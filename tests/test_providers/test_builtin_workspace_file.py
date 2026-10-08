@@ -290,3 +290,22 @@ def test_the_port_matches_the_package_live_when_a_checkout_is_configured(
         assert ours["trace"]["metrics"] == result.metrics
         if result.refusal is not None:
             assert ours["refusal"] == json.loads(result.refusal.model_dump_json())
+
+
+def test_provider_list_names_the_providers_installed_here(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """provider list starts with what is installed, not only the repository (C3)."""
+
+    from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+    from cruxible_core.service.procedures.provider_installation import service_provider_catalog
+    from tests.core_support._support import initialize_local
+
+    instance, _owner = initialize_local(tmp_path)
+    catalog = service_provider_catalog(
+        ProviderRuntimeOperator(tmp_path / "operator-state"), instance
+    )
+
+    (builtin,) = catalog.installed
+    assert builtin.provider == "cruxible-builtin"
+    assert builtin.interfaces == ("workspace.file",)
+    assert catalog.packages == ()
+    assert catalog.detail is not None and "No provider repository configured" in catalog.detail

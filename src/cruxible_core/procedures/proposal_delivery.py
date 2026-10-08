@@ -37,6 +37,7 @@ from pydantic import ValidationError
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
+    AuthoringExistingClaimDisposition,
     AuthoringIntentV1,
     CandidateStatus,
     ChangeSetAuthoringPayload,
@@ -52,7 +53,8 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.claims import claim_path
+from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
+from cruxible_client.contracts.claims import claim_path, parse_claim
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
     ProcedureMandateAny,
@@ -65,6 +67,7 @@ from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureClaimProposalItemV1,
 )
 from cruxible_client.contracts.proposal_models import (
+    CHANGE_SET_RATIONALE_MAX_LENGTH,
     ProposalResult,
     ProposalSettleSubmission,
 )
@@ -97,6 +100,7 @@ from cruxible_core.proposals.delegated_authority import (
 from cruxible_core.proposals.proposals import ProposalService
 
 if TYPE_CHECKING:
+    from cruxible_core.derived.derived_state import ClaimPredicateKey, SnapshotTree
     from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
     from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -281,6 +285,140 @@ def _claim_members(
         claim_ids[egress_item.item_key] = claim_id
         members.append(member)
     return tuple(members), claim_ids, identity_to_item
+
+
+def proposal_rationale(
+    request: TerminalEgressRequestV1,
+    *,
+    items: tuple[ProcedureClaimProposalItemV1, ...],
+    claim_ids: Mapping[str, str],
+) -> str:
+    """The proposal's prose: which run proposed it, then why, in the items' own words.
+
+    This is the rationale `proposal review` shows and an accepted Claim's
+    evidence detail reads back. One item's rationale follows the header as
+    written; several are each labelled with the Claim they explain. The text is
+    bounded like any change-set rationale.
+    """
+
+    header = (
+        f"Proposed by Procedure {request.procedure_identity.name} "
+        f"run {request.run_id} terminal {request.node_id}"
+    )
+    reasons = [
+        (claim_ids[egress_item.item_key], item.rationale.replace("\x00", "").strip())
+        for egress_item, item in zip(request.items, items, strict=True)
+    ]
+    if len(reasons) == 1:
+        body = [reasons[0][1]]
+    else:
+        body = [f"{claim_id}: {reason}" for claim_id, reason in reasons]
+    text = "\n\n".join((header, *(part for part in body if part)))
+    if len(text) > CHANGE_SET_RATIONALE_MAX_LENGTH:
+        text = text[: CHANGE_SET_RATIONALE_MAX_LENGTH - 1].rstrip() + "\u2026"
+    return text
+
+
+_SlotKey = tuple[str, str, str, str, str | None]
+
+
+def _slot_key(statement: ClaimPredicateKey, qualifier: str | None) -> _SlotKey:
+    subject = statement.subject
+    return (
+        subject.artifact_path,
+        subject.selector.scheme,
+        subject.selector.value,
+        statement.predicate,
+        qualifier,
+    )
+
+
+def _with_many_valued_dispositions(
+    members: tuple[ClaimAuthoringPayload, ...],
+    *,
+    claim_ids: Mapping[str, str],
+    base_tree: SnapshotTree,
+) -> tuple[ClaimAuthoringPayload, ...]:
+    """Let an item add a value to a many-valued slot, as the ``add`` write verb does.
+
+    The slot law demands a disposition of every live Claim in a new Claim's
+    (subject, predicate, qualifier) slot as lowering stages it. On a ClaimType
+    of cardinality ``many`` those values do not contend: they stay, and each is
+    dispositioned ``not_tested`` unless the item dispositioned it itself. A
+    one-valued slot is left to the law: an item there names the Claim it
+    ``revises``.
+
+    ``members`` is in staging order (member identity), and the slot each Claim
+    sits in is followed through that order: it starts where the base holds it,
+    and every earlier member moves its own Claim -- a new one, or the lineage it
+    revises, out of whatever slot that lineage held -- into its own slot. So a
+    member is dispositioned against exactly the slot lowering will stage it into.
+    """
+
+    cardinality: dict[str, str | None] = {}
+    # Claim ID -> the slot it sits in as staging reaches the current member.
+    location: dict[str, _SlotKey] = {}
+    loaded: set[tuple[str, str, str, str]] = set()
+
+    def load(statement: ClaimPredicateKey) -> None:
+        key = _slot_key(statement, None)[:4]
+        if key in loaded:
+            return
+        loaded.add(key)
+        for claim in base_tree.claims_for(statement):
+            location.setdefault(
+                claim.identity.name, _slot_key(claim.statement, claim.statement.qualifier)
+            )
+
+    filled: list[ClaimAuthoringPayload] = []
+    for member in members:
+        statement = member.statement
+        predicate = statement.predicate
+        slot = _slot_key(statement, statement.qualifier)
+        own = member.revises or claim_ids[authoring_member_identity(member)]
+        if predicate not in cardinality:
+            path = claim_type_path(predicate)
+            content = base_tree.get(path)
+            cardinality[predicate] = (
+                None if content is None else parse_claim_type(content, path=path).cardinality
+            )
+        load(statement)
+        if member.revises is not None and member.revises not in location:
+            # The revised lineage sits under another subject or predicate.
+            revised_path = claim_path(member.revises)
+            revised = base_tree.get(revised_path)
+            if revised is not None:
+                load(parse_claim(revised, path=revised_path).statement)
+        if cardinality[predicate] != "many":
+            filled.append(member)
+            location[own] = slot
+            continue
+        explicit = {item.claim_id for item in member.existing_claim_dispositions}
+        added = sorted(
+            {claim_id for claim_id, held in location.items() if held == slot} - explicit - {own},
+            key=lambda item: item.encode("ascii"),
+        )
+        location[own] = slot
+        if not added:
+            filled.append(member)
+            continue
+        dispositions = (
+            *member.existing_claim_dispositions,
+            *(
+                AuthoringExistingClaimDisposition(claim_id=claim_id, disposition="not_tested")
+                for claim_id in added
+            ),
+        )
+        filled.append(
+            member.model_copy(
+                update={
+                    "existing_claim_dispositions": tuple(
+                        sorted(dispositions, key=lambda item: item.claim_id.encode("ascii"))
+                    )
+                }
+            )
+        )
+    return tuple(filled)
 
 
 def _intent(
@@ -513,13 +651,18 @@ class ProposalTerminalEgressSink:
             items=items,
             evidence=evidence,
         )
-        ordered = tuple(
-            sorted(members, key=lambda member: authoring_member_identity(member).encode("utf-8"))
+        ordered = _with_many_valued_dispositions(
+            tuple(
+                sorted(
+                    members, key=lambda member: authoring_member_identity(member).encode("utf-8")
+                )
+            ),
+            claim_ids={
+                identity: claim_ids[item_key] for identity, item_key in identity_to_item.items()
+            },
+            base_tree=self.instance.immutable_tree_at(request.accepted_coordinate.git_oid),
         )
-        rationale = (
-            f"Proposed by Procedure {request.procedure_identity.name} "
-            f"run {request.run_id} terminal {request.node_id}"
-        )
+        rationale = proposal_rationale(request, items=items, claim_ids=claim_ids)
         payload = ChangeSetAuthoringPayload(members=ordered, rationale=rationale)
         claim_identities = tuple(
             sorted(

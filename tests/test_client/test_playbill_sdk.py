@@ -497,7 +497,7 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
             return api.ProcedureReadiness.model_construct(
                 coordinate=_COORDINATE,
                 artifact=artifact,
-                procedure_artifact_digest=procedure_artifact_digest(artifact).tagged,
+                artifact_digest=procedure_artifact_digest(artifact).tagged,
             )
 
         def __init__(self) -> None:

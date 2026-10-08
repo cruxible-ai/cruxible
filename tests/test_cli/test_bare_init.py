@@ -188,6 +188,82 @@ def test_the_default_key_directory_never_lands_in_the_daemon_state_root(
     assert _whoami()["actor_id"] == "owner"
 
 
+def test_init_with_a_bearer_token_and_no_host_refuses_before_creating_one(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No one token allocates a host (the bootstrap secret) and inits it (its admin token)."""
+
+    monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", "the-bootstrap-secret")
+
+    result = _run("init")
+
+    assert result.exit_code != 0
+    assert "nothing was created" in result.output
+    assert "cruxible credential claim-bootstrap" in result.output
+    assert load_cli_context().instance_id is None
+    assert get_registry().list_instances() == []
+
+
+def test_init_of_a_remembered_initialized_host_refuses_before_writing(daemon: Path) -> None:
+    """The remembered host already ran init: refuse with the ways forward, not a key error."""
+
+    assert _run("init").exit_code == 0
+    instance_id = load_cli_context().instance_id
+    key_dir = daemon / "config" / "cruxible" / "keys" / str(instance_id) / "alice"
+    before = sorted(path.name for path in key_dir.iterdir())
+
+    again = _run("init")
+
+    assert again.exit_code != 0
+    assert f"Cruxible host {instance_id}" in again.output
+    assert "already" in again.output and "nothing was written" in again.output
+    assert "cruxible context clear" in again.output
+    assert "SigningKeyError" not in again.output
+    assert sorted(path.name for path in key_dir.iterdir()) == before
+    # With no key here (another machine's custody), the daemon's answer refuses it.
+    elsewhere = daemon / "elsewhere"
+    other = _run("init", "--key-dir", str(elsewhere))
+    assert other.exit_code != 0
+    assert "is already initialized" in other.output
+    assert not elsewhere.exists()
+
+
+def test_a_socket_init_creates_its_host_attached_to_the_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worktree attached to another host refuses at host creation, before any host exists."""
+
+    import subprocess
+
+    from cruxible_core.errors import ConfigError
+
+    workspace = tmp_path / "workspace"
+    subprocess.run(["git", "init", "-b", "main", str(workspace)], check=True, capture_output=True)
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
+    monkeypatch.setattr(playbill.getpass, "getuser", lambda: "alice")
+    sent: list[str | None] = []
+
+    class StubClient:
+        def create_host(self, *, workspace_root=None, dry_run=None, **_values):  # type: ignore[no-untyped-def]
+            sent.append(workspace_root)
+            raise ConfigError(
+                f"Workspace {workspace_root!r} is already attached to Cruxible host 'inst_old'"
+            )
+
+    monkeypatch.setattr(_common, "_get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, ["--server-socket", str(tmp_path / "d.sock"), "init"])
+
+    assert result.exit_code != 0
+    assert sent == [str(workspace.resolve())]
+    assert "already attached to Cruxible host 'inst_old'" in result.output
+    assert load_cli_context().instance_id is None
+    assert not (tmp_path / "config").exists()
+
+
 # -- F-001: a remembered credential never crosses to another daemon ------------
 
 OTHER = "http://cruxible-daemon-b"
