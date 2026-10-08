@@ -753,6 +753,63 @@ def test_startup_recovery_closes_the_exact_start_and_terminalizes_the_attempt(
     assert not writer_state.active
     assert executor.execute(prepared, accepted).status == "failed"
 
+    # Recovering the named, already-finalized invocation again reads that one run
+    # through the invocation locator: never the unrelated history around it.
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+
+    stream = prepared.admission.journal_stream
+    admission = prepared.admission
+    frames = LocalJournalBackend._read_frames
+    work = {"frames": 0, "all_records": 0}
+
+    def counted_frames(*args, **kwargs):  # type: ignore[no-untyped-def]
+        for item in frames(*args, **kwargs):
+            work["frames"] += 1
+            yield item
+
+    def no_all_records(*args, **kwargs):  # type: ignore[no-untyped-def]
+        work["all_records"] += 1
+        raise AssertionError("recovery scanned a whole partition")
+
+    def unrelated_history(count: int, partition: str) -> None:
+        head = fixture.journal.read_head(stream, partition)
+        fixture.journal.activate_writer(
+            stream, partition, fencing_token="unrelated", expected_head=head
+        )
+        writer = ProcedureExhaustWriter(
+            journal=fixture.journal, bodies=fixture.bodies, fencing_token="unrelated"
+        )
+        for ordinal in range(count):
+            writer.append(
+                stream=stream,
+                partition_id=partition,
+                event_kind="node_fired",
+                accepted_coordinate=admission.accepted_coordinate,
+                procedure_artifact_digest=admission.procedure_artifact_digest,
+                definition_digest=admission.definition_digest,
+                run_id=f"RUN-unrelated-{partition}-{ordinal}",
+                admission_binding_digest=admission.admission_binding_digest,
+                actor_context=admission.actor_context,
+                recorded_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+                payload={"ordinal": ordinal},
+            )
+
+    measured = []
+    for size, partition in ((10, "unrelated-a"), (100, "unrelated-b")):
+        unrelated_history(size, partition)
+        work.update(frames=0, all_records=0)
+        with monkeypatch.context() as patch:
+            patch.setattr(LocalJournalBackend, "_read_frames", staticmethod(counted_frames))
+            patch.setattr(LocalJournalBackend, "all_records", no_all_records)
+            assert procedure_run_service.service_recover_provider_invocations(
+                _Instance(),  # type: ignore[arg-type]
+                invocation_ids=(invocation_id,),
+                recorded_at=datetime(2026, 9, 1, 0, 0, 2, tzinfo=timezone.utc),
+            ) == (invocation_id,)
+        measured.append(dict(work))
+    assert measured[0]["all_records"] == 0
+    assert measured[0]["frames"] == measured[1]["frames"], measured
+
 
 def test_unclean_start_marks_recovery_required_without_completion_or_terminalization(
     tmp_path: Path,

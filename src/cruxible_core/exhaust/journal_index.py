@@ -38,10 +38,12 @@ _R = TypeVar("_R")
 #: Bumped whenever a table or index changes shape: an index file written under
 #: another version is dropped and rebuilt from the retained journal, which is
 #: the authority (this file is a disposable cache).
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _TABLES = (
     "capture_selectors",
     "capture_progress",
+    "invocation_locators",
+    "invocation_progress",
     "open_runs",
     "run_tallies",
     "records",
@@ -78,6 +80,13 @@ CREATE INDEX IF NOT EXISTS records_stream_position ON records(stream,id);
 CREATE INDEX IF NOT EXISTS records_partition_position
  ON records(stream,partition_id,event_kind,id);
 CREATE TABLE IF NOT EXISTS capture_progress(stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL);
+-- The Provider invocation each provider_invocation_started record names, projected
+-- once per record from its payload: a named invocation finds its run directly.
+CREATE TABLE IF NOT EXISTS invocation_locators (
+ record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
+ invocation_id TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS invocation_by_id ON invocation_locators(invocation_id, record_id);
+CREATE TABLE IF NOT EXISTS invocation_progress(stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL);
 -- Admissions whose run has no attempt_finalized record yet, keyed by the
 -- admission row: running runs are read without visiting finished ones.
 CREATE TABLE IF NOT EXISTS open_runs (
@@ -663,6 +672,66 @@ class JournalIndex:
         if len(rows) > limit:
             return partitions, {"generation": generation, "ordinal": rows[limit - 1]["id"]}
         return partitions, None
+
+    def invocation_runs(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        bodies: Any,
+        invocation_ids: tuple[str, ...],
+    ) -> dict[str, tuple[str, str]]:
+        """invocation id -> (run id, partition) of the run that started it, for the named ids.
+
+        Starts not yet projected are read once (their payload names the
+        invocation) and recorded; every later lookup is one index range per id.
+        An id no retained start names is absent from the answer.
+        """
+        from cruxible_core.exhaust.records import parse_journal_payload
+        from cruxible_core.storage.cas import BodyAccessContext
+
+        access = BodyAccessContext(principal_id="provider-recovery", can_read_body=True)
+        with self.connection() as conn:
+            while True:
+                progress = conn.execute(
+                    "SELECT record_id FROM invocation_progress WHERE stream=?", (_key(stream),)
+                ).fetchone()
+                fresh = conn.execute(
+                    "SELECT * FROM records INDEXED BY records_kind_position WHERE stream=? "
+                    "AND event_kind='provider_invocation_started' AND id>? ORDER BY id LIMIT 1024",
+                    (_key(stream), progress[0] if progress else 0),
+                ).fetchall()
+                if not fresh:
+                    break
+                for row in fresh:
+                    stored = self.read_row(row)
+                    payload = parse_journal_payload(
+                        bodies.read(stored.record.payload_digest, access=access)
+                    )
+                    if not isinstance(payload, dict) or not isinstance(
+                        payload.get("invocation_id"), str
+                    ):
+                        raise JournalIntegrityError(
+                            "Provider invocation start payload names no invocation"
+                        )
+                    conn.execute(
+                        "INSERT INTO invocation_locators VALUES (?,?)",
+                        (row["id"], payload["invocation_id"]),
+                    )
+                conn.execute(
+                    "INSERT OR REPLACE INTO invocation_progress VALUES(?,?)",
+                    (_key(stream), fresh[-1]["id"]),
+                )
+            found: dict[str, tuple[str, str]] = {}
+            for invocation_id in invocation_ids:
+                row = conn.execute(
+                    "SELECT r.run_id,r.partition_id FROM invocation_locators l "
+                    "JOIN records r ON r.id=l.record_id "
+                    "WHERE l.invocation_id=? AND r.stream=? ORDER BY l.record_id LIMIT 1",
+                    (invocation_id, _key(stream)),
+                ).fetchone()
+                if row is not None and row[0] is not None:
+                    found[invocation_id] = (str(row[0]), str(row[1]))
+            return found
 
     def captures(
         self,

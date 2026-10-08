@@ -4592,12 +4592,13 @@ def service_recover_provider_invocations(
     handled: set[str] = set()
 
     def run_groups() -> Iterator[tuple[str, tuple[StoredProcedureJournalRecordV1, ...]]]:
-        """Each run's records, open runs first; finished history only for a named leftover.
+        """Each run's records: every open run, then the run of each named leftover.
 
         An unmatched start lives in a run that has not finalized, so the open-run
         set covers the startup scan. A lease recovery may name an invocation
-        whose run already finalized (its completion is durable): only then are
-        the remaining runs read, to report it handled.
+        whose run already finalized (its completion is durable): that run is
+        found through the index's invocation locator and read alone, to report
+        the invocation handled. Finished history is never scanned.
         """
 
         seen: set[str] = set()
@@ -4605,16 +4606,19 @@ def service_recover_provider_invocations(
             seen.add(locator.run_id)
             yield locator.partition_id, journal.select_records(stream, run_id=locator.run_id)
         named = set(invocation_ids) | set(failures)
-        if not named - handled - {item[1] for item in observed_failures}:
+        leftover = named - handled - {item[1] for item in observed_failures}
+        if not leftover:
             return
-        for partition_id in journal.partition_ids(stream):
-            by_run: dict[str, list[StoredProcedureJournalRecordV1]] = {}
-            for stored in journal.all_records(stream, partition_id):
-                run_id = stored.record.run_id
-                if run_id is not None and run_id not in seen:
-                    by_run.setdefault(run_id, []).append(stored)
-            for grouped in by_run.values():
-                yield partition_id, tuple(grouped)
+        located = journal.index.invocation_runs(
+            stream,
+            bodies=bodies,
+            invocation_ids=tuple(sorted(leftover, key=str.encode)),
+        )
+        for run_id, partition_id in sorted(set(located.values())):
+            if run_id in seen:
+                continue
+            seen.add(run_id)
+            yield partition_id, journal.select_records(stream, run_id=run_id)
 
     for partition_id, records in run_groups():
         if not invocation_ids and not failures:
