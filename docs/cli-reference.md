@@ -1606,7 +1606,12 @@ A completed Source run reports, per occurrence, the `SourceReadReceipt` the
 daemon minted for the exact bytes it read and the digest of the Capture those
 bytes became; `--json` carries both in `source_observations`. A direct Source
 run is identified by its evaluation instant, so re-running at the same instant
-replays the retained observation rather than reading the source again.
+replays the retained observation rather than reading the source again. Without
+`--evaluation-time` a direct run evaluates at the instant the daemon admits it
+(the invocation is its trigger) and records that instant as the run's
+`evaluation_time`, so its Capture is observed when it was read and a
+capture-landing Trigger accepted before the run fires on it; pass the first
+run's `evaluation_time` to replay it.
 
 `get Procedure:NAME` names the unsupported nodes behind its `runnable` answer
 before anything runs. Runs append replay-verifiable journal records, and
@@ -1797,7 +1802,9 @@ instant there. Each cadence or cron Trigger keeps its own chain, whatever other
 Triggers aimed at the Line fired: the enablement matches every instant of its
 schedule from where its own matching reached, one at a time, skipping each
 tick already delivered (matched, or recorded by `evaluate`). A tick is its
-scheduled instant, never when it ran, so dispatching recovered ticks late
+scheduled instant, never when it ran: a tick dispatched late records that
+instant as its run's `occurrence_evaluation_time` (the run is still admitted
+at the daemon's instant), dispatching recovered ticks late
 never skips a live one, and a later tick evaluated first never stands in for
 an earlier one still owed. An enablement that fell behind matches the ticks
 it owes in order, never passing one undelivered. No tick is due before the

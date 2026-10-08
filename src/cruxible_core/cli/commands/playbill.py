@@ -5353,7 +5353,14 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
 @procedure_group.command("run")
 @click.argument("name")
 @click.argument("input_file", type=PayloadFile())
-@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@click.option(
+    "--evaluation-time",
+    default=None,
+    help=(
+        "Explicit ISO-8601 evaluation time; default: the instant the daemon admits the run. "
+        "Pass a run's evaluation_time to replay it."
+    ),
+)
 @click.option(
     "--at",
     "at_file",

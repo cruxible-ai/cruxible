@@ -1285,8 +1285,10 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
         timestamp="2026-08-24T17:00:00.000000Z",
     )
     pinned = instance.accepted_coordinate()
+    # A replay is the same coordinate AND the same evaluation instant.
     request = ProcedureRunRequest(
         at=AcceptedCoordinate.from_internal(pinned),
+        evaluation_time=READ_TIME,
         input={},
     )
 
