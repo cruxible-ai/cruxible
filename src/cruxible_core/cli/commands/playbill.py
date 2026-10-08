@@ -3117,7 +3117,10 @@ def propose_claim_type(
             ),
             command_name="cruxible claim-type propose",
         )
-        _emit_json(envelope_result.model_dump(mode="json"))
+        if output_json:
+            _emit_json(envelope_result.model_dump(mode="json"))
+            return
+        _echo_claim_type_proposal(envelope_result, envelope_result.lint)
         return
     assert input_path is not None
     try:
@@ -3142,7 +3145,31 @@ def propose_claim_type(
         ),
         command_name="cruxible claim-type propose",
     )
-    _emit_json(input_result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(input_result.model_dump(mode="json"))
+        return
+    _echo_claim_type_proposal(input_result.proposal, input_result.lint)
+
+
+def _echo_claim_type_proposal(
+    inspection: contracts.ProposalInspection, lint: contracts.ClaimTypeProposalLint | None
+) -> None:
+    """A ClaimType proposal in a few lines; ``--json`` carries the whole record."""
+
+    admission = inspection.proposal.get("admission") or {}
+    evaluation = inspection.proposal.get("evaluation") or {}
+    proposal_id = admission.get("proposal_id") if isinstance(admission, Mapping) else None
+    verdict = evaluation.get("verdict", "-") if isinstance(evaluation, Mapping) else "-"
+    click.echo(f"{inspection.status}  {proposal_id or '-'}  verdict={verdict}")
+    diagnostics = evaluation.get("diagnostics", ()) if isinstance(evaluation, Mapping) else ()
+    for item in diagnostics:
+        if isinstance(item, Mapping):
+            click.echo(f"  {item.get('code')}: {printable(str(item.get('message', '')))}")
+    for warning in () if lint is None else lint.warnings:
+        click.echo(f"lint: {warning.code} at {warning.field_path}")
+    if proposal_id:
+        click.echo(f"next: cruxible get {proposal_id}")
+    echo_preview_next(inspection.status, inspection.accepted_coordinate)
 
 
 @claim_type_group.command("migrate")
