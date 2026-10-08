@@ -2130,12 +2130,14 @@ class PlaybillInstance:
             return self._projection_sources(
                 bind_current_projection(paths["projections"], expected=verified)
             )
+        # Naming the manifest needs only this coordinate. The replay-proven
+        # coordinates of every generation are built only for a rebuild, so a
+        # bind at a base behind the head costs the same at any history length.
         assembler = ProjectionAssembler(
             self._ledger,
             accepted=verified,
             publication_directory=paths["projections"],
             bodies=ContentAddressedBodyStore(paths["cas"]),
-            accepted_coordinates_by_sequence=self._accepted_coordinates_by_sequence(),
         )
         request = assembler.request(
             output_staging_directory=paths["projections"]
@@ -2146,6 +2148,7 @@ class PlaybillInstance:
             # Only replay-proven coordinates reach this point. Rebuild a missing
             # historical projection under its own compiler, without changing
             # serving or rewriting the accepted record/receipt.
+            assembler.accepted_coordinates_by_sequence = self._accepted_coordinates_by_sequence()
             assembler.assemble(request)
         return self._projection_sources(bind_projection(manifest_path, expected=verified))
 
