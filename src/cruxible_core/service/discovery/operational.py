@@ -29,7 +29,6 @@ from cruxible_client.contracts.claims import (
     SubjectClaimObject,
 )
 from cruxible_client.contracts.errors import CruxibleError
-from cruxible_client.contracts.get_reads import summary_value
 from cruxible_client.contracts.operational_reads import (
     CAPTURE_HANDLE_HEX,
     LINE_CARD_ARMS,
@@ -67,6 +66,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
 from cruxible_client.contracts.procedures.windows import CaptureEventWindow, FixedWindow
+from cruxible_client.contracts.read_values import summary_value
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (

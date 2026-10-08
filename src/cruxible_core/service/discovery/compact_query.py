@@ -57,7 +57,6 @@ from cruxible_client.contracts.compact_query import (
     QueryRequest,
     QueryResultRecord,
 )
-from cruxible_client.contracts.get_reads import summary_value
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
@@ -96,6 +95,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryFilter as GrammarFilter,
 )
 from cruxible_client.contracts.query.results import ClaimQueryResult
+from cruxible_client.contracts.read_values import summary_value
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.backends import ClaimQueryFactsV1
@@ -2505,7 +2505,7 @@ def service_playbill_query(
     page = tuple(answer.candidates[start : start + request.limit])
     truncated = start + len(page) < len(answer.candidates)
     # Every row is bounded by get's card rule: a string over 500 characters is
-    # cut to {value, truncated, length}; get(detail="evidence") reads it whole.
+    # a TruncatedText preview; get(claim, detail="evidence") reads it whole.
     rows = [
         {key: value if key == "flags" else summary_value(value) for key, value in row.items()}
         for row in answer.render(page)

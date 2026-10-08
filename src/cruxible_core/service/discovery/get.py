@@ -92,16 +92,15 @@ from cruxible_client.contracts.get_reads import (
     GetSubjectCard,
     GetSubjectClaim,
     GetTriggerCard,
-    GetTruncatedText,
     ReadFlag,
     ReadSurface,
-    summary_value,
 )
 from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.query.definitions import QueryDefinition
+from cruxible_client.contracts.read_values import TruncatedText, summary_value
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
@@ -832,7 +831,7 @@ def _value_was_cut(
 ) -> bool:
     if surface == "cli":
         return get_value_display(value, width=width).truncated
-    if isinstance(value, GetTruncatedText):
+    if isinstance(value, TruncatedText):
         return True
     return isinstance(value, list | tuple) and any(
         _value_was_cut(item, surface=surface, width=width) for item in value

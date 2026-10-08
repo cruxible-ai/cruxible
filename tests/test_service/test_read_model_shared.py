@@ -363,17 +363,17 @@ def _exact_query(instance: Any, **fields: Any) -> QueryResultRecord:
 def test_get_and_query_show_an_exact_content_value_as_its_text(
     exact_world: tuple[Any, dict[str, Any]],
 ) -> None:
-    from cruxible_client.contracts.get_reads import (
+    from cruxible_client.contracts.read_values import (
         GET_SUMMARY_TEXT_MAX_CHARS,
         ExactContentRef,
-        GetTruncatedText,
+        TruncatedText,
     )
 
     instance, seeded = exact_world
     ruling, long_ruling, binary = seeded["wi-42"], seeded["wi-long"], seeded["wi-bin"]
     text = _RULING.decode()
-    cut = GetTruncatedText(
-        value=_LONG_RULING.decode()[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(_LONG_RULING)
+    cut = TruncatedText(
+        preview=_LONG_RULING.decode()[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(_LONG_RULING)
     )
     marker = ExactContentRef(
         exact_content="binary", content_digest=binary.digest, length=len(_BINARY)
@@ -485,9 +485,9 @@ def test_query_reserves_no_digest_row_key() -> None:
 
 
 def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
-    from cruxible_client.contracts.get_reads import (
+    from cruxible_client.contracts.read_values import (
         GET_SUMMARY_TEXT_MAX_CHARS,
-        GetTruncatedText,
+        TruncatedText,
     )
     from tests.core_support._claim_authoring_support import service_propose_playbill_claim
     from tests.core_support._knowledge_loop_support import activate, authoring, subject_shell
@@ -509,7 +509,7 @@ def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
             timestamp="2026-08-16T20:10:00.000000Z",
         ),
     )
-    cut = GetTruncatedText(value=long_note[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_note))
+    cut = TruncatedText(preview=long_note[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_note))
 
     rows = {
         row["subject_id"]: row

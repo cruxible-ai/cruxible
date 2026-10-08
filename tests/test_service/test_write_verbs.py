@@ -1343,6 +1343,25 @@ def test_set_with_expect_replaces_only_the_value_it_expected(instance: PlaybillI
     assert empty.code == "cruxible.write.slot_changed" and "holds no value" in empty.message
 
 
+def test_a_cut_value_is_never_offered_as_the_value_to_expect(instance: PlaybillInstance) -> None:
+    """A long held value shows as a preview; the repair names the read of the whole one."""
+
+    long_title = "A long title. " * 60
+    first = _write(instance, _set(WI1, "title", long_title))
+    assert first.status == "accepted", first
+
+    refusal = _refusal(_write(instance, _set(WI1, "title", "Short", expect="Other")))
+
+    assert refusal.code == "cruxible.write.slot_changed"
+    assert "TruncatedText(" in refusal.message
+    claim = first.changes[0].claim
+    assert refusal.repair == (
+        "Read it again; to write over what it holds now, expect its whole value, "
+        f'which get({claim}, detail="evidence") reads'
+    )
+    assert _write(instance, _set(WI1, "title", "Short", expect=long_title)).status == "accepted"
+
+
 def test_expect_is_checked_like_a_value_before_it_is_compared(instance: PlaybillInstance) -> None:
     member = _refusal(_write(instance, _set(WI1, "status", "done", expect="dne")))
     assert member.code == "cruxible.write.value_not_member"

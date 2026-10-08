@@ -139,3 +139,49 @@ def test_values_records_each_claim_it_served(
     assert [names for op, _at, names in recorded if op == "playbill.claim.get"] == [
         (f"Claim:{title}",)
     ]
+
+
+def test_a_long_value_is_typed_truncated_text_and_evidence_reads_it_whole(
+    served: tuple[TestClient, str, str], tmp_path: Path
+) -> None:
+    """A preview is a declared type on every read that cuts it, never a loose dict.
+
+    World.values, query rows and Claim cells and the write outcome all carry the
+    same TruncatedText; a short value is unchanged; the documented read returns
+    the whole value.
+    """
+
+    from cruxible_client.contracts.compact_query import QueryClaim
+    from cruxible_client.contracts.get_reads import GetEvidence
+    from cruxible_client.contracts.read_values import (
+        GET_SUMMARY_TEXT_MAX_CHARS,
+        TruncatedText,
+    )
+
+    client, instance_id, _actor = served
+    pb = _sdk(client, instance_id, tmp_path)
+    long_title = "A title long enough to cut. " * 30
+    assert len(long_title) > GET_SUMMARY_TEXT_MAX_CHARS
+    written = pb.set(WI1, "title", long_title, because="Named in review.").changes[0]
+    pb.set(WI1, "status", "ready", because="Checked.")
+    cut = TruncatedText(preview=long_title[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_title))
+
+    values = {item.predicate: item for item in pb.world().values(subjects=[WI1])}
+
+    title = values[TITLE]
+    assert isinstance(title.value, TruncatedText) and title.value == cut
+    assert title.value.read_whole == 'get(claim, detail="evidence")'
+    assert values[f"{KIND}.status"].value == "ready"
+    evidence = pb.get(title.claim, detail="evidence").value
+    assert isinstance(evidence, GetEvidence) and evidence.value == long_title
+
+    page = pb.query(
+        KIND, where=[{"field": "subject_id", "eq": "wi-1"}], select=["title"], claims=True
+    ).page
+    (row,) = page.rows
+    assert row["title"] == cut
+    cells = row["claims"]
+    assert isinstance(cells, dict)
+    (claim,) = cells["title"]
+    assert isinstance(claim, QueryClaim) and claim.value == cut
+    assert written.after == cut

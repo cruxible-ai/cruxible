@@ -29,6 +29,7 @@ from cruxible_client.contracts.operational_reads import (
     GetResolutionContractCard,
     LiveView,
 )
+from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.repairs import ServedRepair
 
 GetDetail = Literal["summary", "evidence", "why", "history", "proof", "body"]
@@ -64,8 +65,6 @@ ReadSurface = Literal["mcp", "cli", "sdk"]
 GET_BODY_DEFAULT_MAX_BYTES = 64 * 1024
 #: The widest byte range one ``get(detail="body")`` returns.
 GET_BODY_RANGE_MAX_BYTES = 256 * 1024
-#: A summary card shows at most this many characters of one string value.
-GET_SUMMARY_TEXT_MAX_CHARS = 500
 #: Revisions per ``get(detail="history")`` page, by default and at most.
 GET_HISTORY_DEFAULT_LIMIT = 20
 GET_HISTORY_MAX_LIMIT = 200
@@ -176,46 +175,6 @@ class GetRequest(_StrictGetModel):
         return self
 
 
-class GetTruncatedText(_StrictGetModel):
-    """A long string value cut short on a summary card.
-
-    ``value`` is its first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters and
-    ``length`` its whole length; ``detail="evidence"`` or ``"proof"`` reads the
-    whole value.
-    """
-
-    value: str
-    truncated: Literal[True] = True
-    length: int = Field(gt=GET_SUMMARY_TEXT_MAX_CHARS)
-
-
-def summary_value(value: Any) -> Any:
-    """A value as a summary card shows it: long strings cut, lists element-wise."""
-
-    if isinstance(value, str) and len(value) > GET_SUMMARY_TEXT_MAX_CHARS:
-        return GetTruncatedText(value=value[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(value))
-    if isinstance(value, list | tuple):
-        return [summary_value(item) for item in value]
-    return value
-
-
-class ExactContentRef(_StrictGetModel):
-    """An exact-content Claim value shown by digest, because it cannot be shown as text.
-
-    An exact-content value reads as its UTF-8 text wherever a value is shown.
-    This marker stands in for the text when there is none to show: the bytes are
-    not UTF-8 text (``binary``), or the store no longer holds them
-    (``unavailable``). It never raises. Every caller who may read a Claim reads
-    its exact-content value; nothing is withheld by permission.
-    """
-
-    exact_content: Literal["binary", "unavailable"]
-    content_digest: str
-    # The value's length in bytes, when it is known without reading the bytes
-    # (the accepted span) or they were read.
-    length: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
-
-
 class GetCoordinate(_StrictGetModel):
     """Which accepted generation answered: the git oid's 12-hex prefix and its sequence."""
 
@@ -225,7 +184,7 @@ class GetCoordinate(_StrictGetModel):
 
 class GetContender(_StrictGetModel):
     claim: str
-    value: Any
+    value: ShownValue
     # An exact-content value's digest; its text is ``value``.
     content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     verdict: str
@@ -237,7 +196,8 @@ class GetClaimCard(_StrictGetModel):
     predicate: str
     predicate_full: str
     qualifier: str | None = Field(default=None, exclude_if=_omit_none)
-    value: Any
+    # The value as a summary shows it: a long string is a TruncatedText preview.
+    value: ShownValue
     # An exact-content value's digest, the proof its text is ``value``.
     content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     verdict: str
@@ -255,7 +215,7 @@ class GetSubjectClaim(_StrictGetModel):
     # The Claim behind the value; a list, aligned with ``value``, when the row
     # shows several (a many-valued predicate or a contested slot).
     claim: str | tuple[str, ...]
-    value: Any
+    value: ShownValue
     # An exact-content row's digests, aligned with ``claim`` the same way.
     content_digest: str | tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
     flags: tuple[ReadFlag, ...] = ()
@@ -572,7 +532,7 @@ class GetRevision(_StrictGetModel):
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     approved_by: tuple[str, ...] = ()
     lifecycle: str | None = Field(default=None, exclude_if=_omit_none)
-    value: Any = Field(default=None, exclude_if=_omit_none)
+    value: ShownValue = Field(default=None, exclude_if=_omit_none)
     content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     digest: str = Field(description="Artifact digest prefix of this revision.")
     # Read a cut value in full at this revision's accepted generation.
@@ -583,7 +543,7 @@ class GetHistory(_StrictGetModel):
     """One page of revisions, newest first; ``revision`` counts from the oldest.
 
     Each revision's value follows the summary card rule: a string over 500
-    characters is cut to ``{value, truncated: true, length}``.
+    characters is a ``TruncatedText`` preview, read whole through ``next``.
     """
 
     revisions: tuple[GetRevision, ...]
@@ -660,9 +620,7 @@ __all__ = [
     "GET_DETAILS_BY_KIND",
     "GET_HISTORY_DEFAULT_LIMIT",
     "GET_HISTORY_MAX_LIMIT",
-    "GET_SUMMARY_TEXT_MAX_CHARS",
     "ByteRange",
-    "ExactContentRef",
     "GetAcquisitionInput",
     "GetApprovalPolicyCard",
     "GetAttestationEvidence",
@@ -703,8 +661,6 @@ __all__ = [
     "GetSourceAcquisitionPolicyCard",
     "GetSubjectCard",
     "GetSubjectClaim",
-    "GetTruncatedText",
     "ReadFlag",
     "ReadSurface",
-    "summary_value",
 ]

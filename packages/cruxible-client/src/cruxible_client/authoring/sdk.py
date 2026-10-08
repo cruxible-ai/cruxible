@@ -197,7 +197,6 @@ from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import (
     GET_BATCH_MAX_REFS,
     ByteRange,
-    ExactContentRef,
     GetBatchRequest,
     GetDetail,
     GetProcedureCard,
@@ -229,6 +228,7 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
+from cruxible_client.contracts.read_values import ExactContentRef
 from cruxible_client.contracts.records import Record, RecordConstructor
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReference,

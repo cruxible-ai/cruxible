@@ -22,7 +22,7 @@ the nearest valid names.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias
 
 from pydantic import (
     BaseModel,
@@ -36,6 +36,7 @@ from cruxible_client.contracts import AcceptedCoordinate
 from cruxible_client.contracts.authoring.models import WorkingSelectionObservation
 from cruxible_client.contracts.codes import CurrentCode, code_told_union
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
+from cruxible_client.contracts.read_values import ShownValue
 
 SUBJECT_REF_PATTERN = r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$"
 CLAIM_ID_PATTERN = r"^(?:Claim:)?CLM-[0-9a-f]{32}$"
@@ -398,8 +399,10 @@ class ChangeOutcome(_StrictWriteModel):
     subject: str | None = Field(default=None, exclude_if=_omit_none)
     field: str | None = Field(default=None, exclude_if=_omit_none)
     predicate: str | None = Field(default=None, exclude_if=_omit_none)
-    before: Any = None
-    after: Any = None
+    # The slot's value before and after, as a summary shows it: a long string is
+    # a TruncatedText preview, read whole with get(claim, detail="evidence").
+    before: ShownValue = None
+    after: ShownValue = None
     claim: str | None = Field(
         default=None,
         exclude_if=_omit_none,

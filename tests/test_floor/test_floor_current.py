@@ -15,7 +15,7 @@ from cruxible_client.contracts.documents import (
     document_path,
     render_document,
 )
-from cruxible_client.contracts.get_reads import ExactContentRef
+from cruxible_client.contracts.read_values import ExactContentRef
 from cruxible_client.contracts.write import WriteOutcome, WriteRequest
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance

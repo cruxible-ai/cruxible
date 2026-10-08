@@ -1303,7 +1303,9 @@ class World:
         Lighter than ``prefetch`` when only values and verdicts are wanted: one
         ``query`` per Subject kind asks for each cell's Claims, including those
         resolution overturned or refused. Strings are subject kind/id addresses
-        or paths and fully qualified predicates.
+        or paths and fully qualified predicates. A string value over 500
+        characters is a ``TruncatedText`` (``preview``, ``length``), never the
+        value: ``cx.get(item.claim, detail="evidence").evidence.value`` reads it whole.
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
@@ -1353,6 +1355,7 @@ class World:
         """Every Claim value of one Subject and predicate batch, every page of it."""
         from cruxible_client.contracts.compact_query import (
             QUERY_MAX_LIMIT,
+            QueryClaim,
             QueryClaimValue,
             QueryRequest,
         )
@@ -1388,10 +1391,17 @@ class World:
                 column.name: column.predicate for column in page.columns if column.predicate
             }
             for row in page.rows:
-                for column, entries in (row.get("claims") or {}).items():
+                cells = row.get("claims") or {}
+                if not isinstance(cells, dict):
+                    raise WorldStructureError("Claim values returned a row with no Claim cells")
+                for column, entries in cells.items():
+                    if not isinstance(entries, list):
+                        raise WorldStructureError("Claim values returned a malformed Claim cell")
                     values.extend(
-                        QueryClaimValue.model_validate(
-                            {**entry, "subject": row["subject"], "predicate": predicate_of[column]}
+                        QueryClaimValue(
+                            **dict(QueryClaim.model_validate(entry)),
+                            subject=str(row["subject"]),
+                            predicate=predicate_of[column],
                         )
                         for entry in entries
                     )

@@ -110,8 +110,11 @@ any reference form you have seen (a Claim id or prefix, `kind/id`, a predicate,
 ...), answers values first with verdict flags,
 and refuses a wrong name with the nearest names. `detail` goes deeper:
 `evidence`, `why`, `history` (newest first, paged), `proof`, or a Document
-`body` by byte range. A summary cuts a long string value to 500 characters and
-marks it `truncated`; `evidence` and `proof` read it whole.
+`body` by byte range. A summary -- a card, a `query` row or Claim cell,
+`world.values`, a write's before/after -- shows a string value over 500
+characters as a `TruncatedText` (`truncated: true`, `preview`, `length`,
+`read_whole`), never as the value: `get(claim, detail="evidence")` reads it
+whole (`evidence.value`), as does `proof`.
 Use `cx.query(name=..., params=..., receipt="full")` for a named query's replay
 receipt (the Claims each row read, paths, verdict), checking truncation before
 assuming completeness.

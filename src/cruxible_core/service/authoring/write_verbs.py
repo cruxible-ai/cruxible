@@ -84,11 +84,9 @@ from cruxible_client.contracts.errors import (
     SettlementIntegrityError,
     WriteRefusalError,
 )
-from cruxible_client.contracts.get_reads import (
-    ReadSurface,
-    summary_value,
-)
+from cruxible_client.contracts.get_reads import ReadSurface
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.read_values import TruncatedText, summary_value
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_client.contracts.temporal import utc_now
@@ -351,6 +349,14 @@ def _brief(value: object) -> str:
 
     text = repr(value)
     return text if len(text) <= _BRIEF_MAX else f"{text[: _BRIEF_MAX - 1]}\u2026"
+
+
+def _was_cut(value: object) -> bool:
+    """Whether a shown value is, or holds, a TruncatedText preview."""
+
+    return isinstance(value, TruncatedText) or (
+        isinstance(value, list) and any(_was_cut(item) for item in value)
+    )
 
 
 def _value_key(value: object) -> str:
@@ -623,13 +629,18 @@ class _Planner:
         expected = [summary_value(value) for value in wanted.values()]
         spelled = expected[0] if isinstance(expect, str | int | float | bool) else expected
         repair_value: object = None if not current else current[0] if len(current) == 1 else current
+        # A preview is never a value to expect: name the read that returns it whole.
+        cut = [item.claim_id for item, shown in zip(live, current, strict=True) if _was_cut(shown)]
         raise _refuse(
             "cruxible.write.slot_changed",
             f"{label} {now}, not {spelled!r} as expected",
             change=index,
             candidates=tuple(item.claim_id for item in live),
             repair=(
-                "Read it again; to write over what it holds now, expect "
+                "Read it again; to write over what it holds now, expect its whole value, "
+                f'which get({cut[0]}, detail="evidence") reads'
+                if cut
+                else "Read it again; to write over what it holds now, expect "
                 + ("[]" if repair_value is None else json.dumps(repair_value))
             ),
             field_path=f"changes[{index}].expect",
