@@ -271,12 +271,13 @@ def service_playbill_proposal_status(
 
 
 def open_proposal_count(instance: PlaybillInstance) -> int:
-    """How many proposals ``proposal list --status open`` shows, counted on the open locator.
+    """How many proposals ``proposal list --status open`` shows, counted on the open locators.
 
     Open is a complete candidate (admission retained), neither refused,
-    accepted nor withdrawn, whose parent is the head's semantic root: exactly
-    the rows of the open-parent index under that root, so the count never
-    visits settled history.
+    withdrawn nor accepted by the coordinate's own history sequence, whose
+    parent is the coordinate's semantic root. The two locators of
+    ``_open_candidates`` keep the listing's snapshot: a proposal accepted after
+    the bound sequence is still open at it. Settled history is never visited.
     """
 
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
@@ -284,14 +285,15 @@ def open_proposal_count(instance: PlaybillInstance) -> int:
         if bound is None:
             return 0
         connection, sequence = bound
-        (count,) = connection.execute(
-            "SELECT count(*) FROM proposals INDEXED BY proposals_by_open_parent "
-            "WHERE evaluation_status='candidate' AND withdrawal_path IS NULL "
-            "AND accepted_sequence IS NULL AND candidate_parent_semantic_root=? "
-            "AND admission_path IS NOT NULL",
-            (coordinate.semantic_root,),
-        ).fetchone()
-        return int(count)
+        return len(
+            _open_candidates(
+                connection,
+                sequence,
+                columns="proposal_id,admitted_at_us",
+                where="candidate_parent_semantic_root=?",
+                parameters=(coordinate.semantic_root,),
+            )
+        )
 
 
 def open_proposal_at_target(

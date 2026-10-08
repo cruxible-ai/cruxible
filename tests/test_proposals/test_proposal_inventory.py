@@ -847,3 +847,27 @@ def test_full_principal_registry_rejects_unsigned_sql_mutation(tmp_path, monkeyp
     monkeypatch.setattr(TypedStateReader, "principal_registry", replaced)
     with pytest.raises(PrincipalIntegrityError):
         instance.accepted_principal_registry(coordinate)
+
+
+def test_the_open_count_keeps_the_listing_snapshot_across_a_concurrent_acceptance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A proposal accepted after the coordinate was captured is still open at it."""
+
+    instance, owner = seed_claims(tmp_path)
+    proposed = service_propose_playbill_claim(
+        instance,
+        authoring=authoring("wi-77", "ready", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="accepted-later",
+        timestamp=TIMESTAMP,
+    )
+    captured = instance.accepted_coordinate()
+    assert open_proposal_count(instance) == 1
+    activate(instance, owner, proposed)
+    assert open_proposal_count(instance) == 0
+    # The acceptance lands between capturing the coordinate and reading the index.
+    monkeypatch.setattr(instance, "accepted_coordinate", lambda: captured)
+    listed = service_list_playbill_proposals(instance, status="open").entries
+    assert len(listed) == 1
+    assert open_proposal_count(instance) == len(listed)
