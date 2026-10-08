@@ -127,6 +127,18 @@ SERVED_AUTHORITY_TERMS: dict[EffectiveRungTermV1, ServedAuthorityTerm] = {
     "mandate_grant": "mandate_grant",
 }
 
+#: A settle terminal whose effective rung reaches propose but not settle
+#: proposes instead -- the same fallback a settle mandate's failing condition
+#: takes -- for this reason, suffixed with the term that capped it.
+SETTLE_AUTHORITY_CAPPED = "cruxible.settle.authority_capped"
+
+
+def settle_authority_capped_reason(term: EffectiveRungTermV1) -> str:
+    """The fallback reason a capped settle terminal records: the cap and its term."""
+
+    return f"{SETTLE_AUTHORITY_CAPPED}_by_{SERVED_AUTHORITY_TERMS[term]}"
+
+
 #: Below rung 0 there is no governed egress at all.  A term reaches this value
 #: only by refusing to interpret something, never by grading it.
 NO_TERMINAL_EGRESS = -1
@@ -479,6 +491,12 @@ class TerminalEgressRequestV1(_StrictEgressModel):
     actor_context: GovernedActorContext
     items: tuple[TerminalEgressItemV1, ...]
     prepared_at: datetime = Field(description="Reads EVALUATION INSTANT.")
+    #: The term that capped a settle terminal at propose. Such a request asks
+    #: for propose authority (its required rung is propose's), and its sink
+    #: delivers the settle terminal's proposal fallback instead of settling.
+    capped_by: EffectiveRungTermV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     _digests = field_validator("procedure_artifact_digest", "admission_binding_digest")(_tagged)
 
@@ -489,7 +507,7 @@ class TerminalEgressRequestV1(_StrictEgressModel):
 
     @model_validator(mode="after")
     def _shape(self) -> "TerminalEgressRequestV1":
-        if self.required_rung != TERMINAL_REQUIRED_RUNGS[self.kind]:
+        if self.required_rung != _requested_rung(self):
             raise ValueError("terminal egress required rung disagrees with its kind")
         if self.required_rung > self.effective_rung:
             raise ValueError("terminal egress above the effective rung is never requested")
@@ -600,6 +618,18 @@ def procedure_producer_receipt_digest(receipt: ProcedureProducerReceiptV1) -> st
     ).tagged
 
 
+def _requested_rung(request: TerminalEgressRequestV1) -> int:
+    """The rung a request asks for: its kind's, or propose's for a capped settle."""
+
+    if request.capped_by is None:
+        return TERMINAL_REQUIRED_RUNGS[request.kind]
+    if request.kind != "settle_change_set" or request.capped_by != request.limiting_term:
+        raise ValueError("only a settle terminal is capped, and only by its limiting term")
+    if request.effective_rung >= TERMINAL_REQUIRED_RUNGS["settle_change_set"]:
+        raise ValueError("a settle terminal its effective rung reaches is never capped")
+    return TERMINAL_REQUIRED_RUNGS["propose_change_set"]
+
+
 def terminal_operation_key(request: TerminalEgressRequestV1) -> str:
     """Derive one retry key from semantic run inputs, never delivery time."""
 
@@ -614,6 +644,8 @@ def terminal_operation_key(request: TerminalEgressRequestV1) -> str:
             "target_paths": list(getattr(request, "target_paths", ())),
             "procedure_mandate_digest": getattr(request, "procedure_mandate_digest", None),
             "procedure_artifact_digest": request.procedure_artifact_digest,
+            # A capped settle is a proposal, not a settlement: another operation.
+            **({} if request.capped_by is None else {"capped_by": request.capped_by}),
         },
     ).tagged
 
@@ -658,7 +690,7 @@ class TerminalEgressRequestV2(TerminalEgressRequestV1):
 
     @model_validator(mode="after")
     def _shape(self) -> "TerminalEgressRequestV2":
-        if self.required_rung != TERMINAL_REQUIRED_RUNGS[self.kind]:
+        if self.required_rung != _requested_rung(self):
             raise ValueError("terminal egress required rung disagrees with its kind")
         if self.required_rung > self.effective_rung:
             raise ValueError("terminal egress above the effective rung is never requested")
@@ -1379,6 +1411,7 @@ __all__ = [
     "RUNG_REQUIRED_OPERATIONS",
     "SELECTOR_PRIVACY_CEILINGS",
     "SENSITIVITY_TAINT_CEILINGS",
+    "SETTLE_AUTHORITY_CAPPED",
     "TERMINAL_EGRESS_BOUND_KINDS",
     "TERMINAL_EGRESS_DISPOSITIONS",
     "CaptureTerminalEgressSink",
@@ -1413,5 +1446,6 @@ __all__ = [
     "procedure_producer_receipt_digest",
     "producer_receipt_for_request",
     "require_procedure_mandate",
+    "settle_authority_capped_reason",
     "terminal_operation_key",
 ]

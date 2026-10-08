@@ -1881,6 +1881,18 @@ with `settle_outcome: settled` and the `accepted_git_oid` it produced. The
 accepted record names the mandate digest, and replay re-derives the same
 authority from the parent state alone; the change carries no approvals.
 
+A settle terminal whose run's authority reaches propose but not settle -- a
+Line whose `max_authority` is `propose`, or a Procedure whose only mandate
+grants propose -- proposes instead: the same fallback a failing condition
+takes, reported `settle_outcome: proposed` with `fallback_reason`
+`cruxible.settle.authority_capped_by_<term>` naming the term that capped it
+(`line_max_authority`, `mandate_grant`, `propagated_sensitivity`). It binds the
+mandate a proposal would and never consults a settle grant, so it settles
+nothing. A Line graduates from proposing to settling with a Line successor
+that raises `max_authority` to `settle`, plus a covering settle mandate, over
+the same Procedure: one Procedure serves both stages, so its digest -- the key
+its track record is folded under -- does not change at graduation.
+
 The settle mandate is the authority: any caller permitted to run the Line
 triggers the settlement, whatever its own tier, and no caller settles without
 one. A caller's tier can raise the run's reported authority above what its
@@ -1895,7 +1907,9 @@ Each terminal is reported with the authority it needs (`required_authority`:
 reach is reported `refused_effective_authority` with the `limiting_term` that
 capped it -- the Procedure's own terminals, the Line's `max_authority`,
 propagated sensitivity, the mandate grant, or calibration -- and the run
-refuses `terminal_authority_capped_by_<term>`.
+refuses `terminal_authority_capped_by_<term>`. The one exception is a settle
+terminal capped at propose, which proposes as described above; capped below
+propose, it is refused like any other.
 
 Known limitation: a settle run submits its delegated proposal against the
 accepted head and then activates it. If another generation is accepted between

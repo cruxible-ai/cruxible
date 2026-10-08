@@ -88,6 +88,7 @@ from cruxible_client.contracts.procedures.models import (
     RepeatNode,
     ReturnNode,
     SelectNode,
+    SettleChangeSetNode,
     SourceNode,
     StateTapNode,
     TransformNode,
@@ -166,11 +167,13 @@ from cruxible_core.procedures.acquisition import (
 )
 from cruxible_core.procedures.egress import (
     SERVED_AUTHORITY_TERMS,
+    EffectiveRungTermV1,
     EffectiveRungV1,
     PreparedTerminalEgressV1,
     TerminalAuthorityRefusal,
     TerminalEgressError,
     TerminalEgressItemV1,
+    TerminalEgressKindV1,
     TerminalEgressPreparerProtocol,
     TerminalEgressReceiptV1,
     TerminalEgressReceiptV2,
@@ -4356,21 +4359,27 @@ class ProcedureExecutor:
             "limiting_term": rung.limiting_term,
             "terms": [item.model_dump(mode="json") for item in rung.terms],
         }
+        # A settle terminal capped at propose proposes instead, as its fallback
+        # for that cap; one capped below propose is refused like any other.
+        capped_by: EffectiveRungTermV1 | None = None
         if not rung.permits(node.kind):
-            self._append_event(
-                admission,
-                records,
-                "terminal_egress",
-                {**payload, "verdict": "refused_effective_rung"},
-            )
-            raise _RunRefusal(
-                cast(ProcedureNodeRefusalCode, rung.refusal_code),
-                f"Terminal {node.kind!r} requires {authority_for_rung(required)}; the "
-                f"{SERVED_AUTHORITY_TERMS[rung.limiting_term]} term capped this run at "
-                f"{authority_for_rung(rung.effective_rung)}. "
-                f"{rung.term(rung.limiting_term).reason}",
-                node_id=node.node_id,
-            )
+            if isinstance(node, SettleChangeSetNode) and rung.permits("propose_change_set"):
+                capped_by = rung.limiting_term
+            else:
+                self._append_event(
+                    admission,
+                    records,
+                    "terminal_egress",
+                    {**payload, "verdict": "refused_effective_rung"},
+                )
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCode, rung.refusal_code),
+                    f"Terminal {node.kind!r} requires {authority_for_rung(required)}; the "
+                    f"{SERVED_AUTHORITY_TERMS[rung.limiting_term]} term capped this run at "
+                    f"{authority_for_rung(rung.effective_rung)}. "
+                    f"{rung.term(rung.limiting_term).reason}",
+                    node_id=node.node_id,
+                )
         try:
             request, prepared = self._terminal_egress_request(
                 node,
@@ -4379,6 +4388,7 @@ class ProcedureExecutor:
                 children=children,
                 values=values,
                 manifests=manifests,
+                capped_by=capped_by,
             )
         except TerminalEgressError as exc:
             refusal = self._terminal_refusal(exc, node_id=node.node_id)
@@ -4559,6 +4569,7 @@ class ProcedureExecutor:
         children: tuple[TerminalChildReceiptV1, ...],
         values: tuple[CanonicalValue, ...],
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        capped_by: EffectiveRungTermV1 | None = None,
     ) -> tuple[TerminalEgressRequestV1, PreparedTerminalEgressV1 | None]:
         """Hand the sink the exact pins this terminal kind's law traverses.
 
@@ -4566,7 +4577,8 @@ class ProcedureExecutor:
         lowers the items through shared authoring and reports the paths that
         lowering actually changed and the exact live mandate it bound, and the
         v2 request is built from THOSE, so the mandate law sees what will be
-        proposed rather than what the template declared.
+        proposed rather than what the template declared. A settle terminal
+        `capped_by` a term asks for propose authority only.
         """
 
         bound_pin: ArtifactPin | None = None
@@ -4575,6 +4587,8 @@ class ProcedureExecutor:
                 node.capture_contract,
                 label=f"emit_capture {node.node_id!r} CaptureContract",
             )
+        # The authority asked for: a capped settle asks for propose's alone.
+        asked: TerminalEgressKindV1 = "propose_change_set" if capped_by is not None else node.kind
         request = TerminalEgressRequestV1(
             kind=node.kind,
             run_id=admission.run_id,
@@ -4584,9 +4598,10 @@ class ProcedureExecutor:
             procedure_artifact_digest=admission.procedure_artifact_digest,
             admission_binding_digest=admission.admission_binding_digest,
             effective_rung=rung.effective_rung,
-            required_rung=TERMINAL_REQUIRED_RUNGS[node.kind],
+            required_rung=TERMINAL_REQUIRED_RUNGS[asked],
             limiting_term=rung.limiting_term,
-            granted_operation=rung.granted_operation(node.kind),
+            granted_operation=rung.granted_operation(asked),
+            capped_by=capped_by,
             bound_artifact_pin=bound_pin,
             actor_context=admission.actor_context,
             items=tuple(
