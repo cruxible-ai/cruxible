@@ -524,7 +524,8 @@ class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
     )
     coordinate: AcceptedCoordinate
     procedure_identity: ArtifactIdentity
-    procedure_artifact_digest: str
+    #: The Procedure's artifact digest, named as every other kind's proof names it.
+    artifact_digest: str
     definition_digest: str
     artifact: ProcedureArtifact
     runnable: ProcedureRunnable
@@ -1854,7 +1855,7 @@ def _readiness(
     return ProcedureReadinessResultV1(
         coordinate=AcceptedCoordinate.from_internal(coordinate),
         procedure_identity=accepted.procedure.identity,
-        procedure_artifact_digest=accepted.artifact_digest,
+        artifact_digest=accepted.artifact_digest,
         definition_digest=accepted.procedure.definition_digest,
         artifact=accepted.procedure,
         runnable=runnable,

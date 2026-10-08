@@ -1304,7 +1304,7 @@ class ProcedureReadiness(BaseModel):
     )
     coordinate: AcceptedCoordinate
     procedure_identity: dict[str, Any]
-    procedure_artifact_digest: str
+    artifact_digest: str
     definition_digest: str
     artifact: _ProcedureArtifact
     runnable: ProcedureRunnable
