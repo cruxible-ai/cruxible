@@ -1,11 +1,11 @@
-# Cruxible Python SDK v2 reference
+# Procedure source authoring (Python SDK)
 
-**Status: implemented on the SDK v2 development branch; not released or deployed.**
-“v2” names the SDK surface, not a package release. The
+This reference specifies authoring Procedures as Python source
+(`cruxible_client.authoring.source`), the contract-derived records it uses, and
+their execution semantics. The
 [base SDK reference](../packages/cruxible-client/README.md) covers connection,
-governance, discovery, and the existing composition frontend. This reference
-specifies source authoring, contract-derived records, and their execution semantics.
-Reserved or unsupported forms are identified explicitly below.
+governance, discovery, and the `Sequence` composition frontend. Reserved or
+unsupported forms are identified explicitly below.
 
 Agents select names and typed handles. The daemon resolves exact dependency
 versions, computes digests, and retains the bindings in the accepted graph and
@@ -50,14 +50,14 @@ This document does not silently remove an existing operation.
 | Existing surface | v2 contract |
 |---|---|
 | [Connection and state contexts](../packages/cruxible-client/README.md#connection-and-state-context) | Unchanged: instance selection, credentials, snapshots, refresh, connection ownership. |
-| [Knowledge authoring](../packages/cruxible-client/README.md#knowledge-authoring) and [changesets](../packages/cruxible-client/README.md#api-changesetdraft) | Same governed definitions and lifecycle. Structured Claim literals gain contract-derived record construction; existing scalar/enum vocabulary remains. |
+| [Knowledge authoring](../packages/cruxible-client/README.md#knowledge-authoring) and [changesets](../packages/cruxible-client/README.md#changesetdraft) | Same governed definitions and lifecycle. Structured Claim literals gain contract-derived record construction; existing scalar/enum vocabulary remains. |
 | [Reads and discovery](../packages/cruxible-client/README.md#reads-and-discovery) | Same query evaluator and discovery/read operations. Typed query binding, parameters, results, and receipts wrap those contracts. |
 | [World and typed values](../packages/cruxible-client/README.md#world-and-typed-values) | Existing host reads remain. Compiled source receives a symbolic view of this same ontology, specified below. |
 | [Drafts, intents, proposals, approvals](../packages/cruxible-client/README.md#drafts-intents-proposals-and-approvals) | Same prepare, submit, review, approve, and accept distinctions. |
 | [Evidence and operational work](../packages/cruxible-client/README.md#evidence-predictions-and-operational-work) | Same capture reads, attestations, predictions, settlement, worklists, and curation. |
 | [Source selectors](../packages/cruxible-client/README.md#source-selection) | Existing host file selectors remain; they are not arbitrary filesystem access inside a Procedure. |
 | [Procedure composition](../packages/cruxible-client/README.md#procedure-composition-and-execution) | `Sequence` and `ProcedureInput` remain valid. Source authoring is an additional frontend. |
-| [Procedure entry points](../packages/cruxible-client/README.md#procedure-entry-points) | `cx.procedure(...)` additionally accepts a source blueprint. Typed input records and run outcomes extend the accepted Procedure handle. `.run(...)` and `cx.line(name).run(...)` keep their existing authority boundaries. |
+| [Procedure entry points](../packages/cruxible-client/README.md#procedure-entry-points) | `cx.procedure(...)` accepts a `ProcedureSource`, a `BlueprintInput` or a `BlueprintInstanceInput` beside `ProcedureInput` and `Sequence`. Typed input records and run outcomes extend the accepted Procedure handle. `.run(...)` and `cx.line(name).run(...)` keep their existing authority boundaries. |
 | [Projections and workspace](../packages/cruxible-client/README.md#projections-and-workspace) | Unchanged governed blocks, query backings, repin/sync, and portable packages. |
 | [Signing](../packages/cruxible-client/README.md#signing-capabilities) | Unchanged explicit signing capabilities. A decorated function grants no signing authority. |
 | [Lower-level client](../packages/cruxible-client/README.md#lower-level-http-client) | Existing endpoints remain. A retained Procedure can be invoked without importing its authoring module. |
@@ -70,7 +70,9 @@ ordinary Python objects whose methods execute during authoring.
 | Name | Role | Availability |
 |---|---|---|
 | `procedure` | Decorate a literal Procedure definition. | Implemented; signature below. |
-| `ProcedureSource` | Immutable source and binding selection; preview/build operations. | Implemented host object. |
+| `ProcedureSource` | Immutable source and binding selection; `bind`, `preview` and `build`. Declared open `slots` make it build a Blueprint. | Implemented host object. |
+| `BlueprintInput`, `BlueprintInstanceInput` | Author a Blueprint (a definition with open slots), and instantiate one by binding a provider per slot. | Authoring inputs in `cruxible_client.authoring.inputs`. |
+| `Cruxible.provider_interface` | Select one installed provider of an interface as a `ProviderBinding`. | Implemented. |
 | `ProcedureWorld`, `ProcedureSubject`, `ClaimSelection[T]`, `ProcedureClaim[T]` | Typed, admitted-state expressions using the existing ontology. | Symbolic compiler interfaces; not separately instantiated Python classes. |
 | `query`, `ProcedureQueryResult` | Named-query state tap and structured result. | Source intrinsic and result adapter. |
 | `call` | Invoke a contracted provider operation. | Source intrinsic over Call semantics. |
@@ -79,9 +81,9 @@ ordinary Python objects whose methods execute during authoring.
 | `claim_candidate`, `ClaimCandidate` | Construct a governed Claim candidate without submitting it. | Source counterpart of the existing Claim authoring contract. |
 | `emit_capture`, `propose_change_set`, `settle_change_set`, `halt` | Terminal return expressions. | Source syntax over existing terminal categories. |
 | `invoke`, `InvocationOutcome[T]` | Invoke an exact accepted child Procedure. | Implemented sequential child execution. |
-| `parallel` | Concurrent independent branches with a join. | Reserved sketch; no final callable signature or default failure policy. |
+| `parallel` | Concurrent independent branches with a join. | Reserved; not importable, and `with` blocks are refused. |
 | `ProcedurePreview`, `CompositionDiagnostic`, `ProcedureCompositionError` | Existing inspection/error types extended with source information. | Shared public inspection/error types; extended with source information. |
-| `Cruxible.procedure(definition=...)` | Consume a `ProcedureSource` as well as the existing input forms. | Implemented overload; returns the existing `ProcedureDraft`. |
+| `Cruxible.procedure(definition=...)` | Consume a `ProcedureSource`, `BlueprintInput` or `BlueprintInstanceInput` as well as `ProcedureInput` and `Sequence`. | Implemented overload; returns the existing `ProcedureDraft`. |
 | `Contract.value`, `bindings.<slot>.input`, `bindings.<query>.parameters` | Construct schema-defined records. | Contract-derived constructors; not executable user helpers. |
 | Typed `Procedure.input/run` | Construct host invocation values. | Typed adapters over existing definition reads and execution services. |
 
@@ -134,7 +136,7 @@ values, actual runtime data, and canonical serialization.
 | `bindings.provider_slot.input(**fields)` | Selected ProviderInterface input contract | Typed Call/Source request record. |
 | `bindings.child_slot.input(**fields)` | Exact child Procedure input contract | Typed child invocation record. |
 | `bindings.query_slot.parameters(**fields)` | Exact QueryDefinition parameter declarations | Typed query parameters. |
-| `provider_binding.input(**fields)` | Schema-resolved host provider handle | Same input constructor in ordinary SDK authoring code. |
+| `cx.provider_interface(...).input(**fields)` | Schema-resolved host provider handle | Same input constructor in ordinary SDK authoring code. |
 | `accepted_procedure.input(**fields)` | Selected accepted Procedure input contract | Host invocation record. |
 | `world.claim_type(predicate).value(**fields)` | Object-valued literal schema of the accepted ClaimType | Typed structured Claim value, retaining predicate ownership. Existing scalar constructors and enum members stay available. |
 
@@ -200,7 +202,7 @@ Procedure[I, O].input(**fields) -> Record[I]
 
 Procedure[I, O].run(
     *,
-    input: Record[I],
+    input: Record[I] | None = None,     # omitted: the constructor's defaults
     at: AcceptedCoordinate | None = None,
     resolution_contract: ResolutionContractReference | None = None,
     trigger_event: TriggerEventReference | None = None,
@@ -210,8 +212,8 @@ Procedure[I, O].run(
 
 A host reads a named query with `cx.query(name=..., params=..., receipt="full")`
 (the full receipt carries the replay result) and its parameters with
-`cx.get("query:NAME")`. Passing a `QueryRef` (`cx.get("query:NAME").ref`) into a
-source blueprint binds it; binding resolves the parameter and result schemas.
+`cx.get("query:NAME")`. Passing a `QueryRef` (`cx.get("query:NAME").ref`) to a
+`ProcedureSource.bind` binds it; binding resolves the parameter and result schemas.
 Parameters may be omitted only when the definition has no unsupplied required
 parameters.
 
@@ -253,11 +255,12 @@ to `run`. The returned run resolves `O` from that exact admitted Procedure.
 
 | Operation | Reads or effects | Result |
 |---|---|---|
-| Import a host module | Ordinary host Python may run, as with any Python module. The Procedure body itself is not executed by the decorator. | Local blueprint. |
+| Import a host module | Ordinary host Python may run, as with any Python module. The Procedure body itself is not executed by the decorator. | Local `ProcedureSource`. |
 | Select a provider/query/Procedure | Existing SDK discovery and accepted-state reads. | Typed exact selection. |
-| Bind a blueprint | Local immutable selection; no installation, invocation, or acceptance. | New blueprint. |
+| Bind a source | Local immutable selection; no installation, invocation, or acceptance. | New `ProcedureSource`. |
 | Preview | Parse and inspect source. An explicitly supplied World may resolve schema through its pinned SDK context; no provider call or governed write. | Structured preview with errors and pending checks. |
-| Build | Require successful compilation and required binding/schema resolution. | Existing authoring input extended with retained source association. |
+| Build | Require successful compilation and required binding/schema resolution. | `ProcedureInput`, or `BlueprintInput` while declared slots stay open, with retained source association. |
+| Instantiate a Blueprint | A `BlueprintInstanceInput` names the accepted Blueprint and one installed provider per slot; lowering checks each against its slot's interface. | An ordinary Procedure recording its Blueprint and bindings. |
 | Prepare | Existing durable intent/preflight operation; daemon validates the submitted definition and source binding. | Existing `Intent`. |
 | Submit/review/approve/accept | Existing distinct governance operations. | Proposal, approval, accepted generation. |
 | Run | Existing admission, permissions, effective budgets, provider deployments, and run-lane restrictions. | Existing run state/receipt with the declared outcome. |
@@ -297,9 +300,9 @@ procedure(
 | `budget` | Required | Declared resource budget, using the current model. No hidden unlimited default. |
 | `hard_caps` | Required | Declared Procedure ceilings; effective admission policy can be stricter. |
 | `activation_policy` | `"snapshot"` | Existing lifecycle behavior; values retain their current meanings. |
-| `acquisition_policy` | `None` | Accepted acquisition policy when needed by Source operations. Missing required policy prevents readiness. |
+| `acquisition_policy` | `None` | Accepted acquisition policy when needed by Source operations. A source that builds a Blueprint takes none; each instance names its own (`BlueprintInstanceInput.acquisition_policy`). |
 | `description` | `None` | Optional human description retained with the definition. |
-| `slots` | `None` | Open Provider slots: binding name -> ProviderInterface name. Each must be used as `bindings.<slot>` in `source(...)`/`call(...)`. While any slot is unbound the source builds a **Blueprint** (a skeleton that never runs); bind every slot with `bind(slot=cx.provider_interface(...))` and it builds a Procedure. |
+| `slots` | `None` | Open Provider slots: binding name -> ProviderInterface name (a `ProviderInterface:` prefix is stripped). Each must be used as `bindings.<slot>` in the body. While any slot is unbound the source builds a **Blueprint** (a skeleton that never runs); binding every slot with `bind(slot=cx.provider_interface(...))` makes it build a Procedure. |
 
 A Procedure's authority is not an argument: it is the most its terminals and
 invoked children can do (`observe`, `propose` or `settle`), and previews report it
@@ -354,25 +357,37 @@ on a source with open slots authors one (`BlueprintInput`, kind `blueprint`).
 `cruxible get Blueprint:<name>` previews instantiation: each slot's interface and
 the installed Providers that fit it. Instantiate with
 `cx.procedure(definition=BlueprintInstanceInput(kind="blueprint_instance", name=..., blueprint=..., bindings={slot: provider}))`:
-lowering checks each binding against its slot's interface and writes an ordinary
-Procedure that records its Blueprint and bindings.
+`bindings` maps each slot to an installed Provider's name (a string, not a
+handle), lowering checks each binding against its slot's interface, and the
+result is an ordinary Procedure that records its Blueprint and bindings.
+`acquisition_policy=` names the policy an instance with Source nodes reads.
+
+A Provider fits a slot when it implements that slot's interface exactly once.
+A retired Blueprint refuses new instances, while Procedures already instantiated
+from it keep running. Both inputs are also change-set members. On the CLI,
+`cruxible authoring example blueprint` and `blueprint-instance` print templates
+for `cruxible authoring submit`; a raw-graph Blueprint marks each open Provider
+position `{"kind": "slot", "slot_name": ...}` and lists the slots in
+`definition.pin_slots`.
 
 ### `bind`
 
 ```text
-bind(**bindings: BindingValue) -> ProcedureSource
+bind(**bindings: ProviderBinding | QueryRef | ProcedureRef) -> ProcedureSource
 ```
 
-Returns a new blueprint with the named selections. Unmentioned selections are
-preserved. Supplying a known slot again explicitly replaces that selection on
-the new blueprint; it does not alter an accepted Procedure or earlier blueprint.
-Unknown slots, wrong reference kinds, or incompatible multiple uses of a slot
-are errors. Bindings are data, never live Python callables.
+Returns a new `ProcedureSource` with the named selections. Unmentioned
+selections are preserved. Supplying a name again explicitly replaces that
+selection on the new source; it does not alter an accepted Procedure or the
+earlier source. A declared slot accepts only a `ProviderBinding`
+(`TypeError` otherwise) of that slot's interface (`ValueError` otherwise).
+Bindings are data, never live Python callables.
 
 Binding can occur before complete schema resolution; final preview/build must
 reject a selected interface whose contracts or effects do not satisfy its uses.
-A reusable unbound blueprint may be inspected, but cannot be prepared as though
-its unresolved slots were executable.
+Every `bindings.<name>` the body uses must be bound before building, except the
+declared `slots`: those may stay open, and the source then builds a Blueprint
+(an unbound undeclared name refuses "Binding 'x' is missing or unsupported").
 
 ### `preview`
 
@@ -395,12 +410,12 @@ are specified under [Preview and diagnostics](#preview-and-diagnostics).
 ### `build`
 
 ```text
-build(*, world: World | None = None) -> ProcedureInput
+build(*, world: World | None = None) -> ProcedureInput | BlueprintInput
 ```
 
 Uses the same inspection/compilation rules as preview. Returns the shared
-Procedure authoring input with its retained source association when all required
-static checks pass. Otherwise raises `ProcedureCompositionError` carrying the
+Procedure authoring input (a `BlueprintInput` while declared slots are open)
+with its retained source association when all required static checks pass. Otherwise raises `ProcedureCompositionError` carrying the
 preview. It does not return a partial executable graph after a compilation error.
 
 The returned `ProcedureInput.definition.source_request` contains source and symbolic
@@ -412,16 +427,17 @@ substitute for admission. The accepted graph retains `definition.source`.
 ```text
 cx.procedure(
     *,
-    definition: ProcedureInput | Sequence | ProcedureSource,
+    definition: ProcedureInput | BlueprintInput | BlueprintInstanceInput
+        | Sequence | ProcedureSource,
 ) -> ProcedureDraft
 ```
 
-Extends the existing method. A blueprint uses the Cruxible context to resolve
+Extends the existing method. A `ProcedureSource` uses the Cruxible context to resolve
 required accepted references and compiles into the same authoring contract.
 `ProcedureDraft.prepare()` returns the existing intent. The daemon checks the
 source/graph relationship; client compilation does not authorize a mismatch.
 
-There is no `blueprint.accept()` or implicit install-and-run operation.
+There is no `source.accept()` or implicit install-and-run operation.
 
 ## Bindings and provider selection
 
@@ -442,8 +458,8 @@ and credentials stay daemon-side. The actual input and output of a provider are
 validated at execution even if static compatibility passed.
 
 ```python
-# Existing provider discovery; source-blueprint .bind is PROPOSED.
-fetch = cx.provider_interface("web.fetch", provider="web")
+# observe_http is an @procedure source whose body uses bindings.fetch.
+fetch = cx.provider_interface("web.fetch", provider="cruxible-provider-web")
 bound = observe_http.bind(fetch=fetch)
 preview = bound.preview(world=cx.world())
 intent = cx.procedure(definition=bound).prepare()
@@ -475,11 +491,11 @@ use ordinary Python; only the retained literal definition is the Procedure.
 | `return value` | Successful pure completion under the output contract. |
 | `return emit_capture(...)` / `return propose_change_set(...)` / `return settle_change_set(...)` | Governed terminal completion. |
 | `return halt(...)` | Explicit halt without a successful output. |
-| Return inside a conditional arm | Supported by the proposal; surviving paths continue, terminated paths do not. |
+| Return inside a conditional arm | Supported; surviving paths continue, terminated paths do not. |
 | Function docstring and comments | Retained for review; not executed. |
 | Other bare expression statements | Refused unless explicitly recognized. Accidentally discarding a terminal or provider expression is not accepted as a silent no-op. |
-| `for`, `while`, comprehensions, generators | Not supported by this source proposal; bounded Repeat has no chosen source spelling yet. |
-| `with` | No general context managers. `parallel` remains the reserved, unsettled form described below. |
+| `for`, `while`, comprehensions, generators | Not supported; bounded Repeat has no source spelling (use `Sequence` or a raw graph). |
+| `with` | Refused. `parallel` remains the reserved, unimplemented form described below. |
 | `try`, `except`, `finally`, `raise`, `assert` | Refused. Use explicit outcomes and `require`; Python exception control flow is not an implicit graph recovery policy. |
 | `async`, `await`, `yield` | Refused. No user event loop or Python coroutine runtime. |
 | Nested functions, lambdas, classes, decorators in the body | Refused; no executable code values or closures. |
@@ -534,7 +550,7 @@ ontology, a copied snapshot of all Subjects, or an input callers can replace.
 
 New `.one()`/`.all()` selectors apply to compiled `ClaimSelection`; they are **not
 methods on today's host tuple**. Host World reads continue to return tuples of
-`ClaimView` unless separately extended in a later proposal.
+`ClaimView`.
 
 ### `ClaimSelection.one`
 
@@ -559,8 +575,8 @@ all(*, limit: int) -> Value[tuple[ProcedureClaim[T], ...]]
 `limit` is required and positive. Returns the complete bounded selection,
 retaining contenders. More results than the bound, or another incomplete read,
 refuses instead of returning an apparently complete prefix. An empty complete
-selection is valid. The proposal does not specify iteration in arbitrary Python;
-use named queries/contracted transforms for population operations.
+selection is valid. Iteration in source is not supported; use named
+queries/contracted transforms for population operations.
 
 ### `ProcedureClaim[T]`
 
@@ -670,15 +686,14 @@ call(
     interface: BindingSlot[ProviderBinding],
     *,
     input: Value[I],
-    effect_policy: str | None = None,
 ) -> Value[O]
 ```
 
-`interface` and `input` are required. `I` and `O` come from the selected accepted
-interface contracts. Construct record input with `bindings.<slot>.input(...)`;
-the output exposes only fields declared by `O`, including typed nested records
-where a nested schema exists. `effect_policy` uses the existing Call policy reference;
-`None` does not excuse a missing policy for an effect that requires one.
+`interface` and `input` are required, and `input` is the only keyword source
+`call` accepts. `I` and `O` come from the selected accepted interface
+contracts. Construct record input with `bindings.<slot>.input(...)`; the output
+exposes only fields declared by `O`, including typed nested records where a
+nested schema exists.
 
 **Effects:** invokes the verified installed provider at runtime, under admission
 and effective permissions. Does not run at preview/build. Its output is the
@@ -712,7 +727,9 @@ policy and daemon/provider limits still apply.
 material according to existing Source behavior. It does not author or accept
 Claims, and it is not by itself the capture terminal for the Procedure.
 
-**Result:** a contract-derived acquisition value. For the web acquisition shape,
+**Result:** a contract-derived acquisition value, typed by the material schema
+the interface declares; an interface that declares none refuses compilation
+(`material_contract_required`). For the web acquisition shape,
 fields may include `retrieved.final_url` and `retrieved.body_sha256`. Those are
 web-contract fields, not a promise that every provider has the same payload.
 A Source result cannot be arbitrarily relabeled as independent verified evidence.
@@ -808,10 +825,10 @@ claim_candidate(
 |---|---|
 | `subject`, `predicate`, `value` | Required typed statement. The predicate's object kind/schema and Subject-kind restrictions apply. |
 | `role`, `rationale` | Required explicit role and supplied rationale. A role not admitted by the ClaimType is refused. |
-| `supported_by`, `copied_from`, `self_source` | Exactly one is required, as in existing host Claim authoring. No implicit source from the fact that a Procedure ran. |
-| `qualifier`, `effective_period` | Optional statement qualification and applicability period. |
-| `revises`, `dispositions` | Existing lineage and contender-handling meanings. Do not automatically supersede every earlier Claim. |
-| `basis` | Exact selected Claim dependencies used by this conclusion. Default empty; supplied Claims retain their exact versions. The executing Procedure binds derivation provenance when its authorized terminal proposes the candidate. |
+| `supported_by`, `copied_from`, `self_source` | Exactly one is required, as in existing host Claim authoring. `supported_by` and `copied_from` must be an Observation: a `source(...)` result or a child's `.terminal.capture`. No implicit source from the fact that a Procedure ran. |
+| `qualifier`, `effective_period` | Optional statement qualification and applicability period; `effective_period` must be a literal `EffectivePeriod(starts_at=..., ends_at=...)`. |
+| `revises`, `dispositions` | Existing lineage and contender-handling meanings; `revises` takes a `.one()` selection or literal Claim ID text. Do not automatically supersede every earlier Claim. |
+| `basis` | Exact selected Claim dependencies used by this conclusion: required when `role` is `derivation`, and refused for any other role. Supplied Claims retain their exact versions. The executing Procedure binds derivation provenance when its authorized terminal proposes the candidate. |
 
 **Returns:** a symbolic candidate description; it has not been submitted,
 approved, or accepted. It is consumed by `propose_change_set`.
@@ -850,8 +867,9 @@ there is no accidental Python `None` success.
 The chosen terminal capability and execution lane must permit every reachable
 terminal. Current direct Procedure runs do not supply the accepted Line lane's
 capture/proposal authority. Source syntax does not remove that restriction.
-`PostInbox` has no source frontend specified here; its existence in other
-contracts is not a promise of SDK support.
+`PostInbox` has no source frontend. The graph format defines it, but no run
+lane delivers it today, even where `get` reports such a Procedure as runnable
+on a Line.
 
 ### `emit_capture`
 
@@ -864,9 +882,9 @@ emit_capture(
 ) -> TerminalReturn[O]
 ```
 
-All arguments are required. `EvidenceInput` denotes the terminal's supported,
-typed evidence input contract, including compatible verified acquisition results.
-It is not arbitrary canonical data. The capture contract's registration rules
+All arguments are required. `value` must be verified Source evidence: a
+`source(...)` result (anything else refuses "emit_capture requires verified
+Source evidence"). It is not arbitrary canonical data. The capture contract's registration rules
 and existing evidence validation determine compatibility. `capture_contract` governs terminal output registration. `result` is
 the Procedure's successful return value and must satisfy its output contract.
 Construct record results with the Procedure's `OutputContract.value(...)`.
@@ -954,7 +972,7 @@ receipt while sharing the parent's admitted authority and remaining budget.
 | Effects | Child effects and terminal capability included in admission requirements. |
 | Provenance | Parent/child occurrence relationship and exact definitions remain inspectable. |
 | Completion | Child terminal completes the child; parent sees a typed outcome and may continue. |
-| Recursion | Cyclic invocation and unbounded recursive depth are not part of this proposal. |
+| Recursion | Refused by the compiler, including indirect cycles. |
 | Dispatch | The child is an accepted binding, not arbitrary code or a name discovered in provider output. |
 
 ### `InvocationOutcome[O]`
@@ -994,7 +1012,7 @@ are not an escape route.
 ### `parallel` — reserved form
 
 ```python
-# PROPOSED SKETCH, not a callable contract with settled options.
+# RESERVED SKETCH: not importable, and `with` is refused today.
 with parallel():
     inventory = invoke(
         bindings.inventory,
@@ -1021,8 +1039,8 @@ conditional alternatives, not parallel branches.
 | Rollback | Never implied for external effects or already-retained evidence. |
 
 Consequently this reference deliberately gives no final `parallel(...)`
-signature, Boolean success guarantee, or readiness claim. A blueprint containing
-an unsupported/unsettled form must refuse clearly, not run it sequentially.
+signature or Boolean success guarantee. Source containing an unsupported form
+refuses clearly; it is never run sequentially.
 
 ### Bounded repetition
 
@@ -1054,14 +1072,14 @@ Source inspection fields:
 | `source` | Authored text, source identity, diagnostic filename, selected source-language rule identifier. |
 | `source_map` | Node/expression identities mapped to `SourceSpan` values. Line numbers are locations, not persistent node identities. |
 | `state_dependencies` | Exact Subject/predicate or query selections, selector/parameter templates, cardinality and limits, and admitted-context requirements. |
-| `binding_requirements` | Every slot, kind, expected contract/effects, supplied selection or explicit unresolved status. |
+| `binding_requirements` | One entry per binding: its `slot` and the `resolved` selection, or `None` while unresolved. |
 | `branch_values` | Guard predicates, branch successors, Select producers, and selected output contract pins. Unavailable value use is a diagnostic. |
-| `return_paths` | Reachable pure/capture/proposal/halt paths, output shape, required terminal capability. |
+| `return_paths` | Reachable pure/capture/proposal/settlement/halt paths, output shape, required terminal capability. |
 | `children` | Exact child call selections and inherited authority/shared-budget obligations. Resolved child contracts appear in `binding_requirements`. |
 | Concurrency | Unsupported; no concurrency field or parallel runtime is implied. |
 
 Static errors and pending runtime checks are distinct. A provider not installed
-at execution time is not proved installed by a structurally valid blueprint.
+at execution time is not proved installed by a structurally valid source.
 A preview should identify what the author must supply, what the daemon must
 validate at prepare, and what necessarily remains a runtime check.
 
@@ -1117,8 +1135,9 @@ rendered source view. That view must be labeled as a rendering; it cannot claim
 to recover comments or the original source structure. Local file locations and
 line offsets stay in preview diagnostics; retained source uses a portable
 coordinate. Historical source envelopes retain their original bytes and digest
-rules. Accepted readiness includes the typed artifact; its `definition.source` holds
-the authored text, rule identifier, and exact resolved bindings. Historical
+rules. `cx.get("Procedure:<name>", detail="proof")` reads the typed artifact; its
+`definition.source` holds the authored text, rule identifier, and exact resolved
+bindings, and the card's `runnable` says how it runs. Historical
 source and graphs retain their original verification rules. Rendering original
 source from non-source graphs is not implemented.
 
@@ -1518,8 +1537,9 @@ generation-accepted and fixed-window Triggers cannot provide this input.
 `cx.line(name)` is the handle for one accepted Line. `line.evaluate(dry_run=True)`
 inspects trigger matches and their `dispatch_status` without enqueueing;
 `line.evaluate(since=..., until=...)` records a missed range as pending work.
-`line.dispatch()` processes pending work; unusable exact Captures close as
-`rejected` and superseded Line bindings close as `superseded`, with typed refusals
+`line.dispatch()` processes pending work (an occurrence's `dispatch_status` is
+`pending`, `admitted`, `rejected`, `superseded` or `lapsed`); unusable exact
+Captures close as `rejected` and superseded Line bindings close as `superseded`, with typed refusals
 and repair hints. To explicitly retry closed work after repair, use
 `line.dispatch(occurrence_id=occurrence_id, retry=True)`. This can bind a
 successor Line only in the same epoch and never substitutes another event or
@@ -1548,21 +1568,18 @@ normally. Late execution keeps the original observation time and window. Missing
 stale, incompatible, or unavailable material refuses admission, even if an ordinary
 acquisition rule permits omission or a default. A retry reuses the admitted binding.
 
-Omitting `trigger_input` preserves trigger-only behavior. Existing instances need
-an explicit governed compiler upgrade to revision 32 before accepting new Lines
-or Triggers; the upgrade refuses while a live Line still embeds its trigger
-(v1-v5), which stays readable as retired history.
+Omitting `trigger_input` preserves trigger-only behavior.
 
 ### Compare a feed observation with an accepted baseline
 
-Derivation proposals use a ClaimType v5 evidence rule with `admission="derivational"`.
+Derivation proposals use a ClaimType evidence rule with `admission="derivational"`.
 The rule requires the producing Procedure and exact input-Claim provenance; it
 contains no producer allowlist. The existing Procedure mandate authorizes the
 exact producer, actor, lane, and proposal scope, and ordinary governed approval
 controls acceptance. A direct-only evidence rule still refuses a derivation.
 Names and typed handles remain the authoring inputs; Cruxible resolves every digest.
 Ordinary authoring, including raw payloads and manual revisions, cannot assert
-Procedure execution. The proposal door requires the exact output bytes from the
+Procedure execution. The proposal path requires the exact output bytes from the
 authorized terminal. Mechanical retirement and ClaimType succession preserve
 existing provenance without claiming a new computation.
 
@@ -1756,36 +1773,9 @@ Transform/Repeat source forms are not made executable by these examples.
 Unsupported source reports a diagnostic and locality. It never falls back to
 executing arbitrary Python or an unregistered provider.
 
-Current source authoring uses `cruxible.procedure-source.v2` (compiler revision 29).
+Current source authoring uses the `cruxible.procedure-source.v2` rules (introduced at
+compiler revision 29).
 It rejects out-of-enum comparison literals and straight-line reassignment with
 localized diagnostics. Invoke outputs retain authored names; `return_paths` describes
 branch-specific results, and the legacy global `returns` alias is null. Retained
 source-v1 records continue to reproduce under their original compilation rules.
-
-### Generation acceptance and workspace floor delivery
-
-`GenerationAcceptedSchedule()` from `cruxible_client.contracts.triggers`
-coalesces accepts into one fire at latest head. It fires only after the Trigger
-version was accepted and the daemon began listening. Use it with
-`draft.trigger(name="floor-refresh", schedule=GenerationAcceptedSchedule(),
-action="floor.refresh")`; Capture-input Lines refuse it through their usual law.
-New instances already seed this ordinary live `floor-refresh` Trigger in genesis;
-it can be edited or retired through the same authoring APIs as any other Trigger.
-Existing instances are unchanged.
-
-Floor refresh warms the index regardless of workspace delivery. A bound local
-workspace defaults to daemon delivery as its sole floor writer. Over a Unix-socket
-`CruxibleClient`, call `set_floor_delivery(instance_id, enabled=False)`
-to opt out and use client delivery; `enabled=True` enables daemon delivery again.
-Detaching clears the flag; a later attachment defaults on again. `host_workspace_registration` reports `floor_delivery` and
-the local path, which the workspace adapter checks before delegating to
-`deliver_floor_now`. Passing `workspace_root=` also answers `delivers_here` on
-any transport (the daemon compares paths and never echoes its own), so a TCP
-client refuses to write a floor the daemon delivers. `cx.refresh_workspace()`
-pulls the floor at head (or `at=`) for workspaces the daemon does not deliver. The latter returns a `FloorDeliveryResult`
-with the delta and the ordinary `WorkspaceFloorWriteResult` receipt.
-Host inspection and server status also show `floor_delivery`. Both client apply
-and daemon delivery create the local `.cruxible/floor/.gitignore` containing `*`;
-it ignores itself and all floor output, stays outside the manifest, and is
-preserved by delta applies and full replay. Its bytes are rewritten only when
-they differ.
