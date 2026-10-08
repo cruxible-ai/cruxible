@@ -1962,7 +1962,7 @@ def _engine_answer(
     )
     # A projected exact-content field reads as text too, from the live values of
     # the slot it projects, with its digests beside it.
-    exact_fields: dict[str, QueryClaimValueRef] = {}
+    exact_fields: dict[str, tuple[QueryClaimValueRef, str]] = {}
     if projection is not None:
         for projected_field in projection.fields:
             ref = projected_field.value
@@ -1970,7 +1970,7 @@ def _engine_answer(
                 continue
             info = vocabulary.predicates.get(ref.predicate)
             if info is not None and info.value_type == "exact_content":
-                exact_fields[_out(projected_field.name)] = ref
+                exact_fields[_out(projected_field.name)] = (ref, info.cardinality)
     candidates = list(result.rows)
     keys = [
         (
@@ -2012,11 +2012,13 @@ def _engine_answer(
             flags = out.pop("flags")
             for projected in row.fields:
                 value = projected.value if projected.state == "present" else None
-                if isinstance(value, str) and value.startswith("Subject:"):
-                    value = value.removeprefix("Subject:")
-                out[_out(projected.name)] = value
+                out[_out(projected.name)] = (
+                    [_subject_value(item) for item in value]
+                    if isinstance(value, list)
+                    else _subject_value(value)
+                )
             states = {_out(projected.name): projected.state for projected in row.fields}
-            for key, ref in exact_fields.items():
+            for key, (ref, cardinality) in exact_fields.items():
                 path = _subject_path_of(row, ref.binding)
                 if path is None or states.get(key) != "present":
                     # The engine answered no value (absent), or surfaced a
@@ -2039,10 +2041,15 @@ def _engine_answer(
                     for item in renderer.values.slot(path, ref.predicate)
                     if item.identity in selected
                 ]
-                # A present value is the one distinct value the engine selected
-                # (it keys exact content by digest and span), shown as its text.
+                # The distinct values the engine selected (it keys exact content
+                # by digest and span), each shown as its text: a many-valued
+                # field is their list, a singleton included, in the slot's order
+                # as compact mode shows it; a one-valued field is its one value.
                 values = _exact_values(content, distinct(_value_identity(item) for item in slot))
-                out[key] = values[0] if values else None
+                if cardinality == "many":
+                    out[key] = values
+                else:
+                    out[key] = values[0] if values else None
             out["flags"] = flags
         return rendered
 
@@ -2062,6 +2069,14 @@ def _engine_answer(
         notes=(*notes, *cap_notes),
         served=served,
     )
+
+
+def _subject_value(value: object) -> object:
+    """A projected Subject reference as compact mode shows it: kind/id."""
+
+    if isinstance(value, str) and value.startswith("Subject:"):
+        return value.removeprefix("Subject:")
+    return value
 
 
 def _engine_selected(row: Any, ref: QueryClaimValueRef) -> frozenset[str]:

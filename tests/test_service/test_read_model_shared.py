@@ -905,3 +905,86 @@ def test_an_oid_outside_accepted_history_cannot_resolve(
         with pytest.raises(ReadRefusalError) as refused:
             resolve_read_coordinate(instance, at)
         assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
+
+
+def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-001: a projected many-valued exact-content field is every selected value.
+
+    A spec and a named query project the field as a list -- a singleton too,
+    binary markers included -- holding exactly what compact mode shows, never
+    only its first value as a scalar.
+    """
+
+    from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
+    from cruxible_client.contracts.policies import ClaimResolutionPolicy
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+    from cruxible_client.contracts.read_values import ExactContentRef
+    from tests.core_support import _exact_content_support as support
+    from tests.core_support._candidate_support import submit_query_definition_candidate
+    from tests.core_support._knowledge_loop_support import TIMESTAMP, accept_proposal
+    from tests.core_support._support import initialize_local
+
+    original = support._claim_type
+    monkeypatch.setattr(
+        support,
+        "_claim_type",
+        lambda: original().model_copy(
+            update={
+                "cardinality": "many",
+                "resolution_policy": ClaimResolutionPolicy(
+                    cardinality="many", eligible_verdicts=("supported",), selector="all"
+                ),
+            }
+        ),
+    )
+    instance, owner = initialize_local(tmp_path)
+    seeded = support.seed_exact_content_into(
+        instance, owner, {"wi-42": b"first ruling", "wi-one": b"the only ruling"}
+    )
+    support.add_exact_claim(
+        instance,
+        owner,
+        "wi-42",
+        _BINARY,
+        claim_id="CLM-" + "9" * 32,
+        existing=(seeded["wi-42"].claim_id,),
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = claim_type_path(support.EXACT_PREDICATE)
+    claim_type = parse_claim_type(tree[path], path=path)
+    query = work_item_query("project.exact.many", claim_type=claim_type)
+    accept_proposal(
+        instance,
+        owner,
+        submit_query_definition_candidate(
+            instance,
+            query=query,
+            actor_id="owner",
+            proposal_name="exact-many-query",
+            timestamp=TIMESTAMP,
+        ),
+    )
+
+    def by_subject(rows: Any, key: str) -> dict[str, Any]:
+        return {row.get("subject_id", row.get("item_id")): row[key] for row in rows}
+
+    compact = by_subject(
+        _exact_query(instance, kind=support.EXACT_KIND, select=["status"]).rows, "status"
+    )
+    spec = QueryDefinitionSpec.model_validate({**query.model_dump(mode="json"), "pins": []})
+    projected = _exact_query(instance, spec=spec)
+    named = _exact_query(instance, name="project.exact.many")
+    (status_column,) = (item for item in projected.columns if item.name == "status")
+    assert status_column.cardinality == "many"
+    for answer in (projected, named):
+        rows = by_subject(answer.rows, "status")
+        assert rows["wi-one"] == ["the only ruling"] == compact["wi-one"]
+        many = rows["wi-42"]
+        assert isinstance(many, list) and len(many) == 2
+        assert many == compact["wi-42"]
+        assert "first ruling" in many
+        (marker,) = [item for item in many if isinstance(item, ExactContentRef)]
+        assert marker.exact_content == "binary"
+        assert all(row["flags"] == [] for row in answer.rows)
