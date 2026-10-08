@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The documentation and agent skills describe this surface. New pages: a
+  rewritten quickstart verified end to end, concepts, modeling state (when
+  something is typed state and when it stays cited prose), projection blocks,
+  and a kits guide. The CLI, MCP and SDK references are corrected against the
+  code. The skills `overlay-and-fit` and `classification-at-scale` are
+  replaced by `adopt-kit` and `automate-with-procedures`, since overlays and
+  relationship groups are gone; `create-state`, `review-state` and
+  `prepare-data` are rewritten.
+
 - The MCP server ships in the base install: `mcp` (`>=1.0,<2`) is a base
   dependency, so `uvx cruxible mcp` and `cruxible-mcp` work on a plain
   `pip install cruxible`. The `mcp` extra is gone; `cruxible[mcp]` still
