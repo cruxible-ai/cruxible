@@ -741,6 +741,32 @@ def _preview_installation(
     )
 
 
+def _hosted_registrations(
+    instance: PlaybillInstance, document: PackageRegistrationDocumentV1
+) -> tuple[ProviderInterfaceRegistration, ...]:
+    """The package registrations this package's deployment re-proves and hosts.
+
+    Core classifies a registration it owns. A live package registration is
+    classified by the deployment that hosts it: this package hosts it exactly when
+    it carries that classifier -- its own new registration, or one it registered
+    earlier (even for a definition core now owns, which it would no longer
+    propose). A registration carrying another package's classifier is not hosted.
+    """
+
+    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+    hosted = []
+    for registration, _live in _interface_bindings(tree, document):
+        if not isinstance(registration, ProviderInterfaceRegistration):
+            continue
+        try:
+            own = document.package_registration(registration.interface_id)
+        except ValueError:
+            continue
+        if own.classifier_digest == registration.classifier_digest:
+            hosted.append(registration)
+    return tuple(hosted)
+
+
 def _install_locked(
     instance: PlaybillInstance,
     operator: ProviderRuntimeOperator,
@@ -800,6 +826,33 @@ def _install_locked(
                 configured = configured.model_copy(update={"installation_verification": verified})
                 deployment = operator._deployment(configured)
                 rewrite_prepared = True
+        # A preparation retained from an install that hosted less (one refused
+        # classifier_host_missing before this package re-proved a registration
+        # it registered earlier) hosts the rest now, in the same order.
+        held = {item.classifier_digest: item for item in configured.classifier_installations}
+        owed = _hosted_registrations(instance, document)
+        if any(item.classifier_digest not in held for item in owed):
+            if operator.process_leases is None:
+                raise ConfigError("provider process runtime is unavailable")
+            registry = ProviderBucketClassifierRegistry()
+            for registration in owed:
+                if registration.classifier_digest not in held:
+                    held[registration.classifier_digest] = registry.install(
+                        _accepted(registration),
+                        PackageBucketClassifier(registration, deployment, operator.process_leases),
+                    )
+            configured = configured.model_copy(
+                update={
+                    "classifier_installations": tuple(held[item.classifier_digest] for item in owed)
+                    + tuple(
+                        item
+                        for digest, item in held.items()
+                        if digest not in {owned.classifier_digest for owned in owed}
+                    )
+                }
+            )
+            deployment = operator._deployment(configured)
+            rewrite_prepared = True
     else:
         custody = directory / "wheels"
         custody.mkdir(exist_ok=True, mode=0o700)
@@ -833,23 +886,7 @@ def _install_locked(
             raise ConfigError("provider process runtime is unavailable")
         registry = ProviderBucketClassifierRegistry()
         installations = []
-        bindings = _interface_bindings(
-            instance.immutable_tree_at(instance.accepted_coordinate().git_oid), document
-        )
-        for registration, _live in bindings:
-            # Core classifies a registration it owns. A live package registration
-            # is classified by the deployment that hosts it: this package re-proves
-            # and hosts it exactly when it carries that classifier -- its own new
-            # registration, or one it registered earlier (even for a definition
-            # core now owns, which it would no longer propose).
-            if not isinstance(registration, ProviderInterfaceRegistration):
-                continue
-            try:
-                own = document.package_registration(registration.interface_id)
-            except ValueError:
-                continue
-            if own.classifier_digest != registration.classifier_digest:
-                continue
+        for registration in _hosted_registrations(instance, document):
             installations.append(
                 registry.install(
                     _accepted(registration),

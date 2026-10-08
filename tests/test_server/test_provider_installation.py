@@ -482,6 +482,82 @@ def test_reinstalling_the_registrant_of_a_retained_web_fetch_registration_hosts_
     ]
 
 
+def test_a_retained_preparation_that_hosted_nothing_hosts_its_classifier_on_retry(
+    installer_http, tmp_path, provider_checkout, monkeypatch
+):
+    """Review F-002 (delta): an install refused classifier_host_missing before this
+    fix had already written prepared.json with no classifier installation. Retrying
+    that exact package reuses the preparation and now hosts the classifier it owes;
+    a package carrying another classifier is still refused, retry or not."""
+
+    import json as stdlib_json
+
+    from cruxible_client.contracts.provider_interfaces import parse_provider_interface
+    from cruxible_core.providers import package_registration
+    from cruxible_core.service.procedures import provider_installation as service
+    from tests.support.provider_installation import build_web_fetch_alternative
+
+    http, instance_id, _reviewer = installer_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = http
+    runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
+    wheel, lock = build_web_fetch_alternative(tmp_path, provider_checkout.repository)
+    path = "provider-interfaces/web.fetch.json"
+    manager = get_playbill_manager()
+    instance = manager.get(instance_id)
+
+    def install(package_wheel, package_lock):
+        return install_provider_wheel(
+            client,
+            instance_id,
+            wheel=package_wheel,
+            lock=package_lock,
+            dependency_wheels=(runtime,),
+        )
+
+    with monkeypatch.context() as earlier:
+        earlier.setattr(
+            package_registration, "core_owned_interface_registration", lambda digest: None
+        )
+        assert install(wheel, lock).status == "ready"
+    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+    retained = parse_provider_interface(tree[path], path=path)
+    cache = instance.root / "exhaust" / "provider-installations"
+    cache.rename(instance.root / "exhaust" / "earlier-installations")
+    operator = manager.provider_runtime_operator()
+    monkeypatch.setattr(operator, "config", operator.config.model_copy(update={"deployments": ()}))
+
+    # The installer before the fix prepared without hosting it, then refused.
+    with monkeypatch.context() as unfixed:
+        unfixed.setattr(service, "_hosted_registrations", lambda *args: ())
+        with pytest.raises(Exception, match="classifier_host_missing"):
+            install(wheel, lock)
+    (prepared,) = cache.glob("*/prepared.json")
+    assert stdlib_json.loads(prepared.read_bytes())["deployment"]["classifier_installations"] == []
+
+    again = install(wheel, lock)
+    assert again.status == "ready" and again.registered, again
+    (deployment,) = manager.provider_runtime_operator().config.deployments
+    assert [item.classifier_digest for item in deployment.classifier_installations] == [
+        retained.classifier_digest
+    ]
+    assert [
+        item["classifier_digest"]
+        for item in stdlib_json.loads(prepared.read_bytes())["deployment"][
+            "classifier_installations"
+        ]
+    ] == [retained.classifier_digest]
+
+    # Another package's classifier is never hosted for it: refused, and so is the retry.
+    monkeypatch.setattr(operator, "config", operator.config.model_copy(update={"deployments": ()}))
+    other, other_lock = build_web_fetch_alternative(
+        tmp_path / "other", provider_checkout.repository, name="fetch-other"
+    )
+    for _attempt in range(2):
+        with pytest.raises(Exception, match="classifier_host_missing"):
+            install(other, other_lock)
+
+
 def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     installer_http, tmp_path, provider_checkout
 ):
