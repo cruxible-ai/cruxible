@@ -3011,6 +3011,8 @@ full digest, a unique digest prefix (`sha256:` plus at least 8 hex characters),
 or a target ref whose current Git target
 names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
+Activating a stale proposal refuses `cruxible.proposal.stale`, naming
+`proposal readmit` (or `withdraw`) as the repair.
 `proposal readmit` replays a stale proposal's authored content through the current
 governed rebase and returns a fresh, idempotent proposal without changing the old
 proposal evidence. It refuses `cruxible.proposal.readmit_already_accepted` when

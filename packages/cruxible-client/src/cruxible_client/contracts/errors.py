@@ -409,6 +409,26 @@ class ProposalReadmitNotStale(ProposalAdmissionError):
         )
 
 
+class ProposalStale(ProposalAdmissionError):
+    """Activation refused: accepted state moved since the proposal was evaluated.
+
+    A stale proposal cannot settle where it stands. Its author readmits it,
+    which rebases the same authored change onto the current head as a new
+    proposal to review, or withdraws it.
+    """
+
+    error_code = "cruxible.proposal.stale"
+
+    def __init__(self, proposal_id: str) -> None:
+        self.proposal_id = proposal_id
+        super().__init__(
+            f"{self.error_code}: proposal {proposal_id} is stale: accepted state moved "
+            "since it was evaluated, so it cannot be activated where it stands; repair: "
+            f"`cruxible proposal readmit {proposal_id}` rebases it onto the current head as "
+            f"a new proposal to review (or `cruxible proposal withdraw {proposal_id}`)"
+        )
+
+
 class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
     """A generated closure must be rebuilt rather than byte-rebased."""
 
@@ -627,6 +647,7 @@ __all__ = [
     "ProposalSelectorAmbiguousError",
     "ProposalWithdrawnError",
     "ProposalRejectedError",
+    "ProposalStale",
     "ProposalIntegrityError",
     "ProjectionCoordinateError",
     "ProjectionError",

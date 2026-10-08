@@ -936,3 +936,33 @@ def test_a_withdrawal_record_without_a_kind_keeps_its_canonical_bytes(tmp_path: 
     assert b"kind" not in canonical_bytes(record.model_dump(mode="json"))
     rejected = record.model_copy(update={"kind": "rejected"})
     assert b'"kind":"rejected"' in canonical_bytes(rejected.model_dump(mode="json"))
+
+
+def test_activating_a_stale_proposal_names_readmit(tmp_path: Path) -> None:
+    """A stale proposal refuses with the readmit repair, not a settlement integrity fault."""
+
+    from cruxible_client.contracts.errors import ProposalStale
+
+    instance, owner = seed_claims(tmp_path)
+    stale = submit_query_definition_candidate(
+        instance,
+        query=work_item_query("stale-then-activated"),
+        actor_id="owner",
+        proposal_name="stale-then-activated",
+        timestamp=TIMESTAMP,
+    )
+    accepted = service_propose_playbill_claim(
+        instance,
+        authoring=authoring("wi-44", "ready", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="advance-head",
+        timestamp=TIMESTAMP,
+    )
+    activate(instance, owner, accepted)
+    proposal_id = stale.proposal.admission.proposal_id
+
+    with pytest.raises(ProposalStale) as excinfo:
+        service_activate_playbill_proposal(instance, proposal_id=proposal_id, activated_by="owner")
+
+    assert excinfo.value.error_code == "cruxible.proposal.stale"
+    assert f"cruxible proposal readmit {proposal_id}" in str(excinfo.value)
