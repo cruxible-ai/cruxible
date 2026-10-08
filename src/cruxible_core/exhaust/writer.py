@@ -83,7 +83,7 @@ class ProcedureExhaustWriter:
         )
         with self.material_reservations.locked():
             self.material_reservations.reserve_locked(reservation)
-            metadata = self.bodies.store(payload_bytes)
+            metadata = self.bodies.store(payload_bytes, journal_payload=True)
             head = (
                 self.journal.read_head(stream, partition_id)
                 if expected_head is None

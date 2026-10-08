@@ -5485,7 +5485,7 @@ class ProcedureExecutor:
                             "run_recovery_required: reserved admission material is unavailable"
                         )
                     pending_to_release.append(matches[0])
-            metadata = self.bodies.store(payload_bytes)
+            metadata = self.bodies.store(payload_bytes, journal_payload=True)
             head = self.journal.read_head(
                 admission.journal_stream,
                 admission.journal_partition_id,

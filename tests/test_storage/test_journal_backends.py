@@ -201,13 +201,14 @@ def test_payload_reservation_spans_cas_to_journal_and_recovers_both_crash_sides(
     )
     original_store = bodies.store
 
-    def store_after_reservation(content: bytes):  # type: ignore[no-untyped-def]
+    def store_after_reservation(content: bytes, *, journal_payload: bool = False):  # type: ignore[no-untyped-def]
         body_digest = bodies.digest_bytes(content).tagged
+        assert journal_payload
         assert any(
             isinstance(item, RunMaterialReservationV1) and item.body_digest == body_digest
             for item in writer.material_reservations.active_locked()
         )
-        return original_store(content)
+        return original_store(content, journal_payload=journal_payload)
 
     monkeypatch.setattr(bodies, "store", store_after_reservation)
     original_append = backend.append

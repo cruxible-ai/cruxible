@@ -90,7 +90,10 @@ class _ObservedBodies:
         self.scope.ineligible = True
         return getattr(self.source, name)
 
-    def store(self, content: bytes):  # type: ignore[no-untyped-def]
+    def store(self, content: bytes, *, journal_payload: bool = False):  # type: ignore[no-untyped-def]
+        # Stored as an evidence body either way: over-advancing the evidence
+        # generation only costs a memo miss.
+        del journal_payload
         self.scope.ineligible = True
         return self.source.store(content)
 
