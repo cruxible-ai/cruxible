@@ -1,104 +1,140 @@
-# Modeling semantic state in Cruxible
+# Modeling state
 
-This branch no longer uses one YAML config as the authority for a mutable entity
-graph. Model accepted knowledge around semantic subjects and external sources.
+Cruxible holds typed state: Subjects, ClaimTypes and Claims, plus the
+definitions that act on them. Not everything belongs there. This page is about
+deciding what does, and shaping it well when it does.
 
-## Start with source ownership
+## State or source
 
-For every source, decide:
+Make something **typed state** when the system has to do something with it:
 
-- what system is authoritative for the underlying record;
-- how a stable record or query coordinate is expressed;
-- whether exact bytes can be pinned;
-- what change cadence and freshness matter;
-- which observations are exhaust versus candidates for governance.
+- ask across items: filter, count, sort, join (`query`);
+- enforce vocabulary: enumerated values, references that must resolve to a
+  real Subject;
+- check consistency mechanically across links, such as a task marked done
+  whose blocker is still open;
+- coordinate concurrent writers: atomic change sets, compare-and-set on a
+  read value;
+- keep per-field history and attribution;
+- drive behavior: `next` rows, Lines, Triggers, staleness of blocks and
+  citations.
 
-Cruxible should not copy an external database merely to point at it. A Claim may
-refer to a source coordinate and evidence digest while the database remains the
-record authority.
+Keep it **prose in a source file** (Markdown, notes) when it is read whole and
+revised whole: reasoning and rationale, trade-offs and rejected options,
+narrative, guides, checkpoints, friction logs, and anything that would need an
+invented schema only to store text.
 
-## Choose the governance unit
+The usual right shape is a **hybrid**: prose is the source, and typed state is
+extracted from it with citations. A decision's full text lives in a Markdown
+section; the decision Subject keeps its standing, its date, what it governs,
+what it amends, a one-line summary, and a citation of the passage. Editing the
+prose then makes `next` report the citation as drifted, and the summary gets
+reviewed. Reports built from state go back into pages as
+[projection blocks](declared-blocks.md), rendered or authored and stamped
+either way.
 
-Use a Document when exact prose or a whole artifact is genuinely the review
-unit. Use a Claim when the useful unit is a proposition. Use a Procedure when
-the useful unit is a bounded, reusable way of acting.
+Warning signs that something is in the wrong place:
 
-One Document can yield many candidate Claims. Extraction is deterministic, but
-selection is explicit: proposing one candidate does not govern every statement
-in the body.
+- long text stored as a Claim value, then cut short on read or edited in place
+  and amended only in prose;
+- obligations or follow-ups that exist only inside a paragraph, so nothing
+  lists them;
+- several hand-synced copies of one list that drift apart.
 
-## Stable subjects
+## Citation or Document
 
-Subjects are discovery anchors. Prefer canonical identities tied to domain
-referents rather than whichever phrase an author happened to use.
+When a Claim rests on what a file says, **cite** it: catalogue the file in
+`.cruxible/sources.yaml` (a `name` and a `locator` are enough) and pass
+`--evidence-file PATH#ANCHOR`. The quoted passage is retained, and `next`
+reports `citation_drifted` when it changes; repair by binding the Claim to the
+new text or retiring it.
 
-Before minting a new subject:
+Make the file a **Document** only when its exact wording is itself the
+governed thing, such as a policy or a specification: the catalog entry gains
+its Document fields, and `sources compile` and `sources propose` turn each
+revision into a reviewed, versioned artifact. Most usage is citations.
 
-1. `get` the exact identity, and grep the floor for it and its aliases;
-2. `orient(kind=K)` the type, and `query` it for near values;
-3. grep optional recall-only tags in the floor;
-4. `get` near candidates;
-5. reuse an existing subject, add an alias, or mint a new one.
+## Subjects
 
-Aliases affect resolution and therefore require stronger authority than
-recall-only tags.
+Subjects are the things your state is about, named `kind/id`. Choose kinds for
+the things people and agents start from, fan out from, or review on their own;
+a concept that may need to be queried or linked deserves a kind rather than a
+text field.
 
-## Claim design
+Choose IDs that are stable for the real thing: a durable source identifier, a
+slug you will not need to change, never a mutable title. Before minting a new
+Subject, look for an existing one:
 
-A ClaimType should state:
+1. `get` the exact `kind/id`, and grep the floor for it and its likely names;
+2. `orient --kind K` to see the kind, and `query K --contains TEXT` for near
+   values;
+3. reuse what exists, or mint the new Subject.
 
-- proposition shape and required fields;
-- subject roles;
-- canonicalization and identity rules;
-- acceptance policy;
-- allowed attestation/evidence forms;
-- projection and explanation expectations.
+## ClaimTypes
 
-Do not encode current truth into the type itself. Claims carry propositions;
-attestations and acceptance history carry epistemic development.
+A ClaimType is one field of a kind. Decide, for each:
 
-## Procedure design
+- **What the value is**: a literal checked by a JSON schema (use an `enum` for
+  a closed set of values, and `member_descriptions` to say what each means), a
+  reference to another Subject (a typed relationship, with
+  `allowed_object_subject_kinds`), or exact content.
+- **How many**: `one` (a value that is replaced) or `many` (a set that values
+  are added to).
+- **Which roles**: `observation` (what was seen), `normative` (what should
+  be), `environment_binding`, `derivation`. Give a `default_role` so writers
+  need not name one.
+- **Which evidence supports a value**: the evidence admission rules. Admit the
+  writer's own words for values a person or agent simply states; admit the
+  catalogued sources and CaptureContracts that should back values that must be
+  checkable. A value whose evidence is not admitted is recorded with the
+  verdict `uncovered`, which reads expose.
+- **How competing values resolve**: the resolution policy.
+- **A description**, so `orient` and agents know what the field means.
 
-A Procedure contract should let an agent decide whether to invoke it without
-loading implementation details:
+Do not encode current truth in the type. Claims carry values; attestations,
+evidence and history carry how well they hold up. When the meaning of a field
+must change, succeed the ClaimType with `cruxible claim-type migrate` and decide
+what happens to each Claim that depends on it, rather than redefining it in
+place.
 
-- contract in;
-- contract out;
-- preconditions;
-- exported capabilities;
-- budgets and terminal caps;
-- pinned dependencies;
-- governance metadata and track record.
+## Evidence that holds up
 
-Graph-v5 names a provider invocation `call`. Its pinned ProviderInterface declares
-`contracts.input` and `contracts.output` using the same schemas as owner-carried
-Procedure Contracts, plus its `effect_class`. Admission checks those schemas
-against the call's Contracts; execution validates input before invocation and
-output before downstream nodes use it. The provider runtime protocol is shared
-by calls and acquisition.
+- Prefer a citation or a Capture to own words when the value comes from
+  somewhere; own words are right for decisions and judgments.
+- Record contradiction as evidence against a Claim (`claim attest
+  --contradict`, or a Claim of what you observed) instead of minting an
+  inverse field.
+- A projection block is never evidence: cite the Claim it reflects, or text
+  outside every block.
 
-A `source` node uses the shared `playbill-provider-result-to-external-capture-v1`
-output contract. The provider returns observation material; Cruxible verifies it and
-constructs the Capture under the pinned CaptureContract and acquisition policy.
-Source refuses mutation interfaces. Graph-v3/v4 artifacts retain their original
-grammar and digests. Existing instances adopt graph-v5 through a governed compiler
-upgrade, not a restart or an automatic rewrite of Procedures.
+## Procedures
 
-## Defaults and policy
+Make a Procedure when a way of acting should be reviewed once and then run the
+same way every time: reading state, fetching or reading sources, calling
+providers, and proposing what should change. A Procedure's contract (its
+input, output, budgets, and the providers it pins) should let an agent decide
+whether to run it without reading its graph.
 
-Authoring must be progressive. Common ClaimTypes and Procedures should inherit
-safe defaults for acceptance, evidence, and explanation. Explicit policy is
-required only where the domain differs.
+- Pin every provider exactly. When the consumer of your definitions should
+  choose a provider, ship a Blueprint and let them instantiate it.
+- Read through accepted state and named queries, and acquire outside data
+  through Source nodes under an acquisition policy, never through ambient
+  access.
+- Let a Line run it when it should happen on a schedule or on an event, and
+  give a Line that proposes or settles changes a mandate that says exactly
+  what it may do.
+- Declare measurements when you want to know whether it worked, and read them
+  with `procedure readings`.
 
-Defaults must remain visible after compilation. They are deterministic authored
-semantics, not hidden runtime guesses.
+## Defaults stay visible
 
-## Query model
+Authoring is progressive: a ClaimType or Procedure that states only what
+differs from the defaults is complete, and the defaults remain visible in what
+was accepted (`get … --detail proof`). Nothing is filled in at run time that
+was not in the accepted definition.
 
-Queries operate over accepted semantic projections and may join subjects whose
-evidence originates in different data silos. A cloud graph/search database can
-accelerate traversal, but its contents are projections of accepted state and
-source references, not a new ground truth.
+## Indexes are projections
 
-Start with grep-friendly files and local SQLite. Add indexes, piecewise
-projections, or graph databases only when measured demand requires them.
+Queries run over accepted state through the daemon's indexes. Any faster
+index, search engine or graph database you add is a projection of accepted
+state and source references, and can be rebuilt from them.
