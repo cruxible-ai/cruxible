@@ -348,6 +348,67 @@ def test_another_installed_implementation_satisfies_the_default(
             pass
 
 
+def test_a_default_implementing_an_uncarried_interface_is_still_satisfied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
+) -> None:
+    """Review e3e7060ce: the default stands for the contracts the kit carries. web
+    0.2.1 also implements search.web, which a kit using only web.fetch does not
+    carry, so another web.fetch implementation still satisfies it; the file index
+    that would serve web is never asked."""
+
+    from tests.support.provider_installation import write_file_index
+    from tests.test_server.test_playbill_kits import _fresh_open_worlds
+
+    web_wheel = next(provider_checkout.wheels.glob("cruxible_provider_web-*.whl"))
+    runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
+    web = tmp_path / "web"
+    (web / "dist").mkdir(parents=True)
+    package = provider_checkout.repository / "packages/cruxible-provider-web"
+    shutil.copy(package / "pyproject.toml", web / "pyproject.toml")
+    shutil.copy(package / "uv.lock", web / "uv.lock")
+    shutil.copy(web_wheel, web / "dist" / web_wheel.name)
+    shutil.copy(runtime, web / "dist" / runtime.name)
+    alternative = _project(
+        tmp_path / "alternative", provider_checkout, name="fetch-alt", claims=(STATIC_LIGHT,)
+    )
+    index = write_file_index(tmp_path / "index", (web_wheel, runtime))
+    config = tmp_path / "server-state" / PROVIDER_RUNTIME_CONFIG_PATH
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"provider_index_urls": list(index)}))
+    opened = _fresh_open_worlds(tmp_path, monkeypatch, independent=False)
+    publisher, consumer = next(opened)
+    try:
+        # The alternative registers web.fetch on the publisher; the kit names web.
+        _install(publisher, alternative)
+        _author(publisher)
+        release = _build_with_default(publisher, web)
+        (provider,) = release.manifest.providers
+        assert (provider.package, provider.delivery, provider.interfaces) == (
+            "cruxible-provider-web",
+            "index",
+            ("search.web", "web.fetch"),
+        )
+        assert INTERFACE_PATH in release.contents()
+        assert "provider-interfaces/search.web.json" not in release.contents()
+
+        _install(consumer, alternative)
+        added = _add(consumer, release, dry_run=False)
+        assert added.status == "accepted", added
+        (step,) = added.providers
+        assert step.action == "satisfied" and "fetch-alt" in (step.detail or ""), step
+        tree = _tree(consumer)
+        assert "providers/cruxible-provider-web.json" not in tree
+        assert "provider-interfaces/search.web.json" not in tree
+        (status,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
+        assert [(item.provider_id, item.delivery, item.state) for item in status.providers] == [
+            ("cruxible-provider-web", "index", "satisfied")
+        ]
+        _instantiate_and_refuse(consumer)
+    finally:
+        for _ in opened:
+            pass
+
+
 def test_an_index_default_is_named_by_its_build_and_carries_no_file() -> None:
     """The delivery field is additive: a bundled entry's manifest bytes (and so every
     existing release digest) are unchanged, and an index default names no file."""
