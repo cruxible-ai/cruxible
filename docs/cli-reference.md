@@ -667,8 +667,19 @@ per-user path outside the workspace and the daemon state root. Every custody
 directory (owner, reviewer and recovery, default or explicit, with symlinks
 resolved and case ignored) is refused inside either before any host is
 allocated or key generated; a refused default is reported after the new host
-is selected, so the retry initializes that host. On an auth-off daemon the init request claims that
-principal, so no bootstrap secret is needed. Init writes the owner's settings
+is selected, so the retry initializes that host. On a local socket the new host
+is created attached to the worktree, so a worktree already attached to another
+host refuses before any host exists. On an auth-off daemon the init request claims that
+principal, so no bootstrap secret is needed. With auth on, no one bearer token
+both allocates a host (the bootstrap secret) and initializes it (the host's
+claimed admin credential), so init with a bearer token and no selected host
+refuses before creating anything and names the three steps: `host create`
+with the secret, `credential claim-bootstrap`, then `init` with the admin
+token. Init of a selected host that init already ran for (its owner key is in
+custody without a retry marker, or the daemon reports the host initialized) is
+refused before anything is written, naming how the host was selected and the
+repair: `context clear` to start a new project, or `context use --principal` to
+act on that host. Init writes the owner's settings
 file (`DIR/cruxible.env`) and remembers it in the CLI context, so later commands
 act as the owner without sourcing anything (see [context](#context)). An init
 whose caller is not one of the owner principals it names is refused with

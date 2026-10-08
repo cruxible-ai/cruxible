@@ -1077,7 +1077,40 @@ def init_playbill(
     ):
         if explicit is not None:
             _refuse_custody_inside(role, Path(explicit), custody_roots, flag=flag)
-    selected = str(selected_instance) if selected_instance else _create_host_for_init(transport)
+    if selected_instance is None and get_runtime_bearer_token() is not None:
+        # Allocating a host takes the daemon's bootstrap secret, and init takes
+        # the new host's own admin credential: no one bearer token does both.
+        raise click.UsageError(
+            "with daemon auth on, init initializes a host you have already allocated and "
+            "claimed, and none is selected; nothing was created. Repair: "
+            "`CRUXIBLE_SERVER_BEARER_TOKEN=<bootstrap secret> cruxible host create`, then "
+            "`cruxible credential claim-bootstrap --secret-file <secret file>`, then "
+            "`CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed> cruxible init` "
+            "(or select an allocated host with --instance-id)"
+        )
+    if selected_instance is not None:
+        _refuse_reinit(
+            str(selected_instance),
+            principal_id=principal_id,
+            key_dir=(
+                Path(key_dir).expanduser()
+                if key_dir is not None
+                else default_key_dir(str(selected_instance), principal_id)
+            ),
+            custody_roots=custody_roots,
+        )
+    selected = (
+        str(selected_instance)
+        if selected_instance
+        else _create_host_for_init(
+            transport,
+            workspace_root=(
+                str(git_workspace)
+                if git_workspace is not None and _root_ctx_obj().get("server_socket")
+                else None
+            ),
+        )
+    )
     owner_key_dir = (
         Path(key_dir).expanduser()
         if key_dir is not None
@@ -1186,16 +1219,18 @@ def _os_principal_id() -> str:
     return name
 
 
-def _create_host_for_init(transport: str) -> str:
+def _create_host_for_init(transport: str, *, workspace_root: str | None) -> str:
     """Allocate the host a bare init initializes, and select it before anything else.
 
     Selecting it first means a retry after a failed init initializes this same
-    host instead of allocating another.
+    host instead of allocating another. The host is created attached to the
+    worktree init will attach (on a local socket), so a worktree already
+    attached to another host refuses here, before any host exists.
     """
 
     _echo_creation_write_target({})
     created = _dispatch_cli(
-        lambda client: client.create_host(dry_run=False),
+        lambda client: client.create_host(workspace_root=workspace_root, dry_run=False),
         lambda: None,
         allow_local=False,
         command_name="cruxible init",
@@ -1204,6 +1239,55 @@ def _create_host_for_init(transport: str) -> str:
     _activate_server_instance(created.instance_id)
     click.echo(f"Created Cruxible host {created.instance_id} @ {transport}", err=True)
     return created.instance_id
+
+
+def _refuse_reinit(
+    instance_id: str, *, principal_id: str, key_dir: Path, custody_roots: tuple[Path, ...]
+) -> None:
+    """Refuse, before anything is written, an init of a host that init already ran for.
+
+    A retry of an interrupted init carries its resume marker and goes on. Without
+    one, an owner key already in custody, or a host the daemon reports
+    initialized, means this init would only fail later: name the host, how it
+    was selected, and the ways forward.
+    """
+
+    source = str(_root_ctx_obj().get("target_instance_source") or "context")
+    repair = (
+        "Repair: to start a new project, `cruxible context clear` (or select no host) and run "
+        f"`cruxible init` again; to act on {instance_id}, use its settings "
+        f"(`cruxible context use --principal ID`)"
+    )
+    target = validate_client_principal_key_target(
+        key_dir, principal_id=principal_id, kind="ordinary", forbidden_roots=custody_roots
+    )
+    if _init_resume_marker(target).exists():
+        return
+    if target.private_key_path.exists():
+        raise click.UsageError(
+            f"Cruxible host {instance_id} (selected by {source}) already has {principal_id}'s "
+            f"init key at {target.directory}, so init already ran for it; nothing was written. "
+            f"{repair}, or pass --key-dir DIR for a key of its own"
+        )
+    try:
+        inspection = _dispatch_cli(
+            lambda client: client.show_host(instance_id),
+            lambda: None,
+            allow_local=False,
+            command_name="cruxible init",
+        )
+    except (CoreError, click.ClickException):
+        # An uninitialized host is shown only to an unscoped operator, so a
+        # refusal here is no evidence that it is initialized.
+        return
+    if (
+        isinstance(inspection, contracts.HostInspection)
+        and inspection.compatibility != "uninitialized"
+    ):
+        raise click.UsageError(
+            f"Cruxible host {instance_id} (selected by {source}) is already initialized; init "
+            f"runs once per host and nothing was written. {repair}"
+        )
 
 
 def _init_custody_roots(workspace: Path | None) -> tuple[Path, ...]:
