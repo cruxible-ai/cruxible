@@ -390,7 +390,6 @@ def service_check_line_trigger(
                     occurrence, _ = _line_occurrence(
                         accepted,
                         evaluation_time=instant,
-                        prior=(),
                         trigger=trigger,
                         binding=binding,
                         exact_basis=instant,
@@ -411,21 +410,26 @@ def service_check_line_trigger(
                 if next_cursor:
                     break
             elif schedule_is_timed(schedule):
+                # A listening pass, or a check with no range, reads the tick due
+                # next in this Trigger's chain: the timer's first instant after
+                # the latest tick delivered to the Line, by that tick's
+                # scheduled instant (when any tick was dispatched, a recovered
+                # one included, never moves the chain), and at or after where
+                # the pass's own matching reached (`since`). A tick already
+                # pending keeps its original due instant; checks must not invent
+                # a new occurrence on every call. An armed segment
+                # (`pending_scope`) only ever resumes its own tick.
                 binding = trigger_binding_for(trigger)
-                _, due = _line_occurrence(
-                    accepted,
-                    evaluation_time=now,
-                    prior=_trigger_admissions(instance, accepted, trigger.trigger.identity),
-                    trigger=trigger,
-                    binding=binding,
-                    not_before=request.since,
-                    accepted_at=trigger_accepted_at(instance, trigger),
-                )
-                # An already-pending cadence tick keeps its original due instant;
-                # checks must not invent a new occurrence on every call. An armed
-                # segment (`pending_scope`) only ever resumes its own tick.
+                last_tick: datetime | None = None
+                held: datetime | None = None
                 if dispatch_root(instance).exists():
                     with LineDispatchStore(instance).locked() as conn:
+                        # One +00:00 ISO form throughout, so text order is time order.
+                        (latest,) = conn.execute(
+                            "SELECT max(eligible_at) FROM pending "
+                            "WHERE line_id=? AND epoch=? AND trigger_id=?",
+                            (identity, accepted.line.occurrence_epoch, name),
+                        ).fetchone()
                         row = conn.execute(
                             "SELECT eligible_at FROM pending WHERE line_id=? AND trigger_id=? "
                             "AND disposition='pending'"
@@ -437,8 +441,19 @@ def service_check_line_trigger(
                                 *((pending_scope,) if pending_scope is not None else ()),
                             ),
                         ).fetchone()
-                        if row is not None:
-                            due = datetime.fromisoformat(row[0])
+                    last_tick = None if latest is None else parse_datetime(latest)
+                    held = None if row is None else parse_datetime(row[0])
+                _, due = _line_occurrence(
+                    accepted,
+                    evaluation_time=now,
+                    last_tick=last_tick,
+                    trigger=trigger,
+                    binding=binding,
+                    not_before=request.since,
+                    accepted_at=trigger_accepted_at(instance, trigger),
+                )
+                if held is not None:
+                    due = held
                 bindings.append((trigger, binding, due or now))
             else:
                 raise ExecutionError(f"unsupported Trigger schedule kind {schedule.kind!r}")
@@ -450,7 +465,6 @@ def service_check_line_trigger(
             occurrence, _ = _line_occurrence(
                 accepted,
                 evaluation_time=eligible,
-                prior=(),
                 trigger=trigger,
                 binding=binding,
                 exact_basis=eligible if binding.kind in TIMED_BINDING_KINDS else None,

@@ -880,7 +880,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
             kind="capture_landing", trigger=trigger.trigger.identity, event=event
         )
         occurrence_id, _ = _line_occurrence(
-            accepted, evaluation_time=READ_TIME, prior=(), trigger=trigger, binding=binding
+            accepted, evaluation_time=READ_TIME, trigger=trigger, binding=binding
         )
         occurrence_ids.append(occurrence_id)
         # Seed retained pending work with a bad reference, modeling a damaged or

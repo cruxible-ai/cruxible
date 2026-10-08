@@ -833,16 +833,16 @@ def test_a_retried_lapsed_tick_never_blocks_the_arms_own_ticks(tmp_path):
     )
     assert [item.status for item in retried.items] == ["admitted"]
 
-    # The retry moved the chain past the arm's queued tick: it closes as
-    # superseded instead of refusing forever, and the arm matches the next one.
+    # The retry ran an earlier tick late; that moves nothing after it, so the
+    # arm's own queued tick still runs, and the arm then matches the next one.
     (arm,) = armed_work(instance, now=READ_TIME + timedelta(seconds=182))
-    stale = dispatch_armed_line(
+    queued = dispatch_armed_line(
         _manager(instance),
         instance.descriptor.instance_id,
         arm,
         now=READ_TIME + timedelta(seconds=182),
     )
-    assert stale is not None and [item.status for item in stale.items] == ["superseded"]
+    assert queued is not None and [item.status for item in queued.items] == ["admitted"]
     at = READ_TIME + timedelta(seconds=300)
     _match(instance, at, daemon_id="restarted")
     (arm,) = armed_work(instance, now=at)

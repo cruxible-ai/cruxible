@@ -1726,10 +1726,13 @@ grid one interval apart from its Trigger version's acceptance, a cron
 schedule's on its calendar, and enabling or resuming never moves them: nothing
 ticks at the enable or restart instant itself unless the schedule has an
 instant there. Each cadence or cron Trigger keeps its own chain: it is due at
-its schedule's next instant after the last occurrence it fired, whatever other
-Triggers aimed at the Line fired, and never before the first instant after its
-Trigger version's acceptance: a new cadence ticks first one interval after it
-was accepted, a successor schedule from its own acceptance. `disable` stops
+its schedule's next instant after the latest tick it delivered to the Line
+(matched or evaluated), whatever other Triggers aimed at the Line fired. The
+chain reads that tick's scheduled instant, never when it ran, so dispatching
+recovered ticks late never skips a live one. It is never due before the first
+instant after its Trigger version's acceptance: a new cadence ticks first one
+interval after it was accepted, a successor schedule from its own acceptance.
+`disable` stops
 further admissions; a run already admitted keeps going, and a retired Line can
 be disabled too. Both are idempotent:
 enabling a Line already enabled by the same credential at the same versions

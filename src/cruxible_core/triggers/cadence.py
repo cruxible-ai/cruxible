@@ -5,10 +5,11 @@ of the Trigger version that names them: a cadence's instants sit on its own
 grid, one interval apart from its acceptance (the first one interval after it),
 a cron schedule's are its calendar instants after acceptance, and a successor
 schedule starts again from its own acceptance. A Line occurrence chain then
-continues at the timer's next instant after the last occurrence its Trigger
-fired. A floor is how a forward-only reader resumes: the timer's first instant
-at or after it, never the floor itself and never an instant before it; the
-instants it skipped are left for explicit evaluation.
+continues at the timer's next instant after the latest tick its Trigger
+delivered, by that tick's scheduled instant, never by when it ran. A floor is
+how a forward-only reader resumes: the timer's first instant at or after it,
+never the floor itself and never an instant before it; the instants it skipped
+are left for explicit evaluation.
 """
 
 from __future__ import annotations

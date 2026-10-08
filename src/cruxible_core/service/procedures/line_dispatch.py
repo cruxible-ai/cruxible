@@ -1345,7 +1345,6 @@ def service_dispatch_line(
                             expected_line_artifact_digest=data["line_artifact_digest"],
                             expected_trigger_artifact_digest=data.get("trigger_artifact_digest"),
                             expected_trigger_pins=pinned_trigger_pins,
-                            explicit_occurrence=session_id is None,
                         )
                         # The journal, not the execution response, establishes admission.
                         admitted = next(
@@ -1374,14 +1373,6 @@ def service_dispatch_line(
                                 }:
                                     status = "rejected"
                                 elif refusal.code == "line_binding_superseded":
-                                    status = "superseded"
-                                elif (
-                                    refusal.code == "occurrence_id_mismatch"
-                                    and session_id is not None
-                                ):
-                                    # An intervening admission moved the cadence
-                                    # chain past this tick. It stays retryable;
-                                    # closing it lets the arm match the next one.
                                     status = "superseded"
                             else:
                                 detail = "No durable admission was produced."

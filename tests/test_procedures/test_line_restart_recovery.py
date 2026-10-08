@@ -8,7 +8,7 @@ covered. Re-enabling does not hide a range nobody evaluated.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 import pytest
@@ -42,6 +42,7 @@ from tests.test_procedures.test_line_arming import (
     _admissions,
     _manager,
     _match,
+    _status,
 )
 from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
@@ -272,6 +273,7 @@ class _Timer:
     restart: datetime
     missed: tuple[datetime, ...]  # the instants the downtime skipped
     next: datetime  # the resumed arm's first tick
+    then: datetime  # the tick after it
 
 
 def _at(minutes: int, seconds: int = 0) -> datetime:
@@ -287,6 +289,7 @@ TIMERS = (
         restart=_at(8, 40),
         missed=(_at(5), _at(7, 30)),
         next=_at(10),
+        then=_at(12, 30),
     ),
     _Timer(
         CronSchedule(expression="*/3 * * * *"),
@@ -294,6 +297,7 @@ TIMERS = (
         restart=_at(10, 20),
         missed=(_at(6), _at(9)),
         next=_at(12),
+        then=_at(15),
     ),
 )
 
@@ -318,8 +322,12 @@ def _drain_armed(instance, at):  # type: ignore[no-untyped-def]
         dispatch_armed_line(_manager(instance), instance.descriptor.instance_id, arm, now=at)
 
 
-def _restarted_timed_line(tmp_path, timer: _Timer):  # type: ignore[no-untyped-def]
-    """An enabled timed Line that ran one tick, then a downtime spanning two more."""
+def _restarted_timed_line(tmp_path, timer: _Timer, *, covered_until=None):  # type: ignore[no-untyped-def]
+    """An enabled timed Line that ran one tick, then a downtime spanning two more.
+
+    `covered_until` is where the live listener's last pass before the downtime
+    reached (exclusive), so the restart gap starts exactly there.
+    """
 
     instance, line, _procedure = line_world(tmp_path, timer.schedule)
     start = READ_TIME + timedelta(seconds=10)
@@ -330,6 +338,8 @@ def _restarted_timed_line(tmp_path, timer: _Timer):  # type: ignore[no-untyped-d
     _match(instance, ran)
     _drain_armed(instance, ran)
     assert _queued(instance, disposition="admitted") == [(timer.first, True)]
+    if covered_until is not None:
+        _match(instance, covered_until - timedelta(microseconds=1))
     # Down from here until `restart`; the restarted daemon rolls the arm over.
     _match(instance, timer.restart, daemon_id="restarted")
     return instance, line
@@ -467,3 +477,194 @@ def test_a_timed_range_never_reaches_before_acceptance_or_lists_a_delivered_tick
     # ran, only the missed ones show.
     spanning = check(READ_TIME + timedelta(seconds=10), timer.restart)
     assert [item.eligible_at for item in spanning.occurrences] == list(timer.missed)
+
+
+# --- recovered ticks never move the live chain (review F-001) ----------------
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_recovered_ticks_dispatched_after_the_next_live_tick_never_skip_it(tmp_path, timer):
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    resumed = timer.restart + timedelta(seconds=1)
+    (gap,), _ = line_attention(instance, now=resumed)
+    recovered = _evaluate(instance, line, gap, resumed)
+    assert [item.eligible_at for item in recovered.occurrences] == list(timer.missed)
+
+    # The listener runs on through the second before the next live tick, and
+    # the recovered ticks are dispatched only once that tick is due.
+    _match(instance, timer.next - timedelta(seconds=1), daemon_id="restarted")
+    drained = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequest(),
+        actor=_actor(instance),
+        caller_rung=3,
+        now=timer.next + timedelta(seconds=1),
+    )
+    assert [item.status for item in drained.items] == ["admitted", "admitted"]
+
+    # The chain reads each tick's scheduled instant, never when it ran: the
+    # arm still matches the live tick it was due, then the one after it.
+    for tick in (timer.next, timer.then):
+        at = tick + timedelta(seconds=2)
+        _match(instance, at, daemon_id="restarted")
+        assert (tick, True) in _queued(instance, disposition="pending")
+        _drain_armed(instance, at)
+    assert _queued(instance, disposition="admitted") == [
+        (timer.first, True),
+        *((at, False) for at in timer.missed),
+        (timer.next, True),
+        (timer.then, True),
+    ]
+    assert line_attention(instance, now=timer.then + timedelta(seconds=2)) == ((), ())
+
+
+# --- tick boundaries: a gap's edges, a range's edges, a successor ------------
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_a_tick_exactly_where_the_listener_stopped_is_the_gaps_and_recovered_once(tmp_path, timer):
+    # The last pass before the downtime covered up to, not including, the
+    # first missed tick, so the gap's inclusive start is exactly that tick.
+    instance, line = _restarted_timed_line(tmp_path, timer, covered_until=timer.missed[0])
+    resumed = timer.restart + timedelta(seconds=1)
+    _match(instance, resumed, daemon_id="restarted")
+    (gap,), _ = line_attention(instance, now=resumed)
+    assert gap.since == timer.missed[0]
+    assert _queued(instance) == [(timer.first, True)]  # no live pass reached it
+
+    evaluated = _evaluate(instance, line, gap, resumed)
+    assert [item.eligible_at for item in evaluated.occurrences] == list(timer.missed)
+    assert line_attention(instance, now=resumed)[0] == ()
+    assert [at for at, _ in _queued(instance)] == [timer.first, *timer.missed]
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_a_tick_exactly_at_the_restart_is_the_resumed_arms_not_the_gaps(tmp_path, timer):
+    timer = replace(timer, restart=timer.missed[1], missed=timer.missed[:1])
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    resumed = timer.restart + timedelta(seconds=1)
+    _match(instance, resumed, daemon_id="restarted")
+    assert (timer.restart, True) in _queued(instance, disposition="pending")
+    (gap,), _ = line_attention(instance, now=resumed)
+    assert gap.until == timer.restart  # the gap's exclusive end leaves it to the arm
+
+    evaluated = _evaluate(instance, line, gap, resumed)
+    assert [item.eligible_at for item in evaluated.occurrences] == list(timer.missed)
+    _drain_armed(instance, resumed)
+    service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequest(),
+        actor=_actor(instance),
+        caller_rung=3,
+        now=resumed,
+    )
+    assert _queued(instance, disposition="admitted") == [
+        (timer.first, True),
+        (timer.missed[0], False),
+        (timer.restart, True),
+    ]
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_a_tick_on_since_is_in_the_range_and_one_on_until_is_not(tmp_path, timer):
+    instance, line = _restarted_timed_line(tmp_path, timer)
+    resumed = timer.restart + timedelta(seconds=1)
+    (gap,), _ = line_attention(instance, now=resumed)
+
+    def evaluate(since, until):  # type: ignore[no-untyped-def]
+        return service_evaluate_line(
+            instance,
+            line.identity.name,
+            LineEvaluateRequest(since=since, until=until),
+            actor=_actor(instance),
+            now=resumed,
+        )
+
+    head = evaluate(timer.missed[0], timer.missed[1])
+    assert [item.eligible_at for item in head.occurrences] == [timer.missed[0]]
+    tail = evaluate(timer.missed[1], gap.until)
+    assert [item.eligible_at for item in tail.occurrences] == [timer.missed[1]]
+    assert [at for at, _ in _queued(instance, disposition="pending")] == list(timer.missed)
+    # Only the part of the gap before the first tick is left, and it holds none.
+    (rest,), _ = line_attention(instance, now=resumed)
+    assert (rest.since, rest.until) == (gap.since, timer.missed[0])
+    again = _evaluate(instance, line, rest, resumed)
+    assert again.status == "not_met" and again.occurrences == ()
+    assert line_attention(instance, now=resumed)[0] == ()
+
+
+#: Per timer: a successor schedule accepted mid-downtime at 16:04:10, its
+#: instants from there to the timer's restart (a cadence on its own grid from
+#: that acceptance), and its next instant after the Line is enabled again.
+SUCCESSORS = (
+    (CadenceSchedule(interval_seconds=120), (_at(6, 10), _at(8, 10)), _at(10, 10)),
+    (CronSchedule(expression="*/2 * * * *"), (_at(6), _at(8), _at(10)), _at(12)),
+)
+
+
+@pytest.mark.parametrize(
+    ("timer", "successor"), tuple(zip(TIMERS, SUCCESSORS, strict=True)), ids=("cadence", "cron")
+)
+def test_a_successor_accepted_mid_gap_recovers_and_ticks_on_its_own_schedule(
+    tmp_path, timer, successor
+):
+    from tests.support.lines import line_trigger, trigger_members
+    from tests.support.lines import successor as successor_of
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_line_triggers import TRIGGER
+
+    schedule, missed, next_tick = successor
+    instance, line, _procedure, owner = line_world(tmp_path, timer.schedule, with_owner=True)
+    start = READ_TIME + timedelta(seconds=10)
+    _enable(instance, line, start)
+    ran = timer.first + timedelta(seconds=1)
+    _match(instance, ran)
+    _drain_armed(instance, ran)
+    # Down from here; the successor is accepted at 16:04:10, mid-downtime.
+    predecessor = line_trigger(TRIGGER, line=line.identity.name, schedule=timer.schedule)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree.update(trigger_members(successor_of(predecessor, schedule=schedule)))
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-24T16:04:10.000000Z", proposal_name="retime"
+    )
+    # The enablement is pinned to the predecessor, so the restarted daemon
+    # stops it rather than adopting the successor; it is enabled again.
+    _match(instance, timer.restart, daemon_id="restarted")
+    assert _status(instance, line, timer.restart).stop_reason == "trigger_changed"
+    resumed = timer.restart + timedelta(seconds=1)
+    _enable(instance, line, resumed)
+
+    # The downtime holds only the live successor's instants after its
+    # acceptance: none of the predecessor's, and not the tick it already ran.
+    evaluated = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=start, until=timer.restart),
+        actor=_actor(instance),
+        now=resumed,
+    )
+    assert [item.eligible_at for item in evaluated.occurrences] == list(missed)
+
+    # Dispatched only once the successor's next tick is due, the recovered
+    # ticks still leave that tick to the enabled Line.
+    _match(instance, next_tick - timedelta(seconds=1))
+    drained = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequest(),
+        actor=_actor(instance),
+        caller_rung=3,
+        now=next_tick + timedelta(seconds=1),
+    )
+    assert [item.status for item in drained.items] == ["admitted"] * len(missed)
+    at = next_tick + timedelta(seconds=2)
+    _match(instance, at)
+    _drain_armed(instance, at)
+    assert _queued(instance, disposition="admitted") == [
+        (timer.first, True),
+        *((tick, False) for tick in missed),
+        (next_tick, True),
+    ]
+    assert line_attention(instance, now=at) == ((), ())
