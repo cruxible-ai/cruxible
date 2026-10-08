@@ -698,9 +698,9 @@ fetches accepted state as `cruxible-ledger/accepted` and open proposals as
 compare them, never check them out or merge them to admit governed state.
 
 Explicit `--workspace DIR` over TCP writes only the client-local URL binding.
-An instance initialized without daemon registration cannot acquire one later;
-archive and rebuild an attached host through the local socket when ledger-ref
-advertisement is required.
+An instance initialized without daemon registration can register a worktree
+later: `cruxible workspace attach` over the local socket attaches an initialized
+host in place.
 
 The ledger's Git object format follows `--object-format`: with no flag it
 inherits an attached workspace's format, and with no workspace it is `sha1`.

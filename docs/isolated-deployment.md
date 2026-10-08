@@ -56,8 +56,8 @@ Use TLS at the proxy for any non-loopback deployment. Never send bearer tokens
 over plaintext untrusted networks. TCP-created hosts are intentionally
 unattached: run `cruxible host create` and `cruxible init` outside a Git
 worktree. If the daemon and workspace are local and the ledger should advertise
-into that workspace, use the Unix socket and attach before initialization;
-attachment cannot be retrofitted afterward.
+into that workspace, attach it over the Unix socket (`cruxible workspace
+attach`), before or after initialization.
 
 ## One daemon per state root
 
@@ -109,8 +109,8 @@ with `--commit --at OID` (the preview's coordinate) is terminal: it
 ends one instance's governed writes and cannot be undone. It is ADMIN-tiered and
 deletes NOTHING. Afterwards:
 
-- every governed write door -- proposals, approvals, activation, curation
-  rulings, Claim attestations, predictions and settlements, Procedure binds and
+- every governed write -- proposals, approvals, activation, curation
+  rulings, Claim attestations, predictions and settlements, and
   Procedure/Line runs -- refuses with the typed
   `cruxible.instance.decommissioned` error carrying the recorded reason;
 - reads keep serving at the accepted coordinate, and `orient` and `next` report
