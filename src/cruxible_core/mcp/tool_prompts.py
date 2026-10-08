@@ -19,9 +19,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_kit_build": (
         "Use when you want to export the definitions under owned identity prefixes as a "
         "kit release another instance can install. A release is a lineage-free snapshot; "
-        "its manifest records where it was built. providers bundles provider packages "
+        "its manifest records where it was built. providers names provider packages "
         "(wheel, lock and path-dependency wheels, staged with body_store first): every "
-        "Provider a carried Procedure pins must be bundled."
+        "Provider a carried Procedure pins must be named. delivery index makes one the "
+        "kit's default provider, installed by name only where nothing implements it."
     ),
     "cruxible_kit_status": (
         "Use when you need the installed kits, the kit paths edited since install, what was "
@@ -33,6 +34,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "kept (keep, keep_local_edits); the plan says what each change does and counts "
         "dependents. It lands at once when the approval policy requires no approval. A kit "
         "bundling provider packages installs them first (admin; a commit stages their files), "
+        "and a default provider by name unless something here implements it (satisfied), "
         "then proposes the definitions; an install awaiting approval stops at "
         "awaiting_providers."
     ),

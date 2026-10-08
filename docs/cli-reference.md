@@ -429,7 +429,7 @@ has tag `cruxible-provider-runtime-operational-config-v1` and these entries:
 | `process_group_termination_timeout_seconds` | `5.0` | Child group termination and verification deadline. |
 | `deployments` | `[]` | Digest-keyed local Provider deployment records. |
 | `provider_repository` | `null` | Operator-configured provider repository used by `provider list` and name-based installs. |
-| `provider_index_urls` | `[]` | Explicit allowed package indexes and download origins, in lookup order. Without these, a transferred or repository install must supply locked dependency wheels, and an install by name uses PyPI. |
+| `provider_index_urls` | `[]` | Explicit allowed package indexes and download origins, in lookup order. Without these, an install by name and a transferred wheel resolve from PyPI, and a repository install must supply locked dependency wheels. |
 | `workspace_allowed_roots` | `[]` | Canonical absolute roots that widen `workspace.file` beyond an attached workspace; these are daemon-local authority and never come from an environment variable. The daemon state root, its trust, custody, Provider-secret, and instance substrate stay refused inside any allowed root. |
 
 Unknown entries, non-positive timing values, malformed JSON, unsafe deployment
@@ -887,12 +887,34 @@ hash the index publishes, and the environment is materialized from the lock the
 wheel embeds. With no `provider_index_urls` configured, the index is PyPI
 (`https://pypi.org/simple/`, files from `https://files.pythonhosted.org/`). A
 local wheel requires `--lock`; `--dependency` supplies local or offline locked
-dependency wheels. Local paths are read by the client and transferred through
-CAS, so this also works against a remote daemon.
+dependency wheels, and the registry dependencies the lock pins resolve by hash
+from the configured indexes, or from PyPI when none is configured. Local paths
+are read by the client and transferred through CAS, so this also works against
+a remote daemon.
 
 The shared installer prepares an exact Python environment, verifies it once,
 checks package classifiers in supervised children, and proposes the package's
 provider interfaces and Provider definition through ordinary acceptance.
+The interface contract owns its registration, not the implementation: an
+exported interface whose definition is already registered live here (an equal
+interface digest) is bound rather than registered again, and the package's
+Provider pins that exact registration whatever its classifier, so a second
+implementation of a contract installs onto the same ProviderInterface and a
+Blueprint slot typed by it takes either. A bound package claims only input
+buckets that registration proves, under the fixture ids its proofs name
+(`cruxible.provider.bucket_fixture_missing` otherwise), and runs classify through
+the deployment that hosts the registration's classifier, which must be installed
+on this daemon (`cruxible.provider.classifier_host_missing`). An occurrence admits
+only the buckets its bound implementation claims; another input is refused
+`unclaimed_bucket` before the provider runs. A different definition under the
+same interface id is proposed as a successor, which every live Provider and
+Procedure pinning the old registration must follow. Cruxible owns the `web.fetch`
+contract (definitions v2 and v3, the one `cruxible-provider-web` 0.2.x ships): a
+package implementing either registers the built-in registration of it, with its
+vocabulary, its four conformance proofs (static light, static medium, API or
+JSON, rendered) and its classifier, whatever the package itself ships, so every
+implementation binds the same ProviderInterface and claims a subset of those
+buckets.
 The registration lands at once when the approval policy requires no approval
 (`ready`); otherwise it stops at proposed (`awaiting_approval`) for the ordinary
 review and activation. It returns `ready`, `awaiting_approval`, or `blocked`,
@@ -918,7 +940,7 @@ and `POST /{instance}/providers/install`.
 
 ~~~text
 cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
-  --out KIT_DIR [--provider PACKAGE_DIR]... [--json]
+  --out KIT_DIR [--provider PACKAGE_DIR]... [--default-provider PACKAGE_DIR]... [--json]
 cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
   [--retire-dependents IDENTITY]... [--allow-downgrade]
   [--dry-run|--commit] [--at OID] [--json]
@@ -990,6 +1012,26 @@ instantiates them with any installed Provider of that interface. The
 compiler-seeded built-ins (`Provider:cruxible-builtin`, `ProviderInterface:
 workspace.file`) are never bundled or carried: a kit pins them as they are, and
 `add` requires this instance to hold the same seeded ones.
+
+Default providers. A kit whose Blueprints leave a slot for a contract (such as
+`web.fetch`) can name a default implementation instead of bundling one:
+`--default-provider PACKAGE_DIR` (repeatable) names a published package laid out
+as for `--provider`, with the published wheel in `dist/`. The manifest records
+the package, its exact version, the wheel and lock digests (`delivery: index`)
+and carries none of its files; the lock given must be the one the wheel embeds
+(`cruxible.kit.provider_lock_not_embedded` otherwise), because `add` installs the
+default by name and version from the daemon's provider index (PyPI unless the
+operator configured `provider_index_urls`), where its path dependencies come from
+the same index. `add` skips the install (`satisfied`) when no Procedure the kit
+carries pins the default, each of its interfaces the kit carries is live here as
+the kit carries it (the built-in `web.fetch` registration, or a package's whose classifier a
+deployment on this daemon hosts), and some live Provider implements each one; the Blueprint's slot
+then takes that Provider. Otherwise it installs the default pinned to the recorded
+wheel and lock: the index's listing must name the recorded wheel hash before the
+wheel is fetched, and the lock it embeds must match before any dependency is
+fetched or any environment prepared, so another build at the same name and
+version is refused (`cruxible.provider.index_build_differs`) with nothing
+prepared, registered or proposed.
 
 Authoring a kit that ships its provider:
 
@@ -1078,8 +1120,9 @@ everywhere. A carried ProviderInterface this instance holds differently blocks
 the change.
 
 `status` lists installed kits, the kit paths edited locally, the divergences kept
-on purpose, where each release was built, and each bundled provider package with
-its install state here (`installed`, `differs` with the installed version, or
+on purpose, where each release was built, and each provider package with its
+delivery and install state here (`installed`, `differs` with the installed
+version, `satisfied` for a default another live Provider stands in for, or
 `missing`). For a kit installed from a registry
 the client lists the repository's tags (MAJOR.MINOR.PATCH, short timeout) and
 shows the latest available version; `--offline` skips the check, and a kit from a
@@ -1091,7 +1134,7 @@ definitions, blocks it. Removing a kit that is not installed
 refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
 MCP: `cruxible_kit_build` (`providers` names packages staged with
-`cruxible_body_store`), `cruxible_kit_status` (with the same update check,
+`cruxible_body_store`; `delivery: index` makes one a default provider), `cruxible_kit_status` (with the same update check,
 `offline`), `cruxible_kit_add` (by registry `reference`, which the adapter pulls,
 or inline `bundle`; a commit stages its provider files) and
 `cruxible_kit_remove`. HTTP:

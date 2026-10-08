@@ -260,6 +260,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     AcquisitionInputOutcomeV1,
     TerminalItemDependencyManifestV1,
 )
+from cruxible_core.providers.provider_classifiers import admitted_bucket_selectors
 from cruxible_core.providers.provider_local_runtime import (
     ProviderLocalRuntimeRefused,
     translate_provider_budget,
@@ -1409,11 +1410,10 @@ def _plan_external_occurrences(
             interface_digest=registration.interface_digest,
             vocabulary_digest=registration.vocabulary_digest,
             classifier_digest=registration.classifier_digest,
-            accepted_bucket_selectors=tuple(
-                sorted(
-                    (item.selector for item in registration.conformance_proofs),
-                    key=str.encode,
-                )
+            # What the bound implementation claims, not every bucket the
+            # registration proves for the implementations bound onto it.
+            accepted_bucket_selectors=admitted_bucket_selectors(
+                provider.provider, implementation, registration
             ),
         )
         produces_capture = isinstance(node, SourceNode)

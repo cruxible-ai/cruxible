@@ -1660,6 +1660,19 @@ def _echo_kit_change(result: KitChangeResult) -> None:
         "names by path. The kit carries the wheels and lock, never source."
     ),
 )
+@click.option(
+    "--default-provider",
+    "default_providers",
+    multiple=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help=(
+        "A published provider package directory the kit names as the default "
+        "implementation of its interfaces (repeatable), laid out as for --provider with "
+        "the published wheel in dist/. The kit carries none of its files: kit add "
+        "installs it by name and exact version from the provider index when no "
+        "installed Provider implements its interfaces."
+    ),
+)
 @json_option
 @handle_errors
 def build_kit(
@@ -1668,14 +1681,16 @@ def build_kit(
     owns: tuple[str, ...],
     out: Path,
     providers: tuple[Path, ...],
+    default_providers: tuple[Path, ...],
     output_json: bool,
 ) -> None:
     """Export this instance's owned definitions as one self-contained kit release.
 
-    Every Provider a carried Procedure pins must be bundled with --provider (the
-    same build this instance installed), and every ProviderInterface the kit
-    carries must be exactly what a bundled wheel registers; kit add installs the
-    bundled providers before the definitions.
+    Every Provider a carried Procedure pins must be named with --provider or
+    --default-provider (the same build this instance installed), and every
+    ProviderInterface the kit carries must be exactly what a named package
+    registers; kit add installs the providers before the definitions, a default
+    one only when no installed Provider implements its interfaces.
     """
     if out.exists():
         raise click.UsageError(f"{out} already exists")
@@ -1688,6 +1703,10 @@ def build_kit(
             providers=tuple(
                 stage_kit_provider_directory(client, instance_id, directory)
                 for directory in providers
+            )
+            + tuple(
+                stage_kit_provider_directory(client, instance_id, directory, delivery="index")
+                for directory in default_providers
             ),
         )
         return client.build_kit(instance_id, request)
@@ -1759,10 +1778,12 @@ def add_kit(
     lands at once when the approval policy requires no approval, otherwise it
     stops at proposed. A kit that bundles provider packages installs the missing
     ones first (admin permission, the transfer install; registry dependencies
-    resolve from the daemon's provider index, PyPI unless configured) and
-    proposes the definitions once they land; an install awaiting approval stops
-    at awaiting_providers (run kit add again after activating it). It previews by
-    default; commit with ``--commit --at OID``.
+    resolve from the daemon's provider index, PyPI unless configured), installs a
+    default provider by name from that index unless an installed Provider already
+    implements its interfaces (satisfied), and proposes the definitions once they
+    land; an install awaiting approval stops at awaiting_providers (run kit add
+    again after activating it). It previews by default; commit with
+    ``--commit --at OID``.
     """
     bundle, origin = resolve_kit(kit)
 

@@ -24,10 +24,6 @@ from cruxible_client.contracts.kits import (
     KitChangeResult,
 )
 from cruxible_client.contracts.procedures.artifacts import parse_procedure
-from cruxible_client.contracts.provider_installation import (
-    ProviderInstallRequest,
-    ProviderWheelObject,
-)
 from cruxible_client.contracts.providers import (
     Provider,
     parse_provider,
@@ -541,55 +537,6 @@ def test_a_carried_interface_must_be_what_a_bundled_wheel_registers(
     finally:
         for _ in opened:
             pass
-
-
-def test_a_bundled_provider_resolves_registry_dependencies_from_the_default_index(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Option (b): a kit's transferred wheel falls back to PyPI as an install by name
-    does; a plain transferred wheel keeps only the operator's configured indexes."""
-
-    from cruxible_core.providers.package_index import DEFAULT_PROVIDER_INDEX_URLS
-    from cruxible_core.service.procedures import provider_installation as service
-
-    seen: list[tuple[str, ...]] = []
-
-    class Stop(Exception):
-        pass
-
-    def prepare(**arguments: Any) -> Any:
-        seen.append(arguments["index_urls"])
-        raise Stop
-
-    monkeypatch.setattr(service, "prepare_provider_package", prepare)
-    monkeypatch.setattr(service, "_source_files", lambda *args: (tmp_path, tmp_path, ()))
-
-    class Operator:
-        class config:  # noqa: N801 - stands in for the operator's config object
-            provider_index_urls: tuple[str, ...] = ()
-
-        state_root = tmp_path
-
-    request = ProviderInstallRequest(
-        wheel=ProviderWheelObject(filename="kit_call-0.2.0-py3-none-any.whl", digest=_ZERO),
-        lock_digest=_ZERO,
-    )
-    for default in (False, True):
-        with pytest.raises(Stop):
-            service._install_locked(
-                None,  # type: ignore[arg-type]
-                Operator(),  # type: ignore[arg-type]
-                request,
-                _ZERO,
-                tmp_path,
-                "actor",
-                "2026-10-07T00:00:00.000000Z",
-                None,
-                None,
-                confirm_head=lambda oid: None,
-                registry_index_default=default,
-            )
-    assert seen == [(), DEFAULT_PROVIDER_INDEX_URLS]
 
 
 def _with_other_runtime_build(project: Path, checkout: ProviderCheckout, root: Path) -> Path:

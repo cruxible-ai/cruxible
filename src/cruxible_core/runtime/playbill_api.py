@@ -265,6 +265,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_procedure,
 )
 from cruxible_core.service.procedures.provider_installation import (
+    ExpectedProviderBuild,
     service_install_provider,
     service_provider_catalog,
 )
@@ -809,29 +810,45 @@ def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildRe
     )
 
 
+def _classifier_hosted(classifier_digest: str) -> bool:
+    """Whether a verified deployment on this daemon hosts a package classifier."""
+
+    return any(
+        item.classifier_digest == classifier_digest
+        for deployment in get_playbill_manager().provider_runtime_operator().config.deployments
+        if deployment.installation_verification is not None
+        for item in deployment.classifier_installations
+    )
+
+
 def playbill_kit_status(instance_id: str) -> KitStatus:
     check_permission("cruxible_kit_status", instance_id=instance_id)
     return _proposal_validation_boundary(
-        "kit status", lambda: service_kit_status(get_playbill_manager().get(instance_id))
+        "kit status",
+        lambda: service_kit_status(
+            get_playbill_manager().get(instance_id), classifier_hosted=_classifier_hosted
+        ),
     )
 
 
 def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResult:
     check_permission("cruxible_kit_add", instance_id=instance_id)
 
-    def install(provider: ProviderInstallRequest) -> ProviderInstallResult:
-        # A bundled provider installs like any transferred wheel: the same
-        # permission and hosted-execution gate as provider install.
+    def install(
+        request: ProviderInstallRequest, *, expected_build: ExpectedProviderBuild | None = None
+    ) -> ProviderInstallResult:
+        # A kit's provider installs like any other: the same permission and
+        # hosted-execution gate as provider install.
         check_permission("cruxible_provider_install", instance_id=instance_id)
         enforce_customer_code_execution_supported()
         manager = get_playbill_manager()
         return service_install_provider(
             manager.get(instance_id),
             operator=manager.provider_runtime_operator(),
-            request=provider,
+            request=request,
             actor_id=_actor_id(instance_id),
             timestamp=canonical_candidate_timestamp(utc_now()),
-            registry_index_default=True,
+            expected_build=expected_build,
         )
 
     with change_entry(request.dry_run, "derived"):
@@ -843,6 +860,7 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
                 actor_id=_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 install_provider=install,
+                classifier_hosted=_classifier_hosted,
             ),
         )
 

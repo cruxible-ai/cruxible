@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
@@ -149,3 +150,59 @@ def test_accepted_registration_cannot_select_unshipped_classifier_code() -> None
         registry.require(changed.registration.classifier_digest)
     assert caught.value.code == "classifier_not_installed"
     assert registry.installed_classifier_digests == frozenset()
+
+
+def _builtin_workspace_file() -> tuple[Any, Any]:
+    from cruxible_core.governance.seed_artifacts.workspace_file import (
+        workspace_file_accepted_registration,
+        workspace_file_builtin_provider,
+    )
+
+    accepted = workspace_file_accepted_registration()
+    provider = workspace_file_builtin_provider(interface_artifact_digest=accepted.artifact_digest)
+    return provider, accepted.registration
+
+
+def _declaring(provider: Any, selectors: tuple[str, ...]) -> Any:
+    """The same Provider whose one implementation declares only ``selectors``."""
+
+    (manifest,) = provider.runtime_artifact.manifest.implementations
+    narrowed = manifest.model_copy(update={"declared_input_buckets": selectors})
+    runtime = provider.runtime_artifact.model_copy(
+        update={
+            "manifest": provider.runtime_artifact.manifest.model_copy(
+                update={"implementations": (narrowed,)}
+            )
+        }
+    )
+    return provider.model_copy(update={"runtime_artifact": runtime})
+
+
+def test_an_occurrence_admits_what_its_implementation_claims_not_the_whole_proof_menu() -> None:
+    """A registration proves the buckets of every implementation bound onto it; one
+    occurrence admits only the buckets its bound implementation declared."""
+
+    from cruxible_client.contracts.errors import ExecutionError
+    from cruxible_core.providers.provider_classifiers import admitted_bucket_selectors
+
+    provider, registration = _builtin_workspace_file()
+    (implementation,) = provider.implementations
+    proven = tuple(
+        sorted((item.selector for item in registration.conformance_proofs), key=str.encode)
+    )
+    assert len(proven) > 2
+    assert admitted_bucket_selectors(provider, implementation, registration) == proven
+
+    claimed = (proven[2], proven[0])
+    narrowed = _declaring(provider, claimed)
+    assert admitted_bucket_selectors(narrowed, implementation, registration) == tuple(
+        sorted(claimed, key=str.encode)
+    )
+
+    # A declared selector the registration does not prove admits nothing.
+    unproven = _declaring(provider, (proven[1], "content_kind=*;size=*"))
+    assert admitted_bucket_selectors(unproven, implementation, registration) == (proven[1],)
+    with pytest.raises(ExecutionError, match="claims no input bucket"):
+        admitted_bucket_selectors(
+            _declaring(provider, ("content_kind=*;size=*",)), implementation, registration
+        )

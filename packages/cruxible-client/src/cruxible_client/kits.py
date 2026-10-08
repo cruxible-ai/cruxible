@@ -143,7 +143,7 @@ def write_kit_directory(bundle: KitBundle, root: Path) -> None:
             raise ValueError(f"kit artifact {item.path} escapes the kit directory")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(item.content)
-    if bundle.manifest.providers and not bundle.provider_files:
+    if bundle.manifest.provider_files() and not bundle.provider_files:
         raise ValueError("this bundle names provider packages but carries none of their bytes")
     for provider_file in bundle.provider_files:
         target = root / KIT_PROVIDER_DIRECTORY / provider_file.filename
@@ -155,7 +155,7 @@ _PROVIDER_PREFIX = KIT_PROVIDER_DIRECTORY + "/"
 
 
 def _pack_kit(bundle: KitBundle) -> tuple[bytes, tuple[bytes, ...]]:
-    if bundle.manifest.providers and not bundle.provider_files:
+    if bundle.manifest.provider_files() and not bundle.provider_files:
         raise ValueError("this bundle names provider packages but carries none of their bytes")
     config = pretty_canonical_bytes(bundle.manifest.model_dump(mode="json"))
     files = {
@@ -195,7 +195,7 @@ def stage_kit_providers(client: CruxibleClient, instance_id: str, bundle: KitBun
     makes).
     """
 
-    if bundle.manifest.providers and not bundle.provider_files:
+    if bundle.manifest.provider_files() and not bundle.provider_files:
         raise KitSourceError("the kit names provider packages but carries none of their bytes")
     for item in bundle.provider_files:
         stored = client.store_body(instance_id, item.content)
