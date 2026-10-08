@@ -28,23 +28,39 @@ Triggers, no mandates, no principals, no approval policy. Those belong to the
 instance that installs the kit. A Line that should run a kit's Procedure is
 authored and enabled by the consumer.
 
-When a kit's Procedures run code of their own (for example a parser for one
-domain's feed), the kit bundles that provider package as its built wheel and
-lock file, never as source. Installing the kit installs the package first, and
-the kit's Procedures pin that exact build.
+A kit names the provider packages its definitions need in one of two ways:
+
+- **Bundled**: a kit's own domain code (for example a parser for one domain's
+  feed) travels inside the kit as the package's built wheel and lock file,
+  never as source. Installing the kit installs the package first, and the
+  kit's Procedures pin that exact build.
+- **Default**: a published, general-purpose package (for example
+  `cruxible-provider-web` for `web.fetch`) is named by package and exact
+  version, and the kit carries none of its files. Installing the kit installs
+  it by name from the provider index, only when nothing installed already
+  implements what the kit needs.
 
 ## Procedures and Blueprints
 
 A Procedure binds every provider slot to one exact provider, so it runs as
 soon as it is accepted. A kit ships a Procedure when the kit itself decides
-what fills each slot: its own bundled provider, or a built-in one.
+what fills each slot: its own bundled provider, a default provider, or a
+built-in one.
 
 A Blueprint is the same definition with one or more slots left open. Each open
 slot names the ProviderInterface it needs, and a Blueprint never runs. A kit
 ships a Blueprint when the consumer should choose the provider: which search
 service, which model, which converter. The consumer instantiates it, binding
 one installed provider per slot, and gets an ordinary Procedure that records
-the Blueprint and the bindings it came from.
+the Blueprint and the bindings it came from. A kit can name a default provider
+for a Blueprint's slot, so the slot has something to bind on an instance that
+has nothing better.
+
+Any implementation of a slot's interface fits it. An interface is registered
+once per instance, by its definition: a second package implementing the same
+definition installs onto the same registration instead of a new one, so its
+Provider fits the same slots. A provider runs only the kinds of input (buckets)
+it claims, and an input it does not claim is refused before it runs.
 
 ## Providers you already have
 
@@ -66,12 +82,11 @@ the Blueprint and the bindings it came from.
   redirect, and connects only to the address it checked, so DNS rebinding
   cannot reach behind it. It needs direct outbound access and fetches pages as
   served: there is no browser rendering.
-- **Bundled in a kit.** A kit's own domain provider arrives with the kit, as
-  described above.
-
-<!-- TODO(default-provider): a kit naming a default provider by package name for
-a Blueprint slot is being added; describe that form here once it lands. Until
-then a kit either bundles the provider or leaves the slot open in a Blueprint. -->
+  Cruxible owns the `web.fetch` contract, so every package that implements it
+  installs onto the same `ProviderInterface:web.fetch`.
+- **From a kit.** A kit's own domain provider arrives bundled in the kit; a
+  kit's default provider is installed by name when the kit is added and
+  nothing here implements its interfaces yet.
 
 Installing a provider needs `admin` permission. It registers the package's
 Provider and interfaces as a change, which lands at once when the approval
@@ -102,8 +117,10 @@ cruxible kit add ghcr.io/cruxible-ai/kits/acme@sha256:<digest>
 ~~~
 
 The preview lists the plan grouped by kind (what each definition does and
-how many dependents it has), the provider packages it would install, and who
-built the release, from which instance and at which coordinate. That build
+how many dependents it has), each provider package and what happens to it
+(already installed, `satisfied` when an installed provider already implements a
+default's interfaces, or to be installed), and who built the release, from
+which instance and at which coordinate. That build
 record is claimed by the builder, not proven. The preview ends with the
 command that commits exactly what you saw:
 
@@ -117,12 +134,24 @@ The result is one of:
 |---|---|---|
 | `accepted` | The change set landed: the approval policy required no approval. | Nothing. |
 | `proposed` | It awaits approval. | `cruxible proposal approve`, then `cruxible proposal activate`. |
-| `awaiting_providers` | A bundled provider's installation awaits approval. | Approve and activate that installation, then run `kit add` again. |
+| `awaiting_providers` | A provider installation the kit needs awaits approval. | Approve and activate that installation, then run `kit add` again. |
 | `blocked` | Something in current state stops it; the detail says what. | Fix the cause, or choose another release. |
 
-Installing the bundled provider packages a kit needs requires `admin`
-permission. A `governed_write` caller can add a kit whose providers are
-already installed.
+Installing the provider packages a kit needs requires `admin` permission. A
+`governed_write` caller can add a kit whose providers are already installed or
+satisfied.
+
+A default provider is installed at exactly the version the kit names, and only
+as the build the kit recorded: the provider index must list the recorded wheel
+hash before the wheel is fetched, and the wheel's lock must match before any
+dependency is fetched. Another build under the same name and version is
+refused (`cruxible.provider.index_build_differs`) with nothing installed. A
+default is skipped (`satisfied`) when no Procedure the kit carries pins it and
+an installed provider already implements each interface the kit carries for
+it; the Blueprint's slot then takes that provider. A daemon configured with a
+provider repository installs by name only from that repository, so there a
+default that is not satisfied is refused: install an implementation yourself
+and add the kit again.
 
 ### Instantiate a Blueprint
 
@@ -159,7 +188,9 @@ cruxible kit status
 ~~~
 
 `kit status` lists each installed kit with its version, the definitions
-edited here since install, the ones kept on purpose, its provider packages,
+edited here since install, the ones kept on purpose, its provider packages
+with their delivery and state (`installed`, `differs`, `satisfied` or
+`missing`),
 and, for a kit installed from a registry, the newest release available (it
 lists the repository's tags; `--offline` skips that). A kit installed from a
 directory or layout reports a local source.
@@ -247,10 +278,34 @@ refuses a different build under the same version. Registry dependencies (for
 example `cruxible-provider-runtime`) are not bundled; the consumer's daemon
 resolves them from its provider index.
 
+### Name a default provider
+
+For a general-purpose contract such as `web.fetch`, name a published package
+as the kit's default instead of bundling it. Lay its directory out as for
+`--provider`: a `pyproject.toml` naming the package, the lock the published
+wheel embeds as `uv.lock` (`cruxible.kit.provider_lock_not_embedded`
+otherwise), and in `dist/` the published wheel plus the wheel of each
+dependency that lock names by path (read to check the build, not carried).
+Install that same build here, and name it:
+
+~~~bash
+cruxible provider install cruxible-provider-web
+cruxible kit build --id acme --version 1.1.0 --owns acme. \
+  --default-provider ./cruxible-provider-web --out ./acme-1.1.0
+~~~
+
+The manifest records the package, its exact version and the wheel and lock
+digests (`delivery: index`), and the kit carries none of its files. Every
+Provider a carried Procedure pins must be named by `--provider` or
+`--default-provider`, as the build this instance installed. A Procedure that
+pins the default always gets it installed on `kit add`; a Blueprint slot typed
+by its interface takes whatever implementation the consumer already has.
+
 ### Share it
 
 The kit directory holds `cruxible-kit.json` (the manifest), `artifacts/`
-(one file per definition) and `providers/` (wheels and lock files). Share it
+(one file per definition) and `providers/` (the bundled wheels and lock
+files). Share it
 as a directory, or as an OCI image layout. There is no public `kit push`:
 official kits are published by Cruxible's release tooling, and a version tag
 there never moves to different content.
