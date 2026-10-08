@@ -35,6 +35,20 @@ if TYPE_CHECKING:
 _LOCK = threading.RLock()
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+#: Bumped whenever a table or index changes shape: an index file written under
+#: another version is dropped and rebuilt from the retained journal, which is
+#: the authority (this file is a disposable cache).
+_SCHEMA_VERSION = 2
+_TABLES = (
+    "capture_selectors",
+    "capture_progress",
+    "open_runs",
+    "run_tallies",
+    "records",
+    "partitions",
+    "index_identity",
+    "initialized",
+)
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS initialized (singleton INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS index_identity (singleton INTEGER PRIMARY KEY, identity TEXT NOT NULL);
@@ -50,17 +64,62 @@ CREATE TABLE IF NOT EXISTS records (
  UNIQUE(stream, partition_id, sequence));
 CREATE INDEX IF NOT EXISTS records_payload ON records(stream,event_kind,payload_digest);
 CREATE INDEX IF NOT EXISTS records_run ON records(stream, run_id, sequence);
+CREATE INDEX IF NOT EXISTS records_run_kind ON records(stream, run_id, event_kind, sequence);
 CREATE INDEX IF NOT EXISTS records_event
  ON records(stream, event_kind, recorded_at, partition_id, sequence);
 CREATE INDEX IF NOT EXISTS records_occurrence
- ON records(stream, partition_id, occurrence_id, event_kind);
+ ON records(stream, partition_id, occurrence_id, event_kind, sequence);
 CREATE TABLE IF NOT EXISTS capture_selectors (
  record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
  contract_digest TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS capture_contract ON capture_selectors(contract_digest, record_id);
 CREATE INDEX IF NOT EXISTS records_kind_position ON records(stream,event_kind,id);
 CREATE INDEX IF NOT EXISTS records_stream_position ON records(stream,id);
+CREATE INDEX IF NOT EXISTS records_partition_position
+ ON records(stream,partition_id,event_kind,id);
 CREATE TABLE IF NOT EXISTS capture_progress(stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL);
+-- Admissions whose run has no attempt_finalized record yet, keyed by the
+-- admission row: running runs are read without visiting finished ones.
+CREATE TABLE IF NOT EXISTS open_runs (
+ row_id INTEGER PRIMARY KEY, stream TEXT NOT NULL, partition_id TEXT NOT NULL,
+ run_id TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS open_runs_run ON open_runs(stream, run_id);
+CREATE INDEX IF NOT EXISTS open_runs_stream ON open_runs(stream, row_id);
+CREATE INDEX IF NOT EXISTS open_runs_partition ON open_runs(stream, partition_id, row_id);
+-- Admission counts per partition and, under the partition id '' (never a valid
+-- partition id), per stream: a count never visits the admissions it counts.
+CREATE TABLE IF NOT EXISTS run_tallies (
+ stream TEXT NOT NULL, partition_id TEXT NOT NULL, admitted INTEGER NOT NULL,
+ PRIMARY KEY(stream, partition_id));
+-- Triggers keep both current on every insert and delete of an indexed record,
+-- including a partition rebuilt after replacement.
+CREATE TRIGGER IF NOT EXISTS records_admitted AFTER INSERT ON records
+ WHEN new.event_kind='admission_bound' AND new.run_id IS NOT NULL BEGIN
+ INSERT INTO run_tallies VALUES(new.stream,new.partition_id,1)
+  ON CONFLICT(stream,partition_id) DO UPDATE SET admitted=admitted+1;
+ INSERT INTO run_tallies VALUES(new.stream,'',1)
+  ON CONFLICT(stream,partition_id) DO UPDATE SET admitted=admitted+1;
+ INSERT INTO open_runs SELECT new.id,new.stream,new.partition_id,new.run_id
+  WHERE NOT EXISTS(SELECT 1 FROM records f WHERE f.stream=new.stream
+  AND f.run_id=new.run_id AND f.event_kind='attempt_finalized');
+END;
+CREATE TRIGGER IF NOT EXISTS records_finalized AFTER INSERT ON records
+ WHEN new.event_kind='attempt_finalized' AND new.run_id IS NOT NULL BEGIN
+ DELETE FROM open_runs WHERE stream=new.stream AND run_id=new.run_id;
+END;
+CREATE TRIGGER IF NOT EXISTS records_unadmitted AFTER DELETE ON records
+ WHEN old.event_kind='admission_bound' AND old.run_id IS NOT NULL BEGIN
+ UPDATE run_tallies SET admitted=admitted-1
+  WHERE stream=old.stream AND partition_id IN (old.partition_id,'');
+ DELETE FROM open_runs WHERE row_id=old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS records_unfinalized AFTER DELETE ON records
+ WHEN old.event_kind='attempt_finalized' AND old.run_id IS NOT NULL BEGIN
+ INSERT OR IGNORE INTO open_runs SELECT a.id,a.stream,a.partition_id,a.run_id
+  FROM records a WHERE a.stream=old.stream AND a.run_id=old.run_id
+  AND a.event_kind='admission_bound' AND NOT EXISTS(SELECT 1 FROM records f
+  WHERE f.stream=old.stream AND f.run_id=old.run_id AND f.event_kind='attempt_finalized');
+END;
 """
 
 
@@ -71,6 +130,33 @@ def journal_locked(function: Callable[_P, _R]) -> Callable[_P, _R]:
             return function(*args, **kwargs)
 
     return locked
+
+
+def _rebuild_schema(conn: sqlite3.Connection) -> None:
+    """Create the index, dropping one written under another schema version.
+
+    The retained journal refills it. One immediate transaction re-checks the
+    version, so concurrent openers drop it once. The new identity invalidates
+    every run page key and live position minted against the old rows, exactly
+    as deleting the file would.
+    """
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+            for table in _TABLES:
+                conn.execute(f"DROP TABLE IF EXISTS {table}")
+            statement = ""
+            for line in _SCHEMA.splitlines(keepends=True):
+                statement += line
+                if sqlite3.complete_statement(statement):
+                    conn.execute(statement)
+                    statement = ""
+            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 def _key(stream: JournalStreamIdentityV1) -> str:
@@ -124,7 +210,8 @@ class JournalIndex:
             conn.row_factory = sqlite3.Row
             try:
                 conn.execute("PRAGMA foreign_keys=ON")
-                conn.executescript(_SCHEMA)
+                if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+                    _rebuild_schema(conn)
                 conn.execute("INSERT OR IGNORE INTO index_identity VALUES(1,?)", (uuid4().hex,))
                 if not conn.execute("SELECT 1 FROM initialized").fetchone():
                     for identity in self.backend._streams_root.glob("*/*/identity.json"):
@@ -323,8 +410,17 @@ class JournalIndex:
                     where.append(f"sequence{op}?")
                     args.append(bound)
             order = "DESC" if descending else "ASC"
+            # An exact occurrence or run is one short index range; without the
+            # hint the planner may prefer an index that only serves the order.
+            hint = (
+                " INDEXED BY records_occurrence"
+                if occurrence_id is not None and partition_id is not None
+                else " INDEXED BY records_run_kind"
+                if run_id is not None and event_kind is not None
+                else ""
+            )
             sql = (
-                "SELECT * FROM records WHERE "
+                f"SELECT * FROM records{hint} WHERE "
                 + " AND ".join(where)
                 + f" ORDER BY sequence {order}, partition_id {order}"
             )
@@ -362,13 +458,31 @@ class JournalIndex:
         if run_id is not None:
             where.append("a.run_id=?")
             args.append(run_id)
-        final = (
-            "(SELECT f.payload_digest FROM records f WHERE f.stream=a.stream "
-            "AND f.run_id=a.run_id AND f.event_kind='attempt_finalized' "
-            "ORDER BY f.sequence DESC LIMIT 1)"
+        # Each shape names the index whose range holds exactly its candidates.
+        source = "records a INDEXED BY " + (
+            "records_run_kind"
+            if run_id is not None
+            else "records_partition_position"
+            if partition_id is not None
+            else "records_kind_position"
         )
         if running_only:
-            where.append(f"{final} IS NULL")
+            # Only open admissions are visited: finished history is never scanned.
+            source = (
+                "open_runs o INDEXED BY "
+                + ("open_runs_partition" if partition_id is not None else "open_runs_stream")
+                + " JOIN records a ON a.id=o.row_id"
+            )
+            where.append("o.stream=?")
+            args.append(_key(stream))
+            if partition_id is not None:
+                where.append("o.partition_id=?")
+                args.append(partition_id)
+        final = (
+            "(SELECT f.payload_digest FROM records f INDEXED BY records_run_kind "
+            "WHERE f.stream=a.stream AND f.run_id=a.run_id AND f.event_kind='attempt_finalized' "
+            "ORDER BY f.sequence DESC LIMIT 1)"
+        )
         with self.connection() as conn:
             identity = conn.execute(
                 "SELECT identity FROM index_identity WHERE singleton=1"
@@ -378,15 +492,19 @@ class JournalIndex:
                     raise RunPageInvalidated(
                         "the run index was rebuilt since this page's first read"
                     )
-                where.append("a.id<?")
+            order = "o.row_id" if running_only else "a.id"
+            if after is not None:
+                where.append(f"{order}<?")
                 args.append(after[1])
             rows = conn.execute(
                 f"SELECT a.id AS row_id, a.run_id AS run_id, a.recorded_at AS admitted_at, "
                 f"a.partition_id AS partition_id, a.payload_digest AS payload_digest, "
                 f"{final} AS final_digest, "
-                "(SELECT count(*) FROM records n WHERE n.stream=a.stream "
-                "AND n.run_id=a.run_id AND n.event_kind='node_fired') AS nodes "
-                "FROM records a WHERE " + " AND ".join(where) + " ORDER BY a.id DESC LIMIT ?",
+                "(SELECT count(*) FROM records n INDEXED BY records_run_kind "
+                "WHERE n.stream=a.stream AND n.run_id=a.run_id AND n.event_kind='node_fired') "
+                f"AS nodes FROM {source} WHERE "
+                + " AND ".join(where)
+                + f" ORDER BY {order} DESC LIMIT ?",
                 (*args, limit + 1),
             ).fetchall()
         return (
@@ -425,20 +543,28 @@ class JournalIndex:
     def run_counts(
         self, stream: JournalStreamIdentityV1, *, partition_id: str | None = None
     ) -> tuple[int, int]:
-        """How many runs were admitted, and how many of them are still running."""
+        """How many runs were admitted, and how many of them are still running.
 
-        where = "a.stream=? AND a.event_kind='admission_bound' AND a.run_id IS NOT NULL"
-        args: list[Any] = [_key(stream)]
-        if partition_id is not None:
-            where += " AND a.partition_id=?"
-            args.append(partition_id)
+        Read from the admission tallies and the open-run set the index keeps as
+        it indexes records, so the cost follows the runs still running, never
+        the runs ever admitted.
+        """
+
+        scope = partition_id if partition_id is not None else ""
         with self.connection() as conn:
-            row = conn.execute(
-                "SELECT count(*), coalesce(sum(NOT EXISTS(SELECT 1 FROM records f "
-                "WHERE f.stream=a.stream AND f.run_id=a.run_id "
-                "AND f.event_kind='attempt_finalized')),0) FROM records a WHERE " + where,
-                args,
+            admitted = conn.execute(
+                "SELECT admitted FROM run_tallies WHERE stream=? AND partition_id=?",
+                (_key(stream), scope),
             ).fetchone()
+            running = (
+                conn.execute(
+                    "SELECT count(*) FROM open_runs WHERE stream=? AND partition_id=?",
+                    (_key(stream), partition_id),
+                )
+                if partition_id is not None
+                else conn.execute("SELECT count(*) FROM open_runs WHERE stream=?", (_key(stream),))
+            ).fetchone()
+        row = (0 if admitted is None else admitted[0], running[0])
         return int(row[0]), int(row[1])
 
     def positions(
