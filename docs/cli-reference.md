@@ -1023,8 +1023,8 @@ and carries none of its files; the lock given must be the one the wheel embeds
 default by name and version from the daemon's provider index (PyPI unless the
 operator configured `provider_index_urls`), where its path dependencies come from
 the same index. `add` skips the install (`satisfied`) when no Procedure the kit
-carries pins the default, each of its interfaces is live here as the kit carries
-it (the built-in `web.fetch` registration, or a package's whose classifier a
+carries pins the default, each of its interfaces the kit carries is live here as
+the kit carries it (the built-in `web.fetch` registration, or a package's whose classifier a
 deployment on this daemon hosts), and some live Provider implements each one; the Blueprint's slot
 then takes that Provider. Otherwise it installs the default and verifies the
 fetched build against the recorded wheel and lock (`cruxible.kit.provider_not_installed`

@@ -1213,14 +1213,21 @@ def _default_implementers(
 ) -> tuple[str, ...]:
     """The live Providers here that stand in for an index default, or none.
 
-    A default provider is skipped only when no carried Procedure pins it (that
-    pin moves to the build installed here), each of its interfaces is live here
-    as the kit carries it (a core-owned registration, or a package's whose
-    classifier a deployment on this daemon hosts), and some live Provider
-    implements each one on that registration.
+    A default provider stands for the contracts the kit carries, so it is
+    skipped only when no carried Procedure pins it (that pin moves to the build
+    installed here), each of its interfaces the kit carries is live here as the
+    kit carries it (a core-owned registration, or a package's whose classifier a
+    deployment on this daemon hosts), and some live Provider implements each one
+    on that registration. Interfaces the package also implements that the kit
+    does not carry decide nothing.
     """
 
-    if provider.delivery != "index":
+    needed = tuple(
+        interface_id
+        for interface_id in provider.interfaces
+        if provider_interface_path(interface_id) in contents
+    )
+    if provider.delivery != "index" or not needed:
         return ()
     for path, content in contents.items():
         if path.startswith("procedures/") and any(
@@ -1237,18 +1244,15 @@ def _default_implementers(
         and held.lifecycle.state == "live"
     ]
     found: set[str] = set()
-    for interface_id in provider.interfaces:
+    for interface_id in needed:
         path = provider_interface_path(interface_id)
         held_bytes = tree.get(path)
         if held_bytes is None:
             return ()
         registration = parse_provider_interface(held_bytes, path=path)
-        carried = contents.get(path)
-        if registration.lifecycle.state != "live" or (
-            carried is not None
-            and _without_lifecycle(json.loads(carried))
-            != _without_lifecycle(json.loads(held_bytes))
-        ):
+        if registration.lifecycle.state != "live" or _without_lifecycle(
+            json.loads(contents[path])
+        ) != _without_lifecycle(json.loads(held_bytes)):
             return ()
         if isinstance(registration, ProviderInterfaceRegistration) and (
             classifier_hosted is None or not classifier_hosted(registration.classifier_digest)
