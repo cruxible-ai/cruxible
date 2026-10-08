@@ -199,6 +199,9 @@ def test_attestation_append_and_ticks_do_not_grow_with_attestations(
         while appended < size:
             _append(store, appended)
             appended += 1
+        # A consumer tick has already folded what was appended before it; the
+        # fold returns every outstanding event (its result), served warm.
+        store.fold_events()
         with _store_work(monkeypatch) as work:
             _append(store, 10_000 + size)
             appended += 1
