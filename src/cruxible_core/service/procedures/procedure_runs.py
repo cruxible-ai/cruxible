@@ -1486,6 +1486,36 @@ def _plan_external_occurrences(
     return tuple(sorted(occurrences, key=lambda item: item.occurrence_path.encode("utf-8")))
 
 
+def _provider_bindings(
+    external_occurrences: Sequence[ProviderExternalOccurrencePlan],
+) -> tuple[ProcedureProviderBinding, ...]:
+    """One Provider binding per planned occurrence, in the node-id order admission requires.
+
+    Occurrences are planned in occurrence-path order (``call/...`` before
+    ``source/...``), which is not node-id order once a Source node's id sorts
+    before a Call node's.
+    """
+
+    return tuple(
+        ProcedureProviderBinding(
+            node_id=item.node_id,
+            provider_artifact_digest=item.provider_artifact_digest,
+            classification_plan=ProviderBucketClassificationPlan(
+                node_id=item.node_id,
+                interface_artifact_digest=item.interface_artifact_digest,
+                interface_digest=item.interface_digest,
+                vocabulary_digest=item.vocabulary_digest,
+                classifier_digest=item.classifier_digest,
+                accepted_bucket_selectors=item.accepted_bucket_selectors,
+            ),
+            implementation_digest=item.implementation_digest,
+            effect_class=item.effect_class,
+            secret_binding_identity_digests=item.secret_plan.binding_identity_digests,
+        )
+        for item in sorted(external_occurrences, key=lambda item: item.node_id.encode("utf-8"))
+    )
+
+
 def _line_external_occurrences(
     accepted_line: AcceptedLineSpec,
     accepted_procedure: AcceptedProcedure,
@@ -3051,24 +3081,7 @@ def _prepare_direct_external_run(
         invocation_input=invocation_input,
     )
     node_pin_sets = procedure_node_pin_sets(accepted)
-    bindings = tuple(
-        ProcedureProviderBinding(
-            node_id=item.node_id,
-            provider_artifact_digest=item.provider_artifact_digest,
-            classification_plan=ProviderBucketClassificationPlan(
-                node_id=item.node_id,
-                interface_artifact_digest=item.interface_artifact_digest,
-                interface_digest=item.interface_digest,
-                vocabulary_digest=item.vocabulary_digest,
-                classifier_digest=item.classifier_digest,
-                accepted_bucket_selectors=item.accepted_bucket_selectors,
-            ),
-            implementation_digest=item.implementation_digest,
-            effect_class=item.effect_class,
-            secret_binding_identity_digests=item.secret_plan.binding_identity_digests,
-        )
-        for item in external_occurrences
-    )
+    bindings = _provider_bindings(external_occurrences)
     deployment_snapshot_digest = typed_digest(
         Sha256Value,
         "playbill-provider-deployment-snapshot-v1",
@@ -4184,24 +4197,7 @@ def _run_playbill_line(
             ]
         },
     ).tagged
-    bindings = tuple(
-        ProcedureProviderBinding(
-            node_id=item.node_id,
-            provider_artifact_digest=item.provider_artifact_digest,
-            classification_plan=ProviderBucketClassificationPlan(
-                node_id=item.node_id,
-                interface_artifact_digest=item.interface_artifact_digest,
-                interface_digest=item.interface_digest,
-                vocabulary_digest=item.vocabulary_digest,
-                classifier_digest=item.classifier_digest,
-                accepted_bucket_selectors=item.accepted_bucket_selectors,
-            ),
-            implementation_digest=item.implementation_digest,
-            effect_class=item.effect_class,
-            secret_binding_identity_digests=item.secret_plan.binding_identity_digests,
-        )
-        for item in external_occurrences
-    )
+    bindings = _provider_bindings(external_occurrences)
     fields = {
         "instance_id": instance.descriptor.instance_id,
         "run_id": "RUN-" + "0" * 64,
