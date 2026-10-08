@@ -198,6 +198,7 @@ def _fact_row(
         # Authority is resolved from live mandate/resolution state by PC-E1's
         # resolver; acceptance-time verdict output is never carried forward.
         resolved_authority_basis=(),
+        cardinality=claim_type.cardinality,
     )
 
 
