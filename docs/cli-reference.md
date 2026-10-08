@@ -895,6 +895,20 @@ a remote daemon.
 The shared installer prepares an exact Python environment, verifies it once,
 checks package classifiers in supervised children, and proposes the package's
 provider interfaces and Provider definition through ordinary acceptance.
+The interface contract owns its registration, not the implementation: an
+exported interface whose definition is already registered live here (an equal
+interface digest) is bound rather than registered again, and the package's
+Provider pins that exact registration whatever its classifier, so a second
+implementation of a contract installs onto the same ProviderInterface and a
+Blueprint slot typed by it takes either. A bound package claims only input
+buckets that registration proves, under the fixture ids its proofs name
+(`cruxible.provider.bucket_fixture_missing` otherwise), and runs classify through
+the deployment that hosts the registration's classifier, which must be installed
+on this daemon (`cruxible.provider.classifier_host_missing`). An occurrence admits
+only the buckets its bound implementation claims; another input is refused
+`unclaimed_bucket` before the provider runs. A different definition under the
+same interface id is proposed as a successor, which every live Provider and
+Procedure pinning the old registration must follow.
 The registration lands at once when the approval policy requires no approval
 (`ready`); otherwise it stops at proposed (`awaiting_approval`) for the ordinary
 review and activation. It returns `ready`, `awaiting_approval`, or `blocked`,

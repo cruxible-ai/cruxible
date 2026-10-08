@@ -14,6 +14,7 @@ def build_local_call(
     increment: int = 1,
     name: str = "local-call",
     backends: tuple[str, ...] = ("local_env",),
+    fixture_id: str = "integer",
 ) -> tuple[Path, Path]:
     from cruxible_provider_runtime.canonical import domain_digest
 
@@ -83,7 +84,7 @@ class Increment:
     )
     resource(
         "fixtures.json",
-        [{"fixture_id": "integer", "canonical_input": {"n": 2}, "measured_bucket_id": "size=one"}],
+        [{"fixture_id": fixture_id, "canonical_input": {"n": 2}, "measured_bucket_id": "size=one"}],
     )
     resource(
         "manifest.json",
@@ -101,7 +102,7 @@ class Increment:
                     "backends": list(backends),
                     "requires_extras": [],
                     "declared_input_buckets": ["size=one"],
-                    "bucket_conformance": {"size=one": "integer"},
+                    "bucket_conformance": {"size=one": fixture_id},
                     "declared_endpoints": [],
                     "capture_contract_families": [],
                     "deterministic": True,

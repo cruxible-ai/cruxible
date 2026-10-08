@@ -20,6 +20,7 @@ from cruxible_client.contracts.provider_interfaces import (
     ProviderBucketVocabulary,
     ProviderClassifierCode,
     ProviderInterfaceRegistration,
+    ProviderInterfaceRegistrationV1,
     provider_bucket_fixture_digest,
     provider_bucket_fixture_set_digest,
     provider_bucket_vocabulary_digest,
@@ -160,8 +161,11 @@ class PackageRegistrationDocumentV1(_Strict):
         distribution: ProviderLocalDistributionPin,
         local_env: ProviderLocalEnvBackendPin,
         control_domain: str,
-        interfaces: tuple[ProviderInterfaceRegistration, ...],
+        interfaces: tuple[ProviderInterfaceRegistrationV1, ...],
     ) -> Provider:
+        """The Provider pinning ``interfaces``: the registration each exported
+        interface binds here (the package's, core's, or one already live)."""
+
         expected = {item.interface_id: item.interface_digest for item in self.interfaces}
         if (
             len(interfaces) != len(expected)

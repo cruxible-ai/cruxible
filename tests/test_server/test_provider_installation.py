@@ -94,7 +94,18 @@ def test_transfer_install_and_restart_reuse(
 
 
 def _run_call(
-    client, http, instance_id, reviewer, tmp_path, interface_id, value, fields_in, fields_out
+    client,
+    http,
+    instance_id,
+    reviewer,
+    tmp_path,
+    interface_id,
+    value,
+    fields_in,
+    fields_out,
+    *,
+    provider_identity=None,
+    name="installed-package-call",
 ):
     from cruxible_client import Cruxible
     from cruxible_client.authoring.examples import procedure_example
@@ -103,7 +114,11 @@ def _run_call(
     from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
     interface = interface_entry(client, instance_id, interface_id)
-    provider = interface["providers"][0]
+    provider = next(
+        item
+        for item in interface["providers"]
+        if provider_identity in (None, item["provider_identity"])
+    )
 
     def carried(name, role):
         return {"kind": "carried_contract", "name": name, "role": role}
@@ -111,7 +126,7 @@ def _run_call(
     example = procedure_example()
     raw = {
         **example.definition,
-        "name": "installed-package-call",
+        "name": name,
         "graph_format": 6,
         "returns": "result",
         "contract_out": carried("result", "contract-out"),
@@ -172,7 +187,7 @@ def _run_call(
     assert not intent.refused, intent.diagnostics
     intent.submit()
     _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
-    run = pb.accepted_procedure("installed-package-call").run()
+    run = pb.accepted_procedure(name).run()
     state = client.get_procedure_run(instance_id, run.run_id)
     assert run.status == "succeeded", state.model_dump_json(indent=2)
     assert state.receipt_digest
@@ -311,6 +326,100 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
     assert old.items() <= operator.deployments.items()
     assert len(operator.deployments) == 3
     assert all(item.environment_path.exists() for item in old.values())
+
+
+def test_another_implementation_binds_the_live_registration_and_classifies_through_its_host(
+    installer_http, tmp_path, provider_checkout
+):
+    """The contract owns the ProviderInterface: a second package of the same
+    definition, with other classifier bytes, installs onto the live registration
+    rather than proposing a successor that would strand the first Provider. It
+    hosts no classifier for it; runs classify through the first deployment."""
+
+    from tests.support.provider_installation import build_local_call
+
+    http, instance_id, reviewer = installer_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = http
+    repository = provider_checkout.repository
+    runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
+    wheel, lock = build_local_call(tmp_path, repository)
+    first = install_provider_wheel(
+        client, instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
+    )
+    assert first.status == "ready", first
+    before = interface_entry(client, instance_id, "local.increment")
+
+    # Its operation module (the classifier's source) differs, so its own
+    # registration would differ; it binds the live one instead.
+    other, other_lock = build_local_call(tmp_path, repository, name="other-call", increment=2)
+    second = install_provider_wheel(
+        client, instance_id, wheel=other, lock=other_lock, dependency_wheels=(runtime,)
+    )
+    assert second.status == "ready" and second.registered, second
+    after = interface_entry(client, instance_id, "local.increment")
+    assert {key: value for key, value in after.items() if key != "providers"} == {
+        key: value for key, value in before.items() if key != "providers"
+    }
+    assert sorted(item["provider_identity"] for item in after["providers"]) == [
+        "Provider:local-call",
+        "Provider:other-call",
+    ]
+    deployments = get_playbill_manager().provider_runtime_operator().config.deployments
+    assert sorted(len(item.classifier_installations) for item in deployments) == [0, 1]
+    assert _run_call(
+        client,
+        http,
+        instance_id,
+        reviewer,
+        tmp_path,
+        "local.increment",
+        {"n": 2},
+        {"n": {"type": "int"}},
+        {"n": {"type": "int"}},
+        provider_identity="Provider:other-call",
+        name="other-package-call",
+    ) == {"n": 4}
+
+
+def test_a_package_binding_a_live_registration_claims_only_what_it_proves(
+    installer_http, tmp_path, provider_checkout, monkeypatch
+):
+    """Binding is checked before anything is proposed: a selector under a fixture id
+    the live registration's proof does not name is a typed refusal, and so is a
+    registration whose package classifier no deployment on this daemon hosts."""
+
+    from tests.support.provider_installation import build_local_call
+
+    http, instance_id, _reviewer = installer_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = http
+    repository = provider_checkout.repository
+    runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
+    wheel, lock = build_local_call(tmp_path, repository)
+    assert install_provider_wheel(
+        client, instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
+    ).registered
+
+    renamed, renamed_lock = build_local_call(
+        tmp_path, repository, name="renamed-call", fixture_id="integer-renamed"
+    )
+    with pytest.raises(Exception) as unproven:
+        install_provider_wheel(
+            client, instance_id, wheel=renamed, lock=renamed_lock, dependency_wheels=(runtime,)
+        )
+    assert "cruxible.provider.bucket_fixture_missing" in str(unproven.value)
+
+    operator = get_playbill_manager().provider_runtime_operator()
+    monkeypatch.setattr(operator, "config", operator.config.model_copy(update={"deployments": ()}))
+    other, other_lock = build_local_call(tmp_path, repository, name="other-call", increment=2)
+    with pytest.raises(Exception) as unhosted:
+        install_provider_wheel(
+            client, instance_id, wheel=other, lock=other_lock, dependency_wheels=(runtime,)
+        )
+    assert "cruxible.provider.classifier_host_missing" in str(unhosted.value)
+    entry = interface_entry(client, instance_id, "local.increment")
+    assert [item["provider_identity"] for item in entry["providers"]] == ["Provider:local-call"]
 
 
 def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(

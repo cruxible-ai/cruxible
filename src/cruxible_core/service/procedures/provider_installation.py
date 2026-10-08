@@ -31,22 +31,31 @@ from cruxible_client.contracts.provider_installation import (
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
     ProviderInterfaceRegistration,
+    ProviderInterfaceRegistrationV1,
     parse_provider_interface,
     provider_interface_digest,
     provider_interface_path,
     render_provider_interface,
 )
 from cruxible_client.contracts.providers import (
+    AcceptedProvider,
     Provider,
+    ProviderAny,
     ProviderLocalDistributionPin,
+    evaluate_provider_law,
     parse_provider,
     provider_digest,
     provider_path,
     render_provider,
 )
+from cruxible_client.contracts.repairs import (
+    HandEditInstruction,
+    HandEditRepair,
+    RepairOperation,
+)
 from cruxible_core.compiler.compiler import GOVERNED_TRIGGERS_COMPILER
 from cruxible_core.derived.derived_state import fork_tree
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, RequestRefusedError
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     is_builtin_workspace_file_registration,
 )
@@ -272,6 +281,136 @@ def _refuse_built_in_interfaces(
             )
 
 
+def _interface_bindings(
+    tree: Mapping[str, bytes], document: PackageRegistrationDocumentV1
+) -> tuple[tuple[ProviderInterfaceRegistrationV1, bool], ...]:
+    """Each exported interface's registration here, and whether it is already live.
+
+    The contract owns the ProviderInterface, not the implementation: a live
+    registration of the same definition (an equal interface digest, in any
+    format and with any classifier) is the one a package binds, so a second
+    implementation installs onto it and its Provider pins that exact artifact.
+    Otherwise the package proposes its registration (core's, for a definition
+    core owns), as a successor where another definition is live under the id.
+    """
+
+    result: list[tuple[ProviderInterfaceRegistrationV1, bool]] = []
+    for desired in document.interface_registrations():
+        path = provider_interface_path(desired.interface_id)
+        current_bytes = tree.get(path)
+        if current_bytes is None:
+            result.append((desired, False))
+            continue
+        current = parse_provider_interface(current_bytes, path=path)
+        if current.lifecycle.state != "live":
+            raise ProposalIntegrityError("install cannot silently restore a retired interface")
+        if current.interface_digest == desired.interface_digest:
+            result.append((current, True))
+            continue
+        result.append(
+            (
+                desired.model_copy(
+                    update={
+                        "lifecycle": ArtifactLifecycle(
+                            predecessor_digest=provider_interface_digest(current).tagged
+                        )
+                    }
+                ),
+                False,
+            )
+        )
+    return tuple(result)
+
+
+def _accepted(
+    registration: ProviderInterfaceRegistrationV1,
+) -> AcceptedProviderInterfaceRegistration:
+    return AcceptedProviderInterfaceRegistration(
+        path=provider_interface_path(registration.interface_id),
+        registration=registration,
+        artifact_digest=provider_interface_digest(registration).tagged,
+    )
+
+
+def _refuse_unproven_provider(
+    provider: Provider,
+    predecessor: ProviderAny | None,
+    interfaces: tuple[ProviderInterfaceRegistrationV1, ...],
+) -> None:
+    """The Provider law, before anything is proposed, against the registrations it binds.
+
+    A package bound onto a registration it did not build claims only buckets that
+    registration proves, each with the fixture the proof names: a selector
+    outside the proof menu (or under another fixture id) is refused here, typed,
+    rather than as a blocked proposal.
+    """
+
+    path = provider_path(provider.identity.name)
+    law = evaluate_provider_law(
+        provider,
+        path=path,
+        predecessor=None
+        if predecessor is None
+        else AcceptedProvider(
+            path=path, provider=predecessor, artifact_digest=provider_digest(predecessor).tagged
+        ),
+        interface_registrations={item.identity.qualified: _accepted(item) for item in interfaces},
+    )
+    if law.verdict == "accepted":
+        return
+    diagnostic = law.diagnostics[0]
+    raise RequestRefusedError(
+        diagnostic.code,
+        f"{provider.identity.name} cannot bind the registrations live here: {diagnostic.message}",
+        repair=HandEditRepair(
+            hand_edit=HandEditInstruction(
+                target=f"the {provider.identity.name} package manifest",
+                required_change=(
+                    "Declare only input-bucket selectors the live ProviderInterface "
+                    "registration proves, each naming the fixture id its proof names "
+                    "(cruxible get ProviderInterface:ID --detail proof lists them)."
+                ),
+            )
+        ),
+    )
+
+
+def _refuse_unhosted_classifiers(
+    instance: PlaybillInstance,
+    operator: ProviderRuntimeOperator,
+    document: PackageRegistrationDocumentV1,
+    configured: ProviderDeploymentConfigV1,
+) -> None:
+    """Every package registration the Provider would pin is classified by a deployment here.
+
+    Runs classify through the first verified deployment holding the
+    registration's classifier installation. A package bound onto another
+    package's registration hosts none of its own for it, so the deployment that
+    registered it must be installed on this daemon.
+    """
+
+    hosted = {item.classifier_digest for item in configured.classifier_installations}
+    hosted.update(
+        item.classifier_digest
+        for deployment in operator.config.deployments
+        if deployment.installation_verification is not None
+        for item in deployment.classifier_installations
+    )
+    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+    for registration, _live in _interface_bindings(tree, document):
+        if (
+            isinstance(registration, ProviderInterfaceRegistration)
+            and registration.classifier_digest not in hosted
+        ):
+            raise RequestRefusedError(
+                "cruxible.provider.classifier_host_missing",
+                f"{registration.interface_id} is registered here with a package classifier "
+                f"({registration.classifier_digest[:19]}) that no deployment on this daemon "
+                "hosts; install the package that registered it on this daemon first",
+                repair=RepairOperation(operation="cruxible.provider.install"),
+            )
+
+
 def _definition_changes(
     instance: PlaybillInstance,
     document: PackageRegistrationDocumentV1,
@@ -281,31 +420,14 @@ def _definition_changes(
     tree = instance.immutable_tree_at(accepted_oid)
     candidate = fork_tree(tree)
     changed = []
-    interfaces = []
-    for desired in document.interface_registrations():
-        path = provider_interface_path(desired.interface_id)
-        current_bytes = tree.get(path)
-        if current_bytes is not None:
-            current = parse_provider_interface(current_bytes, path=path)
-            if current.lifecycle.state != "live":
-                raise ProposalIntegrityError("install cannot silently restore a retired interface")
-            if current.model_dump(exclude={"lifecycle"}) == desired.model_dump(
-                exclude={"lifecycle"}
-            ):
-                desired = ProviderInterfaceRegistration.model_validate(current.model_dump())
-            else:
-                desired = desired.model_copy(
-                    update={
-                        "lifecycle": ArtifactLifecycle(
-                            predecessor_digest=provider_interface_digest(current).tagged
-                        )
-                    }
-                )
-        interfaces.append(desired)
-        raw = render_provider_interface(desired)
-        if raw != current_bytes:
-            candidate[path] = raw
-            changed.append(path)
+    bindings = _interface_bindings(tree, document)
+    for registration, live in bindings:
+        if live:
+            continue
+        path = provider_interface_path(registration.interface_id)
+        candidate[path] = render_provider_interface(registration)
+        changed.append(path)
+    interfaces = tuple(registration for registration, _live in bindings)
     assert isinstance(provider.runtime_artifact.distribution, ProviderLocalDistributionPin)
     assert provider.runtime_artifact.local_env is not None
     desired_provider = document.provider_definition(
@@ -316,6 +438,7 @@ def _definition_changes(
     )
     path = provider_path(provider.identity.name)
     current_bytes = tree.get(path)
+    current_provider: ProviderAny | None = None
     if current_bytes is not None:
         current_provider = parse_provider(current_bytes, path=path)
         if current_provider.lifecycle.state != "live":
@@ -343,6 +466,7 @@ def _definition_changes(
             )
     raw = render_provider(desired_provider)
     if raw != current_bytes:
+        _refuse_unproven_provider(desired_provider, current_provider, interfaces)
         candidate[path] = raw
         changed.append(path)
     return candidate, tuple(sorted(changed))
@@ -646,15 +770,24 @@ def _install_locked(
             raise ConfigError("provider process runtime is unavailable")
         registry = ProviderBucketClassifierRegistry()
         installations = []
-        for registration in document.interface_registrations():
-            accepted = AcceptedProviderInterfaceRegistration(
-                path=provider_interface_path(registration.interface_id),
-                registration=registration,
-                artifact_digest=provider_interface_digest(registration).tagged,
-            )
+        bindings = _interface_bindings(
+            instance.immutable_tree_at(instance.accepted_coordinate().git_oid), document
+        )
+        for own, (registration, _live) in zip(
+            document.interface_registrations(), bindings, strict=True
+        ):
+            # Core classifies a registration it owns. A live registration this
+            # package did not build is classified by the deployment that hosts it,
+            # so only this package's own classifier is re-proven and hosted here.
+            if (
+                not isinstance(registration, ProviderInterfaceRegistration)
+                or not isinstance(own, ProviderInterfaceRegistration)
+                or own.classifier_digest != registration.classifier_digest
+            ):
+                continue
             installations.append(
                 registry.install(
-                    accepted,
+                    _accepted(registration),
                     PackageBucketClassifier(registration, deployment, operator.process_leases),
                 )
             )
@@ -688,8 +821,10 @@ def _install_locked(
             ),
         )
     # Before the deployment is registered: an interface built into this
-    # instance is never re-registered from a package.
+    # instance is never re-registered from a package, and a package classifier
+    # a registration names has a host on this daemon.
     _refuse_built_in_interfaces(instance, document, instance.accepted_coordinate().git_oid)
+    _refuse_unhosted_classifiers(instance, operator, document, configured)
     operator.register_deployment(configured)
     if rewrite_prepared:
         _write(
