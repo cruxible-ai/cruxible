@@ -54,6 +54,9 @@ from tests.test_integration.test_graph_v4_provider_closure import (  # noqa: F40
 TIMESTAMP = "2026-08-24T16:00:00.000000Z"
 
 
+_ACCESS = BodyAccessContext(principal_id="test", can_read_body=True)
+
+
 def _concrete() -> ProcedureArtifact:
     definition, provider_pin, interface_pin = _definition()
     return procedure_artifact(
@@ -383,19 +386,37 @@ def test_source_with_an_open_slot_compiles_to_a_blueprint_and_instantiates_by_re
     assert getattr(call_node, "implementation_digest") is not None
 
 
-def test_procedure_source_declares_slots_and_builds_a_blueprint_until_each_is_bound() -> None:
+@pytest.mark.usefixtures("contracted_demo")
+def test_procedure_source_declares_slots_and_builds_a_blueprint_until_each_is_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The documented flow: declare a slot, bind it with ``cx.provider_interface(...)``."""
+
     from types import SimpleNamespace
 
+    from cruxible_client import Cruxible
     from cruxible_client.authoring.inputs import CarriedContractInput
-    from cruxible_client.authoring.procedures import ProviderBinding
     from cruxible_client.authoring.source import ProcedureSource, procedure
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from cruxible_client.contracts.procedures.source_requests import (
         SourceProviderSelection,
         SourceSlotSelection,
     )
+    from cruxible_core.service.discovery.orient import service_playbill_head
     from tests.test_procedures.test_procedure_execution import _budget, _hard_caps
 
+    instance, _owner = accept_blueprint_world(tmp_path, monkeypatch)
+
+    class _ServiceClient:
+        def get(self, _instance_id: str, *, request: GetRequest) -> object:
+            return service_playbill_get(instance, request=request, access=_ACCESS)
+
+        def head(self, _instance_id: str, **_values: object) -> object:
+            return service_playbill_head(instance)
+
+    cx = Cruxible._from_client(  # type: ignore[arg-type]  # noqa: SLF001
+        _ServiceClient(), instance_id="inst", workspace=None
+    )
     Request = CarriedContractInput(
         name="lookup.request", fields={"key": PropertySchema(type="string")}
     )
@@ -428,21 +449,18 @@ def test_procedure_source_declares_slots_and_builds_a_blueprint_until_each_is_bo
     }
     with pytest.raises(TypeError, match="Bindings require"):
         source.bind(fetch=SimpleNamespace())  # type: ignore[arg-type]
-    coordinate = SimpleNamespace()
-    binding = ProviderBinding(
-        provider="demo-provider",
-        interface="demo.interface",
-        interface_digest="sha256:" + "1" * 64,
-        implementation_digest="sha256:" + "2" * 64,
-    ).model_copy(update={"coordinate": coordinate})
+    binding = cx.provider_interface("demo.interface")
+    assert binding.interface == "ProviderInterface:demo.interface"
     # S3 review a F-005: a slot binds only a Provider serving the interface it declares.
     with pytest.raises(ValueError, match="declares interface"):
-        source.bind(fetch=binding.model_copy(update={"interface": "totally.other.interface"}))
+        source.bind(
+            fetch=binding.model_copy(update={"interface": "ProviderInterface:other.interface"})
+        )
     bound = source.bind(fetch=binding)
     assert not bound.is_blueprint
     world = SimpleNamespace(_playbill=SimpleNamespace(_assert_coordinate=lambda value: None))
     assert bound._at(world).bindings == {  # type: ignore[arg-type]
-        "fetch": SourceProviderSelection(provider="demo-provider", interface="demo.interface")
+        "fetch": SourceProviderSelection(provider=binding.provider, interface=binding.interface)
     }
 
 

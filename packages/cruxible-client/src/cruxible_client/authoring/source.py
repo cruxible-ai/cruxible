@@ -147,11 +147,15 @@ class ProcedureSource:
                 raise TypeError("Bindings require named accepted provider/query/Procedure handles")
             if name in self.slots and not isinstance(value, ProviderBinding):
                 raise TypeError(f"Slot {name!r} binds a Provider (cx.provider_interface(...))")
-            if name in self.slots and value.interface != self.slots[name]:  # type: ignore[union-attr]
-                raise ValueError(
-                    f"Slot {name!r} declares interface {self.slots[name]!r}; "
-                    f"the binding serves {value.interface!r}"  # type: ignore[union-attr]
-                )
+            # Discovery names the interface qualified (``ProviderInterface:<name>``);
+            # a slot declares its bare name.
+            if name in self.slots and isinstance(value, ProviderBinding):
+                served = value.interface.removeprefix("ProviderInterface:")
+                if served != self.slots[name]:
+                    raise ValueError(
+                        f"Slot {name!r} declares interface {self.slots[name]!r}; "
+                        f"the binding serves {served!r}"
+                    )
         return replace(self, _bindings=MappingProxyType(dict(self._bindings, **bindings)))
 
     def _at(self, world: World) -> ProcedureSourceRequest:
