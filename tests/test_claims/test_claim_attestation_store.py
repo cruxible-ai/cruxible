@@ -201,7 +201,9 @@ def test_unknown_head_and_corrupt_marker_refuse_typed(tmp_path: Path) -> None:
 
     marker = next((store.root / "partitions").glob("*/00000000000000000001.json"))
     marker.write_bytes(marker.read_bytes().replace(b'"sequence":1', b'"sequence":2'))
-    # A process verifies each event once; a cold reader sees the corruption.
+    # The same (warm) store refuses, exactly as a new one does.
+    with pytest.raises(ClaimAttestationStoreError, match="store_corrupt"):
+        store.events(at_head=receipt.recorded_head)
     with pytest.raises(ClaimAttestationStoreError, match="store_corrupt"):
         _store(tmp_path).events(at_head=receipt.recorded_head)
 

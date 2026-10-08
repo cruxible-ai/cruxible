@@ -101,6 +101,23 @@ def _exclusive_write(path: Path, content: bytes) -> None:
     _fsync_directory(path.parent)
 
 
+def _file_identity(path: Path) -> tuple[int, ...] | None:
+    """One stat's identity of a stored object; None when it is absent or unreadable."""
+
+    try:
+        status = os.lstat(path)
+    except OSError:
+        return None
+    return (
+        status.st_dev,
+        status.st_ino,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+        status.st_mode,
+    )
+
+
 def _replace_pointer(path: Path, content: bytes) -> None:
     temp = path.parent / f".{path.name}.tmp.{os.getpid()}"
     descriptor: int | None = None
@@ -214,8 +231,16 @@ class ClaimAttestationEvidenceStore:
         self._legacy_accelerators_retired = False
         self._root_children_verified = False
         self._root_children: dict[str, str] = {}
+        # Each verified pair with the file identity of every object it was read
+        # from (event, marker, payload, verification account): a later read
+        # serves it only while all of them still hold, so a lost or rewritten
+        # object refuses warm exactly as it does cold.
         self._event_pair_cache: dict[
-            str, tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]
+            str,
+            tuple[
+                tuple[ClaimAttestationEvent, ClaimAttestationEventPayload],
+                tuple[tuple[Path, tuple[int, ...] | None], ...],
+            ],
         ] = {}
 
     @contextmanager
@@ -765,17 +790,42 @@ class ClaimAttestationEvidenceStore:
     def _event_pair(
         self, event_digest: str
     ) -> tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]:
-        """One published event and its payload, verified against its marker once."""
+        """One published event and its payload, authenticated against its marker.
 
-        pair = self._event_pair_cache.get(event_digest)
-        if pair is None:
-            event = self._load_object("event", event_digest, ClaimAttestationEvent)
-            assert isinstance(event, ClaimAttestationEvent)
-            marker = self._load_marker(self._chain_marker_path(event))
-            if marker != event:
-                raise _error("store_corrupt", "attestation event object and marker differ")
-            pair = (event, self._payload_for_event(event))
-            self._event_pair_cache[event_digest] = pair
+        A pair read before is served from memory only while every object it was
+        read from keeps its file identity (four stats); otherwise it is read
+        and authenticated again, so a lost or rewritten object refuses warm
+        exactly as it does in a new process.
+        """
+
+        cached = self._event_pair_cache.get(event_digest)
+        if cached is not None:
+            pair, identities = cached
+            if all(_file_identity(path) == seen for path, seen in identities):
+                return pair
+        event_path = self._object_path("event", event_digest)
+        event_before = _file_identity(event_path)
+        event = self._load_object("event", event_digest, ClaimAttestationEvent)
+        assert isinstance(event, ClaimAttestationEvent)
+        marker_path = self._chain_marker_path(event)
+        payload_path = self._object_path("payload", event.payload_digest)
+        before = (event_before, _file_identity(marker_path), _file_identity(payload_path))
+        marker = self._load_marker(marker_path)
+        if marker != event:
+            raise _error("store_corrupt", "attestation event object and marker differ")
+        payload = self._payload_for_event(event)
+        account_path = self._object_path(
+            "verification-account", payload.verification_account_digest
+        )
+        identities = tuple(
+            (path, _file_identity(path))
+            for path in (event_path, marker_path, payload_path, account_path)
+        )
+        pair = (event, payload)
+        # Remembered only when the identities bracket the read: an object that
+        # moved while it was read is reloaded next time, never served stale.
+        if None not in before and tuple(seen for _path, seen in identities[:3]) == before:
+            self._event_pair_cache[event_digest] = (pair, identities)
         return pair
 
     def _frontier_through(self, chain: _Chain, position: int) -> _Frontier:
@@ -955,7 +1005,6 @@ class ClaimAttestationEvidenceStore:
                 if self._chain_marker_path(event).exists():
                     self._poisoned = True
                 raise
-            self._event_pair_cache[event.event_digest] = (event, payload)
             return self._result(event, payload, root, root)
 
     def duplicate(

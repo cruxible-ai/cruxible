@@ -140,3 +140,34 @@ def test_a_delta_chained_to_another_map_is_refused(tmp_path: Path) -> None:
     )
     with pytest.raises(ClaimAttestationStoreError, match="map transition differs"):
         ClaimAttestationEvidenceStore(tmp_path / "exhaust", instance_id="inst_test").head()
+
+
+@pytest.mark.parametrize("damage", ["delete_payload", "rewrite_account", "delete_event"])
+def test_warm_reads_refuse_lost_or_rewritten_evidence_as_cold_reads_do(
+    tmp_path: Path, damage: str
+) -> None:
+    """A long-lived store never serves an event whose backing objects are gone or changed."""
+
+    from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
+
+    store = _legacy(tmp_path)
+    (first, payload), *_rest = store.events()
+    assert len(store.fold_events()) == 4  # every pair is now held warm
+    target = {
+        "delete_payload": store._object_path("payload", first.payload_digest),
+        "rewrite_account": store._object_path(
+            "verification-account", payload.verification_account_digest
+        ),
+        "delete_event": store._object_path("event", first.event_digest),
+    }[damage]
+    if damage.startswith("delete"):
+        target.unlink()
+    else:
+        target.chmod(0o600)
+        target.write_bytes(target.read_bytes().replace(b'"owner"', b'"other"', 1))
+    cold = ClaimAttestationEvidenceStore(tmp_path / "exhaust", instance_id="inst_test")
+    for reader in (store, cold):
+        with pytest.raises(ClaimAttestationStoreError, match="store_corrupt"):
+            reader.events()
+        with pytest.raises(ClaimAttestationStoreError, match="store_corrupt"):
+            reader.events(partition_digest=first.partition_digest)
