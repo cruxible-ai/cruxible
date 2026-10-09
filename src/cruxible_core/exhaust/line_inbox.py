@@ -63,7 +63,7 @@ _LOCK = threading.RLock()
 _FENCE = "line-inbox-local-v1"
 _PARTITION = "inbox"
 _EVENT_TAG = "cruxible-line-inbox-transition-v1"
-_DISPOSITION = TypeAdapter(InboxDisposition)
+_DISPOSITION: TypeAdapter[InboxDisposition] = TypeAdapter(InboxDisposition)
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS items (
@@ -109,6 +109,13 @@ class StoredInboxItem:
     envelope: InboxItemEnvelope
     payload: CanonicalValue
     dispositions: tuple[InboxDisposition, ...]
+
+
+def _instant(value: str) -> datetime:
+    parsed = parse_datetime(value)
+    if parsed is None:
+        raise ValueError("Line inbox transition carries no instant")
+    return parsed
 
 
 def inbox_payload_digest(payload: CanonicalValue) -> str:
@@ -260,7 +267,8 @@ class LineInboxStore:
         )
         if cursor.rowcount == 0:
             return  # The same run delivered this item already.
-        posted_at = format_datetime(parse_datetime(posting["posted_at"]))
+        instant = _instant(posting["posted_at"])
+        posted_at = format_datetime(instant)
         row = conn.execute(
             "SELECT envelope,status FROM items WHERE item_id=?", (item_id,)
         ).fetchone()
@@ -273,9 +281,9 @@ class LineInboxStore:
                 procedure_artifact_digest=posting["procedure_artifact_digest"],
                 node_id=posting["node_id"],
                 run_id=posting["run_id"],
-                posted_at=parse_datetime(posted_at),
+                posted_at=instant,
                 last_run_id=posting["run_id"],
-                last_posted_at=parse_datetime(posted_at),
+                last_posted_at=instant,
                 occurrences=1,
                 source_capture_digests=tuple(posting["source_capture_digests"]),
                 dedupe_key=posting["dedupe_key"],
@@ -297,11 +305,11 @@ class LineInboxStore:
             self._bump_unread(conn, envelope.line, 1)
             return
         current = InboxItemEnvelope.model_validate_json(row["envelope"])
-        latest = parse_datetime(posted_at) >= current.last_posted_at
+        latest = instant >= current.last_posted_at
         updated = current.model_copy(
             update={
                 "occurrences": current.occurrences + 1,
-                "last_posted_at": parse_datetime(posted_at) if latest else current.last_posted_at,
+                "last_posted_at": instant if latest else current.last_posted_at,
                 "last_run_id": posting["run_id"] if latest else current.last_run_id,
                 "status": "unread",
                 "recurred_since_disposition": current.recurred_since_disposition
