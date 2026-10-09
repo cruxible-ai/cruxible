@@ -484,10 +484,12 @@ class ReobservationReading:
 class ReobservationReader:
     """Indexed freshness reads over one instance's projection, on one connection.
 
-    The connection is kept for the process; before each read the journal's log
-    signature is compared with the one last caught up to, and only a change
-    catches the projection up from the journal. Counters say how much each read
-    cost, for counted-work tests.
+    The connection is kept for the process. Before each read the projection
+    file's identity and the journal's log signature are compared with the ones
+    last caught up to: a projection deleted or replaced closes the connection,
+    rebuilds or catches the file up from the journal and reconnects; a journal
+    change alone catches the same file up. Counters say how many probes each read
+    made, for counted-work tests.
     """
 
     _cache: dict[Path, "ReobservationReader"] = {}
@@ -499,6 +501,7 @@ class ReobservationReader:
         self._lock = threading.Lock()
         self._conn: sqlite3.Connection | None = None
         self._signature: str | None = None
+        self._projection: tuple[int, int] | None = None
         self.probes = 0
         self.rows_read = 0
 
@@ -514,6 +517,13 @@ class ReobservationReader:
                 cls._cache[root] = reader
             return reader
 
+    def _projection_identity(self) -> tuple[int, int] | None:
+        try:
+            stat = self.store.path.stat()
+        except FileNotFoundError:
+            return None
+        return stat.st_dev, stat.st_ino
+
     def _connection(self) -> sqlite3.Connection | None:
         signature = reobservation_journal_signature(
             self.instance.root,
@@ -522,11 +532,21 @@ class ReobservationReader:
         )
         if signature is None:
             return None
-        if signature != self._signature or self._conn is None:
+        identity = self._projection_identity()
+        if self._conn is None or identity is None or identity != self._projection:
+            # Deleted, replaced or never opened: rebuild or catch the current
+            # file up from the journal, then read that file.
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+            with self.store._locked():
+                pass
+            self._conn = sqlite3.connect(self.store.path, check_same_thread=False)
+            self._projection = self._projection_identity()
+            self._signature = signature
+        elif signature != self._signature:
             with self.store._locked():
                 pass  # catch the projection up from the journal
-            if self._conn is None:
-                self._conn = sqlite3.connect(self.store.path, check_same_thread=False)
             self._signature = signature
         return self._conn
 

@@ -590,3 +590,36 @@ def test_a_head_moved_by_another_process_is_judged_again(
             now=_START + timedelta(minutes=50),
         )
     assert store.history(claim.identity.name) == ()
+
+
+# -- the reader follows its projection file (review F-015) --------------------
+
+
+@pytest.mark.parametrize("how", ["deleted", "replaced"])
+def test_a_warmed_reader_follows_a_rebuilt_projection(tmp_path: Path, how: str) -> None:
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    _reobserve(instance, _START + timedelta(minutes=50))
+    assert _verdict(instance, _START + timedelta(minutes=70)).verdict == "supported"
+    reader = ReobservationReader.of(instance)
+    assert reader.sequence(claim.identity.name) == 1
+    store = ClaimReobservationStore(instance)
+    if how == "deleted":
+        store.path.unlink()
+        # Rebuilt from the journal by the next store open.
+        assert len(store.history(claim.identity.name)) == 1
+    else:
+        staged = store.path.with_name("replacement.sqlite3")
+        store.path.rename(staged)
+        assert len(store.history(claim.identity.name)) == 1  # rebuilt in place
+        store.path.unlink()
+        staged.rename(store.path)  # an older copy put back: a different file
+    _reobserve(instance, _START + timedelta(minutes=100))
+    assert len(store.history(claim.identity.name)) == 2
+    assert reader.sequence(claim.identity.name) == 2
+    verdict = _verdict(instance, _START + timedelta(minutes=130))
+    assert verdict.verdict == "supported", verdict
+    (expiration,) = verdict.freshness_expirations
+    assert expiration.reobserved_at == _START + timedelta(minutes=100)
