@@ -103,6 +103,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("BoundObservationWindow", "ends_at"): "VALIDITY WINDOW",
     ("TerminalEgressChildReceiptV3", "reobserved_at"): "ASSERTION TIME",
     ("TriggerEventReference", "sequence"): "SETTLEMENT ORDER",
+    ("ReobservationReading", "sequence"): "SETTLEMENT ORDER",
+    ("ReobservationReading", "boundaries"): "VALIDITY WINDOW",
     ("GetRunOutcome", "sequence"): "SETTLEMENT ORDER",
     ("ResolutionContractActivationV3", "activated_at"): "EVALUATION INSTANT",
     ("AcceptedGenerationLocation", "sequence"): "SETTLEMENT ORDER",
@@ -540,6 +542,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
 NON_CLOCK_DECLARED_FIELDS: frozenset[tuple[str, str]] = frozenset(
     {
         ("AuthoringIntentCoordinator", "clock"),
+        # Reads re-observations at the instant it is given; it holds no time.
+        ("ClaimFactRowV1", "_reobserved"),
         ("QueryEvaluationPolicy", "requires_explicit_evaluation_time"),
         ("ProviderProcessLeaseV1", "process_start_time"),
         ("ProviderDescendantProcessV1", "process_start_time"),
