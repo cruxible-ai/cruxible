@@ -7,16 +7,22 @@ cites):
 
 * a Claim retired in accepted history, for any reason, indexed as accepted
   generations are caught up -- each generation once, from its change-set record;
-* a Claim in a proposal a reviewer rejected, indexed at rejection from the keys
-  the rejection record carries (taken while the candidate is still readable).
+* a Claim in a proposal a reviewer rejected, indexed at rejection from the
+  statement and Capture digests the rejection record carries (taken while the
+  candidate is still readable), keyed under the current match-key domain.
 
 Everything here is derived: the file lives with the other projections and is
 rebuilt from accepted history and the rejection records when it is missing,
-belongs to another instance, or was keyed under another match-key domain (an
-earlier layout is dropped first). A rejection row is written before its
-record, so a crash between them leaves a row with no record; reads keep a
-rejection row only while its record exists and says ``rejected``, and read the
-receipt from it.
+damaged, belongs to another instance, or was keyed under another match-key
+domain (an earlier layout is dropped first). A damaged file never blocks a
+read: it is discarded and rebuilt, and if that fails too the read reports no
+receipts and logs why.
+
+Closing a proposal is serialized per proposal. A rejection row is written
+before its record, so a crash between them leaves a row with no record; reads
+keep a rejection row only while its record exists and says ``rejected``. Once
+the close resolves -- written, lost to a competing close, or failed -- the
+proposal's rows are rewritten from the record that actually won.
 
 Lookups are keyed: one probe per proposed Claim, never a scan of history.
 Cruxible resurfaces what was recorded and nothing else: it does not interpret a
@@ -29,10 +35,12 @@ import json
 import sqlite3
 import threading
 import weakref
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
+
+import structlog
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.candidates import CandidateMemberLawEvidence
@@ -53,6 +61,7 @@ from cruxible_client.contracts.refusal_receipts import (
     CLAIM_REFUSAL_MATCH_KEY_DOMAIN,
     PriorRefusalReceipt,
     RefusedClaim,
+    RefusedClaimKeyV1,
     claim_producer,
     claim_refusal_match_key,
 )
@@ -90,6 +99,23 @@ CREATE TABLE IF NOT EXISTS proposal_claim_keys (
 CREATE TABLE IF NOT EXISTS proposals_keyed (proposal_id TEXT PRIMARY KEY) STRICT;
 """
 _ACCESS = BodyAccessContext(principal_id="cruxible-refusal-index", can_read_body=True)
+_log = structlog.get_logger("cruxible.refusal_index")
+_T = TypeVar("_T")
+_SIDECARS = ("", "-wal", "-shm", "-journal")
+
+
+def _damaged(exc: sqlite3.DatabaseError) -> bool:
+    """Whether a SQLite failure means the derived file itself is unusable.
+
+    Lock contention is transient and never discards the file; everything else
+    SQLite raises against this cache (not a database, malformed image, a missing
+    table or column of a torn layout) does.
+    """
+
+    if isinstance(exc, sqlite3.OperationalError):
+        text = str(exc).lower()
+        return not ("locked" in text or "busy" in text)
+    return True
 
 
 def _expected_schema() -> list[tuple[object, ...]]:
@@ -168,10 +194,10 @@ def _producer(text: str | None) -> ArtifactPin | None:
     return None if text is None else ArtifactPin.model_validate(json.loads(text))
 
 
-def candidate_refused_claims(
+def _candidate_claims(
     instance: PlaybillInstance, proposal_id: str
-) -> tuple[RefusedClaim, ...] | None:
-    """Key every live Claim a proposal's candidate authors; ``None`` if unreadable.
+) -> tuple[tuple[str, ClaimArtifactAny], ...] | None:
+    """Every live Claim a proposal's candidate authors, by path; ``None`` if unreadable.
 
     Only authored members count (a generated successor restates a Claim the
     change did not propose), and only live ones (a retirement proposes no
@@ -201,8 +227,8 @@ def candidate_refused_claims(
         )
     except Exception:  # noqa: BLE001 - a released candidate keys nothing
         return None
-    refused: list[RefusedClaim] = []
-    for path in paths:
+    claims: list[tuple[str, ClaimArtifactAny]] = []
+    for path in sorted(paths, key=lambda item: item.encode("utf-8")):
         content = tree.get(path)
         if content is None:
             return None
@@ -210,17 +236,82 @@ def candidate_refused_claims(
             claim = parse_claim(content, path=path)
         except ClaimFormatError:
             continue
-        if claim.lifecycle.state != "live":
-            continue
-        refused.append(
-            RefusedClaim(
-                claim_id=claim.identity.name,
-                path=path,
-                match_key=claim_refusal_key(instance, claim),
-                producer=claim_producer(claim),
-            )
+        if claim.lifecycle.state == "live":
+            claims.append((path, claim))
+    return tuple(claims)
+
+
+def candidate_refused_claims(
+    instance: PlaybillInstance, proposal_id: str
+) -> tuple[RefusedClaim, ...] | None:
+    """What a rejection records of each Claim its candidate proposed.
+
+    The statement and the Capture digests it cites: the inputs of the match key,
+    which stay readable after the candidate is released (Captures are retained),
+    so the key is recomputed under whichever key domain reads the record.
+    """
+
+    claims = _candidate_claims(instance, proposal_id)
+    if claims is None:
+        return None
+    return tuple(
+        RefusedClaim(
+            claim_id=claim.identity.name,
+            path=path,
+            statement=claim.statement,
+            capture_digests=claim.backing.capture_digests,
+            producer=claim_producer(claim),
         )
-    return tuple(sorted(refused, key=lambda item: item.path.encode("utf-8")))
+        for path, claim in claims
+    )
+
+
+def _rejection_keys(
+    instance: PlaybillInstance, record: ProposalWithdrawalRecord
+) -> tuple[tuple[RefusedClaim | RefusedClaimKeyV1, str], ...]:
+    """Each refused Claim of a rejection with its key under the current domain.
+
+    A recorded statement and its Captures are keyed afresh. A key-only entry
+    (the first, unreleased record shape) is re-derived from the rejected
+    candidate while its objects are retained; when they are not, it cannot be
+    keyed in this domain and is dropped with a logged note.
+    """
+
+    bodies = instance.body_store()
+    candidate: dict[str, str] | None = None
+    keyed: list[tuple[RefusedClaim | RefusedClaimKeyV1, str]] = []
+    for item in record.refused_claims:
+        if isinstance(item, RefusedClaim):
+            try:
+                contents = {capture_evidence_content(bodies, d) for d in item.capture_digests}
+            except CruxibleError as exc:
+                _log.warning(
+                    "refusal_index_rejection_unkeyable",
+                    proposal_id=record.proposal_id,
+                    claim_id=item.claim_id,
+                    reason=str(exc),
+                )
+                continue
+            keyed.append((item, claim_refusal_match_key(item.statement, contents)))
+            continue
+        if candidate is None:
+            claims = _candidate_claims(instance, record.proposal_id)
+            candidate = (
+                {}
+                if claims is None
+                else {path: claim_refusal_key(instance, claim) for path, claim in claims}
+            )
+        key = candidate.get(item.path)
+        if key is None:
+            _log.warning(
+                "refusal_index_rejection_dropped",
+                proposal_id=record.proposal_id,
+                claim_id=item.claim_id,
+                reason="key-only record and its rejected candidate is no longer retained",
+            )
+            continue
+        keyed.append((item, key))
+    return tuple(keyed)
 
 
 class RefusalIndex:
@@ -232,6 +323,7 @@ class RefusalIndex:
         self._connection: sqlite3.Connection | None = None
         self._open: list[sqlite3.Connection] = []
         self._finalizer = weakref.finalize(self, _close_all, self._open)
+        self._closing: dict[str, threading.Lock] = {}
         # Work counters, for counted-work tests.
         self.generations_indexed = 0
         self.rebuilds = 0
@@ -245,6 +337,8 @@ class RefusalIndex:
         if self._connection is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             connection = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+            self._open.append(connection)
+            self._connection = connection
             connection.execute("PRAGMA journal_mode=WAL")
             schema = _schema(connection)
             if schema and schema != _expected_schema():
@@ -258,14 +352,57 @@ class RefusalIndex:
                 }:
                     connection.execute(f'DROP TABLE IF EXISTS "{table}"')
             connection.executescript(_SCHEMA)
-            self._connection = connection
-            self._open.append(connection)
         return self._connection
 
     def close(self) -> None:
         with self._lock:
             self._connection = None
             _close_all(self._open)
+
+    def _discard(self) -> None:
+        """Drop the damaged derived file and its sidecars; the next use rebuilds it."""
+
+        with self._lock:
+            self.close()
+            for suffix in _SIDECARS:
+                Path(str(self.path) + suffix).unlink(missing_ok=True)
+
+    def _recovering(self, operation: str, run: Callable[[], _T], default: _T) -> _T:
+        """Run one cache operation; a damaged file is discarded and rebuilt once.
+
+        The cache never blocks the governed work reading it: if the rebuilt file
+        fails too (or SQLite stays busy), the operation reports ``default`` -- no
+        receipts -- and logs why. Errors from the authoritative sources (proposal
+        evidence, history, Captures) are not caught here.
+        """
+
+        with self._lock:
+            for attempt in (1, 2):
+                try:
+                    return run()
+                except sqlite3.DatabaseError as exc:
+                    damaged = _damaged(exc) and not (is_previewing() or history_reads_detached())
+                    _log.warning(
+                        "refusal_index_unusable",
+                        path=str(self.path),
+                        operation=operation,
+                        attempt=attempt,
+                        error=str(exc),
+                        action="rebuild" if damaged and attempt == 1 else "no_receipts",
+                    )
+                    if not damaged:
+                        break
+                    self._discard()
+            return default
+
+    @contextmanager
+    def closing(self, proposal_id: str) -> Iterator[None]:
+        """Serialize every close of one proposal, from its open check to its rows."""
+
+        with self._lock:
+            lock = self._closing.setdefault(proposal_id, threading.Lock())
+        with lock:
+            yield
 
     @contextmanager
     def current(self, instance: PlaybillInstance) -> Iterator[sqlite3.Connection]:
@@ -279,11 +416,27 @@ class RefusalIndex:
                 memory = sqlite3.connect(":memory:", check_same_thread=False, isolation_level=None)
                 try:
                     if self.path.exists():
-                        source = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
                         try:
-                            source.backup(memory)
-                        finally:
-                            source.close()
+                            source = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+                            try:
+                                source.backup(memory)
+                            finally:
+                                source.close()
+                            if _schema(memory) != _expected_schema():
+                                raise sqlite3.DatabaseError("refusal index layout differs")
+                        except sqlite3.DatabaseError as exc:
+                            # A preview never repairs the file; it rebuilds privately.
+                            _log.warning(
+                                "refusal_index_unusable",
+                                path=str(self.path),
+                                operation="preview",
+                                error=str(exc),
+                                action="private_rebuild",
+                            )
+                            memory.close()
+                            memory = sqlite3.connect(
+                                ":memory:", check_same_thread=False, isolation_level=None
+                            )
                     memory.executescript(_SCHEMA)
                     self._catch_up(memory, instance)
                     yield memory
@@ -296,7 +449,8 @@ class RefusalIndex:
                 self._catch_up(connection, instance)
                 connection.execute("COMMIT")
             except BaseException:
-                connection.execute("ROLLBACK")
+                with suppress(sqlite3.Error):
+                    connection.execute("ROLLBACK")
                 raise
             yield connection
 
@@ -305,8 +459,11 @@ class RefusalIndex:
     def catch_up(self, instance: PlaybillInstance) -> None:
         """Index every accepted generation not yet indexed (acceptance calls this)."""
 
-        with self.current(instance):
-            pass
+        def run() -> None:
+            with self.current(instance):
+                pass
+
+        self._recovering("catch_up", run, None)
 
     def _catch_up(self, connection: sqlite3.Connection, instance: PlaybillInstance) -> None:
         """Bring the retirement rows to the accepted head, through the history index.
@@ -360,7 +517,7 @@ class RefusalIndex:
         connection.execute("DELETE FROM refusals")
         connection.execute("DELETE FROM proposal_claim_keys")
         connection.execute("DELETE FROM proposals_keyed")
-        self._index_rejections(connection, evidence)
+        self._index_rejections(connection, instance, evidence)
         head = instance.accepted_coordinate()
         with instance.bind_accepted_projection(head) as projection:
             paths = tuple(
@@ -448,9 +605,12 @@ class RefusalIndex:
         )
 
     def _index_rejections(
-        self, connection: sqlite3.Connection, evidence: ProposalEvidenceStore
+        self,
+        connection: sqlite3.Connection,
+        instance: PlaybillInstance,
+        evidence: ProposalEvidenceStore,
     ) -> None:
-        """Rebuild only: every rejection record's keyed Claims."""
+        """Rebuild only: every rejection record's Claims, keyed under this domain."""
 
         directory = evidence.withdrawals
         if not directory.is_dir():
@@ -462,15 +622,25 @@ class RefusalIndex:
                 label="refusal index rejection",
             )
             if record.kind == "rejected":
-                self._put_rejection(connection, record)
+                self._put_rejection(connection, instance, record)
 
     @staticmethod
-    def _put_rejection(connection: sqlite3.Connection, record: ProposalWithdrawalRecord) -> None:
+    def _put_rejection(
+        connection: sqlite3.Connection,
+        instance: PlaybillInstance,
+        record: ProposalWithdrawalRecord,
+    ) -> None:
+        """Replace one proposal's rejection rows with those of ``record``."""
+
+        connection.execute(
+            "DELETE FROM refusals WHERE kind='proposal_rejected' AND source_id=?",
+            (record.proposal_id,),
+        )
         connection.executemany(
             "INSERT OR REPLACE INTO refusals VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
-                    item.match_key,
+                    key,
                     "proposal_rejected",
                     record.proposal_id,
                     item.claim_id,
@@ -482,27 +652,59 @@ class RefusalIndex:
                     record.reason,
                     _producer_text(item.producer),
                 )
-                for item in record.refused_claims
+                for item, key in _rejection_keys(instance, record)
             ],
         )
 
-    def record_rejection(
-        self, instance: PlaybillInstance, record: ProposalWithdrawalRecord
+    def _write(
+        self, instance: PlaybillInstance, change: Callable[[sqlite3.Connection], None]
     ) -> None:
-        """Index a rejection's keyed Claims; called before its record is written."""
-
-        if record.kind != "rejected" or not record.refused_claims:
-            return
         with self.current(instance) as connection:
             if is_previewing() or history_reads_detached():
                 return
             connection.execute("BEGIN IMMEDIATE")
             try:
-                self._put_rejection(connection, record)
+                change(connection)
                 connection.execute("COMMIT")
             except BaseException:
-                connection.execute("ROLLBACK")
+                with suppress(sqlite3.Error):
+                    connection.execute("ROLLBACK")
                 raise
+
+    def record_rejection(
+        self, instance: PlaybillInstance, record: ProposalWithdrawalRecord
+    ) -> None:
+        """Index a rejection's Claims before its record is written (inside `closing`)."""
+
+        if record.kind != "rejected" or not record.refused_claims:
+            return
+        self._recovering(
+            "record_rejection",
+            lambda: self._write(
+                instance, lambda connection: self._put_rejection(connection, instance, record)
+            ),
+            None,
+        )
+
+    def settle_close(self, instance: PlaybillInstance, proposal_id: str) -> None:
+        """Rewrite one proposal's rejection rows from the closing record that won.
+
+        Called (inside `closing`) once a close resolves, however it resolved: the
+        winner's rows replace any speculative ones, and a proposal that did not
+        end rejected keeps none.
+        """
+
+        def change(connection: sqlite3.Connection) -> None:
+            record = instance.proposal_evidence().read_withdrawal(proposal_id)
+            if record is not None and record.kind == "rejected":
+                self._put_rejection(connection, instance, record)
+            else:
+                connection.execute(
+                    "DELETE FROM refusals WHERE kind='proposal_rejected' AND source_id=?",
+                    (proposal_id,),
+                )
+
+        self._recovering("settle_close", lambda: self._write(instance, change), None)
 
     # -- lookups ------------------------------------------------------------
 
@@ -511,50 +713,51 @@ class RefusalIndex:
         connection: sqlite3.Connection,
         instance: PlaybillInstance,
         proposal_id: str,
-    ) -> tuple[RefusedClaim, ...]:
+    ) -> tuple[tuple[str, str], ...]:
+        """(path, match key) of each live Claim the proposal authors, cached once keyed."""
+
         keyed = connection.execute(
             "SELECT 1 FROM proposals_keyed WHERE proposal_id=?", (proposal_id,)
         ).fetchone()
         if keyed is not None:
             return tuple(
-                RefusedClaim(
-                    claim_id=row[0], path=row[1], match_key=row[2], producer=_producer(row[3])
-                )
+                (str(row[0]), str(row[1]))
                 for row in connection.execute(
-                    "SELECT claim_id,path,match_key,producer FROM proposal_claim_keys "
+                    "SELECT path,match_key FROM proposal_claim_keys "
                     "WHERE proposal_id=? ORDER BY path",
                     (proposal_id,),
                 )
             )
-        refused = candidate_refused_claims(instance, proposal_id)
-        if refused is None:
+        claims = _candidate_claims(instance, proposal_id)
+        if claims is None:
             return ()
         self.proposals_keyed += 1
+        rows = [
+            (
+                proposal_id,
+                path,
+                claim.identity.name,
+                claim_refusal_key(instance, claim),
+                _producer_text(claim_producer(claim)),
+            )
+            for path, claim in claims
+        ]
         writable = not (is_previewing() or history_reads_detached())
         if writable:
             connection.execute("BEGIN IMMEDIATE")
         try:
             connection.executemany(
-                "INSERT OR REPLACE INTO proposal_claim_keys VALUES (?,?,?,?,?)",
-                [
-                    (
-                        proposal_id,
-                        item.path,
-                        item.claim_id,
-                        item.match_key,
-                        _producer_text(item.producer),
-                    )
-                    for item in refused
-                ],
+                "INSERT OR REPLACE INTO proposal_claim_keys VALUES (?,?,?,?,?)", rows
             )
             connection.execute("INSERT OR REPLACE INTO proposals_keyed VALUES (?)", (proposal_id,))
             if writable:
                 connection.execute("COMMIT")
         except BaseException:
             if writable:
-                connection.execute("ROLLBACK")
+                with suppress(sqlite3.Error):
+                    connection.execute("ROLLBACK")
             raise
-        return refused
+        return tuple((row[1], row[3]) for row in rows)
 
     def prior_refusals(
         self,
@@ -570,24 +773,28 @@ class RefusalIndex:
 
         evidence = instance.proposal_evidence()
         admitted_us = _micros(evidence.read_admission(proposal_id).admitted_at)
-        found: dict[str, tuple[PriorRefusalReceipt, ...]] = {}
-        with self.current(instance) as connection:
-            for item in self._proposal_keys(connection, instance, proposal_id):
-                self.key_probes += 1
-                receipts: list[PriorRefusalReceipt] = []
-                for row in connection.execute(
-                    "SELECT kind,source_id,claim_id,proposal_id,decided_by,decided_at,"
-                    "reason_code,rationale,producer FROM refusals "
-                    "WHERE match_key=? AND decided_at_us<? ORDER BY decided_at_us,kind,source_id",
-                    (item.match_key, admitted_us),
-                ):
-                    self.rows_read += 1
-                    receipt = _receipt(evidence, row, proposal_id=proposal_id)
-                    if receipt is not None:
-                        receipts.append(receipt)
-                if receipts:
-                    found[item.path] = tuple(receipts)
-        return found
+
+        def run() -> dict[str, tuple[PriorRefusalReceipt, ...]]:
+            found: dict[str, tuple[PriorRefusalReceipt, ...]] = {}
+            with self.current(instance) as connection:
+                for path, match_key in self._proposal_keys(connection, instance, proposal_id):
+                    self.key_probes += 1
+                    receipts: list[PriorRefusalReceipt] = []
+                    for row in connection.execute(
+                        "SELECT kind,source_id,claim_id,proposal_id,decided_by,decided_at,"
+                        "reason_code,rationale,producer FROM refusals WHERE match_key=? "
+                        "AND decided_at_us<? ORDER BY decided_at_us,kind,source_id",
+                        (match_key, admitted_us),
+                    ):
+                        self.rows_read += 1
+                        receipt = _receipt(evidence, row, proposal_id=proposal_id)
+                        if receipt is not None:
+                            receipts.append(receipt)
+                    if receipts:
+                        found[path] = tuple(receipts)
+            return found
+
+        return self._recovering("prior_refusals", run, {})
 
 
 def _retiring_sequence(instance: PlaybillInstance, history: HistoryReader, path: str) -> int | None:

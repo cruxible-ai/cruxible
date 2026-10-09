@@ -1213,9 +1213,20 @@ def _close(
 
     A proposal closes once. The same kind of close again returns the existing
     record; the other kind refuses, since a withdrawn proposal cannot also be
-    rejected (or the reverse).
+    rejected (or the reverse). Closes of one proposal are serialized from the
+    open check through the refusal-index rows, so the rows reflect the close
+    that won.
     """
 
+    with instance.refusal_index().closing(record.proposal_id):
+        return _close_once(instance, mode, record)
+
+
+def _close_once(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    record: ProposalWithdrawalRecord,
+) -> tuple[ProposalWithdrawalRecord, bool, AcceptedCoordinate | None]:
     existing = instance.proposal_evidence().read_withdrawal(record.proposal_id)
     if existing is not None:
         if existing.kind != record.kind:
@@ -1249,10 +1260,9 @@ def _close(
     if mode.previewing:
         return record, False, coordinate
     if record.kind == "rejected":
-        # Key the Claims the rejected candidate proposed while it is still
-        # readable, so a later proposal of the same statement on the same
-        # evidence resurfaces this rejection. The index row precedes the record;
-        # a read keeps it only once the record says rejected.
+        # Record the Claims the rejected candidate proposed (statement and cited
+        # Captures) while it is still readable, so a later proposal of the same
+        # statement on the same evidence resurfaces this rejection.
         from cruxible_core.proposals.refusal_index import candidate_refused_claims
 
         record = ProposalWithdrawalRecord.model_validate(
@@ -1264,11 +1274,20 @@ def _close(
                 ],
             }
         )
-        instance.refusal_index().record_rejection(instance, record)
-    # A pinned close confirms the live accepted head and records while
-    # holding it still (R12).
-    with mode.committing():
-        instance.proposal_evidence().write_withdrawal(record)
+    try:
+        if record.kind == "rejected":
+            # The index row precedes the record (a crash between them leaves a
+            # row a read ignores until a record says rejected) ...
+            instance.refusal_index().record_rejection(instance, record)
+        # A pinned close confirms the live accepted head and records while
+        # holding it still (R12).
+        with mode.committing():
+            instance.proposal_evidence().write_withdrawal(record)
+    finally:
+        if record.kind == "rejected":
+            # ... and once the close resolves, the rows are those of the record
+            # that won: this one, a competing one, or none.
+            instance.refusal_index().settle_close(instance, record.proposal_id)
     # Release local closed-candidate roots even without a configured mirror.
     instance.advertise_workspace()
     instance.request_ledger_mirror()

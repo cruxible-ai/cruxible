@@ -3093,8 +3093,9 @@ terminal reason `rejected`, and every settlement door (approve, activate,
 readmit) then refuses `cruxible.proposal_rejected` naming who rejected it, when,
 and why. A proposal's own actor withdraws rather than rejects; rejecting an
 already-rejected proposal repeats the first answer, and a withdrawn proposal
-cannot also be rejected. The rejection record keys each Claim the candidate
-proposed (`refused_claims`): its statement and the exact Captures it cites.
+cannot also be rejected. The rejection record keeps each Claim the candidate
+proposed (`refused_claims`): its statement and the Captures it cites, from
+which the match key (content digests of that evidence) is recomputed.
 
 ### Earlier refusals of the same statement
 
@@ -3122,9 +3123,13 @@ daemon verified against its own source-read receipt. A re-run that reads
 identical bytes cites the same evidence; different bytes are a new question and
 match nothing. A third-party Provider whose output embeds run-bound values (a
 run ID, a timestamp, a request digest) commits different material on every run,
-so its Captures do not match across runs. A withdrawal is not a refusal. The lookup is a keyed index the daemon maintains
-as generations are accepted and as proposals are rejected; it is derived, and
-rebuilt from accepted history and rejection records when missing.
+so its Captures do not match across runs. A withdrawal is not a refusal. The
+lookup is a keyed index the daemon maintains as generations are accepted and
+as proposals are rejected (closes of one proposal are serialized, and the index
+keeps the close that won). It is derived: when it is missing, damaged, or keyed
+under an earlier rule, it is rebuilt from accepted history and the rejection
+records, and a read that still cannot use it reports no receipts and logs why
+rather than failing.
 
 approve signs locally. The private-key path is not sent to the daemon.
 Activation is a daemon act and writes nothing locally; it returns the

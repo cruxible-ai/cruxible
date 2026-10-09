@@ -19,9 +19,9 @@ the same evidence; different bytes are a new question and match nothing.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Literal
+from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import ProposalDigest, Sha256Value, typed_digest
@@ -68,11 +68,17 @@ def _claim_id(value: str) -> str:
     return value
 
 
-class RefusedClaim(_StrictRefusalModel):
-    """One Claim of a rejected proposal, keyed so a later proposal of it can be found.
+def _path_matches(claim_id: str, path: str) -> None:
+    if claim_path(claim_id) != path:
+        raise ValueError("a refused Claim's path is its own Claim path")
 
-    A rejection record carries these because a closed proposal's candidate tree
-    is released: the key is taken while the candidate is still readable.
+
+class RefusedClaimKeyV1(_StrictRefusalModel):
+    """A refused Claim recorded by its match key alone (the first, unreleased shape).
+
+    The key binds the key domain it was computed under and cannot be recomputed
+    from the record. A rebuild under another domain re-derives the key from the
+    rejected candidate while its objects are retained, and drops it otherwise.
     """
 
     tag: Literal["cruxible-refused-claim-v1"] = "cruxible-refused-claim-v1"
@@ -90,10 +96,45 @@ class RefusedClaim(_StrictRefusalModel):
         return value
 
     @model_validator(mode="after")
-    def _path(self) -> "RefusedClaim":
-        if claim_path(self.claim_id) != self.path:
-            raise ValueError("a refused Claim's path is its own Claim path")
+    def _path(self) -> "RefusedClaimKeyV1":
+        _path_matches(self.claim_id, self.path)
         return self
+
+
+class RefusedClaim(_StrictRefusalModel):
+    """One Claim of a rejected proposal, recorded by the inputs of its match key.
+
+    A rejection record carries these because a closed proposal's candidate tree
+    is released: the statement and the Capture digests it cites are taken while
+    the candidate is still readable. Captures stay retained, so the key is
+    recomputed under whatever key domain reads the record, never stored.
+    """
+
+    tag: Literal["cruxible-refused-claim-v2"] = "cruxible-refused-claim-v2"
+    claim_id: str
+    path: str
+    statement: ClaimStatement
+    capture_digests: tuple[str, ...]
+    producer: ArtifactPin | None = None
+
+    _claim = field_validator("claim_id")(_claim_id)
+
+    @field_validator("capture_digests")
+    @classmethod
+    def _captures(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("refused Claim Capture digests must be sorted and unique")
+        for item in value:
+            Sha256Value.from_tagged(item)
+        return value
+
+    @model_validator(mode="after")
+    def _path(self) -> "RefusedClaim":
+        _path_matches(self.claim_id, self.path)
+        return self
+
+
+RefusedClaimAny: TypeAlias = Annotated[RefusedClaimKeyV1 | RefusedClaim, Field(discriminator="tag")]
 
 
 PriorRefusalKind = Literal["claim_retired", "proposal_rejected"]
@@ -145,6 +186,8 @@ __all__ = [
     "PriorRefusalKind",
     "PriorRefusalReceipt",
     "RefusedClaim",
+    "RefusedClaimAny",
+    "RefusedClaimKeyV1",
     "claim_producer",
     "claim_refusal_match_key",
 ]

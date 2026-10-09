@@ -530,3 +530,256 @@ def test_an_index_from_an_earlier_layout_or_key_is_rebuilt(tmp_path: Path) -> No
         )
     (receipt,) = index.prior_refusals(instance, _proposal_id(again))[again.claim_path]
     assert (receipt.kind, receipt.reason_code) == ("claim_retired", "was-wrong")
+
+
+# --- review findings F-001..F-003: the cache never blocks, races, or forgets ----
+
+
+def test_a_damaged_index_file_is_rebuilt_and_review_still_works(tmp_path: Path) -> None:
+    """F-001: torn bytes in the derived file rebuild it; review and approval prep work."""
+
+    from cruxible_core.service.proposals.review import render_playbill_proposal_review
+
+    instance, _owner = seed_claims(tmp_path)
+    first = _propose(instance, "wi-44", "ready", body=b"status: ready (44)", rationale="One.")
+    _reject(instance, first, "the feed was stale that day")
+    again = _cite(
+        instance,
+        "wi-44",
+        "ready",
+        capture_digest=first.capture_digest,
+        rationale="Two.",
+        with_subject=True,
+    )
+    assert len(_receipts(instance, again)) == 1
+    index = instance.refusal_index()
+    index.close()
+    for suffix in ("", "-wal", "-shm"):
+        Path(str(index.path) + suffix).unlink(missing_ok=True)
+    index.path.write_bytes(b"torn derived SQLite projection")
+
+    (receipt,) = _receipts(instance, again)
+    assert receipt.rationale == "the feed was stale that day"
+    review = service_review_playbill_proposal(
+        instance, proposal_id=_proposal_id(again), access=ACCESS
+    )
+    assert "the feed was stale that day" in render_playbill_proposal_review(review)
+
+
+def test_an_index_that_cannot_be_rebuilt_reports_no_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-001: if even the rebuilt file fails, reads report no receipts, never an error."""
+
+    from cruxible_core.proposals.refusal_index import RefusalIndex
+
+    instance, _owner = seed_claims(tmp_path)
+    first = _propose(instance, "wi-44", "ready", body=b"status: ready (44)", rationale="One.")
+    _reject(instance, first, "not yet")
+    again = _cite(
+        instance,
+        "wi-44",
+        "ready",
+        capture_digest=first.capture_digest,
+        rationale="Two.",
+        with_subject=True,
+    )
+
+    def broken(self: RefusalIndex, connection: Any, instance: Any) -> None:
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    monkeypatch.setattr(RefusalIndex, "_catch_up", broken)
+    assert _receipts(instance, again) == ()
+    assert _prior_refusal_detail(instance, _proposal_id(again)) == {}
+
+
+def test_a_losing_concurrent_rejection_never_sets_the_lookup_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-002: two reviewers reject at once; only the close that won is indexed.
+
+    The 20:30 rejection indexes its row and pauses; the competing 20:59 one is
+    let run before it may publish. Whatever the interleaving, a proposal admitted
+    at 20:50 sees the rejection that actually landed, at 20:30.
+    """
+
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from cruxible_core.proposals import refusal_index
+
+    instance, _owner = seed_claims(tmp_path)
+    first = _propose(instance, "wi-44", "ready", body=b"status: ready (44)", rationale="One.")
+    winner_indexed, loser_indexed, winner_go, loser_go = Event(), Event(), Event(), Event()
+    original = refusal_index.RefusalIndex.record_rejection
+
+    def ordered(self: Any, instance: Any, record: Any) -> None:
+        original(self, instance, record)
+        if record.reason == "winner":
+            winner_indexed.set()
+            winner_go.wait(10)
+        else:
+            loser_indexed.set()
+            loser_go.wait(10)
+
+    monkeypatch.setattr(refusal_index.RefusalIndex, "record_rejection", ordered)
+
+    def reject(reason: str, at: str) -> Any:
+        return service_reject_playbill_proposal(
+            instance,
+            proposal_id=_proposal_id(first),
+            actor_id="reviewer",
+            reason=reason,
+            rejected_at=at,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        winner = pool.submit(reject, "winner", REJECTED_AT)
+        assert winner_indexed.wait(10)
+        loser = pool.submit(reject, "loser", "2026-08-16T20:59:00.000000Z")
+        loser_indexed.wait(2)  # serialized closes never get here before the winner lands
+        winner_go.set()
+        assert winner.result(10).status == "rejected"
+        loser_go.set()
+        try:
+            loser.result(10)
+        except Exception:  # noqa: BLE001 - a loser may refuse; the index must not care
+            pass
+
+    record = instance.proposal_evidence().read_withdrawal(_proposal_id(first))
+    assert record is not None and record.withdrawn_at == REJECTED_AT
+    between = _cite(
+        instance,
+        "wi-44",
+        "ready",
+        capture_digest=first.capture_digest,
+        rationale="Between.",
+        timestamp="2026-08-16T20:50:00.000000Z",
+        with_subject=True,
+    )
+    (receipt,) = _receipts(instance, between)
+    assert (receipt.decided_at, receipt.rationale) == (REJECTED_AT, "winner")
+    index = instance.refusal_index()
+    with sqlite3.connect(f"file:{index.path}?mode=ro", uri=True) as connection:
+        times = connection.execute(
+            "SELECT DISTINCT decided_at FROM refusals WHERE kind='proposal_rejected'"
+        ).fetchall()
+    assert times == [(REJECTED_AT,)]
+
+
+def _v1_key(claim: Any) -> str:
+    """The first key: statement plus Capture envelope digests, domain v1."""
+
+    from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+
+    statement = claim.statement
+    return typed_digest(
+        Sha256Value,
+        "cruxible-claim-refusal-match-v1",
+        {
+            "subject": statement.subject.model_dump(mode="json"),
+            "predicate": statement.predicate,
+            "qualifier": statement.qualifier,
+            "object": statement.object.model_dump(mode="json"),
+            "evidence": sorted(set(claim.backing.capture_digests)),
+        },
+    ).tagged
+
+
+def _write_key_only_rejection(instance: PlaybillInstance, proposed: Any) -> None:
+    """A rejection record in the first, key-only shape, as the first build wrote it."""
+
+    from cruxible_client.contracts.claims import parse_claim
+    from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
+
+    evaluation = instance.proposal_evidence().read_evaluation(_proposal_id(proposed))
+    assert evaluation.evaluated_tree_oid is not None
+    content = instance.proposal_tree(evaluation.evaluated_tree_oid)[proposed.claim_path]
+    claim = parse_claim(content, path=proposed.claim_path)
+    record = ProposalWithdrawalRecord.model_validate(
+        {
+            "proposal_id": _proposal_id(proposed),
+            "actor_id": "reviewer",
+            "reason": "the feed was stale that day",
+            "withdrawn_at": REJECTED_AT,
+            "kind": "rejected",
+            "refused_claims": [
+                {
+                    "tag": "cruxible-refused-claim-v1",
+                    "claim_id": claim.identity.name,
+                    "path": proposed.claim_path,
+                    "match_key": _v1_key(claim),
+                }
+            ],
+        }
+    )
+    instance.proposal_evidence().write_withdrawal(record)
+
+
+def test_a_key_only_rejection_is_rekeyed_in_the_current_domain(tmp_path: Path) -> None:
+    """F-003: a first-shape record is re-derived from its retained candidate on rebuild.
+
+    The re-proposal is a fresh Capture of identical content, so only a key in
+    the current (content) domain can find it.
+    """
+
+    instance, _owner = seed_claims(tmp_path)
+    first = _propose(instance, "wi-44", "ready", body=b"status: ready (44)", rationale="One.")
+    _write_key_only_rejection(instance, first)
+    again = _propose(
+        instance, "wi-44", "ready", body=b"status: ready (44)", rationale="Two.", timestamp=LATER
+    )
+    assert again.capture_digests != first.capture_digests
+
+    (receipt,) = _receipts(instance, again)
+    assert (receipt.kind, receipt.proposal_id) == ("proposal_rejected", _proposal_id(first))
+
+
+def test_a_key_only_rejection_whose_candidate_is_gone_is_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-003: without its candidate a key-only record cannot be keyed; it is dropped."""
+
+    instance, _owner = seed_claims(tmp_path)
+    first = _propose(instance, "wi-44", "ready", body=b"status: ready (44)", rationale="One.")
+    _write_key_only_rejection(instance, first)
+    again = _propose(
+        instance, "wi-44", "ready", body=b"status: ready (44)", rationale="Two.", timestamp=LATER
+    )
+    released = _proposal_id(first)
+    blobs = PlaybillInstance.proposal_blobs
+
+    def gone(self: Any, oid: str, paths: Any, *, proposal_id: str | None = None) -> Any:
+        if proposal_id == released:
+            raise RuntimeError("candidate released")
+        return blobs(self, oid, paths, proposal_id=proposal_id)
+
+    monkeypatch.setattr(PlaybillInstance, "proposal_blobs", gone)
+    assert _prior_refusal_detail(instance, _proposal_id(again)) == {}
+
+
+def test_a_rejection_recorded_under_an_earlier_domain_is_rekeyed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-003: rows and progress from an earlier key domain rebuild with current keys."""
+
+    from cruxible_core.proposals import refusal_index
+
+    instance, _owner = seed_claims(tmp_path)
+    first = _propose(instance, "wi-44", "ready", body=b"status: ready (44)", rationale="One.")
+    with monkeypatch.context() as patch:
+        patch.setattr(refusal_index, "claim_refusal_key", lambda _i, claim: _v1_key(claim))
+        patch.setattr(
+            refusal_index, "CLAIM_REFUSAL_MATCH_KEY_DOMAIN", "cruxible-claim-refusal-match-v1"
+        )
+        _reject(instance, first, "the feed was stale that day")
+    again = _cite(
+        instance,
+        "wi-44",
+        "ready",
+        capture_digest=first.capture_digest,
+        rationale="Again.",
+        with_subject=True,
+    )
+    (receipt,) = _receipts(instance, again)
+    assert receipt.rationale == "the feed was stale that day"
