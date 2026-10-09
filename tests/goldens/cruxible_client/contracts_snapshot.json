@@ -78,6 +78,14 @@
         "not_registered"
       ]
     },
+    "InboxItemStatus": {
+      "values": [
+        "unread",
+        "acknowledged",
+        "dismissed",
+        "linked"
+      ]
+    },
     "LineEnablementOutcome": {
       "values": [
         "enabled",
@@ -132,6 +140,7 @@
         "consumer_stalled",
         "line_coverage_gap",
         "line_work_pending",
+        "line_inbox_unread",
         "evidence_unavailable",
         "prediction_settleable",
         "prediction_window_unbindable"
@@ -162,6 +171,7 @@
         "cruxible.line.enable",
         "cruxible.line.evaluate",
         "cruxible.line.dispatch",
+        "cruxible.inbox.list",
         "cruxible.prediction.settle",
         "hand_edit"
       ]
@@ -20949,6 +20959,3262 @@
         "status"
       ]
     },
+    "InboxAcknowledged": {
+      "fields": {
+        "actor_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_id",
+          "required": true,
+          "schema": {
+            "title": "Actor Id",
+            "type": "string"
+          }
+        },
+        "decided_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "decided_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Decided At",
+            "type": "string"
+          }
+        },
+        "disposition": {
+          "default": "acknowledged",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "disposition",
+          "required": false,
+          "schema": {
+            "const": "acknowledged",
+            "default": "acknowledged",
+            "title": "Disposition",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-acknowledged-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-acknowledged-v1",
+            "default": "cruxible-inbox-acknowledged-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "An agent saw the item and owes it nothing further.",
+        "properties": {
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "title": "Decided At",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "acknowledged",
+            "default": "acknowledged",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-inbox-acknowledged-v1",
+            "default": "cruxible-inbox-acknowledged-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "decided_at"
+        ],
+        "title": "InboxAcknowledged",
+        "type": "object"
+      },
+      "required_fields": [
+        "actor_id",
+        "decided_at"
+      ]
+    },
+    "InboxDismissRequest": {
+      "fields": {
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-dismiss-request-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-dismiss-request-v1",
+            "default": "cruxible-inbox-dismiss-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-inbox-dismiss-request-v1",
+            "default": "cruxible-inbox-dismiss-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "InboxDismissRequest",
+        "type": "object"
+      },
+      "required_fields": [
+        "reason"
+      ]
+    },
+    "InboxDismissed": {
+      "fields": {
+        "actor_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_id",
+          "required": true,
+          "schema": {
+            "title": "Actor Id",
+            "type": "string"
+          }
+        },
+        "decided_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "decided_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Decided At",
+            "type": "string"
+          }
+        },
+        "disposition": {
+          "default": "dismissed",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "disposition",
+          "required": false,
+          "schema": {
+            "const": "dismissed",
+            "default": "dismissed",
+            "title": "Disposition",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-dismissed-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-dismissed-v1",
+            "default": "cruxible-inbox-dismissed-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "An agent judged the item needs nothing, and said why.",
+        "properties": {
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "title": "Decided At",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "dismissed",
+            "default": "dismissed",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-inbox-dismissed-v1",
+            "default": "cruxible-inbox-dismissed-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "decided_at",
+          "reason"
+        ],
+        "title": "InboxDismissed",
+        "type": "object"
+      },
+      "required_fields": [
+        "actor_id",
+        "decided_at",
+        "reason"
+      ]
+    },
+    "InboxDispositionResult": {
+      "fields": {
+        "item": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "item",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/InboxItemEnvelope"
+          }
+        },
+        "recorded": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "recorded",
+          "required": true,
+          "schema": {
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-disposition-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-disposition-result-v1",
+            "default": "cruxible-inbox-disposition-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "InboxAcknowledged": {
+            "additionalProperties": false,
+            "description": "An agent saw the item and owes it nothing further.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "acknowledged",
+                "default": "acknowledged",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-acknowledged-v1",
+                "default": "cruxible-inbox-acknowledged-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at"
+            ],
+            "title": "InboxAcknowledged",
+            "type": "object"
+          },
+          "InboxDismissed": {
+            "additionalProperties": false,
+            "description": "An agent judged the item needs nothing, and said why.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "dismissed",
+                "default": "dismissed",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "title": "Reason",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-dismissed-v1",
+                "default": "cruxible-inbox-dismissed-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at",
+              "reason"
+            ],
+            "title": "InboxDismissed",
+            "type": "object"
+          },
+          "InboxItemEnvelope": {
+            "additionalProperties": false,
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``run_id``/``posted_at`` are the first posting; ``last_run_id``/``last_posted_at``\nthe latest. ``occurrences`` counts every run that posted the same dedupe key.\n``disposition`` is the agent's latest decision, kept when the item recurs:\na recurring item is ``unread`` again, and ``recurred_since_disposition``\ncounts the postings after that decision.",
+            "properties": {
+              "dedupe_key": {
+                "title": "Dedupe Key",
+                "type": "string"
+              },
+              "disposition": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "acknowledged": "#/$defs/InboxAcknowledged",
+                        "dismissed": "#/$defs/InboxDismissed",
+                        "linked": "#/$defs/InboxLinked"
+                      },
+                      "propertyName": "disposition"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/InboxAcknowledged"
+                      },
+                      {
+                        "$ref": "#/$defs/InboxDismissed"
+                      },
+                      {
+                        "$ref": "#/$defs/InboxLinked"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Disposition"
+              },
+              "item_id": {
+                "pattern": "^INB-[0-9a-f]{64}$",
+                "title": "Item Id",
+                "type": "string"
+              },
+              "last_posted_at": {
+                "format": "date-time",
+                "title": "Last Posted At",
+                "type": "string"
+              },
+              "last_run_id": {
+                "title": "Last Run Id",
+                "type": "string"
+              },
+              "line": {
+                "title": "Line",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "occurrences": {
+                "minimum": 1,
+                "title": "Occurrences",
+                "type": "integer"
+              },
+              "payload_bytes": {
+                "minimum": 0,
+                "title": "Payload Bytes",
+                "type": "integer"
+              },
+              "payload_digest": {
+                "title": "Payload Digest",
+                "type": "string"
+              },
+              "posted_at": {
+                "format": "date-time",
+                "title": "Posted At",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "procedure_artifact_digest": {
+                "title": "Procedure Artifact Digest",
+                "type": "string"
+              },
+              "recurred_since_disposition": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Recurred Since Disposition",
+                "type": "integer"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "source_capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Capture Digests",
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-item-envelope-v1",
+                "default": "cruxible-inbox-item-envelope-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "item_id",
+              "status",
+              "line",
+              "procedure",
+              "procedure_artifact_digest",
+              "node_id",
+              "run_id",
+              "posted_at",
+              "last_run_id",
+              "last_posted_at",
+              "occurrences",
+              "dedupe_key",
+              "payload_digest",
+              "payload_bytes"
+            ],
+            "title": "InboxItemEnvelope",
+            "type": "object"
+          },
+          "InboxLinkProposal": {
+            "additionalProperties": false,
+            "description": "Link an item to the proposal an agent wrote about it.",
+            "properties": {
+              "kind": {
+                "const": "proposal",
+                "default": "proposal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "proposal_id": {
+                "maxLength": 256,
+                "minLength": 1,
+                "title": "Proposal Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal_id"
+            ],
+            "title": "InboxLinkProposal",
+            "type": "object"
+          },
+          "InboxLinkSubject": {
+            "additionalProperties": false,
+            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "title": "Subject",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject"
+            ],
+            "title": "InboxLinkSubject",
+            "type": "object"
+          },
+          "InboxLinked": {
+            "additionalProperties": false,
+            "description": "An agent recorded where its judgment of the item lives: a proposal or a Subject.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "linked",
+                "default": "linked",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-linked-v1",
+                "default": "cruxible-inbox-linked-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target": {
+                "discriminator": {
+                  "mapping": {
+                    "proposal": "#/$defs/InboxLinkProposal",
+                    "subject": "#/$defs/InboxLinkSubject"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/InboxLinkProposal"
+                  },
+                  {
+                    "$ref": "#/$defs/InboxLinkSubject"
+                  }
+                ],
+                "title": "Target"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at",
+              "target"
+            ],
+            "title": "InboxLinked",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The item after a disposition. ``recorded`` is false when it repeated the current one.",
+        "properties": {
+          "item": {
+            "$ref": "#/$defs/InboxItemEnvelope"
+          },
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          },
+          "tag": {
+            "const": "cruxible-inbox-disposition-result-v1",
+            "default": "cruxible-inbox-disposition-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "recorded"
+        ],
+        "title": "InboxDispositionResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "item",
+        "recorded"
+      ]
+    },
+    "InboxItem": {
+      "fields": {
+        "dispositions": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "dispositions",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "acknowledged": "#/$defs/InboxAcknowledged",
+                  "dismissed": "#/$defs/InboxDismissed",
+                  "linked": "#/$defs/InboxLinked"
+                },
+                "propertyName": "disposition"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/InboxAcknowledged"
+                },
+                {
+                  "$ref": "#/$defs/InboxDismissed"
+                },
+                {
+                  "$ref": "#/$defs/InboxLinked"
+                }
+              ]
+            },
+            "title": "Dispositions",
+            "type": "array"
+          }
+        },
+        "item": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "item",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/InboxItemEnvelope"
+          }
+        },
+        "payload": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "payload",
+          "required": true,
+          "schema": {
+            "title": "Payload"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-item-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-item-v1",
+            "default": "cruxible-inbox-item-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "InboxAcknowledged": {
+            "additionalProperties": false,
+            "description": "An agent saw the item and owes it nothing further.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "acknowledged",
+                "default": "acknowledged",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-acknowledged-v1",
+                "default": "cruxible-inbox-acknowledged-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at"
+            ],
+            "title": "InboxAcknowledged",
+            "type": "object"
+          },
+          "InboxDismissed": {
+            "additionalProperties": false,
+            "description": "An agent judged the item needs nothing, and said why.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "dismissed",
+                "default": "dismissed",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "title": "Reason",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-dismissed-v1",
+                "default": "cruxible-inbox-dismissed-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at",
+              "reason"
+            ],
+            "title": "InboxDismissed",
+            "type": "object"
+          },
+          "InboxItemEnvelope": {
+            "additionalProperties": false,
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``run_id``/``posted_at`` are the first posting; ``last_run_id``/``last_posted_at``\nthe latest. ``occurrences`` counts every run that posted the same dedupe key.\n``disposition`` is the agent's latest decision, kept when the item recurs:\na recurring item is ``unread`` again, and ``recurred_since_disposition``\ncounts the postings after that decision.",
+            "properties": {
+              "dedupe_key": {
+                "title": "Dedupe Key",
+                "type": "string"
+              },
+              "disposition": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "acknowledged": "#/$defs/InboxAcknowledged",
+                        "dismissed": "#/$defs/InboxDismissed",
+                        "linked": "#/$defs/InboxLinked"
+                      },
+                      "propertyName": "disposition"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/InboxAcknowledged"
+                      },
+                      {
+                        "$ref": "#/$defs/InboxDismissed"
+                      },
+                      {
+                        "$ref": "#/$defs/InboxLinked"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Disposition"
+              },
+              "item_id": {
+                "pattern": "^INB-[0-9a-f]{64}$",
+                "title": "Item Id",
+                "type": "string"
+              },
+              "last_posted_at": {
+                "format": "date-time",
+                "title": "Last Posted At",
+                "type": "string"
+              },
+              "last_run_id": {
+                "title": "Last Run Id",
+                "type": "string"
+              },
+              "line": {
+                "title": "Line",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "occurrences": {
+                "minimum": 1,
+                "title": "Occurrences",
+                "type": "integer"
+              },
+              "payload_bytes": {
+                "minimum": 0,
+                "title": "Payload Bytes",
+                "type": "integer"
+              },
+              "payload_digest": {
+                "title": "Payload Digest",
+                "type": "string"
+              },
+              "posted_at": {
+                "format": "date-time",
+                "title": "Posted At",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "procedure_artifact_digest": {
+                "title": "Procedure Artifact Digest",
+                "type": "string"
+              },
+              "recurred_since_disposition": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Recurred Since Disposition",
+                "type": "integer"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "source_capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Capture Digests",
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-item-envelope-v1",
+                "default": "cruxible-inbox-item-envelope-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "item_id",
+              "status",
+              "line",
+              "procedure",
+              "procedure_artifact_digest",
+              "node_id",
+              "run_id",
+              "posted_at",
+              "last_run_id",
+              "last_posted_at",
+              "occurrences",
+              "dedupe_key",
+              "payload_digest",
+              "payload_bytes"
+            ],
+            "title": "InboxItemEnvelope",
+            "type": "object"
+          },
+          "InboxLinkProposal": {
+            "additionalProperties": false,
+            "description": "Link an item to the proposal an agent wrote about it.",
+            "properties": {
+              "kind": {
+                "const": "proposal",
+                "default": "proposal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "proposal_id": {
+                "maxLength": 256,
+                "minLength": 1,
+                "title": "Proposal Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal_id"
+            ],
+            "title": "InboxLinkProposal",
+            "type": "object"
+          },
+          "InboxLinkSubject": {
+            "additionalProperties": false,
+            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "title": "Subject",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject"
+            ],
+            "title": "InboxLinkSubject",
+            "type": "object"
+          },
+          "InboxLinked": {
+            "additionalProperties": false,
+            "description": "An agent recorded where its judgment of the item lives: a proposal or a Subject.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "linked",
+                "default": "linked",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-linked-v1",
+                "default": "cruxible-inbox-linked-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target": {
+                "discriminator": {
+                  "mapping": {
+                    "proposal": "#/$defs/InboxLinkProposal",
+                    "subject": "#/$defs/InboxLinkSubject"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/InboxLinkProposal"
+                  },
+                  {
+                    "$ref": "#/$defs/InboxLinkSubject"
+                  }
+                ],
+                "title": "Target"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at",
+              "target"
+            ],
+            "title": "InboxLinked",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One inbox item whole: envelope, the payload exactly as posted, and every disposition.",
+        "properties": {
+          "dispositions": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "acknowledged": "#/$defs/InboxAcknowledged",
+                  "dismissed": "#/$defs/InboxDismissed",
+                  "linked": "#/$defs/InboxLinked"
+                },
+                "propertyName": "disposition"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/InboxAcknowledged"
+                },
+                {
+                  "$ref": "#/$defs/InboxDismissed"
+                },
+                {
+                  "$ref": "#/$defs/InboxLinked"
+                }
+              ]
+            },
+            "title": "Dispositions",
+            "type": "array"
+          },
+          "item": {
+            "$ref": "#/$defs/InboxItemEnvelope"
+          },
+          "payload": {
+            "title": "Payload"
+          },
+          "tag": {
+            "const": "cruxible-inbox-item-v1",
+            "default": "cruxible-inbox-item-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "payload"
+        ],
+        "title": "InboxItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "item",
+        "payload"
+      ]
+    },
+    "InboxItemEnvelope": {
+      "fields": {
+        "dedupe_key": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "dedupe_key",
+          "required": true,
+          "schema": {
+            "title": "Dedupe Key",
+            "type": "string"
+          }
+        },
+        "disposition": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "disposition",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "acknowledged": "#/$defs/InboxAcknowledged",
+                    "dismissed": "#/$defs/InboxDismissed",
+                    "linked": "#/$defs/InboxLinked"
+                  },
+                  "propertyName": "disposition"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/InboxAcknowledged"
+                  },
+                  {
+                    "$ref": "#/$defs/InboxDismissed"
+                  },
+                  {
+                    "$ref": "#/$defs/InboxLinked"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Disposition"
+          }
+        },
+        "item_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "item_id",
+          "required": true,
+          "schema": {
+            "pattern": "^INB-[0-9a-f]{64}$",
+            "title": "Item Id",
+            "type": "string"
+          }
+        },
+        "last_posted_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "last_posted_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Last Posted At",
+            "type": "string"
+          }
+        },
+        "last_run_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "last_run_id",
+          "required": true,
+          "schema": {
+            "title": "Last Run Id",
+            "type": "string"
+          }
+        },
+        "line": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line",
+          "required": true,
+          "schema": {
+            "title": "Line",
+            "type": "string"
+          }
+        },
+        "node_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "node_id",
+          "required": true,
+          "schema": {
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "occurrences": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "occurrences",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Occurrences",
+            "type": "integer"
+          }
+        },
+        "payload_bytes": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "payload_bytes",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Payload Bytes",
+            "type": "integer"
+          }
+        },
+        "payload_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "payload_digest",
+          "required": true,
+          "schema": {
+            "title": "Payload Digest",
+            "type": "string"
+          }
+        },
+        "posted_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "posted_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Posted At",
+            "type": "string"
+          }
+        },
+        "procedure": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure",
+          "required": true,
+          "schema": {
+            "title": "Procedure",
+            "type": "string"
+          }
+        },
+        "procedure_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Procedure Artifact Digest",
+            "type": "string"
+          }
+        },
+        "recurred_since_disposition": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "recurred_since_disposition",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Recurred Since Disposition",
+            "type": "integer"
+          }
+        },
+        "run_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": true,
+          "schema": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "source_capture_digests": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source_capture_digests",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Capture Digests",
+            "type": "array"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "unread",
+              "acknowledged",
+              "dismissed",
+              "linked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-item-envelope-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-item-envelope-v1",
+            "default": "cruxible-inbox-item-envelope-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "InboxAcknowledged": {
+            "additionalProperties": false,
+            "description": "An agent saw the item and owes it nothing further.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "acknowledged",
+                "default": "acknowledged",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-acknowledged-v1",
+                "default": "cruxible-inbox-acknowledged-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at"
+            ],
+            "title": "InboxAcknowledged",
+            "type": "object"
+          },
+          "InboxDismissed": {
+            "additionalProperties": false,
+            "description": "An agent judged the item needs nothing, and said why.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "dismissed",
+                "default": "dismissed",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "title": "Reason",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-dismissed-v1",
+                "default": "cruxible-inbox-dismissed-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at",
+              "reason"
+            ],
+            "title": "InboxDismissed",
+            "type": "object"
+          },
+          "InboxLinkProposal": {
+            "additionalProperties": false,
+            "description": "Link an item to the proposal an agent wrote about it.",
+            "properties": {
+              "kind": {
+                "const": "proposal",
+                "default": "proposal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "proposal_id": {
+                "maxLength": 256,
+                "minLength": 1,
+                "title": "Proposal Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal_id"
+            ],
+            "title": "InboxLinkProposal",
+            "type": "object"
+          },
+          "InboxLinkSubject": {
+            "additionalProperties": false,
+            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "title": "Subject",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject"
+            ],
+            "title": "InboxLinkSubject",
+            "type": "object"
+          },
+          "InboxLinked": {
+            "additionalProperties": false,
+            "description": "An agent recorded where its judgment of the item lives: a proposal or a Subject.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "linked",
+                "default": "linked",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-linked-v1",
+                "default": "cruxible-inbox-linked-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target": {
+                "discriminator": {
+                  "mapping": {
+                    "proposal": "#/$defs/InboxLinkProposal",
+                    "subject": "#/$defs/InboxLinkSubject"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/InboxLinkProposal"
+                  },
+                  {
+                    "$ref": "#/$defs/InboxLinkSubject"
+                  }
+                ],
+                "title": "Target"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at",
+              "target"
+            ],
+            "title": "InboxLinked",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``run_id``/``posted_at`` are the first posting; ``last_run_id``/``last_posted_at``\nthe latest. ``occurrences`` counts every run that posted the same dedupe key.\n``disposition`` is the agent's latest decision, kept when the item recurs:\na recurring item is ``unread`` again, and ``recurred_since_disposition``\ncounts the postings after that decision.",
+        "properties": {
+          "dedupe_key": {
+            "title": "Dedupe Key",
+            "type": "string"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "acknowledged": "#/$defs/InboxAcknowledged",
+                    "dismissed": "#/$defs/InboxDismissed",
+                    "linked": "#/$defs/InboxLinked"
+                  },
+                  "propertyName": "disposition"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/InboxAcknowledged"
+                  },
+                  {
+                    "$ref": "#/$defs/InboxDismissed"
+                  },
+                  {
+                    "$ref": "#/$defs/InboxLinked"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Disposition"
+          },
+          "item_id": {
+            "pattern": "^INB-[0-9a-f]{64}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "last_posted_at": {
+            "format": "date-time",
+            "title": "Last Posted At",
+            "type": "string"
+          },
+          "last_run_id": {
+            "title": "Last Run Id",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "occurrences": {
+            "minimum": 1,
+            "title": "Occurrences",
+            "type": "integer"
+          },
+          "payload_bytes": {
+            "minimum": 0,
+            "title": "Payload Bytes",
+            "type": "integer"
+          },
+          "payload_digest": {
+            "title": "Payload Digest",
+            "type": "string"
+          },
+          "posted_at": {
+            "format": "date-time",
+            "title": "Posted At",
+            "type": "string"
+          },
+          "procedure": {
+            "title": "Procedure",
+            "type": "string"
+          },
+          "procedure_artifact_digest": {
+            "title": "Procedure Artifact Digest",
+            "type": "string"
+          },
+          "recurred_since_disposition": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Recurred Since Disposition",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "source_capture_digests": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Capture Digests",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "acknowledged",
+              "dismissed",
+              "linked"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-inbox-item-envelope-v1",
+            "default": "cruxible-inbox-item-envelope-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "status",
+          "line",
+          "procedure",
+          "procedure_artifact_digest",
+          "node_id",
+          "run_id",
+          "posted_at",
+          "last_run_id",
+          "last_posted_at",
+          "occurrences",
+          "dedupe_key",
+          "payload_digest",
+          "payload_bytes"
+        ],
+        "title": "InboxItemEnvelope",
+        "type": "object"
+      },
+      "required_fields": [
+        "dedupe_key",
+        "item_id",
+        "last_posted_at",
+        "last_run_id",
+        "line",
+        "node_id",
+        "occurrences",
+        "payload_bytes",
+        "payload_digest",
+        "posted_at",
+        "procedure",
+        "procedure_artifact_digest",
+        "run_id",
+        "status"
+      ]
+    },
+    "InboxLinkProposal": {
+      "fields": {
+        "kind": {
+          "default": "proposal",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "const": "proposal",
+            "default": "proposal",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Link an item to the proposal an agent wrote about it.",
+        "properties": {
+          "kind": {
+            "const": "proposal",
+            "default": "proposal",
+            "title": "Kind",
+            "type": "string"
+          },
+          "proposal_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id"
+        ],
+        "title": "InboxLinkProposal",
+        "type": "object"
+      },
+      "required_fields": [
+        "proposal_id"
+      ]
+    },
+    "InboxLinkRequest": {
+      "fields": {
+        "tag": {
+          "default": "cruxible-inbox-link-request-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-link-request-v1",
+            "default": "cruxible-inbox-link-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "target": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "proposal": "#/$defs/InboxLinkProposal",
+                "subject": "#/$defs/InboxLinkSubject"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/InboxLinkProposal"
+              },
+              {
+                "$ref": "#/$defs/InboxLinkSubject"
+              }
+            ],
+            "title": "Target"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "InboxLinkProposal": {
+            "additionalProperties": false,
+            "description": "Link an item to the proposal an agent wrote about it.",
+            "properties": {
+              "kind": {
+                "const": "proposal",
+                "default": "proposal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "proposal_id": {
+                "maxLength": 256,
+                "minLength": 1,
+                "title": "Proposal Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal_id"
+            ],
+            "title": "InboxLinkProposal",
+            "type": "object"
+          },
+          "InboxLinkSubject": {
+            "additionalProperties": false,
+            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "title": "Subject",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject"
+            ],
+            "title": "InboxLinkSubject",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "tag": {
+            "const": "cruxible-inbox-link-request-v1",
+            "default": "cruxible-inbox-link-request-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "target": {
+            "discriminator": {
+              "mapping": {
+                "proposal": "#/$defs/InboxLinkProposal",
+                "subject": "#/$defs/InboxLinkSubject"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/InboxLinkProposal"
+              },
+              {
+                "$ref": "#/$defs/InboxLinkSubject"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "InboxLinkRequest",
+        "type": "object"
+      },
+      "required_fields": [
+        "target"
+      ]
+    },
+    "InboxLinkSubject": {
+      "fields": {
+        "kind": {
+          "default": "subject",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "const": "subject",
+            "default": "subject",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "subject": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject",
+          "required": true,
+          "schema": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+            "title": "Subject",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+        "properties": {
+          "kind": {
+            "const": "subject",
+            "default": "subject",
+            "title": "Kind",
+            "type": "string"
+          },
+          "subject": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject"
+        ],
+        "title": "InboxLinkSubject",
+        "type": "object"
+      },
+      "required_fields": [
+        "subject"
+      ]
+    },
+    "InboxLinked": {
+      "fields": {
+        "actor_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_id",
+          "required": true,
+          "schema": {
+            "title": "Actor Id",
+            "type": "string"
+          }
+        },
+        "decided_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "decided_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Decided At",
+            "type": "string"
+          }
+        },
+        "disposition": {
+          "default": "linked",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "disposition",
+          "required": false,
+          "schema": {
+            "const": "linked",
+            "default": "linked",
+            "title": "Disposition",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-linked-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-linked-v1",
+            "default": "cruxible-inbox-linked-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "target": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "proposal": "#/$defs/InboxLinkProposal",
+                "subject": "#/$defs/InboxLinkSubject"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/InboxLinkProposal"
+              },
+              {
+                "$ref": "#/$defs/InboxLinkSubject"
+              }
+            ],
+            "title": "Target"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "InboxLinkProposal": {
+            "additionalProperties": false,
+            "description": "Link an item to the proposal an agent wrote about it.",
+            "properties": {
+              "kind": {
+                "const": "proposal",
+                "default": "proposal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "proposal_id": {
+                "maxLength": 256,
+                "minLength": 1,
+                "title": "Proposal Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal_id"
+            ],
+            "title": "InboxLinkProposal",
+            "type": "object"
+          },
+          "InboxLinkSubject": {
+            "additionalProperties": false,
+            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "title": "Subject",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject"
+            ],
+            "title": "InboxLinkSubject",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "An agent recorded where its judgment of the item lives: a proposal or a Subject.",
+        "properties": {
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "title": "Decided At",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "linked",
+            "default": "linked",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-inbox-linked-v1",
+            "default": "cruxible-inbox-linked-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "target": {
+            "discriminator": {
+              "mapping": {
+                "proposal": "#/$defs/InboxLinkProposal",
+                "subject": "#/$defs/InboxLinkSubject"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/InboxLinkProposal"
+              },
+              {
+                "$ref": "#/$defs/InboxLinkSubject"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "required": [
+          "actor_id",
+          "decided_at",
+          "target"
+        ],
+        "title": "InboxLinked",
+        "type": "object"
+      },
+      "required_fields": [
+        "actor_id",
+        "decided_at",
+        "target"
+      ]
+    },
+    "InboxList": {
+      "fields": {
+        "entries": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entries",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/InboxListEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "line_filter": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "line_filter",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Line Filter"
+          }
+        },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          }
+        },
+        "status_filter": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status_filter",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status Filter"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-list-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-list-v1",
+            "default": "cruxible-inbox-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ExactContentRef": {
+            "additionalProperties": false,
+            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "exact_content": {
+                "enum": [
+                  "binary",
+                  "unavailable"
+                ],
+                "title": "Exact Content",
+                "type": "string"
+              },
+              "length": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Length"
+              }
+            },
+            "required": [
+              "exact_content",
+              "content_digest"
+            ],
+            "title": "ExactContentRef",
+            "type": "object"
+          },
+          "InboxAcknowledged": {
+            "additionalProperties": false,
+            "description": "An agent saw the item and owes it nothing further.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "acknowledged",
+                "default": "acknowledged",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-acknowledged-v1",
+                "default": "cruxible-inbox-acknowledged-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at"
+            ],
+            "title": "InboxAcknowledged",
+            "type": "object"
+          },
+          "InboxDismissed": {
+            "additionalProperties": false,
+            "description": "An agent judged the item needs nothing, and said why.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "dismissed",
+                "default": "dismissed",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "title": "Reason",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-dismissed-v1",
+                "default": "cruxible-inbox-dismissed-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at",
+              "reason"
+            ],
+            "title": "InboxDismissed",
+            "type": "object"
+          },
+          "InboxItemEnvelope": {
+            "additionalProperties": false,
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``run_id``/``posted_at`` are the first posting; ``last_run_id``/``last_posted_at``\nthe latest. ``occurrences`` counts every run that posted the same dedupe key.\n``disposition`` is the agent's latest decision, kept when the item recurs:\na recurring item is ``unread`` again, and ``recurred_since_disposition``\ncounts the postings after that decision.",
+            "properties": {
+              "dedupe_key": {
+                "title": "Dedupe Key",
+                "type": "string"
+              },
+              "disposition": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "acknowledged": "#/$defs/InboxAcknowledged",
+                        "dismissed": "#/$defs/InboxDismissed",
+                        "linked": "#/$defs/InboxLinked"
+                      },
+                      "propertyName": "disposition"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/InboxAcknowledged"
+                      },
+                      {
+                        "$ref": "#/$defs/InboxDismissed"
+                      },
+                      {
+                        "$ref": "#/$defs/InboxLinked"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Disposition"
+              },
+              "item_id": {
+                "pattern": "^INB-[0-9a-f]{64}$",
+                "title": "Item Id",
+                "type": "string"
+              },
+              "last_posted_at": {
+                "format": "date-time",
+                "title": "Last Posted At",
+                "type": "string"
+              },
+              "last_run_id": {
+                "title": "Last Run Id",
+                "type": "string"
+              },
+              "line": {
+                "title": "Line",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "occurrences": {
+                "minimum": 1,
+                "title": "Occurrences",
+                "type": "integer"
+              },
+              "payload_bytes": {
+                "minimum": 0,
+                "title": "Payload Bytes",
+                "type": "integer"
+              },
+              "payload_digest": {
+                "title": "Payload Digest",
+                "type": "string"
+              },
+              "posted_at": {
+                "format": "date-time",
+                "title": "Posted At",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "procedure_artifact_digest": {
+                "title": "Procedure Artifact Digest",
+                "type": "string"
+              },
+              "recurred_since_disposition": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Recurred Since Disposition",
+                "type": "integer"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "source_capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Capture Digests",
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-item-envelope-v1",
+                "default": "cruxible-inbox-item-envelope-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "item_id",
+              "status",
+              "line",
+              "procedure",
+              "procedure_artifact_digest",
+              "node_id",
+              "run_id",
+              "posted_at",
+              "last_run_id",
+              "last_posted_at",
+              "occurrences",
+              "dedupe_key",
+              "payload_digest",
+              "payload_bytes"
+            ],
+            "title": "InboxItemEnvelope",
+            "type": "object"
+          },
+          "InboxLinkProposal": {
+            "additionalProperties": false,
+            "description": "Link an item to the proposal an agent wrote about it.",
+            "properties": {
+              "kind": {
+                "const": "proposal",
+                "default": "proposal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "proposal_id": {
+                "maxLength": 256,
+                "minLength": 1,
+                "title": "Proposal Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal_id"
+            ],
+            "title": "InboxLinkProposal",
+            "type": "object"
+          },
+          "InboxLinkSubject": {
+            "additionalProperties": false,
+            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "title": "Subject",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject"
+            ],
+            "title": "InboxLinkSubject",
+            "type": "object"
+          },
+          "InboxLinked": {
+            "additionalProperties": false,
+            "description": "An agent recorded where its judgment of the item lives: a proposal or a Subject.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "linked",
+                "default": "linked",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-linked-v1",
+                "default": "cruxible-inbox-linked-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target": {
+                "discriminator": {
+                  "mapping": {
+                    "proposal": "#/$defs/InboxLinkProposal",
+                    "subject": "#/$defs/InboxLinkSubject"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/InboxLinkProposal"
+                  },
+                  {
+                    "$ref": "#/$defs/InboxLinkSubject"
+                  }
+                ],
+                "title": "Target"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at",
+              "target"
+            ],
+            "title": "InboxLinked",
+            "type": "object"
+          },
+          "InboxListEntry": {
+            "additionalProperties": false,
+            "description": "One listed item: its envelope and a bounded preview of its payload.\n\n``payload_preview`` follows the summary-read conventions: a long string is a\n``TruncatedText``, an object a ``ShownObject``. A payload whose canonical JSON\nruns past the summary bound is shown as a ``TruncatedText`` of that JSON\ntext. ``inbox get`` returns the whole payload.",
+            "properties": {
+              "item": {
+                "$ref": "#/$defs/InboxItemEnvelope"
+              },
+              "payload_preview": {
+                "$ref": "#/$defs/ShownValue"
+              },
+              "tag": {
+                "const": "cruxible-inbox-list-entry-v1",
+                "default": "cruxible-inbox-list-entry-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "item",
+              "payload_preview"
+            ],
+            "title": "InboxListEntry",
+            "type": "object"
+          },
+          "ShownObject": {
+            "additionalProperties": false,
+            "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
+            "properties": {
+              "object": {
+                "additionalProperties": true,
+                "title": "Object",
+                "type": "object"
+              }
+            },
+            "required": [
+              "object"
+            ],
+            "title": "ShownObject",
+            "type": "object"
+          },
+          "ShownValue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "$ref": "#/$defs/ShownObject"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/ShownValue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "TruncatedText": {
+            "additionalProperties": false,
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
+            "properties": {
+              "length": {
+                "exclusiveMinimum": 500,
+                "title": "Length",
+                "type": "integer"
+              },
+              "preview": {
+                "title": "Preview",
+                "type": "string"
+              },
+              "read_whole": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WholeValueRead"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "truncated": {
+                "const": true,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "truncated",
+              "preview",
+              "length"
+            ],
+            "title": "TruncatedText",
+            "type": "object"
+          },
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One page of inbox items, most recently posted first.",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/$defs/InboxListEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "line_filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Line Filter"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          },
+          "status_filter": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status Filter"
+          },
+          "tag": {
+            "const": "cruxible-inbox-list-v1",
+            "default": "cruxible-inbox-list-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "InboxList",
+        "type": "object"
+      },
+      "required_fields": [
+        "entries"
+      ]
+    },
+    "InboxListEntry": {
+      "fields": {
+        "item": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "item",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/InboxItemEnvelope"
+          }
+        },
+        "payload_preview": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "payload_preview",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ShownValue"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-list-entry-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-list-entry-v1",
+            "default": "cruxible-inbox-list-entry-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ExactContentRef": {
+            "additionalProperties": false,
+            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "exact_content": {
+                "enum": [
+                  "binary",
+                  "unavailable"
+                ],
+                "title": "Exact Content",
+                "type": "string"
+              },
+              "length": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Length"
+              }
+            },
+            "required": [
+              "exact_content",
+              "content_digest"
+            ],
+            "title": "ExactContentRef",
+            "type": "object"
+          },
+          "InboxAcknowledged": {
+            "additionalProperties": false,
+            "description": "An agent saw the item and owes it nothing further.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "acknowledged",
+                "default": "acknowledged",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-acknowledged-v1",
+                "default": "cruxible-inbox-acknowledged-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at"
+            ],
+            "title": "InboxAcknowledged",
+            "type": "object"
+          },
+          "InboxDismissed": {
+            "additionalProperties": false,
+            "description": "An agent judged the item needs nothing, and said why.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "dismissed",
+                "default": "dismissed",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "title": "Reason",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-dismissed-v1",
+                "default": "cruxible-inbox-dismissed-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at",
+              "reason"
+            ],
+            "title": "InboxDismissed",
+            "type": "object"
+          },
+          "InboxItemEnvelope": {
+            "additionalProperties": false,
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``run_id``/``posted_at`` are the first posting; ``last_run_id``/``last_posted_at``\nthe latest. ``occurrences`` counts every run that posted the same dedupe key.\n``disposition`` is the agent's latest decision, kept when the item recurs:\na recurring item is ``unread`` again, and ``recurred_since_disposition``\ncounts the postings after that decision.",
+            "properties": {
+              "dedupe_key": {
+                "title": "Dedupe Key",
+                "type": "string"
+              },
+              "disposition": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "acknowledged": "#/$defs/InboxAcknowledged",
+                        "dismissed": "#/$defs/InboxDismissed",
+                        "linked": "#/$defs/InboxLinked"
+                      },
+                      "propertyName": "disposition"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/InboxAcknowledged"
+                      },
+                      {
+                        "$ref": "#/$defs/InboxDismissed"
+                      },
+                      {
+                        "$ref": "#/$defs/InboxLinked"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Disposition"
+              },
+              "item_id": {
+                "pattern": "^INB-[0-9a-f]{64}$",
+                "title": "Item Id",
+                "type": "string"
+              },
+              "last_posted_at": {
+                "format": "date-time",
+                "title": "Last Posted At",
+                "type": "string"
+              },
+              "last_run_id": {
+                "title": "Last Run Id",
+                "type": "string"
+              },
+              "line": {
+                "title": "Line",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "occurrences": {
+                "minimum": 1,
+                "title": "Occurrences",
+                "type": "integer"
+              },
+              "payload_bytes": {
+                "minimum": 0,
+                "title": "Payload Bytes",
+                "type": "integer"
+              },
+              "payload_digest": {
+                "title": "Payload Digest",
+                "type": "string"
+              },
+              "posted_at": {
+                "format": "date-time",
+                "title": "Posted At",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "procedure_artifact_digest": {
+                "title": "Procedure Artifact Digest",
+                "type": "string"
+              },
+              "recurred_since_disposition": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Recurred Since Disposition",
+                "type": "integer"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "source_capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Capture Digests",
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-item-envelope-v1",
+                "default": "cruxible-inbox-item-envelope-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "item_id",
+              "status",
+              "line",
+              "procedure",
+              "procedure_artifact_digest",
+              "node_id",
+              "run_id",
+              "posted_at",
+              "last_run_id",
+              "last_posted_at",
+              "occurrences",
+              "dedupe_key",
+              "payload_digest",
+              "payload_bytes"
+            ],
+            "title": "InboxItemEnvelope",
+            "type": "object"
+          },
+          "InboxLinkProposal": {
+            "additionalProperties": false,
+            "description": "Link an item to the proposal an agent wrote about it.",
+            "properties": {
+              "kind": {
+                "const": "proposal",
+                "default": "proposal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "proposal_id": {
+                "maxLength": 256,
+                "minLength": 1,
+                "title": "Proposal Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal_id"
+            ],
+            "title": "InboxLinkProposal",
+            "type": "object"
+          },
+          "InboxLinkSubject": {
+            "additionalProperties": false,
+            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "title": "Subject",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject"
+            ],
+            "title": "InboxLinkSubject",
+            "type": "object"
+          },
+          "InboxLinked": {
+            "additionalProperties": false,
+            "description": "An agent recorded where its judgment of the item lives: a proposal or a Subject.",
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "title": "Decided At",
+                "type": "string"
+              },
+              "disposition": {
+                "const": "linked",
+                "default": "linked",
+                "title": "Disposition",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-linked-v1",
+                "default": "cruxible-inbox-linked-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target": {
+                "discriminator": {
+                  "mapping": {
+                    "proposal": "#/$defs/InboxLinkProposal",
+                    "subject": "#/$defs/InboxLinkSubject"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/InboxLinkProposal"
+                  },
+                  {
+                    "$ref": "#/$defs/InboxLinkSubject"
+                  }
+                ],
+                "title": "Target"
+              }
+            },
+            "required": [
+              "actor_id",
+              "decided_at",
+              "target"
+            ],
+            "title": "InboxLinked",
+            "type": "object"
+          },
+          "ShownObject": {
+            "additionalProperties": false,
+            "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
+            "properties": {
+              "object": {
+                "additionalProperties": true,
+                "title": "Object",
+                "type": "object"
+              }
+            },
+            "required": [
+              "object"
+            ],
+            "title": "ShownObject",
+            "type": "object"
+          },
+          "ShownValue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "$ref": "#/$defs/ShownObject"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/ShownValue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "TruncatedText": {
+            "additionalProperties": false,
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
+            "properties": {
+              "length": {
+                "exclusiveMinimum": 500,
+                "title": "Length",
+                "type": "integer"
+              },
+              "preview": {
+                "title": "Preview",
+                "type": "string"
+              },
+              "read_whole": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WholeValueRead"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "truncated": {
+                "const": true,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "truncated",
+              "preview",
+              "length"
+            ],
+            "title": "TruncatedText",
+            "type": "object"
+          },
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One listed item: its envelope and a bounded preview of its payload.\n\n``payload_preview`` follows the summary-read conventions: a long string is a\n``TruncatedText``, an object a ``ShownObject``. A payload whose canonical JSON\nruns past the summary bound is shown as a ``TruncatedText`` of that JSON\ntext. ``inbox get`` returns the whole payload.",
+        "properties": {
+          "item": {
+            "$ref": "#/$defs/InboxItemEnvelope"
+          },
+          "payload_preview": {
+            "$ref": "#/$defs/ShownValue"
+          },
+          "tag": {
+            "const": "cruxible-inbox-list-entry-v1",
+            "default": "cruxible-inbox-list-entry-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "payload_preview"
+        ],
+        "title": "InboxListEntry",
+        "type": "object"
+      },
+      "required_fields": [
+        "item",
+        "payload_preview"
+      ]
+    },
     "InitResult": {
       "fields": {
         "approval_policy_mode": {
@@ -25674,6 +28940,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable"
@@ -25884,6 +29151,7 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "hand_edit"
                 ],
@@ -25954,6 +29222,7 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "hand_edit"
                 ],
@@ -26057,6 +29326,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable"
@@ -26329,6 +29599,7 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "hand_edit"
                 ],
@@ -26399,6 +29670,7 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "hand_edit"
                 ],
@@ -26589,6 +29861,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable"
@@ -26795,6 +30068,7 @@
                   "consumer_stalled",
                   "line_coverage_gap",
                   "line_work_pending",
+                  "line_inbox_unread",
                   "evidence_unavailable",
                   "prediction_settleable",
                   "prediction_window_unbindable"
@@ -26897,6 +30171,7 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "hand_edit"
                 ],
@@ -26967,6 +30242,7 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "hand_edit"
                 ],
@@ -27080,6 +30356,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable"
@@ -27209,6 +30486,7 @@
               "cruxible.line.enable",
               "cruxible.line.evaluate",
               "cruxible.line.dispatch",
+              "cruxible.inbox.list",
               "cruxible.prediction.settle",
               "hand_edit"
             ],
@@ -27275,6 +30553,7 @@
               "cruxible.line.enable",
               "cruxible.line.evaluate",
               "cruxible.line.dispatch",
+              "cruxible.inbox.list",
               "cruxible.prediction.settle",
               "hand_edit"
             ],
@@ -27368,6 +30647,7 @@
               "cruxible.line.enable",
               "cruxible.line.evaluate",
               "cruxible.line.dispatch",
+              "cruxible.inbox.list",
               "cruxible.prediction.settle",
               "hand_edit"
             ],
@@ -27580,6 +30860,7 @@
               "cruxible.line.enable",
               "cruxible.line.evaluate",
               "cruxible.line.dispatch",
+              "cruxible.inbox.list",
               "cruxible.prediction.settle",
               "hand_edit"
             ],
@@ -27975,6 +31256,7 @@
                   "consumer_stalled",
                   "line_coverage_gap",
                   "line_work_pending",
+                  "line_inbox_unread",
                   "evidence_unavailable",
                   "prediction_settleable",
                   "prediction_window_unbindable"
@@ -28134,6 +31416,7 @@
                   "consumer_stalled",
                   "line_coverage_gap",
                   "line_work_pending",
+                  "line_inbox_unread",
                   "evidence_unavailable",
                   "prediction_settleable",
                   "prediction_window_unbindable"
@@ -28237,6 +31520,7 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "hand_edit"
                 ],
@@ -28307,6 +31591,7 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "hand_edit"
                 ],
@@ -28858,6 +32143,7 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "hand_edit"
                 ],
@@ -28928,6 +32214,7 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "hand_edit"
                 ],
@@ -37964,6 +41251,7 @@
           },
           "InboxEgressNode": {
             "additionalProperties": false,
+            "description": "Terminal output into the Line inbox: items sent, as they are, to intelligence.\n\n``input`` is one item, or ``{\"items\": ...}`` to fan out over a list the run\nproduced. Posting is inert: it never touches accepted state. ``max_items``\ncaps what one run posts (``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items\npast it are not posted and the run reports the truncation.",
             "properties": {
               "input": {
                 "title": "Input"
@@ -37973,6 +41261,20 @@
                 "default": "post_inbox",
                 "title": "Kind",
                 "type": "string"
+              },
+              "max_items": {
+                "anyOf": [
+                  {
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Items"
               },
               "node_id": {
                 "title": "Node Id",
@@ -54416,6 +57718,49 @@
             "title": "HandEditRepair",
             "type": "object"
           },
+          "InboxPostTruncation": {
+            "additionalProperties": false,
+            "description": "A ``post_inbox`` terminal selected more items than its run may post.\n\n``cap`` is the terminal's declared ``max_items`` (``cap_source=\"declared\"``)\nor the core default; a run posting from more than one terminal counts them\ntogether. The first ``posted`` of the ``selected`` items were posted; the\nrest were not posted anywhere.",
+            "properties": {
+              "cap": {
+                "minimum": 1,
+                "title": "Cap",
+                "type": "integer"
+              },
+              "cap_source": {
+                "enum": [
+                  "declared",
+                  "default"
+                ],
+                "title": "Cap Source",
+                "type": "string"
+              },
+              "posted": {
+                "minimum": 0,
+                "title": "Posted",
+                "type": "integer"
+              },
+              "selected": {
+                "minimum": 0,
+                "title": "Selected",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-inbox-post-truncation-v1",
+                "default": "cruxible-inbox-post-truncation-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "cap",
+              "cap_source",
+              "selected",
+              "posted"
+            ],
+            "title": "InboxPostTruncation",
+            "type": "object"
+          },
           "InvestigationBinding": {
             "additionalProperties": false,
             "properties": {
@@ -57516,6 +60861,17 @@
                 "default": null,
                 "title": "Fallback Reason"
               },
+              "inbox_truncation": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/InboxPostTruncation"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "journal_coordinate": {
                 "anyOf": [
                   {
@@ -58743,6 +62099,25 @@
             "title": "Fallback Reason"
           }
         },
+        "inbox_truncation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "inbox_truncation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InboxPostTruncation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "journal_coordinate": {
           "default": null,
           "default_json_serializable": true,
@@ -58984,6 +62359,49 @@
       },
       "json_schema": {
         "$defs": {
+          "InboxPostTruncation": {
+            "additionalProperties": false,
+            "description": "A ``post_inbox`` terminal selected more items than its run may post.\n\n``cap`` is the terminal's declared ``max_items`` (``cap_source=\"declared\"``)\nor the core default; a run posting from more than one terminal counts them\ntogether. The first ``posted`` of the ``selected`` items were posted; the\nrest were not posted anywhere.",
+            "properties": {
+              "cap": {
+                "minimum": 1,
+                "title": "Cap",
+                "type": "integer"
+              },
+              "cap_source": {
+                "enum": [
+                  "declared",
+                  "default"
+                ],
+                "title": "Cap Source",
+                "type": "string"
+              },
+              "posted": {
+                "minimum": 0,
+                "title": "Posted",
+                "type": "integer"
+              },
+              "selected": {
+                "minimum": 0,
+                "title": "Selected",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-inbox-post-truncation-v1",
+                "default": "cruxible-inbox-post-truncation-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "cap",
+              "cap_source",
+              "selected",
+              "posted"
+            ],
+            "title": "InboxPostTruncation",
+            "type": "object"
+          },
           "ProcedureJournalCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -59169,6 +62587,17 @@
             ],
             "default": null,
             "title": "Fallback Reason"
+          },
+          "inbox_truncation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InboxPostTruncation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "journal_coordinate": {
             "anyOf": [
@@ -68388,6 +71817,7 @@
           },
           "InboxEgressNode": {
             "additionalProperties": false,
+            "description": "Terminal output into the Line inbox: items sent, as they are, to intelligence.\n\n``input`` is one item, or ``{\"items\": ...}`` to fan out over a list the run\nproduced. Posting is inert: it never touches accepted state. ``max_items``\ncaps what one run posts (``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items\npast it are not posted and the run reports the truncation.",
             "properties": {
               "input": {
                 "title": "Input"
@@ -68397,6 +71827,20 @@
                 "default": "post_inbox",
                 "title": "Kind",
                 "type": "string"
+              },
+              "max_items": {
+                "anyOf": [
+                  {
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Items"
               },
               "node_id": {
                 "title": "Node Id",
@@ -77740,6 +81184,7 @@
           },
           "InboxEgressNode": {
             "additionalProperties": false,
+            "description": "Terminal output into the Line inbox: items sent, as they are, to intelligence.\n\n``input`` is one item, or ``{\"items\": ...}`` to fan out over a list the run\nproduced. Posting is inert: it never touches accepted state. ``max_items``\ncaps what one run posts (``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items\npast it are not posted and the run reports the truncation.",
             "properties": {
               "input": {
                 "title": "Input"
@@ -77749,6 +81194,20 @@
                 "default": "post_inbox",
                 "title": "Kind",
                 "type": "string"
+              },
+              "max_items": {
+                "anyOf": [
+                  {
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Items"
               },
               "node_id": {
                 "title": "Node Id",

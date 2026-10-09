@@ -119,6 +119,21 @@
   "/api/v1/{instance_id}/host": {
     "GET": "HostInspection"
   },
+  "/api/v1/{instance_id}/inbox": {
+    "GET": "InboxList"
+  },
+  "/api/v1/{instance_id}/inbox/{item_id}": {
+    "GET": "InboxItem"
+  },
+  "/api/v1/{instance_id}/inbox/{item_id}/ack": {
+    "POST": "InboxDispositionResult"
+  },
+  "/api/v1/{instance_id}/inbox/{item_id}/dismiss": {
+    "POST": "InboxDispositionResult"
+  },
+  "/api/v1/{instance_id}/inbox/{item_id}/link": {
+    "POST": "InboxDispositionResult"
+  },
   "/api/v1/{instance_id}/init": {
     "POST": "InitResult"
   },
