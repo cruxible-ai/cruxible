@@ -32,6 +32,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.canonical_forms import is_canonical_literal
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
@@ -1987,6 +1988,20 @@ def evaluate_claim_law(
                 "cruxible.claim.literal_schema_invalid",
                 f"The Claim literal {statement.object.value!r} fails the exact schema of "
                 f"ClaimType {contract.predicate!r}{admitted}.",
+                path=path,
+                field="object",
+            )
+        # ClaimType v8: a stored literal is always in its declared canonical form.
+        # No Claim accepted before v8 names a v8 ClaimType, so every earlier
+        # Claim is judged exactly as before.
+        if not claim_type_retirement_shape_exempt and not is_canonical_literal(
+            statement.object.value, contract.canonical_form or ()
+        ):
+            return _diagnostic(
+                "cruxible.claim.literal_not_canonical",
+                f"The Claim literal {statement.object.value!r} is not in the canonical form "
+                f"ClaimType {contract.predicate!r} declares "
+                f"({', '.join(contract.canonical_form or ())}); store its canonical value.",
                 path=path,
                 field="object",
             )

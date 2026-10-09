@@ -32,6 +32,7 @@ from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeResult,
 )
 from cruxible_client.contracts.claim_types import (
+    V7_AND_LATER_FORMATS,
     ClaimType,
     claim_type_digest,
     claim_type_path,
@@ -157,7 +158,7 @@ def _upgrade(
                     )
                 )
             continue
-        if claim_type.artifact_format == "playbill-claim-type-v7":
+        if claim_type.artifact_format in V7_AND_LATER_FORMATS:
             unchanged.append(claim_type.identity.qualified)
             continue
         try:

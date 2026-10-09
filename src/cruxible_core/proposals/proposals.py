@@ -3138,6 +3138,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
     if claim_type.artifact_format in {
         "playbill-claim-type-v6",
         "playbill-claim-type-v7",
+        "playbill-claim-type-v8",
     } and claim_type.lifecycle.state == ("live"):
         unresolved = _claim_type_v6_unresolved(context, claim_type)
         if unresolved:

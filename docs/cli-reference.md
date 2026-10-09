@@ -1296,6 +1296,26 @@ live ClaimTypes (default: all of them) to v7 with `evidence_requirement` kept at
 their backing intact. It lists each ClaimType's revision-evidence change;
 `--dry-run` evaluates the change set and proposes nothing.
 
+ClaimType v8 is v7 plus a `canonical_form`: an ordered list of named transforms
+every literal value of the predicate is stored and compared in. The closed set:
+`nfc` and `nfkc` (Unicode normalization; name at most one), `trim` (drop leading
+and trailing whitespace), `collapse_whitespace` (every whitespace run becomes
+one space), `casefold` and `upper` (Unicode case folding or uppercasing; name at
+most one) and `strip_punctuation` (drop every Unicode punctuation character).
+`casefold`, `upper` and `strip_punctuation` change how a value reads, not only
+how it is spelled. The canonical value is the fixed point of applying the list
+in order, and every string inside a JSON array or object value is canonicalized
+the same way. Every write path stores the canonical value (the raw spelling
+stays in the evidence the Claim cites), and the Claim law refuses a stored
+literal that is not canonical. Enum membership is checked after
+canonicalization, so every enum member must already be canonical. A query,
+`expect`, an enum check or a QueryDefinition comparison canonicalizes its
+operand by the same predicate's form first. `propose --input` lowers to v8 when
+the input names `canonical_form`; an edit that leaves it out keeps the
+predecessor's form, and `null` over a v8 ClaimType states no transform. Changing
+the form is a governed ClaimType succession: a dependent Claim whose stored
+value is not canonical under the new form is re-authored, not carried.
+
 A CaptureContract successor must be compatible with its predecessor: it may
 widen the sources, modes, identities and evidence kinds it accepts and raise its
 budgets, and nothing else. A breaking change is a new contract identity. A

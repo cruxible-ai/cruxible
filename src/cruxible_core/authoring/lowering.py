@@ -67,6 +67,10 @@ from cruxible_client.contracts.authoring.models import (
     blueprint_instantiation,
 )
 from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
+from cruxible_client.contracts.canonical_forms import (
+    CanonicalFormDidNotConverge,
+    canonicalize_literal,
+)
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
@@ -90,8 +94,10 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import (
+    ClaimType,
     claim_type_digest,
     claim_type_path,
+    effective_canonical_form,
     effective_revision_evidence,
     parse_claim_type,
     render_claim_type,
@@ -589,6 +595,33 @@ def _exact_object(
     )
 
 
+def _canonical_object(
+    value: LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject,
+    claim_type: ClaimType,
+) -> LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject:
+    """Store a literal in the canonical form its ClaimType declares (v8).
+
+    Every Claim lowering path -- a change-set member, a write verb, a Procedure
+    terminal item -- comes through here, so the stored object is canonical and
+    the raw spelling stays only in the evidence the Claim cites.
+    """
+
+    form = effective_canonical_form(claim_type)
+    if not form or not isinstance(value, LiteralClaimObject):
+        return value
+    try:
+        canonical = canonicalize_literal(value.value, form)
+    except CanonicalFormDidNotConverge as exc:
+        _refuse(
+            "cruxible.claim.literal_not_canonical",
+            "statement.object",
+            str(exc),
+            repair_kind="replace_object",
+            repair_description="State a value the ClaimType's canonical form settles.",
+        )
+    return value if canonical == value.value else LiteralClaimObject(value=canonical)
+
+
 def _same_predicate_claims(
     tree: Mapping[str, bytes], statement: ClaimStatement
 ) -> tuple[ClaimArtifactAny, ...]:
@@ -1046,6 +1079,7 @@ def _lower_claim(
             ),
             replacement={"required_object_kind": claim_type.object_kind},
         )
+    statement_object = _canonical_object(statement_object, claim_type)
     qualifier = payload.statement.qualifier
     object_referent: tuple[ArtifactIdentity, str] | None = None
     if isinstance(statement_object, SubjectClaimObject):

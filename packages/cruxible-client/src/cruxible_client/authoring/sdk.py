@@ -2659,8 +2659,13 @@ class Cruxible:
         pins: Sequence[ArtifactPin],
         evidence_freshness: Duration | None,
         attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = None,
+        canonical_form: Sequence[str] | None = None,
     ) -> ClaimTypeDraft:
         """Draft a ClaimType, reading its accepted definition through get.
+
+        ``canonical_form`` names the ordered transforms every literal value is
+        stored and compared in (ClaimType v8); left out, a successor keeps its
+        predecessor's form, and a new ClaimType states none (v7).
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
@@ -2708,6 +2713,7 @@ class Cruxible:
         # its predecessor means, exactly as the daemon's lowering does.
         evidence_requirement: EvidenceRequirement = "self"
         revision_evidence: RevisionEvidence = "replace"
+        form: tuple[str, ...] | None = None if canonical_form is None else tuple(canonical_form)
         if isinstance(predicate, ClaimTypeRef):
             predecessor = self._get(f"ClaimType:{name}", "proof", None, predicate.coordinate)
             assert predecessor.proof is not None
@@ -2719,8 +2725,10 @@ class Cruxible:
                 accepted = ClaimType.model_validate(envelope)
                 evidence_requirement = effective_evidence_requirement(accepted)
                 revision_evidence = effective_revision_evidence(accepted)
+                if form is None and accepted.artifact_format == "playbill-claim-type-v8":
+                    form = accepted.canonical_form or ()
         definition = ClaimType(
-            artifact_format="playbill-claim-type-v7",
+            artifact_format="playbill-claim-type-v7" if form is None else "playbill-claim-type-v8",
             identity=ArtifactIdentity(kind="ClaimType", name=name),
             predicate=name,
             allowed_subject_kinds=tuple(subject_kinds),
@@ -2745,6 +2753,7 @@ class Cruxible:
             attestation_consequence_policy=attestation_consequence_policy,
             evidence_requirement=evidence_requirement,
             revision_evidence=revision_evidence,
+            canonical_form=cast(Any, form),
         )
         return ClaimTypeDraft(self, definition)
 

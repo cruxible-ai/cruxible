@@ -40,6 +40,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_TYPE_V6_ACCEPTANCE_LAW,
     CLAIM_TYPE_V6_REVISION_1_ACCEPTANCE_LAW,
     CLAIM_TYPE_V7_ACCEPTANCE_LAW,
+    CLAIM_TYPE_V8_ACCEPTANCE_LAW,
     CLAIM_V2_ACCEPTANCE_LAW,
     CLAIM_V2_REVISION_6_ACCEPTANCE_LAW,
     CLAIM_V2_REVISION_7_ACCEPTANCE_LAW,
@@ -154,6 +155,13 @@ LAW_COORDINATES: tuple[
         "playbill-claim-type-v7",
         1,
         "sha256:e9617add75e2747320ade92631b2ab4c50253b70693d92afb54fefbbdc4d9375",
+    ),
+    (
+        CLAIM_TYPE_V8_ACCEPTANCE_LAW,
+        "playbill.claim-type.v8",
+        "playbill-claim-type-v8",
+        1,
+        "sha256:45308ae9d41af7abf075b38f9bd6eba05f77c2480506c2cd943d8ba70e55fc7f",
     ),
     (
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,

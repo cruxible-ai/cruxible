@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 import shlex
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -60,6 +59,10 @@ from cruxible_client.contracts.authoring.models import (
     authoring_member_identity,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
+from cruxible_client.contracts.canonical_forms import (
+    CanonicalFormDidNotConverge,
+    canonicalize_literal,
+)
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
@@ -69,7 +72,11 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
-from cruxible_client.contracts.claim_types import ClaimType, effective_evidence_requirement
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    effective_canonical_form,
+    effective_evidence_requirement,
+)
 from cruxible_client.contracts.claims import (
     ClaimRetireDependent,
     LiteralClaimObject,
@@ -139,6 +146,7 @@ from cruxible_core.service.discovery.query_values import read_live_values, subje
 from cruxible_core.service.discovery.query_vocabulary import (
     PredicateInfo,
     QueryVocabulary,
+    coerce_text_spelling,
     load_query_vocabulary,
 )
 from cruxible_core.service.identity import require_authoring_principal
@@ -257,27 +265,6 @@ def requires_captured_evidence(claim_type: ClaimType) -> bool:
     """
 
     return effective_evidence_requirement(claim_type) == "captured"
-
-
-_INTEGER_TEXT = re.compile(r"-?(?:0|[1-9][0-9]*)")
-
-
-def _coerce_text(value: object, info: PredicateInfo) -> object:
-    """Read a canonical text spelling of a number or boolean as that value.
-
-    The CLI passes every value as text, and an agent may too. A field whose
-    schema is an integer or a boolean takes the one canonical spelling of such
-    a value (``42``, ``-3``, ``true``, ``false``); any other text stays text and
-    is refused by the schema check with the type it needed.
-    """
-
-    if not isinstance(value, str):
-        return value
-    if info.value_type in ("integer", "decimal") and _INTEGER_TEXT.fullmatch(value):
-        return int(value)
-    if info.value_type == "boolean" and value in ("true", "false"):
-        return value == "true"
-    return value
 
 
 def _named(subject: str | None) -> str:
@@ -775,7 +762,7 @@ class _Planner:
         path: str | None = None,
     ) -> LiteralClaimObject:
         path = path or f"changes[{index}].value"
-        value = _coerce_text(value, info)
+        value = coerce_text_spelling(value, info.value_type)
         if isinstance(value, float):
             if not value.is_integer():
                 raise _refuse(
@@ -786,6 +773,20 @@ class _Planner:
                     field_path=path,
                 )
             value = int(value)
+        form = effective_canonical_form(info.claim_type)
+        if form:
+            # Stored in the declared canonical form, and checked in it: an enum
+            # member is matched after canonicalization (ClaimType v8).
+            try:
+                value = canonicalize_literal(value, form)
+            except CanonicalFormDidNotConverge as exc:
+                raise _refuse(
+                    "cruxible.write.value_type_mismatch",
+                    str(exc),
+                    change=index,
+                    repair="Pass a value the field's canonical form settles",
+                    field_path=path,
+                ) from exc
         if info.members:
             if value not in info.members:
                 spelled = ", ".join(info.members)
