@@ -448,3 +448,54 @@ def test_the_cited_capture_itself_and_a_capture_observed_later_are_refused(
             now=_START + timedelta(minutes=10),
         )
     assert store.history(claim.identity.name) == ()
+
+
+def test_same_size_crash_tail_recovery_invalidates_a_remembered_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-013 probe: a recovered shorter frame filling the torn tail exactly."""
+
+    import os
+
+    from cruxible_core.exhaust.backends import journal_log_path
+    from cruxible_core.service.discovery.claim_status import reset_claim_resolution_memo
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    digest = _pending_same_content(instance, _START + timedelta(minutes=50))
+    store = ClaimReobservationStore(instance)
+    log = journal_log_path(store.root, store.stream, "reobservations")
+    write = os.write
+
+    def partial(fd: int, content: bytes) -> int:
+        if log.exists() and os.fstat(fd).st_ino == log.stat().st_ino:
+            # Tear a longer frame at exactly the length a shorter actor's
+            # otherwise identical record will occupy.
+            write(fd, content[:-1000])
+            raise OSError("interrupted journal frame")
+        return write(fd, content)
+
+    with monkeypatch.context() as local:
+        local.setattr(os, "write", partial)
+        with pytest.raises(OSError, match="interrupted journal frame"):
+            store.record(
+                claim_id=claim.identity.name,
+                capture_digest=digest,
+                actor_id="x" * 1005,
+                now=_START + timedelta(minutes=50),
+            )
+    assert store.history(claim.identity.name) == ()
+    reset_claim_resolution_memo()
+    at = _START + timedelta(minutes=70)
+    assert _statuses(instance, claim, at) == "stale_evidence"
+    torn_size = log.stat().st_size
+    store.record(
+        claim_id=claim.identity.name,
+        capture_digest=digest,
+        actor_id="owner",
+        now=_START + timedelta(minutes=50),
+    )
+    assert len(store.history(claim.identity.name)) == 1
+    assert log.stat().st_size == torn_size  # the recovered log is the same size
+    assert _verdict(instance, at).verdict == "supported"
+    assert _statuses(instance, claim, at) == "supported"

@@ -427,7 +427,10 @@ def reobservation_journal_signature(root: Path, *, exhaust: str, instance_id: st
 
     The log is the authority, so this changes the moment a record is appended,
     before any projection catches up, and no separately written marker can
-    lag it. ``None`` when nothing was ever recorded.
+    lag it. It names the log file's full identity -- device, inode, size and
+    modification and change times, as the journal index does -- so a writer
+    that truncates a crash tail and appends a frame of the same size still
+    changes it. ``None`` when nothing was ever recorded.
     """
 
     stream = JournalStreamIdentityV1(
@@ -440,7 +443,7 @@ def reobservation_journal_signature(root: Path, *, exhaust: str, instance_id: st
         stat = log.stat()
     except FileNotFoundError:
         return None
-    return f"{stat.st_ino}:{stat.st_size}"
+    return f"{stat.st_dev}:{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}"
 
 
 @dataclass(frozen=True)
