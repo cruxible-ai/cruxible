@@ -77,18 +77,7 @@ def test_subjects_whose_names_meet_and_values_that_meet_are_listed(
 
 
 def test_asserting_distinct_from_suppresses_the_pair(instance: PlaybillInstance) -> None:
-    distinct = identity_claim_type(
-        "distinct_from",
-        canonical_form=None,
-        object_kind="subject",
-        cardinality="many",
-        object_kinds=(KIND, "semantic.subject"),
-        predicate="semantic.distinct_from",
-        subject_kinds=("semantic.subject",),
-    )
-    accept_tree(
-        instance, {claim_type_path(distinct.predicate): render_claim_type(distinct)}, name="df"
-    )
+    _distinct_from(instance)
     write(
         instance,
         {"op": "add", "subject": ALPHA, "field": "semantic.alias", "value": "lodash.js"},
@@ -142,3 +131,85 @@ def test_the_duplicate_statement_detector_compares_canonical_statements(
     tree[claim_type_path(folded.predicate)] = render_claim_type(folded)
     (detection,) = _duplicate_statements(tree=tree, generation=1)[0]
     assert len(detection.evidence_refs) == 2
+
+
+# -- review F-008 and F-009 -------------------------------------------------------
+
+
+def _distinct_from(instance: PlaybillInstance) -> None:
+    distinct = identity_claim_type(
+        "distinct_from",
+        canonical_form=None,
+        object_kind="subject",
+        cardinality="many",
+        object_kinds=(KIND, "semantic.subject"),
+        predicate="semantic.distinct_from",
+        subject_kinds=("semantic.subject",),
+    )
+    accept_tree(
+        instance, {claim_type_path(distinct.predicate): render_claim_type(distinct)}, name="df"
+    )
+
+
+def test_a_third_subject_never_rejoins_an_asserted_distinct_pair(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.subjects import render_subject, subject_path
+    from tests.core_support._identity_support import shell
+
+    _distinct_from(instance)
+    accept_tree(
+        instance, {subject_path(KIND, "gamma"): render_subject(shell("gamma"))}, name="gamma"
+    )
+    write(
+        instance,
+        {"op": "add", "subject": ALPHA, "field": "semantic.alias", "value": "one.x"},
+        {"op": "add", "subject": BETA, "field": "semantic.alias", "value": "onex"},
+        {"op": "add", "subject": f"{KIND}/gamma", "field": "semantic.alias", "value": "one-x"},
+        {"op": "add", "subject": ALPHA, "field": "semantic.distinct_from", "value": BETA},
+    )
+    groups = [group for group in audit(instance).groups if isinstance(group, DuplicateSubjectGroup)]
+    assert groups, "alpha and gamma still meet"
+    for group in groups:
+        members = {item.subject for item in group.subjects}
+        assert not {ALPHA, BETA} <= members, members
+    assert [[item.subject for item in group.subjects] for group in groups] == [
+        [ALPHA, f"{KIND}/gamma"]
+    ]
+
+
+def test_grouping_never_enumerates_all_pairs_for_one_sparse_distinct_pair() -> None:
+    from cruxible_core.service.discovery.duplicates import _groups_apart
+
+    holders = [f"subjects/k/{index:05d}.json" for index in range(5000)]
+    apart = {holders[0]: {holders[1]}, holders[1]: {holders[0]}}
+    groups = _groups_apart(holders, apart)
+    # The second holder opens its own group, alone, so it is not a duplicate group.
+    assert groups == [[holders[0], *holders[2:]]]
+
+
+def test_the_budget_is_applied_in_each_read_with_one_overflow_sentinel(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.discovery import duplicates
+
+    for tag in ("a.x", "ax", "b.y", "by"):
+        write(instance, {"op": "add", "subject": ALPHA, "field": "tags", "value": tag})
+    full = audit(instance)
+    assert full.scanned.values == 4 and not full.budget_exhausted
+    reads: list[int] = []
+    original = duplicates._Budget.read
+
+    def counted(self, connection, sql, parameters):  # type: ignore[no-untyped-def]
+        rows = original(self, connection, sql, parameters)
+        reads.append(len(rows))
+        return rows
+
+    monkeypatch.setattr(duplicates._Budget, "read", counted)
+    monkeypatch.setattr(duplicates, "DUPLICATES_AUDIT_MAX_SCANNED", 3)
+    bounded = audit(instance)
+    assert bounded.budget_exhausted
+    scanned = bounded.scanned
+    # Every row the audit read is counted, and together they never pass the bound.
+    assert sum(reads) == scanned.subjects + scanned.aliases + scanned.relations + scanned.values
+    assert sum(reads) <= 3

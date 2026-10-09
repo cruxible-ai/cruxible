@@ -8,7 +8,9 @@ per Subject kind, what is equal under it but distinct under the declared rules:
 - ``subjects``: Subjects of the kind whose ids or aliases meet under the broad
   comparison. Resolve by adding a ``semantic.alias`` to the Subject that stays
   and retiring the other (merge in v1 is alias + retire), or by asserting
-  ``semantic.distinct_from`` between them, which suppresses the pair thereafter.
+  ``semantic.distinct_from`` between them: no group ever holds a pair asserted
+  distinct (a key's holders are taken in path order, each joining the first
+  group it is asserted distinct from no member of).
 - ``values``: live values of one literal predicate of the kind that meet under
   it but are distinct under the predicate's declared canonical form. Resolve by
   a governed ClaimType succession that declares a wider canonical form (its
@@ -28,8 +30,9 @@ from cruxible_client.contracts.canonical_forms import CanonicalTransform
 
 DUPLICATES_AUDIT_DEFAULT_LIMIT: Final = 25
 DUPLICATES_AUDIT_MAX_LIMIT: Final = 200
-#: Subjects, aliases and values one audit reads at most; past it the answer
-#: says it is partial (``budget_exhausted``) rather than silently narrowing.
+#: Rows (Subjects, aliases, distinct_from relations and values) one audit reads
+#: at most, applied in each SQL read with one overflow sentinel; past it the
+#: answer says it is partial (``budget_exhausted``) rather than silently narrowing.
 DUPLICATES_AUDIT_MAX_SCANNED: Final = 50_000
 #: The broader comparison the audit groups by.
 DUPLICATES_AUDIT_BROAD_FORM: Final[tuple[CanonicalTransform, ...]] = (
@@ -103,6 +106,7 @@ class DuplicatesAuditScanned(_StrictDuplicatesModel):
 
     subjects: int = Field(ge=0)
     aliases: int = Field(ge=0)
+    relations: int = Field(ge=0, description="semantic.distinct_from Claims read.")
     values: int = Field(ge=0)
 
 

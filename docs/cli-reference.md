@@ -2682,12 +2682,16 @@ values of one literal predicate that meet but differ under its canonical form
 (`values` groups, naming the form). Cruxible proposes no fix; each group names its
 resolutions. Merge two Subjects by adding a `semantic.alias` to the one that
 stays and retiring the other; keep them apart by asserting
-`semantic.distinct_from` between them, which suppresses the pair from then on;
-unify values by a governed ClaimType succession declaring a wider
-`canonical_form` (dependents re-authored). The audit reads at most 50,000
-Subjects, aliases and values and says when it stopped (`budget_exhausted`);
-`scanned` counts what it read. It pages like the queue (default 25 groups, at
-most 200).
+`semantic.distinct_from` between them: no group ever holds a pair asserted
+distinct (a key's Subjects are taken in path order, and each joins the first
+group holding no Subject it is asserted distinct from), though each may still
+appear in a group with a third Subject. Unify values by a governed ClaimType
+succession declaring a wider `canonical_form` (dependents re-authored). The
+audit applies one row budget (50,000) in each of its reads -- Subjects,
+aliases, `distinct_from` relations, values -- and says when a read reached it
+(`budget_exhausted`); `scanned` counts every row it read. It pages like the
+queue (default 25 groups, at most 200), recomputing within the same bound for
+each page.
 
 The rulings append attributed operational events; they do not create governed
 proposals or mutate accepted knowledge. `overrule` closes an item permanently:

@@ -11,9 +11,9 @@ or a governed canonical-form succession. Core never resolves one itself.
 
 from __future__ import annotations
 
+import sqlite3
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from typing import TypeVar
 
 from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
@@ -34,7 +34,6 @@ from cruxible_client.contracts.duplicates import (
 )
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.discovery.query_values import read_live_values
 from cruxible_core.service.discovery.query_vocabulary import load_query_vocabulary
 from cruxible_core.service.list_pages import (
     decode_list_cursor,
@@ -44,7 +43,6 @@ from cruxible_core.service.list_pages import (
 )
 
 _LIST = "duplicates audit"
-_T = TypeVar("_T")
 _DISTINCT_FROM = "semantic.distinct_from"
 
 
@@ -61,38 +59,50 @@ def _ref(path: str) -> str:
     return path.removeprefix("subjects/").removesuffix(".json")
 
 
-def _components(members: Iterable[str], apart: set[frozenset[str]]) -> list[list[str]]:
-    """Connected groups of ``members``, every pair joined unless asserted distinct."""
+def _groups_apart(members: Iterable[str], apart: Mapping[str, set[str]]) -> list[list[str]]:
+    """Group the holders of one key so no group holds an asserted-distinct pair.
 
-    ordered = sorted(set(members))
-    present = set(ordered)
-    if not any(pair <= present for pair in apart):
-        # Nothing asserted distinct among them: one group, without pairwise work.
-        return [ordered] if len(ordered) > 1 else []
-    parent = {member: member for member in ordered}
+    The overlap contract: a key's holders are taken in path order, and each joins
+    the first group none of whose members it is asserted distinct from, or opens
+    a new one. Every holder is in exactly one group, no group ever holds a pair
+    asserted ``semantic.distinct_from``, and groups of one are not duplicates. A
+    holder distinct from no one costs one probe per group; the work is
+    proportional to holders times groups, never to all pairs.
+    """
 
-    def find(item: str) -> str:
-        while parent[item] != item:
-            parent[item] = parent[parent[item]]
-            item = parent[item]
-        return item
-
-    for index, first in enumerate(ordered):
-        for second in ordered[index + 1 :]:
-            if frozenset({first, second}) not in apart:
-                parent[find(second)] = find(first)
-    groups: dict[str, list[str]] = defaultdict(list)
-    for member in ordered:
-        groups[find(member)].append(member)
-    return [group for group in groups.values() if len(group) > 1]
+    groups: list[list[str]] = []
+    for member in sorted(set(members)):
+        far = apart.get(member, set())
+        for group in groups:
+            if not far or far.isdisjoint(group):
+                group.append(member)
+                break
+        else:
+            groups.append([member])
+    return [group for group in groups if len(group) > 1]
 
 
 class _Budget:
+    """The rows one audit may read, counted as SQL returns them.
+
+    Each read asks for at most what remains plus one: an overflow sentinel. A
+    read that returns the sentinel exhausts the budget; the sentinel is counted
+    as inspected and dropped from the answer.
+    """
+
     def __init__(self, limit: int) -> None:
         self.remaining = limit
         self.exhausted = False
 
-    def take(self, rows: list[_T]) -> list[_T]:
+    def read(
+        self, connection: sqlite3.Connection, sql: str, parameters: tuple[object, ...]
+    ) -> list[tuple[object, ...]]:
+        if self.exhausted:
+            return []
+        rows = [
+            tuple(row)
+            for row in connection.execute(sql + " LIMIT ?", (*parameters, self.remaining + 1))
+        ]
         if len(rows) > self.remaining:
             self.exhausted = True
             rows = rows[: self.remaining]
@@ -111,35 +121,52 @@ def _audit_groups(
     vocabulary.require_kind(kind)
     prefix = f"subjects/{kind}/"
     high = prefix[:-1] + chr(ord("/") + 1)
+    literal = [
+        info
+        for info in vocabulary.predicates_of(kind)
+        if info.claim_type.object_kind == "literal"
+        and info.value_type in {"string", "enum", "json"}
+    ]
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
-        subject_rows: list[tuple[str, str]] = budget.take(
-            list(
-                connection.execute(
-                    "SELECT path, subject_id FROM subjects WHERE path>=? AND path<? "
-                    "AND lifecycle='live' ORDER BY path LIMIT ?",
-                    (prefix, high, budget.remaining + 1),
-                )
-            )
+        subject_rows = budget.read(
+            connection,
+            "SELECT path, subject_id FROM subjects WHERE path>=? AND path<? "
+            "AND lifecycle='live' ORDER BY path",
+            (prefix, high),
         )
-        alias_rows: list[tuple[str, str]] = budget.take(
-            list(
-                connection.execute(
-                    "SELECT target_path, value FROM vocabulary_terms WHERE basis='alias' "
-                    "AND target_path>=? AND target_path<? ORDER BY target_path, value LIMIT ?",
-                    (prefix, high, budget.remaining + 1),
-                )
-            )
+        alias_rows = budget.read(
+            connection,
+            "SELECT target_path, value FROM vocabulary_terms WHERE basis='alias' "
+            "AND target_path>=? AND target_path<? ORDER BY target_path, value",
+            (prefix, high),
         )
-        apart = {
-            frozenset({str(row[0]), str(row[1])})
-            for row in connection.execute(
-                "SELECT subject_path, object_path FROM claims WHERE predicate=? "
-                "AND lifecycle='live' AND object_path IS NOT NULL "
-                "AND ((subject_path>=? AND subject_path<?) OR (object_path>=? AND object_path<?))",
-                (_DISTINCT_FROM, prefix, high, prefix, high),
+        relation_rows = budget.read(
+            connection,
+            "SELECT subject_path, object_path FROM claims WHERE predicate=? "
+            "AND lifecycle='live' AND object_path IS NOT NULL "
+            "AND ((subject_path>=? AND subject_path<?) OR (object_path>=? AND object_path<?)) "
+            "ORDER BY identity",
+            (_DISTINCT_FROM, prefix, high, prefix, high),
+        )
+        predicates = tuple(info.predicate for info in literal)
+        value_rows = (
+            budget.read(
+                connection,
+                "SELECT identity, subject_path, predicate, literal_text FROM claims "
+                "WHERE lifecycle='live' AND literal_type='string' AND subject_path>=? "
+                "AND subject_path<? AND predicate IN ("
+                + ",".join("?" for _ in predicates)
+                + ") ORDER BY identity",
+                (prefix, high, *predicates),
             )
-        }
+            if predicates
+            else []
+        )
+    apart: dict[str, set[str]] = defaultdict(set)
+    for first, second in relation_rows:
+        apart[str(first)].add(str(second))
+        apart[str(second)].add(str(first))
     names: dict[str, set[str]] = defaultdict(set)
     for path, subject_id in subject_rows:
         names[str(path)].add(str(subject_id))
@@ -153,41 +180,23 @@ def _audit_groups(
     groups: list[DuplicateGroup] = []
     for key in sorted(by_key):
         holders = by_key[key]
-        for component in _components(holders, apart):
+        for members in _groups_apart(holders, apart):
             groups.append(
                 DuplicateSubjectGroup(
                     key=key,
                     subjects=tuple(
                         DuplicateSubject(subject=_ref(path), names=tuple(sorted(holders[path])))
-                        for path in component
+                        for path in members
                     ),
                 )
             )
-    literal = [
-        info
-        for info in vocabulary.predicates_of(kind)
-        if info.claim_type.object_kind == "literal"
-        and info.value_type in {"string", "enum", "json"}
-    ]
-    values = (
-        read_live_values(
-            instance,
-            coordinate,
-            subject_paths=tuple(sorted(names)),
-            predicates=tuple(info.predicate for info in literal),
-        )
-        if literal and names
-        else []
-    )
-    taken = budget.take([item for item in values if isinstance(item.value, str)])
     by_value: dict[tuple[str, str], list[DuplicateValue]] = defaultdict(list)
-    for item in taken:
-        value = str(item.value)
-        by_value[(item.predicate, broad_key(value))].append(
+    for identity, subject, predicate, value in value_rows:
+        by_value[(str(predicate), broad_key(str(value)))].append(
             DuplicateValue(
-                claim=str(item.identity).removeprefix("Claim:"),
-                subject=_ref(item.subject_path),
-                value=value,
+                claim=str(identity).removeprefix("Claim:"),
+                subject=_ref(str(subject)),
+                value=str(value),
             )
         )
     forms = {info.predicate: effective_canonical_form(info.claim_type) for info in literal}
@@ -203,7 +212,10 @@ def _audit_groups(
             )
         )
     scanned = DuplicatesAuditScanned(
-        subjects=len(subject_rows), aliases=len(alias_rows), values=len(taken)
+        subjects=len(subject_rows),
+        aliases=len(alias_rows),
+        relations=len(relation_rows),
+        values=len(value_rows),
     )
     return groups, scanned
 
