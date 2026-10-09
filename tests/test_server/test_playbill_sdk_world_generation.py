@@ -304,7 +304,8 @@ def test_the_world_reads_the_accepted_vocabulary_and_refuses_what_it_does_not_na
     world = playbill.world()
 
     assert world.kinds == (PACKAGE_KIND, VULNERABILITY_KIND)
-    assert world.predicates == (AFFECTS, SEVERITY)
+    # The builtin semantic.alias ClaimType every instance seeds is vocabulary too.
+    assert world.predicates == (AFFECTS, SEVERITY, "semantic.alias")
     assert world.unstructured_predicates == ()
     assert world.sec.vuln.severity.members == ("high", "low")
     with pytest.raises(LiteralSchemaError):

@@ -438,6 +438,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "next",
         "audit",
         "list_curation",
+        "curation_duplicates",
         "overrule_curation",
         "accept_fixed_curation",
         "suppress_curation",

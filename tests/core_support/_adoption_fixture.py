@@ -168,6 +168,8 @@ class AdoptionFixtureProfile:
             + 3
             # The built-in workspace.file ProviderInterface and its Provider.
             + 2
+            # The builtin semantic.alias ClaimType.
+            + 1
         )
 
 
