@@ -2046,3 +2046,81 @@ def _journaled_receipt(instance: PlaybillInstance, run_id: str | None) -> dict[s
         ):
             return payload["receipt"]
     raise AssertionError("no delivered terminal_egress record")
+
+
+def _canonical_claim_type(form: tuple[str, ...]) -> ClaimType:
+    """The world's ClaimType as v8, declaring ``form``."""
+
+    from cruxible_client.contracts.artifacts import ArtifactRef
+    from cruxible_client.contracts.policies import (
+        CAPTURE_CONTRACT_REF_ROLE,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
+    )
+
+    return ClaimType.model_validate(
+        {
+            "artifact_format": "playbill-claim-type-v8",
+            "identity": ArtifactIdentity(kind="ClaimType", name=PREDICATE),
+            "predicate": PREDICATE,
+            "allowed_subject_kinds": (SUBJECT_KIND,),
+            "object_kind": "literal",
+            "literal_schema": {"type": "string"},
+            "cardinality": "one",
+            "permitted_roles": ("observation",),
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="workspace-record",
+                        claim_roles=("observation",),
+                        capture_contracts=(
+                            ArtifactRef(
+                                role=CAPTURE_CONTRACT_REF_ROLE,
+                                target=capture_contract().identity,
+                            ),
+                        ),
+                        evidence_kinds=("database_record",),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            ),
+            "admission_policy": ClaimAdmissionPolicy(),
+            "resolution_policy": ClaimResolutionPolicy(
+                cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
+            ),
+            "evidence_requirement": "self",
+            "revision_evidence": "replace",
+            "canonical_form": form,
+        }
+    )
+
+
+def test_a_terminal_canonicalizes_each_item_before_taking_its_identity(tmp_path: Path) -> None:
+    """Canonical forms apply where values become Claims: at the terminal.
+
+    The advisory later spells the same severity " High ". Under the predicate's
+    form it is the live Claim's statement, so the terminal finds that Claim and
+    revises it on the new content instead of proposing a second Claim.
+    """
+
+    instance, owner, root, line, _procedure = proposal_world(
+        tmp_path, claim_type=_canonical_claim_type(("trim", "upper"))
+    )
+    first = _accept_first_run(instance, owner, root, line)
+    (first_child,) = first.children
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    live = parse_claim(tree[first_child.path], path=first_child.path)
+    assert live.statement.object.model_dump(mode="json")["value"] == "HIGH"
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        fixtures.canonical_bytes({"advisory_id": "OSV-2026-0001", "severity": " High "})
+    )
+
+    second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+
+    assert second.status == "succeeded", second.terminal
+    (egress,) = second.terminal_egress
+    (child,) = egress.children
+    assert not child.unchanged
+    assert child.path == first_child.path
+    assert egress.target_paths == (first_child.path,)

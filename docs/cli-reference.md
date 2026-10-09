@@ -1378,8 +1378,9 @@ one space), `casefold` and `upper` (Unicode case folding or uppercasing; name at
 most one) and `strip_punctuation` (drop every Unicode punctuation character).
 `casefold`, `upper` and `strip_punctuation` change how a value reads, not only
 how it is spelled. The canonical value is the fixed point of applying the list
-in order, and every string inside a JSON array or object value is canonicalized
-the same way. Every write path stores the canonical value (the raw spelling
+in order (at most 8 rounds; a form that has not settled by then refuses), and
+every string inside a JSON array or object value is canonicalized the same way
+(object keys are not). Every write path stores the canonical value (the raw spelling
 stays in the evidence the Claim cites), and the Claim law refuses a stored
 literal that is not canonical. Enum membership is checked after
 canonicalization, so every enum member must already be canonical. A query,
@@ -1389,6 +1390,13 @@ the input names `canonical_form`; an edit that leaves it out keeps the
 predecessor's form, and `null` over a v8 ClaimType states no transform. Changing
 the form is a governed ClaimType succession: a dependent Claim whose stored
 value is not canonical under the new form is re-authored, not carried.
+Canonical forms apply where values become Claims. A Procedure's propose and
+settle terminals put each item's literal in its ClaimType's form before taking
+the item's identity, so two spellings of one value are one statement and a
+restatement of a live Claim finds it. Inside a Procedure -- shaping, joining,
+filtering and deduplicating items -- values compare exactly as produced, since
+those items name no predicate; case-insensitive deduplication there belongs in
+a provider step.
 
 A CaptureContract successor must be compatible with its predecessor: it may
 widen the sources, modes, identities and evidence kinds it accepts and raise its
@@ -2735,9 +2743,11 @@ distinct (a key's Subjects are taken in path order, and each joins the first
 group holding no Subject it is asserted distinct from), though each may still
 appear in a group with a third Subject. Unify values by a governed ClaimType
 succession declaring a wider `canonical_form` (dependents re-authored). The
-audit applies one row budget (50,000) in each of its reads -- Subjects,
-aliases, `distinct_from` relations, values -- and says when a read reached it
-(`budget_exhausted`); `scanned` counts every row it read. It pages like the
+audit reads at most 50,000 rows in all, one budget shared by its reads --
+Subjects, aliases, `distinct_from` relations, values -- each asking SQL for no
+more than what remains; when the budget runs out it says so
+(`budget_exhausted`) and the groups cover only what was read. `scanned` counts
+the rows each read returned. It pages like the
 queue (default 25 groups, at most 200), recomputing within the same bound for
 each page.
 

@@ -86,8 +86,8 @@ class _Budget:
     """The rows one audit may read, counted as SQL returns them.
 
     Each read asks for at most what remains plus one: an overflow sentinel. A
-    read that returns the sentinel exhausts the budget; the sentinel is counted
-    as inspected and dropped from the answer.
+    read that returns the sentinel exhausts the budget; the sentinel is dropped
+    from the answer and not counted, so no more than the budget is ever used.
     """
 
     def __init__(self, limit: int) -> None:
