@@ -5998,7 +5998,10 @@ def _inbox_items(
                     node_id=node.node_id,
                     details={"field": "input.items", "reason": "items_unresolved"},
                 ) from exc
-        return values, tuple(state.alias_tokens(_referenced_aliases(member)) for member in template)
+        return values, tuple(
+            _exact_evidence(member, state=state, node_id=node.node_id, field="input.items")
+            for member in template
+        )
     try:
         resolved = _resolve_template(
             declared, input_payload=state.input_payload, outputs=state.outputs
@@ -6010,7 +6013,79 @@ def _inbox_items(
             node_id=node.node_id,
             details={"field": "input", "reason": "input_unresolved"},
         ) from exc
-    return [normalize_canonical(resolved)], (state.alias_tokens(_referenced_aliases(declared)),)
+    return [normalize_canonical(resolved)], (
+        _exact_evidence(declared, state=state, node_id=node.node_id, field="input"),
+    )
+
+
+def _step_references(value: object) -> list[str]:
+    """Every ``$steps.`` reference a template holds, wherever it sits."""
+
+    found: list[str] = []
+
+    def visit(item: object) -> None:
+        if isinstance(item, str):
+            if item.startswith(_STEP_PREFIX):
+                found.append(item)
+        elif isinstance(item, list | tuple):
+            for member in item:
+                visit(member)
+        elif isinstance(item, dict):
+            for member in item.values():
+                visit(member)
+
+    visit(value)
+    return found
+
+
+def _exact_evidence(
+    template: object, *, state: _RunState, node_id: str, field: str
+) -> frozenset[DependencyToken]:
+    """The closure of exactly what a template's own references select, never their siblings'.
+
+    A reference keeps its alias's non-Capture dependencies. Its Captures are the
+    ones its exact path reaches: the whole alias, all of it; the alias's
+    ``items`` list with recorded per-element lineage, those elements'
+    Captures; one element of that list (``items.<i>`` and below), that
+    element's own. Any other path -- a sibling field, a nested list, an
+    element without lineage -- is exact only when its alias was built from at
+    most one Capture; otherwise the item's evidence cannot be told apart and
+    it refuses ``inbox_item_evidence_ambiguous`` rather than borrowing.
+    """
+
+    tokens: frozenset[DependencyToken] = frozenset()
+    for reference in _step_references(template):
+        alias, *path = reference[len(_STEP_PREFIX) :].split(".")
+        provenance = state.provenance.get(alias)
+        if provenance is None:
+            continue
+        captures = frozenset(token for token in provenance.whole if token.slot in _CAPTURE_SLOTS)
+        shared = provenance.whole - captures
+        lineage = provenance.items
+        if not path:
+            selected = captures
+        elif path == ["items"] and lineage is not None:
+            selected = frozenset().union(*lineage) if lineage else frozenset()
+        elif (
+            len(path) >= 2
+            and path[0] == "items"
+            and path[1].isdigit()
+            and lineage is not None
+            and int(path[1]) < len(lineage)
+        ):
+            selected = lineage[int(path[1])]
+        elif len(captures) <= 1:
+            selected = captures
+        else:
+            raise _RunRefusal(
+                "inbox_item_evidence_ambiguous",
+                f"{reference!r} selects part of a value built from more than one Capture "
+                "with no lineage for that part, so its own evidence cannot be told apart.",
+                node_id=node_id,
+                details={"field": field, "reason": "lineage_unavailable"},
+            )
+        tokens |= shared | selected
+    return tokens
 
 
 def _check_inbox_bytes(values: list[CanonicalValue], *, state: _RunState, node_id: str) -> int:

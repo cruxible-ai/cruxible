@@ -2054,9 +2054,13 @@ field must resolve to a list, and an absent or non-list value refuses
 `inbox_item_invalid` without posting. Any other input -- an object, an array,
 an empty array, an object that holds an `items` field -- is one item, posted
 exactly as it resolved. The daemon attaches to each item only the Captures its
-own dependency closure reached; a list built from more than one Capture that
-keeps no per-element lineage refuses `inbox_item_evidence_ambiguous` rather
-than lending every element every Capture. A run posts at most the terminal's
+own references select, by exact path: a whole step output, all of its
+Captures; a produced `items` list, its elements' own; one element
+(`items.<i>`), that element's alone. A reference into part of a value built
+from more than one Capture with no lineage for that part -- a sibling field, a
+nested list, a list without per-element lineage -- refuses
+`inbox_item_evidence_ambiguous` rather than lending the item another part's
+evidence. A run posts at most the terminal's
 `max_items` (100 when it declares none, at most 1000), counted across its
 `post_inbox` terminals; the rest are not posted and the terminal reports
 `inbox_truncation` (`cap`, `cap_source`, `selected`, `posted`). One item may be

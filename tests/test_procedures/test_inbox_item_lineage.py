@@ -137,3 +137,71 @@ def test_the_run_byte_bound_counts_every_inbox_terminal_of_the_run() -> None:
     assert refused.value.refusal.code == "inbox_item_over_budget"
     assert refused.value.refusal.details["bound"] == "run"
     assert INBOX_ITEM_MAX_BYTES < INBOX_RUN_MAX_BYTES
+
+
+# --- the single payload and literal fan-out select evidence by exact path ---------
+# (delta review F-001: the reviewer's three probes)
+
+
+def test_a_single_reference_to_an_exact_items_path_keeps_only_its_captures(
+    tmp_path: Path,
+) -> None:
+    """`bundle.items` holds A's records; its sibling `bundle.other` holds B's."""
+
+    state = _bundle(_two_lists())
+
+    values, tokens = _inbox_items(  # type: ignore[arg-type]
+        InboxEgressNode(node_id="inbox", input="$steps.bundle.items"), state=state
+    )
+
+    assert values == [state.outputs["a"]["items"]]
+    assert _posted_captures(tmp_path, values, tokens) == [(_FEED_A,)]
+
+
+def test_literal_members_selecting_indexed_elements_keep_each_elements_lineage(
+    tmp_path: Path,
+) -> None:
+    state = _two_capture_state(lambda a, b: (frozenset({a}), frozenset({b})))
+
+    values, tokens = _inbox_items(  # type: ignore[arg-type]
+        _node(["$steps.joined.items.0", "$steps.joined.items.1"]), state=state
+    )
+
+    assert _posted_captures(tmp_path, values, tokens) == [(_FEED_A,), (_FEED_B,)]
+
+
+def test_a_literal_member_selecting_an_ambiguous_sibling_refuses() -> None:
+    state = _bundle(_two_lists())
+
+    with pytest.raises(_RunRefusal) as refused:
+        _inbox_items(_node(["$steps.bundle.other"]), state=state)  # type: ignore[arg-type]
+
+    assert refused.value.refusal.code == "inbox_item_evidence_ambiguous"
+    assert refused.value.refusal.details == {
+        "field": "input.items",
+        "reason": "lineage_unavailable",
+    }
+
+
+def test_a_single_payload_selecting_an_ambiguous_sibling_refuses() -> None:
+    state = _bundle(_two_lists())
+
+    with pytest.raises(_RunRefusal) as refused:
+        _inbox_items(  # type: ignore[arg-type]
+            InboxEgressNode(node_id="inbox", input={"rows": "$steps.bundle.other"}), state=state
+        )
+
+    assert refused.value.refusal.code == "inbox_item_evidence_ambiguous"
+    assert refused.value.refusal.details == {"field": "input", "reason": "lineage_unavailable"}
+
+
+def test_a_whole_alias_reference_carries_every_capture_that_built_it(tmp_path: Path) -> None:
+    """A legitimate multi-Capture closure is kept when the selected value is the whole alias."""
+
+    state = _two_capture_state(lambda a, b: None)
+
+    values, tokens = _inbox_items(  # type: ignore[arg-type]
+        InboxEgressNode(node_id="inbox", input="$steps.joined"), state=state
+    )
+
+    assert _posted_captures(tmp_path, values, tokens) == [(_FEED_A, _FEED_B)]
