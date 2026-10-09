@@ -1214,6 +1214,7 @@ section nothing answers "what touches this package" from the object side.
 ~~~text
 cruxible claim-type propose --template
 cruxible claim-type propose --input FILE|- --name NAME [--dry-run|--commit] [--at OID] [--json]
+cruxible claim-type propose --builtin semantic.alias [--name NAME] [--dry-run|--commit] [--json]
 cruxible claim-type migrate REQUEST_FILE|- [--json]
 cruxible claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate]
   [--dry-run|--commit] [--at OID] [--json]
@@ -1246,6 +1247,25 @@ preflight deliver the same typed lint; advisories never enter candidate identity
 the approval frontier, or its certificate. `migrate` atomically succeeds the
 ClaimType and disposes every dependent the request names; it never authors
 retirement decisions from diagnostics.
+
+Core ships builtin ClaimTypes, and a new instance starts with every one of them.
+`semantic.alias` states another name a Subject is known by (any kind; many
+values; stored in the canonical form `nfc, casefold, collapse_whitespace,
+trim`). An instance created before a builtin shipped adopts it with
+`propose --builtin NAME`, which proposes its exact envelope; MCP's
+`cruxible_claim_type_propose` takes `builtin` in place of `input`, and the SDK
+offers `Cruxible.builtin_claim_type(name).propose(...)`. Add an alias with
+`cruxible add KIND/ID semantic.alias other-name --because TEXT`.
+
+Every Subject reference resolves through aliases: a write's subject, a
+Subject-valued value or `expect`, a Claim member's subject or object, a compact
+query's `subject_id` or Subject-valued filter, a named query's entry or
+`subject_reference` parameter, a ProcedureMandate's subject scope and fixed
+Subject parameters, and `inbox link --subject`. A reference `kind/id` that names
+no Subject resolves to the one live Subject of that kind whose alias, under the
+discovery normalizer, equals `id`; an alias naming several refuses
+(`alias_ambiguous`) with each candidate; none leaves the entry point's own rule
+in force (a write adds the Subject, a read refuses the unknown reference).
 
 `migrate` is the operator form of a ClaimType succession: one vocabulary change,
 built from a request file, with nothing else in the generation. The agent form is

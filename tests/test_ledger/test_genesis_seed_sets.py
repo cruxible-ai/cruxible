@@ -44,6 +44,10 @@ FROZEN_SEED_SETS = (
         "triggers-3-workspace-file",
         "8fb1f6c0544d1174140f749ca2a0cd9e9926acae142537a2c92d9dacedb641e4",
     ),
+    (
+        "triggers-3-workspace-file-alias",
+        "12192308c79b75795a055cdbdebfe4c3fad0bf5038db0ae84a4d61046bb85d55",
+    ),
 )
 
 

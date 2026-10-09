@@ -641,6 +641,81 @@ class PlaybillQueryReceiptJournal:
         )
 
 
+def parameters_through_aliases(
+    instance: PlaybillInstance,
+    definition: AcceptedQueryDefinition,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    parameters: Mapping[str, object],
+) -> Mapping[str, object]:
+    """Caller parameters with every Subject reference resolved through its aliases.
+
+    The entry's Subject-id parameter, and every parameter the query declares as a
+    ``subject_reference``, is a Subject reference: one that names no Subject
+    resolves through the aliases of its kind (``semantic.alias``), and an alias
+    naming several refuses ``cruxible.query.alias_ambiguous`` with each.
+    """
+
+    from cruxible_core.indexes.subject_aliases import resolve_reference_text, resolve_subject_ref
+    from cruxible_core.service.discovery.query_vocabulary import query_refusal
+
+    query = definition.query
+    entry = query.entry
+    entry_parameter = (
+        entry.subject_id.parameter
+        if not isinstance(entry, QueryArtifactsEntry) and entry.subject_id is not None
+        else None
+    )
+    references = {item.name for item in query.parameters if item.value_type == "subject_reference"}
+    wanted = [
+        name
+        for name, value in parameters.items()
+        if isinstance(value, str) and (name == entry_parameter or name in references)
+    ]
+    if not wanted:
+        return parameters
+
+    def ambiguous(name: str, kind: str, candidates: tuple[str, ...]) -> Exception:
+        return query_refusal(
+            "cruxible.query.alias_ambiguous",
+            f"parameter {name!r} names no Subject, and an alias of {kind} names "
+            f"{len(candidates)} of them",
+            nearest=candidates,
+            repair="pass one of the listed Subjects",
+            field_path=f"params.{name}",
+        )
+
+    resolved = dict(parameters)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        for name in wanted:
+            value = str(parameters[name])
+            if name == entry_parameter and not isinstance(entry, QueryArtifactsEntry):
+                matches: set[str] = set()
+                for kind in entry.subject_kinds:
+                    resolution = resolve_subject_ref(connection, kind, value)
+                    if resolution.ambiguous:
+                        raise ambiguous(name, kind, resolution.candidates)
+                    if resolution.via == "identity":
+                        matches = {value}
+                        break
+                    if resolution.ref is not None:
+                        matches.add(resolution.ref.partition("/")[2])
+                if len(matches) > 1:
+                    raise ambiguous(name, "/".join(entry.subject_kinds), tuple(sorted(matches)))
+                if matches:
+                    resolved[name] = next(iter(matches))
+                continue
+            found = resolve_reference_text(connection, value)
+            if found is None:
+                continue
+            spelled, resolution = found
+            if resolution.ambiguous:
+                raise ambiguous(name, resolution.kind, resolution.candidates)
+            resolved[name] = spelled
+    return resolved
+
+
 def evaluate_accepted_query(
     instance: PlaybillInstance,
     definition: AcceptedQueryDefinition,
@@ -653,6 +728,10 @@ def evaluate_accepted_query(
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
 ) -> ClaimQueryResult:
     """One dispatch for public reads and projection currency, with lazy Claim facts."""
+    if parameters:
+        parameters = parameters_through_aliases(
+            instance, definition, coordinate=coordinate, parameters=parameters
+        )
     if isinstance(definition.query.entry, QueryArtifactsEntry):
 
         def read(

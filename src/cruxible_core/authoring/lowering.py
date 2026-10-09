@@ -253,6 +253,11 @@ from cruxible_core.compiler.projection_artifacts import (
 )
 from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree, fork_tree
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_aliases import (
+    resolve_reference_text,
+    resolve_subject_ref,
+    split_reference,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 
 
@@ -595,6 +600,70 @@ def _exact_object(
     )
 
 
+_PayloadV1T = TypeVar("_PayloadV1T", bound=ClaimAuthoringPayloadV1)
+
+
+def _with_aliases_resolved(
+    instance: PlaybillInstance,
+    base: AcceptedProjectionCoordinate,
+    tree: Mapping[str, bytes],
+    payload: _PayloadV1T,
+) -> _PayloadV1T:
+    """Resolve a Subject the Claim names through its aliases (``semantic.alias``).
+
+    A statement subject or Subject-valued object whose path is not in the tree
+    being written resolves to the one live Subject of its kind an alias names
+    (``indexes.subject_aliases``); several refuse naming each; none leaves the
+    address as written, for the referent laws to refuse.
+    """
+
+    def resolved(address: SemanticAddress, element: str) -> SemanticAddress:
+        path = address.artifact_path
+        if (
+            address.selector.scheme != "artifact-v1"
+            or not path.startswith("subjects/")
+            or path in tree
+        ):
+            return address
+        kind, _, rest = path.removeprefix("subjects/").partition("/")
+        subject_id = rest.removesuffix(".json")
+        if not kind or not subject_id:
+            return address
+        with instance.bind_accepted_projection(base) as projection:
+            resolution = resolve_subject_ref(projection.typed.connection, kind, subject_id)
+        if resolution.ambiguous:
+            _refuse(
+                "cruxible.authoring.alias_ambiguous",
+                element,
+                f"{kind}/{subject_id} names no Subject, and an alias of {kind} names "
+                f"{len(resolution.candidates)}: {', '.join(resolution.candidates)}.",
+                repair_kind="replace_subject",
+                repair_description="Name one of the listed Subjects as kind/id.",
+                replacement={"candidates": list(resolution.candidates)},
+            )
+        if resolution.via != "alias" or resolution.path is None or resolution.path not in tree:
+            return address
+        return SemanticAddress.whole_artifact(resolution.path)
+
+    statement = payload.statement
+    drafted = (
+        isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayload)
+        and payload.dependency_drafts.subject is not None
+    )
+    # A Subject the Claim drafts in the same change is named exactly, never by alias.
+    subject = statement.subject if drafted else resolved(statement.subject, "statement.subject")
+    value = statement.object
+    if isinstance(value, SubjectClaimObject):
+        target = resolved(value.address, "statement.object.address")
+        if target != value.address:
+            value = SubjectClaimObject(address=target)
+    if subject == statement.subject and value is statement.object:
+        return payload
+    return payload.model_copy(
+        update={"statement": statement.model_copy(update={"subject": subject, "object": value})}
+    )
+
+
 def _canonical_object(
     value: LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject,
     claim_type: ClaimType,
@@ -680,8 +749,8 @@ def canonical_authored_claims(payload: _PayloadT, read: Callable[[str], bytes | 
         if all(new is old for new, old in zip(rewritten, payload.members, strict=True)):
             return payload
         by_identity: dict[str, int] = {}
-        for index, member in enumerate(rewritten):
-            identity = authoring_member_identity(cast(AuthoringChangeSetMember, member))
+        for index, written in enumerate(rewritten):
+            identity = authoring_member_identity(cast(AuthoringChangeSetMember, written))
             if identity in by_identity:
                 raise AuthoringDuplicateStatement(
                     f"{AuthoringDuplicateStatement.error_code}: members "
@@ -1132,6 +1201,7 @@ def _lower_claim(
             )
     claim_id = intent.semantic_identity if claim_identity is None else claim_identity
     type_path = claim_type_path(payload.statement.predicate)
+    payload = _with_aliases_resolved(instance, base, base_tree, payload)
     candidate_base_tree, dependency_paths = _install_claim_dependencies(
         payload,
         base_tree=base_tree,
@@ -2853,10 +2923,50 @@ def _check_line_parameters(
         )
 
 
+def _mandate_alias_resolver(
+    instance: PlaybillInstance,
+    base: AcceptedProjectionCoordinate,
+    tree: Mapping[str, bytes],
+) -> Callable[[str, str], str]:
+    """Resolve a Subject reference a mandate names through its aliases, at ``base``.
+
+    A reference already in ``tree`` stands as written; one that names no Subject
+    resolves to the one live Subject of its kind an alias names; several refuse
+    ``cruxible.authoring.alias_ambiguous`` naming each.
+    """
+
+    def resolve(value: str, element: str) -> str:
+        parts = split_reference(value)
+        if parts is None:
+            return value
+        _prefix, kind, subject_id = parts
+        if f"subjects/{kind}/{subject_id}.json" in tree:
+            return value
+        with instance.bind_accepted_projection(base) as projection:
+            found = resolve_reference_text(projection.typed.connection, value)
+        if found is None:
+            return value
+        spelled, resolution = found
+        if resolution.ambiguous:
+            _refuse(
+                "cruxible.authoring.alias_ambiguous",
+                element,
+                f"{kind}/{subject_id} names no Subject, and an alias of {kind} names "
+                f"{len(resolution.candidates)}: {', '.join(resolution.candidates)}.",
+                repair_kind="replace_subject",
+                repair_description="Name one of the listed Subjects as kind/id.",
+                replacement={"candidates": list(resolution.candidates)},
+            )
+        return spelled
+
+    return resolve
+
+
 def _render_procedure_mandate_member(
     payload: ProcedureMandateAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
+    resolve: Callable[[str, str], str] | None = None,
 ) -> tuple[str, bytes, str]:
     target_path = procedure_path(payload.procedure_name)
     target_content = tree.get(target_path)
@@ -2915,6 +3025,15 @@ def _render_procedure_mandate_member(
                 repair_description="Name a QueryDefinition present at the authoring coordinate.",
             )
         query = parse_query_definition(query_content, path=query_path)
+        fixed = dict(payload.condition.fixed_parameters)
+        if resolve is not None:
+            # A fixed Subject reference names its Subject through its aliases.
+            for declared in query.parameters:
+                value = fixed.get(declared.name)
+                if declared.value_type == "subject_reference" and isinstance(value, str):
+                    fixed[declared.name] = resolve(
+                        value, f"condition.fixed_parameters.{declared.name}"
+                    )
         condition = MandateCondition(
             query=ArtifactPin(
                 role="condition-query",
@@ -2922,7 +3041,7 @@ def _render_procedure_mandate_member(
                 artifact_digest=query_definition_digest(query).tagged,
             ),
             binding_parameter=payload.condition.binding_parameter,
-            fixed_parameters=payload.condition.fixed_parameters,
+            fixed_parameters=fixed,
             required_fields=tuple(sorted(set(payload.condition.required_fields))),
             fallback=payload.condition.fallback,
         )
@@ -2942,7 +3061,19 @@ def _render_procedure_mandate_member(
         subject_scope=(
             None
             if payload.subject_scope is None
-            else tuple(sorted(set(payload.subject_scope), key=lambda item: item.artifact_path))
+            else tuple(
+                sorted(
+                    {
+                        address
+                        if resolve is None or address.selector.scheme != "artifact-v1"
+                        else SemanticAddress.whole_artifact(
+                            resolve(address.artifact_path, f"subject_scope[{index}]")
+                        )
+                        for index, address in enumerate(payload.subject_scope)
+                    },
+                    key=lambda item: item.artifact_path,
+                )
+            )
         ),
         condition=condition,
         suspended=payload.suspended,
@@ -3398,7 +3529,11 @@ def _stage_change_set_member(
         )
         return fork_tree(lowered.proposed_tree), dict(lowered.resolved_authoring), set(), {}
     if isinstance(member, ProcedureMandateAuthoringPayload):
-        mandate_path, content, digest = _render_procedure_mandate_member(member, tree=staged_tree)
+        mandate_path, content, digest = _render_procedure_mandate_member(
+            member,
+            tree=staged_tree,
+            resolve=_mandate_alias_resolver(instance, base, staged_tree),
+        )
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[mandate_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
@@ -4023,6 +4158,7 @@ def lower_authoring(
         path, content, digest = _render_procedure_mandate_member(
             intent.payload,
             tree=base_tree,
+            resolve=_mandate_alias_resolver(instance, base, base_tree),
         )
         candidate_tree = fork_tree(base_tree)
         candidate_tree[path] = content

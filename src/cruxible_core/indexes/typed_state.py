@@ -620,10 +620,16 @@ def vocabulary_terms(source: Any, *, path: str) -> tuple[tuple[str, str, str, st
     A live ClaimType or Subject contributes its identity, canonical tokens and
     structural signature for its own whole-artifact interface; a live
     descriptor Claim contributes the alias, tag or relation label it states
-    about a whole-artifact address. ``term`` is the exact normalized match key
-    the retired reuse law compared; ``value`` is the raw text an interface
-    carries. Only replay and settlement under the historical ClaimType law
-    revisions read this index (``proposals.historical_reuse``).
+    about a whole-artifact address. ``term`` is the match key under the
+    discovery normalizer (``normalize_discovery_term``); ``value`` is the raw
+    text an interface carries. It is maintained incrementally at accept: a
+    changed owner's rows are replaced (``replace_rows``), never the table.
+
+    Two readers (maintainer ruling identity-design-1009, D3): the live alias
+    resolver (``indexes.subject_aliases``) reads the ``alias`` rows at every
+    Subject-reference entry point, and replay or settlement under the
+    historical ClaimType law revisions reads the rest
+    (``proposals.historical_reuse``).
     """
     from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
     from cruxible_client.contracts.claims import (

@@ -21,6 +21,10 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Literal
 
+from cruxible_client.contracts.builtin_claim_types import (
+    SEMANTIC_SUBJECT_KIND,
+    concrete_subject_kinds,
+)
 from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
     canonicalize_literal,
@@ -169,6 +173,19 @@ class QueryVocabulary:
             info for _name, info in sorted(self.predicates.items()) if kind in info.subject_kinds
         )
 
+    def descriptor(self, name: str) -> PredicateInfo | None:
+        """A descriptor predicate (``semantic.alias``) named in full, for any kind.
+
+        A descriptor ClaimType admits ``semantic.subject``: it states something
+        about a Subject of every kind. It is not listed among a kind's fields; a
+        read or a write names it by its full predicate.
+        """
+
+        info = self.predicates.get(name)
+        if info is None or SEMANTIC_SUBJECT_KIND not in info.subject_kinds:
+            return None
+        return info
+
     def incoming(self, kind: str) -> tuple[PredicateInfo, ...]:
         """The Subject-valued predicates whose values may name Subjects of ``kind``.
 
@@ -211,6 +228,9 @@ class QueryVocabulary:
     def _resolved(self, kinds: tuple[str, ...], name: str) -> dict[str, PredicateInfo]:
         """Every predicate one field names for any of these kinds (Addenda 2 and 3)."""
 
+        descriptor = self.descriptor(name)
+        if descriptor is not None:
+            return {descriptor.predicate: descriptor}
         applicable = {
             kind: {info.predicate: info for info in self.predicates_of(kind)} for kind in kinds
         }
@@ -226,6 +246,8 @@ class QueryVocabulary:
         target) the short form is kept only when it names no other predicate.
         """
 
+        if self.descriptor(info.predicate) is not None:
+            return info.predicate
         for kind in kinds:
             if kind not in info.subject_kinds:
                 continue
@@ -297,7 +319,7 @@ def load_query_vocabulary(
                 subject_kinds=tuple(claim_type.allowed_subject_kinds),
                 object_kinds=tuple(claim_type.allowed_object_subject_kinds),
             )
-            kinds.update(claim_type.allowed_subject_kinds)
+            kinds.update(concrete_subject_kinds(claim_type.allowed_subject_kinds))
             kinds.update(claim_type.allowed_object_subject_kinds)
         kinds.update(
             str(row[0])

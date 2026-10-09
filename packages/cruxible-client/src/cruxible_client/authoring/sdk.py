@@ -2757,6 +2757,19 @@ class Cruxible:
         )
         return ClaimTypeDraft(self, definition)
 
+    def builtin_claim_type(self, name: str) -> ClaimTypeDraft:
+        """A ClaimType core ships (``semantic.alias``), as a draft to adopt it.
+
+        New instances start with every builtin; an instance created before one
+        shipped adopts it by proposing its exact envelope.
+
+        Next: ``draft.propose(proposal_name=...)``.
+        """
+
+        from cruxible_client.contracts.builtin_claim_types import builtin_claim_type
+
+        return ClaimTypeDraft(self, builtin_claim_type(name))
+
     def world(self) -> World:
         """Read this instance's accepted vocabulary as typed objects.
 

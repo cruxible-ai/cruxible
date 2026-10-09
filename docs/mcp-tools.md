@@ -243,7 +243,7 @@ The principal registry is `orient(section="principals")`; one record is
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_claim_type_propose` | Propose a governed predicate interface | `GOVERNED_WRITE` |
+| `cruxible_claim_type_propose` | Propose a governed predicate interface, or adopt a builtin (`builtin: semantic.alias`) | `GOVERNED_WRITE` |
 | `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_claim_type_upgrade` | Propose moving older ClaimTypes to v7 (identity evidence rules included), stating their revision evidence | `GOVERNED_WRITE` |
 | `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
