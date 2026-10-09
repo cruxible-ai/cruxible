@@ -32062,6 +32062,17 @@
               "line_dispatch": {
                 "$ref": "#/$defs/NextHealth"
               },
+              "prior_refusal_coverage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PriorRefusalCoverage"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "procedure_catalog": {
                 "$ref": "#/$defs/NextHealth"
               },
@@ -32091,6 +32102,34 @@
               "triggers"
             ],
             "title": "NextStatus",
+            "type": "object"
+          },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
             "type": "object"
           },
           "RepairOperation": {
@@ -32323,6 +32362,25 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/NextHealth"
+          }
+        },
+        "prior_refusal_coverage": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "prior_refusal_coverage",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "procedure_catalog": {
@@ -32653,6 +32711,34 @@
             "title": "NextRepairRequirement",
             "type": "object"
           },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
+            "type": "object"
+          },
           "RepairOperation": {
             "additionalProperties": false,
             "properties": {
@@ -32704,6 +32790,17 @@
           },
           "line_dispatch": {
             "$ref": "#/$defs/NextHealth"
+          },
+          "prior_refusal_coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "procedure_catalog": {
             "$ref": "#/$defs/NextHealth"
