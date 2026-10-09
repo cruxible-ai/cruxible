@@ -118,6 +118,40 @@ def resolve_subject_ref(
     )
 
 
+def creation_collisions(
+    connection: sqlite3.Connection,
+    kind: str,
+    subject_id: str,
+    *,
+    exempt: frozenset[str] = frozenset(),
+    terms_table: str = "vocabulary_terms",
+    subjects_table: str = "subjects",
+) -> tuple[str, ...]:
+    """The live Subjects of ``kind`` a new ``kind/id`` would collide with, as ``kind/id``.
+
+    A new Subject collides with an existing one of its kind whose id, canonical
+    token or alias equals the new id's canonical token (the discovery
+    normalizer): the same thing would then have two Subjects. ``exempt`` names
+    Subject paths the author asserted distinct (``semantic.distinct_from``).
+    """
+
+    low, high = _kind_range(kind)
+    new_path = f"{_SUBJECTS}{kind}/{subject_id}.json"
+    rows = connection.execute(
+        f"SELECT DISTINCT target_path FROM {terms_table} "
+        "WHERE term=? AND basis IN ('canonical_token','alias') "
+        "AND target_path>=? AND target_path<? ORDER BY target_path",
+        (normalize_discovery_term(subject_id), low, high),
+    ).fetchall()
+    return tuple(
+        _ref_of(str(row[0]))
+        for row in rows
+        if str(row[0]) != new_path
+        and str(row[0]) not in exempt
+        and _subject(connection, str(row[0]), table=subjects_table, live=True)
+    )
+
+
 def split_reference(value: str) -> tuple[str, str, str] | None:
     """``(prefix, kind, id)`` of ``Subject:kind/id``, ``kind/id`` or a Subject path.
 
@@ -161,6 +195,7 @@ def resolve_reference_text(
 __all__ = [
     "SubjectRefResolution",
     "alias_targets",
+    "creation_collisions",
     "resolve_reference_text",
     "resolve_subject_ref",
     "split_reference",

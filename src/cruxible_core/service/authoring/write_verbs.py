@@ -137,7 +137,11 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import ComputedPreflight
 from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.indexes.subject_aliases import SubjectRefResolution, resolve_subject_ref
+from cruxible_core.indexes.subject_aliases import (
+    SubjectRefResolution,
+    creation_collisions,
+    resolve_subject_ref,
+)
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.change_preview import compact_coordinate, preview_guards
@@ -706,6 +710,55 @@ class _Planner:
                 field_path=path,
             )
         return resolution
+
+    def _asserted_distinct(self, created: str) -> frozenset[str]:
+        """Subject paths this write asserts ``semantic.distinct_from`` the created one."""
+
+        found: set[str] = set()
+        for change in self.request.changes:
+            if not isinstance(change, SetChange | AddChange):
+                continue
+            if change.field != "semantic.distinct_from" or not isinstance(change.value, str):
+                continue
+            pair: set[str] = set()
+            for ref in (change.subject, str(subject_reference(change.value))):
+                kind, _, subject_id = (ref or "").partition("/")
+                if kind and subject_id:
+                    pair.add(f"subjects/{kind}/{subject_id}.json")
+            if created in pair:
+                found.update(pair - {created})
+        return frozenset(found)
+
+    def check_creation(self, kind: str, subject_id: str, *, index: int, path: str) -> None:
+        """Refuse adding a Subject that collides with an accepted Subject of its kind.
+
+        The new id's canonical token equals an accepted Subject's id, canonical
+        token or alias: the same thing would have two Subjects. A
+        ``semantic.distinct_from`` between the two in the same write exempts it.
+        """
+
+        created = f"subjects/{kind}/{subject_id}.json"
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            collisions = creation_collisions(
+                projection.typed.connection,
+                kind,
+                subject_id,
+                exempt=self._asserted_distinct(created),
+            )
+        if collisions:
+            raise _refuse(
+                "cruxible.write.subject_collision",
+                f"adding {kind}/{subject_id} would collide with {', '.join(collisions)}: "
+                "its id, canonical token or alias is the same name",
+                change=index,
+                candidates=collisions,
+                repair=(
+                    f"Name {collisions[0]} instead; or add a semantic.alias to it; or add "
+                    f"semantic.distinct_from {collisions[0]} to {kind}/{subject_id} in the "
+                    "same write"
+                ),
+                field_path=path,
+            )
 
     def resolve_subject(self, subject: str, *, index: int, path: str) -> tuple[str, str, str]:
         kind, _, subject_id = subject.partition("/")
@@ -1339,6 +1392,7 @@ class _Planner:
             info, change, role=role, index=index, field_name=name, exact=exact, capture=capture
         )
         if not self.subject_exists(path) and path not in self.plan.subjects:
+            self.check_creation(kind, subject_id, index=index, path=f"{prefix}.subject")
             if not applies_to_kind(
                 claim_type.allowed_subject_kinds, kind
             ):  # pragma: no cover - resolve_field

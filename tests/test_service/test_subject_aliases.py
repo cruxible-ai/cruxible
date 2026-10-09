@@ -279,3 +279,102 @@ def test_an_instance_created_before_the_builtin_adopts_it(
     assert receipt.status == "accepted"
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert tree[claim_type_path("semantic.alias")] == render_claim_type(SEMANTIC_ALIAS_CLAIM_TYPE)
+
+
+# -- creation collision (item 4) -------------------------------------------------
+
+
+def _subject_member(subject_id: str) -> Any:
+    from cruxible_client.contracts.authoring.models import SubjectAuthoringPayload
+    from tests.core_support._identity_support import shell
+
+    return SubjectAuthoringPayload(subject=shell(subject_id))
+
+
+def _compile(instance: PlaybillInstance, *members: Any) -> Any:
+    from cruxible_client.contracts.authoring.models import (
+        ChangeSetAuthoringPayload,
+        authoring_member_identity,
+    )
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+
+    payload = ChangeSetAuthoringPayload.model_validate(
+        {
+            "members": sorted(
+                members, key=lambda item: authoring_member_identity(item).encode("utf-8")
+            )
+        }
+    )
+    return AuthoringIntentCoordinator.for_instance(instance).compile(
+        actor=OWNER, payload=payload, canonical_timestamp="2026-10-09T12:00:00.000000Z"
+    )
+
+
+def test_a_new_subject_colliding_with_an_alias_of_its_kind_refuses(
+    instance: PlaybillInstance,
+) -> None:
+    alias(instance, ALPHA, "a-one")
+    result = _compile(instance, _subject_member("a-one"))
+    (diagnostic,) = [
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "cruxible.authoring.subject_collision"
+    ]
+    assert ALPHA in diagnostic.message
+    # A name no Subject of the kind carries is created as before.
+    assert not [
+        item
+        for item in _compile(instance, _subject_member("fresh")).frontier.diagnostics
+        if item.code == "cruxible.authoring.subject_collision"
+    ]
+
+
+def test_asserting_distinct_from_in_the_same_change_exempts_the_pair(
+    instance: PlaybillInstance,
+) -> None:
+    import base64
+
+    from cruxible_client.contracts.authoring.models import (
+        AuthoringClaimStatement,
+        ClaimAuthoringPayloadV2,
+        ClaimDependencyDrafts,
+        SelfSourceBody,
+    )
+    from cruxible_client.contracts.claims import SubjectClaimObject
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from tests.core_support._identity_support import accept_tree, identity_claim_type
+
+    distinct = identity_claim_type(
+        "distinct_from",
+        canonical_form=None,
+        object_kind="subject",
+        cardinality="many",
+        # Lowering checks the object's own kind and the Claim law the descriptor
+        # pseudo-kind, so a descriptor relation names both.
+        object_kinds=(KIND, "semantic.subject"),
+        predicate="semantic.distinct_from",
+        subject_kinds=("semantic.subject",),
+    )
+    accept_tree(
+        instance,
+        {claim_type_path(distinct.predicate): render_claim_type(distinct)},
+        name="distinct-from",
+    )
+    alias(instance, ALPHA, "a-one")
+    asserted = ClaimAuthoringPayloadV2(
+        statement=AuthoringClaimStatement(
+            subject=SemanticAddress.whole_artifact(subject_path(KIND, "a-one")),
+            predicate="semantic.distinct_from",
+            object=SubjectClaimObject(
+                address=SemanticAddress.whole_artifact(subject_path(KIND, "alpha"))
+            ),
+            role="observation",
+        ),
+        rationale="A different package that shares the name.",
+        source=SelfSourceBody(content_base64=base64.b64encode(b"different").decode()),
+        dependency_drafts=ClaimDependencyDrafts(),
+    )
+    result = _compile(instance, _subject_member("a-one"), asserted)
+    codes = [item.code for item in result.frontier.diagnostics]
+    assert "cruxible.authoring.subject_collision" not in codes, codes
+    assert result.verdict == "passed", codes
