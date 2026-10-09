@@ -11,7 +11,13 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any
 
-from cruxible_core.consumers.next import curation, evidence, predictions, queue
+from cruxible_core.consumers.next import (
+    curation,
+    evidence,
+    predictions,
+    queue,
+    settled_refusals,
+)
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
@@ -27,12 +33,14 @@ _PARTS: dict[
     queue.ClaimQueuePart
     | evidence.EvidencePart
     | predictions.PredictionPart
-    | curation.CurationPart,
+    | curation.CurationPart
+    | settled_refusals.SettledRefusalsPart,
 ] = {
     "queue": queue._PART,
     "evidence": evidence._PART,
     "prediction": predictions._PART,
     "curation": curation._PART,
+    "settled_refusals": settled_refusals._PART,
 }
 
 _CONTROL = DisposableState(

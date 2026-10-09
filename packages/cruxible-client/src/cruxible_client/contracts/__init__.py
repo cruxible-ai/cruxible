@@ -272,6 +272,10 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.read_values import TruncatedText as TruncatedText
 from cruxible_client.contracts.read_values import WholeValueRead as WholeValueRead
+from cruxible_client.contracts.refusal_receipts import (
+    PriorRefusalCoverage as PriorRefusalCoverage,
+)
+from cruxible_client.contracts.refusal_receipts import PriorRefusalReceipt as PriorRefusalReceipt
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReference as ClaimVersionReference,
 )
@@ -373,6 +377,7 @@ NextReason: TypeAlias = Literal[
     "consumer_stalled",
     "line_coverage_gap",
     "line_work_pending",
+    "line_settled_prior_refusals",
     "line_inbox_unread",
     "evidence_unavailable",
     "prediction_settleable",
@@ -853,6 +858,8 @@ class ReviewedMember(BaseModel):
     law_digest: str
     law_evidence: dict[str, Any]
     dependency_proof_refs: list[dict[str, Any]]
+    # Earlier refusals of this Claim's statement on the same evidence, as recorded.
+    prior_refusals: list[PriorRefusalReceipt] = Field(default_factory=list)
 
 
 class ProjectionAdvisory(BaseModel):
@@ -926,6 +933,7 @@ class ProposalReview(BaseModel):
     redactions: list[str]
     projection_advisory: ProjectionAdvisory | None = None
     projection_evidence: ProjectionEvidence | None = None
+    prior_refusal_coverage: PriorRefusalCoverage | None = None
 
 
 class ApprovalChallenge(BaseModel):
@@ -1535,6 +1543,8 @@ class NextStatus(BaseModel):
     #: Rows parked by a current ``unsure`` attestation. No row is left out for
     #: the caller: one whose repair it cannot run keeps `repair_requires`.
     held: int = Field(default=0, ge=0)
+    #: Present only while the earlier-refusal index lags the accepted head.
+    prior_refusal_coverage: PriorRefusalCoverage | None = None
 
 
 class NextResult(BaseModel):

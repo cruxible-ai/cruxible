@@ -26,6 +26,10 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlan,
 )
+from cruxible_client.contracts.refusal_receipts import (
+    PriorRefusalCoverage,
+    PriorRefusalReceipt,
+)
 from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.workspace_file import (
@@ -1056,6 +1060,9 @@ class ProcedureTerminalEgressChild(_StrictResultModel):
     manifest_digest: str
     egress_digest: str | None = None
     path: str | None = None
+    # A delivered proposal item whose statement, on the same evidence, was
+    # retired or rejected before: each earlier refusal, exactly as recorded.
+    prior_refusals: tuple[PriorRefusalReceipt, ...] = ()
 
     _digests = field_validator("manifest_digest")(_digest)
 
@@ -1117,9 +1124,15 @@ class ProcedureTerminalEgress(_StrictResultModel):
     settle_outcome: Literal["settled", "proposed"] | None = None
     accepted_git_oid: str | None = None
     fallback_reason: str | None = None
+    # A fallback for cruxible.settle.outside_mandate_scope: the ClaimTypes the
+    # settle grant's scope left out, so the change proposed instead.
+    outside_scope_claim_types: tuple[str, ...] = ()
     # A settle terminal the run's authority capped at propose: the term that
     # capped it. Its request asked for propose authority only.
     capped_by: ServedAuthorityTerm | None = None
+    # Present only while the earlier-refusal index is catching up: the
+    # children's receipts reflect retirements through the generation named.
+    prior_refusal_coverage: PriorRefusalCoverage | None = None
     # A post_inbox terminal that selected more items than its run may post.
     inbox_truncation: InboxPostTruncation | None = Field(
         default=None, exclude_if=lambda value: value is None

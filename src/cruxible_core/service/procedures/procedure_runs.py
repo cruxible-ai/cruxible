@@ -40,6 +40,7 @@ from cruxible_client.contracts.errors import (
     CruxibleError,
     ExecutionError,
     ProjectionIntegrityError,
+    ProposalNotFoundError,
 )
 from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
@@ -2051,6 +2052,7 @@ def _fold_terminal_egress(
             "settle_outcome": receipt.get("outcome"),
             "accepted_git_oid": receipt.get("accepted_git_oid"),
             "fallback_reason": receipt.get("fallback_reason"),
+            "outside_scope_claim_types": tuple(receipt.get("outside_scope_claim_types", ())),
         }
     # The cap is the journaled request's: the prepared record carries it, and
     # every later record of the node keeps it.
@@ -2136,6 +2138,7 @@ def _fold_terminal_egress(
         settle_outcome=cast(Any, settle.get("settle_outcome")),
         accepted_git_oid=cast(Any, settle.get("accepted_git_oid")),
         fallback_reason=cast(Any, settle.get("fallback_reason")),
+        outside_scope_claim_types=cast(Any, settle.get("outside_scope_claim_types", ())),
         capped_by=capped_by,
         inbox_truncation=(
             InboxPostTruncation.model_validate(payload["inbox_truncation"])
@@ -2851,8 +2854,47 @@ def _state_from_records(
         children=tuple(children),
         source_observations=observations,
         terminal_egress=tuple(
-            sorted(terminal_egress.values(), key=lambda item: item.node_id.encode("utf-8"))
+            sorted(
+                (_with_prior_refusals(instance, item) for item in terminal_egress.values()),
+                key=lambda item: item.node_id.encode("utf-8"),
+            )
         ),
+    )
+
+
+def _with_prior_refusals(
+    instance: PlaybillInstance, egress: ProcedureTerminalEgress
+) -> ProcedureTerminalEgress:
+    """Attach to each delivered proposal item its earlier refusals, as recorded.
+
+    A proposed Claim whose statement, on the same evidence, was retired or
+    rejected before its proposal was admitted carries the receipts; nothing
+    else about the run changes.
+    """
+
+    if egress.proposal_id is None or egress.kind not in {
+        "propose_change_set",
+        "settle_change_set",
+    }:
+        return egress
+    try:
+        receipts, coverage = instance.refusal_index().prior_refusals_with_coverage(
+            instance, egress.proposal_id
+        )
+    except ProposalNotFoundError:
+        return egress
+    if not receipts and coverage is None:
+        return egress
+    return egress.model_copy(
+        update={
+            "prior_refusal_coverage": coverage,
+            "children": tuple(
+                child.model_copy(update={"prior_refusals": receipts[child.path]})
+                if child.path in receipts
+                else child
+                for child in egress.children
+            ),
+        }
     )
 
 

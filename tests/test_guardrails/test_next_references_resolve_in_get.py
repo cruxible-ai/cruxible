@@ -63,6 +63,7 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace"]] = {
     "prediction_window_unbindable": "get",
     "line_coverage_gap": "get",
     "line_work_pending": "get",
+    "line_settled_prior_refusals": "get",
     "line_inbox_unread": "get",
 }
 

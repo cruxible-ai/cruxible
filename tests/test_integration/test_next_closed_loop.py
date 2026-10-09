@@ -177,6 +177,8 @@ EXPECTED_OPERATIONS = {
     "line_coverage_gap": "cruxible.line.evaluate",
     # Work matched before a restart waits for an explicit dispatch.
     "line_work_pending": "cruxible.line.dispatch",
+    # Demoting the Line, or repointing it at a fixed Procedure, is a Line successor.
+    "line_settled_prior_refusals": "cruxible.authoring.example",
     # A Line's unread inbox items: the list shows them; judging each clears the row.
     "line_inbox_unread": "cruxible.inbox.list",
     # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
@@ -1587,6 +1589,44 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "mandate_expiring", _request(instance))
 
 
+def _line_settled_prior_refusals(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_spec_digest,
+        line_spec_path,
+        render_line_spec,
+    )
+    from tests.core_support._candidate_support import submit_member_candidate
+    from tests.core_support._knowledge_loop_support import accept_proposal
+    from tests.test_procedures import test_procedure_settlement_delivery as settle
+
+    instance, _root, line, second = settle.settled_refusal_world(root)
+    row = _row(instance, "line_settled_prior_refusals", _request(instance))
+    assert row.subject_identity == line.identity.qualified
+    assert row.related_identities == (f"ProcedureRun:{second.run_id}",)
+    assert row.repair.operation == EXPECTED_OPERATIONS["line_settled_prior_refusals"]
+    assert row.repair.command == "cruxible authoring example line"
+
+    # The repair: a Line successor, here demoted to propose.
+    demoted = line.model_copy(
+        update={
+            "max_authority": "propose",
+            "lifecycle": line.lifecycle.model_copy(
+                update={"predecessor_digest": line_spec_digest(line).tagged}
+            ),
+        }
+    )
+    inspection = submit_member_candidate(
+        instance,
+        members={line_spec_path(demoted.identity.name): render_line_spec(demoted)},
+        actor_id="owner",
+        proposal_name="closed-loop-demote-line",
+        proposal_family="procedure",
+        timestamp="2026-09-12T12:30:00.000000Z",
+    )
+    accept_proposal(instance, settle.OWNERS[instance.root], inspection)
+    _assert_gone(instance, "line_settled_prior_refusals", _request(instance))
+
+
 def _evidence_unavailable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
@@ -1922,6 +1962,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("consumer_stalled", None): _consumer_stalled,
     ("line_coverage_gap", None): _line_coverage_gap,
     ("line_work_pending", None): _line_work_pending,
+    ("line_settled_prior_refusals", None): _line_settled_prior_refusals,
     ("line_inbox_unread", None): _line_inbox_unread,
     ("evidence_unavailable", None): _evidence_unavailable,
     ("prediction_settleable", None): _prediction_settleable,

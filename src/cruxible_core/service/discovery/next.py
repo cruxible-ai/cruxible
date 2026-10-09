@@ -83,6 +83,7 @@ from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityErr
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate, ProcedureMandateV1
+from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
@@ -772,6 +773,12 @@ class PlaybillNextStatusV1(_StrictNextModel):
     #: surface, tool profile or permission tier cannot run is kept with its
     #: repair withheld and ``repair_requires`` set.
     held: int = Field(default=0, ge=0)
+    #: Present only while the earlier-refusal index lags the accepted head, read
+    #: after this answer's own maintenance: receipt counts on proposal rows and
+    #: settled-item counts on Line rows cover retirements through that generation.
+    prior_refusal_coverage: PriorRefusalCoverage | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def _states(self) -> "PlaybillNextStatusV1":
@@ -3846,6 +3853,102 @@ def _consumer_stalled_items(healths: tuple[ConsumerHealth, ...]) -> tuple[Playbi
     )
 
 
+def _line_settled_refusal_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    access_profile: CoverageAccessProfile,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Live Lines whose current version settled items matching earlier refusals.
+
+    Settled items skip review, so a receipt on one is easy to miss. One row per
+    live Line, read from the count kept for the Line's exact spec digest -- one
+    keyed probe per live Line, never a walk of its runs. Counts are computed in
+    post from the run journal (the next consumer's tick, and a bounded catch-up
+    here), never on settle delivery.
+
+    The repair is the Line successor, because that is what closes the row and
+    what the evidence asks for: demote the Line to `max_authority: propose` so
+    its results are reviewed again, or point it at a fixed Procedure. Either is a
+    new Line version, whose count starts empty. The runs that settled the items
+    are named for `get` (the latest in related identities, which `run get` reads
+    with each item's receipts) before deciding which.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        lines = tuple(
+            (str(identity), str(digest))
+            for identity, digest in projection.typed.connection.execute(
+                "SELECT identity,artifact_digest FROM lines WHERE lifecycle='live' "
+                "ORDER BY identity"
+            )
+        )
+    if not lines:
+        return ()
+    from cruxible_core.service.procedures.settled_refusals import (
+        NEXT_CATCH_UP_STEPS,
+        catch_up_settled_refusals,
+        count_settled_refusals_step,
+    )
+
+    # Settlements are counted in post; a bounded catch-up makes the row current
+    # when it is looked at. The read builds the index if it must (as every read
+    # does); a busy index skips the count, and the next read or the consumer's
+    # next tick counts what is left, from the persisted cursor.
+    index = instance.refusal_index()
+    index.coverage(instance)  # a read allowed to wait builds the index if it must
+    catch_up_settled_refusals(instance, steps=NEXT_CATCH_UP_STEPS, wait=False)
+    # The counts and their coverage come from one final read, after this
+    # request's own catch-up: they describe the same snapshot.
+    counts, coverage = index.settled_refusals_with_coverage(instance, lines)
+    if coverage is None:
+        # That read may have completed the retirements the steps were spending
+        # themselves on; count what was waiting on them before answering.
+        step = count_settled_refusals_step(instance, wait=False)
+        if step.records:
+            counts, coverage = index.settled_refusals_with_coverage(instance, lines)
+    items: list[PlaybillNextItemV1] = []
+    for key in lines:
+        found = counts.get(key)
+        if found is None:
+            continue
+        items.append(
+            _item(
+                severity="warning",
+                reason="line_settled_prior_refusals",
+                subject_identity=found.line_identity,
+                related_identities=(f"ProcedureRun:{found.latest_run_id}",),
+                detail={
+                    "line_spec_digest": found.line_spec_digest,
+                    "settled_items_matching_refusals": found.items,
+                    "settled_runs": found.runs,
+                    "latest_run_id": found.latest_run_id,
+                    "latest_settled_at": found.latest_settled_at,
+                    **(
+                        {}
+                        if coverage is None
+                        else {"counted_through_generation": coverage.indexed_through_generation}
+                    ),
+                    "detail": (
+                        f"{found.line_identity} settled {found.items} item"
+                        f"{'s' if found.items != 1 else ''} that match earlier refusals "
+                        "of the same statement on the same evidence; settled items skip "
+                        "review. Read the runs, then fix the Procedure or demote the Line."
+                    ),
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="cruxible.authoring.example",
+                    target=found.line_identity,
+                    required_change="read_the_runs_then_demote_the_line_or_fix_its_procedure",
+                    arguments={"example": "line"},
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _line_attention_items(
     instance: PlaybillInstance,
     *,
@@ -4567,6 +4670,24 @@ def _document_items(
     return tuple(items)
 
 
+def _prior_refusal_detail(instance: PlaybillInstance, proposal_id: str) -> dict[str, object]:
+    """How many earlier refusals a proposal's Claims match, when any do.
+
+    A neutral count of receipts (`proposal review` shows each, as recorded); the
+    row's reason and repair do not change.
+    """
+
+    receipts, coverage = instance.refusal_index().prior_refusals_with_coverage(
+        instance, proposal_id
+    )
+    count = sum(len(items) for items in receipts.values())
+    detail: dict[str, object] = {"prior_refusal_count": count} if count else {}
+    if coverage is not None:
+        # Neutral: the count covers retirements through this generation only.
+        detail["prior_refusals_indexed_through"] = coverage.indexed_through_generation
+    return detail
+
+
 def _proposal_items(
     instance: PlaybillInstance,
     *,
@@ -4602,6 +4723,7 @@ def _proposal_items(
             "candidate_parent_semantic_root": proposal.candidate_parent_semantic_root,
             "accepted_semantic_root": coordinate.semantic_root,
             "target_ref": proposal.target_ref,
+            **_prior_refusal_detail(instance, proposal.proposal_id),
         }
         required_change = "readmit_as_its_author_or_withdraw_the_stale_proposal"
         # A settle terminal's proposal says how it was submitted. A delegated
@@ -4677,6 +4799,7 @@ def _approval_items(
                 "eligible_approvals": proposal.eligible_approvals,
                 "minimum_distinct_signers": proposal.minimum_distinct_signers,
                 "target_ref": proposal.target_ref,
+                **_prior_refusal_detail(instance, proposal.proposal_id),
             },
             repair=PlaybillNextRepairV1(
                 operation="cruxible.proposal.approve",
@@ -4733,6 +4856,7 @@ def _activation_items(
                 "candidate_digest": proposal.candidate_digest,
                 "approvals": proposal.approvals,
                 "target_ref": proposal.target_ref,
+                **_prior_refusal_detail(instance, proposal.proposal_id),
             },
             repair=PlaybillNextRepairV1(
                 operation="cruxible.proposal.activate",
@@ -5482,6 +5606,9 @@ def _next_queue(
         *_line_attention_items(
             instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
         ),
+        *_line_settled_refusal_items(
+            instance, coordinate=coordinate, access_profile=request.access_profile
+        ),
         *_line_inbox_items(instance, access_profile=request.access_profile),
     )
     caller = _CallerView(
@@ -5613,6 +5740,7 @@ def service_playbill_next(
     status = PlaybillNextStatusV1(
         blocking=terminal is not None,
         held=held,
+        prior_refusal_coverage=instance.refusal_index().peek_coverage(instance),
         instance=(
             PlaybillNextHealthV1(state="active")
             if terminal is None

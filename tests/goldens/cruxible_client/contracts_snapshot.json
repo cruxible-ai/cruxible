@@ -140,6 +140,7 @@
         "consumer_stalled",
         "line_coverage_gap",
         "line_work_pending",
+        "line_settled_prior_refusals",
         "line_inbox_unread",
         "evidence_unavailable",
         "prediction_settleable",
@@ -715,6 +716,164 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Cruxible artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactPin": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target",
+              "artifact_digest"
+            ],
+            "title": "ArtifactPin",
+            "type": "object"
+          },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
+            "type": "object"
+          },
+          "PriorRefusalReceipt": {
+            "additionalProperties": false,
+            "description": "An earlier refusal of the same statement on the same evidence, as recorded.\n\n``claim_retired``: ``claim_id`` was retired by ``decided_by`` at ``decided_at``\nwith ``reason_code`` (its retirement reason, when attributed) and the\nretiring change's ``rationale``; ``proposal_id`` is that change's proposal\nwhen known. ``proposal_rejected``: a reviewer, ``decided_by``, rejected\n``proposal_id`` (which proposed ``claim_id``) at ``decided_at``, giving\n``rationale``; a rejection records no reason code. ``producer`` is the\nProcedure the prior Claim named, when it named one. Nothing here is a\nverdict on the new Claim.",
+            "properties": {
+              "claim_id": {
+                "title": "Claim Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "title": "Decided At",
+                "type": "string"
+              },
+              "decided_by": {
+                "title": "Decided By",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "claim_retired",
+                  "proposal_rejected"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "producer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactPin"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "rationale": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rationale"
+              },
+              "reason_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason Code"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-receipt-v1",
+                "default": "cruxible-prior-refusal-receipt-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "claim_id",
+              "decided_by",
+              "decided_at"
+            ],
+            "title": "PriorRefusalReceipt",
+            "type": "object"
+          },
           "ProjectionAdvisory": {
             "additionalProperties": false,
             "properties": {
@@ -862,6 +1021,17 @@
               "parent_semantic_root": {
                 "title": "Parent Semantic Root",
                 "type": "string"
+              },
+              "prior_refusal_coverage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PriorRefusalCoverage"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "projection_advisory": {
                 "anyOf": [
@@ -1031,6 +1201,13 @@
                   }
                 ],
                 "title": "Predecessor Artifact Digest"
+              },
+              "prior_refusals": {
+                "items": {
+                  "$ref": "#/$defs/PriorRefusalReceipt"
+                },
+                "title": "Prior Refusals",
+                "type": "array"
               },
               "semantic_delta": {
                 "items": {
@@ -29145,6 +29322,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
@@ -29531,6 +29709,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
@@ -30066,6 +30245,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
@@ -30273,6 +30453,7 @@
                   "consumer_stalled",
                   "line_coverage_gap",
                   "line_work_pending",
+                  "line_settled_prior_refusals",
                   "line_inbox_unread",
                   "evidence_unavailable",
                   "prediction_settleable",
@@ -30561,6 +30742,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
@@ -31461,6 +31643,7 @@
                   "consumer_stalled",
                   "line_coverage_gap",
                   "line_work_pending",
+                  "line_settled_prior_refusals",
                   "line_inbox_unread",
                   "evidence_unavailable",
                   "prediction_settleable",
@@ -31621,6 +31804,7 @@
                   "consumer_stalled",
                   "line_coverage_gap",
                   "line_work_pending",
+                  "line_settled_prior_refusals",
                   "line_inbox_unread",
                   "evidence_unavailable",
                   "prediction_settleable",
@@ -31878,6 +32062,17 @@
               "line_dispatch": {
                 "$ref": "#/$defs/NextHealth"
               },
+              "prior_refusal_coverage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PriorRefusalCoverage"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "procedure_catalog": {
                 "$ref": "#/$defs/NextHealth"
               },
@@ -31907,6 +32102,34 @@
               "triggers"
             ],
             "title": "NextStatus",
+            "type": "object"
+          },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
             "type": "object"
           },
           "RepairOperation": {
@@ -32139,6 +32362,25 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/NextHealth"
+          }
+        },
+        "prior_refusal_coverage": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "prior_refusal_coverage",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "procedure_catalog": {
@@ -32469,6 +32711,34 @@
             "title": "NextRepairRequirement",
             "type": "object"
           },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
+            "type": "object"
+          },
           "RepairOperation": {
             "additionalProperties": false,
             "properties": {
@@ -32520,6 +32790,17 @@
           },
           "line_dispatch": {
             "$ref": "#/$defs/NextHealth"
+          },
+          "prior_refusal_coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "procedure_catalog": {
             "$ref": "#/$defs/NextHealth"
@@ -37430,6 +37711,357 @@
         "proposal_ref_oid",
         "receive_limits",
         "resolved_authoring_digest"
+      ]
+    },
+    "PriorRefusalCoverage": {
+      "fields": {
+        "accepted_generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Accepted Generation",
+            "type": "integer"
+          }
+        },
+        "indexed_through_generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "indexed_through_generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Indexed Through Generation",
+            "type": "integer"
+          }
+        },
+        "tag": {
+          "default": "cruxible-prior-refusal-coverage-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-prior-refusal-coverage-v1",
+            "default": "cruxible-prior-refusal-coverage-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+        "properties": {
+          "accepted_generation": {
+            "minimum": 0,
+            "title": "Accepted Generation",
+            "type": "integer"
+          },
+          "indexed_through_generation": {
+            "minimum": 0,
+            "title": "Indexed Through Generation",
+            "type": "integer"
+          },
+          "tag": {
+            "const": "cruxible-prior-refusal-coverage-v1",
+            "default": "cruxible-prior-refusal-coverage-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "indexed_through_generation",
+          "accepted_generation"
+        ],
+        "title": "PriorRefusalCoverage",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_generation",
+        "indexed_through_generation"
+      ]
+    },
+    "PriorRefusalReceipt": {
+      "fields": {
+        "claim_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim_id",
+          "required": true,
+          "schema": {
+            "title": "Claim Id",
+            "type": "string"
+          }
+        },
+        "decided_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "decided_at",
+          "required": true,
+          "schema": {
+            "title": "Decided At",
+            "type": "string"
+          }
+        },
+        "decided_by": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "decided_by",
+          "required": true,
+          "schema": {
+            "title": "Decided By",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "claim_retired",
+              "proposal_rejected"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "producer": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "producer",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ArtifactPin"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "proposal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          }
+        },
+        "rationale": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "rationale",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rationale"
+          }
+        },
+        "reason_code": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reason_code",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason Code"
+          }
+        },
+        "tag": {
+          "default": "cruxible-prior-refusal-receipt-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-prior-refusal-receipt-v1",
+            "default": "cruxible-prior-refusal-receipt-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Cruxible artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactPin": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target",
+              "artifact_digest"
+            ],
+            "title": "ArtifactPin",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "An earlier refusal of the same statement on the same evidence, as recorded.\n\n``claim_retired``: ``claim_id`` was retired by ``decided_by`` at ``decided_at``\nwith ``reason_code`` (its retirement reason, when attributed) and the\nretiring change's ``rationale``; ``proposal_id`` is that change's proposal\nwhen known. ``proposal_rejected``: a reviewer, ``decided_by``, rejected\n``proposal_id`` (which proposed ``claim_id``) at ``decided_at``, giving\n``rationale``; a rejection records no reason code. ``producer`` is the\nProcedure the prior Claim named, when it named one. Nothing here is a\nverdict on the new Claim.",
+        "properties": {
+          "claim_id": {
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "decided_at": {
+            "title": "Decided At",
+            "type": "string"
+          },
+          "decided_by": {
+            "title": "Decided By",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "claim_retired",
+              "proposal_rejected"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "producer": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ArtifactPin"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rationale"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason Code"
+          },
+          "tag": {
+            "const": "cruxible-prior-refusal-receipt-v1",
+            "default": "cruxible-prior-refusal-receipt-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "claim_id",
+          "decided_by",
+          "decided_at"
+        ],
+        "title": "PriorRefusalReceipt",
+        "type": "object"
+      },
+      "required_fields": [
+        "claim_id",
+        "decided_at",
+        "decided_by",
+        "kind"
       ]
     },
     "ProcedureChildInvocation": {
@@ -58060,6 +58692,121 @@
             "title": "LineTriggerBinding",
             "type": "object"
           },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
+            "type": "object"
+          },
+          "PriorRefusalReceipt": {
+            "additionalProperties": false,
+            "description": "An earlier refusal of the same statement on the same evidence, as recorded.\n\n``claim_retired``: ``claim_id`` was retired by ``decided_by`` at ``decided_at``\nwith ``reason_code`` (its retirement reason, when attributed) and the\nretiring change's ``rationale``; ``proposal_id`` is that change's proposal\nwhen known. ``proposal_rejected``: a reviewer, ``decided_by``, rejected\n``proposal_id`` (which proposed ``claim_id``) at ``decided_at``, giving\n``rationale``; a rejection records no reason code. ``producer`` is the\nProcedure the prior Claim named, when it named one. Nothing here is a\nverdict on the new Claim.",
+            "properties": {
+              "claim_id": {
+                "title": "Claim Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "title": "Decided At",
+                "type": "string"
+              },
+              "decided_by": {
+                "title": "Decided By",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "claim_retired",
+                  "proposal_rejected"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "producer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactPin"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "rationale": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rationale"
+              },
+              "reason_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason Code"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-receipt-v1",
+                "default": "cruxible-prior-refusal-receipt-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "claim_id",
+              "decided_by",
+              "decided_at"
+            ],
+            "title": "PriorRefusalReceipt",
+            "type": "object"
+          },
           "ProcedureAdmissionMaterialManifest": {
             "additionalProperties": false,
             "properties": {
@@ -61147,6 +61894,25 @@
                 "default": null,
                 "title": "Operation Key"
               },
+              "outside_scope_claim_types": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Outside Scope Claim Types",
+                "type": "array"
+              },
+              "prior_refusal_coverage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PriorRefusalCoverage"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "procedure_mandate_digest": {
                 "anyOf": [
                   {
@@ -61284,6 +62050,14 @@
                 ],
                 "default": null,
                 "title": "Path"
+              },
+              "prior_refusals": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/PriorRefusalReceipt"
+                },
+                "title": "Prior Refusals",
+                "type": "array"
               },
               "tag": {
                 "const": "playbill-procedure-terminal-egress-child-v1",
@@ -62429,6 +63203,41 @@
             "title": "Operation Key"
           }
         },
+        "outside_scope_claim_types": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "outside_scope_claim_types",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Outside Scope Claim Types",
+            "type": "array"
+          }
+        },
+        "prior_refusal_coverage": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "prior_refusal_coverage",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "procedure_mandate_digest": {
           "default": null,
           "default_json_serializable": true,
@@ -62579,6 +63388,49 @@
       },
       "json_schema": {
         "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Cruxible artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactPin": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target",
+              "artifact_digest"
+            ],
+            "title": "ArtifactPin",
+            "type": "object"
+          },
           "InboxPostTruncation": {
             "additionalProperties": false,
             "description": "A ``post_inbox`` terminal selected more items than its run may post.\n\n``cap`` is the terminal's declared ``max_items`` (``cap_source=\"declared\"``)\nor the core default; a run posting from more than one terminal counts them\ntogether. The first ``posted`` of the ``selected`` items were posted; the\nrest were not posted anywhere.",
@@ -62620,6 +63472,121 @@
               "posted"
             ],
             "title": "InboxPostTruncation",
+            "type": "object"
+          },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
+            "type": "object"
+          },
+          "PriorRefusalReceipt": {
+            "additionalProperties": false,
+            "description": "An earlier refusal of the same statement on the same evidence, as recorded.\n\n``claim_retired``: ``claim_id`` was retired by ``decided_by`` at ``decided_at``\nwith ``reason_code`` (its retirement reason, when attributed) and the\nretiring change's ``rationale``; ``proposal_id`` is that change's proposal\nwhen known. ``proposal_rejected``: a reviewer, ``decided_by``, rejected\n``proposal_id`` (which proposed ``claim_id``) at ``decided_at``, giving\n``rationale``; a rejection records no reason code. ``producer`` is the\nProcedure the prior Claim named, when it named one. Nothing here is a\nverdict on the new Claim.",
+            "properties": {
+              "claim_id": {
+                "title": "Claim Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "title": "Decided At",
+                "type": "string"
+              },
+              "decided_by": {
+                "title": "Decided By",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "claim_retired",
+                  "proposal_rejected"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "producer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactPin"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "rationale": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rationale"
+              },
+              "reason_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason Code"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-receipt-v1",
+                "default": "cruxible-prior-refusal-receipt-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "claim_id",
+              "decided_by",
+              "decided_at"
+            ],
+            "title": "PriorRefusalReceipt",
             "type": "object"
           },
           "ProcedureJournalCoordinate": {
@@ -62708,6 +63675,14 @@
                 ],
                 "default": null,
                 "title": "Path"
+              },
+              "prior_refusals": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/PriorRefusalReceipt"
+                },
+                "title": "Prior Refusals",
+                "type": "array"
               },
               "tag": {
                 "const": "playbill-procedure-terminal-egress-child-v1",
@@ -62873,6 +63848,25 @@
             ],
             "default": null,
             "title": "Operation Key"
+          },
+          "outside_scope_claim_types": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Outside Scope Claim Types",
+            "type": "array"
+          },
+          "prior_refusal_coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "procedure_mandate_digest": {
             "anyOf": [
@@ -66006,6 +67000,25 @@
             "type": "string"
           }
         },
+        "prior_refusal_coverage": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "prior_refusal_coverage",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "projection_advisory": {
           "default": null,
           "default_json_serializable": true,
@@ -66158,6 +67171,164 @@
               "compiler_digest"
             ],
             "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Cruxible artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactPin": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target",
+              "artifact_digest"
+            ],
+            "title": "ArtifactPin",
+            "type": "object"
+          },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
+            "type": "object"
+          },
+          "PriorRefusalReceipt": {
+            "additionalProperties": false,
+            "description": "An earlier refusal of the same statement on the same evidence, as recorded.\n\n``claim_retired``: ``claim_id`` was retired by ``decided_by`` at ``decided_at``\nwith ``reason_code`` (its retirement reason, when attributed) and the\nretiring change's ``rationale``; ``proposal_id`` is that change's proposal\nwhen known. ``proposal_rejected``: a reviewer, ``decided_by``, rejected\n``proposal_id`` (which proposed ``claim_id``) at ``decided_at``, giving\n``rationale``; a rejection records no reason code. ``producer`` is the\nProcedure the prior Claim named, when it named one. Nothing here is a\nverdict on the new Claim.",
+            "properties": {
+              "claim_id": {
+                "title": "Claim Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "title": "Decided At",
+                "type": "string"
+              },
+              "decided_by": {
+                "title": "Decided By",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "claim_retired",
+                  "proposal_rejected"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "producer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactPin"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "rationale": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rationale"
+              },
+              "reason_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason Code"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-receipt-v1",
+                "default": "cruxible-prior-refusal-receipt-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "claim_id",
+              "decided_by",
+              "decided_at"
+            ],
+            "title": "PriorRefusalReceipt",
             "type": "object"
           },
           "ProjectionAdvisory": {
@@ -66340,6 +67511,13 @@
                 ],
                 "title": "Predecessor Artifact Digest"
               },
+              "prior_refusals": {
+                "items": {
+                  "$ref": "#/$defs/PriorRefusalReceipt"
+                },
+                "title": "Prior Refusals",
+                "type": "array"
+              },
               "semantic_delta": {
                 "items": {
                   "$ref": "#/$defs/SemanticFieldDelta"
@@ -66474,6 +67652,17 @@
           "parent_semantic_root": {
             "title": "Parent Semantic Root",
             "type": "string"
+          },
+          "prior_refusal_coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "projection_advisory": {
             "anyOf": [
@@ -88507,6 +89696,19 @@
             "title": "Predecessor Artifact Digest"
           }
         },
+        "prior_refusals": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "prior_refusals",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PriorRefusalReceipt"
+            },
+            "title": "Prior Refusals",
+            "type": "array"
+          }
+        },
         "semantic_delta": {
           "has_default": false,
           "has_default_factory": false,
@@ -88523,6 +89725,136 @@
       },
       "json_schema": {
         "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Cruxible artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactPin": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target",
+              "artifact_digest"
+            ],
+            "title": "ArtifactPin",
+            "type": "object"
+          },
+          "PriorRefusalReceipt": {
+            "additionalProperties": false,
+            "description": "An earlier refusal of the same statement on the same evidence, as recorded.\n\n``claim_retired``: ``claim_id`` was retired by ``decided_by`` at ``decided_at``\nwith ``reason_code`` (its retirement reason, when attributed) and the\nretiring change's ``rationale``; ``proposal_id`` is that change's proposal\nwhen known. ``proposal_rejected``: a reviewer, ``decided_by``, rejected\n``proposal_id`` (which proposed ``claim_id``) at ``decided_at``, giving\n``rationale``; a rejection records no reason code. ``producer`` is the\nProcedure the prior Claim named, when it named one. Nothing here is a\nverdict on the new Claim.",
+            "properties": {
+              "claim_id": {
+                "title": "Claim Id",
+                "type": "string"
+              },
+              "decided_at": {
+                "title": "Decided At",
+                "type": "string"
+              },
+              "decided_by": {
+                "title": "Decided By",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "claim_retired",
+                  "proposal_rejected"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "producer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactPin"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "rationale": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rationale"
+              },
+              "reason_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason Code"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-receipt-v1",
+                "default": "cruxible-prior-refusal-receipt-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "claim_id",
+              "decided_by",
+              "decided_at"
+            ],
+            "title": "PriorRefusalReceipt",
+            "type": "object"
+          },
           "SemanticFieldDelta": {
             "additionalProperties": false,
             "properties": {
@@ -88663,6 +89995,13 @@
               }
             ],
             "title": "Predecessor Artifact Digest"
+          },
+          "prior_refusals": {
+            "items": {
+              "$ref": "#/$defs/PriorRefusalReceipt"
+            },
+            "title": "Prior Refusals",
+            "type": "array"
           },
           "semantic_delta": {
             "items": {

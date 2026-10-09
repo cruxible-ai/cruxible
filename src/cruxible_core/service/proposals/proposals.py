@@ -1163,8 +1163,9 @@ def service_reject_playbill_proposal(
     closing record (``kind: rejected``) with a required reason, the same move
     out of the open inventory, and the same refusal at every settlement door.
     The proposal's own actor withdraws rather than rejects. Only an open or
-    stale proposal may be rejected. Nothing remembers a rejection against a
-    later proposal of the same change.
+    stale proposal may be rejected. The record keys each Claim the candidate
+    proposed, so a later proposal of the same statement on the same evidence
+    shows this rejection as a neutral prior refusal receipt; nothing refuses it.
     """
 
     with change_scope(
@@ -1212,9 +1213,20 @@ def _close(
 
     A proposal closes once. The same kind of close again returns the existing
     record; the other kind refuses, since a withdrawn proposal cannot also be
-    rejected (or the reverse).
+    rejected (or the reverse). Closes of one proposal are serialized from the
+    open check through the refusal-index rows, so the rows reflect the close
+    that won.
     """
 
+    with instance.refusal_index().closing(record.proposal_id):
+        return _close_once(instance, mode, record)
+
+
+def _close_once(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    record: ProposalWithdrawalRecord,
+) -> tuple[ProposalWithdrawalRecord, bool, AcceptedCoordinate | None]:
     existing = instance.proposal_evidence().read_withdrawal(record.proposal_id)
     if existing is not None:
         if existing.kind != record.kind:
@@ -1247,10 +1259,35 @@ def _close(
     coordinate = AcceptedCoordinate.from_internal(head)
     if mode.previewing:
         return record, False, coordinate
-    # A pinned close confirms the live accepted head and records while
-    # holding it still (R12).
-    with mode.committing():
-        instance.proposal_evidence().write_withdrawal(record)
+    if record.kind == "rejected":
+        # Record the Claims the rejected candidate proposed (statement and cited
+        # Captures) while it is still readable, so a later proposal of the same
+        # statement on the same evidence resurfaces this rejection.
+        from cruxible_core.proposals.refusal_index import candidate_refused_claims
+
+        record = ProposalWithdrawalRecord.model_validate(
+            {
+                **record.model_dump(mode="json"),
+                "refused_claims": [
+                    item.model_dump(mode="json")
+                    for item in candidate_refused_claims(instance, record.proposal_id) or ()
+                ],
+            }
+        )
+    try:
+        if record.kind == "rejected":
+            # The index row precedes the record (a crash between them leaves a
+            # row a read ignores until a record says rejected) ...
+            instance.refusal_index().record_rejection(instance, record)
+        # A pinned close confirms the live accepted head and records while
+        # holding it still (R12).
+        with mode.committing():
+            instance.proposal_evidence().write_withdrawal(record)
+    finally:
+        if record.kind == "rejected":
+            # ... and once the close resolves, the rows are those of the record
+            # that won: this one, a competing one, or none.
+            instance.refusal_index().settle_close(instance, record.proposal_id)
     # Release local closed-candidate roots even without a configured mirror.
     instance.advertise_workspace()
     instance.request_ledger_mirror()

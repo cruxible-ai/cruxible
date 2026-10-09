@@ -32,6 +32,10 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import ApprovalIntegrityError, ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import ProposalResult
+from cruxible_client.contracts.refusal_receipts import (
+    PriorRefusalCoverage,
+    PriorRefusalReceipt,
+)
 from cruxible_client.contracts.semantic import SourceMapping, whole_body_mapping
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_client.contracts.types import PrincipalRecord
@@ -81,6 +85,10 @@ class ReviewedMember(_StrictReviewModel):
     law_digest: str
     law_evidence: dict[str, object]
     dependency_proof_refs: tuple[dict[str, object], ...]
+    # Earlier refusals of this Claim's statement on the same evidence -- a
+    # retirement, or a reviewer's rejection -- exactly as recorded. Nothing
+    # interprets them but the reviewer.
+    prior_refusals: tuple[PriorRefusalReceipt, ...] = ()
 
 
 class ProjectionAdvisory(_StrictReviewModel):
@@ -150,6 +158,9 @@ class ProposalReview(_StrictReviewModel):
     redactions: tuple[str, ...]
     projection_advisory: ProjectionAdvisory | None = None
     projection_evidence: ProjectionEvidence | None = None
+    # Present only while the earlier-refusal index is catching up: members'
+    # receipts then reflect retirements accepted through the generation named.
+    prior_refusal_coverage: PriorRefusalCoverage | None = None
 
 
 class ApprovalChallenge(_StrictReviewModel):
@@ -516,10 +527,18 @@ def service_review_playbill_proposal(
         for item in approvals
     ]
     redactions = () if access.can_read_body else ("body", "readable_diff", "source_mapping")
-    reviewed_members = _review_members(
-        candidate,
-        base_tree=base_tree,
-        candidate_tree=candidate_tree,
+    prior_refusals, prior_refusal_coverage = instance.refusal_index().prior_refusals_with_coverage(
+        instance, proposal.admission.proposal_id
+    )
+    reviewed_members = tuple(
+        member.model_copy(update={"prior_refusals": prior_refusals[member.path]})
+        if member.path in prior_refusals
+        else member
+        for member in _review_members(
+            candidate,
+            base_tree=base_tree,
+            candidate_tree=candidate_tree,
+        )
     )
     usable_workspace_observation, projection_evidence, eligible_coordinates = (
         _assess_projection_evidence(
@@ -568,6 +587,7 @@ def service_review_playbill_proposal(
             eligible_coordinates=eligible_coordinates,
         ),
         projection_evidence=projection_evidence,
+        prior_refusal_coverage=prior_refusal_coverage,
     )
 
 
@@ -614,6 +634,40 @@ def service_prepare_playbill_approval(
     )
 
 
+def _prior_refusal_lines(review: ProposalReview) -> list[str]:
+    """Each earlier refusal of a proposed Claim's statement on its evidence, as recorded."""
+
+    lines: list[str] = []
+    coverage = review.prior_refusal_coverage
+    if coverage is not None:
+        lines.extend(
+            (
+                "",
+                "Earlier refusals are being indexed: retirements are covered through "
+                f"generation {coverage.indexed_through_generation} of "
+                f"{coverage.accepted_generation}.",
+            )
+        )
+    for member in review.members:
+        for receipt in member.prior_refusals:
+            if not lines:
+                lines.extend(("", "Earlier refusals of the same statement on the same evidence:"))
+            verb = "retired" if receipt.kind == "claim_retired" else "rejected"
+            subject = (
+                f"Claim {receipt.claim_id}"
+                if receipt.kind == "claim_retired"
+                else f"proposal {receipt.proposal_id} (Claim {receipt.claim_id})"
+            )
+            code = "" if receipt.reason_code is None else f" [{receipt.reason_code}]"
+            lines.append(
+                f"  {member.path}: {subject} {verb} by {receipt.decided_by} "
+                f"at {receipt.decided_at}{code}"
+            )
+            if receipt.rationale:
+                lines.extend(f"    {line}" for line in receipt.rationale.splitlines())
+    return lines
+
+
 def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
     """Point a reviewer at the ledger instead of re-rendering the ledger.
 
@@ -635,6 +689,7 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
                 f"Proposal: {review.proposal_id}",
                 f"Candidate: {review.candidate_digest}",
                 f"Settlement base OID: {review.base_oid}",
+                *_prior_refusal_lines(review),
                 "",
                 "Review this proposal in the ledger, in the attached workspace:",
                 f"  git diff cruxible-ledger/accepted...cruxible-ledger/proposals/{key}",
@@ -692,6 +747,7 @@ def render_playbill_proposal_review(review: ProposalReview) -> str:
     ]
     if review.rationale is not None:
         lines.extend(("", "Rationale:", *(f"  {line}" for line in review.rationale.splitlines())))
+    lines.extend(_prior_refusal_lines(review))
     if review.projection_evidence is not None:
         evidence = review.projection_evidence
         evidence_note = (

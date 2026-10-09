@@ -27,6 +27,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.policies import ClaimAdmissionEvaluationAccount
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.refusal_receipts import RefusedClaimAny
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -324,6 +325,11 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     ``kind`` says who closed it: ``withdrawn`` by its author (or a daemon-wide
     operator), ``rejected`` by a reviewer. ``withdrawn_at`` is the instant it
     closed either way.
+
+    A rejection records each Claim the rejected candidate proposed
+    (``refused_claims``: its statement and the Captures it cites), taken while the
+    candidate is still readable, so a later proposal of the same statement on the
+    same evidence resurfaces it neutrally.
     """
 
     tag: Literal["playbill-proposal-withdrawal-v1"] = "playbill-proposal-withdrawal-v1"
@@ -333,6 +339,9 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     withdrawn_at: str
     kind: Literal["withdrawn", "rejected"] = Field(
         default="withdrawn", exclude_if=lambda value: value == "withdrawn"
+    )
+    refused_claims: tuple[RefusedClaimAny, ...] = Field(
+        default=(), exclude_if=lambda value: not value
     )
 
     @field_validator("proposal_id")
@@ -350,6 +359,25 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
             raise ValueError("closing reason must be a single line")
         return value
 
+    @field_validator("refused_claims")
+    @classmethod
+    def _refused_claims(cls, value: tuple[RefusedClaimAny, ...]) -> tuple[RefusedClaimAny, ...]:
+        paths = tuple(item.path for item in value)
+        if paths != tuple(sorted(set(paths), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("refused Claims must be sorted and unique by path")
+        return value
+
+    @model_validator(mode="after")
+    def _refusals(self) -> "ProposalWithdrawalRecord":
+        if self.refused_claims and self.kind != "rejected":
+            raise ValueError("only a rejection keys the Claims it refused")
+        return self
+
+
+#: A settle terminal whose change carries a ClaimType its settle grant's scope
+#: does not name proposes instead, for this reason, naming those ClaimTypes.
+SETTLE_OUTSIDE_MANDATE_SCOPE = "cruxible.settle.outside_mandate_scope"
+
 
 class ProposalSettleSubmission(_StrictProposalModel):
     """How a settle terminal submitted its proposal, retained for recovery.
@@ -358,6 +386,9 @@ class ProposalSettleSubmission(_StrictProposalModel):
     is the ordinary proposal that mandate declared when it did not authorize the
     change, for `fallback_reason`. Recovery reads this back rather than
     inferring it from whatever later happened to the proposal.
+
+    A fallback for `cruxible.settle.outside_mandate_scope` names, in
+    `outside_scope_claim_types`, the ClaimTypes the grant's scope left out.
     """
 
     tag: Literal["playbill-proposal-settle-submission-v1"] = (
@@ -366,6 +397,9 @@ class ProposalSettleSubmission(_StrictProposalModel):
     mode: Literal["delegated", "fallback"]
     mandate_digest: str
     fallback_reason: str | None = None
+    outside_scope_claim_types: tuple[str, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator("mandate_digest")
     @classmethod
@@ -373,10 +407,23 @@ class ProposalSettleSubmission(_StrictProposalModel):
         Sha256Value.from_tagged(value)
         return value
 
+    @field_validator("outside_scope_claim_types")
+    @classmethod
+    def _outside_scope(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("outside-scope ClaimTypes must be sorted and unique")
+        return value
+
     @model_validator(mode="after")
     def _reason(self) -> "ProposalSettleSubmission":
         if (self.mode == "fallback") != bool(self.fallback_reason):
             raise ValueError("exactly a settle fallback names why it fell back")
+        if (self.fallback_reason == SETTLE_OUTSIDE_MANDATE_SCOPE) != bool(
+            self.outside_scope_claim_types
+        ):
+            raise ValueError(
+                "exactly an outside-mandate-scope fallback names the ClaimTypes outside it"
+            )
         return self
 
 
@@ -654,6 +701,7 @@ __all__ = [
     "ProposalAdmissionRecord",
     "ProposalReadmissionLink",
     "ProposalSettleSubmission",
+    "SETTLE_OUTSIDE_MANDATE_SCOPE",
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
     "CHANGE_SET_RECORD_BYTES_PER_MEMBER",

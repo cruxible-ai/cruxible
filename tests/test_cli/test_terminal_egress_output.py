@@ -44,6 +44,22 @@ def test_a_fallen_back_settle_prints_its_proposal_and_why(capsys) -> None:
     )
 
 
+def test_an_outside_scope_settle_names_the_claim_types_it_left_out(capsys) -> None:
+    out = _echo(
+        capsys,
+        _settle(
+            settle_outcome="proposed",
+            fallback_reason="cruxible.settle.outside_mandate_scope",
+            outside_scope_claim_types=("ClaimType:security.advisory.summary",),
+        ),
+    )
+    assert out == (
+        f"Proposal settle: {PROPOSAL} candidate {CANDIDATE} "
+        "(settle fell back: cruxible.settle.outside_mandate_scope; outside the mandate's "
+        "scope: ClaimType:security.advisory.summary)\n"
+    )
+
+
 def test_a_capped_terminal_names_the_authority_it_needed_and_had(capsys) -> None:
     capped = ProcedureTerminalEgress(
         node_id="settle",
@@ -56,4 +72,36 @@ def test_a_capped_terminal_names_the_authority_it_needed_and_had(capsys) -> None
     assert _echo(capsys, capped) == (
         "Terminal settle: settle_change_set needs settle; "
         "the line_max_authority term allowed propose\n"
+    )
+
+
+def test_a_proposed_item_names_how_many_earlier_refusals_it_matches(capsys) -> None:
+    from cruxible_client.contracts.procedures.results import ProcedureTerminalEgressChild
+    from cruxible_client.contracts.refusal_receipts import PriorRefusalReceipt
+
+    receipt = PriorRefusalReceipt(
+        kind="claim_retired",
+        claim_id="CLM-" + "1" * 32,
+        decided_by="owner",
+        decided_at="2026-09-12T11:00:00.000000Z",
+        reason_code="was-wrong",
+    )
+    child = ProcedureTerminalEgressChild(
+        child_index=0,
+        item_key="0",
+        manifest_digest="sha256:" + "c" * 64,
+        path="claims/22/CLM-" + "2" * 32 + ".json",
+        prior_refusals=(receipt,),
+    )
+    out = _echo(
+        capsys,
+        _settle(
+            settle_outcome="proposed",
+            fallback_reason="cruxible.settle.condition_false",
+            children=(child,),
+        ),
+    )
+    assert out.splitlines()[1] == (
+        f"  {child.path} (1 earlier refusal of this statement on this evidence; "
+        "see proposal review)"
     )

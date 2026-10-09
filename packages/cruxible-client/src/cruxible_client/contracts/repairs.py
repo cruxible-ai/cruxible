@@ -227,6 +227,11 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
         operation="cruxible.authoring.example",
         arguments={"example": "procedure-mandate"},
     ),
+    # Demoting a Line, or repointing it at a fixed Procedure, is a Line successor.
+    "line_settled_prior_refusals": RepairOperation(
+        operation="cruxible.authoring.example",
+        arguments={"example": "line"},
+    ),
     # Nothing renders a block, so no sync converges one; what `block sync --all`
     # does is FIND every block whose held list has moved and name the repin that
     # answers each. A producer that knows the source and block names the repin

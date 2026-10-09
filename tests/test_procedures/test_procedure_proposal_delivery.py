@@ -1845,3 +1845,95 @@ def test_a_revision_moving_a_claim_out_leaves_the_slot_it_left(tmp_path: Path) -
         instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
     )
     assert _slots(instance) == {first: "new", second: None}
+
+
+# --- earlier refusals of a proposed item resurface on the run result ---------
+
+
+def _accept_and_retire(instance: PlaybillInstance, owner: Any, proposal_id: str) -> str:
+    """Accept a run's proposal, then retire its one Claim (was-wrong); return the Claim ID."""
+
+    from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayload
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.core_support._retirement_support import activate_submitted, retirement_member
+
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
+    accept_proposal(instance, owner, inspection)
+    candidate = inspection.proposal.candidate
+    assert candidate is not None
+    (path,) = [item.path for item in candidate.members if item.artifact_kind == "claim"]
+    claim_id = path.rsplit("/", 1)[1].removesuffix(".json")
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    created = coordinator.create(
+        actor=actor,
+        payload=ChangeSetAuthoringPayload(
+            members=(retirement_member(instance, claim_id, reason="was-wrong"),),
+            rationale="The advisory feed misreported this severity.",
+        ),
+        canonical_timestamp="2026-09-12T12:05:00.000000Z",
+    )
+    activate_submitted(instance, owner, coordinator.submit(created.intent.intent_id, actor=actor))
+    return claim_id
+
+
+@pytest.mark.parametrize("same_bytes", [True, False], ids=["identical-bytes", "other-bytes"])
+def test_a_rerun_carries_the_earlier_retirement_exactly_on_identical_bytes(
+    tmp_path: Path, same_bytes: bool
+) -> None:
+    """A second run re-reads the workspace file and proposes the same statement again.
+
+    Its Capture is a new envelope (another run, another time) and commits the
+    Provider output that echoes the run's own request digest; the evidence it
+    contributes is the file's bytes digest core verified at the read. On
+    identical bytes the item carries the retirement exactly as recorded; other
+    bytes stating the same severity are new evidence and carry nothing.
+    """
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.captures import parse_capture_envelope
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = run_line(instance, root, line)
+    assert first.status == "succeeded", first.terminal
+    (first_egress,) = first.terminal_egress
+    assert first_egress.proposal_id is not None
+    assert first_egress.children[0].prior_refusals == ()
+    claim_id = _accept_and_retire(instance, owner, first_egress.proposal_id)
+
+    if not same_bytes:
+        (root / fixtures.RELATIVE_PATH).write_bytes(
+            canonical_bytes({**fixtures.ADVISORY, "note": "re-read"})
+        )
+    second = run_line(instance, root, line, at=NOW + timedelta(minutes=10))
+
+    assert second.status == "succeeded", second.terminal
+    assert second.result == first.result
+    (egress,) = second.terminal_egress
+    (child,) = egress.children
+    assert child.path is not None and child.path != first_egress.children[0].path
+    # Two runs: two envelopes and two committed materials, even on identical bytes.
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    envelopes = [
+        parse_capture_envelope(
+            instance.body_store().read(state.source_observations[0].capture_digest, access=access)
+        )
+        for state in (first, second)
+    ]
+    assert envelopes[0].commitment.digest != envelopes[1].commitment.digest
+    if not same_bytes:
+        assert child.prior_refusals == ()
+        return
+    (receipt,) = child.prior_refusals
+    assert (receipt.kind, receipt.claim_id, receipt.reason_code) == (
+        "claim_retired",
+        claim_id,
+        "was-wrong",
+    )
+    assert receipt.decided_at == "2026-09-12T12:05:00.000000Z"
+    assert receipt.rationale == "The advisory feed misreported this severity."
+    # The run result read back later carries the same receipt.
+    assert second.run_id is not None
+    again = service_get_playbill_procedure_run(instance, run_id=second.run_id)
+    assert again.terminal_egress[0].children[0].prior_refusals == (receipt,)

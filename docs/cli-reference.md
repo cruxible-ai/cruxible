@@ -1870,6 +1870,24 @@ index similarly opens a new forward range, while retained pending work
 survives. Pending work bound to an older Line version is closed as superseded
 rather than silently rebound.
 
+Settled items skip review, so a Line whose settle terminal settles items
+matching earlier refusals (see [Earlier refusals of the same
+statement](#earlier-refusals-of-the-same-statement)) shows as one
+`line_settled_prior_refusals` row per live Line: how many settled items matched
+and in how many runs, for the Line's current version, with the latest run as a
+related identity (`get ProcedureRun:<run>` lists each settled item's receipts).
+The row is one keyed read of a count computed in post, never on delivery:
+settle delivery does nothing for it. The next consumer counts, each tick, the
+settle deliveries the run journal holds past a persisted cursor, in bounded
+steps, and `next` runs a bounded catch-up before reading the rows, so the row
+is current when looked at. A busy refusal index skips a step and the cursor
+makes that lossless; a discarded index resets the cursor and the journal is
+counted again. Each settled proposal counts once, and the latest run named is
+the latest settlement, whatever order deliveries and recoveries arrive in. Its
+repair is a Line successor, from `cruxible authoring example line`: demote the
+Line to `max_authority: propose` so its results are reviewed again, or point it
+at a fixed Procedure. Either starts a new Line version, and the row closes.
+
 `evaluate` checks a historical `[since, until)` range against every live
 Trigger aimed at the Line and records its matches as pending; it never runs
 anything. A cadence or cron Trigger matches every instant of its schedule in
@@ -2000,8 +2018,18 @@ A Line whose Procedure ends in a `settle_change_set` terminal lands the change
 without candidate approvals when, and only when, exactly one live settle
 ProcedureMandate for that Procedure covers every Claim the change touches: its
 namespace, its ClaimType scope and change kinds (`create`, `revise`,
-`retire`), and its Subject scope. No covering mandate refuses
-`settle_mandate_missing`; more than one refuses `settle_mandate_ambiguous`.
+`retire`), and its Subject scope. More than one covering mandate refuses
+`settle_mandate_ambiguous`. When none covers the change but a live settle
+grant for the Procedure covers all of it except Claims of ClaimTypes its scope
+does not name, the terminal proposes under that grant instead (per-rule trust:
+a grant over the ClaimTypes you trust to settle, and every other ClaimType the
+Procedure emits goes to review): `settle_outcome: proposed`, `fallback_reason`
+`cruxible.settle.outside_mandate_scope`, and the typed
+`outside_scope_claim_types` naming them, on the run result and on the
+proposal's settle submission. The grant with the fewest such ClaimTypes is
+bound, then the lowest digest; its condition is not consulted. A change no
+grant covers in any other way (namespace, change kind, Subject scope, or no
+live grant) refuses `settle_mandate_missing`.
 The mandate's pinned condition query is then evaluated at the accepted parent
 for each changed Claim's target Subject; it must return exactly that Subject,
 with every required field present, unconflicted and untruncated. A false or
@@ -2529,7 +2557,10 @@ request, or by a caller who is not a registered principal (an auth-off daemon's 
 `operator`, say), has no such rows. The repair is
 `cruxible proposal approve PROPOSAL_ID --signer-id PRINCIPAL`. Add
 `--key` with the path to your signing key: it stays in your own custody and the
-daemon never learns where. Your approval closes the row. So does another
+daemon never learns where. When the candidate's Claims match earlier refusals
+(see [Earlier refusals of the same statement](#earlier-refusals-of-the-same-statement)),
+the row's detail counts them as `prior_refusal_count`, on this row and on the
+stale and awaiting-activation rows alike. Your approval closes the row. So does another
 signer's approval that meets the requirement first, because the candidate then
 needs activation, not more approval. A compiler upgrade settles only with at
 least one signed approval, even under a policy that asks for none, so while it
@@ -3143,8 +3174,49 @@ terminal reason `rejected`, and every settlement door (approve, activate,
 readmit) then refuses `cruxible.proposal_rejected` naming who rejected it, when,
 and why. A proposal's own actor withdraws rather than rejects; rejecting an
 already-rejected proposal repeats the first answer, and a withdrawn proposal
-cannot also be rejected. A rejection is not remembered against a later proposal
-of the same change.
+cannot also be rejected. The rejection record keeps each Claim the candidate
+proposed (`refused_claims`): its statement and the Captures it cites, from
+which the match key (content digests of that evidence) is recomputed.
+
+### Earlier refusals of the same statement
+
+When a proposed Claim's statement (subject, predicate, qualifier, object) and
+the content of the evidence it cites match a Claim retired earlier, for any
+reason, or a Claim of a proposal a reviewer rejected earlier, the proposal
+carries a typed receipt of each such decision, exactly as recorded:
+`prior_refusals` on each member of `proposal review --json`, and on each child
+of a Procedure run's terminal egress. A receipt names the kind
+(`claim_retired` or `proposal_rejected`), the prior Claim, the proposal that
+retired or proposed it, who decided and when, the recorded reason code (a
+retirement's reason; a rejection records none) and rationale, and the
+producing Procedure when the Claim names one. "Earlier" means before this
+proposal was admitted. `proposal review` lists them, and the `next` rows of an
+open proposal count them as `prior_refusal_count`.
+
+Cruxible resurfaces; it does not judge. A receipt never refuses a proposal, never
+changes settlement, and is never interpreted: reading it is the reviewer's or
+the agent's job. Evidence is compared by content, never by the Capture's own
+digest, which also binds the run, the observation time and the contract: each
+cited Capture contributes its evidence commitment digest (the digest of the
+material it committed), and a Capture read through the core-owned
+`workspace.file` interface contributes the file's bytes digest, which the
+daemon verified against its own source-read receipt. A re-run that reads
+identical bytes cites the same evidence; different bytes are a new question and
+match nothing. A third-party Provider whose output embeds run-bound values (a
+run ID, a timestamp, a request digest) commits different material on every run,
+so its Captures do not match across runs. A withdrawal is not a refusal. The
+lookup is a keyed index the daemon keeps current as proposals are rejected
+(closes of one proposal are serialized, and the index keeps the close that
+won) and, for retirements, in post: each read indexes at most one bounded page
+of newly accepted generations and the next consumer works through the rest.
+While retirements lag, a review, a run result and `next` say how far they are
+covered (`prior_refusal_coverage`: indexed through generation G of H; on `next`
+in its status, read after the answer's own maintenance, whether or not any row
+exists) rather than implying there are no receipts, and settled items are not counted until
+the retirements before them are in. It is derived: when it is missing, damaged, or keyed
+under an earlier rule, it is rebuilt from accepted history and the rejection
+records, and a read that still cannot use it reports no receipts and logs why
+rather than failing.
 
 approve signs locally. The private-key path is not sent to the daemon.
 Activation is a daemon act and writes nothing locally; it returns the

@@ -623,6 +623,32 @@ class JournalIndex:
                 )
             )
 
+    def kind_after(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        event_kind: str,
+        after: int,
+        limit: int,
+    ) -> tuple[str, tuple[tuple[int, StoredProcedureJournalRecordV1], ...]]:
+        """One kind's records after a cache position, in append order: a keyed page.
+
+        Returns the index identity with the page. A position is only meaningful
+        under the identity it was read with: after a rebuild the caller starts
+        again from zero (its own work must be idempotent per record).
+        """
+
+        with self.connection() as conn:
+            identity = str(
+                conn.execute("SELECT identity FROM index_identity WHERE singleton=1").fetchone()[0]
+            )
+            rows = conn.execute(
+                "SELECT * FROM records INDEXED BY records_kind_position "
+                "WHERE stream=? AND event_kind=? AND id>? ORDER BY id LIMIT ?",
+                (_key(stream), event_kind, after, limit),
+            ).fetchall()
+            return identity, tuple((int(row["id"]), self.read_row(row)) for row in rows)
+
     def positions(
         self, stream: JournalStreamIdentityV1, *, event_kind: str | None = None
     ) -> dict[str, Any]:

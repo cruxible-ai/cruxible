@@ -292,6 +292,7 @@ def settle_terminal_receipt(
     item_paths: Mapping[str, str] | None,
     accepted_git_oid: str | None,
     fallback_reason: str | None = None,
+    outside_scope_claim_types: tuple[str, ...] = (),
 ) -> TerminalEgressReceiptV4:
     """A settle outcome: the accepted generation, or the ordinary proposal it fell back to."""
 
@@ -313,6 +314,7 @@ def settle_terminal_receipt(
         accepted_git_oid=accepted_git_oid,
         fallback_reason=fallback_reason,
         capped_by=served_capped_by(request),
+        outside_scope_claim_types=outside_scope_claim_types,
     )
 
 
