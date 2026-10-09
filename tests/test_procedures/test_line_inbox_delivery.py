@@ -103,9 +103,11 @@ def test_a_line_posts_each_item_as_is_with_its_capture_attached(tmp_path: Path) 
         envelope = item.envelope
         assert envelope.status == "unread"
         assert envelope.line == line.identity.qualified
-        assert envelope.run_id == state.run_id
         assert envelope.node_id == "inbox"
-        assert envelope.source_capture_digests == (capture,)
+        assert envelope.occurrences == 1
+        assert envelope.first_sighting == envelope.last_sighting
+        assert envelope.last_sighting.run_id == state.run_id
+        assert envelope.last_sighting.source_capture_digests == (capture,)
     assert {child.egress_digest for child in egress.children} == {
         item.envelope.dedupe_key for item in entries
     }
@@ -145,19 +147,34 @@ def test_a_single_input_is_one_item(tmp_path: Path) -> None:
     assert entry.payload == {**ADVISORY, "rows": ROWS}
 
 
-def test_runs_on_new_evidence_post_new_items(tmp_path: Path) -> None:
-    """Each run reads its own Capture, so the same rows on new evidence are new items."""
+def test_an_hourly_reread_of_identical_rows_is_one_item_per_row_seen_each_hour(
+    tmp_path: Path,
+) -> None:
+    """Each tick reads its own Capture; the same rows are the same items, seen again."""
 
     instance, root, line = inbox_world(tmp_path)
+    hours = 4
 
-    first = manual_run(instance, line, at=NOW, root=root)
-    second = manual_run(instance, line, at=NOW + timedelta(seconds=1), root=root)
+    states = [
+        manual_run(instance, line, at=NOW + timedelta(hours=hour), root=root)
+        for hour in range(hours)
+    ]
 
-    assert first.status == second.status == "succeeded"
+    assert all(state.status == "succeeded" for state in states)
     entries = _entries(instance)
-    assert len(entries) == 6
-    assert len({item.envelope.source_capture_digests for item in entries}) == 2
-    assert all(item.envelope.occurrences == 1 for item in entries)
+    assert sorted(item.payload["cve"] for item in entries) == [row["cve"] for row in ROWS]
+    captures = [
+        next(iter({item.capture_digest for item in state.source_observations})) for state in states
+    ]
+    assert len(set(captures)) == hours  # new evidence every hour
+    for item in entries:
+        envelope = item.envelope
+        assert envelope.occurrences == hours
+        assert envelope.first_sighting.run_id == states[0].run_id
+        assert [sighting.source_capture_digests for sighting in envelope.recent_sightings] == [
+            (capture,) for capture in reversed(captures)
+        ]
+    assert LineInboxStore(instance).unread_by_line() == ((line.identity.qualified, len(ROWS)),)
 
 
 def test_the_same_item_again_resurfaces_with_its_prior_disposition(tmp_path: Path) -> None:
@@ -170,7 +187,7 @@ def test_the_same_item_again_resurfaces_with_its_prior_disposition(tmp_path: Pat
     instance, root, line = inbox_world(tmp_path, items={"items": [{"note": "check the feed"}]})
     first = manual_run(instance, line, at=NOW, root=root)
     (entry,) = _entries(instance)
-    assert entry.envelope.source_capture_digests == ()
+    assert entry.envelope.last_sighting.source_capture_digests == ()
     store = LineInboxStore(instance)
     dismissed = InboxDismissed(actor_id="owner", decided_at=NOW, reason="seen it")
     store.record_disposition(
@@ -192,4 +209,7 @@ def test_the_same_item_again_resurfaces_with_its_prior_disposition(tmp_path: Pat
         1,
     )
     assert envelope.disposition == dismissed
-    assert (envelope.run_id, envelope.last_run_id) == (first.run_id, second.run_id)
+    assert (envelope.first_sighting.run_id, envelope.last_sighting.run_id) == (
+        first.run_id,
+        second.run_id,
+    )

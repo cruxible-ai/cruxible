@@ -9,6 +9,7 @@ time, once after the small history and once after one ten times larger.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
@@ -33,6 +34,7 @@ LINE = "Line:watch"
 
 
 def _posting(ordinal: int, *, line: str = LINE, run: str | None = None) -> InboxPosting:
+    # Each posting stands on its own Capture, as a Source Line's runs do.
     return InboxPosting(
         line=line,
         procedure="Procedure:watcher",
@@ -41,7 +43,9 @@ def _posting(ordinal: int, *, line: str = LINE, run: str | None = None) -> Inbox
         node_id="inbox",
         item_key="item-0",
         payload={"ordinal": ordinal, "line": line},
-        source_capture_digests=(f"sha256:{ordinal:064x}",),
+        source_capture_digests=(
+            "sha256:" + hashlib.sha256(f"{line}:{ordinal}:{run}".encode()).hexdigest(),
+        ),
         posted_at=NOW + timedelta(seconds=ordinal),
     )
 
@@ -111,6 +115,10 @@ def test_inbox_operations_do_not_grow_with_the_inbox_history(
                 {
                     "post": lambda fresh=fresh: store.post(  # type: ignore[misc]
                         [_posting(fresh + 3)], **write
+                    ),
+                    # The same row on new evidence: a sighting of an existing item.
+                    "recur": lambda fresh=fresh: store.post(  # type: ignore[misc]
+                        [_posting(fresh, run=f"RUN-recur-{fresh}")], **write
                     ),
                     "list_unread": lambda: service_list_inbox(
                         instance, line="watch", status="unread", limit=10

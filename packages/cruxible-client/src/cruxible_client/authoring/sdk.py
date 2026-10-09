@@ -4643,9 +4643,11 @@ class Line:
 class Inbox:
     """The Line inbox. A Line's post_inbox terminal posts items it could not decide.
 
-    Items are untyped instance data with a core envelope (Line, run, source
-    Captures, dedupe key, disposition). Posting never changes accepted state.
-    An item that recurs is unread again, its prior disposition still shown.
+    Items are untyped instance data with a core envelope (Line, node, dedupe
+    key, occurrences, sightings with their source Captures, disposition). The
+    same payload from the same terminal is one item on any evidence. Posting
+    never changes accepted state. An item that recurs is unread again, its prior
+    disposition still shown.
 
     Next: ``inbox.list(status="unread")``.
     """

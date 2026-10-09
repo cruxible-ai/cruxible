@@ -101,6 +101,9 @@ from cruxible_client.contracts.line_inbox import (
 )
 from cruxible_client.contracts.line_inbox import INBOX_LIST_MAX_LIMIT as INBOX_LIST_MAX_LIMIT
 from cruxible_client.contracts.line_inbox import (
+    INBOX_RECENT_SIGHTINGS as INBOX_RECENT_SIGHTINGS,
+)
+from cruxible_client.contracts.line_inbox import (
     INBOX_RUN_ITEM_CAP_DEFAULT as INBOX_RUN_ITEM_CAP_DEFAULT,
 )
 from cruxible_client.contracts.line_inbox import (
@@ -123,6 +126,7 @@ from cruxible_client.contracts.line_inbox import InboxLinkSubject as InboxLinkSu
 from cruxible_client.contracts.line_inbox import InboxLinkTarget as InboxLinkTarget
 from cruxible_client.contracts.line_inbox import InboxList as InboxList
 from cruxible_client.contracts.line_inbox import InboxListEntry as InboxListEntry
+from cruxible_client.contracts.line_inbox import InboxSighting as InboxSighting
 from cruxible_client.contracts.orient import (
     ORIENT_DEFAULT_LIMIT as ORIENT_DEFAULT_LIMIT,
 )

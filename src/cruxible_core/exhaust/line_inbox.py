@@ -5,10 +5,10 @@ run posted) and a ``disposition`` (an agent's decision about one item). SQLite
 is a disposable projection of that journal, caught up from its last applied
 sequence on every open, and never accepted state.
 
-An item is keyed by its dedupe key (payload digest, source Capture digests and
-Line). Posting an existing key creates nothing new: it counts the
-re-occurrence, and an item already decided returns to ``unread`` with that
-decision still on it. A posting is identified by its run, node and item key, so
+An item is keyed by its dedupe key (payload digest, Line and posting node).
+Posting an existing key creates nothing new: it counts the sighting and keeps
+its Captures in a bounded window, and an item already decided returns to
+``unread`` with that decision still on it. A posting is identified by its run, node and item key, so
 a run that delivers the same terminal twice (recovery) counts once.
 
 Every read is keyed: an item by id, a page by recency through an index, and the
@@ -40,9 +40,11 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.line_inbox import (
+    INBOX_RECENT_SIGHTINGS,
     InboxDisposition,
     InboxItemEnvelope,
     InboxItemStatus,
+    InboxSighting,
     inbox_item_id,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -111,6 +113,10 @@ class StoredInboxItem:
     dispositions: tuple[InboxDisposition, ...]
 
 
+def _sighting_order(sighting: InboxSighting) -> tuple[datetime, str]:
+    return sighting.posted_at, sighting.run_id
+
+
 def _instant(value: str) -> datetime:
     parsed = parse_datetime(value)
     if parsed is None:
@@ -122,19 +128,21 @@ def inbox_payload_digest(payload: CanonicalValue) -> str:
     return "sha256:" + hashlib.sha256(canonical_bytes(payload)).hexdigest()
 
 
-def inbox_dedupe_key(
-    *, line: str, payload_digest: str, source_capture_digests: Sequence[str]
-) -> str:
-    """The item a posting lands in: the same payload, on the same evidence, from the same Line."""
+def inbox_dedupe_key(*, line: str, node_id: str, payload_digest: str) -> str:
+    """The item a posting lands in: the same payload, from the same terminal of the same Line.
+
+    Evidence is not part of it. A Line that re-reads its source gets a new
+    Capture every run, so a key over the Captures would post the same finding
+    again on every tick; each sighting keeps its own Captures instead. The node
+    is part of it: two ``post_inbox`` terminals of one Procedure are two
+    authored reasons to post, and the same payload under each is a different
+    message to whoever judges it.
+    """
 
     return typed_digest(
         Sha256Value,
         "cruxible-line-inbox-dedupe-v1",
-        {
-            "line": line,
-            "payload_digest": payload_digest,
-            "source_capture_digests": sorted(set(source_capture_digests)),
-        },
+        {"line": line, "node_id": node_id, "payload_digest": payload_digest},
     ).tagged
 
 
@@ -266,8 +274,11 @@ class LineInboxStore:
         )
         if cursor.rowcount == 0:
             return  # The same run delivered this item already.
-        instant = _instant(posting["posted_at"])
-        posted_at = format_datetime(instant)
+        sighting = InboxSighting(
+            run_id=posting["run_id"],
+            posted_at=_instant(posting["posted_at"]),
+            source_capture_digests=tuple(posting["source_capture_digests"]),
+        )
         row = conn.execute(
             "SELECT envelope,status FROM items WHERE item_id=?", (item_id,)
         ).fetchone()
@@ -279,12 +290,9 @@ class LineInboxStore:
                 procedure=posting["procedure"],
                 procedure_artifact_digest=posting["procedure_artifact_digest"],
                 node_id=posting["node_id"],
-                run_id=posting["run_id"],
-                posted_at=instant,
-                last_run_id=posting["run_id"],
-                last_posted_at=instant,
                 occurrences=1,
-                source_capture_digests=tuple(posting["source_capture_digests"]),
+                first_sighting=sighting,
+                recent_sightings=(sighting,),
                 dedupe_key=posting["dedupe_key"],
                 payload_digest=posting["payload_digest"],
                 payload_bytes=len(canonical_bytes(posting["payload"])),
@@ -295,7 +303,7 @@ class LineInboxStore:
                     item_id,
                     envelope.line,
                     "unread",
-                    posted_at,
+                    format_datetime(sighting.posted_at),
                     envelope.model_dump_json(),
                     canonical_bytes(posting["payload"]).decode("utf-8"),
                     "[]",
@@ -304,12 +312,18 @@ class LineInboxStore:
             self._bump_unread(conn, envelope.line, 1)
             return
         current = InboxItemEnvelope.model_validate_json(row["envelope"])
-        latest = instant >= current.last_posted_at
-        updated = current.model_copy(
-            update={
+        # A sighting may land out of order (a recovered run); the first and the
+        # bounded recent window are kept by when each run posted.
+        recent = sorted((*current.recent_sightings, sighting), key=_sighting_order, reverse=True)[
+            :INBOX_RECENT_SIGHTINGS
+        ]
+        first = min(current.first_sighting, sighting, key=_sighting_order)
+        updated = InboxItemEnvelope.model_validate(
+            {
+                **current.model_dump(),
                 "occurrences": current.occurrences + 1,
-                "last_posted_at": instant if latest else current.last_posted_at,
-                "last_run_id": posting["run_id"] if latest else current.last_run_id,
+                "first_sighting": first.model_dump(),
+                "recent_sightings": [item.model_dump() for item in recent],
                 "status": "unread",
                 "recurred_since_disposition": current.recurred_since_disposition
                 + (current.disposition is not None),
@@ -318,8 +332,8 @@ class LineInboxStore:
         conn.execute(
             "UPDATE items SET status='unread',last_seen=?,envelope=? WHERE item_id=?",
             (
-                format_datetime(updated.last_posted_at),
-                InboxItemEnvelope.model_validate(updated.model_dump()).model_dump_json(),
+                format_datetime(updated.last_sighting.posted_at),
+                updated.model_dump_json(),
                 item_id,
             ),
         )
@@ -426,9 +440,7 @@ class LineInboxStore:
                 payload_digest = inbox_payload_digest(posting.payload)
                 captures = tuple(sorted(set(posting.source_capture_digests)))
                 key = inbox_dedupe_key(
-                    line=posting.line,
-                    payload_digest=payload_digest,
-                    source_capture_digests=captures,
+                    line=posting.line, node_id=posting.node_id, payload_digest=payload_digest
                 )
                 keys.append(key)
                 seen = conn.execute(

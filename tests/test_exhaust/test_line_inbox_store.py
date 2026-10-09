@@ -8,11 +8,13 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.line_inbox import (
+    INBOX_RECENT_SIGHTINGS,
     InboxAcknowledged,
     InboxDismissed,
     InboxLinked,
     InboxLinkProposal,
     InboxLinkSubject,
+    InboxSighting,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.write import SUBJECT_REF_PATTERN
@@ -50,13 +52,14 @@ def _posting(
     line: str = "Line:watch",
     captures: tuple[str, ...] = (CAPTURE,),
     at: datetime = NOW,
+    node_id: str = "inbox",
 ) -> InboxPosting:
     return InboxPosting(
         line=line,
         procedure="Procedure:watcher",
         procedure_artifact_digest=DIGEST,
         run_id=run_id,
-        node_id="inbox",
+        node_id=node_id,
         item_key=item_key,
         payload=payload,  # type: ignore[arg-type]
         source_capture_digests=captures,
@@ -88,38 +91,89 @@ def test_a_posting_lands_unread_with_its_envelope(tmp_path: Path) -> None:
 
     assert key == inbox_dedupe_key(
         line="Line:watch",
+        node_id="inbox",
         payload_digest=inbox_payload_digest({"cve": "CVE-1"}),
-        source_capture_digests=(CAPTURE,),
     )
     item_id = store.resolve(key)
     stored = store.get(item_id)
     assert stored.payload == {"cve": "CVE-1"}
     envelope = stored.envelope
     assert envelope.status == "unread"
-    assert (envelope.line, envelope.procedure, envelope.run_id, envelope.node_id) == (
+    assert (envelope.line, envelope.procedure, envelope.node_id) == (
         "Line:watch",
         "Procedure:watcher",
-        "RUN-1",
         "inbox",
     )
-    assert envelope.source_capture_digests == (CAPTURE,)
+    sighting = InboxSighting(run_id="RUN-1", posted_at=NOW, source_capture_digests=(CAPTURE,))
+    assert envelope.first_sighting == sighting
+    assert envelope.recent_sightings == (sighting,)
     assert envelope.occurrences == 1 and envelope.disposition is None
     assert store.unread_by_line() == (("Line:watch", 1),)
 
 
-def test_the_same_item_on_other_evidence_or_another_line_is_another_item(tmp_path: Path) -> None:
+def test_the_same_payload_on_new_evidence_is_the_same_item_seen_again(tmp_path: Path) -> None:
+    _instance, store, write = _world(tmp_path)
+    other = "sha256:" + "e" * 64
+
+    first = store.post([_posting({"a": 1}, run_id="RUN-1")], **write)[0]  # type: ignore[arg-type]
+    again = store.post(  # type: ignore[arg-type]
+        [_posting({"a": 1}, run_id="RUN-2", captures=(other,), at=NOW + timedelta(hours=1))],
+        **write,
+    )[0]
+
+    assert first == again
+    envelope = store.get(store.resolve(first)).envelope
+    assert envelope.occurrences == 2
+    assert envelope.first_sighting.source_capture_digests == (CAPTURE,)
+    assert [item.source_capture_digests for item in envelope.recent_sightings] == [
+        (other,),
+        (CAPTURE,),
+    ]
+    assert store.unread_by_line() == (("Line:watch", 1),)
+
+
+def test_another_line_or_another_terminal_is_another_item(tmp_path: Path) -> None:
     _instance, store, write = _world(tmp_path)
 
     keys = {
         store.post([_posting({"a": 1}, run_id="RUN-1")], **write)[0],  # type: ignore[arg-type]
-        store.post(  # type: ignore[arg-type]
-            [_posting({"a": 1}, run_id="RUN-2", captures=("sha256:" + "e" * 64,))], **write
-        )[0],
-        store.post([_posting({"a": 1}, run_id="RUN-3", line="Line:other")], **write)[0],  # type: ignore[arg-type]
+        store.post([_posting({"a": 1}, run_id="RUN-2", line="Line:other")], **write)[0],  # type: ignore[arg-type]
+        store.post([_posting({"a": 1}, run_id="RUN-3", node_id="escalate")], **write)[0],  # type: ignore[arg-type]
     }
 
     assert len(keys) == 3
     assert store.unread_by_line() == (("Line:other", 1), ("Line:watch", 2))
+
+
+def test_an_item_keeps_its_first_and_a_bounded_window_of_recent_sightings(
+    tmp_path: Path,
+) -> None:
+    _instance, store, write = _world(tmp_path)
+    runs = 8
+    for index in range(runs):
+        (key,) = store.post(  # type: ignore[arg-type]
+            [
+                _posting(
+                    {"a": 1},
+                    run_id=f"RUN-{index}",
+                    captures=(f"sha256:{index:064x}",),
+                    at=NOW + timedelta(hours=index),
+                )
+            ],
+            **write,
+        )
+    # A recovered run lands late: it is counted, and the window stays by time.
+    store.post(  # type: ignore[arg-type]
+        [_posting({"a": 1}, run_id="RUN-late", at=NOW - timedelta(hours=1))], **write
+    )
+
+    envelope = store.get(store.resolve(key)).envelope
+    assert envelope.occurrences == runs + 1
+    assert envelope.first_sighting.run_id == "RUN-late"
+    assert [item.run_id for item in envelope.recent_sightings] == [
+        f"RUN-{index}" for index in range(runs - 1, runs - 1 - INBOX_RECENT_SIGHTINGS, -1)
+    ]
+    assert envelope.last_sighting.posted_at == NOW + timedelta(hours=runs - 1)
 
 
 def test_a_recurring_item_counts_and_resurfaces_with_its_prior_disposition(
@@ -141,8 +195,8 @@ def test_a_recurring_item_counts_and_resurfaces_with_its_prior_disposition(
     assert envelope.occurrences == 2
     assert envelope.disposition == dismissed
     assert envelope.recurred_since_disposition == 1
-    assert (envelope.run_id, envelope.last_run_id) == ("RUN-1", "RUN-2")
-    assert envelope.last_posted_at == later
+    assert (envelope.first_sighting.run_id, envelope.last_sighting.run_id) == ("RUN-1", "RUN-2")
+    assert envelope.last_sighting.posted_at == later
     assert store.unread_by_line() == (("Line:watch", 1),)
 
 

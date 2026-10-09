@@ -1241,12 +1241,13 @@ Returns a handle on the Line inbox: the items Lines posted for judgment through
 a `post_inbox` terminal. Each handle call reaches the daemon.
 
 **Conditions and effects:** An item is the payload exactly as posted (untyped
-instance data) inside a core envelope: the Line, Procedure, node and runs that
-posted it, when, the Captures its dependency closure reached, its dedupe key
-(payload, Captures and Line), its status and your latest disposition. Posting
-never changes accepted state. An item posted again is one item seen again
-(`occurrences`); if you already decided it, it is `unread` again with that
-decision still shown. Reads need read permission; dispositions need governed
+instance data) inside a core envelope: the Line, Procedure and node that posted
+it, its dedupe key (payload, Line and node), how often it was seen
+(`occurrences`), its first sighting and up to 5 most recent ones (each a run, its
+time and the Captures its closure reached), its status and your latest
+disposition. Posting never changes accepted state. The same payload posted again
+by the same terminal, on any evidence, is one item seen again; if you already
+decided it, it is `unread` again with that decision still shown. Reads need read permission; dispositions need governed
 write.
 
 | Method | Effect |
@@ -7713,7 +7714,7 @@ definitions singular.
 
 **`contracts.line_dispatch`** — [LineEvaluateRequest](src/cruxible_client/contracts/line_dispatch.py), [LineTriggerVersion](src/cruxible_client/contracts/line_dispatch.py), [LineTriggerOccurrence](src/cruxible_client/contracts/line_dispatch.py), [LineEvaluateResult](src/cruxible_client/contracts/line_dispatch.py), [LineDispatchRequest](src/cruxible_client/contracts/line_dispatch.py), [LineEnablementPrincipal](src/cruxible_client/contracts/line_dispatch.py), [LineEnablement](src/cruxible_client/contracts/line_dispatch.py), [LineDispatchItem](src/cruxible_client/contracts/line_dispatch.py), [LineDispatchResult](src/cruxible_client/contracts/line_dispatch.py).
 
-**`contracts.line_inbox`** — [InboxLinkProposal](src/cruxible_client/contracts/line_inbox.py), [InboxLinkSubject](src/cruxible_client/contracts/line_inbox.py), [InboxAcknowledged](src/cruxible_client/contracts/line_inbox.py), [InboxDismissed](src/cruxible_client/contracts/line_inbox.py), [InboxLinked](src/cruxible_client/contracts/line_inbox.py), [InboxItemEnvelope](src/cruxible_client/contracts/line_inbox.py), [InboxListEntry](src/cruxible_client/contracts/line_inbox.py), [InboxList](src/cruxible_client/contracts/line_inbox.py), [InboxItem](src/cruxible_client/contracts/line_inbox.py), [InboxDismissRequest](src/cruxible_client/contracts/line_inbox.py), [InboxLinkRequest](src/cruxible_client/contracts/line_inbox.py), [InboxDispositionResult](src/cruxible_client/contracts/line_inbox.py).
+**`contracts.line_inbox`** — [InboxLinkProposal](src/cruxible_client/contracts/line_inbox.py), [InboxLinkSubject](src/cruxible_client/contracts/line_inbox.py), [InboxAcknowledged](src/cruxible_client/contracts/line_inbox.py), [InboxDismissed](src/cruxible_client/contracts/line_inbox.py), [InboxLinked](src/cruxible_client/contracts/line_inbox.py), [InboxSighting](src/cruxible_client/contracts/line_inbox.py), [InboxItemEnvelope](src/cruxible_client/contracts/line_inbox.py), [InboxListEntry](src/cruxible_client/contracts/line_inbox.py), [InboxList](src/cruxible_client/contracts/line_inbox.py), [InboxItem](src/cruxible_client/contracts/line_inbox.py), [InboxDismissRequest](src/cruxible_client/contracts/line_inbox.py), [InboxLinkRequest](src/cruxible_client/contracts/line_inbox.py), [InboxDispositionResult](src/cruxible_client/contracts/line_inbox.py).
 
 **`contracts.merkle`** — [MerkleDomainFamily](src/cruxible_client/contracts/merkle.py), [MerkleNode](src/cruxible_client/contracts/merkle.py), [MerkleTree](src/cruxible_client/contracts/merkle.py).
 

@@ -2082,11 +2082,15 @@ terminal selected and could not decide. It is operational state (a journal and
 a rebuildable index under the instance's exhaust), never accepted state.
 
 Each item is its payload exactly as posted -- untyped instance data -- inside a
-core envelope: `line`, `procedure`, `node_id`, the first and latest posting
-(`run_id`/`posted_at`, `last_run_id`/`last_posted_at`), `occurrences`,
-`source_capture_digests` (the Captures its dependency closure reached), its
-`dedupe_key` (payload digest, source Captures and Line), `status` and your
-latest `disposition`. `ITEM` is the `INB-` id or a unique prefix of it with at
+core envelope: `line`, `procedure`, `node_id`, its `dedupe_key` (payload
+digest, Line and posting node), `occurrences`, its `first_sighting` and up to 5
+`recent_sightings` (newest first; each the run, its time and the
+`source_capture_digests` that item's dependency closure reached), `status` and
+your latest `disposition`. Evidence is not part of the key: a Line that re-reads
+its source each tick and finds the same rows posts one item per row, seen once
+per tick, each sighting keeping its own Captures. Two `post_inbox` terminals of
+one Procedure are two authored reasons to post, so the same payload under each
+is a separate item. `ITEM` is the `INB-` id or a unique prefix of it with at
 least 12 hex digits.
 
 `list` returns the newest postings first with a bounded payload preview (a long
@@ -2095,8 +2099,8 @@ payload and every disposition. Dispositions are yours, never automatic: `ack`
 (seen, owed nothing), `dismiss --reason` (recorded verbatim), or `link` to the
 proposal you wrote or to an accepted Subject such as a note. Repeating the
 item's current decision records nothing. Posting the same dedupe key again
-creates no new item: it counts the occurrence, and an item you already decided
-is `unread` again with that decision still shown, so you judge it again.
+creates no new item: it counts the sighting, and an item you already decided is
+`unread` again with that decision still shown, so you judge it again.
 Reading needs read permission; dispositions need governed write.
 
 `cruxible next` reports one `line_inbox_unread` row per Line with unread items,

@@ -5704,7 +5704,7 @@ def _inbox_row(envelope: Any) -> str:
     )
     return (
         f"{envelope.status}{prior}  {envelope.item_id[:16]}  {envelope.line}  {seen}  "
-        f"{format_datetime(envelope.last_posted_at)}"
+        f"{format_datetime(envelope.last_sighting.posted_at)}"
     )
 
 
@@ -5773,8 +5773,15 @@ def inbox_get(item_id: str, output_json: bool) -> None:
     click.echo(_inbox_row(envelope))
     click.echo(f"Item: {envelope.item_id}")
     click.echo(f"Procedure: {envelope.procedure} node {envelope.node_id}")
-    click.echo(f"Runs: first {envelope.run_id}, last {envelope.last_run_id}")
-    click.echo(f"Captures: {', '.join(envelope.source_capture_digests) or '-'}")
+    click.echo(f"Seen {envelope.occurrences} time(s)")
+    for label, sighting in (
+        ("First", envelope.first_sighting),
+        *(("Recent", item) for item in envelope.recent_sightings),
+    ):
+        click.echo(
+            f"{label}: {sighting.run_id} at {format_datetime(sighting.posted_at)} captures "
+            f"{', '.join(sighting.source_capture_digests) or '-'}"
+        )
     for disposition in result.dispositions:
         detail = getattr(disposition, "reason", None) or (
             disposition.target.model_dump(mode="json") if hasattr(disposition, "target") else ""

@@ -265,8 +265,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Items are untyped data a Line could not decide; filter by line and status."
     ),
     "cruxible_inbox_get": (
-        "Use to read one inbox item whole before judging it: payload, source Captures, runs "
-        "that posted it, and any prior disposition."
+        "Use to read one inbox item whole before judging it: payload, how often it was seen, "
+        "the runs and source Captures of its sightings, and any prior disposition."
     ),
     "cruxible_inbox_ack": (
         "Use when an inbox item needs nothing further from you and no reason is worth recording."

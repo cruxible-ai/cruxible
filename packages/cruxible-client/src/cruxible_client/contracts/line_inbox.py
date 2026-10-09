@@ -10,10 +10,12 @@ disposition.
 Rule of thumb for authors: propose when the automation can state the belief,
 post when it cannot.
 
-The dedupe key is the payload digest, the source Capture digests and the Line.
-Posting an item whose key exists creates nothing new: it counts the
-re-occurrence, and an item an agent already decided returns to ``unread`` with
-that prior disposition still shown. Core does not interpret it.
+The dedupe key is the payload digest, the Line and the posting node: the same
+payload from the same terminal of the same Line is one item however often it is
+seen, whatever evidence each sighting stood on. Posting it again creates nothing
+new: the item counts the sighting and keeps its evidence (the first sighting
+and the most recent ones, bounded), and an item an agent already decided returns
+to ``unread`` with that prior disposition still shown. Core does not interpret it.
 
 Dispositions are an agent's, never automatic: ``acknowledged``, ``dismissed``
 (with a reason) or ``linked`` (to a proposal or a Subject).
@@ -25,7 +27,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.read_values import ShownValue
@@ -38,6 +40,8 @@ INBOX_LIST_MAX_LIMIT = 200
 #: and the most any terminal may declare.
 INBOX_RUN_ITEM_CAP_DEFAULT = 100
 INBOX_RUN_ITEM_CAP_MAX = 1_000
+#: How many of an item's most recent sightings its envelope keeps, beside its first.
+INBOX_RECENT_SIGHTINGS = 5
 #: The longest dismissal reason recorded.
 INBOX_REASON_MAX_CHARS = 1_000
 
@@ -137,37 +141,15 @@ InboxDisposition: TypeAlias = Annotated[
 ]
 
 
-class InboxItemEnvelope(_StrictInboxModel):
-    """The core envelope of one inbox item: everything about it except its payload.
+class InboxSighting(_StrictInboxModel):
+    """One run's posting of an item, and the Captures that item's closure reached in it."""
 
-    ``run_id``/``posted_at`` are the first posting; ``last_run_id``/``last_posted_at``
-    the latest. ``occurrences`` counts every run that posted the same dedupe key.
-    ``disposition`` is the agent's latest decision, kept when the item recurs:
-    a recurring item is ``unread`` again, and ``recurred_since_disposition``
-    counts the postings after that decision.
-    """
-
-    tag: Literal["cruxible-inbox-item-envelope-v1"] = "cruxible-inbox-item-envelope-v1"
-    item_id: str = Field(pattern=INBOX_ITEM_ID_PATTERN)
-    status: InboxItemStatus
-    line: str
-    procedure: str
-    procedure_artifact_digest: str
-    node_id: str
+    tag: Literal["cruxible-inbox-sighting-v1"] = "cruxible-inbox-sighting-v1"
     run_id: str
     posted_at: datetime
-    last_run_id: str
-    last_posted_at: datetime
-    occurrences: int = Field(ge=1)
     source_capture_digests: tuple[str, ...] = ()
-    dedupe_key: str
-    payload_digest: str
-    payload_bytes: int = Field(ge=0)
-    disposition: InboxDisposition | None = None
-    recurred_since_disposition: int = Field(default=0, ge=0)
 
-    _times = field_validator("posted_at", "last_posted_at")(_utc)
-    _digests = field_validator("procedure_artifact_digest", "dedupe_key", "payload_digest")(_digest)
+    _time = field_validator("posted_at")(_utc)
 
     @field_validator("source_capture_digests")
     @classmethod
@@ -177,6 +159,57 @@ class InboxItemEnvelope(_StrictInboxModel):
         if value != tuple(sorted(set(value))):
             raise ValueError("source Capture digests are sorted and unique")
         return value
+
+
+def _sighting_order(sighting: InboxSighting) -> tuple[datetime, str]:
+    return sighting.posted_at, sighting.run_id
+
+
+class InboxItemEnvelope(_StrictInboxModel):
+    """The core envelope of one inbox item: everything about it except its payload.
+
+    ``occurrences`` counts every run that posted the item. ``first_sighting`` is
+    the earliest of them and ``recent_sightings`` the latest
+    (``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures
+    its posting stood on. ``disposition`` is the agent's latest decision, kept
+    when the item recurs: a recurring item is ``unread`` again, and
+    ``recurred_since_disposition`` counts the sightings after that decision.
+    """
+
+    tag: Literal["cruxible-inbox-item-envelope-v1"] = "cruxible-inbox-item-envelope-v1"
+    item_id: str = Field(pattern=INBOX_ITEM_ID_PATTERN)
+    status: InboxItemStatus
+    line: str
+    procedure: str
+    procedure_artifact_digest: str
+    node_id: str
+    occurrences: int = Field(ge=1)
+    first_sighting: InboxSighting
+    recent_sightings: tuple[InboxSighting, ...] = Field(
+        min_length=1, max_length=INBOX_RECENT_SIGHTINGS
+    )
+    dedupe_key: str
+    payload_digest: str
+    payload_bytes: int = Field(ge=0)
+    disposition: InboxDisposition | None = None
+    recurred_since_disposition: int = Field(default=0, ge=0)
+
+    _digests = field_validator("procedure_artifact_digest", "dedupe_key", "payload_digest")(_digest)
+
+    @model_validator(mode="after")
+    def _sightings(self) -> InboxItemEnvelope:
+        recent = self.recent_sightings
+        if list(recent) != sorted(recent, key=_sighting_order, reverse=True):
+            raise ValueError("recent sightings are newest first")
+        if len(recent) > self.occurrences:
+            raise ValueError("an item keeps no more sightings than it had")
+        if _sighting_order(self.first_sighting) > _sighting_order(recent[-1]):
+            raise ValueError("the first sighting precedes every recent one")
+        return self
+
+    @property
+    def last_sighting(self) -> InboxSighting:
+        return self.recent_sightings[0]
 
 
 class InboxListEntry(_StrictInboxModel):
@@ -246,6 +279,7 @@ __all__ = [
     "INBOX_LIST_DEFAULT_LIMIT",
     "INBOX_LIST_MAX_LIMIT",
     "INBOX_REASON_MAX_CHARS",
+    "INBOX_RECENT_SIGHTINGS",
     "INBOX_RUN_ITEM_CAP_DEFAULT",
     "INBOX_RUN_ITEM_CAP_MAX",
     "INBOX_SUBJECT_REF_PATTERN",
@@ -264,6 +298,7 @@ __all__ = [
     "InboxLinked",
     "InboxList",
     "InboxListEntry",
+    "InboxSighting",
     "inbox_item_id",
     "is_inbox_item_id",
 ]
