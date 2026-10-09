@@ -1128,10 +1128,10 @@ class _Planner:
                     (subject_path_value, *versions),
                 )
             }
-        # Every Capture of the contract counts, cited or not: one an accepted
-        # Claim cites, or one a run is recorded producing. Both are indexed.
+        # Every retained Capture of the contract counts, cited or not; the body
+        # store indexes each envelope by its contract when it is stored.
         inventory = contract_captures(
-            self.instance, self.head, contract_digests=versions, budget=_CONTRACT_CAPTURE_BUDGET
+            self.instance, contract_digests=versions, budget=_CONTRACT_CAPTURE_BUDGET
         )
         if not inventory.complete:
             raise _refuse(

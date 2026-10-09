@@ -699,3 +699,51 @@ def test_one_submit_verifies_a_shared_capture_once(
         "envelope": 2,
         "material": 2,
     }
+
+
+def test_a_capture_provable_only_by_its_delivered_terminal_is_found_by_contract(
+    world: ProducedCaptures,
+) -> None:
+    from cruxible_core.service.evidence.capture_reads import (
+        contract_captures,
+        verify_accepted_capture,
+    )
+
+    instance = world.instance
+    source_capture, terminal_capture = _genuine(world)
+    # A crash after the delivered terminal and before its produced_capture
+    # record: cut the journal right after the terminal and rebuild its index.
+    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    journal = LocalJournalBackend(journal_root)
+    terminal = next(
+        stored.record for stored in world.records if stored.record.event_kind == "terminal_egress"
+    )
+    directory = journal._partition_directory(terminal.stream, terminal.partition_id, create=False)
+    end = next(
+        offset + size
+        for offset, size, stored in LocalJournalBackend._read_frames(
+            directory,
+            stream=terminal.stream,
+            partition_id=terminal.partition_id,
+            recover_tail=False,
+        )
+        if stored.record.event_kind == "terminal_egress"
+    )
+    with (directory / "records.log").open("r+b") as log:
+        log.truncate(end)
+    (journal_root / "event-index.sqlite3").unlink()
+    survivors = journal.all_records(terminal.stream, terminal.partition_id)
+    assert [stored.record.event_kind for stored in survivors].count("produced_capture") == 1
+    assert survivors[-1].record.event_kind == "terminal_egress"
+
+    inventory = contract_captures(
+        instance,
+        contract_digests=(capture_contract_digest(world.contract).tagged,),
+        budget=16,
+    )
+    assert inventory.complete
+    assert {terminal_capture, source_capture} <= {item.digest for item in inventory.captures}
+    verified = verify_accepted_capture(
+        instance, instance.accepted_coordinate(), terminal_capture, access=_READ
+    )
+    assert not isinstance(verified, str)

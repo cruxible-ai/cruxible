@@ -37,7 +37,7 @@ from tests.core_support._write_support import (
     report_evidence,
     seed_write_surface,
 )
-from tests.support.capture_receipts import admit_legacy_v1_citations, journal_produced_capture
+from tests.support.capture_receipts import admit_legacy_v1_citations
 
 WI1 = f"{KIND}/wi-1"
 WI2 = f"{KIND}/wi-2"
@@ -684,7 +684,7 @@ def _contract_of(instance: PlaybillInstance, digest: str) -> str:
     )
 
 
-def _seed_record_source(instance: PlaybillInstance) -> tuple[Any, Any]:
+def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> tuple[Any, Any]:
     """Accept an external record contract and its provider; answer (contract, provider)."""
 
     from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -703,7 +703,7 @@ def _seed_record_source(instance: PlaybillInstance) -> tuple[Any, Any]:
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from tests.core_support._pc_c_support import capture_contract, provider
 
-    contract = capture_contract()
+    contract = capture_contract() if contract is None else contract
     provider_artifact = provider(contract)
     # A field whose evidence is the record, bound to its Subject by the source.
     predicate = f"{KIND}.recorded_status"
@@ -760,8 +760,7 @@ def _record_capture(
 
     The reader stores the record as a canonical value; with ``exact`` the same
     record is also stored as exact bytes, which a Claim can cite, and that one
-    is answered. Each is journaled as a run's produced Capture, which is how a
-    lookup by contract finds a Capture no Claim cites.
+    is answered.
     """
 
     from cruxible_core.evidence.source_readers import (
@@ -808,16 +807,7 @@ def _record_capture(
         ),
         store=instance.body_store(),
     )
-    contract_digest = acquired.envelope.capture_contract_digest
-    recorded_at = NOW if observed_at is None else observed_at
     if not exact:
-        journal_produced_capture(
-            instance,
-            acquired.capture_digest,
-            contract_digest=contract_digest,
-            run_id=f"record-run-{subject_id}-canonical-{recorded_at.timestamp():.0f}",
-            recorded_at=recorded_at,
-        )
         return str(acquired.capture_digest)
     # The reader commits the record as a canonical value, which a Claim cannot
     # map a byte span onto; the same record committed as exact bytes can be cited.
@@ -834,15 +824,7 @@ def _record_capture(
         "materialization": "cas",
     }
     envelope = type(acquired.envelope).model_validate(exact)
-    held = store.store(render_capture_envelope(envelope)).digest
-    journal_produced_capture(
-        instance,
-        held,
-        contract_digest=contract_digest,
-        run_id=f"record-run-{subject_id}-exact-{recorded_at.timestamp():.0f}",
-        recorded_at=recorded_at,
-    )
-    return held
+    return store.store(render_capture_envelope(envelope)).digest
 
 
 def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subject(
@@ -865,6 +847,31 @@ def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subje
         _write(instance, _set(WI2, "recorded_status", "ready") | {"evidence": by_contract})
     )
     assert other.code == "cruxible.write.contract_capture_not_found"
+
+
+def test_contract_evidence_finds_an_uncited_self_asserted_capture(
+    instance: PlaybillInstance,
+) -> None:
+    """A proposer-asserted contract's Capture needs no run: it is found by contract too."""
+
+    from cruxible_client.contracts.write import capture_handle
+    from tests.core_support._pc_c_support import capture_contract
+    from tests.test_authoring.test_authoring_existing_capture import _self_asserted
+
+    contract, provider_artifact = _seed_record_source(
+        instance, contract=_self_asserted(capture_contract())
+    )
+    held = _record_capture(instance, contract, provider_artifact, WI1)
+    assert held not in _accepted_capture_digests(instance)
+    by_contract = {"kind": "contract", "contract": contract.identity.name}
+    outcome = _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_contract})
+    assert outcome.status == "accepted", outcome
+    assert outcome.changes[0].capture == capture_handle(held)
+    by_digest = _write(
+        instance,
+        _set(WI1, "recorded_status", "done") | {"evidence": {"kind": "capture", "capture": held}},
+    )
+    assert by_digest.status == "accepted", by_digest
 
 
 def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Literal
 
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
@@ -27,10 +26,7 @@ from cruxible_client.contracts.source_references import (
     SourceHandle,
 )
 from cruxible_core.errors import PermissionDeniedError
-from cruxible_core.exhaust import LocalJournalBackend
-from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-from cruxible_core.procedures.execution import procedure_line_journal_stream
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import service_open_playbill_source
 from cruxible_core.storage.cas import BodyAccessContext
@@ -330,74 +326,27 @@ def retained_captures(
 
 
 _INVENTORY_ACCESS = BodyAccessContext(principal_id="playbill-capture-inventory", can_read_body=True)
-#: How many produced-Capture records one journal page reads.
-_JOURNAL_PAGE = 256
-_END_OF_TIME = datetime.max.replace(tzinfo=UTC)
 
 
 def contract_captures(
     instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
     *,
     contract_digests: Collection[str],
     budget: int,
 ) -> RetainedCaptureInventory:
-    """The Captures under these contract versions, located by index, never by a CAS walk.
+    """The retained Captures under these contract versions, by index, never by a CAS walk.
 
-    Two indexes name them: the accepted projection's ``captures`` table (every
-    Capture an accepted Claim or attestation cites at ``coordinate``) and the
-    journal's produced-Capture selectors (every Capture a run is recorded
-    producing, cited or not). A Capture neither names -- bytes stored outside a
-    run and cited by nothing -- is not evidence a new citation may use. At most
-    ``budget`` Captures are read; past it the inventory is incomplete and says
-    so. Nothing here is verified; ``verify_accepted_capture`` verifies what a
-    caller keeps.
+    Every Capture envelope the body store holds is indexed by the contract it
+    names when it is stored: a run's Source acquisition or ``emit_capture``
+    terminal, a self-asserted selection, cited or not. At most ``budget`` are
+    read; past it the inventory is incomplete and says so. Nothing here is
+    verified; citation verifies what a caller keeps, at its coordinate.
     """
 
-    versions = tuple(dict.fromkeys(contract_digests))
-    digests: dict[str, None] = {}
-    if versions:
-        marks = ",".join("?" for _ in versions)
-        with instance.bind_accepted_projection(coordinate) as projection:
-            for (digest,) in projection.typed.connection.execute(
-                f"SELECT capture_digest FROM captures WHERE contract_digest IN ({marks}) "
-                "ORDER BY capture_digest",
-                versions,
-            ):
-                digests[str(digest)] = None
     store = instance.body_store()
-    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
-    complete = True
-    if journal_root.exists() and versions:
-        journal = LocalJournalBackend(journal_root)
-        stream = procedure_line_journal_stream(instance.descriptor.instance_id)
-        for version in versions:
-            cursor: tuple[str, str, int] | None = None
-            while len(digests) <= budget:
-                records, cursor, projected = journal.index.captures(
-                    stream,
-                    bodies=store,
-                    contract_digest=version,
-                    since=None,
-                    until=_END_OF_TIME,
-                    limit=_JOURNAL_PAGE,
-                    cursor=cursor,
-                )
-                if not projected:
-                    continue  # the selector index projected one more batch; ask again
-                for stored in records:
-                    payload = parse_journal_payload(
-                        store.read(stored.record.payload_digest, access=_INVENTORY_ACCESS)
-                    )
-                    produced = payload.get("capture_digest") if isinstance(payload, dict) else None
-                    if isinstance(produced, str):
-                        digests[produced] = None
-                if cursor is None:
-                    break
-    if len(digests) > budget:
-        complete = False
+    digests, complete = store.capture_envelopes.captures(contract_digests, limit=budget)
     found: list[RetainedCapture] = []
-    for digest in list(digests)[:budget]:
+    for digest in digests:
         try:
             envelope = parse_capture_envelope(store.read(digest, access=_INVENTORY_ACCESS))
         except (CruxibleError, ValueError):

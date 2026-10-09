@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
 
 import pytest
 
@@ -15,13 +14,6 @@ from cruxible_client.contracts.captures import (
     ProviderProducerReceiptResolution,
     VerifiedCaptureMemo,
 )
-from cruxible_client.contracts.temporal import format_datetime
-from cruxible_core.exhaust import LocalJournalBackend
-from cruxible_core.exhaust.records import ProcedureJournalRecordDraftV1, journal_payload_bytes
-from cruxible_core.governance.actor_context import GovernedActorContext
-from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.procedures.execution import procedure_line_journal_stream
-from cruxible_core.runtime.instance import PlaybillInstance
 
 Resolution = ProviderProducerReceiptResolution | ProcedureProducerReceiptProtocol
 
@@ -73,67 +65,6 @@ def admit_legacy_v1_citations(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "cruxible_client.contracts.captures.capture_contract_is_self_asserted",
         lambda _contract: True,
-    )
-
-
-def journal_produced_capture(
-    instance: PlaybillInstance,
-    capture_digest: str,
-    *,
-    contract_digest: str,
-    run_id: str,
-    recorded_at: datetime,
-) -> None:
-    """Append the ``produced_capture`` record a run would have written for a Capture.
-
-    For tests of what reads the journal's produced-Capture index (discovery by
-    contract); the receipt chain such a record follows in a real run is absent.
-    """
-
-    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
-    journal_root.mkdir(mode=0o700, exist_ok=True)
-    journal = LocalJournalBackend(journal_root)
-    stream = procedure_line_journal_stream(instance.descriptor.instance_id)
-    partition_id = f"test-produced-{run_id}"
-    head = journal.read_head(stream, partition_id)
-    if head.sequence == 0:
-        journal.activate_writer(
-            stream, partition_id, fencing_token="test-writer", expected_head=head
-        )
-    payload = instance.body_store().store(
-        journal_payload_bytes(
-            {
-                "tag": "playbill-procedure-produced-capture-v1",
-                "node_id": "source",
-                "capture_digest": capture_digest,
-                "capture_contract_digest": contract_digest,
-                "observed_at": format_datetime(recorded_at),
-            }
-        )
-    )
-    accepted = instance.accepted_coordinate()
-    journal.append(
-        ProcedureJournalRecordDraftV1(
-            stream=stream,
-            partition_id=partition_id,
-            event_kind="produced_capture",
-            accepted_coordinate=AcceptedCoordinate.from_internal(accepted),
-            procedure_artifact_digest=contract_digest,
-            definition_digest=contract_digest,
-            run_id=run_id,
-            admission_binding_digest=contract_digest,
-            payload_digest=payload.digest,
-            actor_context=GovernedActorContext(
-                actor_type="human_user",
-                actor_id="owner",
-                org_id="org-test",
-                operation_id=f"op-{run_id}",
-                timestamp=recorded_at,
-            ),
-            recorded_at=recorded_at,
-        ),
-        expected_head=head,
-        fencing_token="test-writer",
     )
 
 
