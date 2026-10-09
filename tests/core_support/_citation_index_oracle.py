@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
-from cruxible_client.contracts.captures import CaptureEnvelopeAny
+from cruxible_client.contracts.captures import CaptureEnvelopeAny, observed_content
 from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
@@ -93,6 +93,7 @@ class _CitationRow:
     capture_digests: set[str] = field(default_factory=set)
     claim_paths: set[str] = field(default_factory=set)
     dereference_handle_digest: str | None = None
+    observed_content_digest: str | None = None
 
 
 def build_evidence_citation_index(
@@ -185,11 +186,14 @@ def build_evidence_citation_index_v2(
 
     rows: dict[tuple[bytes, bytes], _CitationRow] = {}
     associations: dict[tuple[bytes, bytes], dict[tuple[bytes, bytes], CoverageClaimCitationV2]] = {}
-    for entry in captures:
+    for entry in sorted(captures, key=lambda item: item.capture_digest.encode("ascii")):
         envelope = entry.envelope
         source = accepted_logical_source(envelope.source)
+        # V2 groups by what was observed, by content; a Capture recording none
+        # groups by its commitment, as V1 does.
+        observed = observed_content(envelope)
         key = (
-            envelope.commitment.digest.encode("ascii"),
+            observed.digest.encode("ascii"),
             source.sort_key if source is not None else b"",
         )
         row = rows.get(key)
@@ -200,6 +204,9 @@ def build_evidence_citation_index_v2(
                 byte_length=envelope.commitment.byte_length,
                 accepted_source=source,
                 access_class=entry.access_class,
+                observed_content_digest=(
+                    None if observed.basis == "commitment" else observed.digest
+                ),
             )
             rows[key] = row
         row.capture_digests.add(entry.capture_digest)
@@ -234,6 +241,7 @@ def build_evidence_citation_index_v2(
                 associations.get(key, {})[association_key]
                 for association_key in sorted(associations.get(key, {}))
             ),
+            observed_content_digest=row.observed_content_digest,
         )
         for key, row in sorted(rows.items())
     )

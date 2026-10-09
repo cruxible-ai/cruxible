@@ -14,6 +14,7 @@ from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     capture_contract_digest,
     capture_contract_is_self_asserted,
+    observed_content,
     parse_capture_contract,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext, BodyProjectionProtocol
@@ -66,13 +67,20 @@ def coverage_rows(
     at: AcceptedCoordinate,
     version: Literal[1, 2] = 2,
 ) -> tuple[EvidenceCitationIndexV1 | EvidenceCitationIndexV2, dict[str, CaptureEnvelopeAny]]:
-    """Reproduce retained V1/V2 bytes using indexed joins and exact CAS envelopes."""
+    """Reproduce retained V1/V2 bytes using indexed joins and exact CAS envelopes.
+
+    V1 groups Captures by their commitment. V2 groups them by observed content
+    (``captures.observed_content_digest``): a Capture that records none falls
+    back to its commitment, so every row of an index built before the field
+    reproduces byte for byte.
+    """
+    group_column = "evidence_commitment_digest" if version == 1 else "observed_content_digest"
     groups = reader._rows(
-        "SELECT DISTINCT p.evidence_commitment_digest,s.kind,p.logical_source_id FROM captures p "
-        "JOIN source_references s USING(source_ref_key) WHERE EXISTS "
+        f"SELECT DISTINCT p.{group_column} AS group_digest,s.kind,p.logical_source_id "
+        "FROM captures p JOIN source_references s USING(source_ref_key) WHERE EXISTS "
         "(SELECT 1 FROM citation_uses u WHERE u.capture_digest=p.capture_digest "
         "AND u.owner_kind='Claim') "
-        "ORDER BY p.evidence_commitment_digest,s.kind,p.logical_source_id"
+        f"ORDER BY p.{group_column},s.kind,p.logical_source_id"
     )
     access = BodyAccessContext(principal_id="playbill-coverage", can_read_body=True)
     envelopes: dict[str, CaptureEnvelopeAny] = {}
@@ -82,10 +90,10 @@ def coverage_rows(
         captures = reader._rows(
             "SELECT p.capture_digest FROM captures p "
             "JOIN source_references s USING(source_ref_key) "
-            "WHERE p.evidence_commitment_digest=? AND s.kind=? AND p.logical_source_id IS ? "
+            f"WHERE p.{group_column}=? AND s.kind=? AND p.logical_source_id IS ? "
             "AND EXISTS (SELECT 1 FROM citation_uses u WHERE u.capture_digest=p.capture_digest "
             "AND u.owner_kind='Claim') ORDER BY p.capture_digest",
-            (group["evidence_commitment_digest"], group["kind"], group["logical_source_id"]),
+            (group["group_digest"], group["kind"], group["logical_source_id"]),
         )
         addresses: set[str] = set()
         associations: dict[tuple[bytes, bytes], CoverageClaimCitationV2] = {}
@@ -161,12 +169,16 @@ def coverage_rows(
             ),
         )
         if version == 2:
+            observed = observed_content(first)
             citations.append(
                 EvidenceCitationV2.model_validate(
                     {
                         **values,
                         "citation_associations": tuple(
                             associations[key] for key in sorted(associations)
+                        ),
+                        "observed_content_digest": (
+                            None if observed.basis == "commitment" else observed.digest
                         ),
                     }
                 )

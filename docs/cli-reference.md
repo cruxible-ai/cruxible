@@ -3237,14 +3237,21 @@ Cruxible resurfaces; it does not judge. A receipt never refuses a proposal, neve
 changes settlement, and is never interpreted: reading it is the reviewer's or
 the agent's job. Evidence is compared by content, never by the Capture's own
 digest, which also binds the run, the observation time and the contract: each
-cited Capture contributes its evidence commitment digest (the digest of the
-material it committed), and a Capture read through the core-owned
-`workspace.file` interface contributes the file's bytes digest, which the
-daemon verified against its own source-read receipt. A re-run that reads
-identical bytes cites the same evidence; different bytes are a new question and
-match nothing. A third-party Provider whose output embeds run-bound values (a
-run ID, a timestamp, a request digest) commits different material on every run,
-so its Captures do not match across runs. A withdrawal is not a refusal. The
+cited Capture contributes its observed content (`observed_content_digest` on
+its envelope): for a `workspace.file` read, the file's bytes digest, which the
+daemon verified against its own source-read receipt; for a `web.fetch` v3 fetch,
+the digest of the body the origin sent, which the daemon recomputes from the
+retained body and refuses (`cruxible.capture.observed_content_mismatch`) when
+the Provider's stated digest differs; for any other Capture, its evidence
+commitment digest (the digest of the material it committed). A re-run that
+reads identical bytes cites the same evidence; different bytes are a new
+question and match nothing. A third-party Provider whose output embeds
+run-bound values (a run ID, a timestamp, a request digest) commits different
+material on every run, so its Captures do not match across runs. The same
+observed content is one piece of evidence everywhere else too: coverage groups
+its citations in one row, the floor counts it once, `next` reports new evidence
+of it once and treats a Claim that already admits it as having it, and the
+freshness-drift detector sees a change only when the content changed. A withdrawal is not a refusal. The
 lookup is a keyed index the daemon keeps current as proposals are rejected
 (closes of one proposal are serialized, and the index keeps the close that
 won) and, for retirements, in post: each read indexes at most one bounded page
