@@ -102,6 +102,8 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "consumer_stalled": "restart_the_consumer_through_its_named_repair",
     "line_coverage_gap": "evaluate_the_uncovered_range_then_dispatch_what_it_finds",
     "line_work_pending": "dispatch_the_lines_pending_work",
+    # Items a Line posted for judgment: read them, then ack, dismiss or link each.
+    "line_inbox_unread": "judge_the_lines_unread_inbox_items",
     "evidence_unavailable": "restore_the_capture_from_backup_or_recapture_and_recite_its_claims",
     # The row names `settle RSC-...`; the daemon resolves the exact contract and
     # bound window, and which accepted observation settles it is the settler's call.
@@ -139,6 +141,14 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "proposal_item_evidence_ambiguous": (
         "flow_exactly_one_source_capture_into_each_proposed_claim_item"
     ),
+    # A `post_inbox` input is the Procedure author's: an explicit fan-out must
+    # resolve to a list, each element's evidence must be its own, and every item
+    # and the run's whole post stay within the inbox byte bounds.
+    "inbox_item_invalid": "resolve_the_inbox_input_or_its_items_to_a_list",
+    "inbox_item_evidence_ambiguous": (
+        "keep_per_element_lineage_for_lists_built_from_several_captures"
+    ),
+    "inbox_item_over_budget": "post_smaller_items_or_fewer_items_per_run",
     "proposal_lowering_refused": "repair_the_proposed_claim_the_lowering_diagnostic_names",
     "proposal_candidate_refused": "repair_the_proposed_member_the_candidate_diagnostic_names",
     "settle_mandate_missing": (

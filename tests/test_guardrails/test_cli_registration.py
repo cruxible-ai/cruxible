@@ -100,8 +100,9 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     # 27 includes the retained-Capture read group, the kit group and the internal
     # registration group whose children are the root's; the read cut removed the
     # subject, policy and query groups (query is one command), and the stub leaf
-    # replaced the world group; the Claude Code hook group is cut.
-    assert len(groups) == 27, f"expected 27 Cruxible/host groups, found {len(groups)}"
+    # replaced the world group; the Claude Code hook group is cut. The Line inbox
+    # group adds one.
+    assert len(groups) == 28, f"expected 28 Cruxible/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
@@ -131,9 +132,10 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # Includes retained evidence reads through `capture read`, `cruxible mcp` and the kit verbs.
     # S3: `procedure readiness|status` folded into `get`, `procedure bind` was cut,
     # `line status` folded into `get Line:<name>`, `line check` became
-    # `line evaluate --dry-run`. v1 polish added `proposal reject`.
-    assert len(leaf_claims) == 99, (
-        f"expected 99 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    # `line evaluate --dry-run`. v1 polish added `proposal reject`; the Line inbox
+    # added `inbox list|get|ack|dismiss|link`.
+    assert len(leaf_claims) == 104, (
+        f"expected 104 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

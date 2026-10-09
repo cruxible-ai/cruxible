@@ -1322,6 +1322,52 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_inbox_list(
+        instance_id: InstanceId = None,
+        *,
+        line: str | None = None,
+        status: contracts.InboxItemStatus | None = None,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.INBOX_LIST_MAX_LIMIT)
+        ] = contracts.INBOX_LIST_DEFAULT_LIMIT,
+        cursor: str | None = None,
+    ) -> contracts.InboxList:
+        """List one page of Line inbox items; pass next_cursor back while truncated."""
+        return handlers.handle_playbill_inbox_list(
+            require_instance_id(instance_id), line=line, status=status, limit=limit, cursor=cursor
+        )
+
+    @_tool
+    def cruxible_inbox_get(instance_id: InstanceId = None, *, item_id: str) -> contracts.InboxItem:
+        """Read one inbox item whole: envelope, payload as posted, and its latest dispositions."""
+        return handlers.handle_playbill_inbox_get(require_instance_id(instance_id), item_id)
+
+    @_tool
+    def cruxible_inbox_ack(
+        instance_id: InstanceId = None, *, item_id: str
+    ) -> contracts.InboxDispositionResult:
+        """Acknowledge one inbox item: seen, and owed nothing further."""
+        return handlers.handle_playbill_inbox_ack(require_instance_id(instance_id), item_id)
+
+    @_tool
+    def cruxible_inbox_dismiss(
+        instance_id: InstanceId = None, *, item_id: str, reason: str
+    ) -> contracts.InboxDispositionResult:
+        """Dismiss one inbox item, recording why it needs nothing."""
+        return handlers.handle_playbill_inbox_dismiss(
+            require_instance_id(instance_id), item_id, reason
+        )
+
+    @_tool
+    def cruxible_inbox_link(
+        instance_id: InstanceId = None, *, item_id: str, target: contracts.InboxLinkTarget
+    ) -> contracts.InboxDispositionResult:
+        """Link one inbox item to the proposal or Subject that records your judgment of it."""
+        return handlers.handle_playbill_inbox_link(
+            require_instance_id(instance_id), item_id, target
+        )
+
+    @_tool
     def cruxible_line_run(
         instance_id: InstanceId = None,
         *,

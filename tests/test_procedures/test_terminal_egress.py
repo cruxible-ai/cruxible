@@ -90,11 +90,18 @@ def _line_bound(prepared: PreparedProcedureRunV1) -> PreparedProcedureRunV1:
 class _InboxSink:
     def __init__(self) -> None:
         self.requests: list[TerminalEgressRequestV1] = []
+        self.manifests: list[object] = []
 
     def deliver_terminal_egress(
         self, *, request: TerminalEgressRequestV1
     ) -> TerminalEgressReceiptV1:
+        raise AssertionError("post_inbox is delivered through the inbox door")
+
+    def deliver_inbox_egress(
+        self, *, request: TerminalEgressRequestV1, manifests: object
+    ) -> TerminalEgressReceiptV1:
         self.requests.append(request)
+        self.manifests.append(manifests)
         return TerminalEgressReceiptV1(
             kind=request.kind,
             run_id=request.run_id,
@@ -118,6 +125,9 @@ class _ProposalRefusingSink:
             "Target paths differ from the admitted candidate.",
             details={"target_paths": ["claims/expected.json"]},
         )
+
+    def deliver_inbox_egress(self, *, request: TerminalEgressRequestV1, manifests: object) -> None:
+        self.deliver_terminal_egress(request=request)
 
 
 def _payload(fixture, digest: str) -> object:
@@ -199,6 +209,8 @@ def test_terminal_sink_delivery_is_receipted_after_item_dependencies(tmp_path) -
 
     assert result.status == "succeeded"
     assert len(sink.requests) == 1 and len(sink.requests[0].items) == 2
+    # The inbox door receives each item's own dependency manifest.
+    assert set(sink.manifests[0]) == {item.item_key for item in sink.requests[0].items}  # type: ignore[call-overload]
     records = fixture.journal.all_records(fixture.stream, "runs")
     kinds = [item.record.event_kind for item in records]
     assert kinds.index("item_dependencies") < kinds.index("terminal_egress")

@@ -1477,6 +1477,55 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.LineEvaluateResult)
 
+    def list_inbox(
+        self,
+        instance_id: str,
+        *,
+        line: str | None = None,
+        status: contracts.InboxItemStatus | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> contracts.InboxList:
+        """One page of Line inbox items, most recent first; follow ``next_cursor``."""
+        params: dict[str, Any] = {}
+        for key, value in (
+            ("line", line),
+            ("status", status),
+            ("limit", limit),
+            ("cursor", cursor),
+        ):
+            if value is not None:
+                params[key] = value
+        response = self._client.get(f"/api/v1/{instance_id}/inbox", params=params)
+        return self._parse_model(response, contracts.InboxList)
+
+    def get_inbox_item(self, instance_id: str, item_id: str) -> contracts.InboxItem:
+        """One inbox item whole: envelope, payload as posted, and its latest dispositions."""
+        response = self._client.get(f"/api/v1/{instance_id}/inbox/{item_id}")
+        return self._parse_model(response, contracts.InboxItem)
+
+    def ack_inbox_item(self, instance_id: str, item_id: str) -> contracts.InboxDispositionResult:
+        response = self._client.post(f"/api/v1/{instance_id}/inbox/{item_id}/ack")
+        return self._parse_model(response, contracts.InboxDispositionResult)
+
+    def dismiss_inbox_item(
+        self, instance_id: str, item_id: str, *, reason: str
+    ) -> contracts.InboxDispositionResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/inbox/{item_id}/dismiss",
+            json=contracts.InboxDismissRequest(reason=reason).model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.InboxDispositionResult)
+
+    def link_inbox_item(
+        self, instance_id: str, item_id: str, *, target: contracts.InboxLinkTarget
+    ) -> contracts.InboxDispositionResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/inbox/{item_id}/link",
+            json=contracts.InboxLinkRequest(target=target).model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.InboxDispositionResult)
+
     def dispatch_line(
         self, instance_id: str, line: str, *, request: contracts.LineDispatchRequest
     ) -> contracts.LineDispatchResult:

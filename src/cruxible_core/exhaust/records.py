@@ -40,8 +40,10 @@ PROCEDURE_EXHAUST_JOURNAL_FAMILY = "procedure-exhaust-v1"
 RESOLUTION_JOURNAL_FAMILY = "resolution-exhaust-v1"
 QUERY_RECEIPT_JOURNAL_FAMILY = "query-receipt-v1"
 LINE_DISPATCH_JOURNAL_FAMILY = "line-dispatch-v1"
+LINE_INBOX_JOURNAL_FAMILY = "line-inbox-v1"
 REGISTERED_JOURNAL_FAMILIES: tuple[str, ...] = (
     LINE_DISPATCH_JOURNAL_FAMILY,
+    LINE_INBOX_JOURNAL_FAMILY,
     RESOLUTION_JOURNAL_FAMILY,
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     QUERY_RECEIPT_JOURNAL_FAMILY,
@@ -53,6 +55,7 @@ _HEX_SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
 
 JournalEventKindV1 = Literal[
     "line_dispatch_transition",
+    "line_inbox_transition",
     "occurrence_materialized",
     "occurrence_lapsed",
     "attempt_started",
@@ -144,6 +147,26 @@ def _validate_event_family(
             )
         ):
             raise ValueError("Line dispatch transitions carry no Procedure-run coordinates")
+        return
+    if event_kind == "line_inbox_transition" or journal_family == LINE_INBOX_JOURNAL_FAMILY:
+        # An inbox transition names the run that posted inside its payload; the
+        # record itself is operational state, never a step of that run.
+        if (
+            event_kind != "line_inbox_transition"
+            or journal_family != LINE_INBOX_JOURNAL_FAMILY
+            or any(
+                value is not None
+                for value in (
+                    procedure_artifact_digest,
+                    run_id,
+                    line_spec_digest,
+                    occurrence_id,
+                    attempt,
+                    admission_binding_digest,
+                )
+            )
+        ):
+            raise ValueError("Line inbox transitions carry no Procedure-run coordinates")
         return
     if journal_family == RESOLUTION_JOURNAL_FAMILY:
         if event_kind not in {
@@ -703,6 +726,7 @@ __all__ = [
     "CLAIM_VERDICT_OBSERVATION_EVENT_KIND",
     "QUERY_RECEIPT_EVENT_KIND",
     "QUERY_RECEIPT_JOURNAL_FAMILY",
+    "LINE_INBOX_JOURNAL_FAMILY",
     "REGISTERED_JOURNAL_FAMILIES",
     "StoredProcedureJournalRecordV1",
     "build_journal_head_manifest",

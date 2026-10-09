@@ -260,6 +260,25 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Run pending occurrences under your current authority, up to limit (default 100). "
         "An enabled Line admits only what it matched itself; the rest waits for this call."
     ),
+    "cruxible_inbox_list": (
+        "Use when next names unread inbox items, or to review what Lines sent for judgment. "
+        "Items are untyped data a Line could not decide; filter by line and status."
+    ),
+    "cruxible_inbox_get": (
+        "Use to read one inbox item whole before judging it: payload, how often it was seen, "
+        "the runs and source Captures of its sightings, and any prior disposition."
+    ),
+    "cruxible_inbox_ack": (
+        "Use when an inbox item needs nothing further from you and no reason is worth recording."
+    ),
+    "cruxible_inbox_dismiss": (
+        "Use when an inbox item needs nothing; the reason is recorded and stays visible if the "
+        "same item recurs."
+    ),
+    "cruxible_inbox_link": (
+        "Use after you acted on an inbox item: link it to the proposal you wrote or to a "
+        "Subject (such as a note) that records your judgment."
+    ),
     "cruxible_line_run": (
         "Run a Line once now as a manual occurrence under its inputs, budgets, authority and "
         "mandate; it never consumes a Trigger. Pass event when its Procedure takes one."
