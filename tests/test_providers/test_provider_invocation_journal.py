@@ -760,7 +760,12 @@ def test_startup_recovery_closes_the_exact_start_and_terminalizes_the_attempt(
     stream = prepared.admission.journal_stream
     admission = prepared.admission
     frames = LocalJournalBackend._read_frames
-    work = {"frames": 0, "all_records": 0}
+    cas_read = type(fixture.bodies).read
+    work = {"frames": 0, "all_records": 0, "cas_reads": 0}
+
+    def counted_read(self, digest, **kwargs):  # type: ignore[no-untyped-def]
+        work["cas_reads"] += 1
+        return cas_read(self, digest, **kwargs)
 
     def counted_frames(*args, **kwargs):  # type: ignore[no-untyped-def]
         for item in frames(*args, **kwargs):
@@ -780,26 +785,45 @@ def test_startup_recovery_closes_the_exact_start_and_terminalizes_the_attempt(
             journal=fixture.journal, bodies=fixture.bodies, fencing_token="unrelated"
         )
         for ordinal in range(count):
-            writer.append(
+            run_id = f"RUN-unrelated-{partition}-{ordinal}"
+            common = dict(
                 stream=stream,
                 partition_id=partition,
-                event_kind="node_fired",
                 accepted_coordinate=admission.accepted_coordinate,
                 procedure_artifact_digest=admission.procedure_artifact_digest,
                 definition_digest=admission.definition_digest,
-                run_id=f"RUN-unrelated-{partition}-{ordinal}",
+                run_id=run_id,
                 admission_binding_digest=admission.admission_binding_digest,
                 actor_context=admission.actor_context,
                 recorded_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
-                payload={"ordinal": ordinal},
+            )
+            # A completed unrelated Provider invocation: a validated start with
+            # its own invocation id, then its run's finalization.
+            writer.append(
+                event_kind="provider_invocation_started",
+                payload=ProviderInvocationStarted(
+                    invocation_id=f"sha256:{ordinal:064x}",
+                    occurrence_path=f"/unrelated/{partition}",
+                    implementation_digest="sha256:" + "1" * 64,
+                    materialization_digest="sha256:" + "2" * 64,
+                    input_digest="sha256:" + "3" * 64,
+                    input_bucket="small",
+                ).model_dump(mode="json"),
+                **common,  # type: ignore[arg-type]
+            )
+            writer.append(
+                event_kind="attempt_finalized",
+                payload={"status": "succeeded", "ordinal": ordinal},
+                **common,  # type: ignore[arg-type]
             )
 
     measured = []
     for size, partition in ((10, "unrelated-a"), (100, "unrelated-b")):
         unrelated_history(size, partition)
-        work.update(frames=0, all_records=0)
+        work.update(frames=0, all_records=0, cas_reads=0)
         with monkeypatch.context() as patch:
             patch.setattr(LocalJournalBackend, "_read_frames", staticmethod(counted_frames))
+            patch.setattr(type(fixture.bodies), "read", counted_read)
             patch.setattr(LocalJournalBackend, "all_records", no_all_records)
             assert procedure_run_service.service_recover_provider_invocations(
                 _Instance(),  # type: ignore[arg-type]
@@ -808,7 +832,15 @@ def test_startup_recovery_closes_the_exact_start_and_terminalizes_the_attempt(
             ) == (invocation_id,)
         measured.append(dict(work))
     assert measured[0]["all_records"] == 0
-    assert measured[0]["frames"] == measured[1]["frames"], measured
+    assert measured[0] == measured[1], measured
+    # A rebuilt index holds no writer notes: its first lookup projects the
+    # pending starts once from their payloads, and still finds the run.
+    fixture.journal.index.path.unlink()
+    assert procedure_run_service.service_recover_provider_invocations(
+        _Instance(),  # type: ignore[arg-type]
+        invocation_ids=(invocation_id,),
+        recorded_at=datetime(2026, 9, 1, 0, 0, 3, tzinfo=timezone.utc),
+    ) == (invocation_id,)
 
 
 def test_unclean_start_marks_recovery_required_without_completion_or_terminalization(

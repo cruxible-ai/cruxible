@@ -8,9 +8,11 @@ CAS-addressed payload, so there is exactly one durable append path.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime
+from typing import Any
 
-from cruxible_client.contracts.errors import ExecutionError
+from cruxible_client.contracts.errors import ExecutionError, JournalError
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.exhaust.records import (
     JournalEventKindV1,
@@ -126,7 +128,34 @@ class ProcedureExhaustWriter:
             ):
                 raise ExecutionError("journal append did not reproduce its material reservation")
             self.material_reservations.release_locked(reservation.reservation_id)
-            return stored
+        if event_kind == "provider_invocation_started":
+            note_invocation_start(self.journal, stored, payload)
+        return stored
 
 
-__all__ = ["ProcedureExhaustWriter"]
+def note_invocation_start(
+    journal: Any, stored: StoredProcedureJournalRecordV1, payload: object
+) -> None:
+    """Give a just-appended Provider start its locator, when the journal keeps an index.
+
+    A start left unnoted (no index, a crash before this) is projected later.
+    """
+
+    index = getattr(journal, "index", None)
+    invocation_id = payload.get("invocation_id") if isinstance(payload, dict) else None
+    if index is None or not isinstance(invocation_id, str):
+        return
+    try:
+        index.note_invocation(
+            stored.record.stream,
+            partition_id=stored.record.partition_id,
+            sequence=stored.record.sequence,
+            invocation_id=invocation_id,
+        )
+    except (JournalError, sqlite3.DatabaseError):
+        # The start is durable; its locator is a cache. Left pending, the next
+        # lookup projects it from the payload.
+        pass
+
+
+__all__ = ["ProcedureExhaustWriter", "note_invocation_start"]

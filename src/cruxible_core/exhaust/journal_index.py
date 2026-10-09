@@ -38,12 +38,12 @@ _R = TypeVar("_R")
 #: Bumped whenever a table or index changes shape: an index file written under
 #: another version is dropped and rebuilt from the retained journal, which is
 #: the authority (this file is a disposable cache).
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 _TABLES = (
     "capture_selectors",
     "capture_progress",
     "invocation_locators",
-    "invocation_progress",
+    "invocation_pending",
     "open_runs",
     "run_tallies",
     "records",
@@ -80,13 +80,20 @@ CREATE INDEX IF NOT EXISTS records_stream_position ON records(stream,id);
 CREATE INDEX IF NOT EXISTS records_partition_position
  ON records(stream,partition_id,event_kind,id);
 CREATE TABLE IF NOT EXISTS capture_progress(stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL);
--- The Provider invocation each provider_invocation_started record names, projected
--- once per record from its payload: a named invocation finds its run directly.
+-- The Provider invocation each provider_invocation_started record names. The
+-- writer that appends a start records its locator (note_invocation); a start
+-- indexed without one (a rebuilt index, a crash between append and note) waits
+-- in invocation_pending until a lookup projects it from its payload.
 CREATE TABLE IF NOT EXISTS invocation_locators (
  record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
  invocation_id TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS invocation_by_id ON invocation_locators(invocation_id, record_id);
-CREATE TABLE IF NOT EXISTS invocation_progress(stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS invocation_pending (
+ record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE);
+CREATE TRIGGER IF NOT EXISTS records_invocation_started AFTER INSERT ON records
+ WHEN new.event_kind='provider_invocation_started' BEGIN
+ INSERT INTO invocation_pending VALUES(new.id);
+END;
 -- Admissions whose run has no attempt_finalized record yet, keyed by the
 -- admission row: running runs are read without visiting finished ones.
 CREATE TABLE IF NOT EXISTS open_runs (
@@ -673,6 +680,35 @@ class JournalIndex:
             return partitions, {"generation": generation, "ordinal": rows[limit - 1]["id"]}
         return partitions, None
 
+    def note_invocation(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        partition_id: str,
+        sequence: int,
+        invocation_id: str,
+    ) -> None:
+        """Record the invocation a just-appended start names: the writer's own locator.
+
+        The writer holds the payload it appended, so no body is read. A start
+        never noted stays pending, and a lookup projects it from its payload.
+        """
+
+        with self.connection() as conn:
+            self._sync(conn, stream, partition_id)
+            row = conn.execute(
+                "SELECT id,event_kind FROM records WHERE stream=? AND partition_id=? "
+                "AND sequence=?",
+                (_key(stream), partition_id, sequence),
+            ).fetchone()
+            if row is None or row["event_kind"] != "provider_invocation_started":
+                raise JournalIntegrityError("noted invocation start is not indexed")
+            conn.execute(
+                "INSERT OR REPLACE INTO invocation_locators VALUES (?,?)",
+                (row["id"], invocation_id),
+            )
+            conn.execute("DELETE FROM invocation_pending WHERE record_id=?", (row["id"],))
+
     def invocation_runs(
         self,
         stream: JournalStreamIdentityV1,
@@ -682,9 +718,11 @@ class JournalIndex:
     ) -> dict[str, tuple[str, str]]:
         """invocation id -> (run id, partition) of the run that started it, for the named ids.
 
-        Starts not yet projected are read once (their payload names the
-        invocation) and recorded; every later lookup is one index range per id.
-        An id no retained start names is absent from the answer.
+        Writers note each start as they append it, so a lookup is one index
+        range per id. Only starts indexed without a note (an index rebuilt from
+        the journal, or a crash between an append and its note) are projected
+        here, once each, from their payloads. An id no retained start names is
+        absent from the answer.
         """
         from cruxible_core.exhaust.records import parse_journal_payload
         from cruxible_core.storage.cas import BodyAccessContext
@@ -692,17 +730,14 @@ class JournalIndex:
         access = BodyAccessContext(principal_id="provider-recovery", can_read_body=True)
         with self.connection() as conn:
             while True:
-                progress = conn.execute(
-                    "SELECT record_id FROM invocation_progress WHERE stream=?", (_key(stream),)
-                ).fetchone()
-                fresh = conn.execute(
-                    "SELECT * FROM records INDEXED BY records_kind_position WHERE stream=? "
-                    "AND event_kind='provider_invocation_started' AND id>? ORDER BY id LIMIT 1024",
-                    (_key(stream), progress[0] if progress else 0),
+                pending = conn.execute(
+                    "SELECT r.* FROM invocation_pending p JOIN records r ON r.id=p.record_id "
+                    "WHERE r.stream=? ORDER BY p.record_id LIMIT 1024",
+                    (_key(stream),),
                 ).fetchall()
-                if not fresh:
+                if not pending:
                     break
-                for row in fresh:
+                for row in pending:
                     stored = self.read_row(row)
                     payload = parse_journal_payload(
                         bodies.read(stored.record.payload_digest, access=access)
@@ -714,13 +749,10 @@ class JournalIndex:
                             "Provider invocation start payload names no invocation"
                         )
                     conn.execute(
-                        "INSERT INTO invocation_locators VALUES (?,?)",
+                        "INSERT OR REPLACE INTO invocation_locators VALUES (?,?)",
                         (row["id"], payload["invocation_id"]),
                     )
-                conn.execute(
-                    "INSERT OR REPLACE INTO invocation_progress VALUES(?,?)",
-                    (_key(stream), fresh[-1]["id"]),
-                )
+                    conn.execute("DELETE FROM invocation_pending WHERE record_id=?", (row["id"],))
             found: dict[str, tuple[str, str]] = {}
             for invocation_id in invocation_ids:
                 row = conn.execute(
