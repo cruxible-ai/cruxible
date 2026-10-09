@@ -17,6 +17,7 @@ freshness lookup reads one indexed range per Claim lineage, never a scan.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 from collections.abc import Iterator, Mapping, Sequence
@@ -527,7 +528,9 @@ class ReobservationReader:
     file's identity and the journal's log signature are compared with the ones
     last caught up to: a projection deleted or replaced closes the connection,
     rebuilds or catches the file up from the journal and reconnects; a journal
-    change alone catches the same file up. Counters say how many probes each read
+    change alone catches the same file up. A forked child starts with fresh
+    locks and no inherited connection (``os.register_at_fork``, as the Git and
+    CAS caches do, plus a PID guard). Counters say how many probes each read
     made, for counted-work tests.
     """
 
@@ -541,6 +544,7 @@ class ReobservationReader:
         self._conn: sqlite3.Connection | None = None
         self._signature: str | None = None
         self._projection: tuple[int, int] | None = None
+        self._pid = os.getpid()
         self.probes = 0
         self.rows_read = 0
 
@@ -556,6 +560,15 @@ class ReobservationReader:
                 cls._cache[root] = reader
             return reader
 
+    def _after_fork(self) -> None:
+        """Forget what the parent held: its lock state and its connection."""
+
+        self._lock = threading.Lock()
+        self._conn = None  # the parent's; never closed from the child
+        self._signature = None
+        self._projection = None
+        self._pid = os.getpid()
+
     def _projection_identity(self) -> tuple[int, int] | None:
         try:
             stat = self.store.path.stat()
@@ -564,6 +577,8 @@ class ReobservationReader:
         return stat.st_dev, stat.st_ino
 
     def _connection(self) -> sqlite3.Connection | None:
+        if self._pid != os.getpid():
+            self._after_fork()
         signature = reobservation_journal_signature(
             self.instance.root,
             exhaust=self.instance.descriptor.storage.exhaust,
@@ -662,6 +677,20 @@ class ReobservationReader:
             boundaries=tuple(sorted(boundaries)),
             sequence=sequence,
         )
+
+
+def _after_fork_in_child() -> None:
+    """A forked child holds none of the parent's locks or connections."""
+
+    global _LOCK
+    _LOCK = threading.RLock()
+    ReobservationReader._cache_lock = threading.Lock()
+    for reader in ReobservationReader._cache.values():
+        reader._after_fork()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 def cited_reobservation_keys(

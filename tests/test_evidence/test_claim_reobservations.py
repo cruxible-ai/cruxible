@@ -676,3 +676,35 @@ def test_a_warmed_reader_follows_a_rebuilt_projection(tmp_path: Path, how: str) 
     assert verdict.verdict == "supported", verdict
     (expiration,) = verdict.freshness_expirations
     assert expiration.reobserved_at == _START + timedelta(minutes=100)
+
+
+def test_a_forked_child_does_not_inherit_the_reader_lock(tmp_path: Path) -> None:
+    """Reviewer fork probe: the parent holds the reader's lock at fork time."""
+
+    import os
+    import signal
+    import warnings
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+
+    if not hasattr(os, "fork"):
+        pytest.skip("no fork on this platform")
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    _reobserve(instance, _START + timedelta(minutes=50))
+    reader = ReobservationReader.of(instance)
+    assert reader.sequence(claim.identity.name) == 1
+    reader._lock.acquire()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            pid = os.fork()
+        if pid == 0:
+            signal.signal(signal.SIGALRM, lambda *args: os._exit(42))
+            signal.alarm(5)
+            code = 0 if reader.sequence(claim.identity.name) == 1 else 3
+            os._exit(code)
+    finally:
+        reader._lock.release()
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
