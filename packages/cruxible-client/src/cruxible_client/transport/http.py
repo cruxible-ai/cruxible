@@ -1500,7 +1500,7 @@ class CruxibleClient:
         return self._parse_model(response, contracts.InboxList)
 
     def get_inbox_item(self, instance_id: str, item_id: str) -> contracts.InboxItem:
-        """One inbox item whole: envelope, payload as posted, and its dispositions."""
+        """One inbox item whole: envelope, payload as posted, and its latest dispositions."""
         response = self._client.get(f"/api/v1/{instance_id}/inbox/{item_id}")
         return self._parse_model(response, contracts.InboxItem)
 

@@ -5760,7 +5760,7 @@ def _echo_inbox_disposition(result: Any) -> None:
 @json_option
 @handle_errors
 def inbox_get(item_id: str, output_json: bool) -> None:
-    """Read one item whole: envelope, payload as posted, and every disposition."""
+    """Read one item whole: envelope, payload as posted, and its latest dispositions."""
 
     result = _server_call(
         lambda client, instance_id: client.get_inbox_item(instance_id, item_id),
@@ -5782,7 +5782,12 @@ def inbox_get(item_id: str, output_json: bool) -> None:
             f"{label}: {sighting.run_id} at {format_datetime(sighting.posted_at)} captures "
             f"{', '.join(sighting.source_capture_digests) or '-'}"
         )
-    for disposition in result.dispositions:
+    if envelope.disposition_count > len(result.recent_dispositions):
+        click.echo(
+            f"Dispositions: latest {len(result.recent_dispositions)} of "
+            f"{envelope.disposition_count}"
+        )
+    for disposition in result.recent_dispositions:
         detail = getattr(disposition, "reason", None) or (
             disposition.target.model_dump(mode="json") if hasattr(disposition, "target") else ""
         )

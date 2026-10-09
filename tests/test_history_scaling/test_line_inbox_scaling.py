@@ -10,6 +10,7 @@ time, once after the small history and once after one ten times larger.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
@@ -145,3 +146,126 @@ def test_inbox_operations_do_not_grow_with_the_inbox_history(
             k: v for k, v in large[name].items() if k != "vm"
         }, (name, small[name], large[name])
         assert abs(small[name]["vm"] - large[name]["vm"]) <= 64, (name, rounds)
+
+
+class _Decoded:
+    """Counts what one inbox read decodes: JSON text and validated adapter input, in bytes."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from cruxible_core.exhaust import line_inbox
+
+        self.bytes = 0
+        counter = self
+
+        class _Json:
+            @staticmethod
+            def loads(text: str | bytes) -> object:
+                counter.bytes += len(text)
+                return json.loads(text)
+
+        class _Adapter:
+            def __init__(self, adapter: object) -> None:
+                self.adapter = adapter
+
+            def validate_json(self, text: str | bytes) -> object:
+                counter.bytes += len(text)
+                return self.adapter.validate_json(text)  # type: ignore[attr-defined]
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(self.adapter, name)
+
+        monkeypatch.setattr(line_inbox, "json", _Json)
+        monkeypatch.setattr(line_inbox, "_DISPOSITION", _Adapter(line_inbox._DISPOSITION))
+        monkeypatch.setattr(line_inbox, "_PREVIEW", _Adapter(line_inbox._PREVIEW))
+
+
+def test_a_get_and_a_decision_do_not_grow_with_the_items_decision_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-006: one item decided 10 and then 100 times reads and records the same work."""
+
+    instance, _owner = initialize_local(tmp_path)
+    store = LineInboxStore(instance)
+    write = {
+        "actor": _actor(instance),
+        "now": NOW,
+        "coordinate": AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+    }
+    (key,) = store.post([_posting(1)], **write)  # type: ignore[arg-type]
+    item = store.resolve(key)
+    decided = 0
+    rounds = []
+    for size in (10, 100):
+        while decided < size:
+            store.record_disposition(  # type: ignore[arg-type]
+                item,
+                InboxDismissed(actor_id="agent", decided_at=NOW, reason=f"seen {decided:04d}"),
+                **write,
+            )
+            decided += 1
+        decoded = _Decoded(monkeypatch)
+        measured = _measure(
+            monkeypatch,
+            {
+                "get": lambda: service_get_inbox_item(instance, item=item),
+                "decide": lambda size=size: store.record_disposition(  # type: ignore[misc]
+                    item,
+                    InboxDismissed(actor_id="agent", decided_at=NOW, reason=f"again {size:04d}"),
+                    **write,
+                ),
+            },
+        )
+        decided += 1
+        measured["decoded"] = {"bytes": decoded.bytes}
+        rounds.append(measured)
+        monkeypatch.undo()
+
+    small, large = rounds
+    assert small["decoded"] == large["decoded"], rounds
+    for name in ("get", "decide"):
+        assert {k: v for k, v in small[name].items() if k != "vm"} == {
+            k: v for k, v in large[name].items() if k != "vm"
+        }, (name, rounds)
+        assert abs(small[name]["vm"] - large[name]["vm"]) <= 64, (name, rounds)
+
+
+def test_a_page_of_large_payloads_decodes_only_bounded_previews(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-003: a list page reads previews, never whole payloads, at any inbox size."""
+
+    from cruxible_client.contracts.line_inbox import INBOX_ITEM_MAX_BYTES
+
+    instance, _owner = initialize_local(tmp_path)
+    store = LineInboxStore(instance)
+    write = {
+        "actor": _actor(instance),
+        "now": NOW,
+        "coordinate": AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+    }
+    large = "x" * (INBOX_ITEM_MAX_BYTES - 100)
+    posted = 0
+    rounds = []
+    for size in (12, 36):
+        while posted < size:
+            store.post(  # type: ignore[arg-type]
+                [
+                    InboxPosting(
+                        **{
+                            **_posting(posted).__dict__,
+                            "payload": {"ordinal": posted, "text": large},
+                        }
+                    )
+                ],
+                **write,
+            )
+            posted += 1
+        decoded = _Decoded(monkeypatch)
+        page = service_list_inbox(instance, limit=10)
+        rounds.append(decoded.bytes)
+        monkeypatch.undo()
+        assert len(page.entries) == 10
+
+    assert rounds[0] == rounds[1], rounds
+    # Ten previews, each bounded by the summary bound, not ten whole payloads.
+    assert rounds[0] < 10 * 1_000, rounds

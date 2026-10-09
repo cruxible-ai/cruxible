@@ -9,11 +9,11 @@ import pytest
 from click.testing import CliRunner
 
 from cruxible_client import AccessProfile, Cruxible, CruxibleClient
+from cruxible_client.contracts.line_inbox import inbox_payload_preview as payload_preview
 from cruxible_client.contracts.read_values import ShownObject, TruncatedText
 from cruxible_client.errors import CoreError as CruxibleError
 from cruxible_core.cli.commands import playbill as commands
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
-from cruxible_core.service.procedures.line_inbox import payload_preview
 from tests.test_procedures.test_line_inbox_delivery import ROWS, inbox_world
 from tests.test_procedures.test_manual_line_runs import manual_run
 from tests.test_procedures.test_procedure_source_runs import NOW
@@ -63,7 +63,7 @@ def test_the_sdk_lists_reads_and_judges_inbox_items(playbill_http, tmp_path, mon
 
     whole = inbox.get(first[:16])
     assert whole.item.item_id == first and whole.payload in ROWS
-    assert whole.dispositions == ()
+    assert whole.recent_dispositions == ()
 
     acked = inbox.ack(first)
     assert acked.recorded and acked.item.status == "acknowledged"
@@ -80,7 +80,7 @@ def test_the_sdk_lists_reads_and_judges_inbox_items(playbill_http, tmp_path, mon
     assert linked.item.disposition.target.proposal_id == proposals[0].proposal_id  # type: ignore[union-attr]
 
     assert inbox.list(status="unread").entries == ()
-    assert [item.disposition for item in inbox.get(first).dispositions] == ["acknowledged"]
+    assert [item.disposition for item in inbox.get(first).recent_dispositions] == ["acknowledged"]
 
 
 def test_refusals_name_the_list_repair(playbill_http, tmp_path, monkeypatch):
@@ -134,7 +134,7 @@ def test_the_cli_lists_and_judges_inbox_items(playbill_http, tmp_path, monkeypat
     assert both.exit_code != 0 and "exactly one" in both.output
     shown = runner.invoke(commands.inbox_group, ["get", items[1], "--json"])
     detail = json.loads(shown.output)
-    assert detail["dispositions"][0]["reason"] == "noise"
+    assert detail["recent_dispositions"][0]["reason"] == "noise"
 
 
 def test_a_long_payload_previews_as_truncated_text() -> None:

@@ -4673,7 +4673,7 @@ class Inbox:
         )
 
     def get(self, item_id: str) -> api.InboxItem:
-        """One item whole: envelope, payload as posted, and every disposition.
+        """One item whole: envelope, payload as posted, and its 10 latest dispositions.
 
         Next: ``inbox.ack(item_id)``, ``inbox.dismiss(item_id, reason=...)`` or ``inbox.link``.
         """

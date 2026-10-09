@@ -1339,7 +1339,7 @@ def register_tools(
 
     @_tool
     def cruxible_inbox_get(instance_id: InstanceId = None, *, item_id: str) -> contracts.InboxItem:
-        """Read one inbox item whole: envelope, payload as posted, and its dispositions."""
+        """Read one inbox item whole: envelope, payload as posted, and its latest dispositions."""
         return handlers.handle_playbill_inbox_get(require_instance_id(instance_id), item_id)
 
     @_tool

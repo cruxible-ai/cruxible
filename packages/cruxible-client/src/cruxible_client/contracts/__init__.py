@@ -104,6 +104,9 @@ from cruxible_client.contracts.line_inbox import (
 )
 from cruxible_client.contracts.line_inbox import INBOX_LIST_MAX_LIMIT as INBOX_LIST_MAX_LIMIT
 from cruxible_client.contracts.line_inbox import (
+    INBOX_RECENT_DISPOSITIONS as INBOX_RECENT_DISPOSITIONS,
+)
+from cruxible_client.contracts.line_inbox import (
     INBOX_RECENT_SIGHTINGS as INBOX_RECENT_SIGHTINGS,
 )
 from cruxible_client.contracts.line_inbox import (

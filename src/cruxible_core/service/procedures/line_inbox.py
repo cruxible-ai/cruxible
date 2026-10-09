@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
 from cruxible_client.contracts.errors import SubjectNotFoundError
 from cruxible_client.contracts.line_inbox import (
     INBOX_ITEM_SELECTOR_PATTERN,
@@ -28,12 +27,6 @@ from cruxible_client.contracts.line_inbox import (
     InboxListEntry,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.read_values import (
-    GET_SUMMARY_TEXT_MAX_CHARS,
-    ShownValue,
-    TruncatedText,
-    summary_value,
-)
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.exhaust.line_inbox import InboxItemNotFound, LineInboxStore
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -72,22 +65,6 @@ def inbox_line_filter(line: str | None) -> str | None:
     return f"Line:{name}"
 
 
-def payload_preview(payload: CanonicalValue) -> ShownValue:
-    """A payload as a summary shows it: bounded, never mistakable for the payload.
-
-    Within the summary bound the payload is shown the way a summary shows any
-    value (an object wrapped whole). Past it, the payload's canonical JSON text
-    is cut to a ``TruncatedText``.
-    """
-
-    text = canonical_bytes(payload).decode("utf-8")
-    if len(text) > GET_SUMMARY_TEXT_MAX_CHARS:
-        return TruncatedText(
-            truncated=True, preview=text[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(text)
-        )
-    return summary_value(payload)
-
-
 def _resolve(store: LineInboxStore, selector: str) -> str:
     try:
         return store.resolve(selector)
@@ -123,8 +100,7 @@ def service_list_inbox(
         line_filter=line_filter,
         status_filter=status,
         entries=tuple(
-            InboxListEntry(item=item.envelope, payload_preview=payload_preview(item.payload))
-            for item in items
+            InboxListEntry(item=item.envelope, payload_preview=item.preview) for item in items
         ),
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
@@ -134,7 +110,11 @@ def service_list_inbox(
 def service_get_inbox_item(instance: PlaybillInstance, *, item: str) -> InboxItem:
     store = LineInboxStore(instance)
     stored = store.get(_resolve(store, item))
-    return InboxItem(item=stored.envelope, payload=stored.payload, dispositions=stored.dispositions)
+    return InboxItem(
+        item=stored.envelope,
+        payload=stored.payload,
+        recent_dispositions=stored.recent_dispositions,
+    )
 
 
 def _record(
@@ -236,7 +216,6 @@ __all__ = [
     "InboxItemNotFoundError",
     "InboxRequestInvalid",
     "inbox_line_filter",
-    "payload_preview",
     "service_acknowledge_inbox_item",
     "service_dismiss_inbox_item",
     "service_get_inbox_item",

@@ -1253,7 +1253,7 @@ write.
 | Method | Effect |
 |---|---|
 | `.list(*, line=None, status=None, limit=None, cursor=None) -> InboxList` | One page, most recently posted first, with a bounded `payload_preview` per item; follow `next_cursor`. `line` is a Line name; `status` is `unread`, `acknowledged`, `dismissed` or `linked`. |
-| `.get(item_id) -> InboxItem` | One item whole: envelope, payload and every disposition. `item_id` may be a unique `INB-` prefix of 12+ hex digits. |
+| `.get(item_id) -> InboxItem` | One item whole: envelope, payload and its 10 most recent dispositions, newest first (`item.disposition_count` counts them all). `item_id` may be a unique `INB-` prefix of 12+ hex digits. |
 | `.ack(item_id) -> InboxDispositionResult` | Acknowledge it: seen, owed nothing further. Repeating the current decision records nothing (`recorded=False`). |
 | `.dismiss(item_id, *, reason) -> InboxDispositionResult` | Dismiss it with a recorded reason. |
 | `.link(item_id, *, proposal=None, subject=None) -> InboxDispositionResult` | Link it to the proposal you wrote, or to an accepted Subject (`kind/id`, such as a note). Name exactly one. |

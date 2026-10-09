@@ -2101,10 +2101,12 @@ one Procedure are two authored reasons to post, so the same payload under each
 is a separate item. `ITEM` is the `INB-` id or a unique prefix of it with at
 least 12 hex digits.
 
-`list` returns the newest postings first with a bounded payload preview (a long
-payload is a `TruncatedText` of its canonical JSON); `get` returns the whole
-payload and every disposition. Dispositions are yours, never automatic: `ack`
-(seen, owed nothing), `dismiss --reason` (recorded verbatim), or `link` to the
+`list` returns the newest postings first with a bounded payload preview, made
+when the item was posted (a long payload is a `TruncatedText` of its canonical
+JSON), so a page never reads whole payloads; `get` returns the whole payload
+and the item's 10 most recent dispositions, newest first, with
+`disposition_count` counting them all (the inbox journal keeps every one).
+Dispositions are yours, never automatic: `ack` (seen, owed nothing), `dismiss --reason` (recorded verbatim), or `link` to the
 proposal you wrote or to an accepted Subject such as a note. Repeating the
 item's current decision records nothing. Posting the same dedupe key again
 creates no new item: it counts the sighting, and an item you already decided is

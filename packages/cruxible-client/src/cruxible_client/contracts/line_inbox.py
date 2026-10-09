@@ -29,8 +29,17 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
-from cruxible_client.contracts.read_values import ShownValue
+from cruxible_client.contracts.canonical import (
+    CanonicalValue,
+    canonical_bytes,
+    normalize_canonical,
+)
+from cruxible_client.contracts.read_values import (
+    GET_SUMMARY_TEXT_MAX_CHARS,
+    ShownValue,
+    TruncatedText,
+    summary_value,
+)
 from cruxible_client.contracts.temporal import ensure_utc
 
 #: Items one page of ``inbox list`` returns when the request names no limit, and the most.
@@ -46,6 +55,8 @@ INBOX_ITEM_MAX_BYTES = 65_536
 INBOX_RUN_MAX_BYTES = 1_048_576
 #: How many of an item's most recent sightings its envelope keeps, beside its first.
 INBOX_RECENT_SIGHTINGS = 5
+#: How many of an item's most recent dispositions a whole-item read returns.
+INBOX_RECENT_DISPOSITIONS = 10
 #: The longest dismissal reason recorded.
 INBOX_REASON_MAX_CHARS = 1_000
 
@@ -196,6 +207,7 @@ class InboxItemEnvelope(_StrictInboxModel):
     payload_digest: str
     payload_bytes: int = Field(ge=0)
     disposition: InboxDisposition | None = None
+    disposition_count: int = Field(default=0, ge=0)
     recurred_since_disposition: int = Field(default=0, ge=0)
 
     _digests = field_validator("procedure_artifact_digest", "dedupe_key", "payload_digest")(_digest)
@@ -242,12 +254,19 @@ class InboxList(_StrictInboxModel):
 
 
 class InboxItem(_StrictInboxModel):
-    """One inbox item whole: envelope, the payload exactly as posted, and every disposition."""
+    """One inbox item whole: envelope, the payload exactly as posted, and its latest decisions.
+
+    ``recent_dispositions`` holds the latest ``INBOX_RECENT_DISPOSITIONS``,
+    newest first; the envelope's ``disposition_count`` says how many there
+    were in all, and the inbox journal keeps every one.
+    """
 
     tag: Literal["cruxible-inbox-item-v1"] = "cruxible-inbox-item-v1"
     item: InboxItemEnvelope
     payload: object
-    dispositions: tuple[InboxDisposition, ...] = ()
+    recent_dispositions: tuple[InboxDisposition, ...] = Field(
+        default=(), max_length=INBOX_RECENT_DISPOSITIONS
+    )
 
     @field_validator("payload", mode="before")
     @classmethod
@@ -273,6 +292,22 @@ class InboxDispositionResult(_StrictInboxModel):
     recorded: bool
 
 
+def inbox_payload_preview(payload: CanonicalValue) -> ShownValue:
+    """A payload as a list shows it: bounded, never mistakable for the payload.
+
+    Within the summary bound the payload is shown the way a summary shows any
+    value (an object wrapped whole). Past it, the payload's canonical JSON text
+    is cut to a ``TruncatedText``.
+    """
+
+    text = canonical_bytes(payload).decode("utf-8")
+    if len(text) > GET_SUMMARY_TEXT_MAX_CHARS:
+        return TruncatedText(
+            truncated=True, preview=text[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(text)
+        )
+    return summary_value(payload)
+
+
 def is_inbox_item_id(value: str) -> bool:
     return _ITEM_ID.fullmatch(value) is not None
 
@@ -285,6 +320,7 @@ __all__ = [
     "INBOX_LIST_DEFAULT_LIMIT",
     "INBOX_LIST_MAX_LIMIT",
     "INBOX_REASON_MAX_CHARS",
+    "INBOX_RECENT_DISPOSITIONS",
     "INBOX_RECENT_SIGHTINGS",
     "INBOX_RUN_ITEM_CAP_DEFAULT",
     "INBOX_RUN_ITEM_CAP_MAX",
@@ -306,5 +342,6 @@ __all__ = [
     "InboxListEntry",
     "InboxSighting",
     "inbox_item_id",
+    "inbox_payload_preview",
     "is_inbox_item_id",
 ]

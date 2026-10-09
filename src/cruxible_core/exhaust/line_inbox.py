@@ -40,14 +40,18 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.line_inbox import (
+    INBOX_ITEM_MAX_BYTES,
+    INBOX_RECENT_DISPOSITIONS,
     INBOX_RECENT_SIGHTINGS,
     InboxDisposition,
     InboxItemEnvelope,
     InboxItemStatus,
     InboxSighting,
     inbox_item_id,
+    inbox_payload_preview,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.exhaust.records import (
@@ -66,11 +70,19 @@ _FENCE = "line-inbox-local-v1"
 _PARTITION = "inbox"
 _EVENT_TAG = "cruxible-line-inbox-transition-v1"
 _DISPOSITION: TypeAdapter[InboxDisposition] = TypeAdapter(InboxDisposition)
+_PREVIEW: TypeAdapter[ShownValue] = TypeAdapter(ShownValue)
+#: The projection's layout; a projection written under another one is rebuilt
+#: from the journal, which it only ever caches.
+_SCHEMA_VERSION = 2
+_TABLES = ("progress", "items", "postings", "unread", "dispositions")
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS items (
  item_id TEXT PRIMARY KEY, line TEXT NOT NULL, status TEXT NOT NULL, last_seen TEXT NOT NULL,
- envelope TEXT NOT NULL, payload TEXT NOT NULL, dispositions TEXT NOT NULL);
+ envelope TEXT NOT NULL, preview TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS dispositions (
+ item_id TEXT NOT NULL, ordinal INTEGER NOT NULL, record TEXT NOT NULL,
+ PRIMARY KEY(item_id, ordinal)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS items_recent ON items(last_seen, item_id);
 CREATE INDEX IF NOT EXISTS items_status ON items(status, last_seen, item_id);
 CREATE INDEX IF NOT EXISTS items_line ON items(line, last_seen, item_id);
@@ -108,9 +120,19 @@ class InboxPosting:
 
 @dataclass(frozen=True)
 class StoredInboxItem:
+    """One item whole: its payload and its most recent dispositions, newest first."""
+
     envelope: InboxItemEnvelope
     payload: CanonicalValue
-    dispositions: tuple[InboxDisposition, ...]
+    recent_dispositions: tuple[InboxDisposition, ...]
+
+
+@dataclass(frozen=True)
+class InboxPageEntry:
+    """One listed item: its envelope and the bounded preview made when it was posted."""
+
+    envelope: InboxItemEnvelope
+    preview: ShownValue
 
 
 def _sighting_order(sighting: InboxSighting) -> tuple[datetime, str]:
@@ -215,6 +237,11 @@ class LineInboxStore:
             conn = self._open_projection()
             conn.row_factory = sqlite3.Row
             try:
+                if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+                    # Disposable: drop it and replay the journal from the start.
+                    for table in _TABLES:
+                        conn.execute(f"DROP TABLE IF EXISTS {table}")
+                    conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                 conn.executescript(_SCHEMA)
                 row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
                 start = row[0] + 1 if row else 1
@@ -305,8 +332,9 @@ class LineInboxStore:
                     "unread",
                     format_datetime(sighting.posted_at),
                     envelope.model_dump_json(),
+                    # The list reads this bounded preview, never the whole payload.
+                    _PREVIEW.dump_json(inbox_payload_preview(posting["payload"])).decode(),
                     canonical_bytes(posting["payload"]).decode("utf-8"),
-                    "[]",
                 ),
             )
             self._bump_unread(conn, envelope.line, 1)
@@ -341,10 +369,12 @@ class LineInboxStore:
             self._bump_unread(conn, current.line, 1)
 
     def _apply_disposition(self, conn: sqlite3.Connection, data: dict[str, Any]) -> None:
+        """Record one decision: the current one in the envelope, each as its own row."""
+
         item_id = data["item_id"]
         disposition = _DISPOSITION.validate_python(data["disposition"])
         row = conn.execute(
-            "SELECT envelope,status,dispositions FROM items WHERE item_id=?", (item_id,)
+            "SELECT envelope,status FROM items WHERE item_id=?", (item_id,)
         ).fetchone()
         if row is None:
             raise ValueError("Line inbox disposition names no posted item")
@@ -354,19 +384,17 @@ class LineInboxStore:
                 **current.model_dump(),
                 "status": disposition.disposition,
                 "disposition": disposition.model_dump(),
+                "disposition_count": current.disposition_count + 1,
                 "recurred_since_disposition": 0,
             }
         )
-        history = json.loads(row["dispositions"])
-        history.append(disposition.model_dump(mode="json"))
         conn.execute(
-            "UPDATE items SET status=?,envelope=?,dispositions=? WHERE item_id=?",
-            (
-                disposition.disposition,
-                updated.model_dump_json(),
-                canonical_bytes(history).decode("utf-8"),
-                item_id,
-            ),
+            "INSERT INTO dispositions VALUES(?,?,?)",
+            (item_id, updated.disposition_count, disposition.model_dump_json()),
+        )
+        conn.execute(
+            "UPDATE items SET status=?,envelope=? WHERE item_id=?",
+            (disposition.disposition, updated.model_dump_json(), item_id),
         )
         if row["status"] == "unread":
             self._bump_unread(conn, current.line, -1)
@@ -437,6 +465,12 @@ class LineInboxStore:
         fresh: list[dict[str, Any]] = []
         with self.locked(create=True) as conn:
             for posting in postings:
+                size = len(canonical_bytes(posting.payload))
+                if size > INBOX_ITEM_MAX_BYTES:
+                    raise ValueError(
+                        f"an inbox item may be at most {INBOX_ITEM_MAX_BYTES} canonical bytes, "
+                        f"not {size}"
+                    )
                 payload_digest = inbox_payload_digest(posting.payload)
                 captures = tuple(sorted(set(posting.source_capture_digests)))
                 key = inbox_dedupe_key(
@@ -525,18 +559,22 @@ class LineInboxStore:
         return str(rows[0][0])
 
     def get(self, item_id: str) -> StoredInboxItem:
+        """One item: its envelope, whole payload (bounded at posting) and latest decisions."""
+
         with self.locked() as conn:
             row = conn.execute(
-                "SELECT envelope,payload,dispositions FROM items WHERE item_id=?", (item_id,)
+                "SELECT envelope,payload FROM items WHERE item_id=?", (item_id,)
             ).fetchone()
-        if row is None:
-            raise InboxItemNotFound(item_id)
+            if row is None:
+                raise InboxItemNotFound(item_id)
+            recent = conn.execute(
+                "SELECT record FROM dispositions WHERE item_id=? ORDER BY ordinal DESC LIMIT ?",
+                (item_id, INBOX_RECENT_DISPOSITIONS),
+            ).fetchall()
         return StoredInboxItem(
             envelope=InboxItemEnvelope.model_validate_json(row["envelope"]),
             payload=json.loads(row["payload"]),
-            dispositions=tuple(
-                _DISPOSITION.validate_python(item) for item in json.loads(row["dispositions"])
-            ),
+            recent_dispositions=tuple(_DISPOSITION.validate_json(item[0]) for item in recent),
         )
 
     def page(
@@ -546,8 +584,12 @@ class LineInboxStore:
         status: InboxItemStatus | None,
         limit: int,
         cursor: str | None,
-    ) -> tuple[tuple[StoredInboxItem, ...], str | None]:
-        """One page, most recently posted first; a full page returns the next cursor."""
+    ) -> tuple[tuple[InboxPageEntry, ...], str | None]:
+        """One page, most recently posted first; a full page returns the next cursor.
+
+        A page reads each item's envelope and its bounded preview only, never
+        the payload, so its work is bounded by the page size.
+        """
 
         clauses: list[str] = []
         params: list[object] = []
@@ -564,17 +606,16 @@ class LineInboxStore:
         where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
         with self.locked() as conn:
             rows = conn.execute(
-                "SELECT item_id,last_seen,envelope,payload FROM items "
+                "SELECT item_id,last_seen,envelope,preview FROM items "
                 f"{where}ORDER BY last_seen DESC, item_id DESC LIMIT ?",
                 (*params, limit + 1),
             ).fetchall()
         more = len(rows) > limit
         rows = rows[:limit]
         items = tuple(
-            StoredInboxItem(
+            InboxPageEntry(
                 envelope=InboxItemEnvelope.model_validate_json(row["envelope"]),
-                payload=json.loads(row["payload"]),
-                dispositions=(),
+                preview=_PREVIEW.validate_json(row["preview"]),
             )
             for row in rows
         )
@@ -606,6 +647,7 @@ def _same_decision(current: InboxDisposition | None, new: InboxDisposition) -> b
 
 __all__ = [
     "InboxItemNotFound",
+    "InboxPageEntry",
     "InboxPosting",
     "LineInboxStore",
     "StoredInboxItem",

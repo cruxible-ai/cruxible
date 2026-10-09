@@ -232,11 +232,13 @@ def test_dispositions_are_journaled_and_a_repeat_records_nothing(tmp_path: Path)
     )
     store.record_disposition(item_id, note, **write)  # type: ignore[arg-type]
 
-    assert [item.disposition for item in store.get(item_id).dispositions] == [
+    stored = store.get(item_id)
+    assert [item.disposition for item in stored.recent_dispositions] == [
+        "linked",
+        "linked",
         "acknowledged",
-        "linked",
-        "linked",
     ]
+    assert stored.envelope.disposition_count == 3
 
 
 def test_the_index_rebuilds_from_the_journal(tmp_path: Path) -> None:
@@ -253,7 +255,7 @@ def test_the_index_rebuilds_from_the_journal(tmp_path: Path) -> None:
     rebuilt = LineInboxStore(instance)
 
     assert rebuilt.page(line=None, status=None, limit=10, cursor=None) == before
-    assert rebuilt.get(item_id).dispositions == store.get(item_id).dispositions
+    assert rebuilt.get(item_id).recent_dispositions == store.get(item_id).recent_dispositions
     assert rebuilt.unread_by_line() == (("Line:watch", 1),)
 
 
@@ -275,7 +277,7 @@ def test_a_page_is_most_recent_first_and_filters_by_line_and_status(tmp_path: Pa
     first, cursor = store.page(line=None, status=None, limit=2, cursor=None)
     second, cursor2 = store.page(line=None, status=None, limit=2, cursor=cursor)
     third, cursor3 = store.page(line=None, status=None, limit=2, cursor=cursor2)
-    assert [item.payload for item in (*first, *second, *third)] == [
+    assert [item.preview.object for item in (*first, *second, *third)] == [  # type: ignore[union-attr]
         {"n": 4},
         {"n": 3},
         {"n": 2},
@@ -284,7 +286,7 @@ def test_a_page_is_most_recent_first_and_filters_by_line_and_status(tmp_path: Pa
     ]
     assert cursor3 is None
     watched, _ = store.page(line="Line:watch", status="unread", limit=10, cursor=None)
-    assert [item.payload for item in watched] == [{"n": 4}, {"n": 2}, {"n": 0}]
+    assert [item.preview.object for item in watched] == [{"n": 4}, {"n": 2}, {"n": 0}]  # type: ignore[union-attr]
     assert store.page(line=None, status="dismissed", limit=10, cursor=None) == ((), None)
 
 
@@ -304,3 +306,56 @@ def test_an_empty_inbox_reads_without_creating_anything(tmp_path: Path) -> None:
     assert store.unread_by_line() == ()
     assert store.page(line=None, status=None, limit=5, cursor=None) == ((), None)
     assert not store.root.exists()
+
+
+def test_a_whole_item_read_returns_its_latest_decisions_only(tmp_path: Path) -> None:
+    """Review F-006: an item decided many times keeps a bounded recent window."""
+
+    from cruxible_client.contracts.line_inbox import INBOX_RECENT_DISPOSITIONS
+
+    _instance, store, write = _world(tmp_path)
+    (key,) = store.post([_posting({"a": 1})], **write)  # type: ignore[arg-type]
+    item_id = store.resolve(key)
+    decisions = INBOX_RECENT_DISPOSITIONS + 5
+    for index in range(decisions):
+        store.record_disposition(  # type: ignore[arg-type]
+            item_id,
+            InboxDismissed(actor_id="agent", decided_at=NOW, reason=f"reason {index}"),
+            **write,
+        )
+
+    stored = store.get(item_id)
+    assert stored.envelope.disposition_count == decisions
+    assert [item.reason for item in stored.recent_dispositions] == [  # type: ignore[union-attr]
+        f"reason {index}"
+        for index in range(decisions - 1, decisions - 1 - INBOX_RECENT_DISPOSITIONS, -1)
+    ]
+
+
+def test_the_store_refuses_an_item_over_the_byte_bound(tmp_path: Path) -> None:
+    """Review F-003: the bound holds at the store too, before anything is journaled."""
+
+    from cruxible_client.contracts.line_inbox import INBOX_ITEM_MAX_BYTES
+
+    _instance, store, write = _world(tmp_path)
+
+    with pytest.raises(ValueError, match="at most"):
+        store.post([_posting("x" * INBOX_ITEM_MAX_BYTES)], **write)  # type: ignore[arg-type]
+    assert not store.root.exists() or store.page(line=None, status=None, limit=5, cursor=None) == (
+        (),
+        None,
+    )
+
+
+def test_an_older_projection_layout_is_rebuilt_from_the_journal(tmp_path: Path) -> None:
+    import sqlite3
+
+    _instance, store, write = _world(tmp_path)
+    (key,) = store.post([_posting({"a": 1})], **write)  # type: ignore[arg-type]
+    connection = sqlite3.connect(store.path)
+    connection.execute("PRAGMA user_version=1")
+    connection.execute("DELETE FROM items")
+    connection.commit()
+    connection.close()
+
+    assert store.get(store.resolve(key)).payload == {"a": 1}

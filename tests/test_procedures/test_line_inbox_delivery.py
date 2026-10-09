@@ -82,8 +82,9 @@ def inbox_world(  # type: ignore[no-untyped-def]
 
 
 def _entries(instance: PlaybillInstance) -> list[Any]:
-    entries, _cursor = LineInboxStore(instance).page(line=None, status=None, limit=50, cursor=None)
-    return list(entries)
+    store = LineInboxStore(instance)
+    entries, _cursor = store.page(line=None, status=None, limit=50, cursor=None)
+    return [store.get(entry.envelope.item_id) for entry in entries]
 
 
 def test_a_line_posts_each_item_as_is_with_its_capture_attached(tmp_path: Path) -> None:
