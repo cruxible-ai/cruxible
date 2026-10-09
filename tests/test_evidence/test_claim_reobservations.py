@@ -827,3 +827,36 @@ def test_preview_and_commit_agree_after_the_clock_goes_back(tmp_path: Path) -> N
     # Within the clock's actual instant it is admitted, stamped at the last record's.
     made = restarted.record(**{**attempt, "clock": lambda: _START + timedelta(minutes=50)})
     assert made is not None and made.recorded_at == _START + timedelta(hours=2)
+
+
+def test_a_reader_outside_the_cache_resets_before_its_inherited_lock(tmp_path: Path) -> None:
+    """Review F-019 probe: a directly constructed reader, forked with its lock held."""
+
+    import os
+    import signal
+    import warnings
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+
+    if not hasattr(os, "fork"):
+        pytest.skip("no fork on this platform")
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    _reobserve(instance, _START + timedelta(minutes=50))
+    reader = ReobservationReader(instance)
+    assert reader.sequence(claim.identity.name) == 1
+    assert reader not in ReobservationReader._cache.values()
+    reader._lock.acquire()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            pid = os.fork()
+        if pid == 0:
+            signal.signal(signal.SIGALRM, lambda *args: os._exit(42))
+            signal.alarm(5)
+            code = 0 if reader.sequence(claim.identity.name) == 1 else 3
+            os._exit(code)
+    finally:
+        reader._lock.release()
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0

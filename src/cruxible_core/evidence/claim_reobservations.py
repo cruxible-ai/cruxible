@@ -556,8 +556,9 @@ class ReobservationReader:
     last caught up to: a projection deleted or replaced closes the connection,
     rebuilds or catches the file up from the journal and reconnects; a journal
     change alone catches the same file up. A forked child starts with fresh
-    locks and no inherited connection (``os.register_at_fork``, as the Git and
-    CAS caches do, plus a PID guard). Counters say how many probes each read
+    locks and no inherited connection: cached readers through
+    ``os.register_at_fork`` (as the Git and CAS caches do), and every reader
+    through a PID guard checked before its mutex. Counters say how many probes each read
     made, for counted-work tests.
     """
 
@@ -596,6 +597,17 @@ class ReobservationReader:
         self._projection = None
         self._pid = os.getpid()
 
+    def _guard_fork(self) -> None:
+        """In a forked child, reset before touching the inherited mutex.
+
+        Checked ahead of every public read, so a reader the fork hook did not
+        reach (constructed directly, or displaced from the cache) never waits
+        on a lock its parent held at fork time.
+        """
+
+        if self._pid != os.getpid():
+            self._after_fork()
+
     def _projection_identity(self) -> tuple[int, int] | None:
         try:
             stat = self.store.path.stat()
@@ -604,8 +616,6 @@ class ReobservationReader:
         return stat.st_dev, stat.st_ino
 
     def _connection(self) -> sqlite3.Connection | None:
-        if self._pid != os.getpid():
-            self._after_fork()
         signature = reobservation_journal_signature(
             self.instance.root,
             exhaust=self.instance.descriptor.storage.exhaust,
@@ -634,6 +644,7 @@ class ReobservationReader:
     def sequence(self, claim_id: str) -> int:
         """The lineage's last journal sequence: 0 when it was never re-observed."""
 
+        self._guard_fork()
         with self._lock:
             conn = self._connection()
             if conn is None:
@@ -661,6 +672,7 @@ class ReobservationReader:
         at_us = _micros(at)
         evidence: list[CaptureReobservationEvidence] = []
         boundaries: set[datetime] = set()
+        self._guard_fork()
         with self._lock:
             conn = self._connection()
             if conn is None:
