@@ -73,7 +73,11 @@ from cruxible_client.contracts.proposal_models import (
     ProposalSettleSubmission,
 )
 from cruxible_core.authoring import lowering as authoring_lowering
-from cruxible_core.authoring.lowering import AuthoringLoweringError, LoweredAuthoring
+from cruxible_core.authoring.lowering import (
+    AuthoringLoweringError,
+    LoweredAuthoring,
+    canonical_authored_claims,
+)
 from cruxible_core.procedures.egress import (
     PreparedTerminalEgressV1,
     TerminalEgressReceiptV1,
@@ -255,8 +259,14 @@ def _claim_members(
     *,
     items: tuple[ProcedureClaimProposalItemV1, ...],
     evidence: Mapping[str, str],
+    read: Callable[[str], bytes | None] = lambda _path: None,
 ) -> tuple[tuple[ClaimAuthoringPayload, ...], dict[str, str], dict[str, str]]:
-    """Build one Claim member per item; return members, item->claim id, identity->item."""
+    """Build one Claim member per item; return members, item->claim id, identity->item.
+
+    Each item's literal is put in its ClaimType's canonical form (v8) before its
+    identity is taken, so two items that state one canonical statement are the
+    same statement twice, whatever spelling the run produced.
+    """
 
     members: list[ClaimAuthoringPayload] = []
     claim_ids: dict[str, str] = {}
@@ -287,6 +297,7 @@ def _claim_members(
             revises=item.revises,
             dependency_drafts=ClaimDependencyDrafts(),
         )
+        member = canonical_authored_claims(member, read)
         identity = authoring_member_identity(member)
         if identity in identity_to_item:
             raise ProposalDeliveryRefused(
@@ -674,10 +685,12 @@ class ProposalTerminalEgressSink:
                     "The journaled preparation names no Capture for a terminal item.",
                     details={"item_keys": missing},
                 )
+        base_tree = self.instance.immutable_tree_at(request.accepted_coordinate.git_oid)
         members, claim_ids, identity_to_item = _claim_members(
             request,
             items=items,
             evidence=evidence,
+            read=base_tree.get,
         )
         ordered = _with_many_valued_dispositions(
             tuple(

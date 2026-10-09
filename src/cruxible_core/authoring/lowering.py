@@ -5,10 +5,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from collections.abc import Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import NoReturn, TypeAlias
+from typing import NoReturn, TypeAlias, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -620,6 +620,94 @@ def _canonical_object(
             repair_description="State a value the ClaimType's canonical form settles.",
         )
     return value if canonical == value.value else LiteralClaimObject(value=canonical)
+
+
+_PayloadT = TypeVar("_PayloadT")
+
+
+def canonical_authored_claims(payload: _PayloadT, read: Callable[[str], bytes | None]) -> _PayloadT:
+    """Rewrite authored Claim literals into their ClaimType's canonical form (v8).
+
+    Lowering stores the canonical value anyway; doing it before identities are
+    minted makes two spellings equal under the form one authored statement, so
+    member identity, duplicate detection and idempotent re-authoring all compare
+    canonical statements. A ClaimType the same change set defines or succeeds is
+    the one read; otherwise ``read`` returns the accepted bytes at ``path``. A
+    value the form cannot settle is left as written: lowering refuses it.
+    """
+
+    forms: dict[str, tuple[str, ...]] = {}
+    members = payload.members if isinstance(payload, ChangeSetAuthoringPayload) else (payload,)
+    for member in members:
+        if isinstance(member, ClaimTypeAuthoringPayload):
+            forms[member.claim_type.predicate] = effective_canonical_form(member.claim_type)
+        elif isinstance(member, ClaimTypeSuccessionMember):
+            forms[member.successor.predicate] = effective_canonical_form(member.successor)
+
+    def form_of(predicate: str) -> tuple[str, ...]:
+        if predicate not in forms:
+            path = claim_type_path(predicate)
+            content = read(path)
+            forms[predicate] = (
+                ()
+                if content is None
+                else effective_canonical_form(parse_claim_type(content, path=path))
+            )
+        return forms[predicate]
+
+    def canonical(member: object) -> object:
+        if not isinstance(member, ClaimAuthoringPayloadV1):
+            return member
+        value = member.statement.object
+        if not isinstance(value, LiteralClaimObject):
+            return member
+        form = form_of(member.statement.predicate)
+        if not form:
+            return member
+        try:
+            settled = canonicalize_literal(value.value, form)
+        except CanonicalFormDidNotConverge:
+            return member
+        if settled == value.value:
+            return member
+        statement = member.statement.model_copy(
+            update={"object": LiteralClaimObject(value=settled)}
+        )
+        return member.model_copy(update={"statement": statement})
+
+    if isinstance(payload, ChangeSetAuthoringPayload):
+        rewritten = tuple(canonical(member) for member in payload.members)
+        if all(new is old for new, old in zip(rewritten, payload.members, strict=True)):
+            return payload
+        by_identity: dict[str, int] = {}
+        for index, member in enumerate(rewritten):
+            identity = authoring_member_identity(cast(AuthoringChangeSetMember, member))
+            if identity in by_identity:
+                raise AuthoringDuplicateStatement(
+                    f"{AuthoringDuplicateStatement.error_code}: members "
+                    f"{by_identity[identity]} and {index} state one statement once their "
+                    "values are in the canonical form the ClaimType declares; leave one out"
+                )
+            by_identity[identity] = index
+        ordered = sorted(
+            rewritten,
+            key=lambda member: authoring_member_identity(
+                cast(AuthoringChangeSetMember, member)
+            ).encode("utf-8"),
+        )
+        return cast(
+            _PayloadT,
+            ChangeSetAuthoringPayload.model_validate(
+                {**payload.model_dump(mode="python"), "members": ordered}
+            ),
+        )
+    return cast(_PayloadT, canonical(payload))
+
+
+class AuthoringDuplicateStatement(FormatError):
+    """Two authored members state one statement once canonicalized (ClaimType v8)."""
+
+    error_code = "cruxible.authoring.duplicate_statement"
 
 
 def _same_predicate_claims(

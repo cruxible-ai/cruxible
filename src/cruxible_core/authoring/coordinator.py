@@ -55,6 +55,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import ApprovalIntegrityError, CruxibleError
 from cruxible_client.contracts.temporal import utc_now
+from cruxible_core.authoring.lowering import canonical_authored_claims
 from cruxible_core.authoring.preflight import (
     ComputedPreflight,
     authoring_operation,
@@ -230,6 +231,11 @@ class AuthoringIntentCoordinator:
             )
         return AuthoringIntentView(intent=stored)
 
+    def _canonical_payload(self, payload: AuthoringPayload, *, git_oid: str) -> AuthoringPayload:
+        """The payload with every authored Claim literal in its canonical form (v8)."""
+
+        return canonical_authored_claims(payload, lambda path: self.instance.blob_at(git_oid, path))
+
     def _draft_intent(
         self,
         *,
@@ -242,6 +248,7 @@ class AuthoringIntentCoordinator:
     ) -> AuthoringIntentV1:
         """Build one draft intent in memory, minting its identities; nothing is stored."""
 
+        payload = self._canonical_payload(payload, git_oid=at.git_oid)
         semantic_identity = self._mint_semantic_identity(payload)
         status = CandidateStatus(
             state="draft",
@@ -1045,6 +1052,9 @@ class AuthoringIntentCoordinator:
                     "cruxible.authoring.program_stamp_contract_mismatch",
                     "a v3 program stamp requires the v2 reference-assertion envelope",
                 )
+        payload = self._canonical_payload(
+            payload, git_oid=self.instance.accepted_coordinate().git_oid
+        )
         payload_digest = authoring_payload_digest(payload)
         # The idempotency key names the CREATE FINGERPRINT, never the payload
         # digest: a change set's payload digest deliberately drops its

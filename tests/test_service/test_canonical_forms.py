@@ -19,6 +19,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV2,
     ClaimDependencyDrafts,
     SelfSourceBody,
+    authoring_member_identity,
 )
 from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -122,7 +123,12 @@ def test_the_claim_law_refuses_a_literal_that_is_not_canonical(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A lowering that forgot the form: the Claim law still holds the line.
+    from cruxible_core.authoring import coordinator as coordinator_module
+
     monkeypatch.setattr(lowering, "_canonical_object", lambda value, _claim_type: value)
+    monkeypatch.setattr(
+        coordinator_module, "canonical_authored_claims", lambda payload, _read: payload
+    )
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     result = coordinator.compile(
         actor=OWNER,
@@ -131,3 +137,105 @@ def test_the_claim_law_refuses_a_literal_that_is_not_canonical(
     )
     codes = [item.code for item in result.frontier.diagnostics]
     assert "cruxible.claim.literal_not_canonical" in codes, codes
+
+
+# -- incoming operands at the comparison entry points (item 2) -------------------
+
+
+def _query(instance: PlaybillInstance, **fields: Any) -> list[str]:
+    from cruxible_client.contracts.compact_query import QueryRequest
+    from cruxible_core.service.discovery.compact_query import service_playbill_query
+
+    result = service_playbill_query(instance, request=QueryRequest.model_validate(fields))
+    return [row["subject_id"] for row in result.rows]
+
+
+def test_a_compact_query_canonicalizes_its_operand(instance: PlaybillInstance) -> None:
+    assert (
+        write(
+            instance,
+            {"op": "set", "subject": ALPHA, "field": "code", "value": "Pkg One"},
+            {"op": "set", "subject": ALPHA, "field": "state", "value": "open"},
+        ).status
+        == "accepted"
+    )
+    assert _query(instance, kind=KIND, where=[{"field": "code", "eq": "  PKG   one"}]) == ["alpha"]
+    assert _query(instance, kind=KIND, where=[{"field": "code", "in": ["x", " pkg ONE"]}]) == [
+        "alpha"
+    ]
+    assert _query(instance, kind=KIND, where=[{"field": "state", "eq": "OPEN"}]) == ["alpha"]
+    assert _query(instance, kind=KIND, where=[{"field": "code", "eq": "pkg-one"}]) == []
+
+
+def test_expect_and_an_already_present_value_compare_canonically(
+    instance: PlaybillInstance,
+) -> None:
+    assert (
+        write(instance, {"op": "set", "subject": ALPHA, "field": "code", "value": "Pkg One"}).status
+        == "accepted"
+    )
+    moved = write(
+        instance,
+        {"op": "set", "subject": ALPHA, "field": "code", "value": "pkg two", "expect": " PKG ONE"},
+    )
+    assert moved.status == "accepted", moved
+    stale = write(
+        instance,
+        {"op": "set", "subject": ALPHA, "field": "code", "value": "x", "expect": "pkg one"},
+    )
+    assert stale.refusal is not None and stale.refusal.code == "cruxible.write.slot_changed"
+    assert (
+        write(instance, {"op": "add", "subject": ALPHA, "field": "tags", "value": "Infra"}).status
+        == "accepted"
+    )
+    again = write(instance, {"op": "add", "subject": ALPHA, "field": "tags", "value": " INFRA "})
+    assert again.status == "accepted" and again.proposal is None
+    assert again.changes[0].already_live
+    assert stored(instance, "tags") == ["infra"]
+
+
+def test_authored_members_are_canonical_before_their_identity_is_minted(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_core.authoring.lowering import canonical_authored_claims
+
+    head = instance.accepted_coordinate().git_oid
+
+    def read(path: str) -> bytes | None:
+        return instance.blob_at(head, path)
+
+    raw = ChangeSetAuthoringPayload.model_validate(
+        {
+            "members": sorted(
+                (_member(" Pkg ONE"), _member("x", "plain")),
+                key=lambda item: authoring_member_identity(item).encode("utf-8"),
+            )
+        }
+    )
+    settled = canonical_authored_claims(raw, read)
+    values = {member.statement.object.value for member in settled.members}  # type: ignore[union-attr]
+    assert values == {"pkg one", "x"}
+    plain = ChangeSetAuthoringPayload(members=(_member(" X", "plain"),))
+    assert canonical_authored_claims(plain, read) is plain
+    single = canonical_authored_claims(_member(" Pkg  ONE"), read)
+    assert single.statement.object == LiteralClaimObject(value="pkg one")
+
+
+def test_two_spellings_of_one_statement_in_a_change_set_are_one_statement(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_core.authoring.lowering import AuthoringDuplicateStatement
+
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    payload = ChangeSetAuthoringPayload.model_validate(
+        {
+            "members": sorted(
+                (_member(" INFRA", "tags"), _member("infra", "tags")),
+                key=lambda item: authoring_member_identity(item).encode("utf-8"),
+            )
+        }
+    )
+    with pytest.raises(AuthoringDuplicateStatement, match="state one statement"):
+        coordinator.compile(
+            actor=OWNER, payload=payload, canonical_timestamp="2026-10-09T12:00:00.000000Z"
+        )

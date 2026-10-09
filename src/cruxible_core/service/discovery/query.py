@@ -19,6 +19,7 @@ from cruxible_client.contracts.claim_attestations import ClaimAttestation
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_path,
+    effective_canonical_form,
     parse_claim_type,
 )
 from cruxible_client.contracts.claims import (
@@ -199,6 +200,7 @@ def _fact_row(
         # resolver; acceptance-time verdict output is never carried forward.
         resolved_authority_basis=(),
         cardinality=claim_type.cardinality,
+        canonical_form=effective_canonical_form(claim_type),
     )
 
 

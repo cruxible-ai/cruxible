@@ -82,6 +82,9 @@ class ClaimFactRowV1(_StrictQueryBackendModel):
     cardinality: Literal["one", "many"] = Field(
         default="one", exclude_if=lambda value: value == "one"
     )
+    #: The canonical form its ClaimType declares (v8): a literal compared with
+    #: this Claim's value is canonicalized by it. Omitted when none.
+    canonical_form: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @field_validator("resolved_authority_basis")
     @classmethod
