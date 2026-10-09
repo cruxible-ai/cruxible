@@ -39,7 +39,7 @@ from cruxible_client.contracts.errors import CruxibleError, ReadRefusalError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
-from cruxible_core.exhaust.backends import LocalJournalBackend
+from cruxible_core.exhaust.backends import LocalJournalBackend, journal_log_path
 from cruxible_core.exhaust.records import (
     CLAIM_REOBSERVATION_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -58,8 +58,6 @@ _PARTITION = "reobservations"
 _EVENT_TAG = "cruxible-claim-reobservation-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
 _SCHEMA_VERSION = 1
-#: The marker naming the journal's last appended sequence (``verdict_input_fingerprint``).
-REOBSERVATION_GENERATION = "generation"
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
@@ -325,14 +323,11 @@ class ClaimReobservationStore:
                 payload=payload,
                 expected_head=head,
             )
+            # The append is the record: from here a reader's catch-up and the
+            # verdict-input fingerprint (``reobservation_journal_signature``)
+            # already see it, whatever happens to the projection below.
             self._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)
             conn.commit()
-            # The verdict-input fingerprint reads this marker: a remembered
-            # verdict derivation never outlives a newer re-observation.
-            marker = self.root / REOBSERVATION_GENERATION
-            staged = marker.with_suffix(".tmp")
-            staged.write_text(str(stored.record.sequence), "ascii")
-            staged.replace(marker)
         return record
 
     # -- reads --------------------------------------------------------------
@@ -395,6 +390,27 @@ class ClaimReobservationStore:
         """Every re-observation recorded for one Claim lineage: one indexed range."""
 
         return self.for_claims((claim_id,)).get(claim_id, ())
+
+
+def reobservation_journal_signature(root: Path, *, exhaust: str, instance_id: str) -> str | None:
+    """What the re-observation journal holds, from its append-only log alone.
+
+    The log is the authority, so this changes the moment a record is appended,
+    before any projection catches up, and no separately written marker can
+    lag it. ``None`` when nothing was ever recorded.
+    """
+
+    stream = JournalStreamIdentityV1(
+        instance_id=instance_id,
+        journal_family=CLAIM_REOBSERVATION_JOURNAL_FAMILY,
+        stream_id="reobservations",
+    )
+    log = journal_log_path(root / exhaust / REOBSERVATION_DIRECTORY, stream, _PARTITION)
+    try:
+        stat = log.stat()
+    except FileNotFoundError:
+        return None
+    return f"{stat.st_ino}:{stat.st_size}"
 
 
 def reobservation_reading(
@@ -464,8 +480,8 @@ def claim_reobservation_evidence(
 
 __all__ = [
     "REOBSERVATION_DIRECTORY",
+    "reobservation_journal_signature",
     "reobservation_reading",
-    "REOBSERVATION_GENERATION",
     "ClaimReobservationRefused",
     "ClaimReobservationStore",
     "ReobservationRecord",

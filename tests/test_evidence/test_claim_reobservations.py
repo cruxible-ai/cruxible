@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -179,7 +180,7 @@ def test_the_freshness_lookup_is_one_indexed_probe_per_claim(tmp_path: Path) -> 
     _reobserve(instance, _START + timedelta(minutes=50))
     # A record is a verdict input outside the body store: remembered verdict
     # derivations key on its journal generation.
-    assert str(verdict_input_fingerprint(instance)).endswith("|reobservation:1")
+    assert "|reobservation:" in str(verdict_input_fingerprint(instance))
     store = ClaimReobservationStore(instance)
     # Many other lineages' records: what this lineage costs never depends on them.
     with store._locked() as conn:
@@ -276,3 +277,87 @@ def test_query_fact_rows_carry_recorded_reobservations(tmp_path: Path) -> None:
     (item,) = _fact_row(instance).reobservations
     assert item.cited_capture_digest == _fact_row(instance).captures[0].capture_digest
     assert item.observed_at == _START + timedelta(minutes=50)
+
+
+# -- interrupted appends (review F-010) ---------------------------------------
+
+
+def _pending_same_content(instance, at: datetime) -> str:  # type: ignore[no-untyped-def]
+    """Land a same-content Capture through submit without recording it."""
+
+    saved: list[str] = []
+    with pytest.MonkeyPatch.context() as patch:
+
+        def stop_before_record(self, **kwargs):  # type: ignore[no-untyped-def]
+            saved.append(kwargs["capture_digest"])
+
+        patch.setattr(ClaimReobservationStore, "record", stop_before_record)
+        _reobserve(instance, at)
+    (digest,) = saved
+    return digest
+
+
+def _statuses(instance, claim, at: datetime) -> str:  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+    from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
+
+    verdicts: dict[str, Any] = {}
+    claim_resolution_statuses(
+        instance,
+        claims=(claim,),
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=at,
+        verdicts_by_identity=verdicts,
+    )
+    return str(verdicts[claim.identity.qualified].verdict)
+
+
+@pytest.mark.parametrize("crash", ["after_append", "after_projection_commit"])
+def test_an_interrupted_append_never_leaves_a_remembered_verdict_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, crash: str
+) -> None:
+    from cruxible_core.service.discovery.claim_status import reset_claim_resolution_memo
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    digest = _pending_same_content(instance, _START + timedelta(minutes=50))
+    at = _START + timedelta(minutes=70)
+    reset_claim_resolution_memo()
+    # Warm the remembered derivation while the newer Capture is not yet recorded.
+    assert _statuses(instance, claim, at) == "stale_evidence"
+    before = verdict_input_fingerprint(instance)
+    real_apply = ClaimReobservationStore._apply
+
+    def interrupted(conn, payload, sequence, recorded_at):  # type: ignore[no-untyped-def]
+        if crash == "after_projection_commit":
+            real_apply(conn, payload, sequence, recorded_at)
+            conn.commit()
+        raise OSError(f"crash {crash}")
+
+    store = ClaimReobservationStore(instance)
+    with monkeypatch.context() as local:
+        local.setattr(ClaimReobservationStore, "_apply", staticmethod(interrupted))
+        with pytest.raises(OSError, match="crash"):
+            store.record(
+                claim_id=claim.identity.name,
+                capture_digest=digest,
+                coordinate=instance.accepted_coordinate(),
+                actor_id="owner",
+                now=_START + timedelta(minutes=50),
+            )
+    # The journal is the authority: the fingerprint moved with the append itself,
+    # so no remembered verdict is served before (or without) any recovery.
+    assert verdict_input_fingerprint(instance) != before
+    assert _statuses(instance, claim, at) == "supported"
+    # Catch-up and a retry are the same record.
+    assert len(store.for_claim(claim.identity.name)) == 1
+    store.record(
+        claim_id=claim.identity.name,
+        capture_digest=digest,
+        coordinate=instance.accepted_coordinate(),
+        actor_id="owner",
+        now=_START + timedelta(minutes=50),
+    )
+    assert len(store.for_claim(claim.identity.name)) == 1
+    assert _verdict(instance, at).verdict == "supported"
+    assert _statuses(instance, claim, at) == "supported"
