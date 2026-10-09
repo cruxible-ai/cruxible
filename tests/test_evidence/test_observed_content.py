@@ -197,3 +197,72 @@ def test_coverage_groups_two_captures_of_the_same_content_as_one_row(tmp_path: P
     assert row.observed_content_digest == source_read.bytes_digest
     by_commitment, _ = coverage_rows(world.reader, bodies=fixture.store, at=AT, version=1)
     assert len(by_commitment.citations) == 2
+
+
+# -- refusal matching keeps every key it ever produced (review F-007) -------------
+
+
+def _legacy(fixture: Any, built: Any) -> str:
+    from cruxible_client.contracts.captures import render_capture_envelope
+
+    legacy = built.envelope.model_copy(update={"observed_content_digest": None})
+    assert "observed_content_digest" not in legacy.model_dump(mode="json")
+    return fixture.store.store(render_capture_envelope(legacy)).digest
+
+
+def _reread(fixture: Any, source_read: Any, output: Any) -> tuple[Any, Any]:
+    """The same file bytes read by another run: other material, same content."""
+
+    reread = source_read.model_copy(
+        update={"derived_request_digest": "sha256:" + hashlib.sha256(b"rerun").hexdigest()}
+    )
+    material = canonical_bytes(
+        {
+            **output,
+            "source": {**output["source"], "commitment_digest": reread.derived_request_digest},
+        }
+    )
+    result = fixture.result.model_copy(
+        update={
+            "content_base64": base64.b64encode(material).decode("ascii"),
+            "byte_length": len(material),
+            "bytes_digest": "sha256:" + hashlib.sha256(material).hexdigest(),
+        }
+    )
+    receipt = fixture.receipt.model_copy(
+        update={
+            "output": ProviderInvocationOutputDigest(
+                output_digest=provider_invocation_output_digest(json.loads(material))
+            ).model_dump(mode="json")
+        }
+    )
+    return _build(
+        replace(fixture, result=result, receipt=receipt), source_read_receipt=reread
+    ), reread
+
+
+def test_a_legacy_workspace_capture_keeps_its_verified_bytes_identity(tmp_path: Path) -> None:
+    from cruxible_core.proposals.refusal_index import capture_evidence_content
+
+    fixture, source_read, output = _workspace_fixture(tmp_path)
+    built = _build(fixture, source_read_receipt=source_read)
+    legacy = _legacy(fixture, built)
+    # Old and new envelopes of the same file bytes are one piece of evidence.
+    assert capture_evidence_content(fixture.store, legacy) == source_read.bytes_digest
+    assert capture_evidence_content(fixture.store, built.capture_digest) == source_read.bytes_digest
+    # Two pre-field Captures of the same bytes from different runs still match.
+    again, _reread_receipt = _reread(fixture, source_read, output)
+    assert again.envelope.commitment.digest != built.envelope.commitment.digest
+    assert capture_evidence_content(fixture.store, _legacy(fixture, again)) == (
+        capture_evidence_content(fixture.store, legacy)
+    )
+
+
+def test_a_legacy_non_workspace_capture_keeps_its_commitment_identity(tmp_path: Path) -> None:
+    from cruxible_core.proposals.refusal_index import capture_evidence_content
+
+    fixture = provider_capture_fixture(tmp_path)
+    other = _build(fixture)
+    assert capture_evidence_content(fixture.store, other.capture_digest) == (
+        other.envelope.commitment.digest
+    )
