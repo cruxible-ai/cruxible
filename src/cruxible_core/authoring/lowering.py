@@ -699,28 +699,29 @@ def claim_aliases_resolved(
     return _with_aliases_resolved(instance, base, tree, payload)
 
 
-def cited_content(instance: PlaybillInstance, capture_digest: str) -> str:
-    """What one Capture observed, by content (``observed_content``).
+def cited_observation(instance: PlaybillInstance, capture_digest: str) -> tuple[str, str]:
+    """What one Capture observed: its exact contract digest and observed content.
 
-    A Capture whose envelope cannot be read contributes its own digest, which
-    no other Capture's content equals.
+    A Capture whose envelope cannot be read contributes its own digest for
+    both, which no other Capture's observation equals.
     """
 
     access = BodyAccessContext(principal_id="playbill-authoring", can_read_body=True)
     try:
         envelope = parse_capture_envelope(instance.body_store().read(capture_digest, access=access))
     except (CruxibleError, OSError, ValueError):
-        return capture_digest
-    return observed_content(envelope).digest
+        return capture_digest, capture_digest
+    return envelope.capture_contract_digest, observed_content(envelope).digest
 
 
 def _cited_associations(
     instance: PlaybillInstance, citations: Iterable[ClaimCitation]
-) -> set[tuple[str, str, str]]:
-    """Each citation a Claim holds, as (observed content, role, origin)."""
+) -> set[tuple[str, str, str, str]]:
+    """Each citation a Claim holds, as (contract, observed content, role, origin)."""
 
     return {
-        (cited_content(instance, item.capture_digest), item.role, item.origin) for item in citations
+        (*cited_observation(instance, item.capture_digest), item.role, item.origin)
+        for item in citations
     }
 
 
@@ -1804,11 +1805,13 @@ def _lower_claim(
         if base_tree.get(member_path) != candidate_tree[member_path]
     )
     # Re-observation (identity-design-1009): the same canonical statement whose
-    # citation association -- the observed content cited, its role and its
-    # origin -- the Claim already holds is a no-op: no revision, no citation
-    # growth. It is the very Capture again, or another Capture of the same
-    # content (a re-run reading the same bytes) cited the same way. A new
-    # association on already-cited content (another role or origin) is kept,
+    # citation association -- the exact verified Capture contract and observed
+    # content cited, its role and its origin -- the Claim already holds is a
+    # no-op: no revision, no citation growth. The re-observation journal admits
+    # exactly these (same contract and content), so preflight and submit agree.
+    # It is the very Capture again, or another Capture of the same content (a
+    # re-run reading the same bytes) cited the same way. A new association on
+    # already-cited content (another role, origin or contract) is kept,
     # and new content under the same statement refreshes the evidence by
     # revising the Claim, never by writing a second one.
     # A disposition that takes no stance (not_tested: the other slot Claims a
@@ -1823,7 +1826,12 @@ def _lower_claim(
     reobserved = (
         same_statement
         and not recited
-        and (observed_content(capture_envelope).digest, citation.role, citation.origin)
+        and (
+            capture_envelope.capture_contract_digest,
+            observed_content(capture_envelope).digest,
+            citation.role,
+            citation.origin,
+        )
         in _cited_associations(instance, predecessor_citations)
     )
     idempotent = (

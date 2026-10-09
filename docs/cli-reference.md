@@ -1324,12 +1324,12 @@ ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
 `revision_evidence` rule (`replace`: a revision that changes its statement keeps
 exactly the evidence it cites; `accumulate`: it keeps everything its
 predecessors cited). A revision that states the same thing again keeps its
-evidence either way, and a carry never loses backing. Restating a live Claim's
-canonical statement on evidence of content it already cites (the same observed
-content: the same file bytes, the same fetched body, the same words) under the
-same contract and in the same citation association (role and origin) is a
-no-op: no revision, no citation growth, no proposal. A new association on
-already-cited content (another role or origin) is kept as a revision. On new
+evidence either way, and a carry never loses backing. The same statement,
+citation role and origin, under the same verified Capture contract and observed
+content (the same file bytes, the same fetched body, the same words), changes no
+Claim; its admissible re-observation is recorded separately. No revision, no
+citation growth, no proposal. A new association on already-cited content
+(another role, origin or Capture contract) is kept as a revision. On new
 content the Claim's evidence is refreshed by revising it. A Procedure item that
 names no Claim to revise but restates a live one (its Subjects resolved through
 aliases first) targets that Claim's lineage, never a second Claim of the same

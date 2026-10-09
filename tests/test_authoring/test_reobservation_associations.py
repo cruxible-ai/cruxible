@@ -1,9 +1,10 @@
-"""Re-observation is a no-op only when the citation association is already held (F-003).
+"""Re-observation is a no-op only when the citation association is already held (F-003, F-012).
 
-The same canonical statement on content the Claim already cites is a no-op only
-when the citation role and origin match too; a new association on that content
-is kept, in either direction, whether its Capture is the same or another of the
-same content.
+The same statement, citation role and origin, under the same verified Capture
+contract and observed content, changes no Claim; its admissible re-observation
+is recorded separately. A new association on that content -- another role or
+origin, or another contract observing the same bytes -- is kept, in either
+direction, whether its Capture is the same or another of the same content.
 """
 
 from __future__ import annotations
@@ -85,3 +86,39 @@ def test_evidence_on_content_cited_only_as_copy_is_kept(tmp_path: Path) -> None:
     )
     lowered = _preview(coordinator, actor, as_evidence, "2026-08-21T12:06:00.000000Z")
     assert lowered.changed_members, lowered.resolved_authoring
+
+
+def _copied(instance: Any, coordinator: Any, actor: Any, first_id: str) -> Any:
+    copy = _working_payload(occurrence_count=1).model_copy(
+        update={"revises": first_id, "citation_role": "copy"}
+    )
+    intent = coordinator.create(
+        actor=actor, payload=copy, canonical_timestamp="2026-08-21T12:04:00.000000Z"
+    ).intent
+    _activate(instance, coordinator.submit(intent.intent_id, actor=actor))
+    # The same bytes read through another working source: another Capture contract.
+    return copy.model_copy(
+        update={"source": copy.source.model_copy(update={"source_id": "other.same-bytes"})}
+    )
+
+
+def test_the_same_content_under_another_contract_is_a_new_association(tmp_path: Path) -> None:
+    """Review F-012 probe: preview keeps the association and its contract."""
+
+    instance, _owner, actor, first_id, _second, coordinator, _other = shared_capture_world(tmp_path)
+    different = _copied(instance, coordinator, actor, first_id)
+    lowered = _preview(coordinator, actor, different, "2026-08-21T12:05:00.000000Z")
+    assert lowered.changed_members, lowered.resolved_authoring
+    assert "outcome" not in lowered.resolved_authoring
+
+
+def test_submit_agrees_with_preflight_on_another_contract(tmp_path: Path) -> None:
+    """Review F-012 probe: submit proposes the revision instead of refusing to record."""
+
+    instance, _owner, actor, first_id, _second, coordinator, _other = shared_capture_world(tmp_path)
+    different = _copied(instance, coordinator, actor, first_id)
+    intent = coordinator.create(
+        actor=actor, payload=different, canonical_timestamp="2026-08-21T12:05:00.000000Z"
+    ).intent
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None, submitted
