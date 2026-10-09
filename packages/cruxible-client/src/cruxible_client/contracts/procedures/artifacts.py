@@ -307,9 +307,9 @@ DIRECT_NODE_KINDS = frozenset(
     }
 )
 #: Node kinds only a Line runs: they egress under the Line's authority.
-LINE_NODE_KINDS = frozenset(
-    {"emit_capture", "post_inbox", "propose_change_set", "settle_change_set"}
-)
+# The terminals a Line lane delivers. ``post_inbox`` is a terminal no lane
+# delivers yet, so a Procedure ending in one reports ``unsupported``.
+LINE_NODE_KINDS = frozenset({"emit_capture", "propose_change_set", "settle_change_set"})
 
 
 class ProcedureNodeSupport(_StrictProcedureArtifactModel):

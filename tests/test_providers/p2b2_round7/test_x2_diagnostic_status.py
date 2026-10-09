@@ -63,7 +63,9 @@ def test_cli_status_renders_available_lane_diagnostics(
             )
 
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(short_root / "cli-context.json"))
-    monkeypatch.setattr("cruxible_core.cli.commands.server._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.server._get_client", lambda _state_root=None: StubClient()
+    )
 
     result = CliRunner().invoke(
         cli,

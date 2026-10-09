@@ -192,7 +192,7 @@ def test_follow_in_follows_a_relation_backwards_in_command_line_order(
     for bad in ("dev.batch.delivers", ":batch"):
         refused = _run("dev.roadmap_item", "--follow-in", bad)
         assert refused.exit_code != 0
-        assert "field:alias" in refused.output and "dev.batch.delivers:batch" in refused.output
+        assert "field:alias" in refused.output and "project.task.part_of:task" in refused.output
         assert "--follow-in" in refused.output
     assert len(stub.requests) == 1
 
@@ -221,7 +221,7 @@ def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
             {
                 "subject": "legal.case/b",
                 "subject_id": "b",
-                "ruling": TruncatedText(preview="Reversed " * 60, length=900),
+                "ruling": TruncatedText(truncated=True, preview="Reversed " * 60, length=900),
                 "flags": [],
             },
             {

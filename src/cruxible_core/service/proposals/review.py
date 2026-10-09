@@ -142,6 +142,9 @@ class ProposalReview(_StrictReviewModel):
     members: tuple[ReviewedMember, ...]
     governance: dict[str, object]
     provenance: dict[str, object]
+    # The author's own prose for the change set, as admitted: for a Procedure's
+    # proposal, the run that proposed it and each item's rationale.
+    rationale: str | None = None
     attestation_coverage: dict[str, object]
     documents: tuple[PlaybillReviewedDocument, ...]
     redactions: tuple[str, ...]
@@ -546,6 +549,7 @@ def service_review_playbill_proposal(
             "actor_id": proposal.admission.actor_id,
             "source_compilation_digest": proposal.admission.source_compilation_digest,
         },
+        rationale=proposal.admission.rationale,
         attestation_coverage={
             "attestations": attestation_items,
             "coverage": "containing_change_set",
@@ -686,6 +690,8 @@ def render_playbill_proposal_review(review: ProposalReview) -> str:
             )
         ),
     ]
+    if review.rationale is not None:
+        lines.extend(("", "Rationale:", *(f"  {line}" for line in review.rationale.splitlines())))
     if review.projection_evidence is not None:
         evidence = review.projection_evidence
         evidence_note = (

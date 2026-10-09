@@ -837,6 +837,7 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
     assert isinstance(row.claim, str)
     head = instance.accepted_coordinate().git_oid
     cut = TruncatedText(
+        truncated=True,
         preview=long_value[:GET_SUMMARY_TEXT_MAX_CHARS],
         length=len(long_value),
         read_whole=WholeValueRead(ref=row.claim, at=head),
@@ -864,15 +865,21 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
 def test_summary_value_cuts_only_long_strings() -> None:
     from cruxible_client.contracts.read_values import (
         GET_SUMMARY_TEXT_MAX_CHARS,
+        ShownObject,
         TruncatedText,
         summary_value,
     )
 
     edge = "x" * GET_SUMMARY_TEXT_MAX_CHARS
     assert summary_value(edge) == edge
-    assert summary_value(["ready", 3, {"k": edge + "y"}]) == ["ready", 3, {"k": edge + "y"}]
+    # An object value is shown whole and wrapped; nothing inside it is cut.
+    assert summary_value(["ready", 3, {"k": edge + "y"}]) == [
+        "ready",
+        3,
+        ShownObject(object={"k": edge + "y"}),
+    ]
     assert summary_value([edge + "y"]) == [
-        TruncatedText(preview=edge, length=GET_SUMMARY_TEXT_MAX_CHARS + 1)
+        TruncatedText(truncated=True, preview=edge, length=GET_SUMMARY_TEXT_MAX_CHARS + 1)
     ]
 
 
@@ -882,6 +889,7 @@ def test_a_cut_value_round_trips_as_truncated_text_and_short_values_stay_themsel
     from cruxible_client.contracts.compact_query import QueryClaimValue
     from cruxible_client.contracts.read_values import (
         ExactContentRef,
+        ShownObject,
         TruncatedText,
         summary_value,
     )
@@ -900,7 +908,8 @@ def test_a_cut_value_round_trips_as_truncated_text_and_short_values_stay_themsel
     assert (again.value.preview, again.value.length) == ("y" * 500, 900)
 
     marker = ExactContentRef(exact_content="binary", content_digest="sha256:" + "a" * 64)
-    for shown in ("ready", 3, 1.5, True, None, ["a", 2], {"$decimal": "0.1"}, marker):
+    decimal = ShownObject(object={"$decimal": "0.1"})
+    for shown in ("ready", 3, 1.5, True, None, ["a", 2], decimal, marker):
         wire = item.model_copy(update={"value": shown}).model_dump_json()
         parsed = QueryClaimValue.model_validate_json(wire).value
         assert parsed == shown and type(parsed) is type(shown)

@@ -248,9 +248,9 @@ cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port POR
   [--capability-ceiling TIER] [--bootstrap-secret-file PATH]
 cruxible server install-service [--state-root DIR] [--socket PATH | --host HOST --port PORT]
   [--capability-ceiling TIER] [--auth|--no-auth] [--print] [--replace]
-cruxible server status [--json]
-cruxible server restart [--no-wait] [--timeout SECONDS] [--json]
-cruxible server stop [--timeout SECONDS] [--json]
+cruxible server status [--state-root DIR] [--json]
+cruxible server restart [--no-wait] [--timeout SECONDS] [--state-root DIR] [--json]
+cruxible server stop [--timeout SECONDS] [--state-root DIR] [--json]
 ~~~
 
 server start is the long-running daemon process and does not connect to an
@@ -275,7 +275,9 @@ daemon holds the state-root lock it writes the secret owner-only (0600) to
 `<state-root>/daemon/bootstrap-secret`, and prints only that path. An in-place
 restart keeps the same secret. `server status`, `server restart` and
 `server stop` use that file by default when no `CRUXIBLE_SERVER_BEARER_TOKEN` is
-set, so a local restart needs no credential typed in. The secret is never sent:
+set, so a local restart needs no credential typed in; for a daemon started with
+`--state-root DIR`, pass the same `--state-root DIR` (the default is
+`CRUXIBLE_STATE_ROOT`, else `~/.cruxible`). The secret is never sent:
 each such request carries a MAC keyed by the secret over its method, path,
 body digest, a fresh nonce, a timestamp and the daemon's unpredictable boot id
 (read from the live lock record), and the daemon accepts it only if the boot id
@@ -470,11 +472,13 @@ not supported yet (`cruxible.trigger.schedule_unsupported_for_action`), and an
 action name that is not registered is refused at acceptance
 (`cruxible.trigger.action_unknown`). A new
 instance is initialized with `evidence-sweep` (daily),
-`prediction-anchor-retry` (hourly), `floor-refresh` and `curation-detect`
-(both on accepted generations); change a schedule, add a Trigger, or retire
-one through an ordinary proposal. Internal-action Triggers need no
-enablement. `cruxible next` reports unscheduled findings
-actions, and an unscheduled floor action when workspace delivery is enabled.
+`prediction-anchor-retry` (hourly) and `floor-refresh` (on accepted
+generations); change a schedule, add a Trigger, or retire one through an
+ordinary proposal. Curation detection (beta) is opt-in: author a
+`curation-detect` Trigger aimed at the `curation.detect` action to run it.
+Internal-action Triggers need no enablement. `cruxible next` reports
+unscheduled findings actions other than opt-in `curation.detect`, and an
+unscheduled floor action when workspace delivery is enabled.
 
 No Trigger fires retroactively. A timer fires each of its instants once, all of
 them after the acceptance of its Trigger version: a new cadence first fires one
@@ -667,8 +671,19 @@ per-user path outside the workspace and the daemon state root. Every custody
 directory (owner, reviewer and recovery, default or explicit, with symlinks
 resolved and case ignored) is refused inside either before any host is
 allocated or key generated; a refused default is reported after the new host
-is selected, so the retry initializes that host. On an auth-off daemon the init request claims that
-principal, so no bootstrap secret is needed. Init writes the owner's settings
+is selected, so the retry initializes that host. On a local socket the new host
+is created attached to the worktree, so a worktree already attached to another
+host refuses before any host exists. On an auth-off daemon the init request claims that
+principal, so no bootstrap secret is needed. With auth on, no one bearer token
+both allocates a host (the bootstrap secret) and initializes it (the host's
+claimed admin credential), so init with a bearer token and no selected host
+refuses before creating anything and names the three steps: `host create`
+with the secret, `credential claim-bootstrap`, then `init` with the admin
+token. Init of a selected host that init already ran for (its owner key is in
+custody without a retry marker, or the daemon reports the host initialized) is
+refused before anything is written, naming how the host was selected and the
+repair: `context clear` to start a new project, or `context use --principal` to
+act on that host. Init writes the owner's settings
 file (`DIR/cruxible.env`) and remembers it in the CLI context, so later commands
 act as the owner without sourcing anything (see [context](#context)). An init
 whose caller is not one of the owner principals it names is refused with
@@ -881,6 +896,10 @@ cruxible provider install NAME[==VERSION] | WHEEL [--lock FILE]
   [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
+`provider list` names every live Provider installed here (the built-in
+`cruxible-builtin` included) with its package, version and the interfaces it
+implements, then the packages a configured provider repository offers.
+
 Installation requires **ADMIN**. A package name resolves through the daemon's
 configured repository when it has one. Otherwise it installs from the provider
 index: the newest final release, or exactly `==VERSION`. The first configured
@@ -1030,7 +1049,13 @@ and carries none of its files; the lock given must be the one the wheel embeds
 (`cruxible.kit.provider_lock_not_embedded` otherwise), because `add` installs the
 default by name and version from the daemon's provider index (PyPI unless the
 operator configured `provider_index_urls`), where its path dependencies come from
-the same index. `add` skips the install (`satisfied`) when no Procedure the kit
+the same index; `kit build` therefore never needs the wheels of the default's path
+dependencies in its `dist/`. A daemon with `provider_repository` configured
+installs a package by name from that checkout only, so it refuses the default's
+exact-version install: install the repository's build with `provider install`
+first (the default is then `satisfied`), or add the kit on a daemon without one.
+The `add` preview says which: an index default it would install reads `would
+install (by name from the provider index at exactly VERSION ...)`. `add` skips the install (`satisfied`) when no Procedure the kit
 carries pins the default, each of its interfaces the kit carries is live here as
 the kit carries it (the built-in `web.fetch` registration, or a package's whose classifier a
 deployment on this daemon hosts), and some live Provider implements each one; the Blueprint's slot
@@ -1557,9 +1582,11 @@ nodes behind that answer. Procedures are graph format 6 and pin every Provider
 exactly; open slots belong only to a Blueprint. The direct lane runs `state_tap`,
 `state_claim`, `transform`, `project`, `guard`, `repeat`, `select`, `constant`,
 `return`, `invoke`, `halt`, `source` and `call` nodes. The effectful terminals --
-`emit_capture`, `post_inbox`, `propose_change_set`, `settle_change_set` -- run
+`emit_capture`, `propose_change_set`, `settle_change_set` -- run
 only as a Line: a direct invocation carries no requested authority, no
-occurrence, and no mandate coordinate, and none is fabricated for it.
+occurrence, and no mandate coordinate, and none is fabricated for it. No lane
+delivers a `post_inbox` terminal yet, so a Procedure ending in one reports
+`unsupported`.
 
 A **Blueprint** is the same definition with interface-typed Provider slots left
 open (`cruxible authoring example blueprint`); it is accepted but never runs.
@@ -1604,7 +1631,12 @@ A completed Source run reports, per occurrence, the `SourceReadReceipt` the
 daemon minted for the exact bytes it read and the digest of the Capture those
 bytes became; `--json` carries both in `source_observations`. A direct Source
 run is identified by its evaluation instant, so re-running at the same instant
-replays the retained observation rather than reading the source again.
+replays the retained observation rather than reading the source again. Without
+`--evaluation-time` a direct run evaluates at the instant the daemon admits it
+(the invocation is its trigger) and records that instant as the run's
+`evaluation_time`, so its Capture is observed when it was read and a
+capture-landing Trigger accepted before the run fires on it; pass the first
+run's `evaluation_time` to replay it.
 
 `get Procedure:NAME` names the unsupported nodes behind its `runnable` answer
 before anything runs. Runs append replay-verifiable journal records, and
@@ -1795,7 +1827,9 @@ instant there. Each cadence or cron Trigger keeps its own chain, whatever other
 Triggers aimed at the Line fired: the enablement matches every instant of its
 schedule from where its own matching reached, one at a time, skipping each
 tick already delivered (matched, or recorded by `evaluate`). A tick is its
-scheduled instant, never when it ran, so dispatching recovered ticks late
+scheduled instant, never when it ran: a tick dispatched late records that
+instant as its run's `occurrence_evaluation_time` (the run is still admitted
+at the daemon's instant), dispatching recovered ticks late
 never skips a live one, and a later tick evaluated first never stands in for
 an earlier one still owed. An enablement that fell behind matches the ticks
 it owes in order, never passing one undelivered. No tick is due before the
@@ -1935,6 +1969,20 @@ digest, the operation key, the mandate bound, and the Claim path each item
 lowered into; `--json` carries them in `terminal_egress`. Producing the
 proposal activates nothing: retrieve it with `cruxible get PROPOSAL_ID`, review
 it in the ledger, and activate it with the existing proposal verbs.
+
+An item on a many-valued ClaimType adds a value, as `write`'s `add` does: the
+values already in its slot (and any sibling item in the same slot) stay, and
+each is dispositioned `not_tested`. An item on a single-valued slot that
+already holds a value names the Claim it `revises`. Each item's rationale
+reaches the proposal: the proposal's rationale is the run that proposed it
+followed by the items' own rationales (each labelled with its Claim ID when
+there are several), shown by `proposal review --json` as `rationale` and read
+back by `get CLM-... --detail evidence` once accepted.
+
+The run's wall-clock budget is enforced inside the terminal, after its items
+are prepared and before anything is delivered: a run out of time ends
+`wall_clock_exhausted` with the terminal refused for that code and no
+proposal. A terminal that delivered is not then reported as out of time.
 
 The proposal ref is keyed on the admitted operation. A retry of the same
 operation recovers the same proposal and publishes the same receipt; other
@@ -2418,7 +2466,19 @@ request, or by a caller who is not a registered principal (an auth-off daemon's 
 `--key` with the path to your signing key: it stays in your own custody and the
 daemon never learns where. Your approval closes the row. So does another
 signer's approval that meets the requirement first, because the candidate then
-needs activation, not more approval.
+needs activation, not more approval. A compiler upgrade settles only with at
+least one signed approval, even under a policy that asks for none, so while it
+carries no signature it is a `proposal_awaiting_approval` row for every active
+ordinary principal, its author included, whose signature settlement would count.
+
+A `proposal_awaiting_activation` row is one of your own open candidates whose
+parent is the coordinate's semantic root and that needs no approval, or whose
+approval requirement other signers have met (and, for a compiler upgrade,
+that carries a signature): activation is all it waits on.
+"Your" is the same authenticated caller; nobody else's queue lists it. The
+repair is `cruxible proposal activate PROPOSAL_ID`, which closes the row. Your
+candidate still waiting on others' approval is listed in their queues as
+`proposal_awaiting_approval`.
 
 A `mandate_expiring` row is a live, unsuspended ProcedureMandate whose
 `expires_at` falls after the evaluation time and within `--expiring-within`.
@@ -2448,16 +2508,17 @@ cruxible curation unsuppress ITEM_ID
   [--attribution-ref REF]... [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
-Detection runs on its own: the `curation.detect` internal action, fired by the
-seeded `curation-detect` Trigger on every accepted generation, runs every
-detector at the head and records what it found, evaluated at the fire's recorded
-instant. `curation list` is a pure read of that queue: it prints each item's ID,
+Curation is beta, and detection runs only when a Trigger aimed at the
+`curation.detect` internal action is authored (for example `curation-detect` on
+accepted generations; none is seeded, and `next` never runs or waits on it).
+Each fire runs every detector at the head and records what it found, evaluated
+at the fire's recorded instant. `curation list` is a pure read of that queue: it prints each item's ID,
 pattern kind, subject and `latest_event_digest` (what every ruling needs), when
 detection last ran (`current`, `behind` or `never_run`) and whether its Trigger
 is live, and the detectors that cannot run here and why (dead vocabulary needs
 `CRUXIBLE_CONSUMPTION_RECEIPTS=on`; block churn needs a recorded workspace scan).
-An instance created before the seeded Trigger needs it proposed once (`next`
-reports `curation.detect` as unscheduled).
+With no such Trigger, `curation list` reports detection `never_run` and its
+Trigger `missing`.
 
 Block churn is the one detector that reads the workspace, which the daemon never
 does: `curation observe` scans the workspace's declared blocks client-side and
@@ -2951,6 +3012,7 @@ cruxible proposal list [--status open|settled|incomplete] [--limit N]
   [--cursor CURSOR] [--json]
 cruxible proposal readmit PROPOSAL_ID [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal withdraw PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
+cruxible proposal reject PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
   [--workspace-root DIR] [--json]
 cruxible proposal approve PROPOSAL_ID
@@ -2987,6 +3049,8 @@ full digest, a unique digest prefix (`sha256:` plus at least 8 hex characters),
 or a target ref whose current Git target
 names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
+Activating a stale proposal refuses `cruxible.proposal.stale`, naming
+`proposal readmit` (or `withdraw`) as the repair.
 `proposal readmit` replays a stale proposal's authored content through the current
 governed rebase and returns a fresh, idempotent proposal without changing the old
 proposal evidence. It refuses `cruxible.proposal.readmit_already_accepted` when
@@ -3005,6 +3069,17 @@ with terminal reason `withdrawn`. Only the actor who submitted a proposal may
 withdraw it; withdrawing an already-withdrawn proposal repeats the first answer
 rather than rewriting its reason, and a settled proposal refuses, because its
 outcome is not an intention to overwrite.
+
+`proposal reject` is the reviewer's side of the same ending: a reviewer
+(`graph_write`) who will not accept another actor's open or stale proposal
+rejects it with a required `--reason`. It writes the same immutable closing
+record, marked `rejected`, moves the proposal out of the open inventory with
+terminal reason `rejected`, and every settlement door (approve, activate,
+readmit) then refuses `cruxible.proposal_rejected` naming who rejected it, when,
+and why. A proposal's own actor withdraws rather than rejects; rejecting an
+already-rejected proposal repeats the first answer, and a withdrawn proposal
+cannot also be rejected. A rejection is not remembered against a later proposal
+of the same change.
 
 approve signs locally. The private-key path is not sent to the daemon.
 Activation is a daemon act and writes nothing locally; it returns the

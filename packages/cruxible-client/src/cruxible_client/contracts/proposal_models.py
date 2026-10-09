@@ -317,9 +317,13 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     sits beside: nothing about accepted state changes, and the candidate stays
     readable forever. What changes is the inventory -- a proposal that cannot
     activate stops being reported open, so `proposal list` is a list of work and
-    not a graveyard. Immutable and one per proposal: withdrawal is a terminal
+    not a graveyard. Immutable and one per proposal: closing is a terminal
     statement, so a second one over the same proposal is refused rather than
     silently restating the first with a new reason.
+
+    ``kind`` says who closed it: ``withdrawn`` by its author (or a daemon-wide
+    operator), ``rejected`` by a reviewer. ``withdrawn_at`` is the instant it
+    closed either way.
     """
 
     tag: Literal["playbill-proposal-withdrawal-v1"] = "playbill-proposal-withdrawal-v1"
@@ -327,6 +331,9 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     actor_id: str
     reason: str = Field(min_length=1, max_length=1_000)
     withdrawn_at: str
+    kind: Literal["withdrawn", "rejected"] = Field(
+        default="withdrawn", exclude_if=lambda value: value == "withdrawn"
+    )
 
     @field_validator("proposal_id")
     @classmethod
@@ -338,9 +345,9 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     @classmethod
     def _reason(cls, value: str) -> str:
         if value.strip() != value or not value.strip():
-            raise ValueError("withdrawal reason must be nonblank and normalized")
+            raise ValueError("closing reason must be nonblank and normalized")
         if any(character in value for character in "\r\n"):
-            raise ValueError("withdrawal reason must be a single line")
+            raise ValueError("closing reason must be a single line")
         return value
 
 

@@ -497,3 +497,36 @@ def test_no_start_path_prints_or_logs_the_secret(
     for path in (tmp_path).rglob("*"):
         if path.is_file() and path.resolve() not in held:
             assert secret.encode() not in path.read_bytes(), path
+
+
+@pytest.mark.parametrize("command", ["stop", "status", "restart"])
+def test_a_lifecycle_command_finds_the_secret_under_its_state_root_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, command: str
+) -> None:
+    """A daemon started with --state-root is stopped with the same flag, no env needed."""
+
+    from cruxible_client.transport.lifecycle import DaemonLifecycleClient
+
+    socket = tmp_path / "run" / "d.sock"
+    state_root, lock = _held_secret(tmp_path, f"unix socket {socket}")
+    # The configured state root is somewhere else entirely.
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
+    seen: list[str | None] = []
+
+    def recording(self: DaemonLifecycleClient, **kwargs: Any) -> None:
+        seen.append(kwargs.get("operator_secret"))
+        raise click.ClickException("recorded")
+
+    monkeypatch.setattr(DaemonLifecycleClient, "__init__", recording)
+    base = ["--server-socket", str(socket), "server", command]
+    try:
+        without = CliRunner().invoke(cli, base)
+        with_flag = CliRunner().invoke(cli, [*base, "--state-root", str(state_root)])
+    finally:
+        assert lock is not None
+        lock.release()
+
+    assert "recorded" in without.output and "recorded" in with_flag.output
+    assert seen == [None, "the-secret"]

@@ -295,7 +295,7 @@ def test_changed_base_and_mixed_proposal_refuse_upgrade(tmp_path, monkeypatch):
 
 
 def test_upgrade_stale_candidate_cannot_cross_another_acceptance(tmp_path, monkeypatch):
-    from cruxible_client.contracts.errors import SettlementIntegrityError
+    from cruxible_client.contracts.errors import ProposalStale
     from cruxible_core.proposals.settlement import ChangeActorBinding
     from tests.test_ledger.test_activation import _candidate
 
@@ -312,7 +312,8 @@ def test_upgrade_stale_candidate_cannot_cross_another_acceptance(tmp_path, monke
         proposal_actor_id="owner",
     )
     head = instance.accepted_coordinate()
-    with pytest.raises(SettlementIntegrityError, match="not the current main ref"):
+    # The upgrade candidate is stale now: refused with the readmit repair.
+    with pytest.raises(ProposalStale, match="cruxible proposal readmit"):
         service_activate_playbill_proposal(
             instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
         )

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
         SourceRef,
         SubjectRef,
         TypedRef,
+        WholeValueUnavailable,
     )
     from cruxible_client.authoring.signing import ApprovalSigner, LocalEd25519ApprovalSigner
     from cruxible_client.authoring.workspace import (
@@ -86,6 +87,11 @@ if TYPE_CHECKING:
         ProjectNode,
         StateTapNode,
         TransformNode,
+    )
+    from cruxible_client.contracts.read_values import (
+        ExactContentRef,
+        ShownObject,
+        TruncatedText,
     )
     from cruxible_client.contracts.write import SlotRef
     from cruxible_client.transport.http import CruxibleClient
@@ -159,6 +165,10 @@ __all__ = [
     "WorldClaimType",
     "WorldStructureError",
     "WorldSubject",
+    "ExactContentRef",
+    "ShownObject",
+    "TruncatedText",
+    "WholeValueUnavailable",
 ]
 
 __version__ = "0.5.1"
@@ -229,10 +239,15 @@ def __getattr__(name: str) -> Any:
         "SourceRef",
         "SubjectRef",
         "TypedRef",
+        "WholeValueUnavailable",
     }:
         from cruxible_client.authoring import sdk_types
 
         return getattr(sdk_types, name)
+    if name in {"ExactContentRef", "ShownObject", "TruncatedText"}:
+        from cruxible_client.contracts import read_values
+
+        return getattr(read_values, name)
     if name == "SlotRef":
         from cruxible_client.contracts.write import SlotRef
 

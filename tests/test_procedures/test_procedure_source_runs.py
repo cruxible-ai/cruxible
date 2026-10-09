@@ -40,6 +40,7 @@ from cruxible_client.contracts.captures import (
     CaptureContract,
     capture_contract_digest,
     capture_contract_path,
+    parse_capture_envelope,
     render_capture_contract,
 )
 from cruxible_client.contracts.errors import ExecutionError
@@ -518,7 +519,7 @@ def test_source_is_served_on_the_direct_lane_and_terminals_only_on_a_line() -> N
     assert "source" in DIRECT_NODE_KINDS
     # Terminals and post_inbox stay dark on the direct lane.
     assert DIRECT_NODE_KINDS.isdisjoint({"emit_capture", "post_inbox", "propose_change_set"})
-    assert {"emit_capture", "post_inbox", "propose_change_set"} <= LINE_NODE_KINDS
+    assert {"emit_capture", "propose_change_set"} <= LINE_NODE_KINDS
 
 
 def test_the_sdk_authors_a_source_node(tmp_path: Path) -> None:
@@ -1757,3 +1758,37 @@ def test_a_line_over_a_source_procedure_must_name_an_acquisition_policy(
         lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
     assert refused.value.code == "cruxible.authoring.line_acquisition_policy_required"
     assert refused.value.offending_element == "acquisition_policy_name"
+
+
+def test_a_direct_run_without_an_instant_evaluates_when_it_is_admitted(tmp_path: Path) -> None:
+    """The operator's invocation is the trigger: its Capture is observed at the read.
+
+    It used to evaluate at the accepted head's time, so the Capture predated the
+    read and no capture-landing Trigger accepted after that head ever fired.
+    """
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
+    admitted = NOW + timedelta(hours=3)
+    assert instance.accepted_evaluation_time(instance.accepted_coordinate().git_oid) < admitted
+
+    state = service_run_playbill_procedure(
+        instance,
+        name=PROCEDURE_NAME,
+        request=ProcedureRunRequest(input={}),
+        actor_context=_actor(instance),
+        provider_runtime_operator=_Operator(_WorkspaceInvoker()),  # type: ignore[arg-type]
+        workspace_file_reader=_reader(instance, root),
+        daemon_clock=_TestClock(admitted),
+    )
+
+    assert state.status == "succeeded", state.terminal
+    assert state.evaluation_time == admitted
+    (observation,) = state.source_observations
+    assert observation.capture_digest is not None
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            observation.capture_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    assert envelope.observed_at == admitted

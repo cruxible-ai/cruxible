@@ -142,6 +142,7 @@ from cruxible_core.service.evidence.evidence import (
     service_evaluate_playbill_claim_verdict,
 )
 from cruxible_core.service.proposals.proposals import (
+    proposals_awaiting_activation,
     proposals_awaiting_approval,
     stale_unreadmitted_proposals,
 )
@@ -886,6 +887,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.sources.propose": "sources propose",
     "cruxible.proposal.readmit": "proposal readmit",
     "cruxible.proposal.approve": "proposal approve",
+    "cruxible.proposal.activate": "proposal activate",
     "cruxible.compiler.upgrade": "compiler upgrade",
     "cruxible.line.enable": "line enable",
     "cruxible.line.evaluate": "line evaluate",
@@ -970,6 +972,7 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.sources.propose": "cruxible_sources_propose",
     "cruxible.proposal.readmit": "cruxible_proposal_readmit",
     "cruxible.proposal.approve": "cruxible_proposal_approve",
+    "cruxible.proposal.activate": "cruxible_proposal_activate",
     "cruxible.compiler.upgrade": "cruxible_compiler_upgrade",
     "cruxible.line.enable": "cruxible_line_enable",
     "cruxible.line.evaluate": "cruxible_line_evaluate",
@@ -1150,6 +1153,8 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _mcp_call("cruxible_authoring_example", name=text("example"))
     if operation == "cruxible.proposal.readmit" and text("proposal_id"):
         return _mcp_call("cruxible_proposal_readmit", proposal_id=text("proposal_id"))
+    if operation == "cruxible.proposal.activate" and text("proposal_id"):
+        return _mcp_call("cruxible_proposal_activate", proposal_id=text("proposal_id"))
     if operation == "cruxible.proposal.approve" and text("proposal_id") and text("signer_id"):
         return _mcp_call(
             "cruxible_proposal_approve",
@@ -1250,6 +1255,8 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
     if operation == "cruxible.authoring.example":
         example = text("example")
         return None if example is None else _sdk_call("authoring_example", example)
+    if operation == "cruxible.proposal.activate" and (proposal := text("proposal_id")):
+        return _sdk_call("cx.activate", proposal)
     if operation == "cruxible.proposal.approve" and (proposal := text("proposal_id")):
         handle = _sdk_call("cx.proposal", proposal)
         return f"{handle}.approve(reviewed={handle}.review())"
@@ -1374,7 +1381,7 @@ def _repair_command(
         if not isinstance(prediction_id, str) or not prediction_id:
             return None
         parts.append(shlex.quote(prediction_id))
-    elif operation == "cruxible.proposal.readmit":
+    elif operation in {"cruxible.proposal.readmit", "cruxible.proposal.activate"}:
         proposal_id = values.get("proposal_id")
         if not isinstance(proposal_id, str):
             return None
@@ -4230,10 +4237,13 @@ def _triggers_health(
     delivery_enabled = record is not None and record.floor_delivery
     # Workspace delivery defaults on when attached: an instance with it disabled
     # needs no floor schedule. Findings actions retain their existing advisory.
+    # An opt-in action (curation detection, beta) is expected to be unscheduled.
     unscheduled = [
         action
         for action, spec in INTERNAL_ACTIONS.items()
-        if action not in scheduled and (spec.effect == "findings" or delivery_enabled)
+        if action not in scheduled
+        and not spec.opt_in
+        and (spec.effect == "findings" or delivery_enabled)
     ]
     detail: dict[str, object] = {"scheduled": scheduled}
     if not unscheduled:
@@ -4632,6 +4642,59 @@ def _approval_items(
             ),
         )
         for proposal in proposals_awaiting_approval(
+            instance,
+            AcceptedCoordinate.from_internal(coordinate),
+            principal_id=caller_principal_id,
+            ordinary_principal_ids=ordinary,
+        )
+    )
+
+
+def _activation_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    caller_principal_id: str | None,
+    access_profile: CoverageAccessProfile,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """The calling principal's own open proposals that activation is next for.
+
+    The caller is the daemon's authenticated principal, as for approval rows.
+    A proposal it authored that needs no approval, or whose requirement other
+    signers met, waits only on activation; activating it closes the row. A
+    proposal still waiting on others' approval is theirs to approve and shows
+    in their queues as ``proposal_awaiting_approval``.
+    """
+
+    if caller_principal_id is None or not access_profile.permits("instance"):
+        return ()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        ordinary = frozenset(
+            row[0]
+            for row in projection.typed.connection.execute(
+                "SELECT principal_id FROM principals WHERE status='active' AND kind='ordinary'"
+            )
+        )
+    return tuple(
+        _item(
+            severity="repair",
+            reason="proposal_awaiting_activation",
+            subject_identity=proposal.proposal_id,
+            related_identities=(proposal.target_ref,),
+            detail={
+                "admitted_at": proposal.admitted_at,
+                "candidate_digest": proposal.candidate_digest,
+                "approvals": proposal.approvals,
+                "target_ref": proposal.target_ref,
+            },
+            repair=PlaybillNextRepairV1(
+                operation="cruxible.proposal.activate",
+                target=proposal.proposal_id,
+                required_change="activate_your_proposal_its_approvals_are_met",
+                arguments={"proposal_id": proposal.proposal_id},
+            ),
+        )
+        for proposal in proposals_awaiting_activation(
             instance,
             AcceptedCoordinate.from_internal(coordinate),
             principal_id=caller_principal_id,
@@ -5342,6 +5405,12 @@ def _next_queue(
             access_profile=request.access_profile,
         ),
         *_approval_items(
+            instance,
+            coordinate=coordinate,
+            caller_principal_id=caller_principal_id,
+            access_profile=request.access_profile,
+        ),
+        *_activation_items(
             instance,
             coordinate=coordinate,
             caller_principal_id=caller_principal_id,

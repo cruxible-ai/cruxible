@@ -1077,7 +1077,40 @@ def init_playbill(
     ):
         if explicit is not None:
             _refuse_custody_inside(role, Path(explicit), custody_roots, flag=flag)
-    selected = str(selected_instance) if selected_instance else _create_host_for_init(transport)
+    if selected_instance is None and get_runtime_bearer_token() is not None:
+        # Allocating a host takes the daemon's bootstrap secret, and init takes
+        # the new host's own admin credential: no one bearer token does both.
+        raise click.UsageError(
+            "with daemon auth on, init initializes a host you have already allocated and "
+            "claimed, and none is selected; nothing was created. Repair: "
+            "`CRUXIBLE_SERVER_BEARER_TOKEN=<bootstrap secret> cruxible host create`, then "
+            "`cruxible credential claim-bootstrap --secret-file <secret file>`, then "
+            "`CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed> cruxible init` "
+            "(or select an allocated host with --instance-id)"
+        )
+    if selected_instance is not None:
+        _refuse_reinit(
+            str(selected_instance),
+            principal_id=principal_id,
+            key_dir=(
+                Path(key_dir).expanduser()
+                if key_dir is not None
+                else default_key_dir(str(selected_instance), principal_id)
+            ),
+            custody_roots=custody_roots,
+        )
+    selected = (
+        str(selected_instance)
+        if selected_instance
+        else _create_host_for_init(
+            transport,
+            workspace_root=(
+                str(git_workspace)
+                if git_workspace is not None and _root_ctx_obj().get("server_socket")
+                else None
+            ),
+        )
+    )
     owner_key_dir = (
         Path(key_dir).expanduser()
         if key_dir is not None
@@ -1186,16 +1219,18 @@ def _os_principal_id() -> str:
     return name
 
 
-def _create_host_for_init(transport: str) -> str:
+def _create_host_for_init(transport: str, *, workspace_root: str | None) -> str:
     """Allocate the host a bare init initializes, and select it before anything else.
 
     Selecting it first means a retry after a failed init initializes this same
-    host instead of allocating another.
+    host instead of allocating another. The host is created attached to the
+    worktree init will attach (on a local socket), so a worktree already
+    attached to another host refuses here, before any host exists.
     """
 
     _echo_creation_write_target({})
     created = _dispatch_cli(
-        lambda client: client.create_host(dry_run=False),
+        lambda client: client.create_host(workspace_root=workspace_root, dry_run=False),
         lambda: None,
         allow_local=False,
         command_name="cruxible init",
@@ -1204,6 +1239,55 @@ def _create_host_for_init(transport: str) -> str:
     _activate_server_instance(created.instance_id)
     click.echo(f"Created Cruxible host {created.instance_id} @ {transport}", err=True)
     return created.instance_id
+
+
+def _refuse_reinit(
+    instance_id: str, *, principal_id: str, key_dir: Path, custody_roots: tuple[Path, ...]
+) -> None:
+    """Refuse, before anything is written, an init of a host that init already ran for.
+
+    A retry of an interrupted init carries its resume marker and goes on. Without
+    one, an owner key already in custody, or a host the daemon reports
+    initialized, means this init would only fail later: name the host, how it
+    was selected, and the ways forward.
+    """
+
+    source = str(_root_ctx_obj().get("target_instance_source") or "context")
+    repair = (
+        "Repair: to start a new project, `cruxible context clear` (or select no host) and run "
+        f"`cruxible init` again; to act on {instance_id}, use its settings "
+        f"(`cruxible context use --principal ID`)"
+    )
+    target = validate_client_principal_key_target(
+        key_dir, principal_id=principal_id, kind="ordinary", forbidden_roots=custody_roots
+    )
+    if _init_resume_marker(target).exists():
+        return
+    if target.private_key_path.exists():
+        raise click.UsageError(
+            f"Cruxible host {instance_id} (selected by {source}) already has {principal_id}'s "
+            f"init key at {target.directory}, so init already ran for it; nothing was written. "
+            f"{repair}, or pass --key-dir DIR for a key of its own"
+        )
+    try:
+        inspection = _dispatch_cli(
+            lambda client: client.show_host(instance_id),
+            lambda: None,
+            allow_local=False,
+            command_name="cruxible init",
+        )
+    except (CoreError, click.ClickException):
+        # An uninitialized host is shown only to an unscoped operator, so a
+        # refusal here is no evidence that it is initialized.
+        return
+    if (
+        isinstance(inspection, contracts.HostInspection)
+        and inspection.compatibility != "uninitialized"
+    ):
+        raise click.UsageError(
+            f"Cruxible host {instance_id} (selected by {source}) is already initialized; init "
+            f"runs once per host and nothing was written. {repair}"
+        )
 
 
 def _init_custody_roots(workspace: Path | None) -> tuple[Path, ...]:
@@ -1445,18 +1529,24 @@ def provider_group() -> None:
 @json_option
 @handle_errors
 def list_provider_packages(output_json: bool) -> None:
-    """List packages from the daemon's configured provider repository."""
+    """List the Providers installed here, then the configured repository's packages."""
     result = _server_call(
         lambda client, instance_id: client.list_provider_packages(instance_id),
         command_name="cruxible provider list",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
-    else:
-        for package in result.packages:
-            click.echo(f"{package.name} {package.version}: {', '.join(package.interfaces)}")
-        if result.detail:
-            click.echo(result.detail)
+        return
+    click.echo("Installed:" if result.installed else "Installed: none")
+    for installed in result.installed:
+        runs = "" if installed.package is None else f" ({installed.package} {installed.version})"
+        click.echo(f"  {installed.provider}{runs}: {', '.join(installed.interfaces) or '-'}")
+    if result.packages:
+        click.echo("Provider repository:")
+    for package in result.packages:
+        click.echo(f"  {package.name} {package.version}: {', '.join(package.interfaces)}")
+    if result.detail:
+        click.echo(result.detail)
 
 
 @provider_group.command("install")
@@ -1668,10 +1758,12 @@ def _echo_kit_change(result: KitChangeResult) -> None:
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help=(
         "A published provider package directory the kit names as the default "
-        "implementation of its interfaces (repeatable), laid out as for --provider with "
-        "the published wheel in dist/. The kit carries none of its files: kit add "
-        "installs it by name and exact version from the provider index when no "
-        "installed Provider implements its interfaces."
+        "implementation of its interfaces (repeatable): pyproject.toml, uv.lock and the "
+        "published wheel in dist/ (path dependencies' wheels are not needed). The kit "
+        "carries none of its files. kit add installs it by name at exactly this version "
+        "from the provider index, refusing any other build, unless a live Provider already "
+        "implements its interfaces; a daemon with provider_repository configured refuses "
+        "that install (install the repository's build first with provider install)."
     ),
 )
 @json_option
@@ -2088,6 +2180,40 @@ def withdraw_proposal(
         return
     already = " (already withdrawn)" if result.already_withdrawn else ""
     click.echo(f"{result.status}  {result.proposal_id}  {result.withdrawn_at}{already}")
+    click.echo(f"Reason: {result.reason}")
+    echo_preview_next(result.status, result.coordinate)
+
+
+@proposal_group.command("reject")
+@click.argument("proposal_id")
+@click.option(
+    "--reason",
+    required=True,
+    help="Why this proposal should not be accepted. Recorded verbatim.",
+)
+@change_control_options
+@json_option
+@handle_errors
+def reject_proposal(
+    proposal_id: str, reason: str, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
+    """Reject another actor's open proposal as its reviewer."""
+
+    result = _server_call(
+        lambda client, instance_id: client.reject_proposal(
+            instance_id,
+            client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
+            reason=reason,
+            dry_run=dry_run,
+            at=at,
+        ),
+        command_name="cruxible proposal reject",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    already = " (already rejected)" if result.already_rejected else ""
+    click.echo(f"{result.status}  {result.proposal_id}  {result.rejected_at}{already}")
     click.echo(f"Reason: {result.reason}")
     echo_preview_next(result.status, result.coordinate)
 
@@ -2999,7 +3125,10 @@ def propose_claim_type(
             ),
             command_name="cruxible claim-type propose",
         )
-        _emit_json(envelope_result.model_dump(mode="json"))
+        if output_json:
+            _emit_json(envelope_result.model_dump(mode="json"))
+            return
+        _echo_claim_type_proposal(envelope_result, envelope_result.lint)
         return
     assert input_path is not None
     try:
@@ -3024,7 +3153,31 @@ def propose_claim_type(
         ),
         command_name="cruxible claim-type propose",
     )
-    _emit_json(input_result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(input_result.model_dump(mode="json"))
+        return
+    _echo_claim_type_proposal(input_result.proposal, input_result.lint)
+
+
+def _echo_claim_type_proposal(
+    inspection: contracts.ProposalInspection, lint: contracts.ClaimTypeProposalLint | None
+) -> None:
+    """A ClaimType proposal in a few lines; ``--json`` carries the whole record."""
+
+    admission = inspection.proposal.get("admission") or {}
+    evaluation = inspection.proposal.get("evaluation") or {}
+    proposal_id = admission.get("proposal_id") if isinstance(admission, Mapping) else None
+    verdict = evaluation.get("verdict", "-") if isinstance(evaluation, Mapping) else "-"
+    click.echo(f"{inspection.status}  {proposal_id or '-'}  verdict={verdict}")
+    diagnostics = evaluation.get("diagnostics", ()) if isinstance(evaluation, Mapping) else ()
+    for item in diagnostics:
+        if isinstance(item, Mapping):
+            click.echo(f"  {item.get('code')}: {printable(str(item.get('message', '')))}")
+    for warning in () if lint is None else lint.warnings:
+        click.echo(f"lint: {warning.code} at {warning.field_path}")
+    if proposal_id:
+        click.echo(f"next: cruxible get {proposal_id}")
+    echo_preview_next(inspection.status, inspection.accepted_coordinate)
 
 
 @claim_type_group.command("migrate")
@@ -5004,7 +5157,7 @@ def _follow_order(
 def _follow_entry(spec: str, option: str) -> dict[str, str]:
     field, _, alias = spec.partition(":")
     if not field or not alias:
-        example = "dev.batch.delivers:batch" if option == "--follow-in" else "closed_by:batch"
+        example = "project.task.part_of:task" if option == "--follow-in" else "closed_by:batch"
         raise click.BadParameter(
             f"{spec!r} is not field:alias, for example {example}", param_hint=option
         )
@@ -5035,7 +5188,7 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     multiple=True,
     help=(
         "Follow a relation backwards (repeatable): field:alias, another kind's predicate "
-        "that points at KIND, e.g. dev.batch.delivers:batch."
+        "that points at KIND, e.g. project.task.part_of:task."
     ),
 )
 @click.option("--order-by", "order_fields", multiple=True, help="Order: f or -f (repeatable).")
@@ -5319,7 +5472,14 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
 @procedure_group.command("run")
 @click.argument("name")
 @click.argument("input_file", type=PayloadFile())
-@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@click.option(
+    "--evaluation-time",
+    default=None,
+    help=(
+        "Explicit ISO-8601 evaluation time; default: the instant the daemon admits the run. "
+        "Pass a run's evaluation_time to replay it."
+    ),
+)
 @click.option(
     "--at",
     "at_file",
@@ -6015,7 +6175,11 @@ def _echo_next_status(status: contracts.NextStatus) -> None:
 
 @playbill_group.group("curation")
 def curation_group() -> None:
-    """Review the ontology-maintenance patterns curation detection records."""
+    """Review the ontology-maintenance patterns curation detection records (beta).
+
+    Curation is beta: detection runs only when a Trigger aimed at the
+    curation.detect action (curation-detect) is authored; none is seeded.
+    """
 
 
 def _curation_ruling_options(function: Callable[..., Any]) -> Callable[..., Any]:

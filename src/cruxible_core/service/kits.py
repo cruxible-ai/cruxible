@@ -332,7 +332,7 @@ def service_build_kit(
             wheel=(item.wheel.filename, wheel),
             lock=lock,
             dependencies=dependencies,
-            embedded_lock_required=item.delivery == "index",
+            delivery=item.delivery,
         )
         if item.delivery == "index":
             # A default provider installs by name: the kit carries none of its
@@ -420,6 +420,10 @@ def _build_difference(
         return f"wheel other than {package.provider.wheel.filename}"
     if runtime.local_env is None or runtime.local_env.lock_sha256 != package.provider.lock.sha256:
         return "lock other than the bundled one"
+    if package.pin_key is None:
+        # An index default given no path dependency wheels: its closure is the
+        # index's, so only the wheel and lock it installs are compared.
+        return None
     if runtime.local_env.materialization_digests.get(package.pin_key) != package.materialization:
         # The lock pins path dependencies by name and version only: the
         # materialization digest is what names their exact wheels.
@@ -1333,7 +1337,19 @@ def _provider_steps(
             )
         elif state == "missing":
             missing.append(provider)
-            steps.append(KitProviderStep(**named, action="would_install"))
+            steps.append(
+                KitProviderStep(
+                    **named,
+                    action="would_install",
+                    detail=(
+                        f"by name from the provider index at exactly {provider.version}, "
+                        "refusing any other build; refused where provider_repository is "
+                        "configured"
+                    )
+                    if provider.delivery == "index"
+                    else None,
+                )
+            )
         else:
             steps.append(
                 KitProviderStep(

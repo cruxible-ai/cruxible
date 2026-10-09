@@ -136,7 +136,20 @@ class ProviderPackageSummary(_Strict):
     interfaces: tuple[str, ...]
 
 
+class InstalledProvider(_Strict):
+    """One live Provider at the accepted head: what is installed here, and what it implements."""
+
+    provider: str
+    #: The distribution it runs, when it runs one (the built-in runs inside core).
+    package: str | None = None
+    version: str | None = None
+    interfaces: tuple[str, ...]
+
+
 class ProviderCatalog(_Strict):
+    """Installed Providers, then the packages the configured repository offers."""
+
     tag: Literal["playbill-provider-catalog-v1"] = "playbill-provider-catalog-v1"
+    installed: tuple[InstalledProvider, ...] = ()
     packages: tuple[ProviderPackageSummary, ...] = ()
     detail: str | None = None
