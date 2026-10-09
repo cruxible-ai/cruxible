@@ -2329,3 +2329,134 @@ def test_an_interrupted_unchanged_terminal_is_recovered_without_a_proposal(
     # A second sweep finds nothing left to do.
     assert service_recover_proposal_egress(reopened, recorded_at=NOW + timedelta(hours=3)) == {}
     assert ClaimReobservationStore(reopened).history(claim_id) == after
+
+
+# --- Line track records fold each terminal to its outcome (review F-023) -------
+
+
+def _track(instance: PlaybillInstance, run_id: str, line: Any, procedure: Any) -> Any:
+    from cruxible_client.contracts.procedures.artifacts import (
+        AcceptedProcedure,
+        procedure_artifact_digest,
+    )
+    from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec, line_spec_digest
+    from cruxible_core.exhaust.line_track_records import build_line_track_record
+    from cruxible_core.exhaust.promotions import VerifiedExhaustRecordV1
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.service.procedures.procedure_runs import _records_for_run
+
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    records = []
+    for stored in _records_for_run(instance, run_id):
+        record = stored.record
+        records.append(
+            VerifiedExhaustRecordV1(
+                record_digest=stored.record_digest,
+                sequence=record.sequence,
+                event_kind=record.event_kind,
+                generation_digest=record.accepted_coordinate.generation_root,
+                payload_digest=record.payload_digest,
+                payload=parse_journal_payload(
+                    instance.body_store().read(record.payload_digest, access=access)
+                ),
+                procedure_artifact_digest=record.procedure_artifact_digest,
+                definition_digest=record.definition_digest,
+                run_id=record.run_id,
+                occurrence_id=record.occurrence_id,
+                attempt=record.attempt,
+                line_spec_digest=record.line_spec_digest,
+            )
+        )
+    return build_line_track_record(
+        tuple(records),
+        accepted_line=AcceptedLineSpec(
+            path=line_spec_path(line.identity.name),
+            line=line,
+            artifact_digest=line_spec_digest(line).tagged,
+        ),
+        accepted_procedure=AcceptedProcedure(
+            path=procedure_path(procedure.identity.name),
+            procedure=procedure,
+            artifact_digest=procedure_artifact_digest(procedure).tagged,
+        ),
+    )
+
+
+def _die_at_delivery(monkeypatch: pytest.MonkeyPatch, *, journal_failure: bool) -> dict[str, str]:
+    """Kill the process at the sink; with ``journal_failure`` the executor's failed
+    record is written on the way out, otherwise the process is gone before it."""
+
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+
+    saved: dict[str, Any] = {}
+    append = ProcedureExecutor._append_event
+
+    def die(self, **kwargs):  # type: ignore[no-untyped-def]
+        saved["run_id"] = kwargs["request"].run_id
+        saved["dead"] = not journal_failure
+        raise _Crash()
+
+    def dead_append(self, admission, records, event_kind, payload):  # type: ignore[no-untyped-def]
+        if saved.get("dead") or (journal_failure and event_kind == "attempt_finalized"):
+            raise _Crash()
+        return append(self, admission, records, event_kind, payload)
+
+    monkeypatch.setattr(ProposalTerminalEgressSink, "deliver_terminal_egress", die)
+    monkeypatch.setattr(ProcedureExecutor, "_append_event", dead_append)
+    return saved
+
+
+@pytest.mark.parametrize("lane", ["unchanged", "effectful"])
+def test_a_failed_then_recovered_terminal_reads_as_one_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lane: str
+) -> None:
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, owner, root, line, procedure = proposal_world(tmp_path)
+    if lane == "unchanged":
+        _accept_first_run(instance, owner, root, line)
+    with monkeypatch.context() as patch:
+        saved = _die_at_delivery(patch, journal_failure=True)
+        with pytest.raises(_Crash):
+            run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    failed = _track(instance, saved["run_id"], line, procedure)
+    assert [item.verdict for item in failed.readings] == ["failed"]
+    assert (failed.tally.failed, failed.tally.delivered) == (1, 0)
+    recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(hours=2))
+    assert recovered == {saved["run_id"]: "delivered"}
+    got = _track(instance, saved["run_id"], line, procedure)
+    # The failed record is an intermediate state, superseded by recovery's.
+    assert [item.verdict for item in got.readings] == ["delivered"]
+    assert got.tally.delivered == 1 and got.tally.failed == 0
+    assert "failed" not in got.tally.model_dump(mode="json")
+
+
+def test_a_prepared_only_terminal_reads_as_unresolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, owner, root, line, procedure = proposal_world(tmp_path)
+    _accept_first_run(instance, owner, root, line)
+    with monkeypatch.context() as patch:
+        saved = _die_at_delivery(patch, journal_failure=False)
+        with pytest.raises(_Crash):
+            run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    got = _track(instance, saved["run_id"], line, procedure)
+    assert [item.verdict for item in got.readings] == ["unresolved"]
+    assert (got.tally.unresolved, got.tally.delivered) == (1, 0)
+
+
+def test_a_prepared_then_delivered_terminal_reads_as_one_delivery(tmp_path: Path) -> None:
+    instance, owner, root, line, procedure = proposal_world(tmp_path)
+    _accept_first_run(instance, owner, root, line)
+    run = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    assert run.run_id is not None
+    got = _track(instance, run.run_id, line, procedure)
+    assert [item.verdict for item in got.readings] == ["delivered"]
+    # A track record with no refusal, failure or open intent keeps its old bytes.
+    assert set(got.tally.model_dump(mode="json")) == {
+        "tag",
+        "delivered",
+        "capped",
+        "pending",
+        "capped_by_term",
+    }
