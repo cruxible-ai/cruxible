@@ -81,6 +81,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalResult,
     ProposalSettleSubmission,
 )
+from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.authoring import lowering as authoring_lowering
 from cruxible_core.authoring.lowering import (
     AuthoringLoweringError,
@@ -744,8 +745,12 @@ class ProposalTerminalEgressSink:
         accepted_mandates: Mapping[str, ProcedureMandateAny],
         proposal_service: Callable[[], ProposalService] | None = None,
         delegation: ProcedureDelegation | None = None,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self.instance = instance
+        #: The daemon's clock: a re-observation is recorded at its own instant,
+        #: never at the terminal's preparation time.
+        self.clock = clock
         self.delegation = delegation
         self.accepted_mandates = dict(accepted_mandates)
         self._proposal_service = proposal_service or instance.proposal_service
@@ -1075,7 +1080,7 @@ class ProposalTerminalEgressSink:
                     claim_id=claim_id,
                     capture_digest=child.reobserving_capture_digest,
                     actor_id=request.actor_context.actor_id,
-                    now=request.prepared_at,
+                    clock=self.clock,
                 )
             except ClaimReobservationRefused:
                 continue

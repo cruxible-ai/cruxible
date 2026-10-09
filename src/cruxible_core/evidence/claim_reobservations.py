@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -40,7 +40,7 @@ from cruxible_client.contracts.claims import claim_path, parse_claim
 from cruxible_client.contracts.errors import CruxibleError, ReadRefusalError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime, utc_now
 from cruxible_core.exhaust.backends import LocalJournalBackend, journal_log_path
 from cruxible_core.exhaust.records import (
     CLAIM_REOBSERVATION_JOURNAL_FAMILY,
@@ -112,6 +112,20 @@ class ClaimReobservationRefused(CruxibleError):
     """A re-observation that is not admissible is never recorded."""
 
     error_code = "cruxible.claim.reobservation_refused"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"{self.error_code}: {message}")
+
+
+class ClaimReobservationJournalCorrupt(CruxibleError):
+    """The journal holds a record recorded before the one ahead of it.
+
+    The writer stamps each record with the daemon's clock at append, raised to
+    the previous record's instant, so recorded order is journal order by
+    construction; a journal that breaks it was not written by this store.
+    """
+
+    error_code = "cruxible.claim.reobservation_journal_corrupt"
 
     def __init__(self, message: str) -> None:
         super().__init__(f"{self.error_code}: {message}")
@@ -204,9 +218,14 @@ class ClaimReobservationStore:
     ) -> None:
         observed_at = _instant(payload["observed_at"])
         row = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
-        # Journal order is recorded order (``record`` never records before the
-        # last record); a step is never placed before an earlier one.
-        recorded_us = max(_micros(recorded_at), 0 if row is None else int(row[0]))
+        # Journal order is recorded order by construction (``record``): replay
+        # takes every instant as written and refuses a journal that breaks it.
+        recorded_us = _micros(recorded_at)
+        if row is not None and recorded_us < int(row[0]):
+            raise ClaimReobservationJournalCorrupt(
+                f"record {sequence} was recorded at {format_datetime(recorded_at)}, before "
+                f"the record ahead of it ({format_datetime(_from_micros(row[0]))})"
+            )
         observed_us = _micros(observed_at)
         key = (payload["claim_id"], payload["contract_digest"], payload["observed_content_digest"])
         inserted = conn.execute(
@@ -333,7 +352,7 @@ class ClaimReobservationStore:
         claim_id: str,
         capture_digest: str,
         actor_id: str,
-        now: datetime,
+        clock: Callable[[], datetime] = utc_now,
     ) -> ReobservationRecord | None:
         """Record one admissible re-observation at the current head; a repeat is the same record.
 
@@ -342,10 +361,14 @@ class ClaimReobservationStore:
         held ledger head is the verified coordinate: the Claim must be live
         there and cite a Capture of the same contract and observed content,
         and the re-observing Capture must be
-        daemon-admitted, verify there, and not be observed after ``now``. A
-        historical record stays readable whatever later happens to its Claim;
-        this decides only whether a new one may be written. Nothing is written
-        while previewing (``dry_run``): a preview observes nothing durable.
+        daemon-admitted, verify there, and not be observed after the clock's
+        instant. ``clock`` is the daemon's own; the record's one recording
+        instant is read from it at the durable append, raised to the previous
+        record's so the journal is in recorded order by construction, and is
+        the ``recorded_at`` the journal record carries. A historical record
+        stays readable whatever later happens to its Claim; this decides only
+        whether a new one may be written. Nothing is written while previewing
+        (``dry_run``): a preview observes nothing durable.
         """
 
         if is_previewing():
@@ -353,7 +376,7 @@ class ClaimReobservationStore:
                 claim_id=claim_id,
                 capture_digest=capture_digest,
                 head=self.instance.accepted_coordinate(),
-                now=now,
+                now=clock(),
             )
             return None
         # Accepted main is held still from the admission check through the
@@ -380,8 +403,9 @@ class ClaimReobservationStore:
                     "accepted state moved past this instance's verified head; "
                     "the re-observation is judged again at the new head"
                 )
-            # Records append in recorded order: one is never recorded before the
-            # last (its own instant is the later of ``now`` and that record's).
+            # The one recording instant: the daemon's clock at the append, never
+            # before the last record's, so the journal is in recorded order.
+            now = clock()
             last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
             if last is not None and _micros(now) < int(last[0]):
                 now = _from_micros(last[0])
@@ -738,6 +762,7 @@ def reobservations_at(
 
 __all__ = [
     "REOBSERVATION_DIRECTORY",
+    "ClaimReobservationJournalCorrupt",
     "ClaimReobservationRefused",
     "ClaimReobservationStore",
     "ReobservationKey",

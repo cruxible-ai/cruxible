@@ -1354,8 +1354,12 @@ a cited Capture expires at the latest `observed_at` among it and its recorded
 re-observations of the same contract and content, plus `stale_after`. Only
 re-observations recorded by the evaluation instant count, so a verdict evaluated
 at an earlier instant reproduces byte for byte and its committed expirations
-still verify. Records append in recorded order (a record is never recorded
-before the last one), so the latest applicable record of a cited contract and
+still verify. A record's recording instant is the daemon's own clock at the
+durable append, raised to the previous record's when the clock has gone back:
+that one value is the journal record's `recorded_at`, so records append in
+recorded order by construction, a rebuild reproduces the projection exactly,
+and a journal out of recorded order is refused as corrupt
+(`cruxible.claim.reobservation_journal_corrupt`). The latest applicable record of a cited contract and
 content is a step function of the recording instant: freshness reads it with
 one seek at the evaluation instant, however long the Claim's re-observation
 history (kept in full for audit) or however many observations were recorded

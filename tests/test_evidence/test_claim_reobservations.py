@@ -128,7 +128,7 @@ def test_a_capture_of_different_content_does_not_refresh(tmp_path: Path) -> None
             claim_id=current.identity.name,
             capture_digest=other,
             actor_id="owner",
-            now=_START + timedelta(minutes=50),
+            clock=lambda: _START + timedelta(minutes=50),
         )
     assert store.history(current.identity.name) == ()
     assert _verdict(instance, _START + timedelta(hours=1)).verdict == "stale_evidence"
@@ -165,7 +165,7 @@ def test_a_forged_or_unadmitted_capture_is_refused(tmp_path: Path) -> None:
                 claim_id=current.identity.name,
                 capture_digest=digest,
                 actor_id="owner",
-                now=_START + timedelta(minutes=50),
+                clock=lambda: _START + timedelta(minutes=50),
             )
     assert store.history(current.identity.name) == ()
     # The cited Capture itself observed nothing new: it is not a re-observation.
@@ -435,7 +435,7 @@ def test_an_interrupted_append_never_leaves_a_remembered_verdict_behind(
                 claim_id=claim.identity.name,
                 capture_digest=digest,
                 actor_id="owner",
-                now=_START + timedelta(minutes=50),
+                clock=lambda: _START + timedelta(minutes=50),
             )
     # The journal is the authority: the fingerprint moved with the append itself,
     # so no remembered verdict is served before (or without) any recovery.
@@ -447,7 +447,7 @@ def test_an_interrupted_append_never_leaves_a_remembered_verdict_behind(
         claim_id=claim.identity.name,
         capture_digest=digest,
         actor_id="owner",
-        now=_START + timedelta(minutes=50),
+        clock=lambda: _START + timedelta(minutes=50),
     )
     assert len(store.history(claim.identity.name)) == 1
     assert _verdict(instance, at).verdict == "supported"
@@ -474,7 +474,7 @@ def test_a_record_for_a_retired_lineage_is_refused(tmp_path: Path) -> None:
             claim_id=claim.identity.name,
             capture_digest=digest,
             actor_id="owner",
-            now=_START + timedelta(minutes=50),
+            clock=lambda: _START + timedelta(minutes=50),
         )
     assert store.history(claim.identity.name) == ()
 
@@ -490,7 +490,7 @@ def test_the_cited_capture_itself_and_a_capture_observed_later_are_refused(
             claim_id=claim.identity.name,
             capture_digest=claim_citation_references(claim)[0].capture_digest,
             actor_id="owner",
-            now=_START + timedelta(hours=1),
+            clock=lambda: _START + timedelta(hours=1),
         )
     digest = _pending_same_content(instance, _START + timedelta(minutes=50))
     with pytest.raises(ClaimReobservationRefused, match="after the re-observation"):
@@ -498,7 +498,7 @@ def test_the_cited_capture_itself_and_a_capture_observed_later_are_refused(
             claim_id=claim.identity.name,
             capture_digest=digest,
             actor_id="owner",
-            now=_START + timedelta(minutes=10),
+            clock=lambda: _START + timedelta(minutes=10),
         )
     assert store.history(claim.identity.name) == ()
 
@@ -535,7 +535,7 @@ def test_same_size_crash_tail_recovery_invalidates_a_remembered_verdict(
                 claim_id=claim.identity.name,
                 capture_digest=digest,
                 actor_id="x" * 1005,
-                now=_START + timedelta(minutes=50),
+                clock=lambda: _START + timedelta(minutes=50),
             )
     assert store.history(claim.identity.name) == ()
     reset_claim_resolution_memo()
@@ -546,7 +546,7 @@ def test_same_size_crash_tail_recovery_invalidates_a_remembered_verdict(
         claim_id=claim.identity.name,
         capture_digest=digest,
         actor_id="owner",
-        now=_START + timedelta(minutes=50),
+        clock=lambda: _START + timedelta(minutes=50),
     )
     assert len(store.history(claim.identity.name)) == 1
     assert log.stat().st_size == torn_size  # the recovered log is the same size
@@ -601,7 +601,7 @@ def test_an_acceptance_cannot_land_between_admission_and_append(
             claim_id=claim.identity.name,
             capture_digest=digest,
             actor_id="owner",
-            now=_START + timedelta(minutes=50),
+            clock=lambda: _START + timedelta(minutes=50),
         )
         seen["future"].result(timeout=60)
     assert seen.get("blocked") is True
@@ -640,7 +640,7 @@ def test_a_head_moved_by_another_process_is_judged_again(
             claim_id=claim.identity.name,
             capture_digest=digest,
             actor_id="owner",
-            now=_START + timedelta(minutes=50),
+            clock=lambda: _START + timedelta(minutes=50),
         )
     assert store.history(claim.identity.name) == ()
 
@@ -708,3 +708,81 @@ def test_a_forked_child_does_not_inherit_the_reader_lock(tmp_path: Path) -> None
         reader._lock.release()
     _, status = os.waitpid(pid, 0)
     assert os.waitstatus_to_exitcode(status) == 0
+
+
+# -- one recording instant per record (review F-017) --------------------------
+
+
+def _dump(store) -> list[str]:  # type: ignore[no-untyped-def]
+    with store._locked() as conn:
+        return list(conn.iterdump())
+
+
+def test_the_recording_instant_is_the_daemon_clock_at_append_raised_monotone(
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    captures = [
+        _pending_same_content(instance, _START + timedelta(minutes=minute))
+        for minute in (30, 35, 45)
+    ]
+    store = ClaimReobservationStore(instance)
+    # The daemon's clock regresses after the first record.
+    stamps = []
+    for capture, minute in zip(captures, (120, 50, 130), strict=True):
+        made = store.record(
+            claim_id=claim.identity.name,
+            capture_digest=capture,
+            actor_id="owner",
+            clock=lambda minute=minute: _START + timedelta(minutes=minute),
+        )
+        assert made is not None
+        stamps.append(made.recorded_at)
+    assert stamps == [
+        _START + timedelta(minutes=120),
+        _START + timedelta(minutes=120),
+        _START + timedelta(minutes=130),
+    ]
+    # That one instant is the journal record's own recorded_at, and the audit's.
+    journal = LocalJournalBackend(store.root)
+    recorded = [
+        stored.record.recorded_at
+        for stored in journal.select_records(store.stream, partition_id="reobservations")
+    ]
+    assert recorded == stamps
+    assert sorted(item.recorded_at for item in store.history(claim.identity.name)) == stamps
+    # The incremental projection and one rebuilt from the journal are the same bytes.
+    incremental = _dump(store)
+    store.path.unlink()
+    assert _dump(store) == incremental
+
+
+def test_a_journal_out_of_recorded_order_is_refused_as_corrupt(tmp_path: Path) -> None:
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationJournalCorrupt
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    later = _pending_same_content(instance, _START + timedelta(minutes=50))
+    earlier = _pending_same_content(instance, _START + timedelta(minutes=30))
+    store = ClaimReobservationStore(instance)
+    store.record(
+        claim_id=claim.identity.name,
+        capture_digest=later,
+        actor_id="owner",
+        clock=lambda: _START + timedelta(hours=2),
+    )
+    # A writer that is not this store's: an append stamped before the last record.
+    with store._locked() as conn:
+        conn.execute("UPDATE progress SET recorded_us=0")
+    store.record(
+        claim_id=claim.identity.name,
+        capture_digest=earlier,
+        actor_id="owner",
+        clock=lambda: _START + timedelta(minutes=40),
+    )
+    store.path.unlink()
+    with pytest.raises(ClaimReobservationJournalCorrupt, match="before"):
+        store.history(claim.identity.name)

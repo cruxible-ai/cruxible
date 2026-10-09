@@ -301,6 +301,7 @@ class ServedNestedProcedureRunner:
                     instance=self.instance,
                     accepted_mandates=self.mandates,
                     delegation=ProcedureDelegation(context, accepted),
+                    clock=self.clock.now,
                 ),
                 # A child posts under the Line its root run ran as.
                 inbox=None

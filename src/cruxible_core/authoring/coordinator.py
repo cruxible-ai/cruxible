@@ -846,7 +846,7 @@ class AuthoringIntentCoordinator:
                 claim_id=claim_id,
                 capture_digest=capture_digest,
                 actor_id=actor_id,
-                now=self.clock(),
+                clock=self.clock,
             )
 
     def submit(
