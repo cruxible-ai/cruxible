@@ -102,7 +102,7 @@ def test_hourly_reobservation_keeps_a_claim_fresh_past_its_captures_expiry(
     assert expiration.observed_at == _START
     assert expiration.reobserved_at == _START + timedelta(hours=2.7)
     assert expiration.expires_at == _START + timedelta(hours=3.7)
-    latest = ClaimReobservationStore(instance).for_claim(before.identity.name)
+    latest = ClaimReobservationStore(instance).history(before.identity.name)
     assert expiration.reobserved_by == max(latest, key=lambda item: item.observed_at).capture_digest
     # Past the latest re-observation's horizon the content is stale again.
     assert _verdict(instance, _START + timedelta(hours=3.7)).verdict == "stale_evidence"
@@ -130,7 +130,7 @@ def test_a_capture_of_different_content_does_not_refresh(tmp_path: Path) -> None
             actor_id="owner",
             now=_START + timedelta(minutes=50),
         )
-    assert store.for_claim(current.identity.name) == ()
+    assert store.history(current.identity.name) == ()
     assert _verdict(instance, _START + timedelta(hours=1)).verdict == "stale_evidence"
 
 
@@ -167,47 +167,83 @@ def test_a_forged_or_unadmitted_capture_is_refused(tmp_path: Path) -> None:
                 actor_id="owner",
                 now=_START + timedelta(minutes=50),
             )
-    assert store.for_claim(current.identity.name) == ()
+    assert store.history(current.identity.name) == ()
     # The cited Capture itself observed nothing new: it is not a re-observation.
     assert parse_capture_envelope(instance.body_store().read(cited, access=_ACCESS))
 
 
-def test_the_freshness_lookup_is_one_indexed_probe_per_claim(tmp_path: Path) -> None:
+def test_the_freshness_lookup_is_bounded_by_cited_contents_not_history(tmp_path: Path) -> None:
+    """One lineage observed thousands of times costs one ordered probe per cited content."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+
     instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
     current = _current_claim(instance)
     _reobserve(instance, _START + timedelta(minutes=50))
     # A record is a verdict input outside the body store: remembered verdict
-    # derivations key on its journal generation.
+    # derivations key on its journal.
     assert "|reobservation:" in str(verdict_input_fingerprint(instance))
     store = ClaimReobservationStore(instance)
-    # Many other lineages' records: what this lineage costs never depends on them.
+    (real,) = store.history(current.identity.name)
+    start_us = (_START - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
+    second = 1_000_000
+
+    def row(index: int, content: str, claim_id: str) -> tuple[object, ...]:
+        observed = start_us + 3 * index * second
+        return (
+            claim_id,
+            "sha256:" + f"{index:060x}" + content[-4:],
+            real.contract_digest,
+            content,
+            "2026-08-16T20:00:00+00:00",
+            "2026-08-16T20:00:30+00:00",
+            observed,
+            observed + 30 * second,
+            100 + index,
+        )
+
+    replaced = "sha256:" + "2" * 64  # content a later revision no longer cites
     with store._locked() as conn:
         conn.executemany(
-            "INSERT INTO reobservations VALUES (?,?,?,?,?,?)",
-            [
+            "INSERT INTO reobservations VALUES (?,?,?,?,?,?,?,?,?)",
+            [row(i, real.observed_content_digest, current.identity.name) for i in range(3000)]
+            + [row(i, replaced, current.identity.name) for i in range(3000)]
+            + [row(i, real.observed_content_digest, f"CLM-{i:032x}") for i in range(2000)],
+        )
+        plans = [
+            " ".join(str(item[-1]) for item in conn.execute("EXPLAIN QUERY PLAN " + sql, args))
+            for sql, args in (
                 (
-                    f"CLM-{index:032x}",
-                    "sha256:" + f"{index:064x}",
-                    "sha256:" + "1" * 64,
-                    "sha256:" + "2" * 64,
-                    "2026-08-16T20:00:00+00:00",
-                    "2026-08-16T20:00:00+00:00",
-                )
-                for index in range(5000)
-            ],
-        )
-        plan = " ".join(
-            str(row[-1])
-            for row in conn.execute(
-                "EXPLAIN QUERY PLAN SELECT capture_digest FROM reobservations WHERE claim_id=?",
-                (current.identity.name,),
+                    "SELECT capture_digest FROM reobservations INDEXED BY reobservations_latest "
+                    "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? "
+                    "AND observed_us<=? AND recorded_us<=? "
+                    "ORDER BY observed_us DESC, capture_digest DESC LIMIT 1",
+                    (current.identity.name, "c", "o", 0, 0),
+                ),
+                (
+                    "SELECT MIN(recorded_us) FROM reobservations INDEXED BY reobservations_next "
+                    "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? "
+                    "AND recorded_us>?",
+                    (current.identity.name, "c", "o", 0),
+                ),
             )
-        )
-    assert "SEARCH" in plan and "SCAN" not in plan
-    found = store.for_claims((current.identity.name, "CLM-" + "f" * 32))
-    assert store.probes == 2
-    assert store.rows_read == 1
-    assert len(found[current.identity.name]) == 1
+        ]
+    assert all("SEARCH" in plan and "SCAN" not in plan for plan in plans), plans
+    # The full history stays for audit.
+    assert len(store.history(current.identity.name)) == 6001
+
+    reader = ReobservationReader.of(instance)
+    reader.probes = reader.rows_read = 0
+    at = _START + timedelta(hours=2)
+    verdict = _verdict(instance, at)
+    # Recorded by 2:00 means observed by 1:59:30: the latest such is 3 * 2390 s.
+    (expiration,) = verdict.freshness_expirations
+    assert expiration.reobserved_at == _START + timedelta(seconds=3 * 2390)
+    assert verdict.verdict == "supported"
+    # Whether the lineage was re-observed, then one ordered probe and one
+    # next-recording probe for the one cited content: never its history.
+    assert reader.probes == 4
+    assert reader.rows_read == 1
 
 
 def test_old_verdict_and_receipt_bytes_are_unchanged(tmp_path: Path) -> None:
@@ -220,7 +256,7 @@ def test_old_verdict_and_receipt_bytes_are_unchanged(tmp_path: Path) -> None:
     # A verdict at an instant before any re-observation was recorded reproduces
     # byte for byte, and its committed expirations still verify.
     assert _verdict(instance, at).model_dump_json() == dumped
-    (record,) = ClaimReobservationStore(instance).for_claim(_current_claim(instance).identity.name)
+    (record,) = ClaimReobservationStore(instance).history(_current_claim(instance).identity.name)
     expiration = EvidenceFreshnessExpiration(
         capture_digest=before.freshness_expirations[0].capture_digest,
         observed_at=_START,
@@ -268,13 +304,19 @@ def _verdict_inputs(instance):  # type: ignore[no-untyped-def]
     return row.rule, row.captures
 
 
-def test_query_fact_rows_carry_recorded_reobservations(tmp_path: Path) -> None:
+def test_query_fact_rows_read_reobservations_at_the_evaluation_instant(tmp_path: Path) -> None:
     instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
-    assert "reobservations" not in _fact_row(instance).model_dump(mode="json")
+    at = _START + timedelta(hours=1)
+    assert _fact_row(instance).reobservations_at(at) == ()
     _reobserve(instance, _START + timedelta(minutes=50))
-    (item,) = _fact_row(instance).reobservations
-    assert item.cited_capture_digest == _fact_row(instance).captures[0].capture_digest
+    row = _fact_row(instance)
+    # How a row reads freshness is not part of its bytes or its equality.
+    assert "reobservation" not in row.model_dump_json()
+    (item,) = row.reobservations_at(at)
+    assert item.cited_capture_digest == row.captures[0].capture_digest
     assert item.observed_at == _START + timedelta(minutes=50)
+    # Before the record was made it does not count.
+    assert row.reobservations_at(_START + timedelta(minutes=40)) == ()
 
 
 # -- interrupted appends (review F-010) ---------------------------------------
@@ -347,14 +389,14 @@ def test_an_interrupted_append_never_leaves_a_remembered_verdict_behind(
     assert verdict_input_fingerprint(instance) != before
     assert _statuses(instance, claim, at) == "supported"
     # Catch-up and a retry are the same record.
-    assert len(store.for_claim(claim.identity.name)) == 1
+    assert len(store.history(claim.identity.name)) == 1
     store.record(
         claim_id=claim.identity.name,
         capture_digest=digest,
         actor_id="owner",
         now=_START + timedelta(minutes=50),
     )
-    assert len(store.for_claim(claim.identity.name)) == 1
+    assert len(store.history(claim.identity.name)) == 1
     assert _verdict(instance, at).verdict == "supported"
     assert _statuses(instance, claim, at) == "supported"
 
@@ -381,7 +423,7 @@ def test_a_record_for_a_retired_lineage_is_refused(tmp_path: Path) -> None:
             actor_id="owner",
             now=_START + timedelta(minutes=50),
         )
-    assert store.for_claim(claim.identity.name) == ()
+    assert store.history(claim.identity.name) == ()
 
 
 def test_the_cited_capture_itself_and_a_capture_observed_later_are_refused(
@@ -405,4 +447,4 @@ def test_the_cited_capture_itself_and_a_capture_observed_later_are_refused(
             actor_id="owner",
             now=_START + timedelta(minutes=10),
         )
-    assert store.for_claim(claim.identity.name) == ()
+    assert store.history(claim.identity.name) == ()

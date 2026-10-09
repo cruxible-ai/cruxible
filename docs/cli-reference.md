@@ -1341,22 +1341,28 @@ artifact digest, the re-observing Capture and when it observed the content;
 unchanged completes with no proposal and no authority exercised: its receipt
 (`playbill-terminal-egress-unchanged-receipt-v1`) reports every child unchanged.
 
-A no-op re-observation still counts for freshness. When the restating Capture
-is daemon-admitted, verifies at the head, and observed exactly the content of
-a Capture the Claim cites under the same contract, it is recorded on the
-evidence plane as an append-only re-observation: its Claim, its Capture, the
-contract, the observed content and when it observed it. The record is not a
-Claim revision and moves no generation. Under a ClaimType's
-`evidence_freshness.stale_after`, a cited Capture expires at the latest
-`observed_at` among it and its recorded re-observations, plus `stale_after`.
-Only re-observations recorded by the evaluation instant count, so a verdict
-evaluated at an earlier instant reproduces byte for byte and its committed
-expirations still verify. A re-observation that set an expiry is named in the
-verdict's `freshness_expirations` entry (`reobserved_by`, `reobserved_at`). A
-forged or unadmitted Capture, or one of other content, is refused
-(`cruxible.claim.reobservation_refused`) and refreshes nothing. Re-observing on a
-schedule (say hourly, under a longer `stale_after`) keeps a Claim current
-without revising it. `propose --input` lowers
+A no-op re-observation still counts for freshness. It is recorded on the
+evidence plane as an append-only re-observation -- its Claim, its Capture, the
+contract, the observed content and when it observed it -- when, at the current
+head read under the record's own lock, the Claim is live, the restating Capture
+is daemon-admitted and verifies there, it observed exactly the content of a
+Capture the Claim cites under the same contract, it is not that very Capture,
+and it was not observed after the record is made. The record is not a Claim
+revision and moves no generation; a record already made stays readable whatever
+later happens to its Claim. Under a ClaimType's `evidence_freshness.stale_after`,
+a cited Capture expires at the latest `observed_at` among it and its recorded
+re-observations of the same contract and content, plus `stale_after`. Only
+re-observations recorded by the evaluation instant count, so a verdict evaluated
+at an earlier instant reproduces byte for byte and its committed expirations
+still verify. The latest applicable record is found by one indexed probe per
+cited contract and content at the evaluation instant, never by reading the
+Claim's whole re-observation history, which is kept for audit. A re-observation
+that set an expiry is named in the verdict's `freshness_expirations` entry
+(`reobserved_by`, `reobserved_at`). Anything else is refused
+(`cruxible.claim.reobservation_refused`) and refreshes nothing; a Procedure's
+unchanged item whose Claim was retired after the run's base keeps its receipt
+and records nothing. Re-observing on a schedule (say hourly, under a longer
+`stale_after`) keeps a Claim current without revising it. `propose --input` lowers
 to v7: a new ClaimType takes `self` and `replace`. An edit follows JSON merge-patch
 against its predecessor: a v7 field left out keeps the predecessor's value (over
 a ClaimType before v7: no descriptions, no default role, `self` and

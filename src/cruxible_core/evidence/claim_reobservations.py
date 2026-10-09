@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -58,18 +58,36 @@ _FENCE = "claim-reobservation-local-v1"
 _PARTITION = "reobservations"
 _EVENT_TAG = "cruxible-claim-reobservation-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 REOBSERVATION_DIRECTORY = "claim-reobservations"
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+# The full history is kept (audit, historical verification). Freshness reads
+# never materialize it: ``reobservations_latest`` answers the latest applicable
+# record of one (lineage, contract, content) at an instant with one ordered
+# probe, ``reobservations_next`` the next instant a record starts counting, and
+# ``reobservations_by_sequence`` whether a lineage's records changed at all.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS reobservations (
  claim_id TEXT NOT NULL, capture_digest TEXT NOT NULL, contract_digest TEXT NOT NULL,
  observed_content_digest TEXT NOT NULL, observed_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
+ observed_us INTEGER NOT NULL, recorded_us INTEGER NOT NULL, sequence INTEGER NOT NULL,
  PRIMARY KEY(claim_id, capture_digest)
 ) STRICT;
-CREATE INDEX IF NOT EXISTS reobservations_by_claim
- ON reobservations(claim_id, contract_digest, observed_content_digest);
+CREATE INDEX IF NOT EXISTS reobservations_latest ON reobservations
+ (claim_id, contract_digest, observed_content_digest, observed_us, capture_digest);
+CREATE INDEX IF NOT EXISTS reobservations_next ON reobservations
+ (claim_id, contract_digest, observed_content_digest, recorded_us);
+CREATE INDEX IF NOT EXISTS reobservations_by_sequence ON reobservations (claim_id, sequence);
 """
+
+
+def _micros(value: datetime) -> int:
+    return (value.astimezone(UTC) - _EPOCH) // timedelta(microseconds=1)
+
+
+def _from_micros(value: object) -> datetime:
+    return _EPOCH + timedelta(microseconds=int(str(value)))
 
 
 class ClaimReobservationRefused(CruxibleError):
@@ -165,15 +183,19 @@ class ClaimReobservationStore:
     def _apply(
         conn: sqlite3.Connection, payload: Mapping[str, Any], sequence: int, recorded_at: datetime
     ) -> None:
+        observed_at = _instant(payload["observed_at"])
         conn.execute(
-            "INSERT OR IGNORE INTO reobservations VALUES (?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO reobservations VALUES (?,?,?,?,?,?,?,?,?)",
             (
                 payload["claim_id"],
                 payload["capture_digest"],
                 payload["contract_digest"],
                 payload["observed_content_digest"],
-                payload["observed_at"],
+                format_datetime(observed_at),
                 format_datetime(recorded_at),
+                _micros(observed_at),
+                _micros(recorded_at),
+                sequence,
             ),
         )
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?)", (sequence,))
@@ -372,15 +394,21 @@ class ClaimReobservationStore:
 
     # -- reads --------------------------------------------------------------
 
-    def _read(self, conn: sqlite3.Connection, claim_id: str) -> tuple[ReobservationRecord, ...]:
-        self.probes += 1
-        rows = conn.execute(
-            "SELECT capture_digest, contract_digest, observed_content_digest, "
-            "observed_at, recorded_at FROM reobservations WHERE claim_id=? "
-            "ORDER BY capture_digest",
-            (claim_id,),
-        ).fetchall()
-        self.rows_read += len(rows)
+    def history(self, claim_id: str) -> tuple[ReobservationRecord, ...]:
+        """Every re-observation ever recorded for one lineage, in capture order.
+
+        The audit read: freshness never calls it (``ReobservationReader.latest``).
+        """
+
+        if not self.root.is_dir():
+            return ()
+        with self._locked() as conn:
+            rows = conn.execute(
+                "SELECT capture_digest, contract_digest, observed_content_digest, "
+                "observed_at, recorded_at FROM reobservations WHERE claim_id=? "
+                "ORDER BY capture_digest",
+                (claim_id,),
+            ).fetchall()
         return tuple(
             ReobservationRecord(
                 claim_id=claim_id,
@@ -392,44 +420,6 @@ class ClaimReobservationStore:
             )
             for row in rows
         )
-
-    def for_claims(self, claim_ids: Sequence[str]) -> dict[str, tuple[ReobservationRecord, ...]]:
-        """Every re-observation recorded for each Claim lineage named.
-
-        One connection, and one indexed range probe per lineage: what a lineage
-        costs never depends on how many records other lineages hold.
-        """
-
-        if not claim_ids or not self.root.is_dir():
-            return {}
-        with self._locked() as conn:
-            return {
-                claim_id: found for claim_id in claim_ids if (found := self._read(conn, claim_id))
-            }
-
-    @classmethod
-    @contextmanager
-    def lookup(cls, instance: object) -> Iterator[Callable[[str], tuple[ReobservationRecord, ...]]]:
-        """A per-lineage lookup on one connection, for a read that assembles many Claims.
-
-        A source that is not a live instance (recovery replay) and an instance
-        that never recorded one both answer nothing without opening anything.
-        """
-
-        if not isinstance(instance, PlaybillInstance):
-            yield lambda _claim_id: ()
-            return
-        store = cls(instance)
-        if not store.root.is_dir():
-            yield lambda _claim_id: ()
-            return
-        with store._locked() as conn:
-            yield lambda claim_id: store._read(conn, claim_id)
-
-    def for_claim(self, claim_id: str) -> tuple[ReobservationRecord, ...]:
-        """Every re-observation recorded for one Claim lineage: one indexed range."""
-
-        return self.for_claims((claim_id,)).get(claim_id, ())
 
 
 def reobservation_journal_signature(root: Path, *, exhaust: str, instance_id: str) -> str | None:
@@ -453,40 +443,174 @@ def reobservation_journal_signature(root: Path, *, exhaust: str, instance_id: st
     return f"{stat.st_ino}:{stat.st_size}"
 
 
-def reobservation_reading(
-    records: Sequence[ReobservationRecord],
-) -> tuple[tuple[str, str, str], ...]:
-    """What a verdict read of one lineage's records returned, comparable later."""
+@dataclass(frozen=True)
+class ReobservationKey:
+    """One cited Capture of a Claim and the (contract, content) it observed."""
 
-    return tuple(
-        (item.capture_digest, _stamp(item.observed_at), _stamp(item.recorded_at))
-        for item in records
-    )
+    cited_capture_digest: str
+    contract_digest: str
+    observed_content_digest: str
 
 
-def _stamp(value: datetime) -> str:
-    stamped = format_datetime(value)
-    assert stamped is not None
-    return stamped
+@dataclass(frozen=True)
+class ReobservationReading:
+    """What a freshness read of one lineage at one instant found.
+
+    ``evidence`` is the latest applicable record per cited Capture;
+    ``boundaries`` every instant that answer can change at (each record's
+    observation and recording, and the next recording of each key);
+    ``sequence`` the lineage's last journal sequence, which names its whole
+    record set for a remembered answer.
+    """
+
+    evidence: tuple[CaptureReobservationEvidence, ...] = ()
+    boundaries: tuple[datetime, ...] = ()
+    sequence: int = 0
 
 
-def claim_reobservation_evidence(
+class ReobservationReader:
+    """Indexed freshness reads over one instance's projection, on one connection.
+
+    The connection is kept for the process; before each read the journal's log
+    signature is compared with the one last caught up to, and only a change
+    catches the projection up from the journal. Counters say how much each read
+    cost, for counted-work tests.
+    """
+
+    _cache: dict[Path, "ReobservationReader"] = {}
+    _cache_lock = threading.Lock()
+
+    def __init__(self, instance: PlaybillInstance) -> None:
+        self.store = ClaimReobservationStore(instance)
+        self.instance = instance
+        self._lock = threading.Lock()
+        self._conn: sqlite3.Connection | None = None
+        self._signature: str | None = None
+        self.probes = 0
+        self.rows_read = 0
+
+    @classmethod
+    def of(cls, instance: PlaybillInstance) -> "ReobservationReader":
+        """The process's reader for this instance's store."""
+
+        root = _root(instance)
+        with cls._cache_lock:
+            reader = cls._cache.get(root)
+            if reader is None or reader.instance is not instance:
+                reader = cls(instance)
+                cls._cache[root] = reader
+            return reader
+
+    def _connection(self) -> sqlite3.Connection | None:
+        signature = reobservation_journal_signature(
+            self.instance.root,
+            exhaust=self.instance.descriptor.storage.exhaust,
+            instance_id=self.instance.descriptor.instance_id,
+        )
+        if signature is None:
+            return None
+        if signature != self._signature or self._conn is None:
+            with self.store._locked():
+                pass  # catch the projection up from the journal
+            if self._conn is None:
+                self._conn = sqlite3.connect(self.store.path, check_same_thread=False)
+            self._signature = signature
+        return self._conn
+
+    def sequence(self, claim_id: str) -> int:
+        """The lineage's last journal sequence: 0 when it was never re-observed."""
+
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return 0
+            self.probes += 1
+            row = conn.execute(
+                "SELECT MAX(sequence) FROM reobservations WHERE claim_id=?", (claim_id,)
+            ).fetchone()
+        return 0 if row is None or row[0] is None else int(row[0])
+
+    def latest(
+        self, claim_id: str, keys: Sequence[ReobservationKey], at: datetime
+    ) -> ReobservationReading:
+        """The latest record per key applicable at ``at``: one ordered probe each.
+
+        Applicable means recorded by ``at`` (and so observed by it: admission
+        refuses a Capture observed after its record). Among those the latest
+        observation wins, ties broken by the larger Capture digest, exactly as
+        ``claim_verdicts`` selects. Work is one indexed probe per distinct key,
+        never the lineage's history.
+        """
+
+        at_us = _micros(at)
+        evidence: list[CaptureReobservationEvidence] = []
+        boundaries: set[datetime] = set()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return ReobservationReading()
+            self.probes += 1
+            row = conn.execute(
+                "SELECT MAX(sequence) FROM reobservations WHERE claim_id=?", (claim_id,)
+            ).fetchone()
+            sequence = 0 if row is None or row[0] is None else int(row[0])
+            if not sequence:
+                return ReobservationReading()
+            found: dict[tuple[str, str], tuple[str, int, int] | None] = {}
+            for key in keys:
+                pair = (key.contract_digest, key.observed_content_digest)
+                if pair not in found:
+                    self.probes += 2
+                    hit = conn.execute(
+                        "SELECT capture_digest, observed_us, recorded_us FROM reobservations "
+                        "INDEXED BY reobservations_latest WHERE claim_id=? AND "
+                        "contract_digest=? AND observed_content_digest=? AND observed_us<=? "
+                        "AND recorded_us<=? ORDER BY observed_us DESC, capture_digest DESC "
+                        "LIMIT 1",
+                        (claim_id, *pair, at_us, at_us),
+                    ).fetchone()
+                    upcoming = conn.execute(
+                        "SELECT MIN(recorded_us) FROM reobservations "
+                        "INDEXED BY reobservations_next WHERE claim_id=? AND "
+                        "contract_digest=? AND observed_content_digest=? AND recorded_us>?",
+                        (claim_id, *pair, at_us),
+                    ).fetchone()
+                    self.rows_read += int(hit is not None)
+                    if upcoming is not None and upcoming[0] is not None:
+                        boundaries.add(_from_micros(upcoming[0]))
+                    found[pair] = None if hit is None else (str(hit[0]), int(hit[1]), int(hit[2]))
+                selected = found[pair]
+                if selected is None:
+                    continue
+                digest, observed_us, recorded_us = selected
+                observed, recorded = _from_micros(observed_us), _from_micros(recorded_us)
+                boundaries.update((observed, recorded))
+                evidence.append(
+                    CaptureReobservationEvidence(
+                        cited_capture_digest=key.cited_capture_digest,
+                        reobserving_capture_digest=digest,
+                        observed_at=observed,
+                        recorded_at=recorded,
+                    )
+                )
+        return ReobservationReading(
+            evidence=tuple(
+                sorted(evidence, key=lambda item: item.cited_capture_digest.encode("ascii"))
+            ),
+            boundaries=tuple(sorted(boundaries)),
+            sequence=sequence,
+        )
+
+
+def cited_reobservation_keys(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
     captures: Sequence[CaptureVerdictEvidence],
-    records: Sequence[ReobservationRecord],
-) -> tuple[CaptureReobservationEvidence, ...]:
-    """The recorded re-observations of each Capture this Claim cites, for its verdict.
+) -> tuple[ReobservationKey, ...]:
+    """Each cited Capture with the contract and content it observed, from the evidence index."""
 
-    ``records`` are the Claim lineage's (``ClaimReobservationStore.for_claims``);
-    each is matched to a cited Capture of the same contract and observed content
-    through the accepted evidence index at ``coordinate``.
-    """
-
-    if not records:
-        return ()
-    cited: dict[tuple[str, str], list[str]] = {}
+    keys: list[ReobservationKey] = []
     with instance.bind_accepted_projection(coordinate) as projection:
         for item in captures:
             row = projection.typed.connection.execute(
@@ -495,35 +619,41 @@ def claim_reobservation_evidence(
                 (item.capture_digest,),
             ).fetchone()
             if row is not None:
-                cited.setdefault((str(row[0]), str(row[1])), []).append(item.capture_digest)
-    found: list[CaptureReobservationEvidence] = []
-    for record in records:
-        for digest in cited.get((record.contract_digest, record.observed_content_digest), ()):
-            found.append(
-                CaptureReobservationEvidence(
-                    cited_capture_digest=digest,
-                    reobserving_capture_digest=record.capture_digest,
-                    observed_at=record.observed_at,
-                    recorded_at=record.recorded_at,
-                )
-            )
-    return tuple(
-        sorted(
-            found,
-            key=lambda item: (
-                item.cited_capture_digest.encode("ascii"),
-                item.reobserving_capture_digest.encode("ascii"),
-            ),
-        )
-    )
+                keys.append(ReobservationKey(item.capture_digest, str(row[0]), str(row[1])))
+    return tuple(keys)
+
+
+def reobservations_at(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    claim_id: str,
+    captures: Sequence[CaptureVerdictEvidence],
+    at: datetime,
+) -> ReobservationReading:
+    """The recorded re-observations that count for one Claim's verdict at ``at``.
+
+    A lineage never re-observed costs one indexed probe and nothing else; one
+    that was costs one lookup per cited Capture and one ordered probe per cited
+    (contract, content), however long its history.
+    """
+
+    reader = ReobservationReader.of(instance)
+    if not reader.sequence(claim_id):
+        return ReobservationReading()
+    keys = cited_reobservation_keys(instance, coordinate=coordinate, captures=captures)
+    return reader.latest(claim_id, keys, at)
 
 
 __all__ = [
     "REOBSERVATION_DIRECTORY",
-    "reobservation_journal_signature",
-    "reobservation_reading",
     "ClaimReobservationRefused",
     "ClaimReobservationStore",
+    "ReobservationKey",
+    "ReobservationReader",
+    "ReobservationReading",
     "ReobservationRecord",
-    "claim_reobservation_evidence",
+    "cited_reobservation_keys",
+    "reobservation_journal_signature",
+    "reobservations_at",
 ]

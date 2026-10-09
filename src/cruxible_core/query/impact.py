@@ -250,7 +250,7 @@ def _verdict(
         claim_effective_until=statement.effective_until,
         referent_current=row.referent_current,
         resolved_authority_basis=row.resolved_authority_basis,
-        reobservations=row.reobservations,
+        reobservations=row.reobservations_at(evaluation_time),
     )
     return (result.verdict, result.currency)
 

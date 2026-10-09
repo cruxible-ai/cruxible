@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import pickle
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Mapping, MutableSet, Sequence
+from collections.abc import Callable, Iterator, Mapping, MutableSet
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
@@ -69,10 +69,8 @@ from cruxible_client.contracts.source_references import (
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.evidence.claim_reobservations import (
-    ClaimReobservationStore,
-    ReobservationRecord,
-    claim_reobservation_evidence,
-    reobservation_reading,
+    ReobservationReader,
+    reobservations_at,
 )
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.indexes.history.history_index import HistoryReader, RetainedRecordReader
@@ -208,12 +206,11 @@ class VerdictReads:
     # reader, or a file that moved while it was read): nothing may be
     # fingerprinted, so the whole derivation is not remembered.
     bodies_complete: bool = True
-    # The recorded re-observations each Claim lineage's verdict used, as
-    # ``reobservation_reading`` names them: like availability, an input outside
-    # the accepted coordinate, so a remembered answer is keyed on what was used.
-    used_reobservations: dict[str, tuple[tuple[str, str, str], ...]] = dataclass_field(
-        default_factory=dict
-    )
+    # Each Claim lineage's re-observation journal sequence its verdict read
+    # (0: none recorded): like availability, an input outside the accepted
+    # coordinate, so a remembered answer is keyed on the record set it used.
+    # Within that set, the answer's time boundaries bound it.
+    used_reobservations: dict[str, int] = dataclass_field(default_factory=dict)
 
     def update(self, other: VerdictReads) -> None:
         self.paths |= other.paths
@@ -458,12 +455,11 @@ class ClaimVerdictReadContext:
         if self._recording is not None:
             self._recording.law_paths.add(path)
 
-    def note_reobservations(self, claim_id: str, records: Sequence[ReobservationRecord]) -> None:
-        """Attribute the recorded re-observations one Claim lineage's verdict used."""
+    def note_reobservations(self, claim_id: str, sequence: int) -> None:
+        """Attribute the re-observation record set one Claim lineage's verdict read."""
 
         if self._recording is not None:
-            used = reobservation_reading(records)
-            if self._recording.used_reobservations.setdefault(claim_id, used) != used:
+            if self._recording.used_reobservations.setdefault(claim_id, sequence) != sequence:
                 self._recording.inconsistent = True
 
     def note_capture(
@@ -545,11 +541,9 @@ class ClaimVerdictReadContext:
             if bodies is not None:
                 bodies.note_bodies(None if _UNKNOWN_BODIES in used else used)
         if reads.used_reobservations:
-            recorded = ClaimReobservationStore(self.instance).for_claims(
-                tuple(sorted(reads.used_reobservations))
-            )
-            for claim_id in reads.used_reobservations:
-                values[("reobserved", claim_id)] = reobservation_reading(recorded.get(claim_id, ()))
+            reader = ReobservationReader.of(self.instance)
+            for claim_id in sorted(reads.used_reobservations):
+                values[("reobserved", claim_id)] = reader.sequence(claim_id)
         values[("compiler",)] = self.coordinate.compiler.rule_digest
         return values
 
@@ -1317,11 +1311,17 @@ def service_evaluate_playbill_claim_verdict(
             else None
         ),
     )
-    recorded = ClaimReobservationStore(instance).for_claim(accepted.claim.identity.name)
-    read_context.note_reobservations(accepted.claim.identity.name, recorded)
-    reobservations = claim_reobservation_evidence(
-        instance, coordinate=coordinate, captures=captures, records=recorded
+    reading = reobservations_at(
+        instance,
+        coordinate=coordinate,
+        claim_id=accepted.claim.identity.name,
+        captures=captures,
+        at=evaluation_time,
     )
+    read_context.note_reobservations(accepted.claim.identity.name, reading.sequence)
+    reobservations = reading.evidence
+    if time_boundaries is not None:
+        time_boundaries |= set(reading.boundaries)
     if time_boundaries is not None:
         _record_verdict_time_boundaries(
             time_boundaries,

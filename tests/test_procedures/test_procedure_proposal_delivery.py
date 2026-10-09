@@ -1983,7 +1983,7 @@ def test_a_terminal_that_restates_only_live_claims_completes_with_no_proposal(
     (observation,) = second.source_observations
     assert observation.capture_digest not in live.backing.capture_digests
     # The newer Capture is recorded as a re-observation of the cited content.
-    (record,) = ClaimReobservationStore(instance).for_claim(live.identity.name)
+    (record,) = ClaimReobservationStore(instance).history(live.identity.name)
     assert record.capture_digest == observation.capture_digest
     receipt = _journaled_receipt(instance, second.run_id)
     assert receipt["tag"] == "playbill-terminal-egress-unchanged-receipt-v1"
@@ -2156,4 +2156,4 @@ def test_an_unchanged_terminal_does_not_record_for_a_claim_retired_after_prepare
     (egress,) = second.terminal_egress
     (child,) = egress.children
     assert child.unchanged and child.path == first_child.path
-    assert ClaimReobservationStore(instance).for_claim(claim_id) == ()
+    assert ClaimReobservationStore(instance).history(claim_id) == ()
