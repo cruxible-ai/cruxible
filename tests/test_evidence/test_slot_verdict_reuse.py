@@ -249,7 +249,7 @@ def _remembered_derivation(instance):  # type: ignore[no-untyped-def]
 def test_a_remembered_derivation_is_not_served_over_a_body_rewritten_in_place(
     tmp_path: Path, keep_mtime: bool
 ) -> None:
-    """The shard fingerprint sees arrivals and removals; the body fingerprints see the rest."""
+    """The evidence generation sees arrivals and removals; the body fingerprints see the rest."""
 
     instance, _owner = seed_claims(tmp_path)
     context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
@@ -258,7 +258,7 @@ def test_a_remembered_derivation_is_not_served_over_a_body_rewritten_in_place(
     _derive(instance, fresh=True)
 
     _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=keep_mtime)
-    # The keyed shard fingerprint does not move; the entry must still not be served.
+    # The keyed evidence generation does not move; the entry must still not be served.
     assert playbill_search.verdict_input_fingerprint(instance) == fingerprint
     # Served straight from the remembered derivation: nothing is reset.
     warm = _outcome(lambda: _remembered_derivation(instance))

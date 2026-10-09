@@ -127,6 +127,16 @@ def test_reading_index_memo(monkeypatch: pytest.MonkeyPatch) -> None:
         def all_records(self, _stream: object, partition: str) -> list[Any]:
             return records(partition)
 
+        def select_records(
+            self,
+            _stream: object,
+            *,
+            partition_id: str,
+            first_sequence: int,
+            last_sequence: int,
+        ) -> list[Any]:
+            return records(partition_id)[first_sequence - 1 : last_sequence]
+
     instance = SimpleNamespace(root=Path("/hammered"))
 
     def work(worker: int, round_index: int) -> None:

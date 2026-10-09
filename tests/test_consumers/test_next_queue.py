@@ -619,7 +619,7 @@ def _rewrite_backing(instance, *, keep_mtime: bool) -> None:  # type: ignore[no-
     capture = context.claims()[0].backing.capture_digests[0]
     fingerprint = verdict_input_fingerprint(instance)
     _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=keep_mtime)
-    # The shard fingerprint does not see an in-place rewrite; body identities must.
+    # The evidence generation does not see an in-place rewrite; body identities must.
     assert verdict_input_fingerprint(instance) == fingerprint
 
 

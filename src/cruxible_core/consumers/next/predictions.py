@@ -104,9 +104,11 @@ CREATE INDEX IF NOT EXISTS windows_by_identity ON windows(identity);
 CREATE INDEX IF NOT EXISTS windows_dirty ON windows(contract_id) WHERE dirty IS NOT NULL;
 CREATE TABLE IF NOT EXISTS unbindable (
  identity TEXT NOT NULL, record_digest TEXT NOT NULL, event TEXT NOT NULL,
- code TEXT NOT NULL, checked_at TEXT NOT NULL,
+ code TEXT NOT NULL, checked_at TEXT NOT NULL, missing_body TEXT,
  PRIMARY KEY(identity, record_digest)
 ) STRICT;
+CREATE INDEX IF NOT EXISTS unbindable_by_missing_body
+ ON unbindable(missing_body) WHERE missing_body IS NOT NULL;
 CREATE TABLE IF NOT EXISTS retries (
  identity TEXT NOT NULL, record_digest TEXT NOT NULL, dirty TEXT NOT NULL,
  PRIMARY KEY(identity,record_digest)
@@ -227,10 +229,21 @@ def _window_row(contract: _Contract, window: BoundObservationWindow) -> tuple[An
     )
 
 
+@dataclass(frozen=True)
+class _Unbound:
+    """Why an anchor binds no window, and the one body whose arrival could change that."""
+
+    code: str
+    #: The anchor record's payload digest when that body is what is missing: a
+    #: later landing that stores the same bytes restores it. None when nothing a
+    #: landing stores can (a lost record, an invalid or mismatched payload).
+    missing_body: str | None
+
+
 def _bind(
     instance: Any, contract: _Contract, event: TriggerEventReference
-) -> BoundObservationWindow | str | None:
-    """The event's bound window; its refusal code when unbindable; None to retry later."""
+) -> BoundObservationWindow | _Unbound | None:
+    """The event's bound window; why it is unbindable; None to retry later."""
 
     from cruxible_core.service.procedures.procedure_runs import _stream
     from cruxible_core.service.procedures.resolution_contracts import (
@@ -249,7 +262,17 @@ def _bind(
     try:
         return bind_window(instance, contract.contract.window, event, now=observed_at)
     except TriggerCaptureRefused as exc:
-        return None if exc.retryable else str(exc.refusal_code)
+        if exc.retryable:
+            return None
+        payload = records[0].record.payload_digest if len(records) == 1 else None
+        return _Unbound(
+            code=str(exc.refusal_code),
+            missing_body=payload
+            if exc.refusal_code == "trigger_capture_unavailable"
+            and payload is not None
+            and not instance.body_store().verify(payload)
+            else None,
+        )
 
 
 def settleable_windows(instance: Any, *, evaluation_time: datetime) -> tuple[SettleableWindow, ...]:
@@ -489,6 +512,18 @@ class PredictionPart:
         events = trigger_events(
             instance, after=trigger_sequence, action=ACTION.name, limit=EVENT_BATCH
         )
+        # The payload bodies the landings since the last pass stored: read from
+        # the index over exactly those landings.
+        landed_bodies = (
+            journal.index.payload_digests(
+                captures_stream,
+                event_kind="produced_capture",
+                after=capture_head,
+                through=captures["ordinal"],
+            )
+            if known == generation and captures["ordinal"] > capture_head
+            else ()
+        )
         mark = uuid4().hex
         with _STATE.open(instance) as connection:
             assert connection is not None
@@ -513,12 +548,24 @@ class PredictionPart:
                     "UPDATE contracts SET capture_generation=NULL,capture_ordinal=0,"
                     "scan_through=NULL,scan_cursor=NULL WHERE selector_digest IS NOT NULL"
                 )
-            if events or (known == generation and captures["ordinal"] > capture_head):
+            # The anchor-retry Trigger requeues every unbindable anchor. A new
+            # landing requeues only the anchors whose missing payload body it
+            # stored (payloads are content addressed and need not name their
+            # run): never every anchor ever refused.
+            if events:
                 connection.execute(
                     "INSERT INTO retries SELECT identity,record_digest,? "
                     "FROM unbindable WHERE true "
                     "ON CONFLICT(identity,record_digest) DO UPDATE SET dirty=excluded.dirty",
                     (mark,),
+                )
+            elif landed_bodies:
+                connection.executemany(
+                    "INSERT INTO retries SELECT identity,record_digest,? "
+                    "FROM unbindable INDEXED BY unbindable_by_missing_body "
+                    "WHERE missing_body=? "
+                    "ON CONFLICT(identity,record_digest) DO UPDATE SET dirty=excluded.dirty",
+                    ((mark, body) for body in landed_bodies),
                 )
             if events:
                 connection.execute("UPDATE progress SET trigger_sequence=?", (events[-1].sequence,))
@@ -743,7 +790,7 @@ class PredictionPart:
             if not complete:
                 continue  # the index is still projecting new landings
             windows: list[tuple[Any, ...]] = []
-            unbound: list[tuple[str, TriggerEventReference, str]] = []
+            unbound: list[tuple[str, TriggerEventReference, _Unbound]] = []
             bound: list[str] = []
             retry = False
             for stored in records:
@@ -757,7 +804,7 @@ class PredictionPart:
                 if window is None:
                     retry = True
                     break
-                if isinstance(window, str):
+                if isinstance(window, _Unbound):
                     unbound.append((stored.record_digest, event, window))
                     continue
                 bound.append(stored.record_digest)
@@ -794,7 +841,7 @@ class PredictionPart:
         connection: sqlite3.Connection,
         identity: str,
         windows: list[tuple[Any, ...]],
-        unbound: list[tuple[str, TriggerEventReference, str]],
+        unbound: list[tuple[str, TriggerEventReference, _Unbound]],
         bound: list[str],
         *,
         now: datetime,
@@ -819,18 +866,19 @@ class PredictionPart:
         )
         connection.executemany(
             # An upsert, not a replace: a replace deletes without firing the tally.
-            "INSERT INTO unbindable VALUES (?,?,?,?,?) ON CONFLICT(identity,record_digest) "
+            "INSERT INTO unbindable VALUES (?,?,?,?,?,?) ON CONFLICT(identity,record_digest) "
             "DO UPDATE SET event=excluded.event,code=excluded.code,"
-            "checked_at=excluded.checked_at",
+            "checked_at=excluded.checked_at,missing_body=excluded.missing_body",
             (
                 (
                     identity,
                     digest,
                     event.model_dump_json(),
-                    code,
+                    unbindable.code,
                     format_datetime(now),
+                    unbindable.missing_body,
                 )
-                for digest, event, code in unbound
+                for digest, event, unbindable in unbound
             ),
         )
 
@@ -884,7 +932,7 @@ class PredictionPart:
             retried.append((contract.identity, digest, retry_mark))
             if window is None:
                 continue
-            if isinstance(window, str):
+            if isinstance(window, _Unbound):
                 rebound.append((contract, [], [(digest, event, window)], []))
                 continue
             row = _window_row(contract, window)

@@ -1,21 +1,22 @@
 """Keep next's expensive Claim rows current as their accepted inputs change.
 
 This findings projection is disposable. Matching follows the accepted and door
-heads plus CAS availability, and one bounded worker folds each new target
-before moving the serving cursor. Time bounds come from the fold, never from
-polling a clock: a deadline fire requests the next fold, and reads compute live
-until that fold catches up. A failed target remains stalled until an input
+heads plus the body store's evidence generation, and one bounded worker folds
+each new target before moving the serving cursor. Time bounds come from the
+fold, never from polling a clock: a deadline fire requests the next fold, and
+reads compute live until that fold catches up. A failed target remains stalled until an input
 changes or the operator rebuilds this disposable state, avoiding endless folds
 of the same broken inputs.
 
-The CAS shard fingerprint sees bodies arrive and go, not a body rewritten in
-place. Each fold therefore runs inside one CAS body observation, which records
-the file identity of every object any row family reads or checks, and a
-published queue is served only while one stat of each still matches. A changed
-identity is a miss (the read computes live, and fails exactly as live does)
-and a rebuild request; a fold whose answer rests on something no identity
-stands for publishes nothing a read will serve. A failed fold keeps what it
-observed too, so repairing a body in place releases the failure once.
+The evidence generation sees evidence bodies arrive and any body go (journal
+record payloads never move it), not a body rewritten in place. Each fold
+therefore runs inside one CAS body observation, which records the file identity
+of every object any row family reads or checks, and a published queue is served
+only while one stat of each still matches. A changed identity is a miss (the
+read computes live, and fails exactly as live does) and a rebuild request; a
+fold whose answer rests on something no identity stands for publishes nothing a
+read will serve. A failed fold keeps what it observed too, so repairing a body
+in place releases the failure once.
 """
 
 from __future__ import annotations

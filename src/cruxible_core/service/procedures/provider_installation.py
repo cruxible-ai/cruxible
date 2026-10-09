@@ -89,7 +89,7 @@ from cruxible_core.runtime.provider_runtime import (
 )
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
-from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+from cruxible_core.service.proposals.proposals import open_proposal_at_target
 from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 
@@ -1001,14 +1001,7 @@ def _install_locked(
             },
         ).removeprefix("sha256:")
         target = f"refs/proposals/{actor_id}/provider-install-{suffix}"
-        pending = next(
-            (
-                item
-                for item in service_list_playbill_proposals(instance, status="open").entries
-                if item.target_ref == target
-            ),
-            None,
-        )
+        pending = open_proposal_at_target(instance, target)
         if pending is None:
             submitted = instance.proposal_service().submit(
                 actor=AuthenticatedActor(actor_id=actor_id),

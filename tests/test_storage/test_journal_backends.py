@@ -201,13 +201,14 @@ def test_payload_reservation_spans_cas_to_journal_and_recovers_both_crash_sides(
     )
     original_store = bodies.store
 
-    def store_after_reservation(content: bytes):  # type: ignore[no-untyped-def]
+    def store_after_reservation(content: bytes, *, journal_payload: bool = False):  # type: ignore[no-untyped-def]
         body_digest = bodies.digest_bytes(content).tagged
+        assert journal_payload
         assert any(
             isinstance(item, RunMaterialReservationV1) and item.body_digest == body_digest
             for item in writer.material_reservations.active_locked()
         )
-        return original_store(content)
+        return original_store(content, journal_payload=journal_payload)
 
     monkeypatch.setattr(bodies, "store", store_after_reservation)
     original_append = backend.append
@@ -366,7 +367,7 @@ def test_pending_admission_crash_before_cas_keeps_the_durable_lease(
     cas_root.mkdir()
     bodies = ContentAddressedBodyStore(cas_root)
 
-    def crash_before_cas(_content: bytes):
+    def crash_before_cas(_content: bytes, **_kwargs):  # type: ignore[no-untyped-def]
         raise KeyboardInterrupt("crash before CAS visibility")
 
     monkeypatch.setattr(bodies, "store", crash_before_cas)
@@ -536,7 +537,7 @@ def test_failed_admission_material_store_releases_new_lease(tmp_path, monkeypatc
     bodies = ContentAddressedBodyStore(cas_root)
     store = ProcedureMaterialReservationStore(bodies.reservation_root)
 
-    def fail(_content):
+    def fail(_content, **_kwargs):  # type: ignore[no-untyped-def]
         assert tuple(bodies.reservation_root.glob("*.json"))
         raise OSError("CAS write failed")
 

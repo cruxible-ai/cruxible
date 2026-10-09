@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import errno
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, get_args
@@ -752,6 +754,117 @@ def test_startup_recovery_closes_the_exact_start_and_terminalizes_the_attempt(
     assert writer_state is not None
     assert not writer_state.active
     assert executor.execute(prepared, accepted).status == "failed"
+
+    # Recovering the named, already-finalized invocation again reads that one run
+    # through the invocation locator: never the unrelated history around it.
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+
+    stream = prepared.admission.journal_stream
+    admission = prepared.admission
+    frames = LocalJournalBackend._read_frames
+    cas_read = type(fixture.bodies).read
+    work = {"frames": 0, "all_records": 0, "cas_reads": 0, "vm": 0}
+    import sqlite3
+
+    connect = sqlite3.connect
+
+    def counted_connect(*args, **kwargs):  # type: ignore[no-untyped-def]
+        connection = connect(*args, **kwargs)
+
+        def tick() -> int:
+            work["vm"] += 1
+            return 0
+
+        connection.set_progress_handler(tick, 1)
+        return connection
+
+    def counted_read(self, digest, **kwargs):  # type: ignore[no-untyped-def]
+        work["cas_reads"] += 1
+        return cas_read(self, digest, **kwargs)
+
+    def counted_frames(*args, **kwargs):  # type: ignore[no-untyped-def]
+        for item in frames(*args, **kwargs):
+            work["frames"] += 1
+            yield item
+
+    def no_all_records(*args, **kwargs):  # type: ignore[no-untyped-def]
+        work["all_records"] += 1
+        raise AssertionError("recovery scanned a whole partition")
+
+    def unrelated_history(count: int, partition: str) -> None:
+        head = fixture.journal.read_head(stream, partition)
+        fixture.journal.activate_writer(
+            stream, partition, fencing_token="unrelated", expected_head=head
+        )
+        writer = ProcedureExhaustWriter(
+            journal=fixture.journal, bodies=fixture.bodies, fencing_token="unrelated"
+        )
+        for ordinal in range(count):
+            run_id = f"RUN-unrelated-{partition}-{ordinal}"
+            common = dict(
+                stream=stream,
+                partition_id=partition,
+                accepted_coordinate=admission.accepted_coordinate,
+                procedure_artifact_digest=admission.procedure_artifact_digest,
+                definition_digest=admission.definition_digest,
+                run_id=run_id,
+                admission_binding_digest=admission.admission_binding_digest,
+                actor_context=admission.actor_context,
+                recorded_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+            )
+            # A completed unrelated Provider invocation: a validated start with
+            # its own invocation id, then its run's finalization.
+            writer.append(
+                event_kind="provider_invocation_started",
+                payload=ProviderInvocationStarted(
+                    invocation_id=f"sha256:{ordinal:064x}",
+                    occurrence_path=f"/unrelated/{partition}",
+                    implementation_digest="sha256:" + "1" * 64,
+                    materialization_digest="sha256:" + "2" * 64,
+                    input_digest="sha256:" + "3" * 64,
+                    input_bucket="small",
+                ).model_dump(mode="json"),
+                **common,  # type: ignore[arg-type]
+            )
+            writer.append(
+                event_kind="node_fired",
+                payload={"ordinal": ordinal},
+                **common,  # type: ignore[arg-type]
+            )
+            writer.append(
+                event_kind="attempt_finalized",
+                payload={"status": "succeeded", "ordinal": ordinal},
+                **common,  # type: ignore[arg-type]
+            )
+
+    measured = []
+    for size, partition in ((10, "unrelated-a"), (100, "unrelated-b")):
+        unrelated_history(size, partition)
+        work.update(frames=0, all_records=0, cas_reads=0, vm=0)
+        with monkeypatch.context() as patch:
+            patch.setattr(sqlite3, "connect", counted_connect)
+            patch.setattr(LocalJournalBackend, "_read_frames", staticmethod(counted_frames))
+            patch.setattr(type(fixture.bodies), "read", counted_read)
+            patch.setattr(LocalJournalBackend, "all_records", no_all_records)
+            assert procedure_run_service.service_recover_provider_invocations(
+                _Instance(),  # type: ignore[arg-type]
+                invocation_ids=(invocation_id,),
+                recorded_at=datetime(2026, 9, 1, 0, 0, 2, tzinfo=timezone.utc),
+            ) == (invocation_id,)
+        measured.append(dict(work))
+    assert measured[0]["all_records"] == 0 and measured[0]["vm"] > 0
+    # No start is pending (every writer noted its own), so the lookup visits
+    # neither unrelated starts nor any other retained record: same SQL work.
+    assert _pending_starts(fixture.journal) == 0
+    assert measured[0] == measured[1], measured
+    # A rebuilt index holds no writer notes: its first lookup projects the
+    # pending starts once from their payloads, and still finds the run.
+    fixture.journal.index.path.unlink()
+    assert procedure_run_service.service_recover_provider_invocations(
+        _Instance(),  # type: ignore[arg-type]
+        invocation_ids=(invocation_id,),
+        recorded_at=datetime(2026, 9, 1, 0, 0, 3, tzinfo=timezone.utc),
+    ) == (invocation_id,)
 
 
 def test_unclean_start_marks_recovery_required_without_completion_or_terminalization(
@@ -1648,3 +1761,128 @@ def test_an_egress_observer_backend_is_a_name_not_prose(backend: str) -> None:
             observer_backend=backend,
             observer_grade="attribution",
         )
+
+
+@contextmanager
+def _failing_note(monkeypatch: pytest.MonkeyPatch, failures: list[str]):  # type: ignore[no-untyped-def]
+    """A real filesystem error on the locator-note path only (its partition sync)."""
+
+    from cruxible_core.exhaust.journal_index import JournalIndex
+
+    note, sync = JournalIndex.note_invocation, JournalIndex._sync
+    noting: list[bool] = []
+
+    def noting_invocation(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        noting.append(True)
+        try:
+            return note(self, *args, **kwargs)
+        finally:
+            noting.pop()
+
+    def failing_sync(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if noting:
+            failures.append("EIO")
+            raise OSError(errno.EIO, "injected I/O error on records.log")
+        return sync(self, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(JournalIndex, "note_invocation", noting_invocation)
+        patch.setattr(JournalIndex, "_sync", failing_sync)
+        yield
+
+
+def _pending_starts(journal) -> int:  # type: ignore[no-untyped-def]
+    with journal.index.connection() as conn:
+        return int(conn.execute("SELECT count(*) FROM invocation_pending").fetchone()[0])
+
+
+def test_a_failed_locator_note_never_fails_the_executors_durable_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    failures: list[str] = []
+    with _failing_note(monkeypatch, failures):
+        result = ProcedureExecutor(
+            journal=fixture.journal,
+            bodies=fixture.bodies,
+            run_index=fixture.run_index,
+            fencing_token="writer",
+            activation_authority=_Authority(accepted.artifact_digest),
+            contract_validator=_Contracts(),
+            provider_runtime_invoker=_Invoker(),
+            provider_classifier_registry=registry,
+        ).execute(prepared, accepted)
+    assert failures and result.status == "succeeded"
+    assert _pending_starts(fixture.journal) == 1
+    started = next(
+        item
+        for item in fixture.journal.all_records(
+            prepared.admission.journal_stream, prepared.admission.journal_partition_id
+        )
+        if item.record.event_kind == "provider_invocation_started"
+    )
+    invocation_id = parse_journal_payload(
+        fixture.bodies.read(
+            started.record.payload_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )["invocation_id"]  # type: ignore[index]
+    located = fixture.journal.index.invocation_runs(
+        prepared.admission.journal_stream,
+        bodies=fixture.bodies,
+        invocation_ids=(invocation_id,),
+    )
+    assert located == {
+        invocation_id: (prepared.admission.run_id, prepared.admission.journal_partition_id)
+    }
+    assert _pending_starts(fixture.journal) == 0
+
+
+def test_a_failed_locator_note_never_fails_the_exhaust_writers_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    admission = prepared.admission
+    stream, partition = admission.journal_stream, "noted-elsewhere"
+    fixture.journal.activate_writer(
+        stream,
+        partition,
+        fencing_token="other",
+        expected_head=fixture.journal.read_head(stream, partition),
+    )
+    invocation_id = "sha256:" + "9" * 64
+    failures: list[str] = []
+    with _failing_note(monkeypatch, failures):
+        stored = ProcedureExhaustWriter(
+            journal=fixture.journal, bodies=fixture.bodies, fencing_token="other"
+        ).append(
+            stream=stream,
+            partition_id=partition,
+            event_kind="provider_invocation_started",
+            accepted_coordinate=admission.accepted_coordinate,
+            procedure_artifact_digest=admission.procedure_artifact_digest,
+            definition_digest=admission.definition_digest,
+            run_id="RUN-noted-elsewhere",
+            admission_binding_digest=admission.admission_binding_digest,
+            actor_context=admission.actor_context,
+            recorded_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+            payload=ProviderInvocationStarted(
+                invocation_id=invocation_id,
+                occurrence_path="/noted/elsewhere",
+                implementation_digest="sha256:" + "1" * 64,
+                materialization_digest="sha256:" + "2" * 64,
+                input_digest="sha256:" + "3" * 64,
+                input_bucket="small",
+            ).model_dump(mode="json"),
+        )
+    assert failures and stored.record.sequence == 1
+    assert fixture.journal.read_head(stream, partition).sequence == 1
+    assert _pending_starts(fixture.journal) == 1
+    assert fixture.journal.index.invocation_runs(
+        stream, bodies=fixture.bodies, invocation_ids=(invocation_id,)
+    ) == {invocation_id: ("RUN-noted-elsewhere", partition)}
+    assert _pending_starts(fixture.journal) == 0

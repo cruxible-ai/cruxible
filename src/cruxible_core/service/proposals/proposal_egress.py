@@ -115,7 +115,7 @@ def _fold_partition(
     bodies: Any,
     access: BodyAccessContext,
 ) -> dict[str, _RunFold]:
-    """One pass over a partition; every record lands on the run that wrote it."""
+    """One pass over records; every record lands on the run that wrote it."""
 
     runs: dict[str, _RunFold] = {}
     for stored in records:
@@ -175,8 +175,11 @@ def service_recover_proposal_egress(
     bodies = instance.body_store()
     access = BodyAccessContext(principal_id="proposal-egress-recovery", can_read_body=True)
     recovered: dict[str, RecoveredProposalEgressDisposition] = {}
-    for partition_id in journal.partition_ids(stream):
-        records = journal.all_records(stream, partition_id)
+    # Only runs still running can hold an open egress: a finalized run is
+    # skipped below anyway, so finished history is never read.
+    for locator in tuple(journal.index.running(stream)):
+        partition_id = locator.partition_id
+        records = journal.select_records(stream, run_id=locator.run_id)
         runs = _fold_partition(records, bodies=bodies, access=access)
         for run_id, fold in runs.items():
             admission = fold.admission

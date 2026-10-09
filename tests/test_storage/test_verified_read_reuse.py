@@ -205,3 +205,21 @@ def test_scan_streams_a_bounded_prefix_including_a_dry_runs_held_bodies(
     assert extra in dry.scan("", budget=1000).digests
     assert extra not in store.scan("", budget=1000).digests
     assert dry.peek(extra, 4) == b"held"
+
+
+def test_only_evidence_bodies_and_erasure_advance_the_evidence_generation(tmp_path):
+    """Journal-record payloads (run records, dispatch coverage, settlements) never
+    move the verdict input fingerprint; an evidence body's arrival and any erase do."""
+
+    store, digest, _path = _store(tmp_path)
+    generation = store.evidence_generation()
+    assert generation not in (None, "")
+    store.store(b"run record payload", journal_payload=True)
+    assert store.evidence_generation() == generation
+    store.store(b"good")  # already present: nothing arrived
+    assert store.evidence_generation() == generation
+    store.store(b"a new capture body")
+    after_arrival = store.evidence_generation()
+    assert after_arrival != generation
+    assert store.erase(digest)
+    assert store.evidence_generation() != after_arrival
