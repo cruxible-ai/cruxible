@@ -845,7 +845,6 @@ class AuthoringIntentCoordinator:
             ClaimReobservationStore(self.instance).record(
                 claim_id=claim_id,
                 capture_digest=capture_digest,
-                coordinate=self.instance.accepted_coordinate(),
                 actor_id=actor_id,
                 now=self.clock(),
             )

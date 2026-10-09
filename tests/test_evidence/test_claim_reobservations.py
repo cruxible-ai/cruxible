@@ -127,7 +127,6 @@ def test_a_capture_of_different_content_does_not_refresh(tmp_path: Path) -> None
         store.record(
             claim_id=current.identity.name,
             capture_digest=other,
-            coordinate=instance.accepted_coordinate(),
             actor_id="owner",
             now=_START + timedelta(minutes=50),
         )
@@ -165,7 +164,6 @@ def test_a_forged_or_unadmitted_capture_is_refused(tmp_path: Path) -> None:
             store.record(
                 claim_id=current.identity.name,
                 capture_digest=digest,
-                coordinate=instance.accepted_coordinate(),
                 actor_id="owner",
                 now=_START + timedelta(minutes=50),
             )
@@ -341,7 +339,6 @@ def test_an_interrupted_append_never_leaves_a_remembered_verdict_behind(
             store.record(
                 claim_id=claim.identity.name,
                 capture_digest=digest,
-                coordinate=instance.accepted_coordinate(),
                 actor_id="owner",
                 now=_START + timedelta(minutes=50),
             )
@@ -354,10 +351,58 @@ def test_an_interrupted_append_never_leaves_a_remembered_verdict_behind(
     store.record(
         claim_id=claim.identity.name,
         capture_digest=digest,
-        coordinate=instance.accepted_coordinate(),
         actor_id="owner",
         now=_START + timedelta(minutes=50),
     )
     assert len(store.for_claim(claim.identity.name)) == 1
     assert _verdict(instance, at).verdict == "supported"
     assert _statuses(instance, claim, at) == "supported"
+
+
+# -- admission at the live head (review F-011) --------------------------------
+
+
+def test_a_record_for_a_retired_lineage_is_refused(tmp_path: Path) -> None:
+    from cruxible_client.contracts.claims import claim_path, parse_claim
+    from tests.core_support._published_world import retire_claim
+
+    instance, owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    digest = _pending_same_content(instance, _START + timedelta(minutes=50))
+    retire_claim(instance, owner, claim.identity.name)
+    path = claim_path(claim.identity.name)
+    head = instance.blob_at(instance.accepted_coordinate().git_oid, path)
+    assert head is not None and parse_claim(head, path=path).lifecycle.state == "retired"
+    store = ClaimReobservationStore(instance)
+    with pytest.raises(ClaimReobservationRefused, match="retired"):
+        store.record(
+            claim_id=claim.identity.name,
+            capture_digest=digest,
+            actor_id="owner",
+            now=_START + timedelta(minutes=50),
+        )
+    assert store.for_claim(claim.identity.name) == ()
+
+
+def test_the_cited_capture_itself_and_a_capture_observed_later_are_refused(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    store = ClaimReobservationStore(instance)
+    with pytest.raises(ClaimReobservationRefused, match="already cites"):
+        store.record(
+            claim_id=claim.identity.name,
+            capture_digest=claim_citation_references(claim)[0].capture_digest,
+            actor_id="owner",
+            now=_START + timedelta(hours=1),
+        )
+    digest = _pending_same_content(instance, _START + timedelta(minutes=50))
+    with pytest.raises(ClaimReobservationRefused, match="after the re-observation"):
+        store.record(
+            claim_id=claim.identity.name,
+            capture_digest=digest,
+            actor_id="owner",
+            now=_START + timedelta(minutes=10),
+        )
+    assert store.for_claim(claim.identity.name) == ()

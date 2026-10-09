@@ -2124,3 +2124,36 @@ def test_a_terminal_canonicalizes_each_item_before_taking_its_identity(tmp_path:
     assert not child.unchanged
     assert child.path == first_child.path
     assert egress.target_paths == (first_child.path,)
+
+
+def test_an_unchanged_terminal_does_not_record_for_a_claim_retired_after_prepare(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-011: the receipt keeps the admitted base; no record is written."""
+
+    from pathlib import PurePosixPath
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+    from tests.core_support._published_world import retire_claim
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = _accept_first_run(instance, owner, root, line)
+    (first_child,) = first.children
+    claim_id = PurePosixPath(first_child.path).stem
+    original = ProposalTerminalEgressSink.prepare_terminal_egress
+
+    def retire_after_prepare(self, **kwargs):  # type: ignore[no-untyped-def]
+        prepared = original(self, **kwargs)
+        assert prepared.changes_nothing
+        retire_claim(instance, owner, claim_id)
+        return prepared
+
+    monkeypatch.setattr(ProposalTerminalEgressSink, "prepare_terminal_egress", retire_after_prepare)
+    second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+
+    assert second.status == "succeeded", second.terminal
+    (egress,) = second.terminal_egress
+    (child,) = egress.children
+    assert child.unchanged and child.path == first_child.path
+    assert ClaimReobservationStore(instance).for_claim(claim_id) == ()

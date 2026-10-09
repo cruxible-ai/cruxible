@@ -1057,22 +1057,23 @@ class ProposalTerminalEgressSink:
     ) -> None:
         """Record each unchanged item's re-observation of content its Claim cites.
 
-        The very Capture the Claim already cites observed nothing new and is not
-        recorded. A re-observation no longer admissible at the head (its Claim
-        moved on since the run's base) is not recorded; the receipt still names it.
+        The store admits each one at the current head under its append lock
+        (``ClaimReobservationStore.record``). One it refuses there -- the Claim
+        retired, or no longer citing that contract and content, since the run's
+        base; or the very Capture the Claim already cites -- is not recorded.
+        The terminal still completes, and its receipt still names the child as
+        it was at the admitted base.
         """
 
         if not unchanged:
             return
         store = ClaimReobservationStore(self.instance)
-        head = self.instance.accepted_coordinate()
         for child in unchanged:
             claim_id = PurePosixPath(child.path).stem
             try:
                 store.record(
                     claim_id=claim_id,
                     capture_digest=child.reobserving_capture_digest,
-                    coordinate=head,
                     actor_id=request.actor_context.actor_id,
                     now=request.prepared_at,
                 )

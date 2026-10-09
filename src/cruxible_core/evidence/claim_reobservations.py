@@ -9,8 +9,9 @@ to when it was last observed (``claim_verdicts.CaptureReobservationEvidence``).
 Storage follows the Line inbox's pattern: a journal (``claim-reobservation-v1``)
 is the append-only authority, and a SQLite projection keyed by Claim lineage is
 caught up from its last applied sequence on every open. A record is admitted only
-for a daemon-admitted Capture that verifies at the head and whose observed
-content equals a Capture the Claim currently cites under the same contract. The
+for a Claim live at the current head, read under the append's lock, and a
+daemon-admitted Capture that verifies there and whose observed content equals a
+Capture that Claim cites under the same contract. The
 freshness lookup reads one indexed range per Claim lineage, never a scan.
 """
 
@@ -188,9 +189,9 @@ class ClaimReobservationStore:
     ) -> CaptureEnvelopeAny:
         """The re-observing Capture's envelope, or the typed refusal.
 
-        It must be a daemon-admitted Capture that verifies at the head, and its
-        observed content must equal a Capture the Claim currently cites under
-        the same contract.
+        It must be a daemon-admitted Capture that verifies at ``coordinate``,
+        the Claim must be live there, and the Capture's observed content must
+        equal a Capture the Claim cites there under the same contract.
         """
 
         from cruxible_core.service.evidence.capture_reads import (
@@ -219,6 +220,15 @@ class ClaimReobservationStore:
         if content is None:
             raise ClaimReobservationRefused(f"no accepted Claim {claim_id} to re-observe")
         claim = parse_claim(content, path=claim_path(claim_id))
+        if claim.lifecycle.state != "live":
+            raise ClaimReobservationRefused(
+                f"Claim {claim_id} is {claim.lifecycle.state} at the head: a re-observation "
+                "is recorded only for a live Claim"
+            )
+        if capture_digest in claim.backing.capture_digests:
+            raise ClaimReobservationRefused(
+                f"Claim {claim_id} already cites Capture {capture_digest}: nothing new was observed"
+            )
         wanted = (envelope.capture_contract_digest, observed_content(envelope).digest)
         for cited in claim.backing.capture_digests:
             try:
@@ -234,56 +244,86 @@ class ClaimReobservationStore:
             "cites under its contract"
         )
 
+    def _admitted(
+        self,
+        *,
+        claim_id: str,
+        capture_digest: str,
+        head: AcceptedProjectionCoordinate,
+        now: datetime,
+    ) -> ReobservationRecord:
+        envelope = self._admissible(
+            claim_id=claim_id, capture_digest=capture_digest, coordinate=head
+        )
+        observed_at = envelope.observed_at.astimezone(UTC)
+        if observed_at > now:
+            raise ClaimReobservationRefused(
+                f"Capture {capture_digest} was observed at {format_datetime(observed_at)}, "
+                f"after the re-observation is recorded ({format_datetime(now)})"
+            )
+        return ReobservationRecord(
+            claim_id=claim_id,
+            capture_digest=capture_digest,
+            contract_digest=envelope.capture_contract_digest,
+            observed_content_digest=observed_content(envelope).digest,
+            observed_at=observed_at,
+            recorded_at=now,
+        )
+
     def record(
         self,
         *,
         claim_id: str,
         capture_digest: str,
-        coordinate: AcceptedProjectionCoordinate,
         actor_id: str,
         now: datetime,
     ) -> ReobservationRecord | None:
-        """Record one admissible re-observation; a repeat is the same record.
+        """Record one admissible re-observation at the current head; a repeat is the same record.
 
-        Nothing is written while previewing (``dry_run``): a preview observes
-        nothing durable.
+        Admission is judged at the accepted head read under the same lock as the
+        append: the Claim must be live there and cite a Capture of the same
+        contract and observed content, and the re-observing Capture must be
+        daemon-admitted, verify there, and not be observed after ``now``. A
+        historical record stays readable whatever later happens to its Claim;
+        this decides only whether a new one may be written. Nothing is written
+        while previewing (``dry_run``): a preview observes nothing durable.
         """
 
-        envelope = self._admissible(
-            claim_id=claim_id, capture_digest=capture_digest, coordinate=coordinate
-        )
-        record = ReobservationRecord(
-            claim_id=claim_id,
-            capture_digest=capture_digest,
-            contract_digest=envelope.capture_contract_digest,
-            observed_content_digest=observed_content(envelope).digest,
-            observed_at=envelope.observed_at.astimezone(UTC),
-            recorded_at=now,
-        )
         if is_previewing():
+            self._admitted(
+                claim_id=claim_id,
+                capture_digest=capture_digest,
+                head=self.instance.accepted_coordinate(),
+                now=now,
+            )
             return None
-        payload = {
-            "tag": _EVENT_TAG,
-            "claim_id": record.claim_id,
-            "capture_digest": record.capture_digest,
-            "contract_digest": record.contract_digest,
-            "observed_content_digest": record.observed_content_digest,
-            "observed_at": format_datetime(record.observed_at),
-        }
         with self._locked(create=True) as conn:
             known = conn.execute(
-                "SELECT recorded_at FROM reobservations WHERE claim_id=? AND capture_digest=?",
+                "SELECT contract_digest, observed_content_digest, observed_at, recorded_at "
+                "FROM reobservations WHERE claim_id=? AND capture_digest=?",
                 (claim_id, capture_digest),
             ).fetchone()
             if known is not None:
                 return ReobservationRecord(
-                    claim_id=record.claim_id,
-                    capture_digest=record.capture_digest,
-                    contract_digest=record.contract_digest,
-                    observed_content_digest=record.observed_content_digest,
-                    observed_at=record.observed_at,
-                    recorded_at=_instant(known[0]),
+                    claim_id=claim_id,
+                    capture_digest=capture_digest,
+                    contract_digest=str(known[0]),
+                    observed_content_digest=str(known[1]),
+                    observed_at=_instant(known[2]),
+                    recorded_at=_instant(known[3]),
                 )
+            accepted = self.instance.accepted_coordinate()
+            record = self._admitted(
+                claim_id=claim_id, capture_digest=capture_digest, head=accepted, now=now
+            )
+            payload = {
+                "tag": _EVENT_TAG,
+                "claim_id": record.claim_id,
+                "capture_digest": record.capture_digest,
+                "contract_digest": record.contract_digest,
+                "observed_content_digest": record.observed_content_digest,
+                "observed_at": format_datetime(record.observed_at),
+            }
             journal = self._journal(create=True)
             assert journal is not None
             from cruxible_core.storage.material_reservations import (
@@ -310,7 +350,7 @@ class ClaimReobservationStore:
                 stream=self.stream,
                 partition_id=_PARTITION,
                 event_kind="claim_reobservation",
-                accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
+                accepted_coordinate=AcceptedCoordinate.from_internal(accepted),
                 definition_digest=self.stream.identity_digest,
                 actor_context=GovernedActorContext(
                     actor_type="service_account",
