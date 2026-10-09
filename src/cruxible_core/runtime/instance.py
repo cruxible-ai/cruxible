@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import shutil
+import sqlite3
 import stat
 import threading
 import time
@@ -40,6 +41,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import (
     BootstrapError,
+    CruxibleError,
     FormatError,
     InstanceDecommissioned,
     PrincipalIntegrityError,
@@ -179,6 +181,7 @@ from cruxible_core.storage.preview_fence import is_previewing, refuse_write_whil
 
 if TYPE_CHECKING:
     from cruxible_core.evidence.claim_attestation_store import ClaimAttestationEvidenceStore
+    from cruxible_core.proposals.refusal_index import RefusalIndex
     from cruxible_core.query.backends import ClaimQueryFactsV1
 
 DESCRIPTOR_FILE = "instance.json"
@@ -1702,6 +1705,42 @@ class PlaybillInstance:
         return ProposalEvidenceStore(
             paths["exhaust"], index=self._accepted_history_index.proposals, transport=self._ledger
         )
+
+    def refusal_index(self) -> RefusalIndex:
+        """The derived index of earlier refusals (retired Claims, rejected proposals).
+
+        One per instance, in the projections directory: rebuilt from accepted
+        history and rejection records whenever it is missing.
+        """
+
+        index = self.__dict__.get("_refusal_index")
+        if index is None:
+            from cruxible_core.proposals.refusal_index import RefusalIndex
+
+            paths = self._validated_paths(self.root, self.descriptor.storage)
+            with self._state_lock:
+                index = self.__dict__.get("_refusal_index")
+                if index is None:
+                    index = RefusalIndex(paths["projections"] / "refusals.sqlite3")
+                    self.__dict__["_refusal_index"] = index
+        return index
+
+    def maintain_refusal_index(self) -> None:
+        """Index the retirements a just-accepted generation made, once the index exists.
+
+        Activation calls this after it releases the accepted-state locks. An
+        index no lookup has built yet is left to its first lookup, which builds
+        it; acceptance never pays for that rebuild. A failure here leaves the
+        next lookup to catch up: the acceptance stands.
+        """
+
+        index = self.__dict__.get("_refusal_index")
+        if index is None or not index.path.exists():
+            return
+        try:
+            index.catch_up(self)
+        except (sqlite3.Error, OSError, CruxibleError):
+            index.close()
 
     def proposal_ref_target(self, target_ref: str) -> str | None:
         """Read one proposal transport ref without exposing ledger mutation."""

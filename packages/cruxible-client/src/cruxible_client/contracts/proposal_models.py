@@ -27,6 +27,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.policies import ClaimAdmissionEvaluationAccount
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.refusal_receipts import RefusedClaim
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -324,6 +325,10 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     ``kind`` says who closed it: ``withdrawn`` by its author (or a daemon-wide
     operator), ``rejected`` by a reviewer. ``withdrawn_at`` is the instant it
     closed either way.
+
+    A rejection keys each Claim the rejected candidate proposed
+    (``refused_claims``), taken while the candidate is still readable, so a later
+    proposal of the same statement on the same evidence resurfaces it neutrally.
     """
 
     tag: Literal["playbill-proposal-withdrawal-v1"] = "playbill-proposal-withdrawal-v1"
@@ -334,6 +339,7 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     kind: Literal["withdrawn", "rejected"] = Field(
         default="withdrawn", exclude_if=lambda value: value == "withdrawn"
     )
+    refused_claims: tuple[RefusedClaim, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @field_validator("proposal_id")
     @classmethod
@@ -349,6 +355,20 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
         if any(character in value for character in "\r\n"):
             raise ValueError("closing reason must be a single line")
         return value
+
+    @field_validator("refused_claims")
+    @classmethod
+    def _refused_claims(cls, value: tuple[RefusedClaim, ...]) -> tuple[RefusedClaim, ...]:
+        paths = tuple(item.path for item in value)
+        if paths != tuple(sorted(set(paths), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("refused Claims must be sorted and unique by path")
+        return value
+
+    @model_validator(mode="after")
+    def _refusals(self) -> "ProposalWithdrawalRecord":
+        if self.refused_claims and self.kind != "rejected":
+            raise ValueError("only a rejection keys the Claims it refused")
+        return self
 
 
 #: A settle terminal whose change carries a ClaimType its settle grant's scope

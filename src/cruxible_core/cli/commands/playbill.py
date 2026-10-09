@@ -5461,7 +5461,14 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
             )
             for child in egress.children:
                 if child.path is not None:
-                    click.echo(f"  {child.path}")
+                    count = len(child.prior_refusals)
+                    earlier = (
+                        f" ({count} earlier refusal{'s' if count != 1 else ''} of this "
+                        "statement on this evidence; see proposal review)"
+                        if count
+                        else ""
+                    )
+                    click.echo(f"  {child.path}{earlier}")
         elif egress.verdict == "delivered":
             click.echo(f"Terminal {egress.node_id}: {egress.kind} delivered")
         elif egress.verdict == "refused_effective_authority":

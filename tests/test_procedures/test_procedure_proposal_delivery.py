@@ -1845,3 +1845,50 @@ def test_a_revision_moving_a_claim_out_leaves_the_slot_it_left(tmp_path: Path) -
         instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
     )
     assert _slots(instance) == {first: "new", second: None}
+
+
+# --- earlier refusals of a proposed item resurface on the run result ---------
+
+
+def test_a_delivered_item_carries_its_earlier_refusals_on_the_run_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each delivered child carries the receipts its Claim's key found, as recorded.
+
+    A run's own Capture is new evidence, so nothing earlier matches here; the
+    receipts are read through the same lookup `proposal review` uses, which the
+    refusal-index tests exercise against real retirements and rejections.
+    """
+
+    from cruxible_client.contracts.refusal_receipts import PriorRefusalReceipt
+    from cruxible_core.proposals.refusal_index import RefusalIndex
+
+    instance, _owner, root, line, _procedure = proposal_world(tmp_path)
+    state = run_line(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    (child,) = egress.children
+    assert child.prior_refusals == ()
+    assert child.path is not None and egress.proposal_id is not None
+
+    receipt = PriorRefusalReceipt(
+        kind="proposal_rejected",
+        claim_id=child.path.rsplit("/", 1)[1].removesuffix(".json"),
+        proposal_id=egress.proposal_id,
+        decided_by="reviewer",
+        decided_at="2026-09-12T11:00:00.000000Z",
+        rationale="the feed was stale",
+    )
+    asked: list[str] = []
+
+    def found(self: RefusalIndex, _instance: Any, proposal_id: str) -> dict[str, Any]:
+        asked.append(proposal_id)
+        return {child.path: (receipt,)}  # type: ignore[dict-item]
+
+    monkeypatch.setattr(RefusalIndex, "prior_refusals", found)
+    assert state.run_id is not None
+    again = service_get_playbill_procedure_run(instance, run_id=state.run_id)
+
+    assert asked == [egress.proposal_id]
+    (served,) = again.terminal_egress[0].children
+    assert served.prior_refusals == (receipt,)

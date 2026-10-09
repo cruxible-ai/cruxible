@@ -40,6 +40,7 @@ from cruxible_client.contracts.errors import (
     CruxibleError,
     ExecutionError,
     ProjectionIntegrityError,
+    ProposalNotFoundError,
 )
 from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
@@ -2844,8 +2845,44 @@ def _state_from_records(
         children=tuple(children),
         source_observations=observations,
         terminal_egress=tuple(
-            sorted(terminal_egress.values(), key=lambda item: item.node_id.encode("utf-8"))
+            sorted(
+                (_with_prior_refusals(instance, item) for item in terminal_egress.values()),
+                key=lambda item: item.node_id.encode("utf-8"),
+            )
         ),
+    )
+
+
+def _with_prior_refusals(
+    instance: PlaybillInstance, egress: ProcedureTerminalEgress
+) -> ProcedureTerminalEgress:
+    """Attach to each delivered proposal item its earlier refusals, as recorded.
+
+    A proposed Claim whose statement, on the same evidence, was retired or
+    rejected before its proposal was admitted carries the receipts; nothing
+    else about the run changes.
+    """
+
+    if egress.proposal_id is None or egress.kind not in {
+        "propose_change_set",
+        "settle_change_set",
+    }:
+        return egress
+    try:
+        receipts = instance.refusal_index().prior_refusals(instance, egress.proposal_id)
+    except ProposalNotFoundError:
+        return egress
+    if not receipts:
+        return egress
+    return egress.model_copy(
+        update={
+            "children": tuple(
+                child.model_copy(update={"prior_refusals": receipts[child.path]})
+                if child.path in receipts
+                else child
+                for child in egress.children
+            )
+        }
     )
 
 

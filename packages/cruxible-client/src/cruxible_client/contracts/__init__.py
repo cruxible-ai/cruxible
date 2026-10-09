@@ -232,6 +232,7 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.read_values import TruncatedText as TruncatedText
 from cruxible_client.contracts.read_values import WholeValueRead as WholeValueRead
+from cruxible_client.contracts.refusal_receipts import PriorRefusalReceipt as PriorRefusalReceipt
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReference as ClaimVersionReference,
 )
@@ -811,6 +812,8 @@ class ReviewedMember(BaseModel):
     law_digest: str
     law_evidence: dict[str, Any]
     dependency_proof_refs: list[dict[str, Any]]
+    # Earlier refusals of this Claim's statement on the same evidence, as recorded.
+    prior_refusals: list[PriorRefusalReceipt] = Field(default_factory=list)
 
 
 class ProjectionAdvisory(BaseModel):

@@ -2476,7 +2476,10 @@ request, or by a caller who is not a registered principal (an auth-off daemon's 
 `operator`, say), has no such rows. The repair is
 `cruxible proposal approve PROPOSAL_ID --signer-id PRINCIPAL`. Add
 `--key` with the path to your signing key: it stays in your own custody and the
-daemon never learns where. Your approval closes the row. So does another
+daemon never learns where. When the candidate's Claims match earlier refusals
+(see [Earlier refusals of the same statement](#earlier-refusals-of-the-same-statement)),
+the row's detail counts them as `prior_refusal_count`, on this row and on the
+stale and awaiting-activation rows alike. Your approval closes the row. So does another
 signer's approval that meets the requirement first, because the candidate then
 needs activation, not more approval. A compiler upgrade settles only with at
 least one signed approval, even under a policy that asks for none, so while it
@@ -3090,8 +3093,33 @@ terminal reason `rejected`, and every settlement door (approve, activate,
 readmit) then refuses `cruxible.proposal_rejected` naming who rejected it, when,
 and why. A proposal's own actor withdraws rather than rejects; rejecting an
 already-rejected proposal repeats the first answer, and a withdrawn proposal
-cannot also be rejected. A rejection is not remembered against a later proposal
-of the same change.
+cannot also be rejected. The rejection record keys each Claim the candidate
+proposed (`refused_claims`): its statement and the exact Captures it cites.
+
+### Earlier refusals of the same statement
+
+When a proposed Claim's statement (subject, predicate, qualifier, object) and
+the exact set of Captures it cites match a Claim retired earlier, for any
+reason, or a Claim of a proposal a reviewer rejected earlier, the proposal
+carries a typed receipt of each such decision, exactly as recorded:
+`prior_refusals` on each member of `proposal review --json`, and on each child
+of a Procedure run's terminal egress. A receipt names the kind
+(`claim_retired` or `proposal_rejected`), the prior Claim, the proposal that
+retired or proposed it, who decided and when, the recorded reason code (a
+retirement's reason; a rejection records none) and rationale, and the
+producing Procedure when the Claim names one. "Earlier" means before this
+proposal was admitted. `proposal review` lists them, and the `next` rows of an
+open proposal count them as `prior_refusal_count`.
+
+Cruxible resurfaces; it does not judge. A receipt never refuses a proposal, never
+changes settlement, and is never interpreted: reading it is the reviewer's or
+the agent's job. New evidence is a new question, so a Claim citing any other
+Captures matches nothing; a Procedure run's own fetched Capture is new evidence
+on every run, so its items match only when they cite the same retained Capture
+(a Line's admitted trigger input, or an explicitly selected Capture). A
+withdrawal is not a refusal. The lookup is a keyed index the daemon maintains
+as generations are accepted and as proposals are rejected; it is derived, and
+rebuilt from accepted history and rejection records when missing.
 
 approve signs locally. The private-key path is not sent to the daemon.
 Activation is a daemon act and writes nothing locally; it returns the

@@ -26,6 +26,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlan,
 )
+from cruxible_client.contracts.refusal_receipts import PriorRefusalReceipt
 from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.workspace_file import (
@@ -1053,6 +1054,9 @@ class ProcedureTerminalEgressChild(_StrictResultModel):
     manifest_digest: str
     egress_digest: str | None = None
     path: str | None = None
+    # A delivered proposal item whose statement, on the same evidence, was
+    # retired or rejected before: each earlier refusal, exactly as recorded.
+    prior_refusals: tuple[PriorRefusalReceipt, ...] = ()
 
     _digests = field_validator("manifest_digest")(_digest)
 

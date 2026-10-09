@@ -4520,6 +4520,20 @@ def _document_items(
     return tuple(items)
 
 
+def _prior_refusal_detail(instance: PlaybillInstance, proposal_id: str) -> dict[str, object]:
+    """How many earlier refusals a proposal's Claims match, when any do.
+
+    A neutral count of receipts (`proposal review` shows each, as recorded); the
+    row's reason and repair do not change.
+    """
+
+    count = sum(
+        len(receipts)
+        for receipts in instance.refusal_index().prior_refusals(instance, proposal_id).values()
+    )
+    return {"prior_refusal_count": count} if count else {}
+
+
 def _proposal_items(
     instance: PlaybillInstance,
     *,
@@ -4555,6 +4569,7 @@ def _proposal_items(
             "candidate_parent_semantic_root": proposal.candidate_parent_semantic_root,
             "accepted_semantic_root": coordinate.semantic_root,
             "target_ref": proposal.target_ref,
+            **_prior_refusal_detail(instance, proposal.proposal_id),
         }
         required_change = "readmit_as_its_author_or_withdraw_the_stale_proposal"
         # A settle terminal's proposal says how it was submitted. A delegated
@@ -4630,6 +4645,7 @@ def _approval_items(
                 "eligible_approvals": proposal.eligible_approvals,
                 "minimum_distinct_signers": proposal.minimum_distinct_signers,
                 "target_ref": proposal.target_ref,
+                **_prior_refusal_detail(instance, proposal.proposal_id),
             },
             repair=PlaybillNextRepairV1(
                 operation="cruxible.proposal.approve",
@@ -4686,6 +4702,7 @@ def _activation_items(
                 "candidate_digest": proposal.candidate_digest,
                 "approvals": proposal.approvals,
                 "target_ref": proposal.target_ref,
+                **_prior_refusal_detail(instance, proposal.proposal_id),
             },
             repair=PlaybillNextRepairV1(
                 operation="cruxible.proposal.activate",
