@@ -263,11 +263,15 @@ def test_run_reads_use_bounded_index_ranges(tmp_path: Path, monkeypatch) -> None
             limit=1,
         )
         backend.index.select(stream, run_id="RUN-1", event_kind="terminal_egress")
+        backend.index.invocation_runs(stream, bodies=None, invocation_ids=("sha256:" + "0" * 64,))
 
     plans = [
         (sql, plan)
         for sql, plan in _plans(monkeypatch, run)
-        if "FROM records" in sql or "FROM open_runs" in sql or "FROM run_tallies" in sql
+        if "FROM records" in sql
+        or "FROM open_runs" in sql
+        or "FROM run_tallies" in sql
+        or "FROM invocation_pending" in sql
     ]
     assert len(plans) >= 10
     for sql, plan in plans:
@@ -284,6 +288,13 @@ def test_run_reads_use_bounded_index_ranges(tmp_path: Path, monkeypatch) -> None
     assert counts and all("records" not in " ".join(plan) for plan in counts)
     occurrence = next(plan for sql, plan in plans if "occurrence_id=" in sql)
     assert any("records_occurrence" in line for line in occurrence), occurrence
+    # The pending-start catch-up is driven by the pending rows of the stream:
+    # empty, it visits nothing else.
+    pending = next(plan for sql, plan in plans if "FROM invocation_pending p" in sql)
+    assert pending[0].startswith(
+        "SEARCH p USING COVERING INDEX invocation_pending_stream (stream=?)"
+    ), pending
+    assert not any("records_stream_position" in line for line in pending), pending
     running = [plan for sql, plan in plans if "open_runs o" in sql]
     assert len(running) == 2
     assert all(plan[0].startswith("SEARCH o USING COVERING INDEX open_runs") for plan in running)

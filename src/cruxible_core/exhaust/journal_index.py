@@ -38,7 +38,7 @@ _R = TypeVar("_R")
 #: Bumped whenever a table or index changes shape: an index file written under
 #: another version is dropped and rebuilt from the retained journal, which is
 #: the authority (this file is a disposable cache).
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 _TABLES = (
     "capture_selectors",
     "capture_progress",
@@ -89,10 +89,12 @@ CREATE TABLE IF NOT EXISTS invocation_locators (
  invocation_id TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS invocation_by_id ON invocation_locators(invocation_id, record_id);
 CREATE TABLE IF NOT EXISTS invocation_pending (
- record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE);
+ record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
+ stream TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS invocation_pending_stream ON invocation_pending(stream, record_id);
 CREATE TRIGGER IF NOT EXISTS records_invocation_started AFTER INSERT ON records
  WHEN new.event_kind='provider_invocation_started' BEGIN
- INSERT INTO invocation_pending VALUES(new.id);
+ INSERT INTO invocation_pending VALUES(new.id, new.stream);
 END;
 -- Admissions whose run has no attempt_finalized record yet, keyed by the
 -- admission row: running runs are read without visiting finished ones.
@@ -731,8 +733,11 @@ class JournalIndex:
         with self.connection() as conn:
             while True:
                 pending = conn.execute(
-                    "SELECT r.* FROM invocation_pending p JOIN records r ON r.id=p.record_id "
-                    "WHERE r.stream=? ORDER BY p.record_id LIMIT 1024",
+                    # Driven by the pending rows of this stream: when none are
+                    # pending, nothing else is visited.
+                    "SELECT r.* FROM invocation_pending p INDEXED BY invocation_pending_stream "
+                    "JOIN records r ON r.id=p.record_id "
+                    "WHERE p.stream=? ORDER BY p.record_id LIMIT 1024",
                     (_key(stream),),
                 ).fetchall()
                 if not pending:
