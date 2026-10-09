@@ -2878,19 +2878,22 @@ def _with_prior_refusals(
     }:
         return egress
     try:
-        receipts = instance.refusal_index().prior_refusals(instance, egress.proposal_id)
+        receipts, coverage = instance.refusal_index().prior_refusals_with_coverage(
+            instance, egress.proposal_id
+        )
     except ProposalNotFoundError:
         return egress
-    if not receipts:
+    if not receipts and coverage is None:
         return egress
     return egress.model_copy(
         update={
+            "prior_refusal_coverage": coverage,
             "children": tuple(
                 child.model_copy(update={"prior_refusals": receipts[child.path]})
                 if child.path in receipts
                 else child
                 for child in egress.children
-            )
+            ),
         }
     )
 

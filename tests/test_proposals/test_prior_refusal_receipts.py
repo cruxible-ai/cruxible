@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections import Counter
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,7 @@ REJECTED_AT = "2026-08-16T20:30:00.000000Z"
 RETIRED_AT = "2026-08-16T20:40:00.000000Z"
 LATER = "2026-08-16T20:50:00.000000Z"
 ACCESS = BodyAccessContext(principal_id="reviewer", can_read_body=True)
+TIMESTAMP_AT = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
 
 
 def _propose(
@@ -784,3 +786,105 @@ def test_a_rejection_recorded_under_an_earlier_domain_is_rekeyed(
     )
     (receipt,) = _receipts(instance, again)
     assert receipt.rationale == "the feed was stale that day"
+
+
+# --- F-009 / F-010: bounded maintenance on reads; non-waiting steps never repair ---
+
+
+def test_a_read_indexes_one_bounded_page_and_says_how_far(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retirement backlog is indexed a page per read; until current, reads say so."""
+
+    from cruxible_core.proposals import refusal_index as module
+    from cruxible_core.service.procedures.settled_refusals import count_settled_refusals_step
+
+    monkeypatch.setattr(module, "RETIREMENT_PAGE", 3)
+    instance, owner = seed_claims(tmp_path)
+    accepted = _propose(instance, "wi-44", "ready", body=b"status: ready (44)", rationale="A.")
+    activate(instance, owner, accepted)
+    index = instance.refusal_index()
+    index.catch_up(instance)  # built and current
+    # A backlog: the matching retirement first, then unrelated generations.
+    _retire(instance, owner, _claim_id(accepted), "was-wrong")
+    for number in range(7):
+        other = _propose(
+            instance,
+            f"wi-{200 + number}",
+            "ready",
+            body=f"status: ready ({200 + number})".encode(),
+            rationale=f"Other {number}.",
+        )
+        activate(instance, owner, other)
+    head = instance.accepted_history()[-1].sequence
+    again = _cite(
+        instance, "wi-44", "ready", capture_digest=accepted.capture_digest, rationale="Again."
+    )
+
+    before = index.generations_indexed
+    receipts, coverage = index.prior_refusals_with_coverage(instance, _proposal_id(again))
+    # One read: at most one page, and a typed note of how far it reaches.
+    assert index.generations_indexed - before <= 3
+    assert coverage is not None and coverage.accepted_generation >= head
+    assert coverage.indexed_through_generation < coverage.accepted_generation
+    review = service_review_playbill_proposal(
+        instance, proposal_id=_proposal_id(again), access=ACCESS
+    )
+    assert "Earlier refusals are being indexed" in render_playbill_proposal_review_pointer(review)
+    # While retirements lag, a counting step spends itself on a page and counts nothing.
+    step = count_settled_refusals_step(instance, wait=True)
+    assert (step.ran, step.records, step.more) in {(True, 0, True), (True, 0, False)}
+
+    # Later reads resume a page at a time until current.
+    reads = 0
+    while coverage is not None:
+        before = index.generations_indexed
+        receipts, coverage = index.prior_refusals_with_coverage(instance, _proposal_id(again))
+        assert index.generations_indexed - before <= 3
+        reads += 1
+        assert reads < 10
+    ((receipt,),) = receipts.values()
+    assert (receipt.kind, receipt.reason_code) == ("claim_retired", "was-wrong")
+    review = service_review_playbill_proposal(
+        instance, proposal_id=_proposal_id(again), access=ACCESS
+    )
+    assert review.prior_refusal_coverage is None
+
+
+def test_a_cold_incompatible_busy_index_skips_a_post_step_without_repair(
+    tmp_path: Path,
+) -> None:
+    """F-010: a non-waiting step opens without waiting and never repairs the layout."""
+
+    import time
+
+    from cruxible_core.consumers.next import settled_refusals as part
+    from cruxible_core.service.procedures.settled_refusals import count_settled_refusals_step
+
+    instance, _owner = seed_claims(tmp_path)
+    index = instance.refusal_index()
+    index.catch_up(instance)
+    index.close()
+    del instance.__dict__["_refusal_index"]  # a restart: no warm connection
+    with sqlite3.connect(index.path) as connection:
+        connection.execute("CREATE TABLE stray (x INTEGER)")
+    other = sqlite3.connect(index.path, isolation_level=None)
+    other.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        step = count_settled_refusals_step(instance)
+        assert part._PART.due(instance, now=TIMESTAMP_AT) == ()
+        (health,) = part._PART.health(instance, now=TIMESTAMP_AT)
+        assert time.monotonic() - started < 1.0
+        assert step.ran is False and health.state == "running"
+    finally:
+        other.execute("ROLLBACK")
+        other.close()
+    with sqlite3.connect(f"file:{index.path}?mode=ro", uri=True) as connection:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master")}
+    assert "stray" in tables  # nothing repaired, dropped or created by the step
+    # A read allowed to wait repairs it.
+    instance.refusal_index().catch_up(instance)
+    with sqlite3.connect(f"file:{index.path}?mode=ro", uri=True) as connection:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master")}
+    assert "stray" not in tables

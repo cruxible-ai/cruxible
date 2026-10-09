@@ -1,9 +1,10 @@
 """Count settled items matching earlier refusals in post, within the next consumer.
 
 Settle delivery does nothing for `next`'s ``line_settled_prior_refusals`` row.
-Each tick, when the run journal holds settle-terminal records past the refusal
-index's persisted cursor, one bounded step counts them
-(`count_settled_refusals_step`). A busy or unbuilt index skips the tick; the
+Each tick, when retirements are not yet indexed through the accepted head, or
+the run journal holds settle-terminal records past the refusal index's
+persisted cursor, bounded steps index the next retirement page or count the
+next records (`count_settled_refusals_step`). A busy or unbuilt index skips the tick; the
 cursor makes that lossless, and nothing is held in memory.
 """
 
@@ -20,13 +21,20 @@ STEPS_PER_WORK = 4
 
 
 def _behind(instance: Any) -> bool | None:
-    """Whether settle records wait past the cursor; ``None`` when that is unknown now."""
+    """Whether retirements or settle records wait past the index; ``None`` if unknown.
+
+    A read-only look that never acts or waits: it reads the index's progress and
+    cursor through its own read-only connection.
+    """
 
     from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 
-    cursor = instance.refusal_index().settled_cursor(instance, wait=False)
-    if cursor is None:
+    peeked = instance.refusal_index().peek(instance)
+    if peeked is None:
         return None
+    indexed_through, cursor = peeked
+    if indexed_through < instance.accepted_history()[-1].sequence:
+        return True
     journal, _root = _journal(instance)
     identity, page = journal.index.kind_after(
         _stream(instance), event_kind="terminal_egress", after=cursor.record_id, limit=1

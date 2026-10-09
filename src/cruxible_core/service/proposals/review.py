@@ -32,7 +32,10 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import ApprovalIntegrityError, ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import ProposalResult
-from cruxible_client.contracts.refusal_receipts import PriorRefusalReceipt
+from cruxible_client.contracts.refusal_receipts import (
+    PriorRefusalCoverage,
+    PriorRefusalReceipt,
+)
 from cruxible_client.contracts.semantic import SourceMapping, whole_body_mapping
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_client.contracts.types import PrincipalRecord
@@ -155,6 +158,9 @@ class ProposalReview(_StrictReviewModel):
     redactions: tuple[str, ...]
     projection_advisory: ProjectionAdvisory | None = None
     projection_evidence: ProjectionEvidence | None = None
+    # Present only while the earlier-refusal index is catching up: members'
+    # receipts then reflect retirements accepted through the generation named.
+    prior_refusal_coverage: PriorRefusalCoverage | None = None
 
 
 class ApprovalChallenge(_StrictReviewModel):
@@ -521,7 +527,7 @@ def service_review_playbill_proposal(
         for item in approvals
     ]
     redactions = () if access.can_read_body else ("body", "readable_diff", "source_mapping")
-    prior_refusals = instance.refusal_index().prior_refusals(
+    prior_refusals, prior_refusal_coverage = instance.refusal_index().prior_refusals_with_coverage(
         instance, proposal.admission.proposal_id
     )
     reviewed_members = tuple(
@@ -581,6 +587,7 @@ def service_review_playbill_proposal(
             eligible_coordinates=eligible_coordinates,
         ),
         projection_evidence=projection_evidence,
+        prior_refusal_coverage=prior_refusal_coverage,
     )
 
 
@@ -631,6 +638,16 @@ def _prior_refusal_lines(review: ProposalReview) -> list[str]:
     """Each earlier refusal of a proposed Claim's statement on its evidence, as recorded."""
 
     lines: list[str] = []
+    coverage = review.prior_refusal_coverage
+    if coverage is not None:
+        lines.extend(
+            (
+                "",
+                "Earlier refusals are being indexed: retirements are covered through "
+                f"generation {coverage.indexed_through_generation} of "
+                f"{coverage.accepted_generation}.",
+            )
+        )
     for member in review.members:
         for receipt in member.prior_refusals:
             if not lines:

@@ -6,8 +6,10 @@ records from the journal index after the refusal index's persisted cursor (a
 keyed read by event kind, never a scan), keeps the deliveries whose receipt
 says ``settled``, takes each one's Line version from its run's admission, and
 hands the page to the refusal index, which counts and advances the cursor in
-one transaction. The consumer runner runs a step every tick, and `next` runs a
-bounded catch-up before it reads the Line rows. A busy or unbuilt index skips
+one transaction. While retirements lag (a backlog is indexed one page per
+step), a step spends itself on that page and counts nothing. The consumer
+runner runs steps every tick, and `next` runs a bounded catch-up before it
+reads the Line rows. A busy or unbuilt index skips
 the step; the cursor makes skipping lossless.
 """
 
@@ -50,9 +52,14 @@ def count_settled_refusals_step(
     from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 
     index = instance.refusal_index()
-    cursor = index.settled_cursor(instance, wait=wait)
-    if cursor is None:
+    state = index.settled_state(instance, wait=wait)
+    if state is None:
         return SettledStep(ran=False, records=0, more=False)
+    cursor, coverage = state
+    if coverage is not None:
+        # Retirements are still being indexed (one page per step): count nothing
+        # until the history a settlement's receipts depend on is in.
+        return SettledStep(ran=True, records=0, more=True)
     journal, _root = _journal(instance)
     stream = _stream(instance)
     identity, page = journal.index.kind_after(

@@ -3890,7 +3890,7 @@ def _line_settled_refusal_items(
     # does); a busy index skips the count, and the next read or the consumer's
     # next tick counts what is left, from the persisted cursor.
     index = instance.refusal_index()
-    index.catch_up(instance)
+    coverage = index.coverage(instance)
     catch_up_settled_refusals(instance, steps=NEXT_CATCH_UP_STEPS, wait=False)
     counts = index.settled_refusals(instance, lines)
     items: list[PlaybillNextItemV1] = []
@@ -3910,6 +3910,11 @@ def _line_settled_refusal_items(
                     "settled_runs": found.runs,
                     "latest_run_id": found.latest_run_id,
                     "latest_settled_at": found.latest_settled_at,
+                    **(
+                        {}
+                        if coverage is None
+                        else {"counted_through_generation": coverage.indexed_through_generation}
+                    ),
                     "detail": (
                         f"{found.line_identity} settled {found.items} item"
                         f"{'s' if found.items != 1 else ''} that match earlier refusals "
@@ -4656,11 +4661,15 @@ def _prior_refusal_detail(instance: PlaybillInstance, proposal_id: str) -> dict[
     row's reason and repair do not change.
     """
 
-    count = sum(
-        len(receipts)
-        for receipts in instance.refusal_index().prior_refusals(instance, proposal_id).values()
+    receipts, coverage = instance.refusal_index().prior_refusals_with_coverage(
+        instance, proposal_id
     )
-    return {"prior_refusal_count": count} if count else {}
+    count = sum(len(items) for items in receipts.values())
+    detail: dict[str, object] = {"prior_refusal_count": count} if count else {}
+    if coverage is not None:
+        # Neutral: the count covers retirements through this generation only.
+        detail["prior_refusals_indexed_through"] = coverage.indexed_through_generation
+    return detail
 
 
 def _proposal_items(

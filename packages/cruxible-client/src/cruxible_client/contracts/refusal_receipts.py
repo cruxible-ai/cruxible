@@ -181,7 +181,27 @@ class PriorRefusalReceipt(_StrictRefusalModel):
         return self
 
 
+class PriorRefusalCoverage(_StrictRefusalModel):
+    """How far earlier retirements were indexed when receipts were read.
+
+    Present only while the index is catching up: receipts then reflect
+    retirements accepted through ``indexed_through_generation`` of
+    ``accepted_generation``. Rejections are always current.
+    """
+
+    tag: Literal["cruxible-prior-refusal-coverage-v1"] = "cruxible-prior-refusal-coverage-v1"
+    indexed_through_generation: int = Field(ge=0)
+    accepted_generation: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _behind(self) -> "PriorRefusalCoverage":
+        if self.indexed_through_generation >= self.accepted_generation:
+            raise ValueError("coverage is reported only while the index is behind")
+        return self
+
+
 __all__ = [
+    "PriorRefusalCoverage",
     "CLAIM_REFUSAL_MATCH_KEY_DOMAIN",
     "PriorRefusalKind",
     "PriorRefusalReceipt",

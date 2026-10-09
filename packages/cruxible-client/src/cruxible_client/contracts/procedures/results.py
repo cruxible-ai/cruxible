@@ -26,7 +26,10 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlan,
 )
-from cruxible_client.contracts.refusal_receipts import PriorRefusalReceipt
+from cruxible_client.contracts.refusal_receipts import (
+    PriorRefusalCoverage,
+    PriorRefusalReceipt,
+)
 from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.workspace_file import (
@@ -1127,6 +1130,9 @@ class ProcedureTerminalEgress(_StrictResultModel):
     # A settle terminal the run's authority capped at propose: the term that
     # capped it. Its request asked for propose authority only.
     capped_by: ServedAuthorityTerm | None = None
+    # Present only while the earlier-refusal index is catching up: the
+    # children's receipts reflect retirements through the generation named.
+    prior_refusal_coverage: PriorRefusalCoverage | None = None
     # A post_inbox terminal that selected more items than its run may post.
     inbox_truncation: InboxPostTruncation | None = Field(
         default=None, exclude_if=lambda value: value is None

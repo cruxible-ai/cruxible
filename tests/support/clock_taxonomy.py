@@ -436,6 +436,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProposalWithdrawResult", "withdrawn_at"): "ASSERTION TIME",
     ("PlaybillProposalRejectResultV1", "rejected_at"): "ASSERTION TIME",
     ("PriorRefusalReceipt", "decided_at"): "ASSERTION TIME",
+    ("PriorRefusalCoverage", "indexed_through_generation"): "SETTLEMENT ORDER",
+    ("PriorRefusalCoverage", "accepted_generation"): "SETTLEMENT ORDER",
     ("LineSettledRefusals", "latest_settled_at"): "EVALUATION INSTANT",
     ("SettledDelivery", "settled_at"): "EVALUATION INSTANT",
     ("ProposalRejectResult", "rejected_at"): "ASSERTION TIME",

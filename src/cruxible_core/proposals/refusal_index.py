@@ -46,7 +46,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeAlias, TypeVar, cast
 
 import structlog
 
@@ -67,6 +67,7 @@ from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityErr
 from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
 from cruxible_client.contracts.refusal_receipts import (
     CLAIM_REFUSAL_MATCH_KEY_DOMAIN,
+    PriorRefusalCoverage,
     PriorRefusalReceipt,
     RefusedClaim,
     RefusedClaimKeyV1,
@@ -337,6 +338,11 @@ def _rejection_keys(
 
 
 _BUSY_TIMEOUT_MS = 5000
+_ReceiptsRead: TypeAlias = tuple[
+    dict[str, tuple[PriorRefusalReceipt, ...]], PriorRefusalCoverage | None
+]
+#: Accepted generations one catch-up indexes before returning (each its own transaction).
+RETIREMENT_PAGE = 64
 
 
 class _Deferred(Exception):
@@ -385,6 +391,8 @@ class RefusalIndex:
         self._finalizer = weakref.finalize(self, _close_all, self._open)
         self._closing: dict[str, threading.Lock] = {}
         self._no_wait = False
+        # Set by every catch-up: how far retirements are indexed, while lagging.
+        self._coverage: PriorRefusalCoverage | None = None
         # Work counters, for counted-work tests.
         self.generations_indexed = 0
         self.rebuilds = 0
@@ -397,11 +405,28 @@ class RefusalIndex:
     # -- connections ------------------------------------------------------
 
     def _writer(self) -> sqlite3.Connection:
-        connection = self._open_writer()
-        if self._no_wait:
-            # A background step gives up at once on contention instead of waiting.
-            connection.execute("PRAGMA busy_timeout=0")
-        return connection
+        if not self._no_wait:
+            return self._open_writer()
+        if self._connection is None:
+            # A non-waiting caller opens without waiting, and never builds,
+            # repairs, drops or creates the layout: anything but the exact
+            # schema is left to a reader allowed to wait.
+            if not self.path.exists():
+                raise _Deferred("index_not_built")
+            connection = sqlite3.connect(
+                self.path, check_same_thread=False, isolation_level=None, timeout=0
+            )
+            try:
+                if _schema(connection) != _expected_schema():
+                    raise _Deferred("index_layout_needs_repair")
+            except BaseException:
+                connection.close()
+                raise
+            self._open.append(connection)
+            self._connection = connection
+        # A non-waiting caller gives up at once on contention.
+        self._connection.execute("PRAGMA busy_timeout=0")
+        return self._connection
 
     def _open_writer(self) -> sqlite3.Connection:
         if self._connection is None:
@@ -513,7 +538,7 @@ class RefusalIndex:
                                 ":memory:", check_same_thread=False, isolation_level=None
                             )
                     memory.executescript(_SCHEMA)
-                    self._catch_up(memory, instance)
+                    self._coverage = self._catch_up(memory, instance)
                     yield memory
                 finally:
                     memory.close()
@@ -521,7 +546,7 @@ class RefusalIndex:
             connection = self._writer()
             connection.execute("BEGIN IMMEDIATE")
             try:
-                self._catch_up(connection, instance)
+                self._coverage = self._catch_up(connection, instance)
                 connection.execute("COMMIT")
             except BaseException:
                 with suppress(sqlite3.Error):
@@ -540,14 +565,19 @@ class RefusalIndex:
 
         self._recovering("catch_up", run, None)
 
-    def _catch_up(self, connection: sqlite3.Connection, instance: PlaybillInstance) -> None:
+    def _catch_up(
+        self, connection: sqlite3.Connection, instance: PlaybillInstance
+    ) -> PriorRefusalCoverage | None:
         """Bring the retirement rows to the accepted head, through the history index.
 
-        Caught up, this reads one generation locator. Behind, it indexes each
-        newer generation from its change-set record. With no progress (a new
-        or foreign file) it rebuilds: every retired Claim at the head, from the
-        accepted projection, plus every rejection record -- never by walking
-        accepted history.
+        Caught up, this reads one generation locator. Behind, it indexes at most
+        one page (`RETIREMENT_PAGE` generations) from their change-set records
+        and records its progress, so one call's work is bounded whatever the
+        backlog; the background step drives the rest, a page per transaction.
+        Returns the coverage while the index still lags the head (``None`` once
+        caught up). With no progress (a new or foreign file) it rebuilds: every
+        retired Claim at the head, from the accepted projection, plus every
+        rejection record -- never by walking accepted history.
         """
 
         instance_id = instance.descriptor.instance_id
@@ -564,7 +594,7 @@ class RefusalIndex:
                 and progress[2] == head.generation_root
                 and progress[3] == CLAIM_REFUSAL_MATCH_KEY_DOMAIN
             ):
-                return
+                return None
             if self._no_wait and (progress is None or progress[0] != instance_id):
                 raise _Deferred("index_needs_rebuild")
             if (
@@ -577,12 +607,26 @@ class RefusalIndex:
                 if self._no_wait:
                     raise _Deferred("index_needs_rebuild")
                 self._rebuild(connection, instance, evidence, history)
+                through = head
             else:
-                for sequence in range(progress[1] + 1, head.sequence + 1):
+                last = min(head.sequence, progress[1] + RETIREMENT_PAGE)
+                for sequence in range(progress[1] + 1, last + 1):
                     self._index_generation(connection, instance, evidence, history, sequence)
+                through = history.generation(last)
         connection.execute(
             "INSERT OR REPLACE INTO refusal_progress VALUES (1,?,?,?,?)",
-            (instance_id, head.sequence, head.generation_root, CLAIM_REFUSAL_MATCH_KEY_DOMAIN),
+            (
+                instance_id,
+                through.sequence,
+                through.generation_root,
+                CLAIM_REFUSAL_MATCH_KEY_DOMAIN,
+            ),
+        )
+        if through.sequence == head.sequence:
+            return None
+        return PriorRefusalCoverage(
+            indexed_through_generation=through.sequence,
+            accepted_generation=head.sequence,
         )
 
     def _rebuild(
@@ -800,15 +844,49 @@ class RefusalIndex:
     def settled_cursor(self, instance: PlaybillInstance, *, wait: bool) -> SettledCursor | None:
         """Where counting stands; ``None`` when this step should skip (busy, or unbuilt)."""
 
-        def read(connection: sqlite3.Connection) -> SettledCursor:
-            row = connection.execute(
-                "SELECT journal_identity,record_id FROM settled_cursor"
-            ).fetchone()
-            return (
-                SettledCursor(None, 0) if row is None else SettledCursor(str(row[0]), int(row[1]))
-            )
+        state = self.settled_state(instance, wait=wait)
+        return None if state is None else state[0]
 
-        return self._step(instance, "settled_cursor", read, wait=wait)
+    def settled_state(
+        self, instance: PlaybillInstance, *, wait: bool
+    ) -> tuple[SettledCursor, PriorRefusalCoverage | None] | None:
+        """The cursor after one bounded retirement page, and the coverage if still behind.
+
+        Counting waits for the retirements before it: a step that finds the
+        index lagging spends itself on the page and counts nothing yet.
+        """
+
+        def read(
+            connection: sqlite3.Connection,
+        ) -> tuple[SettledCursor, PriorRefusalCoverage | None]:
+            return _cursor(connection), self._coverage
+
+        return self._step(instance, "settled_state", read, wait=wait)
+
+    def peek(self, instance: PlaybillInstance) -> tuple[int, SettledCursor] | None:
+        """Retirements indexed through, and the counting cursor: a read-only look.
+
+        Opens its own read-only connection without waiting and changes nothing,
+        so consumer scheduling and health never act or block. ``None`` when the
+        file is missing, busy, or not in this layout.
+        """
+
+        if not self.path.exists():
+            return None
+        try:
+            connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=0)
+        except sqlite3.Error:
+            return None
+        try:
+            if _schema(connection) != _expected_schema():
+                return None
+            progress = connection.execute("SELECT sequence FROM refusal_progress").fetchone()
+            cursor = _cursor(connection)
+        except sqlite3.Error:
+            return None
+        finally:
+            connection.close()
+        return None if progress is None else (int(progress[0]), cursor)
 
     def advance_settled(
         self,
@@ -835,14 +913,7 @@ class RefusalIndex:
             }
             connection.execute("BEGIN IMMEDIATE")
             try:
-                row = connection.execute(
-                    "SELECT journal_identity,record_id FROM settled_cursor"
-                ).fetchone()
-                current = (
-                    SettledCursor(None, 0)
-                    if row is None
-                    else SettledCursor(str(row[0]), int(row[1]))
-                )
+                current = _cursor(connection)
                 if current != expected:
                     connection.execute("ROLLBACK")
                     return False
@@ -1024,9 +1095,33 @@ class RefusalIndex:
         own rejection.
         """
 
-        return self._recovering(
-            "prior_refusals", lambda: self._prior_refusals_now(instance, proposal_id), {}
-        )
+        return self.prior_refusals_with_coverage(instance, proposal_id)[0]
+
+    def prior_refusals_with_coverage(
+        self, instance: PlaybillInstance, proposal_id: str
+    ) -> tuple[dict[str, tuple[PriorRefusalReceipt, ...]], PriorRefusalCoverage | None]:
+        """`prior_refusals`, and how far retirements were indexed when it was read.
+
+        The coverage is ``None`` when the index is current. While it lags (a
+        backlog is indexed a page per read and by the background step), the
+        receipts reflect retirements accepted through the generation it names
+        -- the caller says so, neutrally, rather than implying there are none.
+        """
+
+        def run() -> _ReceiptsRead:
+            found = self._prior_refusals_now(instance, proposal_id)
+            return found, self._coverage
+
+        return self._recovering("prior_refusals", run, cast(_ReceiptsRead, ({}, None)))
+
+    def coverage(self, instance: PlaybillInstance) -> PriorRefusalCoverage | None:
+        """One bounded catch-up page; how far retirements are indexed if still behind."""
+
+        def run() -> PriorRefusalCoverage | None:
+            with self.current(instance):
+                return self._coverage
+
+        return self._recovering("coverage", run, None)
 
     def _prior_refusals_now(
         self, instance: PlaybillInstance, proposal_id: str
@@ -1073,6 +1168,13 @@ def _retiring_sequence(instance: PlaybillInstance, history: HistoryReader, path:
         if content is not None and parse_claim(content, path=path).lifecycle.state == "retired":
             return location.sequence
     return None
+
+
+def _cursor(connection: sqlite3.Connection) -> SettledCursor:
+    row = connection.execute("SELECT journal_identity,record_id FROM settled_cursor").fetchone()
+    if row is None:
+        return SettledCursor(None, 0)
+    return SettledCursor(None if row[0] is None else str(row[0]), int(row[1]))
 
 
 def _close_all(connections: list[sqlite3.Connection]) -> None:

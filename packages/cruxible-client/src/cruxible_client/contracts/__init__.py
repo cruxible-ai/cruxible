@@ -272,6 +272,9 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.read_values import TruncatedText as TruncatedText
 from cruxible_client.contracts.read_values import WholeValueRead as WholeValueRead
+from cruxible_client.contracts.refusal_receipts import (
+    PriorRefusalCoverage as PriorRefusalCoverage,
+)
 from cruxible_client.contracts.refusal_receipts import PriorRefusalReceipt as PriorRefusalReceipt
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReference as ClaimVersionReference,
@@ -930,6 +933,7 @@ class ProposalReview(BaseModel):
     redactions: list[str]
     projection_advisory: ProjectionAdvisory | None = None
     projection_evidence: ProjectionEvidence | None = None
+    prior_refusal_coverage: PriorRefusalCoverage | None = None
 
 
 class ApprovalChallenge(BaseModel):
