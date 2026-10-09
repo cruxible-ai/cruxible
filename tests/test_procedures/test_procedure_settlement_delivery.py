@@ -648,6 +648,48 @@ def test_a_crashed_settlement_recovers_one_accepted_result(
     )
 
 
+def test_a_crashed_settlement_whose_head_moved_recovers_as_refused(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A stale proposal is a typed publication refusal, not stranded recovery."""
+
+    from cruxible_core.service.procedures.procedure_runs import service_get_playbill_procedure_run
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, root, line = settle_world(tmp_path)
+    _crash_settle(monkeypatch, after_activation=False)
+    with pytest.raises(_Crash):
+        run_settle(instance, root, line)
+    monkeypatch.undo()
+    moved = _subject().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="Subject", name=f"{SUBJECT_KIND}/moved-on"),
+            "subject_id": "moved-on",
+        }
+    )
+    fixtures._accept_more(
+        instance,
+        OWNERS[instance.root],
+        {subject_path(SUBJECT_KIND, "moved-on"): render_subject(moved)},
+        name="head-moves-on",
+    )
+    generations = len(instance.accepted_history())
+
+    recovered = service_recover_proposal_egress(
+        instance, recorded_at=fixtures.NOW + timedelta(minutes=1)
+    )
+    ((run_id, disposition),) = recovered.items()
+    assert disposition == "refused"
+    assert len(instance.accepted_history()) == generations
+    (egress,) = service_get_playbill_procedure_run(instance, run_id=run_id).terminal_egress
+    assert egress.verdict == "refused"
+    # Finalized: recovery has nothing left to do.
+    assert (
+        service_recover_proposal_egress(instance, recorded_at=fixtures.NOW + timedelta(minutes=2))
+        == {}
+    )
+
+
 def _fallback_codes(egress: Any) -> set[str]:
     return set((egress.fallback_reason or "").split(", "))
 
