@@ -2103,6 +2103,82 @@ def playbill_line_evaluate(
     )
 
 
+def playbill_inbox_list(
+    instance_id: str,
+    *,
+    line: str | None = None,
+    status: contracts.InboxItemStatus | None = None,
+    limit: int = contracts.INBOX_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> contracts.InboxList:
+    check_permission("cruxible_inbox_list", instance_id=instance_id)
+    from cruxible_core.service.procedures.line_inbox import service_list_inbox
+
+    return service_list_inbox(
+        get_playbill_manager().get(instance_id),
+        line=line,
+        status=status,
+        limit=limit,
+        cursor=cursor,
+    )
+
+
+def playbill_inbox_get(instance_id: str, item_id: str) -> contracts.InboxItem:
+    check_permission("cruxible_inbox_get", instance_id=instance_id)
+    from cruxible_core.service.procedures.line_inbox import service_get_inbox_item
+
+    return service_get_inbox_item(get_playbill_manager().get(instance_id), item=item_id)
+
+
+def _inbox_actor(instance_id: str) -> GovernedActorContext:
+    actor = _write_actor_context(instance_id)
+    if actor is None:
+        raise AuthenticationError("Inbox dispositions require an authenticated actor identity")
+    return actor
+
+
+def playbill_inbox_ack(instance_id: str, item_id: str) -> contracts.InboxDispositionResult:
+    check_permission("cruxible_inbox_ack", instance_id=instance_id)
+    from cruxible_core.service.procedures.line_inbox import service_acknowledge_inbox_item
+
+    return service_acknowledge_inbox_item(
+        get_playbill_manager().get(instance_id),
+        item=item_id,
+        actor_context=_inbox_actor(instance_id),
+        decided_at=utc_now(),
+    )
+
+
+def playbill_inbox_dismiss(
+    instance_id: str, item_id: str, *, reason: str
+) -> contracts.InboxDispositionResult:
+    check_permission("cruxible_inbox_dismiss", instance_id=instance_id)
+    from cruxible_core.service.procedures.line_inbox import service_dismiss_inbox_item
+
+    return service_dismiss_inbox_item(
+        get_playbill_manager().get(instance_id),
+        item=item_id,
+        reason=reason,
+        actor_context=_inbox_actor(instance_id),
+        decided_at=utc_now(),
+    )
+
+
+def playbill_inbox_link(
+    instance_id: str, item_id: str, *, target: contracts.InboxLinkTarget
+) -> contracts.InboxDispositionResult:
+    check_permission("cruxible_inbox_link", instance_id=instance_id)
+    from cruxible_core.service.procedures.line_inbox import service_link_inbox_item
+
+    return service_link_inbox_item(
+        get_playbill_manager().get(instance_id),
+        item=item_id,
+        target=target,
+        actor_context=_inbox_actor(instance_id),
+        decided_at=utc_now(),
+    )
+
+
 def playbill_line_dispatch(
     instance_id: str, line: str, *, request: contracts.LineDispatchRequest
 ) -> contracts.LineDispatchResult:

@@ -179,6 +179,8 @@ EXPECTED_OPERATIONS = {
     "line_work_pending": "cruxible.line.dispatch",
     # Demoting the Line, or repointing it at a fixed Procedure, is a Line successor.
     "line_settled_prior_refusals": "cruxible.authoring.example",
+    # A Line's unread inbox items: the list shows them; judging each clears the row.
+    "line_inbox_unread": "cruxible.inbox.list",
     # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
     "evidence_unavailable": "hand_edit",
     "prediction_settleable": "cruxible.prediction.settle",
@@ -1778,6 +1780,41 @@ def _line_work_pending(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "line_work_pending", request)
 
 
+def _line_inbox_unread(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from cruxible_core.service.procedures.line_inbox import (
+        service_acknowledge_inbox_item,
+        service_dismiss_inbox_item,
+        service_list_inbox,
+    )
+    from tests.test_procedures.test_line_inbox_delivery import inbox_world
+    from tests.test_procedures.test_manual_line_runs import manual_run
+    from tests.test_procedures.test_procedure_source_runs import NOW, _actor
+
+    instance, workspace, line = inbox_world(root)
+    assert manual_run(instance, line, at=NOW, root=workspace).status == "succeeded"
+    request = _request(instance)
+
+    row = _row(instance, "line_inbox_unread", request)
+    assert row.subject_identity == line.identity.qualified and row.detail["unread"] == 3
+    assert row.repair.command == (
+        f"cruxible inbox list --line {line.identity.name} --status unread"
+    )
+
+    # The named repair lists exactly the Line's unread items; judging each clears the row.
+    listed = service_list_inbox(instance, line=line.identity.name, status="unread", limit=50)
+    assert len(listed.entries) == 3
+    first, *rest = (entry.item.item_id for entry in listed.entries)
+    service_dismiss_inbox_item(
+        instance, item=first, reason="noise", actor_context=_actor(instance), decided_at=NOW
+    )
+    assert _row(instance, "line_inbox_unread", request).detail["unread"] == 2
+    for item in rest:
+        service_acknowledge_inbox_item(
+            instance, item=item, actor_context=_actor(instance), decided_at=NOW
+        )
+    _assert_gone(instance, "line_inbox_unread", request)
+
+
 def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
@@ -1926,6 +1963,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("line_coverage_gap", None): _line_coverage_gap,
     ("line_work_pending", None): _line_work_pending,
     ("line_settled_prior_refusals", None): _line_settled_prior_refusals,
+    ("line_inbox_unread", None): _line_inbox_unread,
     ("evidence_unavailable", None): _evidence_unavailable,
     ("prediction_settleable", None): _prediction_settleable,
     ("prediction_window_unbindable", None): _prediction_window_unbindable,

@@ -128,6 +128,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "line_work_pending",
         # A live Line whose settled items matched earlier refusals.
         "line_settled_prior_refusals",
+        # A Line's unread inbox items, one row per Line with its volume.
+        "line_inbox_unread",
     }
     assert set(get_args(NextRepairOperation)) == {
         "cruxible.authoring.example",
@@ -153,6 +155,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "cruxible.compiler.upgrade",
         "cruxible.line.enable",
         "cruxible.line.dispatch",
+        # The unread inbox row names the list that shows the Line's items.
+        "cruxible.inbox.list",
         "cruxible.prediction.settle",
         "hand_edit",
         "cruxible.line.evaluate",

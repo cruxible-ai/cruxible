@@ -104,10 +104,11 @@ from cruxible_client.contracts.procedures.results import ProcedureHaltTerminal
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.provider_installation import ProviderInstallRequest
+from cruxible_client.contracts.read_values import shown_plain
 from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
-from cruxible_client.contracts.temporal import parse_datetime
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.contracts.write import (
@@ -5692,6 +5693,182 @@ def procedure_readings(
         )
     if result.cursor is not None:
         click.echo(f"Next: --cursor {result.cursor}")
+
+
+@playbill_group.group("inbox")
+def inbox_group() -> None:
+    """Judge what Lines sent to intelligence.
+
+    A Line's post_inbox terminal posts items it could not decide, as they are,
+    with the Captures behind each. Posting never changes accepted state. Read
+    them with list and get, then ack, dismiss (with a reason) or link each to
+    the proposal or Subject that records your judgment. An item that recurs is
+    unread again, its prior disposition still shown.
+    """
+
+
+def _inbox_row(envelope: Any) -> str:
+    seen = f"x{envelope.occurrences}" if envelope.occurrences > 1 else "-"
+    prior = (
+        f" (was {envelope.disposition.disposition})"
+        if envelope.status == "unread" and envelope.disposition is not None
+        else ""
+    )
+    return (
+        f"{envelope.status}{prior}  {envelope.item_id[:16]}  {envelope.line}  {seen}  "
+        f"{format_datetime(envelope.last_sighting.posted_at)}"
+    )
+
+
+@inbox_group.command("list")
+@click.option("--line", default=None, help="Only this Line's items (NAME or Line:NAME).")
+@click.option(
+    "--status",
+    type=click.Choice(["unread", "acknowledged", "dismissed", "linked"]),
+    default=None,
+    help="Only items with this status.",
+)
+@click.option(
+    "--limit",
+    default=contracts.INBOX_LIST_DEFAULT_LIMIT,
+    show_default=True,
+    type=click.IntRange(1, contracts.INBOX_LIST_MAX_LIMIT),
+    help="Items per page.",
+)
+@click.option("--cursor", default=None, help="Continue a previous page of the same listing.")
+@json_option
+@handle_errors
+def inbox_list(
+    line: str | None, status: str | None, limit: int, cursor: str | None, output_json: bool
+) -> None:
+    """List inbox items, most recently posted first."""
+
+    result = _server_call(
+        lambda client, instance_id: client.list_inbox(
+            instance_id, line=line, status=cast(Any, status), limit=limit, cursor=cursor
+        ),
+        command_name="cruxible inbox list",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    if not result.entries:
+        click.echo("No inbox items.")
+        return
+    click.echo("STATUS  ITEM  LINE  SEEN  LAST_POSTED")
+    for entry in result.entries:
+        click.echo(_inbox_row(entry.item))
+        preview = shown_plain(entry.payload_preview)
+        click.echo(f"  {preview if isinstance(preview, str) else json.dumps(preview)}")
+    _echo_list_continuation(result.next_cursor)
+
+
+def _echo_inbox_disposition(result: Any) -> None:
+    click.echo(_inbox_row(result.item) + ("" if result.recorded else "  (unchanged)"))
+
+
+@inbox_group.command("get")
+@click.argument("item_id")
+@json_option
+@handle_errors
+def inbox_get(item_id: str, output_json: bool) -> None:
+    """Read one item whole: envelope, payload as posted, and its latest dispositions."""
+
+    result = _server_call(
+        lambda client, instance_id: client.get_inbox_item(instance_id, item_id),
+        command_name="cruxible inbox get",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    envelope = result.item
+    click.echo(_inbox_row(envelope))
+    click.echo(f"Item: {envelope.item_id}")
+    click.echo(f"Procedure: {envelope.procedure} node {envelope.node_id}")
+    click.echo(f"Seen {envelope.occurrences} time(s)")
+    for label, sighting in (
+        ("First", envelope.first_sighting),
+        *(("Recent", item) for item in envelope.recent_sightings),
+    ):
+        click.echo(
+            f"{label}: {sighting.run_id} at {format_datetime(sighting.posted_at)} captures "
+            f"{', '.join(sighting.source_capture_digests) or '-'}"
+        )
+    if envelope.disposition_count > len(result.recent_dispositions):
+        click.echo(
+            f"Dispositions: latest {len(result.recent_dispositions)} of "
+            f"{envelope.disposition_count}"
+        )
+    for disposition in result.recent_dispositions:
+        detail = getattr(disposition, "reason", None) or (
+            disposition.target.model_dump(mode="json") if hasattr(disposition, "target") else ""
+        )
+        click.echo(
+            f"Disposition: {disposition.disposition} by {disposition.actor_id} at "
+            f"{format_datetime(disposition.decided_at)} {detail}".rstrip()
+        )
+    click.echo(json.dumps(result.payload, indent=2, sort_keys=True))
+
+
+@inbox_group.command("ack")
+@click.argument("item_id")
+@json_option
+@handle_errors
+def inbox_ack(item_id: str, output_json: bool) -> None:
+    """Acknowledge an item: seen, and owed nothing further."""
+
+    result = _server_call(
+        lambda client, instance_id: client.ack_inbox_item(instance_id, item_id),
+        command_name="cruxible inbox ack",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    _echo_inbox_disposition(result)
+
+
+@inbox_group.command("dismiss")
+@click.argument("item_id")
+@click.option("--reason", required=True, help="Why the item needs nothing. Recorded verbatim.")
+@json_option
+@handle_errors
+def inbox_dismiss(item_id: str, reason: str, output_json: bool) -> None:
+    """Dismiss an item, recording why it needs nothing."""
+
+    result = _server_call(
+        lambda client, instance_id: client.dismiss_inbox_item(instance_id, item_id, reason=reason),
+        command_name="cruxible inbox dismiss",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    _echo_inbox_disposition(result)
+
+
+@inbox_group.command("link")
+@click.argument("item_id")
+@click.option("--proposal", default=None, help="The proposal that records your judgment.")
+@click.option("--subject", default=None, help="The Subject (KIND/ID), such as a note.")
+@json_option
+@handle_errors
+def inbox_link(item_id: str, proposal: str | None, subject: str | None, output_json: bool) -> None:
+    """Link an item to the proposal or Subject that records your judgment of it."""
+
+    if (proposal is None) == (subject is None):
+        raise click.UsageError("name exactly one of --proposal or --subject")
+    target: contracts.InboxLinkTarget = (
+        contracts.InboxLinkProposal(proposal_id=proposal)
+        if proposal is not None
+        else contracts.InboxLinkSubject(subject=cast(str, subject))
+    )
+    result = _server_call(
+        lambda client, instance_id: client.link_inbox_item(instance_id, item_id, target=target),
+        command_name="cruxible inbox link",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    _echo_inbox_disposition(result)
 
 
 @playbill_group.group("line")

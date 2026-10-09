@@ -48,6 +48,11 @@ from cruxible_client.contracts.errors import (
     JournalError,
     JournalIntegrityError,
 )
+from cruxible_client.contracts.line_inbox import (
+    INBOX_ITEM_MAX_BYTES,
+    INBOX_RUN_ITEM_CAP_DEFAULT,
+    INBOX_RUN_MAX_BYTES,
+)
 from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicy,
 )
@@ -96,6 +101,7 @@ from cruxible_client.contracts.procedures.models import (
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import (
+    InboxPostTruncation,
     ProcedureAcquisitionPlan,
     ProcedureAdmissionMaterialManifest,
     ProcedureAdmissionMaterialMember,
@@ -170,6 +176,7 @@ from cruxible_core.procedures.egress import (
     SERVED_AUTHORITY_TERMS,
     EffectiveRungTermV1,
     EffectiveRungV1,
+    InboxEgressSinkProtocol,
     PreparedTerminalEgressV1,
     SettleGrantHolderProtocol,
     TerminalAuthorityRefusal,
@@ -2401,6 +2408,10 @@ class _RunState:
     provider_invocations_started: int = 0
     provider_invocations_completed: int = 0
     run_started_monotonic_ns: int = 0
+    #: Items this run's post_inbox terminals posted, against the run's inbox cap,
+    #: and their canonical bytes, against the run's inbox byte bound.
+    inbox_items: int = 0
+    inbox_bytes: int = 0
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -4333,13 +4344,25 @@ class ProcedureExecutor:
         operation instead of re-run as a second one.
         """
 
-        children, values, manifests = self._record_terminal_items(
+        inbox_cap = _inbox_cap(node) if isinstance(node, InboxEgressNode) else None
+        children, values, manifests, selected = self._record_terminal_items(
             node,
             admission=admission,
             state=state,
             records=records,
+            limit=None if inbox_cap is None else max(inbox_cap[0] - state.inbox_items, 0),
         )
-        if not values:
+        truncation = (
+            None
+            if inbox_cap is None or selected <= len(values)
+            else InboxPostTruncation(
+                cap=inbox_cap[0],
+                cap_source=inbox_cap[1],
+                selected=selected,
+                posted=len(values),
+            ).model_dump(mode="json")
+        )
+        if not values and truncation is None:
             # A fan-out over an empty list has nothing to emit: no egress is
             # prepared or delivered (a proposal with no member is no proposal),
             # and the run ends at this terminal with its typed result.
@@ -4351,6 +4374,9 @@ class ProcedureExecutor:
             "required_rung": required,
             "children": [item.model_dump(mode="json") for item in children],
         }
+        if truncation is not None:
+            # Every record of this terminal carries what its cap left unposted.
+            payload["inbox_truncation"] = truncation
         rung = self.effective_rung
         if rung is None or self.egress_sink is None:
             self._append_event(
@@ -4401,6 +4427,13 @@ class ProcedureExecutor:
             # A caller's tier lifted the mandate term to settle, but no live
             # mandate grants settling: the grant caps it at propose.
             capped_by = "mandate_grant"
+        if not values:
+            # The run's inbox cap was spent by an earlier post_inbox terminal:
+            # nothing is posted, and the record says what the cap left out.
+            self._append_event(
+                admission, records, "terminal_egress", {**payload, "verdict": "delivered"}
+            )
+            return
         try:
             request, prepared = self._terminal_egress_request(
                 node,
@@ -4477,7 +4510,9 @@ class ProcedureExecutor:
                 )
             state.capture_bytes += emitted_bytes
         try:
-            receipt = self._deliver_terminal_egress(request, admission=admission)
+            receipt = self._deliver_terminal_egress(
+                request, admission=admission, manifests=manifests
+            )
         except TerminalEgressError as exc:
             refusal = self._terminal_refusal(exc, node_id=node.node_id)
             if effectful:
@@ -4523,6 +4558,8 @@ class ProcedureExecutor:
                 "receipt": receipt.model_dump(mode="json"),
             },
         )
+        if request.kind == "post_inbox":
+            state.inbox_items += len(request.items)
         if isinstance(request, TerminalEgressRequestV2) and request.kind == "emit_capture":
             assert isinstance(receipt, TerminalEgressReceiptV2)  # verified above
             for child in receipt.children:
@@ -4560,10 +4597,19 @@ class ProcedureExecutor:
         request: TerminalEgressRequestV1,
         *,
         admission: ProcedureRunAdmissionV1,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1],
     ) -> TerminalEgressReceiptV1:
-        """Hand the request to the sink; a preparer sink also receives the admission."""
+        """Hand the request to the sink; a preparer sink also receives the admission.
+
+        An inbox post goes to the sink's inbox door with each item's manifest,
+        from which it attaches exactly the Captures that item's closure reached.
+        """
 
         assert self.egress_sink is not None
+        if request.kind == "post_inbox":
+            if not isinstance(self.egress_sink, InboxEgressSinkProtocol):
+                raise TerminalEgressError("this run's egress sink does not deliver post_inbox")
+            return self.egress_sink.deliver_inbox_egress(request=request, manifests=manifests)
         if isinstance(self.egress_sink, TerminalEgressPreparerProtocol):
             return self.egress_sink.deliver_terminal_egress(  # type: ignore[call-arg]
                 request=request,
@@ -4695,12 +4741,18 @@ class ProcedureExecutor:
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
+        limit: int | None = None,
     ) -> tuple[
         tuple[TerminalChildReceiptV1, ...],
         tuple[CanonicalValue, ...],
         dict[str, TerminalItemDependencyManifestV1],
+        int,
     ]:
-        """Derive one manifest per terminal item from the exact closure it consumed."""
+        """Derive one manifest per terminal item from the exact closure it consumed.
+
+        ``limit`` keeps the first items only (an inbox cap); the last element is
+        how many items the terminal selected before it.
+        """
 
         declared = _terminal_item_templates(node)
         base = _node_policy_tokens(node) | state.control
@@ -4710,6 +4762,8 @@ class ProcedureExecutor:
             values, item_tokens = _fan_out_items(
                 node.candidate_templates, state=state, node_id=node.node_id
             )
+        elif isinstance(node, InboxEgressNode):
+            values, item_tokens = _inbox_items(node, state=state)
         else:
             values, item_tokens = _terminal_items(declared, state=state)
         if isinstance(node, ProposeChangeSetNode):
@@ -4729,6 +4783,12 @@ class ProcedureExecutor:
                 ]
             except (ValueError, KeyError) as exc:
                 raise _RunRefusal("proposal_item_invalid", str(exc), node_id=node.node_id) from exc
+        selected = len(values)
+        if limit is not None:
+            values, item_tokens = list(values[:limit]), tuple(item_tokens[:limit])
+        if isinstance(node, InboxEgressNode):
+            # Bytes are bounded before anything is journaled or posted.
+            state.inbox_bytes += _check_inbox_bytes(values, state=state, node_id=node.node_id)
         outcomes = tuple(
             sorted(state.outcomes.values(), key=lambda item: item.input_name.encode("utf-8"))
         )
@@ -4778,7 +4838,7 @@ class ProcedureExecutor:
                 )
             )
             manifests[item_key] = manifest
-        return tuple(receipts), tuple(values), manifests
+        return tuple(receipts), tuple(values), manifests, selected
 
     @staticmethod
     def _bucket_is_accepted(bucket: str, selectors: tuple[str, ...]) -> bool:
@@ -5788,6 +5848,14 @@ def _projected_provenance(
     )
 
 
+def _inbox_cap(node: InboxEgressNode) -> tuple[int, Literal["declared", "default"]]:
+    """The most items a run posts to the inbox, and whether the terminal declared it."""
+
+    if node.max_items is not None:
+        return node.max_items, "declared"
+    return INBOX_RUN_ITEM_CAP_DEFAULT, "default"
+
+
 def _terminal_item_templates(
     node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
 ) -> object:
@@ -5819,46 +5887,240 @@ def _fan_out_items(
     the union.
     """
 
+    return _fan_out_list(
+        fan_out.items,
+        state=state,
+        node_id=node_id,
+        field="candidate_templates.items",
+        noun="proposal items",
+        invalid_code="proposal_item_invalid",
+        ambiguous_code="proposal_item_evidence_ambiguous",
+    )
+
+
+def _fan_out_list(
+    template: object,
+    *,
+    state: _RunState,
+    node_id: str,
+    field: str,
+    noun: str,
+    invalid_code: ProcedureNodeRefusalCode,
+    ambiguous_code: ProcedureNodeRefusalCode,
+) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
+    """The elements of a list the run produced, each with only its own evidence closure."""
+
     try:
         resolved = _resolve_template(
-            fan_out.items, input_payload=state.input_payload, outputs=state.outputs
+            template, input_payload=state.input_payload, outputs=state.outputs
         )
     except ExecutionError as exc:
         raise _RunRefusal(
-            "proposal_item_invalid",
+            invalid_code,
             f"The fan-out's items did not resolve: {exc}",
             node_id=node_id,
-            details={"field": "candidate_templates.items", "reason": "items_unresolved"},
+            details={"field": field, "reason": "items_unresolved"},
         ) from exc
     if not isinstance(resolved, list):
         raise _RunRefusal(
-            "proposal_item_invalid",
-            "The fan-out's items resolved to a "
-            f"{type(resolved).__name__}, not a list of proposal items.",
+            invalid_code,
+            f"The fan-out's items resolved to a {type(resolved).__name__}, not a list of {noun}.",
             node_id=node_id,
-            details={"field": "candidate_templates.items", "reason": "items_not_a_list"},
+            details={"field": field, "reason": "items_not_a_list"},
         )
     values = [normalize_canonical(item) for item in resolved]
-    alias = _template_alias(fan_out.items)
+    alias = _template_alias(template)
     provenance = None if alias is None else state.provenance.get(alias)
     if provenance is None:
-        whole = state.alias_tokens(_referenced_aliases(fan_out.items))
+        whole = state.alias_tokens(_referenced_aliases(template))
         return values, tuple(whole for _ in values)
     # Lineage belongs to the exact path it was recorded for; a sibling or
     # nested path has none of its own.
-    lineage = provenance.items if _lineage_alias(fan_out.items) == alias else None
+    lineage = provenance.items if _lineage_alias(template) == alias else None
     if lineage is None or len(lineage) < len(values):
         if len({token for token in provenance.whole if token.slot in _CAPTURE_SLOTS}) > 1:
             raise _RunRefusal(
-                "proposal_item_evidence_ambiguous",
+                ambiguous_code,
                 "The fan-out's list was built from more than one Capture and keeps no "
                 "per-element lineage, so no element's own evidence can be told apart.",
                 node_id=node_id,
-                details={"field": "candidate_templates.items", "reason": "lineage_unavailable"},
+                details={"field": field, "reason": "lineage_unavailable"},
             )
         return values, tuple(provenance.whole for _ in values)
     shared = frozenset(token for token in provenance.whole if token.slot not in _CAPTURE_SLOTS)
     return values, tuple(shared | lineage[index] for index in range(len(values)))
+
+
+def _inbox_items(
+    node: InboxEgressNode,
+    *,
+    state: _RunState,
+) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
+    """What a post_inbox terminal posts: its input as one item, or an explicit fan-out.
+
+    Only an input that is exactly ``{"items": ...}`` fans out, and then its
+    items must resolve to a list (a typed refusal otherwise, posting nothing).
+    Each element carries only its own evidence: a literal list's elements
+    their own references, a produced list its recorded per-element lineage,
+    and a list built from more than one Capture without that lineage refuses
+    rather than lending every element every Capture. Any other input -- an
+    array, an empty array, an object that happens to hold ``items`` -- is one
+    item, exactly as it resolved.
+    """
+
+    declared = node.input
+    if isinstance(declared, dict) and set(declared) == {"items"}:
+        template = declared["items"]
+        if not isinstance(template, list):
+            return _fan_out_list(
+                template,
+                state=state,
+                node_id=node.node_id,
+                field="input.items",
+                noun="inbox items",
+                invalid_code="inbox_item_invalid",
+                ambiguous_code="inbox_item_evidence_ambiguous",
+            )
+        values: list[CanonicalValue] = []
+        for member in template:
+            try:
+                values.append(
+                    normalize_canonical(
+                        _resolve_template(
+                            member, input_payload=state.input_payload, outputs=state.outputs
+                        )
+                    )
+                )
+            except ExecutionError as exc:
+                raise _RunRefusal(
+                    "inbox_item_invalid",
+                    f"An inbox item did not resolve: {exc}",
+                    node_id=node.node_id,
+                    details={"field": "input.items", "reason": "items_unresolved"},
+                ) from exc
+        return values, tuple(
+            _exact_evidence(member, state=state, node_id=node.node_id, field="input.items")
+            for member in template
+        )
+    try:
+        resolved = _resolve_template(
+            declared, input_payload=state.input_payload, outputs=state.outputs
+        )
+    except ExecutionError as exc:
+        raise _RunRefusal(
+            "inbox_item_invalid",
+            f"The inbox input did not resolve: {exc}",
+            node_id=node.node_id,
+            details={"field": "input", "reason": "input_unresolved"},
+        ) from exc
+    return [normalize_canonical(resolved)], (
+        _exact_evidence(declared, state=state, node_id=node.node_id, field="input"),
+    )
+
+
+def _step_references(value: object) -> list[str]:
+    """Every ``$steps.`` reference a template holds, wherever it sits."""
+
+    found: list[str] = []
+
+    def visit(item: object) -> None:
+        if isinstance(item, str):
+            if item.startswith(_STEP_PREFIX):
+                found.append(item)
+        elif isinstance(item, list | tuple):
+            for member in item:
+                visit(member)
+        elif isinstance(item, dict):
+            for member in item.values():
+                visit(member)
+
+    visit(value)
+    return found
+
+
+def _exact_evidence(
+    template: object, *, state: _RunState, node_id: str, field: str
+) -> frozenset[DependencyToken]:
+    """The closure of exactly what a template's own references select, never their siblings'.
+
+    A reference keeps its alias's non-Capture dependencies. Its Captures are the
+    ones its exact path reaches: the whole alias, all of it; the alias's
+    ``items`` list with recorded per-element lineage, those elements'
+    Captures; one element of that list (``items.<i>`` and below), that
+    element's own. Any other path -- a sibling field, a nested list, an
+    element without lineage -- is exact only when its alias was built from at
+    most one Capture; otherwise the item's evidence cannot be told apart and
+    it refuses ``inbox_item_evidence_ambiguous`` rather than borrowing.
+    """
+
+    tokens: frozenset[DependencyToken] = frozenset()
+    for reference in _step_references(template):
+        alias, *path = reference[len(_STEP_PREFIX) :].split(".")
+        provenance = state.provenance.get(alias)
+        if provenance is None:
+            continue
+        captures = frozenset(token for token in provenance.whole if token.slot in _CAPTURE_SLOTS)
+        shared = provenance.whole - captures
+        lineage = provenance.items
+        if not path:
+            selected = captures
+        elif path == ["items"] and lineage is not None:
+            selected = frozenset().union(*lineage) if lineage else frozenset()
+        elif (
+            len(path) >= 2
+            and path[0] == "items"
+            and path[1].isdigit()
+            and lineage is not None
+            and int(path[1]) < len(lineage)
+        ):
+            selected = lineage[int(path[1])]
+        elif len(captures) <= 1:
+            selected = captures
+        else:
+            raise _RunRefusal(
+                "inbox_item_evidence_ambiguous",
+                f"{reference!r} selects part of a value built from more than one Capture "
+                "with no lineage for that part, so its own evidence cannot be told apart.",
+                node_id=node_id,
+                details={"field": field, "reason": "lineage_unavailable"},
+            )
+        tokens |= shared | selected
+    return tokens
+
+
+def _check_inbox_bytes(values: list[CanonicalValue], *, state: _RunState, node_id: str) -> int:
+    """Refuse a post whose item or run total exceeds the inbox byte bounds; nothing is posted."""
+
+    total = 0
+    for index, value in enumerate(values):
+        size = len(canonical_bytes(value))
+        if size > INBOX_ITEM_MAX_BYTES:
+            raise _RunRefusal(
+                "inbox_item_over_budget",
+                f"Inbox item {index} is {size} canonical bytes; one item may be at most "
+                f"{INBOX_ITEM_MAX_BYTES}.",
+                node_id=node_id,
+                details={
+                    "bound": "item",
+                    "child_index": index,
+                    "limit": INBOX_ITEM_MAX_BYTES,
+                    "observed": size,
+                },
+            )
+        total += size
+    if state.inbox_bytes + total > INBOX_RUN_MAX_BYTES:
+        raise _RunRefusal(
+            "inbox_item_over_budget",
+            f"This run would post {state.inbox_bytes + total} canonical bytes to the inbox; a "
+            f"run may post at most {INBOX_RUN_MAX_BYTES}.",
+            node_id=node_id,
+            details={
+                "bound": "run",
+                "limit": INBOX_RUN_MAX_BYTES,
+                "observed": state.inbox_bytes + total,
+            },
+        )
+    return total
 
 
 def _terminal_items(

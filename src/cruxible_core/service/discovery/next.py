@@ -892,6 +892,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.line.enable": "line enable",
     "cruxible.line.evaluate": "line evaluate",
     "cruxible.line.dispatch": "line dispatch",
+    "cruxible.inbox.list": "inbox list",
     "cruxible.prediction.settle": "prediction settle",
 }
 
@@ -977,13 +978,14 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.line.enable": "cruxible_line_enable",
     "cruxible.line.evaluate": "cruxible_line_evaluate",
     "cruxible.line.dispatch": "cruxible_line_dispatch",
+    "cruxible.inbox.list": "cruxible_inbox_list",
     "cruxible.prediction.settle": "cruxible_prediction_settle",
     "hand_edit": None,
 }
 _GOVERNED_WRITE_RUNG = 1
 #: Repairs whose served door writes nothing and so never meets the principal
 #: boundary; every other served repair is refused to a caller that cannot author.
-_AUTHORING_FREE_REPAIRS = frozenset({"cruxible.floor.export"})
+_AUTHORING_FREE_REPAIRS = frozenset({"cruxible.floor.export", "cruxible.inbox.list"})
 
 
 def _tool_rung(tool: str) -> int:
@@ -1145,6 +1147,8 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         limit = values.get("limit")
         request = {"limit": limit} if isinstance(limit, int) and limit > 1 else {}
         return _mcp_call("cruxible_line_dispatch", line=text("line"), request=request)
+    if operation == "cruxible.inbox.list" and text("line"):
+        return _mcp_call("cruxible_inbox_list", line=text("line"), status="unread")
     if operation == "cruxible.prediction.settle" and text("prediction_id"):
         # The observation is the settler's to choose: its Claim ID is the one
         # argument left to add.
@@ -1250,6 +1254,8 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         if isinstance(limit, int) and limit > 1:
             return _sdk_call("cx.line", line) + _sdk_call(".dispatch", limit=limit)
         return _sdk_call("cx.line", line) + ".dispatch()"
+    if operation == "cruxible.inbox.list" and (line := text("line")):
+        return "cx.inbox()" + _sdk_call(".list", line=line, status="unread")
     if operation == "cruxible.prediction.settle" and (prediction := text("prediction_id")):
         return _sdk_call("cx.settle", prediction)
     if operation == "cruxible.authoring.example":
@@ -1373,6 +1379,11 @@ def _repair_command(
         parts.append(shlex.quote(line))
         if operation == "cruxible.line.dispatch" and isinstance(limit, int) and limit > 1:
             parts.extend(["--limit", str(limit)])
+    elif operation == "cruxible.inbox.list":
+        line = values.get("line")
+        if not isinstance(line, str) or not line:
+            return None
+        parts.extend(["--line", shlex.quote(line), "--status", "unread"])
     elif operation == "cruxible.prediction.settle":
         # The daemon resolves the exact contract and window from the bound
         # window id; the observation is the settler's to choose, so its Claim
@@ -3970,6 +3981,42 @@ def _line_attention_items(
     return tuple(items)
 
 
+def _line_inbox_items(
+    instance: PlaybillInstance,
+    *,
+    access_profile: CoverageAccessProfile,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """One row per Line with unread inbox items: what it sent for judgment, and how many.
+
+    The count is the Line's volume, read from a maintained per-Line tally, so
+    the row costs the same however long the inbox's history is. An item that
+    recurs after a disposition counts as unread again.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.exhaust.line_inbox import LineInboxStore
+
+    return tuple(
+        _item(
+            severity="repair",
+            reason="line_inbox_unread",
+            subject_identity=line,
+            detail={
+                "unread": count,
+                "detail": f"{count} new inbox item{'s' if count != 1 else ''} from {line}.",
+            },
+            repair=PlaybillNextRepairV1(
+                operation="cruxible.inbox.list",
+                target=line,
+                required_change="judge_the_lines_unread_inbox_items",
+                arguments={"line": line.removeprefix("Line:"), "status": "unread"},
+            ),
+        )
+        for line, count in LineInboxStore(instance).unread_by_line()
+    )
+
+
 def _evidence_unavailable_items(
     instance: PlaybillInstance,
     *,
@@ -5523,6 +5570,7 @@ def _next_queue(
         *_line_settled_refusal_items(
             instance, coordinate=coordinate, access_profile=request.access_profile
         ),
+        *_line_inbox_items(instance, access_profile=request.access_profile),
     )
     caller = _CallerView(
         instance,

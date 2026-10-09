@@ -99,6 +99,12 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     # decided per target at the served boundary and in the service.
     "cruxible_line_dispatch": PermissionMode.READ_ONLY,
     "cruxible_line_run": PermissionMode.READ_ONLY,
+    # The Line inbox: reading is open; an agent's dispositions are governed writes.
+    "cruxible_inbox_list": PermissionMode.READ_ONLY,
+    "cruxible_inbox_get": PermissionMode.READ_ONLY,
+    "cruxible_inbox_ack": PermissionMode.GOVERNED_WRITE,
+    "cruxible_inbox_dismiss": PermissionMode.GOVERNED_WRITE,
+    "cruxible_inbox_link": PermissionMode.GOVERNED_WRITE,
     "cruxible_since": PermissionMode.READ_ONLY,
     "cruxible_next": PermissionMode.READ_ONLY,
     "cruxible_curation_list": PermissionMode.READ_ONLY,

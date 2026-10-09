@@ -312,6 +312,11 @@ Procedure has Source nodes.
 | `cruxible_line_run` | Run a Line once now as a manual occurrence under its own inputs, budgets, authority and mandate; it never consumes a Trigger. `event` is the event input for a Line whose Procedure takes one; an event its Triggers already admitted needs `repeat`. A Line that can propose or settle needs a mandate, an observe-only one none | `READ_ONLY` |
 | `cruxible_line_evaluate` | Evaluate a historical range (`since`, `until`) into pending work; never executes. `dry_run` only reports what the range makes eligible (a read, no range needed); enqueueing needs governed write. | `READ_ONLY` |
 | `cruxible_line_dispatch` | Admit retained pending occurrences under the current caller's authority, up to `limit` (default 100) per call; follow `cursor` for more. | `READ_ONLY` |
+| `cruxible_inbox_list` | List one page of the Line inbox, newest postings first, with a bounded payload preview; filter by `line` and `status`, follow `next_cursor`. | `READ_ONLY` |
+| `cruxible_inbox_get` | Read one inbox item whole: envelope (Line, node, dedupe key, occurrences, first and recent sightings with their source Captures, disposition), payload as posted (at most 65,536 bytes), and its 10 most recent dispositions (`disposition_count` says how many in all). | `READ_ONLY` |
+| `cruxible_inbox_ack` | Acknowledge an inbox item: seen, owed nothing further. | `GOVERNED_WRITE` |
+| `cruxible_inbox_dismiss` | Dismiss an inbox item with a recorded `reason`. | `GOVERNED_WRITE` |
+| `cruxible_inbox_link` | Link an inbox item to the proposal (`{"kind": "proposal", "proposal_id": ...}`) or accepted Subject (`{"kind": "subject", "subject": "kind/id"}`) that records your judgment. | `GOVERNED_WRITE` |
 
 `procedure_run`, `line_run` and `line_dispatch` are read-tier only for targets
 that observe. A Procedure whose terminals can propose or settle, or a Line whose

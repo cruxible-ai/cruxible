@@ -87,6 +87,7 @@ from cruxible_client.contracts.procedures.models import (
     required_authority,
 )
 from cruxible_client.contracts.procedures.results import (
+    InboxPostTruncation,
     ProcedureAcquisitionPlan,
     ProcedureAdmissionMaterialManifest,
     ProcedureAdmissionRefusal,
@@ -189,6 +190,7 @@ from cruxible_core.exhaust import (
     JournalStreamIdentityV1,
     LocalJournalBackend,
 )
+from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.exhaust.promotions import VerifiedExhaustRecordV1
 from cruxible_core.exhaust.records import (
     JournalEventKindV1,
@@ -207,6 +209,7 @@ from cruxible_core.procedures.egress import (
     SERVED_AUTHORITY_TERMS,
     CaptureTerminalEgressSink,
     PreparedTerminalEgressV1,
+    TerminalEgressError,
     TerminalEgressReceiptV1,
     TerminalEgressRequestV1,
     compute_effective_rung,
@@ -257,6 +260,7 @@ from cruxible_core.procedures.execution import (
     run_value_digest,
     verify_line_admission_spec,
 )
+from cruxible_core.procedures.inbox_delivery import InboxTerminalEgressSink
 from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
 from cruxible_core.procedures.proposal_delivery import (
     ProposalTerminalEgressSink,
@@ -2136,6 +2140,11 @@ def _fold_terminal_egress(
         fallback_reason=cast(Any, settle.get("fallback_reason")),
         outside_scope_claim_types=cast(Any, settle.get("outside_scope_claim_types", ())),
         capped_by=capped_by,
+        inbox_truncation=(
+            InboxPostTruncation.model_validate(payload["inbox_truncation"])
+            if isinstance(payload.get("inbox_truncation"), dict)
+            else (None if current is None else current.inbox_truncation)
+        ),
     )
 
 
@@ -3493,10 +3502,25 @@ class _LineTerminalEgressSink:
     """Dispatch each served terminal to its existing authority-owning sink."""
 
     def __init__(
-        self, *, capture: CaptureTerminalEgressSink, proposal: ProposalTerminalEgressSink
+        self,
+        *,
+        capture: CaptureTerminalEgressSink,
+        proposal: ProposalTerminalEgressSink,
+        inbox: InboxTerminalEgressSink | None = None,
     ) -> None:
         self.capture = capture
         self.proposal = proposal
+        self.inbox = inbox
+
+    def deliver_inbox_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+    ) -> TerminalEgressReceiptV1:
+        if self.inbox is None:
+            raise TerminalEgressError("post_inbox is delivered only under a Line")
+        return self.inbox.deliver_inbox_egress(request=request, manifests=manifests)
 
     def grants_settle(self) -> bool:
         return self.proposal.grants_settle()
@@ -4427,6 +4451,9 @@ def _run_playbill_line(
             ),
             proposal=ProposalTerminalEgressSink(
                 instance=instance, accepted_mandates=dict(mandates)
+            ),
+            inbox=InboxTerminalEgressSink(
+                store=LineInboxStore(instance), line=accepted_line.line.identity
             ),
         )
         journal, root = _journal_for_write(instance)
