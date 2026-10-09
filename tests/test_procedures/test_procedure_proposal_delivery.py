@@ -1878,17 +1878,21 @@ def _accept_and_retire(instance: PlaybillInstance, owner: Any, proposal_id: str)
     return claim_id
 
 
-def test_a_rerun_on_other_bytes_carries_no_earlier_retirement(tmp_path: Path) -> None:
-    """A second run whose source bytes changed proposes the same severity on new evidence.
+@pytest.mark.parametrize("same_bytes", [True, False], ids=["identical-bytes", "other-bytes"])
+def test_a_rerun_carries_the_earlier_retirement_exactly_on_identical_bytes(
+    tmp_path: Path, same_bytes: bool
+) -> None:
+    """A second run re-reads the workspace file and proposes the same statement again.
 
-    The first run's Claim was accepted and then retired; the re-run's item states
-    the same statement, but its Capture's content differs, so it carries no
-    receipt. (On identical bytes the builtin workspace.file Provider still yields
-    a different content commitment: its output echoes the run-bound derived
-    request digest. See the batch report.)
+    Its Capture is a new envelope (another run, another time) and commits the
+    Provider output that echoes the run's own request digest; the evidence it
+    contributes is the file's bytes digest core verified at the read. On
+    identical bytes the item carries the retirement exactly as recorded; other
+    bytes stating the same severity are new evidence and carry nothing.
     """
 
     from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.captures import parse_capture_envelope
 
     instance, owner, root, line, _procedure = proposal_world(tmp_path)
     first = run_line(instance, root, line)
@@ -1896,11 +1900,12 @@ def test_a_rerun_on_other_bytes_carries_no_earlier_retirement(tmp_path: Path) ->
     (first_egress,) = first.terminal_egress
     assert first_egress.proposal_id is not None
     assert first_egress.children[0].prior_refusals == ()
-    _accept_and_retire(instance, owner, first_egress.proposal_id)
+    claim_id = _accept_and_retire(instance, owner, first_egress.proposal_id)
 
-    (root / fixtures.RELATIVE_PATH).write_bytes(
-        canonical_bytes({**fixtures.ADVISORY, "note": "re-read"})
-    )
+    if not same_bytes:
+        (root / fixtures.RELATIVE_PATH).write_bytes(
+            canonical_bytes({**fixtures.ADVISORY, "note": "re-read"})
+        )
     second = run_line(instance, root, line, at=NOW + timedelta(minutes=10))
 
     assert second.status == "succeeded", second.terminal
@@ -1908,4 +1913,27 @@ def test_a_rerun_on_other_bytes_carries_no_earlier_retirement(tmp_path: Path) ->
     (egress,) = second.terminal_egress
     (child,) = egress.children
     assert child.path is not None and child.path != first_egress.children[0].path
-    assert child.prior_refusals == ()
+    # Two runs: two envelopes and two committed materials, even on identical bytes.
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    envelopes = [
+        parse_capture_envelope(
+            instance.body_store().read(state.source_observations[0].capture_digest, access=access)
+        )
+        for state in (first, second)
+    ]
+    assert envelopes[0].commitment.digest != envelopes[1].commitment.digest
+    if not same_bytes:
+        assert child.prior_refusals == ()
+        return
+    (receipt,) = child.prior_refusals
+    assert (receipt.kind, receipt.claim_id, receipt.reason_code) == (
+        "claim_retired",
+        claim_id,
+        "was-wrong",
+    )
+    assert receipt.decided_at == "2026-09-12T12:05:00.000000Z"
+    assert receipt.rationale == "The advisory feed misreported this severity."
+    # The run result read back later carries the same receipt.
+    assert second.run_id is not None
+    again = service_get_playbill_procedure_run(instance, run_id=second.run_id)
+    assert again.terminal_egress[0].children[0].prior_refusals == (receipt,)

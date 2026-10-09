@@ -36,14 +36,18 @@ from typing import TYPE_CHECKING
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.candidates import CandidateMemberLawEvidence
-from cruxible_client.contracts.captures import parse_capture_envelope
+from cruxible_client.contracts.canonical import Sha256Value
+from cruxible_client.contracts.captures import (
+    ProviderInvocationCaptureEvidence,
+    parse_capture_envelope,
+)
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimArtifactAny,
     ClaimFormatError,
     parse_claim,
 )
-from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
 from cruxible_client.contracts.refusal_receipts import (
     CLAIM_REFUSAL_MATCH_KEY_DOMAIN,
@@ -52,9 +56,10 @@ from cruxible_client.contracts.refusal_receipts import (
     claim_producer,
     claim_refusal_match_key,
 )
+from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_DIGESTS
 from cruxible_core.indexes.history.history_index import history_reads_detached
 from cruxible_core.indexes.proposals.proposal_index import _micros
-from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.storage.preview_fence import is_previewing
 
 if TYPE_CHECKING:
@@ -106,20 +111,53 @@ def _schema(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
     ]
 
 
-def claim_refusal_key(instance: PlaybillInstance, claim: ClaimArtifactAny) -> str:
-    """A Claim's match key, over the content commitments of the Captures it cites.
+def capture_evidence_content(bodies: ContentAddressedBodyStore, capture_digest: str) -> str:
+    """The content-only digest one cited Capture contributes to a match key.
 
-    Each cited Capture's envelope is read once to take ``commitment.digest``: the
-    digest of the observed bytes or value, which does not depend on the run,
-    the observation time, the contract or where the material is kept.
+    A Capture is ordinarily its ``commitment.digest``: the digest of the material
+    it committed, independent of the run, the observation time, the contract and
+    where the material is kept. A Capture produced through the core-owned
+    workspace.file interface commits the Provider's output, which also echoes
+    the run's derived request digest; for it the content is the file's own
+    ``bytes_digest`` in that echo. Core verified the echo against its own
+    source-read receipt when it built the Capture, and the material is read here
+    by its committed digest, so nothing a third party supplies is trusted. A
+    workspace Capture whose echo cannot be read keeps its commitment digest,
+    which matches nothing it should not.
     """
 
+    envelope = parse_capture_envelope(bodies.read(capture_digest, access=_ACCESS))
+    commitment = envelope.commitment
+    evidence = getattr(envelope, "production_evidence", None)
+    if (
+        not isinstance(evidence, ProviderInvocationCaptureEvidence)
+        or evidence.interface_digest not in WORKSPACE_FILE_INTERFACE_DIGESTS
+        or commitment.materialization != "cas"
+    ):
+        return commitment.digest
+    try:
+        material = json.loads(bodies.read(commitment.digest, access=_ACCESS))
+    except (CruxibleError, ValueError):
+        return commitment.digest
+    source = material.get("source") if isinstance(material, dict) else None
+    content = source.get("bytes_digest") if isinstance(source, dict) else None
+    if not isinstance(content, str):
+        return commitment.digest
+    try:
+        Sha256Value.from_tagged(content)
+    except ValueError:
+        return commitment.digest
+    return content
+
+
+def claim_refusal_key(instance: PlaybillInstance, claim: ClaimArtifactAny) -> str:
+    """A Claim's match key, over the content of the Captures it cites."""
+
     bodies = instance.body_store()
-    commitments = {
-        parse_capture_envelope(bodies.read(digest, access=_ACCESS)).commitment.digest
-        for digest in claim.backing.capture_digests
-    }
-    return claim_refusal_match_key(claim.statement, commitments)
+    return claim_refusal_match_key(
+        claim.statement,
+        {capture_evidence_content(bodies, digest) for digest in claim.backing.capture_digests},
+    )
 
 
 def _producer_text(pin: ArtifactPin | None) -> str | None:
@@ -635,5 +673,6 @@ def _receipt(
 __all__ = [
     "RefusalIndex",
     "candidate_refused_claims",
+    "capture_evidence_content",
     "claim_refusal_key",
 ]

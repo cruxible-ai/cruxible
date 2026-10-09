@@ -8,11 +8,12 @@ exactly as recorded, and the producing Procedure when the Claim names one. It
 never interprets the reason, never refuses, and never changes settlement
 because of it; an authored policy may.
 
-Evidence is compared by content: the evidence commitment digest of each Capture
-the Claim cites (the digest of the observed bytes or value), never the Capture
-envelope's own digest, which also binds the run, the observation time and the
-contract. A re-run that re-fetches identical bytes cites the same evidence;
-different bytes are a new question and match nothing.
+Evidence is compared by content, never by the Capture envelope's own digest,
+which also binds the run, the observation time and the contract: a Capture
+contributes its evidence commitment digest, or, for one produced through the
+core-owned workspace.file interface, the file's bytes digest that core verified
+against its source-read receipt. A re-run that re-fetches identical bytes cites
+the same evidence; different bytes are a new question and match nothing.
 """
 
 from __future__ import annotations
@@ -26,17 +27,17 @@ from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import ProposalDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.claims import ClaimArtifactAny, ClaimStatement, claim_path
 
-CLAIM_REFUSAL_MATCH_KEY_DOMAIN = "cruxible-claim-refusal-match-v2"
+CLAIM_REFUSAL_MATCH_KEY_DOMAIN = "cruxible-claim-refusal-match-v3"
 
 
 def claim_refusal_match_key(statement: ClaimStatement, evidence_commitments: Iterable[str]) -> str:
     """The key a refusal is indexed and found under: the statement and its evidence content.
 
-    ``evidence_commitments`` are the evidence commitment digests of the Captures
-    the Claim cites (``CaptureEnvelope.commitment.digest``), deduplicated and
-    sorted here. Role, effective times and the ClaimType version are not part of
-    the key: the same belief about the same thing on the same evidence matches
-    across them.
+    ``evidence_commitments`` are the content digests of the Captures the Claim
+    cites (``CaptureEnvelope.commitment.digest``, or a workspace.file Capture's
+    verified file bytes digest), deduplicated and sorted here. Role, effective
+    times and the ClaimType version are not part of the key: the same belief
+    about the same thing on the same evidence matches across them.
     """
 
     return typed_digest(
