@@ -2784,8 +2784,11 @@ before and after, its Claim and its verdict; a verdict other than `supported`
 prints a warning with its repair.
 
 `add` puts one more VALUE in a many-valued FIELD, beside the values already
-there; a value already live is answered as done, and `--expect-absent` refuses
-it instead (`cruxible.write.value_already_present`). `retire` ends one live
+there. A value already live in the same role restates that Claim: on evidence
+of content it already cites the same way it is answered as done (already live);
+on new evidence (other `--because` words, another Capture) that Claim's evidence
+is refreshed, never a second Claim written; `--expect-absent` refuses it
+instead (`cruxible.write.value_already_present`). `retire` ends one live
 Claim, named by ID or by SUBJECT FIELD when that field holds one value; the
 Claims that depend on it retire with it; `--expect` compares the field's values
 as on `set`. `write` applies a

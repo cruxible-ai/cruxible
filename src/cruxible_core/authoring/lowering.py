@@ -1779,10 +1779,12 @@ def _lower_claim(
     # association on already-cited content (another role or origin) is kept,
     # and new content under the same statement refreshes the evidence by
     # revising the Claim, never by writing a second one.
+    # A disposition that takes no stance (not_tested: the other slot Claims a
+    # many-valued restatement keeps) changes nothing about the Claim restated.
     same_statement = (
         predecessor is not None
         and claim.statement == predecessor.statement
-        and not payload.existing_claim_dispositions
+        and all(item.disposition == "not_tested" for item in payload.existing_claim_dispositions)
         and not dependency_paths
     )
     recited = same_statement and citation in predecessor_citations

@@ -95,3 +95,30 @@ def test_a_terminal_item_restating_a_live_claim_on_new_content_revises_it(
     assert _restated_on_new_content(instance, tree, _restating(new_content)) == claim
     # On content the live Claim already cites the item is left as authored.
     assert _restated_on_new_content(instance, tree, _restating(same_content)) is None
+
+
+def test_add_restating_a_live_value_refreshes_new_content_on_its_lineage(
+    instance: PlaybillInstance,
+) -> None:
+    """Review F-005: add goes through the shared re-observation comparison."""
+
+    change = {"op": "add", "subject": ALPHA, "field": "tags", "value": "Infra"}
+    first = write(instance, change, "A")
+    claim = first.changes[0].claim
+    assert claim is not None
+    before = cited_captures(instance, claim)
+
+    same = write(instance, {**change, "value": " INFRA "}, "A")
+    assert same.status == "accepted" and same.proposal is None
+    assert same.changes[0].already_live and same.changes[0].claim == claim
+    assert cited_captures(instance, claim) == before
+
+    refreshed = write(instance, {**change, "value": " INFRA "}, "B")
+    assert refreshed.status == "accepted" and refreshed.proposal is not None, refreshed
+    assert not refreshed.changes[0].already_live
+    assert refreshed.changes[0].claim == claim
+    assert cited_captures(instance, claim) > before
+
+    absent = write(instance, {**change, "expect_absent": True}, "C")
+    assert absent.refusal is not None
+    assert absent.refusal.code == "cruxible.write.value_already_present"

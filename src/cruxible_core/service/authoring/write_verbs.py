@@ -30,7 +30,7 @@ from __future__ import annotations
 import base64
 import json
 import shlex
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -82,6 +82,7 @@ from cruxible_client.contracts.claims import (
     ClaimRetireDependent,
     LiteralClaimObject,
     SubjectClaimObject,
+    claim_artifact_digest,
     claim_path,
     literal_schema_violation,
     new_claim_id,
@@ -395,6 +396,7 @@ class _SlotClaim:
     claim_id: str
     digest: str
     value: object
+    role: str = "normative"
 
 
 @dataclass(frozen=True)
@@ -429,6 +431,11 @@ class _Planned:
     pin: _SlotPin | None = None
     # The Capture the evidence cites, by digest, once a handle or contract resolved.
     capture: str | None = None
+    # An add restating a live value: the outcome it reports, and the live
+    # Claim's digest, when the shared re-observation comparison leaves that
+    # Claim unchanged (the same association on the same content).
+    unchanged_outcome: dict[str, Any] | None = None
+    unchanged_digest: str | None = None
 
 
 @dataclass
@@ -499,7 +506,14 @@ class _Planner:
             shown: object = None
             if live is not None:
                 shown = self.exact.value(str(live.value), live.span) if live.exact else live.value
-            found.append(_SlotClaim(claim_id=_bare(identity), digest=digest, value=shown))
+            found.append(
+                _SlotClaim(
+                    claim_id=_bare(identity),
+                    digest=digest,
+                    value=shown,
+                    role="normative" if live is None else live.role,
+                )
+            )
         return tuple(found)
 
     def slot_pin(
@@ -1410,6 +1424,8 @@ class _Planner:
         revises: str | None = None
         before: object = None
         contenders: tuple[str, ...] = ()
+        unchanged: dict[str, Any] | None = None
+        unchanged_digest: str | None = None
         if isinstance(change, SetChange):
             self.check_expected(
                 index=index,
@@ -1454,7 +1470,9 @@ class _Planner:
                 (
                     item
                     for item in live
-                    if item.value == shown_after and item.claim_id not in retiring
+                    if item.value == shown_after
+                    and item.role == role
+                    and item.claim_id not in retiring
                 ),
                 None,
             )
@@ -1469,27 +1487,26 @@ class _Planner:
                     field_path=f"changes[{index}].expect_absent",
                 )
             if present is not None:
-                # Adding what is already there is done already: an idempotent
-                # success, with nothing to submit for this change.
-                return _Planned(
-                    index=index,
-                    op=change.op,
-                    outcome={
-                        "subject": subject,
-                        "field": name,
-                        "predicate": info.predicate,
-                        "before": summary_value(
-                            present.value,
-                            read_whole=whole_value_read(present.claim_id, self.head.git_oid),
-                        ),
-                        "after": summary_value(present.value),
-                        "claim": present.claim_id,
-                        "already_live": True,
-                    },
-                    slot=(path, info.predicate),
-                    change=change,
-                    claim_type=claim_type,
-                )
+                # Adding what is already there restates the live Claim: its
+                # lineage is the one revised, and the shared re-observation
+                # comparison in lowering decides. The same association on the
+                # same content changes nothing (already live); new content
+                # refreshes the evidence of that Claim, never a second one.
+                revises = present.claim_id
+                before = present.value
+                unchanged = {
+                    "subject": subject,
+                    "field": name,
+                    "predicate": info.predicate,
+                    "before": summary_value(
+                        present.value,
+                        read_whole=whole_value_read(present.claim_id, self.head.git_oid),
+                    ),
+                    "after": summary_value(present.value),
+                    "claim": present.claim_id,
+                    "already_live": True,
+                }
+                unchanged_digest = present.digest
         statement = AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(path),
             predicate=info.predicate,
@@ -1546,6 +1563,8 @@ class _Planner:
             revises=revises,
             existing=tuple(item.claim_id for item in live if item.claim_id != revises),
             pin=self.slot_pin(path, info.predicate),
+            unchanged_outcome=unchanged,
+            unchanged_digest=unchanged_digest,
         )
 
     def _retiring(self) -> set[str]:
@@ -1932,11 +1951,20 @@ def _minted_claims(intent: AuthoringIntentV1) -> dict[str, str]:
 
 
 def _change_outcomes(
-    plan: _Plan, lowered: _Lowered, intent: AuthoringIntentV1 | None
+    plan: _Plan,
+    lowered: _Lowered,
+    intent: AuthoringIntentV1 | None,
+    *,
+    unchanged: Callable[[_Planned], bool] = lambda _item: False,
 ) -> tuple[ChangeOutcome, ...]:
+    """Each change's outcome; ``unchanged`` names the restating adds lowering left alone."""
+
     minted = {} if intent is None else _minted_claims(intent)
     outcomes: list[ChangeOutcome] = []
     for item in plan.changes:
+        if item.unchanged_outcome is not None and unchanged(item):
+            outcomes.append(ChangeOutcome(op=item.op, **item.unchanged_outcome))
+            continue
         values = dict(item.outcome)
         if item.op != "retire" and item.member is not None:
             identity = lowered.identity_by_change[item.index]
@@ -2003,7 +2031,11 @@ def _pending_verdicts(
     its Claim; its verdict is the one it holds at the head.
     """
 
-    present = [item for item in plan.changes if item.member is None and item.op != "retire"]
+    present = [
+        item
+        for item in plan.changes
+        if (item.member is None or item.unchanged_outcome is not None) and item.op != "retire"
+    ]
     found = _accepted_verdicts(instance, head, _Plan(changes=present)) if present else {}
     return {**found, **candidate}
 
@@ -2463,6 +2495,21 @@ def _service_write(
         surface=request.surface,
         proposal_id=proposal_id,
     )
+    candidate = (
+        None
+        if status.candidate_digest is None
+        else instance.proposal_evidence().read_candidate(status.candidate_digest)
+    )
+    if candidate is not None:
+        written = {member.path for member in getattr(candidate, "members", ())}
+        changes = _change_outcomes(
+            plan,
+            lowered,
+            intent,
+            unchanged=lambda item: (
+                item.revises is not None and claim_path(item.revises) not in written
+            ),
+        )
     changes, warnings = _with_verdicts(
         instance,
         head=evaluated_at,
@@ -2472,11 +2519,7 @@ def _service_write(
             instance,
             evaluated_at,
             plan,
-            {}
-            if status.candidate_digest is None
-            else _candidate_verdicts(
-                instance.proposal_evidence().read_candidate(status.candidate_digest)
-            ),
+            {} if candidate is None else _candidate_verdicts(candidate),
         ),
         surface=request.surface,
         because=request.because,
@@ -2593,6 +2636,7 @@ def _accepted(
             compiler_digest=accepted.compiler_digest,
         )
     )
+    changes = _unchanged_at(instance, coordinate, plan, changes)
     changes, warnings = _with_verdicts(
         instance,
         head=coordinate,
@@ -2617,6 +2661,28 @@ def _accepted(
     )
 
 
+def _unchanged_at(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    plan: _Plan,
+    changes: tuple[ChangeOutcome, ...],
+) -> tuple[ChangeOutcome, ...]:
+    """Report a restating add whose Claim the accepted write left as it was as already live."""
+
+    marked = list(changes)
+    for position, item in enumerate(plan.changes):
+        if item.unchanged_outcome is None or item.revises is None:
+            continue
+        content = instance.blob_at(coordinate.git_oid, claim_path(item.revises))
+        if content is None:
+            continue
+        if claim_artifact_digest(parse_claim(content, path=claim_path(item.revises))).tagged == (
+            item.unchanged_digest
+        ):
+            marked[position] = ChangeOutcome(op=item.op, **item.unchanged_outcome)
+    return tuple(marked)
+
+
 def _dry_run(
     instance: PlaybillInstance,
     *,
@@ -2634,7 +2700,17 @@ def _dry_run(
     intent, computed = coordinator.preview(
         actor=caller.actor, payload=lowered.payload, canonical_timestamp=timestamp
     )
-    changes = _change_outcomes(plan, lowered, intent)
+    changed = (
+        set()
+        if computed.lowered is None
+        else {path for path, _content in computed.lowered.changed_members}
+    )
+    changes = _change_outcomes(
+        plan,
+        lowered,
+        intent,
+        unchanged=lambda item: item.revises is not None and claim_path(item.revises) not in changed,
+    )
     compact = compact_coordinate(instance, head)
     if computed.result.verdict != "passed":
         return WriteOutcome(
