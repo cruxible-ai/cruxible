@@ -21327,7 +21327,7 @@
           },
           "InboxItemEnvelope": {
             "additionalProperties": false,
-            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``run_id``/``posted_at`` are the first posting; ``last_run_id``/``last_posted_at``\nthe latest. ``occurrences`` counts every run that posted the same dedupe key.\n``disposition`` is the agent's latest decision, kept when the item recurs:\na recurring item is ``unread`` again, and ``recurred_since_disposition``\ncounts the postings after that decision.",
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item is ``unread`` again, and\n``recurred_since_disposition`` counts the sightings after that decision.",
             "properties": {
               "dedupe_key": {
                 "title": "Dedupe Key",
@@ -21363,18 +21363,12 @@
                 "default": null,
                 "title": "Disposition"
               },
+              "first_sighting": {
+                "$ref": "#/$defs/InboxSighting"
+              },
               "item_id": {
                 "pattern": "^INB-[0-9a-f]{64}$",
                 "title": "Item Id",
-                "type": "string"
-              },
-              "last_posted_at": {
-                "format": "date-time",
-                "title": "Last Posted At",
-                "type": "string"
-              },
-              "last_run_id": {
-                "title": "Last Run Id",
                 "type": "string"
               },
               "line": {
@@ -21399,11 +21393,6 @@
                 "title": "Payload Digest",
                 "type": "string"
               },
-              "posted_at": {
-                "format": "date-time",
-                "title": "Posted At",
-                "type": "string"
-              },
               "procedure": {
                 "title": "Procedure",
                 "type": "string"
@@ -21412,23 +21401,20 @@
                 "title": "Procedure Artifact Digest",
                 "type": "string"
               },
+              "recent_sightings": {
+                "items": {
+                  "$ref": "#/$defs/InboxSighting"
+                },
+                "maxItems": 5,
+                "minItems": 1,
+                "title": "Recent Sightings",
+                "type": "array"
+              },
               "recurred_since_disposition": {
                 "default": 0,
                 "minimum": 0,
                 "title": "Recurred Since Disposition",
                 "type": "integer"
-              },
-              "run_id": {
-                "title": "Run Id",
-                "type": "string"
-              },
-              "source_capture_digests": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Source Capture Digests",
-                "type": "array"
               },
               "status": {
                 "enum": [
@@ -21454,11 +21440,9 @@
               "procedure",
               "procedure_artifact_digest",
               "node_id",
-              "run_id",
-              "posted_at",
-              "last_run_id",
-              "last_posted_at",
               "occurrences",
+              "first_sighting",
+              "recent_sightings",
               "dedupe_key",
               "payload_digest",
               "payload_bytes"
@@ -21561,6 +21545,41 @@
               "target"
             ],
             "title": "InboxLinked",
+            "type": "object"
+          },
+          "InboxSighting": {
+            "additionalProperties": false,
+            "description": "One run's posting of an item, and the Captures that item's closure reached in it.",
+            "properties": {
+              "posted_at": {
+                "format": "date-time",
+                "title": "Posted At",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "source_capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Capture Digests",
+                "type": "array"
+              },
+              "tag": {
+                "const": "cruxible-inbox-sighting-v1",
+                "default": "cruxible-inbox-sighting-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "posted_at"
+            ],
+            "title": "InboxSighting",
             "type": "object"
           }
         },
@@ -21739,7 +21758,7 @@
           },
           "InboxItemEnvelope": {
             "additionalProperties": false,
-            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``run_id``/``posted_at`` are the first posting; ``last_run_id``/``last_posted_at``\nthe latest. ``occurrences`` counts every run that posted the same dedupe key.\n``disposition`` is the agent's latest decision, kept when the item recurs:\na recurring item is ``unread`` again, and ``recurred_since_disposition``\ncounts the postings after that decision.",
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item is ``unread`` again, and\n``recurred_since_disposition`` counts the sightings after that decision.",
             "properties": {
               "dedupe_key": {
                 "title": "Dedupe Key",
@@ -21775,18 +21794,12 @@
                 "default": null,
                 "title": "Disposition"
               },
+              "first_sighting": {
+                "$ref": "#/$defs/InboxSighting"
+              },
               "item_id": {
                 "pattern": "^INB-[0-9a-f]{64}$",
                 "title": "Item Id",
-                "type": "string"
-              },
-              "last_posted_at": {
-                "format": "date-time",
-                "title": "Last Posted At",
-                "type": "string"
-              },
-              "last_run_id": {
-                "title": "Last Run Id",
                 "type": "string"
               },
               "line": {
@@ -21811,11 +21824,6 @@
                 "title": "Payload Digest",
                 "type": "string"
               },
-              "posted_at": {
-                "format": "date-time",
-                "title": "Posted At",
-                "type": "string"
-              },
               "procedure": {
                 "title": "Procedure",
                 "type": "string"
@@ -21824,23 +21832,20 @@
                 "title": "Procedure Artifact Digest",
                 "type": "string"
               },
+              "recent_sightings": {
+                "items": {
+                  "$ref": "#/$defs/InboxSighting"
+                },
+                "maxItems": 5,
+                "minItems": 1,
+                "title": "Recent Sightings",
+                "type": "array"
+              },
               "recurred_since_disposition": {
                 "default": 0,
                 "minimum": 0,
                 "title": "Recurred Since Disposition",
                 "type": "integer"
-              },
-              "run_id": {
-                "title": "Run Id",
-                "type": "string"
-              },
-              "source_capture_digests": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Source Capture Digests",
-                "type": "array"
               },
               "status": {
                 "enum": [
@@ -21866,11 +21871,9 @@
               "procedure",
               "procedure_artifact_digest",
               "node_id",
-              "run_id",
-              "posted_at",
-              "last_run_id",
-              "last_posted_at",
               "occurrences",
+              "first_sighting",
+              "recent_sightings",
               "dedupe_key",
               "payload_digest",
               "payload_bytes"
@@ -21973,6 +21976,41 @@
               "target"
             ],
             "title": "InboxLinked",
+            "type": "object"
+          },
+          "InboxSighting": {
+            "additionalProperties": false,
+            "description": "One run's posting of an item, and the Captures that item's closure reached in it.",
+            "properties": {
+              "posted_at": {
+                "format": "date-time",
+                "title": "Posted At",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "source_capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Capture Digests",
+                "type": "array"
+              },
+              "tag": {
+                "const": "cruxible-inbox-sighting-v1",
+                "default": "cruxible-inbox-sighting-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "posted_at"
+            ],
+            "title": "InboxSighting",
             "type": "object"
           }
         },
@@ -22080,6 +22118,15 @@
             "title": "Disposition"
           }
         },
+        "first_sighting": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "first_sighting",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/InboxSighting"
+          }
+        },
         "item_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -22088,27 +22135,6 @@
           "schema": {
             "pattern": "^INB-[0-9a-f]{64}$",
             "title": "Item Id",
-            "type": "string"
-          }
-        },
-        "last_posted_at": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "last_posted_at",
-          "required": true,
-          "schema": {
-            "format": "date-time",
-            "title": "Last Posted At",
-            "type": "string"
-          }
-        },
-        "last_run_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "last_run_id",
-          "required": true,
-          "schema": {
-            "title": "Last Run Id",
             "type": "string"
           }
         },
@@ -22164,17 +22190,6 @@
             "type": "string"
           }
         },
-        "posted_at": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "posted_at",
-          "required": true,
-          "schema": {
-            "format": "date-time",
-            "title": "Posted At",
-            "type": "string"
-          }
-        },
         "procedure": {
           "has_default": false,
           "has_default_factory": false,
@@ -22195,6 +22210,21 @@
             "type": "string"
           }
         },
+        "recent_sightings": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "recent_sightings",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/InboxSighting"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Recent Sightings",
+            "type": "array"
+          }
+        },
         "recurred_since_disposition": {
           "default": 0,
           "default_json_serializable": true,
@@ -22207,32 +22237,6 @@
             "minimum": 0,
             "title": "Recurred Since Disposition",
             "type": "integer"
-          }
-        },
-        "run_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "run_id",
-          "required": true,
-          "schema": {
-            "title": "Run Id",
-            "type": "string"
-          }
-        },
-        "source_capture_digests": {
-          "default": [],
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "source_capture_digests",
-          "required": false,
-          "schema": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Source Capture Digests",
-            "type": "array"
           }
         },
         "status": {
@@ -22437,10 +22441,45 @@
             ],
             "title": "InboxLinked",
             "type": "object"
+          },
+          "InboxSighting": {
+            "additionalProperties": false,
+            "description": "One run's posting of an item, and the Captures that item's closure reached in it.",
+            "properties": {
+              "posted_at": {
+                "format": "date-time",
+                "title": "Posted At",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "source_capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Capture Digests",
+                "type": "array"
+              },
+              "tag": {
+                "const": "cruxible-inbox-sighting-v1",
+                "default": "cruxible-inbox-sighting-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "posted_at"
+            ],
+            "title": "InboxSighting",
+            "type": "object"
           }
         },
         "additionalProperties": false,
-        "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``run_id``/``posted_at`` are the first posting; ``last_run_id``/``last_posted_at``\nthe latest. ``occurrences`` counts every run that posted the same dedupe key.\n``disposition`` is the agent's latest decision, kept when the item recurs:\na recurring item is ``unread`` again, and ``recurred_since_disposition``\ncounts the postings after that decision.",
+        "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item is ``unread`` again, and\n``recurred_since_disposition`` counts the sightings after that decision.",
         "properties": {
           "dedupe_key": {
             "title": "Dedupe Key",
@@ -22476,18 +22515,12 @@
             "default": null,
             "title": "Disposition"
           },
+          "first_sighting": {
+            "$ref": "#/$defs/InboxSighting"
+          },
           "item_id": {
             "pattern": "^INB-[0-9a-f]{64}$",
             "title": "Item Id",
-            "type": "string"
-          },
-          "last_posted_at": {
-            "format": "date-time",
-            "title": "Last Posted At",
-            "type": "string"
-          },
-          "last_run_id": {
-            "title": "Last Run Id",
             "type": "string"
           },
           "line": {
@@ -22512,11 +22545,6 @@
             "title": "Payload Digest",
             "type": "string"
           },
-          "posted_at": {
-            "format": "date-time",
-            "title": "Posted At",
-            "type": "string"
-          },
           "procedure": {
             "title": "Procedure",
             "type": "string"
@@ -22525,23 +22553,20 @@
             "title": "Procedure Artifact Digest",
             "type": "string"
           },
+          "recent_sightings": {
+            "items": {
+              "$ref": "#/$defs/InboxSighting"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Recent Sightings",
+            "type": "array"
+          },
           "recurred_since_disposition": {
             "default": 0,
             "minimum": 0,
             "title": "Recurred Since Disposition",
             "type": "integer"
-          },
-          "run_id": {
-            "title": "Run Id",
-            "type": "string"
-          },
-          "source_capture_digests": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Source Capture Digests",
-            "type": "array"
           },
           "status": {
             "enum": [
@@ -22567,11 +22592,9 @@
           "procedure",
           "procedure_artifact_digest",
           "node_id",
-          "run_id",
-          "posted_at",
-          "last_run_id",
-          "last_posted_at",
           "occurrences",
+          "first_sighting",
+          "recent_sightings",
           "dedupe_key",
           "payload_digest",
           "payload_bytes"
@@ -22581,18 +22604,16 @@
       },
       "required_fields": [
         "dedupe_key",
+        "first_sighting",
         "item_id",
-        "last_posted_at",
-        "last_run_id",
         "line",
         "node_id",
         "occurrences",
         "payload_bytes",
         "payload_digest",
-        "posted_at",
         "procedure",
         "procedure_artifact_digest",
-        "run_id",
+        "recent_sightings",
         "status"
       ]
     },
@@ -23236,7 +23257,7 @@
           },
           "InboxItemEnvelope": {
             "additionalProperties": false,
-            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``run_id``/``posted_at`` are the first posting; ``last_run_id``/``last_posted_at``\nthe latest. ``occurrences`` counts every run that posted the same dedupe key.\n``disposition`` is the agent's latest decision, kept when the item recurs:\na recurring item is ``unread`` again, and ``recurred_since_disposition``\ncounts the postings after that decision.",
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item is ``unread`` again, and\n``recurred_since_disposition`` counts the sightings after that decision.",
             "properties": {
               "dedupe_key": {
                 "title": "Dedupe Key",
@@ -23272,18 +23293,12 @@
                 "default": null,
                 "title": "Disposition"
               },
+              "first_sighting": {
+                "$ref": "#/$defs/InboxSighting"
+              },
               "item_id": {
                 "pattern": "^INB-[0-9a-f]{64}$",
                 "title": "Item Id",
-                "type": "string"
-              },
-              "last_posted_at": {
-                "format": "date-time",
-                "title": "Last Posted At",
-                "type": "string"
-              },
-              "last_run_id": {
-                "title": "Last Run Id",
                 "type": "string"
               },
               "line": {
@@ -23308,11 +23323,6 @@
                 "title": "Payload Digest",
                 "type": "string"
               },
-              "posted_at": {
-                "format": "date-time",
-                "title": "Posted At",
-                "type": "string"
-              },
               "procedure": {
                 "title": "Procedure",
                 "type": "string"
@@ -23321,23 +23331,20 @@
                 "title": "Procedure Artifact Digest",
                 "type": "string"
               },
+              "recent_sightings": {
+                "items": {
+                  "$ref": "#/$defs/InboxSighting"
+                },
+                "maxItems": 5,
+                "minItems": 1,
+                "title": "Recent Sightings",
+                "type": "array"
+              },
               "recurred_since_disposition": {
                 "default": 0,
                 "minimum": 0,
                 "title": "Recurred Since Disposition",
                 "type": "integer"
-              },
-              "run_id": {
-                "title": "Run Id",
-                "type": "string"
-              },
-              "source_capture_digests": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Source Capture Digests",
-                "type": "array"
               },
               "status": {
                 "enum": [
@@ -23363,11 +23370,9 @@
               "procedure",
               "procedure_artifact_digest",
               "node_id",
-              "run_id",
-              "posted_at",
-              "last_run_id",
-              "last_posted_at",
               "occurrences",
+              "first_sighting",
+              "recent_sightings",
               "dedupe_key",
               "payload_digest",
               "payload_bytes"
@@ -23494,6 +23499,41 @@
               "payload_preview"
             ],
             "title": "InboxListEntry",
+            "type": "object"
+          },
+          "InboxSighting": {
+            "additionalProperties": false,
+            "description": "One run's posting of an item, and the Captures that item's closure reached in it.",
+            "properties": {
+              "posted_at": {
+                "format": "date-time",
+                "title": "Posted At",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "source_capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Capture Digests",
+                "type": "array"
+              },
+              "tag": {
+                "const": "cruxible-inbox-sighting-v1",
+                "default": "cruxible-inbox-sighting-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "posted_at"
+            ],
+            "title": "InboxSighting",
             "type": "object"
           },
           "ShownObject": {
@@ -23835,7 +23875,7 @@
           },
           "InboxItemEnvelope": {
             "additionalProperties": false,
-            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``run_id``/``posted_at`` are the first posting; ``last_run_id``/``last_posted_at``\nthe latest. ``occurrences`` counts every run that posted the same dedupe key.\n``disposition`` is the agent's latest decision, kept when the item recurs:\na recurring item is ``unread`` again, and ``recurred_since_disposition``\ncounts the postings after that decision.",
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item is ``unread`` again, and\n``recurred_since_disposition`` counts the sightings after that decision.",
             "properties": {
               "dedupe_key": {
                 "title": "Dedupe Key",
@@ -23871,18 +23911,12 @@
                 "default": null,
                 "title": "Disposition"
               },
+              "first_sighting": {
+                "$ref": "#/$defs/InboxSighting"
+              },
               "item_id": {
                 "pattern": "^INB-[0-9a-f]{64}$",
                 "title": "Item Id",
-                "type": "string"
-              },
-              "last_posted_at": {
-                "format": "date-time",
-                "title": "Last Posted At",
-                "type": "string"
-              },
-              "last_run_id": {
-                "title": "Last Run Id",
                 "type": "string"
               },
               "line": {
@@ -23907,11 +23941,6 @@
                 "title": "Payload Digest",
                 "type": "string"
               },
-              "posted_at": {
-                "format": "date-time",
-                "title": "Posted At",
-                "type": "string"
-              },
               "procedure": {
                 "title": "Procedure",
                 "type": "string"
@@ -23920,23 +23949,20 @@
                 "title": "Procedure Artifact Digest",
                 "type": "string"
               },
+              "recent_sightings": {
+                "items": {
+                  "$ref": "#/$defs/InboxSighting"
+                },
+                "maxItems": 5,
+                "minItems": 1,
+                "title": "Recent Sightings",
+                "type": "array"
+              },
               "recurred_since_disposition": {
                 "default": 0,
                 "minimum": 0,
                 "title": "Recurred Since Disposition",
                 "type": "integer"
-              },
-              "run_id": {
-                "title": "Run Id",
-                "type": "string"
-              },
-              "source_capture_digests": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Source Capture Digests",
-                "type": "array"
               },
               "status": {
                 "enum": [
@@ -23962,11 +23988,9 @@
               "procedure",
               "procedure_artifact_digest",
               "node_id",
-              "run_id",
-              "posted_at",
-              "last_run_id",
-              "last_posted_at",
               "occurrences",
+              "first_sighting",
+              "recent_sightings",
               "dedupe_key",
               "payload_digest",
               "payload_bytes"
@@ -24069,6 +24093,41 @@
               "target"
             ],
             "title": "InboxLinked",
+            "type": "object"
+          },
+          "InboxSighting": {
+            "additionalProperties": false,
+            "description": "One run's posting of an item, and the Captures that item's closure reached in it.",
+            "properties": {
+              "posted_at": {
+                "format": "date-time",
+                "title": "Posted At",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "source_capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Capture Digests",
+                "type": "array"
+              },
+              "tag": {
+                "const": "cruxible-inbox-sighting-v1",
+                "default": "cruxible-inbox-sighting-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "posted_at"
+            ],
+            "title": "InboxSighting",
             "type": "object"
           },
           "ShownObject": {
@@ -24213,6 +24272,100 @@
       "required_fields": [
         "item",
         "payload_preview"
+      ]
+    },
+    "InboxSighting": {
+      "fields": {
+        "posted_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "posted_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Posted At",
+            "type": "string"
+          }
+        },
+        "run_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": true,
+          "schema": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "source_capture_digests": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source_capture_digests",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Capture Digests",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-sighting-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-sighting-v1",
+            "default": "cruxible-inbox-sighting-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One run's posting of an item, and the Captures that item's closure reached in it.",
+        "properties": {
+          "posted_at": {
+            "format": "date-time",
+            "title": "Posted At",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "source_capture_digests": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Capture Digests",
+            "type": "array"
+          },
+          "tag": {
+            "const": "cruxible-inbox-sighting-v1",
+            "default": "cruxible-inbox-sighting-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "posted_at"
+        ],
+        "title": "InboxSighting",
+        "type": "object"
+      },
+      "required_fields": [
+        "posted_at",
+        "run_id"
       ]
     },
     "InitResult": {
