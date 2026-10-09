@@ -329,19 +329,7 @@ def test_a_new_subject_colliding_with_an_alias_of_its_kind_refuses(
     ]
 
 
-def test_asserting_distinct_from_in_the_same_change_exempts_the_pair(
-    instance: PlaybillInstance,
-) -> None:
-    import base64
-
-    from cruxible_client.contracts.authoring.models import (
-        AuthoringClaimStatement,
-        ClaimAuthoringPayloadV2,
-        ClaimDependencyDrafts,
-        SelfSourceBody,
-    )
-    from cruxible_client.contracts.claims import SubjectClaimObject
-    from cruxible_client.contracts.semantic import SemanticAddress
+def _accept_distinct_from(instance: PlaybillInstance) -> None:
     from tests.core_support._identity_support import accept_tree, identity_claim_type
 
     distinct = identity_claim_type(
@@ -360,13 +348,26 @@ def test_asserting_distinct_from_in_the_same_change_exempts_the_pair(
         {claim_type_path(distinct.predicate): render_claim_type(distinct)},
         name="distinct-from",
     )
-    alias(instance, ALPHA, "a-one")
-    asserted = ClaimAuthoringPayloadV2(
+
+
+def _distinct_member(subject_id: str, other: str) -> Any:
+    import base64
+
+    from cruxible_client.contracts.authoring.models import (
+        AuthoringClaimStatement,
+        ClaimAuthoringPayloadV2,
+        ClaimDependencyDrafts,
+        SelfSourceBody,
+    )
+    from cruxible_client.contracts.claims import SubjectClaimObject
+    from cruxible_client.contracts.semantic import SemanticAddress
+
+    return ClaimAuthoringPayloadV2(
         statement=AuthoringClaimStatement(
-            subject=SemanticAddress.whole_artifact(subject_path(KIND, "a-one")),
+            subject=SemanticAddress.whole_artifact(subject_path(KIND, subject_id)),
             predicate="semantic.distinct_from",
             object=SubjectClaimObject(
-                address=SemanticAddress.whole_artifact(subject_path(KIND, "alpha"))
+                address=SemanticAddress.whole_artifact(subject_path(KIND, other))
             ),
             role="observation",
         ),
@@ -374,7 +375,192 @@ def test_asserting_distinct_from_in_the_same_change_exempts_the_pair(
         source=SelfSourceBody(content_base64=base64.b64encode(b"different").decode()),
         dependency_drafts=ClaimDependencyDrafts(),
     )
-    result = _compile(instance, _subject_member("a-one"), asserted)
+
+
+def test_asserting_distinct_from_in_the_same_change_exempts_the_pair(
+    instance: PlaybillInstance,
+) -> None:
+    _accept_distinct_from(instance)
+    alias(instance, ALPHA, "a-one")
+    result = _compile(instance, _subject_member("a-one"), _distinct_member("a-one", "alpha"))
     codes = [item.code for item in result.frontier.diagnostics]
     assert "cruxible.authoring.subject_collision" not in codes, codes
     assert result.verdict == "passed", codes
+
+
+# -- the authoritative creation boundary (review F-001, F-002) --------------------
+
+
+def _alias_member(subject_id: str, name: str) -> Any:
+    import base64
+
+    from cruxible_client.contracts.authoring.models import (
+        AuthoringClaimStatement,
+        ClaimAuthoringPayloadV2,
+        ClaimDependencyDrafts,
+        SelfSourceBody,
+    )
+    from cruxible_client.contracts.claims import LiteralClaimObject
+    from cruxible_client.contracts.semantic import SemanticAddress
+
+    return ClaimAuthoringPayloadV2(
+        statement=AuthoringClaimStatement(
+            subject=SemanticAddress.whole_artifact(subject_path(KIND, subject_id)),
+            predicate="semantic.alias",
+            object=LiteralClaimObject(value=name),
+            role="observation",
+        ),
+        rationale="Alias added in this change.",
+        source=SelfSourceBody(content_base64=base64.b64encode(b"alias").decode()),
+        dependency_drafts=ClaimDependencyDrafts(),
+    )
+
+
+def _submit_raw(instance: PlaybillInstance, updates: dict[str, bytes], name: str) -> Any:
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+
+    base = instance.accepted_coordinate()
+    return instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/{name}", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree={**instance.tree_at(base.git_oid), **updates},
+        timestamp="2026-10-09T12:00:00.000000Z",
+    )
+
+
+def _codes(result: Any) -> list[str]:
+    return [item.code for item in result.frontier.diagnostics]
+
+
+def test_same_change_alias_creation_collision_refuses(instance: PlaybillInstance) -> None:
+    """Review F-002 probe: a new Subject and an alias naming it, in one change."""
+
+    result = _compile(instance, _subject_member("fresh"), _alias_member("alpha", "fresh"))
+    assert result.verdict == "refused", result
+    assert "cruxible.authoring.subject_collision" in _codes(result)
+
+
+def test_raw_proposal_creation_collision_refuses_at_receive(instance: PlaybillInstance) -> None:
+    """Review F-001 probe: an ordinary proposal is held to the same boundary."""
+
+    from cruxible_client.contracts.subjects import render_subject
+    from tests.core_support._identity_support import shell
+
+    alias(instance, ALPHA, "a-one")
+    submitted = _submit_raw(
+        instance, {subject_path(KIND, "a-one"): render_subject(shell("a-one"))}, "raw-collision"
+    )
+    assert submitted.candidate is None
+    (diagnostic,) = submitted.evaluation.diagnostics
+    assert diagnostic.code == "cruxible.subject.creation_collision"
+    assert ALPHA in diagnostic.message
+
+
+def test_a_moved_head_rechecks_creation_against_the_new_parent(
+    instance: PlaybillInstance,
+) -> None:
+    """Admitted without collision, then the head names it: it never lands."""
+
+    from cruxible_client.contracts.errors import ProposalStale
+    from cruxible_client.contracts.subjects import render_subject
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
+    from tests.core_support._identity_support import shell
+
+    submitted = _submit_raw(
+        instance, {subject_path(KIND, "b-two"): render_subject(shell("b-two"))}, "pending-b-two"
+    )
+    assert submitted.candidate is not None, submitted.evaluation
+    # The head moves: alpha is now also known as b-two.
+    alias(instance, ALPHA, "b-two")
+    with pytest.raises(ProposalStale):
+        service_activate_playbill_proposal(
+            instance, proposal_id=submitted.admission.proposal_id, activated_by="owner"
+        )
+    readmitted = service_readmit_playbill_proposal(
+        instance, proposal_id=submitted.admission.proposal_id, actor_id="owner", dry_run=False
+    )
+    dumped = readmitted.model_dump_json()
+    assert "cruxible.subject.creation_collision" in dumped, dumped
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert subject_path(KIND, "b-two") not in tree
+
+
+def test_a_claim_subject_draft_is_held_to_the_boundary(instance: PlaybillInstance) -> None:
+    from cruxible_client.contracts.authoring.models import ClaimDependencyDrafts
+    from tests.core_support._identity_support import shell
+
+    alias(instance, ALPHA, "a-one")
+    drafted = _alias_member("a-one", "other").model_copy(
+        update={"dependency_drafts": ClaimDependencyDrafts(subject=shell("a-one"))}
+    )
+    result = _compile(instance, drafted)
+    assert "cruxible.authoring.subject_collision" in _codes(result), _codes(result)
+
+
+def test_a_write_adding_an_alias_and_its_subject_together_refuses(
+    instance: PlaybillInstance,
+) -> None:
+    outcome = write(
+        instance,
+        {"op": "add", "subject": ALPHA, "field": "semantic.alias", "value": "fresh"},
+        {"op": "set", "subject": f"{KIND}/fresh", "field": "code", "value": "x"},
+    )
+    assert outcome.status != "accepted", outcome
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert subject_path(KIND, "fresh") not in tree
+
+
+def test_a_distinct_from_exemption_covers_only_its_own_pair(instance: PlaybillInstance) -> None:
+    _accept_distinct_from(instance)
+    alias(instance, ALPHA, "a-one")
+    alias(instance, BETA, "a-one")
+    # a-one meets alpha and beta; asserting it distinct from alpha leaves beta.
+    result = _compile(instance, _subject_member("a-one"), _distinct_member("a-one", "alpha"))
+    (diagnostic,) = [
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "cruxible.authoring.subject_collision"
+    ]
+    assert BETA in diagnostic.message and ALPHA not in diagnostic.message
+
+
+def test_a_retirement_in_the_same_change_lifts_the_collision(instance: PlaybillInstance) -> None:
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.subjects import parse_subject, render_subject, subject_digest
+    from cruxible_core.indexes.subject_aliases import candidate_creation_collisions
+    from tests.core_support._identity_support import shell
+
+    alias(instance, ALPHA, "a-one")
+    oid = instance.accepted_coordinate().git_oid
+    base = instance.immutable_tree_at(oid)
+    plain = instance.tree_at(oid)
+    created = subject_path(KIND, "a-one")
+    alpha_path = subject_path(KIND, "alpha")
+    alpha = parse_subject(plain[alpha_path], path=alpha_path)
+    retired = alpha.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=subject_digest(alpha).tagged
+            )
+        }
+    )
+    candidate = {
+        **plain,
+        created: render_subject(shell("a-one")),
+        alpha_path: render_subject(retired),
+    }
+    for parent in (base, plain):  # the projection and the cold derivation agree
+        assert (
+            candidate_creation_collisions(
+                current_tree=parent, candidate_tree=candidate, scope=(alpha_path, created)
+            )
+            == ()
+        )
+        assert candidate_creation_collisions(
+            current_tree=parent,
+            candidate_tree={**plain, created: render_subject(shell("a-one"))},
+            scope=(created,),
+        ) == ((created, (ALPHA,)),)

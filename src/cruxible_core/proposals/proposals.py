@@ -310,7 +310,13 @@ from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProject
 from cruxible_core.indexes.proposals.proposal_note_projection import (
     ProposalNoteIndex,
 )
-from cruxible_core.indexes.subject_aliases import SubjectReferenceResolver, tree_reference_resolver
+from cruxible_core.indexes.subject_aliases import (
+    SUBJECT_CREATION_COLLISION,
+    SubjectReferenceResolver,
+    candidate_creation_collisions,
+    subject_collision_message,
+    tree_reference_resolver,
+)
 from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
     derive_candidate_cards,
@@ -4280,6 +4286,30 @@ def _evaluate_scoped_members(
         )
     if tuple(item.path for item in accepted) != scope:
         raise ProposalIntegrityError("evaluator did not cover every scoped member")
+    if not replaying_accepted:
+        # The authoritative Subject-creation boundary (identity-design-1009): a
+        # Subject this change creates must not collide with a live one of its
+        # kind, read from the parent overlaid with this change. Admission and
+        # settlement both evaluate here, so every route is held to it. History
+        # accepted before the rule is not refused again on replay.
+        collisions = candidate_creation_collisions(
+            current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
+        )
+        if collisions:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                tuple(
+                    _diagnostic(
+                        SUBJECT_CREATION_COLLISION,
+                        subject_collision_message(path, others),
+                        path,
+                    )
+                    for path, others in collisions
+                ),
+                rebased,
+                claim_admission_accounts=claim_admission_accounts,
+            )
     if delegated_mandate_digest is not None:
         # A settle mandate replaces candidate approval only when, read from the
         # parent state, it covers every member and its condition holds for each.

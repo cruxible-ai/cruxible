@@ -254,19 +254,21 @@ def projection_connection(
     return connect
 
 
-def tree_reference_resolver(tree: Mapping[str, bytes]) -> SubjectReferenceResolver:
-    """The resolver for references read from one accepted tree.
+def tree_index_connection(
+    tree: Mapping[str, bytes],
+) -> Callable[[], AbstractContextManager[sqlite3.Connection]]:
+    """Open one accepted tree's Subject and vocabulary index.
 
-    An accepted tree that stands on its projection resolves through that
-    projection's alias index. A tree with none (cold replay, genesis) derives the
-    same two tables from its own members with the same row derivation the
-    projection compiler uses (``typed_state.vocabulary_terms``), once, on first
-    use: one rule, whichever way the tree is held.
+    An accepted root tree that stands on its projection reads that projection.
+    A tree with none (cold replay, genesis, an edited tree) derives the same two
+    tables from its own members with the row derivation the projection compiler
+    uses (``typed_state.vocabulary_terms``), once, on first use: one rule,
+    whichever way the tree is held.
     """
 
     reader = getattr(tree, "_accepted_reader", None)
-    if reader is not None:
-        return reference_resolver(projection_connection(reader))
+    if reader is not None and getattr(tree, "_parent", None) is None:
+        return projection_connection(reader)
     built: list[sqlite3.Connection] = []
 
     @contextmanager
@@ -275,7 +277,150 @@ def tree_reference_resolver(tree: Mapping[str, bytes]) -> SubjectReferenceResolv
             built.append(_tree_alias_index(tree))
         yield built[0]
 
-    return reference_resolver(connect)
+    return connect
+
+
+def tree_reference_resolver(tree: Mapping[str, bytes]) -> SubjectReferenceResolver:
+    """The resolver for references read from one accepted tree (``tree_index_connection``)."""
+
+    return reference_resolver(tree_index_connection(tree))
+
+
+def _owner_path(identity: str) -> str | None:
+    kind, _, name = identity.partition(":")
+    if kind == "Subject":
+        return f"{_SUBJECTS}{name}.json"
+    if kind == "Claim" and name.startswith("CLM-") and len(name) > 6:
+        return f"claims/{name[4:6]}/{name}.json"
+    return None
+
+
+def _live_member(tree: Mapping[str, bytes], path: str) -> Any | None:
+    """The live Subject or Claim at ``path`` in ``tree``, parsed; None otherwise."""
+
+    from cruxible_client.contracts.claims import parse_claim
+    from cruxible_client.contracts.subjects import parse_subject
+
+    content = tree.get(path)
+    if content is None:
+        return None
+    source: Any = (
+        parse_subject(content, path=path)
+        if path.startswith(_SUBJECTS)
+        else parse_claim(content, path=path)
+    )
+    return source if source.lifecycle.state == "live" else None
+
+
+SUBJECT_CREATION_COLLISION = "cruxible.subject.creation_collision"
+
+
+def subject_collision_message(path: str, others: tuple[str, ...]) -> str:
+    """The one refusal text for a new Subject that collides, at every boundary."""
+
+    created = _ref_of(path)
+    return (
+        f"New Subject {created} collides with live {', '.join(others)}: its id, canonical "
+        "token or alias is the same name. Name the existing Subject, add an alias to it, "
+        f"or assert semantic.distinct_from between {created} and it in the same change."
+    )
+
+
+def candidate_creation_collisions(
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    scope: tuple[str, ...],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Each Subject a change creates that collides, with the live Subjects it meets.
+
+    A Subject is created when it is live in the candidate and not live in the
+    parent. It collides with another live Subject of its kind, in the candidate
+    state, whose id, canonical token or alias equals the new id's canonical token
+    (the discovery normalizer). The candidate state is the parent's index
+    overlaid with the changed owners only: a parent row whose owner the change
+    touched is dropped, and each changed owner that is live in the candidate
+    contributes its rows afresh -- Subjects created or revived, aliases added,
+    retirements -- never a rebuild of the index. A ``semantic.distinct_from``
+    Claim the same change makes live exempts exactly the pair it names.
+    """
+
+    from cruxible_client.contracts.claims import SubjectClaimObject
+    from cruxible_core.indexes.typed_state import vocabulary_terms
+
+    changed = frozenset(scope)
+    created: list[str] = []
+    fresh_rows: list[tuple[str, str, str, str, str]] = []
+    distinct: set[frozenset[str]] = set()
+    for path in scope:
+        if path.startswith("claims/"):
+            content = candidate_tree.get(path)
+            # Only alias and distinct_from Claims bear on a collision.
+            if content is None or (
+                b'"semantic.alias"' not in content and b'"semantic.distinct_from"' not in content
+            ):
+                continue
+        elif not path.startswith(_SUBJECTS):
+            continue
+        source = _live_member(candidate_tree, path)
+        if source is None:
+            continue
+        if path.startswith(_SUBJECTS):
+            if _live_member(current_tree, path) is None:
+                created.append(path)
+        else:
+            statement = source.statement
+            value = statement.object
+            if statement.predicate == "semantic.distinct_from" and isinstance(
+                value, SubjectClaimObject
+            ):
+                distinct.add(
+                    frozenset({statement.subject.artifact_path, value.address.artifact_path})
+                )
+        fresh_rows.extend(vocabulary_terms(source, path=path))
+    if not created:
+        return ()
+
+    found: list[tuple[str, tuple[str, ...]]] = []
+    with tree_index_connection(current_tree)() as connection:
+        for path in sorted(created):
+            kind, _, rest = path.removeprefix(_SUBJECTS).partition("/")
+            term = normalize_discovery_term(rest.removesuffix(".json"))
+            low, high = _kind_range(kind)
+            meets: set[str] = set()
+            for identity, target in connection.execute(
+                "SELECT source_identity, target_path FROM vocabulary_terms "
+                "WHERE term=? AND basis IN ('canonical_token','alias') "
+                "AND target_path>=? AND target_path<?",
+                (term, low, high),
+            ):
+                owner = _owner_path(str(identity))
+                if owner is not None and owner in changed:
+                    continue  # the change re-states this owner's rows
+                meets.add(str(target))
+            for _identity, target, basis, row_term, _value in fresh_rows:
+                if (
+                    row_term == term
+                    and basis in {"canonical_token", "alias"}
+                    and low <= target < high
+                ):
+                    meets.add(target)
+            colliding = tuple(
+                sorted(
+                    _ref_of(other)
+                    for other in meets
+                    if other != path
+                    and frozenset({path, other}) not in distinct
+                    and (
+                        _live_member(candidate_tree, other) is not None
+                        if other in changed
+                        else _subject(connection, other, table="subjects", live=True)
+                    )
+                )
+            )
+            if colliding:
+                found.append((path, colliding))
+    return tuple(found)
 
 
 def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
@@ -311,7 +456,11 @@ __all__ = [
     "SubjectReferenceAmbiguous",
     "SubjectReferenceResolver",
     "SubjectRefResolution",
+    "SUBJECT_CREATION_COLLISION",
+    "candidate_creation_collisions",
+    "subject_collision_message",
     "projection_connection",
+    "tree_index_connection",
     "reference_resolver",
     "tree_reference_resolver",
     "alias_targets",

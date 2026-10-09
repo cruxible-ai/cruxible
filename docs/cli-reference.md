@@ -1272,6 +1272,20 @@ discovery normalizer, equals `id`; an alias naming several refuses
 (`alias_ambiguous`) with each candidate; none leaves the entry point's own rule
 in force (a write adds the Subject, a read refuses the unknown reference).
 
+A change may not create a Subject that collides with a live Subject of its kind:
+one whose id, canonical token or alias equals the new id's canonical token (the
+discovery normalizer), whether accepted already or added by the same change (a
+new alias, another new Subject). Retirements in the same change count: a Subject
+or alias the change retires collides with nothing. The refusal is part of
+candidate evaluation, so every route is held to it -- authoring and its Subject
+drafts, write verbs, Procedure items and raw proposals alike -- at admission and
+again at settlement against the parent it lands on
+(`cruxible.subject.creation_collision`); authoring and writes also refuse it
+early (`cruxible.authoring.subject_collision`, `cruxible.write.subject_collision`).
+Name the existing Subject, add an alias to it, or assert `semantic.distinct_from`
+between the two in the same change, which exempts exactly that pair. History
+accepted before the rule is not refused again on recovery replay.
+
 `migrate` is the operator form of a ClaimType succession: one vocabulary change,
 built from a request file, with nothing else in the generation. The agent form is
 the `claim_type_succession` change-set member under `cruxible authoring`, which

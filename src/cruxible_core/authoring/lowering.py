@@ -256,10 +256,11 @@ from cruxible_core.compiler.projection_artifacts import (
 from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree, fork_tree
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
-    creation_collisions,
+    candidate_creation_collisions,
     resolve_reference_text,
     resolve_subject_ref,
     split_reference,
+    subject_collision_message,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -4211,70 +4212,49 @@ _DISTINCT_FROM = "semantic.distinct_from"
 def _refuse_subject_collisions(
     instance: PlaybillInstance, *, intent: AuthoringIntentV1, lowered: LoweredAuthoring
 ) -> None:
-    """Refuse a new Subject that collides with an accepted Subject of its kind.
+    """Refuse early a new Subject that collides with a live Subject of its kind.
 
-    A Subject this lowering creates -- a Subject member, a Claim's Subject
-    draft, a write's added Subject, a Procedure item's Subject -- collides when
-    its id's canonical token equals an accepted Subject's id, canonical token or
-    alias of the same kind (``indexes.subject_aliases.creation_collisions``).
-    The author resolves it by naming the existing Subject, by adding an alias
-    to it, or by asserting ``semantic.distinct_from`` between the two in the
-    same change, which exempts that pair.
+    The authoritative check is candidate evaluation's (admission and
+    settlement, ``indexes.subject_aliases.candidate_creation_collisions``);
+    this is the same check run on the lowered candidate, so the author learns
+    which member to repair before anything is proposed. A Subject this lowering
+    creates -- a Subject member, a Claim's Subject draft, a write's added
+    Subject, a Procedure item's Subject -- collides when its id's canonical
+    token equals another live Subject's id, canonical token or alias of the
+    same kind, accepted or added by this change. The author resolves it by
+    naming the existing Subject, by adding an alias to it, or by asserting
+    ``semantic.distinct_from`` between the two in the same change, which
+    exempts that pair.
     """
 
+    if not any(path.startswith("subjects/") for path, _content in lowered.changed_members):
+        return
     base = instance.resolve_accepted_coordinate(
         git_oid=intent.base_coordinate.git_oid,
         semantic_root=intent.base_coordinate.semantic_root,
         generation_root=intent.base_coordinate.generation_root,
     )
-    base_tree = instance.immutable_tree_at(base.git_oid)
-    created = [
-        path
-        for path, _content in lowered.changed_members
-        if path.startswith("subjects/") and path not in base_tree
-    ]
-    if not created:
-        return
-    distinct: set[frozenset[str]] = set()
-    for path, content in lowered.changed_members:
-        if not path.startswith("claims/"):
-            continue
-        claim = parse_claim(content, path=path)
-        value = claim.statement.object
-        if (
-            claim.statement.predicate == _DISTINCT_FROM
-            and claim.lifecycle.state == "live"
-            and isinstance(value, SubjectClaimObject)
-        ):
-            distinct.add(
-                frozenset({claim.statement.subject.artifact_path, value.address.artifact_path})
-            )
-    with instance.bind_accepted_projection(base) as projection:
-        connection = projection.typed.connection
-        for path in created:
-            kind, _, rest = path.removeprefix("subjects/").partition("/")
-            subject_id = rest.removesuffix(".json")
-            exempt = frozenset(
-                other for pair in distinct if path in pair for other in pair if other != path
-            )
-            collisions = creation_collisions(connection, kind, subject_id, exempt=exempt)
-            if collisions:
-                _refuse(
-                    "cruxible.authoring.subject_collision",
-                    path
-                    if path not in lowered.member_by_path
-                    else f"members[{lowered.member_by_path[path]}]",
-                    f"New Subject {kind}/{subject_id} collides with accepted "
-                    f"{', '.join(collisions)}: its id, canonical token or alias is the same "
-                    "name. Name the existing Subject, add an alias to it, or assert "
-                    f"{_DISTINCT_FROM} between them in the same change.",
-                    repair_kind="use_existing_subject",
-                    repair_description=(
-                        f"Name {collisions[0]} instead, add a semantic.alias to it, or "
-                        f"assert {_DISTINCT_FROM} between {kind}/{subject_id} and it."
-                    ),
-                    replacement={"existing": list(collisions)},
-                )
+    collisions = candidate_creation_collisions(
+        current_tree=instance.immutable_tree_at(base.git_oid),
+        candidate_tree=lowered.proposed_tree,
+        scope=tuple(path for path, _content in lowered.changed_members),
+    )
+    for path, others in collisions:
+        kind, _, rest = path.removeprefix("subjects/").partition("/")
+        subject_id = rest.removesuffix(".json")
+        _refuse(
+            "cruxible.authoring.subject_collision",
+            path
+            if path not in lowered.member_by_path
+            else f"members[{lowered.member_by_path[path]}]",
+            subject_collision_message(path, others),
+            repair_kind="use_existing_subject",
+            repair_description=(
+                f"Name {others[0]} instead, add a semantic.alias to it, or "
+                f"assert {_DISTINCT_FROM} between {kind}/{subject_id} and it."
+            ),
+            replacement={"existing": list(others)},
+        )
 
 
 def _lower_authoring(
