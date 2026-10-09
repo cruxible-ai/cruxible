@@ -110,6 +110,7 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimArtifactV2,
     ClaimBacking,
+    ClaimCitation,
     ClaimReferentContext,
     ClaimRetireDependent,
     ClaimStatement,
@@ -666,24 +667,29 @@ def _with_aliases_resolved(
     )
 
 
-def _cited_contents(instance: PlaybillInstance, capture_digests: Iterable[str]) -> set[str]:
-    """What the Captures a Claim cites observed, by content (``observed_content``).
+def cited_content(instance: PlaybillInstance, capture_digest: str) -> str:
+    """What one Capture observed, by content (``observed_content``).
 
     A Capture whose envelope cannot be read contributes its own digest, which
     no other Capture's content equals.
     """
 
-    store = instance.body_store()
     access = BodyAccessContext(principal_id="playbill-authoring", can_read_body=True)
-    found: set[str] = set()
-    for digest in capture_digests:
-        try:
-            found.add(
-                observed_content(parse_capture_envelope(store.read(digest, access=access))).digest
-            )
-        except (CruxibleError, OSError, ValueError):
-            found.add(digest)
-    return found
+    try:
+        envelope = parse_capture_envelope(instance.body_store().read(capture_digest, access=access))
+    except (CruxibleError, OSError, ValueError):
+        return capture_digest
+    return observed_content(envelope).digest
+
+
+def _cited_associations(
+    instance: PlaybillInstance, citations: Iterable[ClaimCitation]
+) -> set[tuple[str, str, str]]:
+    """Each citation a Claim holds, as (observed content, role, origin)."""
+
+    return {
+        (cited_content(instance, item.capture_digest), item.role, item.origin) for item in citations
+    }
 
 
 def _canonical_object(
@@ -1765,12 +1771,14 @@ def _lower_claim(
         )
         if base_tree.get(member_path) != candidate_tree[member_path]
     )
-    # Re-observation (identity-design-1009): the same canonical statement on
-    # evidence whose observed content the Claim already cites is a no-op -- no
-    # revision, no citation growth -- whether it is the very Capture again or
-    # another Capture of the same content (a re-run reading the same bytes).
-    # New content under the same statement refreshes the evidence by revising
-    # the Claim, never by writing a second one.
+    # Re-observation (identity-design-1009): the same canonical statement whose
+    # citation association -- the observed content cited, its role and its
+    # origin -- the Claim already holds is a no-op: no revision, no citation
+    # growth. It is the very Capture again, or another Capture of the same
+    # content (a re-run reading the same bytes) cited the same way. A new
+    # association on already-cited content (another role or origin) is kept,
+    # and new content under the same statement refreshes the evidence by
+    # revising the Claim, never by writing a second one.
     same_statement = (
         predecessor is not None
         and claim.statement == predecessor.statement
@@ -1778,15 +1786,11 @@ def _lower_claim(
         and not dependency_paths
     )
     recited = same_statement and citation in predecessor_citations
-    # Another Capture of content already cited. Citing the very same Capture in
-    # a new role is a new citation, never a re-observation.
     reobserved = (
         same_statement
         and not recited
-        and predecessor is not None
-        and capture_digest_value not in predecessor.backing.capture_digests
-        and observed_content(capture_envelope).digest
-        in _cited_contents(instance, predecessor.backing.capture_digests)
+        and (observed_content(capture_envelope).digest, citation.role, citation.origin)
+        in _cited_associations(instance, predecessor_citations)
     )
     idempotent = (
         isinstance(payload.source, ExistingCaptureCitationSource) and bool(recited)
