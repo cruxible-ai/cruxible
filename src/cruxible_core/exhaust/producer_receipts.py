@@ -239,7 +239,6 @@ class JournalProducerReceiptResolver:
         #: The journal payload bodies each run's answers were derived from: an
         #: answer stands only while every one of them is still held and intact.
         self._run_bodies: dict[str, set[str]] = {}
-        self._error_runs: dict[str, str] = {}
         self._current_run = ""
         self._verified = _VerifiedCaptures()
         self._notes: list[ProducerReceiptJournalNote] = []
@@ -297,7 +296,6 @@ class JournalProducerReceiptResolver:
                     "Capture producer receipt journal is invalid for " + candidate_digest
                 ),
             )
-            self._error_runs.setdefault(candidate_digest, self._current_run)
 
     @staticmethod
     def _candidate_digest(event_kind: str, payload: object) -> str | None:
@@ -657,16 +655,21 @@ class JournalProducerReceiptResolver:
         *,
         run_id: str,
     ) -> None:
-        """Index the cited run, then the whole journal, until ``found`` answers.
+        """Answer from a kept positive result, or derive the answer as a fresh context would.
 
-        Only answers are kept, each only while the journal payloads it was
-        derived from are held (``_still_proven``). A miss reads the run again,
-        since a context may outlive an append to a run it already read; the
-        whole journal is read at most once per context.
+        Only positive answers are kept, each only while the journal payloads it
+        was derived from are held (``_still_proven``). A refusal or a miss is
+        never kept: the context forgets what it derived and reads the cited run,
+        then the whole journal, exactly as a fresh context does -- a proof body
+        restored since, or a record appended since, is seen.
         """
 
-        if found() is not None:
-            return
+        try:
+            if found() is not None:
+                return
+        except CaptureFormatError:
+            pass
+        self._forget()
         self._index_run(run_id)
         if found() is None and not self._full:
             self.index_all()
@@ -689,14 +692,11 @@ class JournalProducerReceiptResolver:
 
         self._resolutions.clear()
         self._errors.clear()
-        self._error_runs.clear()
         self._productions.clear()
         self._run_bodies.clear()
         self._full = False
 
     def _receipt_runs(self, digest: str) -> tuple[str, ...]:
-        if digest in self._errors:
-            return (self._error_runs.get(digest, ""),)
         resolution = self._resolutions.get(digest)
         if resolution is None:
             return ()

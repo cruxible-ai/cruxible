@@ -313,3 +313,46 @@ def test_journal_proof_payloads_are_rechecked_warm_as_cold(
     # the finished Capture verification kept above them.
     shared._verified._memos.clear()
     assert _outcome(lambda: verify(shared)) == cold
+
+
+@pytest.mark.parametrize("capture_kind", ["source", "terminal"])
+def test_a_refusal_is_never_kept_past_its_proof_body_returning(
+    world: ProducedCaptures,  # noqa: F811 - the imported fixture
+    capture_kind: str,
+) -> None:
+    """Erase the run's admission, refuse, restore the exact bytes: warm verifies as cold."""
+
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    instance = world.instance
+    store = instance.body_store()
+    source_capture, terminal_capture = _genuine(world)
+    capture = source_capture if capture_kind == "source" else terminal_capture
+    envelope = _envelope(instance, capture)
+
+    def verify(context: LocalProducerReceiptResolver) -> object:
+        return verify_capture(
+            capture,
+            store=store,
+            contract=world.contract,
+            producer_artifact_digests={
+                envelope.producer.qualified: envelope.run_coordinate.executable_digest
+            },
+            producer_receipt_resolver=context,
+        )
+
+    admission = next(
+        stored.record.payload_digest
+        for stored in world.records
+        if stored.record.event_kind == "admission_bound"
+    )
+    original = store.read(admission, access=BodyAccessContext(principal_id="t", can_read_body=True))
+    assert store.erase(admission)
+    shared = instance.capture_verification_context()
+    refused = _outcome(lambda: verify(shared))
+    assert refused != "verified"
+    assert _outcome(lambda: verify(instance.capture_verification_context())) == refused
+
+    assert store.store(original).digest == admission
+    assert _outcome(lambda: verify(instance.capture_verification_context())) == "verified"
+    assert _outcome(lambda: verify(shared)) == "verified"
