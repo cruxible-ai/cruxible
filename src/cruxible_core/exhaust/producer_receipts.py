@@ -236,6 +236,11 @@ class JournalProducerReceiptResolver:
         self._resolutions: dict[str, ProducerReceiptResolution] = {}
         self._errors: dict[str, CaptureFormatError] = {}
         self._productions: dict[str, set[CaptureProductionRecord]] = {}
+        #: The journal payload bodies each run's answers were derived from: an
+        #: answer stands only while every one of them is still held and intact.
+        self._run_bodies: dict[str, set[str]] = {}
+        self._error_runs: dict[str, str] = {}
+        self._current_run = ""
         self._verified = _VerifiedCaptures()
         self._notes: list[ProducerReceiptJournalNote] = []
         self._access = BodyAccessContext(
@@ -292,6 +297,7 @@ class JournalProducerReceiptResolver:
                     "Capture producer receipt journal is invalid for " + candidate_digest
                 ),
             )
+            self._error_runs.setdefault(candidate_digest, self._current_run)
 
     @staticmethod
     def _candidate_digest(event_kind: str, payload: object) -> str | None:
@@ -401,6 +407,7 @@ class JournalProducerReceiptResolver:
             record = stored.record
             if record.event_kind not in _PROOF_EVENT_KINDS:
                 continue
+            self._current_run = record.run_id or ""
             try:
                 payload = parse_journal_payload(
                     self._bodies.read(record.payload_digest, access=self._access)
@@ -413,6 +420,8 @@ class JournalProducerReceiptResolver:
                     exc=exc,
                 )
                 continue
+            # What this run's answers rest on: re-checked before any is reused.
+            self._run_bodies.setdefault(self._current_run, set()).add(record.payload_digest)
             candidate_digest = self._candidate_digest(record.event_kind, payload)
             if record.event_kind == "produced_capture":
                 self._produced(stored, payload)
@@ -650,9 +659,10 @@ class JournalProducerReceiptResolver:
     ) -> None:
         """Index the cited run, then the whole journal, until ``found`` answers.
 
-        Only answers are kept. A miss reads the run again, since a context may
-        outlive an append to a run it already read; the whole journal is read at
-        most once per context.
+        Only answers are kept, each only while the journal payloads it was
+        derived from are held (``_still_proven``). A miss reads the run again,
+        since a context may outlive an append to a run it already read; the
+        whole journal is read at most once per context.
         """
 
         if found() is not None:
@@ -660,6 +670,39 @@ class JournalProducerReceiptResolver:
         self._index_run(run_id)
         if found() is None and not self._full:
             self.index_all()
+
+    def _still_proven(self, run_ids: Iterable[str]) -> bool:
+        """Whether every journal payload these runs' answers were derived from is held."""
+
+        for run_id in dict.fromkeys(run_ids):
+            for body in sorted(self._run_bodies.get(run_id, ())):
+                try:
+                    if not self._bodies.verify(body):
+                        return False
+                except (OSError, CruxibleError, ValueError):
+                    # Unreadable as cold resolution would find it: re-derive.
+                    return False
+        return True
+
+    def _forget(self) -> None:
+        """Drop every derived answer: the context is cold again and re-derives."""
+
+        self._resolutions.clear()
+        self._errors.clear()
+        self._error_runs.clear()
+        self._productions.clear()
+        self._run_bodies.clear()
+        self._full = False
+
+    def _receipt_runs(self, digest: str) -> tuple[str, ...]:
+        if digest in self._errors:
+            return (self._error_runs.get(digest, ""),)
+        resolution = self._resolutions.get(digest)
+        if resolution is None:
+            return ()
+        if isinstance(resolution, ProviderProducerReceiptResolution):
+            return (resolution.receipt.run_id,)
+        return (resolution.run_id,)
 
     def _resolution(self, digest: str) -> ProducerReceiptResolution | None:
         error = self._errors.get(digest)
@@ -673,6 +716,8 @@ class JournalProducerReceiptResolver:
         *,
         run_id: str,
     ) -> ProviderProducerReceiptResolution | ProcedureProducerReceiptProtocol | None:
+        if not self._still_proven(self._receipt_runs(digest)):
+            self._forget()
         if self._full_journal:
             self.index_all()
         self._lookup(lambda: self._resolution(digest), run_id=run_id)
@@ -684,6 +729,10 @@ class JournalProducerReceiptResolver:
         *,
         run_id: str,
     ) -> tuple[CaptureProductionRecord, ...]:
+        if not self._still_proven(
+            record.run_id for record in self._productions.get(capture_digest, ())
+        ):
+            self._forget()
         if self._full_journal:
             self.index_all()
         self._lookup(lambda: self._productions.get(capture_digest), run_id=run_id)

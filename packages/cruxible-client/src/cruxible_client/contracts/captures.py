@@ -2659,13 +2659,21 @@ def verify_capture(
     expected_contract = capture_contract_digest(contract).tagged
     if producer_receipt_resolver is not None:
         memo = producer_receipt_resolver.recall_verified(digest)
-        if memo is not None and _memo_answers(
-            memo,
-            store=store,
-            contract=contract,
-            contract_digest=expected_contract,
-            producer_artifact_digests=producer_artifact_digests,
-            require_production_proof=require_production_proof,
+        if (
+            memo is not None
+            and _memo_answers(
+                memo,
+                store=store,
+                contract=contract,
+                contract_digest=expected_contract,
+                producer_artifact_digests=producer_artifact_digests,
+                require_production_proof=require_production_proof,
+            )
+            and _journal_proof_still_answers(
+                memo,
+                producer_receipt_resolver,
+                require_production_proof=require_production_proof,
+            )
         ):
             return memo.envelope
     envelope = _verify_capture_once(
@@ -2700,11 +2708,13 @@ def verify_capture(
 def required_capture_bodies(
     envelope: CaptureEnvelopeV1 | CaptureEnvelope, capture_digest: str
 ) -> tuple[str, ...]:
-    """Every retained body verification requires for this Capture, in one list.
+    """Every retained Capture-side body verification requires, in one list.
 
     The envelope itself, its CAS-retained commitment and CAS source, and a
     derived Capture's input receipt-set manifest. A finished verification is
-    reused only while the store still holds each of them.
+    reused only while the store still holds each of them, and, for a v2
+    Capture, while the producer-journal proof payloads the resolver derived
+    its receipt and production records from remain held and intact.
     """
 
     required = [capture_digest]
@@ -2715,6 +2725,38 @@ def required_capture_bodies(
     if envelope.input_receipt_set_manifest_digest is not None:
         required.append(envelope.input_receipt_set_manifest_digest)
     return tuple(dict.fromkeys(required))
+
+
+def _journal_proof_still_answers(
+    memo: VerifiedCaptureMemo,
+    resolver: ProducerReceiptResolverProtocol,
+    *,
+    require_production_proof: bool,
+) -> bool:
+    """Whether the journal proof a v2 verification rested on still stands.
+
+    The resolver answers its receipt and production lookups only while the
+    journal payloads behind them are held and intact, so asking again is the
+    same re-check a cold verification would make.
+    """
+
+    envelope = memo.envelope
+    if not isinstance(envelope, CaptureEnvelope):
+        return True
+    run_id = envelope.run_coordinate.run_id
+    try:
+        if require_production_proof and not any(
+            record.capture_digest == memo.capture_digest
+            and record.capture_contract_digest == envelope.capture_contract_digest
+            and record.receipt_digest in (None, envelope.producer_receipt_digest)
+            for record in resolver.produced_capture(memo.capture_digest, run_id=run_id)
+        ):
+            return False
+        return (
+            resolver.producer_receipt(envelope.producer_receipt_digest, run_id=run_id) is not None
+        )
+    except (FormatError, ValueError):
+        return False
 
 
 def _memo_answers(

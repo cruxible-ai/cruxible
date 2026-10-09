@@ -42,7 +42,16 @@ from tests.core_support._pc_c_support import (
     provider,
     provider_run,
 )
+from tests.test_authoring.p2b4_unit1.test_live_capture_consumers import (
+    ProducedCaptures,
+    acquisition_demo,  # noqa: F401 - the fixture the producer world needs
+)
 from tests.test_authoring.test_authoring_existing_capture import _activate, _self_asserted
+from tests.test_authoring.test_capture_production_proof import (  # noqa: F401 - fixture
+    _envelope,
+    _genuine,
+    world,
+)
 from tests.test_indexes.test_projection_window_evidence import (
     BLOCK_BODY,
     EVIDENCE_CODE,
@@ -246,3 +255,61 @@ def test_warm_and_cold_requests_give_identical_verdicts(
         derived.append(_outcome(lambda: verify(shared if warm else context())))
         outcomes[warm] = [window, derived]
     assert outcomes[True] == outcomes[False]
+
+
+@pytest.mark.parametrize(
+    ("capture_kind", "event", "damage"),
+    [
+        ("source", "produced_capture", "erase"),
+        ("source", "provider_invocation_completed", "corrupt"),
+        ("terminal", "admission_bound", "erase"),
+        ("terminal", "terminal_egress", "erase"),
+    ],
+)
+def test_journal_proof_payloads_are_rechecked_warm_as_cold(
+    world: ProducedCaptures,  # noqa: F811 - the imported fixture
+    capture_kind: str,
+    event: str,
+    damage: str,
+) -> None:
+    """A run's proof payloads are dependencies of every answer derived from them."""
+
+    instance = world.instance
+    store = instance.body_store()
+    source_capture, terminal_capture = _genuine(world)
+    capture = source_capture if capture_kind == "source" else terminal_capture
+    envelope = _envelope(instance, capture)
+
+    def verify(context: LocalProducerReceiptResolver) -> object:
+        return verify_capture(
+            capture,
+            store=store,
+            contract=world.contract,
+            producer_artifact_digests={
+                envelope.producer.qualified: envelope.run_coordinate.executable_digest
+            },
+            producer_receipt_resolver=context,
+        )
+
+    shared = instance.capture_verification_context()
+    assert _outcome(lambda: verify(shared)) == "verified"
+    payload = next(
+        stored.record.payload_digest
+        for stored in world.records
+        if stored.record.event_kind == event
+    )
+    assert payload not in (capture, envelope.commitment.digest)
+    if damage == "erase":
+        assert store.erase(payload)
+    else:
+        path = store._path(payload)
+        path.chmod(0o600)
+        path.write_bytes(b"not the proof payload")
+
+    cold = _outcome(lambda: verify(instance.capture_verification_context()))
+    assert cold != "verified"
+    assert _outcome(lambda: verify(shared)) == cold
+    # The resolver's own receipt and production answers re-check too, not only
+    # the finished Capture verification kept above them.
+    shared._verified._memos.clear()
+    assert _outcome(lambda: verify(shared)) == cold
