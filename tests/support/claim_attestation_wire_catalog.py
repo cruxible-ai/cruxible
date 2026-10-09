@@ -14,7 +14,7 @@ from cruxible_client.contracts.primitives import canonical_json
 CLAIM_ATTESTATION_WIRE_CATALOG_VERSION = 1
 # Pinned from the real Pydantic models in the authorized atomic re-pin commit.
 CLAIM_ATTESTATION_WIRE_CONTRACT_CATALOG_DIGEST = (
-    "sha256:eeb4f3f1982d810113c73a0e0ef8de6e7aecc0d223ba9ae8f8c5420985c4ce0e"
+    "sha256:50fd63c00b3c57f5089ed50643d7417685c3090264788c20b2ce2f24d5fe6b77"
 )
 
 CLAIM_ATTESTATION_WIRE_MODEL_NAMES = (
@@ -26,12 +26,11 @@ CLAIM_ATTESTATION_WIRE_MODEL_NAMES = (
     ("claim_attestations", "ClaimAttestation"),
     ("claim_attestations", "PreparedClaimAttestationRequest"),
     ("claim_attestations", "VerifiedClaimAttestation"),
-    ("claim_attestation_store", "ClaimAttestationAccelerator"),
     ("claim_attestation_store", "ClaimAttestationEventPayload"),
     ("claim_attestation_store", "ClaimAttestationEvent"),
+    ("claim_attestation_store", "ClaimAttestationHeadMapDelta"),
     ("claim_attestation_store", "ClaimAttestationHeadMapEntry"),
     ("claim_attestation_store", "ClaimAttestationHeadMapNode"),
-    ("claim_attestation_store", "ClaimAttestationOutstandingMembership"),
     ("claim_attestation_store", "ClaimAttestationPartitionGenesis"),
     ("claim_attestation_store", "ClaimAttestationPartitionHead"),
     ("claim_attestation_store", "ClaimAttestationPublishedPointer"),

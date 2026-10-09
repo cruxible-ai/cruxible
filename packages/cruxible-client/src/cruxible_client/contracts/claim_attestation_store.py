@@ -22,6 +22,7 @@ CLAIM_ATTESTATION_PARTITION_V1_DOMAIN = "playbill-claim-attestation-partition-v1
 CLAIM_ATTESTATION_PARTITION_GENESIS_V1_DOMAIN = "playbill-claim-attestation-partition-genesis-v1"
 CLAIM_ATTESTATION_PARTITION_HEAD_V1_DOMAIN = "playbill-claim-attestation-partition-head-v1"
 CLAIM_ATTESTATION_HEAD_MAP_NODE_V1_DOMAIN = "playbill-claim-attestation-head-map-node-v1"
+CLAIM_ATTESTATION_HEAD_MAP_DELTA_V1_DOMAIN = "playbill-claim-attestation-head-map-delta-v1"
 CLAIM_ATTESTATION_PUBLISHED_ROOT_V1_DOMAIN = "playbill-claim-attestation-published-root-v1"
 
 
@@ -204,6 +205,32 @@ class ClaimAttestationHeadMapNode(_StrictStoreModel):
         return self
 
 
+class ClaimAttestationHeadMapDelta(_StrictStoreModel):
+    """One published transition's map: the head it changed, chained to the map before.
+
+    ``map_digest`` commits to ``previous_map_digest`` and the changed head, so it
+    commits by induction to every head in the map without restating them: an
+    append writes one head, not one per attested Claim. Stores written before
+    the delta keep their full ``ClaimAttestationHeadMapNode`` maps; a delta may
+    follow either kind.
+    """
+
+    tag: Literal["playbill-claim-attestation-head-map-delta-v1"] = (
+        "playbill-claim-attestation-head-map-delta-v1"
+    )
+    previous_map_digest: str
+    head: ClaimAttestationPartitionHead
+    map_digest: str
+
+    _digests = field_validator("previous_map_digest", "map_digest")(_digest)
+
+    @model_validator(mode="after")
+    def _reproduces(self) -> "ClaimAttestationHeadMapDelta":
+        if self.map_digest != claim_attestation_head_map_delta_digest(self):
+            raise ValueError("attestation head-map delta digest does not reproduce")
+        return self
+
+
 class ClaimAttestationPublishedRoot(_StrictStoreModel):
     tag: Literal["playbill-claim-attestation-published-root-v1"] = (
         "playbill-claim-attestation-published-root-v1"
@@ -246,60 +273,6 @@ class ClaimAttestationPublishedPointer(_StrictStoreModel):
     root_digest: str
 
     _root_digest = field_validator("root_digest")(_digest)
-
-
-class ClaimAttestationOutstandingMembership(_StrictStoreModel):
-    tag: Literal["playbill-claim-attestation-outstanding-membership-v1"] = (
-        "playbill-claim-attestation-outstanding-membership-v1"
-    )
-    claim_identity: ArtifactIdentity
-    capture_digest: str
-    event_digest: str
-
-    _digests = field_validator("capture_digest", "event_digest")(_digest)
-
-
-class ClaimAttestationAccelerator(_StrictStoreModel):
-    tag: Literal["playbill-claim-attestation-accelerator-v1"] = (
-        "playbill-claim-attestation-accelerator-v1"
-    )
-    at_published_root_digest: str
-    # (partition_digest, basis, principal_id, event_digest)
-    latest_event_by_principal: tuple[tuple[str, str, str, str], ...] = ()
-    # (partition_digest, principal_id, statement_digest, event_digest)
-    idempotency_entries: tuple[tuple[str, str, str, str], ...] = ()
-    outstanding_memberships: tuple[ClaimAttestationOutstandingMembership, ...] = ()
-
-    _root_digest = field_validator("at_published_root_digest")(_digest)
-
-    @model_validator(mode="after")
-    def _canonical(self) -> "ClaimAttestationAccelerator":
-        latest = tuple(sorted(set(self.latest_event_by_principal)))
-        idempotency = tuple(sorted(set(self.idempotency_entries)))
-        memberships = tuple(
-            sorted(
-                set(self.outstanding_memberships),
-                key=lambda item: (
-                    item.claim_identity.qualified.encode("utf-8"),
-                    item.capture_digest.encode("ascii"),
-                    item.event_digest.encode("ascii"),
-                ),
-            )
-        )
-        if (
-            self.latest_event_by_principal != latest
-            or self.idempotency_entries != idempotency
-            or self.outstanding_memberships != memberships
-        ):
-            raise ValueError("attestation accelerator entries must be sorted and unique")
-        for partition, _basis, _principal, event in latest:
-            _digest(partition)
-            _digest(event)
-        for partition, _principal, statement, event in idempotency:
-            _digest(partition)
-            _digest(statement)
-            _digest(event)
-        return self
 
 
 def claim_attestation_partition_digest(
@@ -350,6 +323,13 @@ def claim_attestation_head_map_node_digest(node: ClaimAttestationHeadMapNode) ->
     value.pop("tag")
     value.pop("map_digest")
     return typed_digest(Sha256Value, CLAIM_ATTESTATION_HEAD_MAP_NODE_V1_DOMAIN, value).tagged
+
+
+def claim_attestation_head_map_delta_digest(delta: ClaimAttestationHeadMapDelta) -> str:
+    value = delta.model_dump(mode="json")
+    value.pop("tag")
+    value.pop("map_digest")
+    return typed_digest(Sha256Value, CLAIM_ATTESTATION_HEAD_MAP_DELTA_V1_DOMAIN, value).tagged
 
 
 def claim_attestation_published_root_digest(root: ClaimAttestationPublishedRoot) -> str:

@@ -189,7 +189,11 @@ from cruxible_core.exhaust import (
     LocalJournalBackend,
 )
 from cruxible_core.exhaust.promotions import VerifiedExhaustRecordV1
-from cruxible_core.exhaust.records import JournalEventKindV1, parse_journal_payload
+from cruxible_core.exhaust.records import (
+    JournalEventKindV1,
+    StoredProcedureJournalRecordV1,
+    parse_journal_payload,
+)
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -4593,11 +4597,40 @@ def service_recover_provider_invocations(
     access = BodyAccessContext(principal_id="provider-recovery", can_read_body=True)
     recovered: list[str] = []
     handled: set[str] = set()
-    for partition_id in journal.partition_ids(stream):
-        records = journal.all_records(stream, partition_id)
+
+    def run_groups() -> Iterator[tuple[str, tuple[StoredProcedureJournalRecordV1, ...]]]:
+        """Each run's records: every open run, then the run of each named leftover.
+
+        An unmatched start lives in a run that has not finalized, so the open-run
+        set covers the startup scan. A lease recovery may name an invocation
+        whose run already finalized (its completion is durable): that run is
+        found through the index's invocation locator and read alone, to report
+        the invocation handled. Finished history is never scanned.
+        """
+
+        seen: set[str] = set()
+        for locator in tuple(journal.index.running(stream)):
+            seen.add(locator.run_id)
+            yield locator.partition_id, journal.select_records(stream, run_id=locator.run_id)
+        named = set(invocation_ids) | set(failures)
+        leftover = named - handled - {item[1] for item in observed_failures}
+        if not leftover:
+            return
+        located = journal.index.invocation_runs(
+            stream,
+            bodies=bodies,
+            invocation_ids=tuple(sorted(leftover, key=str.encode)),
+        )
+        for run_id, partition_id in sorted(set(located.values())):
+            if run_id in seen:
+                continue
+            seen.add(run_id)
+            yield partition_id, journal.select_records(stream, run_id=run_id)
+
+    for partition_id, records in run_groups():
         if not invocation_ids and not failures:
-            # The startup scan for built-in starts: a partition whose starts are
-            # all completed needs no body read.
+            # The startup scan for built-in starts: a run whose starts are all
+            # completed needs no body read.
             kinds = [stored.record.event_kind for stored in records]
             if kinds.count("provider_invocation_started") == kinds.count(
                 "provider_invocation_completed"

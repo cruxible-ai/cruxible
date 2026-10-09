@@ -284,14 +284,62 @@ def service_playbill_proposal_status(
     return entry
 
 
+def open_proposal_count(instance: PlaybillInstance) -> int:
+    """How many proposals ``proposal list --status open`` shows, counted on the open locators.
+
+    Open is a complete candidate (admission retained), neither refused,
+    withdrawn nor accepted by the coordinate's own history sequence, whose
+    parent is the coordinate's semantic root. The two locators of
+    ``_open_candidates`` keep the listing's snapshot: a proposal accepted after
+    the bound sequence is still open at it. Settled history is never visited.
+    """
+
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    with _bound_inventory(instance, coordinate) as bound:
+        if bound is None:
+            return 0
+        connection, sequence = bound
+        return len(
+            _open_candidates(
+                connection,
+                sequence,
+                columns="proposal_id,admitted_at_us",
+                where="candidate_parent_semantic_root=?",
+                parameters=(coordinate.semantic_root,),
+            )
+        )
+
+
+def open_proposal_at_target(
+    instance: PlaybillInstance, target_ref: str
+) -> PlaybillProposalListEntryV1 | None:
+    """The open proposal under one exact target ref, if any: a dedupe by locator.
+
+    The same entry ``proposal list --status open`` would show for it, read
+    through the target-ref locator rather than the whole inventory.
+    """
+
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    return next(
+        (
+            entry
+            for entry in _proposal_entries(instance, coordinate, target_ref=target_ref)
+            if entry.status == "open"
+        ),
+        None,
+    )
+
+
 def _proposal_entries(
     instance: PlaybillInstance,
     coordinate: AcceptedCoordinate,
     proposal_id: str | None = None,
     *,
     require_evidence: bool = True,
+    target_ref: str | None = None,
 ) -> tuple[PlaybillProposalListEntryV1, ...]:
-    """List entries, or one ID's; ``require_evidence`` makes that ID's records mandatory."""
+    """List entries, or one ID's, or one target ref's; ``require_evidence`` makes that
+    ID's records mandatory."""
     evidence = instance.proposal_evidence()
     if proposal_id is not None and require_evidence:
         # A selected status is an evidence read, not an inventory-only answer.
@@ -310,10 +358,22 @@ def _proposal_entries(
             "WHEN withdrawal_path IS NOT NULL THEN 'withdrawn' "
             "WHEN candidate_parent_semantic_root=? THEN NULL ELSE 'stale' END AS reason "
             "FROM proposals p "
-            + ("WHERE proposal_id=? " if proposal_id is not None else "")
+            + (
+                "WHERE proposal_id=? "
+                if proposal_id is not None
+                else "INDEXED BY proposals_by_target WHERE target_ref=? "
+                if target_ref is not None
+                else ""
+            )
             + "ORDER BY admitted_at_us,proposal_id",
             (sequence, coordinate.semantic_root)
-            + ((proposal_id,) if proposal_id is not None else ()),
+            + (
+                (proposal_id,)
+                if proposal_id is not None
+                else (target_ref,)
+                if target_ref is not None
+                else ()
+            ),
         ).fetchall()
     entries = []
     for row in rows:
@@ -895,9 +955,14 @@ def _readmit(
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     link = ProposalReadmissionLink(source_proposal_id=proposal_id, coordinate=coordinate)
     operation_digest = link.operation_digest
+    # Only the source's author may readmit, and the readmit service admits under
+    # exactly this ref, so the link's admissions are found at it (the record's
+    # `readmits` still decides): never by reading every admission retained.
     matching = tuple(
         admission
-        for admission in instance.proposal_evidence().list_admissions()
+        for admission in instance.proposal_evidence().admissions_at_target(
+            _readmission_target_ref(actor_id, operation_digest)
+        )
         if admission.readmits == link
     )
     if len(matching) > 1:

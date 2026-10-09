@@ -4272,7 +4272,9 @@ def _evaluate_scoped_members(
             candidate_tree=candidate_tree,
             current=current,
             timestamp=timestamp,
-            facts=None if query_facts_provider is None else query_facts_provider(current),
+            facts=None
+            if query_facts_provider is None
+            else lambda predicates: query_facts_provider(current, predicates=predicates),
         )
         if issues:
             return CandidateEvaluation(

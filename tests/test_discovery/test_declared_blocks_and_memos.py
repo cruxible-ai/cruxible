@@ -791,7 +791,7 @@ def test_the_resolution_memo_hits_on_the_surfaces_and_misses_when_its_inputs_mov
     assert counted[0] > evaluated
     evaluated = counted[0]
 
-    # Pre-create the shard: adding a new shard accidentally moved the old
+    # Pre-create the shard: adding a new shard once moved the old shard
     # fingerprint's parent directory and hid this regression.
     body = b"a body no verdict has seen yet\n"
     prefix = hashlib.sha256(body).hexdigest()[:2]
@@ -805,7 +805,7 @@ def test_the_resolution_memo_hits_on_the_surfaces_and_misses_when_its_inputs_mov
     _orient(instance)
     evaluated = counted[0]
 
-    # CAS churn that no verdict reads moves the whole-store fingerprint, so the
+    # CAS churn that no verdict reads moves the evidence generation, so the
     # whole-derivation memo misses; but each remembered slot re-checks only its
     # own captures' availability, so nothing is derived again. (A slot whose own
     # retained evidence disappears is re-derived: test_slot_verdict_reuse.)
@@ -815,13 +815,24 @@ def test_the_resolution_memo_hits_on_the_surfaces_and_misses_when_its_inputs_mov
     _orient(instance)
     assert counted[0] == evaluated
 
+    # A body removed outside the store moves no generation: only a body some
+    # verdict read can matter, and its recorded identity (absence included)
+    # catches that. Storing it again is an arrival.
     path = instance.body_store()._path(stored.digest)
-    for action in (path.unlink, lambda: instance.body_store().store(body)):
-        before = verdict_input_fingerprint(instance)
-        action()
-        assert verdict_input_fingerprint(instance) != before
-        _orient(instance)
-        assert counted[0] == evaluated
+    before = verdict_input_fingerprint(instance)
+    path.unlink()
+    assert verdict_input_fingerprint(instance) == before
+    _orient(instance)
+    assert counted[0] == evaluated
+    instance.body_store().store(body)
+    assert verdict_input_fingerprint(instance) != before
+    _orient(instance)
+    assert counted[0] == evaluated
+
+    # A journal record's payload is not an evidence input: it moves nothing.
+    before = verdict_input_fingerprint(instance)
+    instance.body_store().store(b"a journal payload\n", journal_payload=True)
+    assert verdict_input_fingerprint(instance) == before
 
     # Pending door attestations are not consumed. Changing their store must
     # neither scan its contents nor invalidate the accepted-state verdict.

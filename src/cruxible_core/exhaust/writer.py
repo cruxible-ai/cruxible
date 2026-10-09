@@ -9,6 +9,9 @@ CAS-addressed payload, so there is exactly one durable append path.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
+
+import structlog
 
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_core.exhaust.backends import LocalJournalBackend
@@ -83,7 +86,7 @@ class ProcedureExhaustWriter:
         )
         with self.material_reservations.locked():
             self.material_reservations.reserve_locked(reservation)
-            metadata = self.bodies.store(payload_bytes)
+            metadata = self.bodies.store(payload_bytes, journal_payload=True)
             head = (
                 self.journal.read_head(stream, partition_id)
                 if expected_head is None
@@ -126,7 +129,45 @@ class ProcedureExhaustWriter:
             ):
                 raise ExecutionError("journal append did not reproduce its material reservation")
             self.material_reservations.release_locked(reservation.reservation_id)
-            return stored
+        if event_kind == "provider_invocation_started":
+            note_invocation_start(self.journal, stored, payload)
+        return stored
 
 
-__all__ = ["ProcedureExhaustWriter"]
+_log = structlog.get_logger("cruxible.exhaust")
+
+
+def note_invocation_start(
+    journal: Any, stored: StoredProcedureJournalRecordV1, payload: object
+) -> None:
+    """Give a just-appended Provider start its locator, when the journal keeps an index.
+
+    Locator maintenance is best effort: journal, SQLite and filesystem failures
+    leave the durable start available for later projection. Nothing here can
+    fail the append it follows.
+    """
+
+    index = getattr(journal, "index", None)
+    invocation_id = payload.get("invocation_id") if isinstance(payload, dict) else None
+    if index is None or not isinstance(invocation_id, str):
+        return
+    try:
+        index.note_invocation(
+            stored.record.stream,
+            partition_id=stored.record.partition_id,
+            sequence=stored.record.sequence,
+            invocation_id=invocation_id,
+        )
+    except Exception as exc:  # noqa: BLE001 -- the append already succeeded
+        # Locator maintenance is best effort: journal, SQLite and filesystem
+        # failures leave the durable start pending, and the next lookup
+        # projects it from its payload.
+        _log.warning(
+            "invocation_locator_note_failed",
+            partition_id=stored.record.partition_id,
+            sequence=stored.record.sequence,
+            reason=f"{type(exc).__name__}: {exc}",
+        )
+
+
+__all__ = ["ProcedureExhaustWriter", "note_invocation_start"]

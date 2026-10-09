@@ -803,6 +803,84 @@ def test_a_settled_delivery_finds_its_generation_without_walking_history(
     assert _egress(state).settle_outcome == "settled"
 
 
+def test_a_settle_reads_condition_facts_for_its_predicates_only(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The condition is decided over the predicates its query reads, never every live Claim,
+    and over lazily read trees, never two whole materialized ones."""
+
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    instance, root, line = settle_world(tmp_path)
+    built = PlaybillInstance._accepted_query_facts
+    asked: list[object] = []
+
+    def scoped(source, coordinate, *, predicates=None):  # type: ignore[no-untyped-def]
+        asked.append(predicates)
+        return built(source, coordinate, predicates=predicates)
+
+    def no_materialized_tree(self, oid):  # type: ignore[no-untyped-def]
+        raise AssertionError("settle delivery materialized a whole accepted tree")
+
+    monkeypatch.setattr(PlaybillInstance, "_accepted_query_facts", staticmethod(scoped))
+    monkeypatch.setattr(PlaybillInstance, "tree_at", no_materialized_tree)
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    assert _egress(state).settle_outcome == "settled"
+    # Every build (delivery, then the proposal's own replay) asks for exactly the
+    # predicates the condition query reads.
+    expected = _condition(only_subject=None).referenced_predicates
+    assert asked and all(predicates == expected for predicates in asked), asked
+
+
+def test_every_settle_mandate_lookup_reads_its_one_path_never_the_tree(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Delivery and the proposal's own evaluations find the mandate without listing paths."""
+
+    from collections.abc import Iterator, Mapping
+
+    from cruxible_core.proposals import delegated_authority
+
+    instance, root, line = settle_world(tmp_path)
+    lookup = delegated_authority._mandate_by_digest
+    walked: list[tuple[str | None, int]] = []
+
+    class CountingTree(Mapping[str, bytes]):
+        def __init__(self, inner: Mapping[str, bytes]) -> None:
+            self.inner = inner
+            self.listed = 0
+
+        def __getitem__(self, key: str) -> bytes:
+            return self.inner[key]
+
+        def __iter__(self) -> Iterator[str]:
+            for key in self.inner:
+                self.listed += 1
+                yield key
+
+        def __len__(self) -> int:
+            return len(self.inner)
+
+        def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
+            return getattr(self.inner, name)
+
+    def counted(tree, digest, *, name=None):  # type: ignore[no-untyped-def]
+        wrapped = CountingTree(tree)
+        try:
+            return lookup(wrapped, digest, name=name)
+        finally:
+            walked.append((name, wrapped.listed))
+
+    monkeypatch.setattr(delegated_authority, "_mandate_by_digest", counted)
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    assert _egress(state).settle_outcome == "settled"
+    # The delivery precheck (by name) and the proposal evaluations (by digest).
+    assert len(walked) >= 3 and any(name is None for name, _ in walked), walked
+    assert all(listed == 0 for _name, listed in walked), walked
+
+
 @pytest.mark.parametrize(
     ("only_subject", "outcome"), [(None, "settled"), ("someone-else", "proposed")]
 )

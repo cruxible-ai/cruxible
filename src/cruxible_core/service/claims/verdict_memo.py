@@ -11,11 +11,13 @@ at the same coordinate, so this remembers it. It is a cache and nothing else:
 
 * it is per-process and cold after a restart, so no answer depends on it;
 * it is keyed on everything the derivation reads -- the instance root, the
-  accepted coordinate, the exact Claim set, and a fingerprint of CAS shard
-  directories, whose contents decide whether a capture can be replayed now.
-  The shard fingerprint sees bodies arrive and leave, not a body rewritten in
-  place, so each entry also keeps the file identity of every body-store object
-  its verdicts read and is served only while all of them hold (one stat each);
+  accepted coordinate, the exact Claim set, and the body store's evidence
+  generation, which moves when an evidence body arrives or any body leaves
+  (deciding whether a capture can be replayed now) but not for journal-record
+  payloads. The generation sees bodies arrive and leave, not a body rewritten
+  in place, so each entry also keeps the file identity of every body-store
+  object its verdicts read and is served only while all of them hold (one stat
+  each);
   Accepted attestations are bound by the coordinate; pending door attestations
   are not consumed by this derivation;
 * the evaluation instant is NOT in the key, because every real surface stamps a
@@ -35,7 +37,6 @@ nothing is served as a fact, and the compiler does not know it exists.
 from __future__ import annotations
 
 import hashlib
-import os
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
@@ -46,14 +47,19 @@ MEMO_CAPACITY = 4
 def verdict_input_fingerprint(instance: object) -> str | None:
     """Fingerprint every input a Claim verdict reads besides the accepted tree.
 
-    CAS publishes immutable bodies by adding entries under cas/sha256/<shard>.
-    Read those shard directories, not their parent or every body. This bounds
-    metadata work by the 256 shards while detecting arrivals and removals in
-    existing shards. This is a writer-owned availability signal, not a proof
-    against in-place tampering with body bytes; the body fingerprints kept with
-    each remembered derivation cover that. An unreadable store disables
-    reuse entirely: two failed observations must never form a reusable key.
+    The body store replaces its evidence-generation token after every evidence
+    body lands and every erase (``ContentAddressedBodyStore.store``): one small
+    read, and it does not move for journal-record payloads (run records, Line
+    dispatch coverage, settlements), which are reachable only through the
+    record that names them, appended after the body lands. This is a
+    writer-owned availability signal, not a proof against in-place tampering
+    with body bytes; the body fingerprints kept with each remembered derivation
+    cover that, and they record a consulted body's absence too. An unreadable
+    token disables reuse entirely: two failed observations must never form a
+    reusable key.
     """
+
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
 
     root = getattr(instance, "root", None)
     descriptor = getattr(instance, "descriptor", None)
@@ -62,20 +68,19 @@ def verdict_input_fingerprint(instance: object) -> str | None:
     storage = getattr(descriptor, "storage", None)
     if storage is None:
         return None
-    algorithm_root = root / getattr(storage, "cas", "cas") / "sha256"
-    digest = hashlib.sha256()
+    marker = (
+        root
+        / getattr(storage, "cas", "cas")
+        / "sha256"
+        / ContentAddressedBodyStore.EVIDENCE_GENERATION
+    )
     try:
-        with os.scandir(algorithm_root) as entries:
-            for entry in sorted(entries, key=lambda item: item.name):
-                metadata = entry.stat(follow_symlinks=False)
-                digest.update(entry.name.encode("utf-8"))
-                digest.update(
-                    f"{metadata.st_dev}:{metadata.st_ino}:{metadata.st_mode}:"
-                    f"{metadata.st_size}:{metadata.st_mtime_ns}:{metadata.st_ctime_ns}".encode()
-                )
-    except OSError:
+        token = marker.read_text("ascii")
+    except FileNotFoundError:
+        token = ""
+    except (OSError, ValueError):
         return None
-    return digest.hexdigest()
+    return "evidence-generation:" + token
 
 
 def memo_key(
