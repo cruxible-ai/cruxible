@@ -233,6 +233,8 @@ class JournalProducerReceiptResolver:
         self._full = False
         #: How many runs this context located through the journal index.
         self.lookups = 0
+        #: How many times a miss brought the journal index up to date.
+        self.catch_ups = 0
         self._resolutions: dict[str, ProducerReceiptResolution] = {}
         self._errors: dict[str, CaptureFormatError] = {}
         self._productions: dict[str, set[CaptureProductionRecord]] = {}
@@ -363,7 +365,7 @@ class JournalProducerReceiptResolver:
             self._resolutions[digest] = resolution
 
     def index_all(self) -> None:
-        """Index every partition once: recovery, and the fallback after a per-run miss."""
+        """Index every partition once: recovery and audit (``full_journal``)."""
 
         if self._full:
             return
@@ -659,9 +661,11 @@ class JournalProducerReceiptResolver:
 
         Only positive answers are kept, each only while the journal payloads it
         was derived from are held (``_still_proven``). A refusal or a miss is
-        never kept: the context forgets what it derived and reads the cited run,
-        then the whole journal, exactly as a fresh context does -- a proof body
-        restored since, or a record appended since, is seen.
+        never kept: the context forgets what it derived and reads the cited run.
+        On a miss it brings the journal index up to the records appended since
+        its last sync -- never the whole journal -- and reads the run once more,
+        so a record appended since is seen; still missing, the caller refuses.
+        The full-journal pass stays for recovery and audit (``full_journal``).
         """
 
         try:
@@ -672,7 +676,17 @@ class JournalProducerReceiptResolver:
         self._forget()
         self._index_run(run_id)
         if found() is None and not self._full:
-            self.index_all()
+            self._catch_up()
+            self._index_run(run_id)
+
+    def _catch_up(self) -> None:
+        """Index every journal record appended since the index's last sync."""
+
+        self.catch_ups += 1
+        try:
+            self._journal.catch_up_index(self._stream)
+        except (OSError, CruxibleError, ValueError) as exc:
+            raise CaptureFormatError("Capture producer receipt journal is unavailable") from exc
 
     def _still_proven(self, run_ids: Iterable[str]) -> bool:
         """Whether every journal payload these runs' answers were derived from is held."""

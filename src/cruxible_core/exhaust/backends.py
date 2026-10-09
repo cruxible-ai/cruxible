@@ -602,6 +602,11 @@ class LocalJournalBackend:
         self._records(stream, partition_id, recover_tail=True)
         return self.read_head(stream, partition_id)
 
+    def catch_up_index(self, stream: JournalStreamIdentityV1) -> None:
+        """Bring the journal index up to every record appended since its last sync."""
+
+        self.index.catch_up(stream, self.partition_ids(stream))
+
     def all_records(
         self,
         stream: JournalStreamIdentityV1,

@@ -11,7 +11,7 @@ import hashlib
 import json
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -357,6 +357,19 @@ class JournalIndex:
     ) -> None:
         with self.connection() as conn:
             self._sync(conn, stream, partition_id, recover_tail=recover_tail)
+
+    def catch_up(self, stream: JournalStreamIdentityV1, partition_ids: Iterable[str]) -> None:
+        """Index every record appended to these partitions since their last sync.
+
+        Each partition's sync compares the log's signature first and, on a strict
+        append, verifies and indexes only the frames past its last indexed
+        offset: an unchanged partition costs one stat, a grown one its new
+        records, never the whole journal.
+        """
+
+        with self.connection() as conn:
+            for partition_id in partition_ids:
+                self._sync(conn, stream, partition_id)
 
     def head(self, stream: JournalStreamIdentityV1, partition_id: str) -> JournalPartitionHeadV1:
         with self.connection() as conn:
