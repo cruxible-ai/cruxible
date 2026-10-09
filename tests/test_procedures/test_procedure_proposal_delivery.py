@@ -2196,6 +2196,8 @@ def test_an_unchanged_terminal_is_accounted_as_delivered_and_finalized(tmp_path:
             payload = parse_journal_payload(
                 instance.body_store().read(record.payload_digest, access=access)
             )
+            if payload.get("verdict") == "prepared":
+                continue  # the intent; the track record reads the outcome
             readings.append(
                 _egress_reading(
                     SimpleNamespace(
@@ -2245,3 +2247,85 @@ def test_an_unchanged_terminal_records_at_the_live_daemon_clock(tmp_path: Path) 
     (record,) = ClaimReobservationStore(instance).history(claim_id)
     assert record.recorded_at > NOW + timedelta(hours=3)
     assert record.recorded_at <= live["now"]
+
+
+@pytest.mark.parametrize("after_record", [False, True])
+def test_an_interrupted_unchanged_terminal_is_recovered_without_a_proposal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, after_record: bool
+) -> None:
+    """Review F-022 probe: death before or after the re-observation append."""
+
+    from pathlib import PurePosixPath
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+    from cruxible_core.runtime.instance import PlaybillInstance as Instance
+    from cruxible_core.service.procedures.procedure_runs import (
+        _records_for_run,
+        service_get_playbill_procedure_run,
+        service_recover_provider_invocations,
+    )
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = _accept_first_run(instance, owner, root, line)
+    claim_id = PurePosixPath(first.children[0].path).stem
+    refs = _proposal_refs(instance)
+    saved: dict[str, str] = {}
+    original = ProposalTerminalEgressSink.deliver_terminal_egress
+
+    def crash(self, **kwargs):  # type: ignore[no-untyped-def]
+        saved["run_id"] = kwargs["request"].run_id
+        if after_record:
+            original(self, **kwargs)
+        raise _Crash()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ProposalTerminalEgressSink, "deliver_terminal_egress", crash)
+        with pytest.raises(_Crash):
+            run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    store = ClaimReobservationStore(instance)
+    before = store.history(claim_id)
+    assert len(before) == int(after_record)
+    # The intent was journaled before any re-observation append.
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    prepared = [
+        payload
+        for stored in _records_for_run(instance, saved["run_id"])
+        if stored.record.event_kind == "terminal_egress"
+        for payload in (
+            parse_journal_payload(
+                instance.body_store().read(stored.record.payload_digest, access=access)
+            ),
+        )
+        if payload.get("verdict") == "prepared"
+    ]
+    assert len(prepared) == 1 and prepared[0]["prepared"]["target_paths"] == []
+
+    # A restart: reopen the instance and run both startup recoveries.
+    reopened = Instance.open(instance.root, trust_root=instance.trust_root)
+    assert (
+        service_recover_provider_invocations(
+            reopened,
+            invocation_ids=(),
+            recorded_at=NOW + timedelta(hours=2),
+            close_in_process_starts=True,
+        )
+        == ()
+    )
+    recovered = service_recover_proposal_egress(reopened, recorded_at=NOW + timedelta(hours=2))
+    assert recovered == {saved["run_id"]: "delivered"}
+    state = service_get_playbill_procedure_run(reopened, run_id=saved["run_id"])
+    assert state.status == "operational_failed"
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered" and egress.proposal_id is None
+    assert all(child.unchanged for child in egress.children)
+    after = ClaimReobservationStore(reopened).history(claim_id)
+    assert len(after) == 1
+    if after_record:
+        assert after == before  # the appended record keeps its instant
+    assert _proposal_refs(reopened) == refs
+    # A second sweep finds nothing left to do.
+    assert service_recover_proposal_egress(reopened, recorded_at=NOW + timedelta(hours=3)) == {}
+    assert ClaimReobservationStore(reopened).history(claim_id) == after

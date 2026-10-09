@@ -4472,10 +4472,14 @@ class ProcedureExecutor:
                 observed=elapsed_us,
                 node_id=node.node_id,
             )
-        effectful = isinstance(request, TerminalEgressRequestV2) and request.kind in {
-            "propose_change_set",
-            "settle_change_set",
-        }
+        # A proposal or settle terminal is journaled around its sink: a durable
+        # `prepared` record before the sink is called, a resolving record after,
+        # so recovery can finish it. That holds for one whose every item is
+        # unchanged too: its delivery records re-observations, a durable effect.
+        effectful = (
+            isinstance(request, TerminalEgressRequestV2)
+            and request.kind in {"propose_change_set", "settle_change_set"}
+        ) or (prepared is not None and prepared.changes_nothing)
         if isinstance(request, TerminalEgressRequestV2) and effectful:
             payload = {
                 **payload,
@@ -4483,6 +4487,7 @@ class ProcedureExecutor:
                 "target_paths": list(request.target_paths),
                 "procedure_mandate_digest": request.procedure_mandate_digest,
             }
+        if effectful:
             self._append_event(
                 admission,
                 records,

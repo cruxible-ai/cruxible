@@ -1340,6 +1340,11 @@ artifact digest, the re-observing Capture and when it observed the content;
 `unchanged` on the run's terminal child). A terminal whose every item is
 unchanged completes with no proposal and no authority exercised: its receipt
 (`playbill-terminal-egress-unchanged-receipt-v1`) reports every child unchanged.
+It still records re-observations, a durable effect, so it journals its
+`prepared` intent before delivery like any proposal terminal: a run that dies
+around delivery is finished by startup recovery, which re-derives and checks
+the unchanged children, records them idempotently (one already recorded keeps
+its instant), emits the unchanged receipt and finalizes the attempt.
 
 A no-op re-observation still counts for freshness. It is recorded on the
 evidence plane as an append-only re-observation -- its Claim, its Capture, the

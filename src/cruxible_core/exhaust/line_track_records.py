@@ -492,6 +492,10 @@ def build_line_track_record(
                 deployments.add(snapshot)
             continue
         if record.event_kind == "terminal_egress":
+            if _payload_mapping(record).get("verdict") == "prepared":
+                # An intent journaled before the sink is called; the resolving
+                # record that follows it is the terminal's outcome.
+                continue
             readings.append(_egress_reading(record))
     ordered = tuple(sorted(readings, key=lambda item: item.sequence))
     return LineTrackRecordV1(
