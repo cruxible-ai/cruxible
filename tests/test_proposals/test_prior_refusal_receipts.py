@@ -423,8 +423,8 @@ def test_the_lookup_does_not_grow_with_history(tmp_path: Path) -> None:
     assert counts[0]["cas_reads"] == 0
 
 
-def test_an_acceptance_indexes_only_its_own_generation(tmp_path: Path) -> None:
-    """Once built, the index is kept current at acceptance, one generation at a time."""
+def test_a_read_after_an_acceptance_indexes_only_its_new_generation(tmp_path: Path) -> None:
+    """Acceptance does nothing for the index; the next read indexes just what landed."""
 
     instance, owner = _grown(tmp_path, 2)
     accepted = _propose(instance, "wi-44", "ready", body=b"status: ready (44)", rationale="A.")
@@ -432,8 +432,9 @@ def test_an_acceptance_indexes_only_its_own_generation(tmp_path: Path) -> None:
     index = instance.refusal_index()
     index.catch_up(instance)
     built = index.generations_indexed
-    # Activation through the service door: the retirement is indexed as it lands.
     _retire(instance, owner, _claim_id(accepted), "was-wrong")
+    assert index.generations_indexed == built  # activation left the index alone
+    index.catch_up(instance)
     assert index.generations_indexed - built == 1
     with sqlite3.connect(f"file:{index.path}?mode=ro", uri=True) as connection:
         rows = connection.execute(

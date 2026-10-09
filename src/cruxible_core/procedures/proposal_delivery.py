@@ -32,7 +32,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-import structlog
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactPin
@@ -105,8 +104,6 @@ if TYPE_CHECKING:
     from cruxible_core.derived.derived_state import ClaimPredicateKey, SnapshotTree
     from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
     from cruxible_core.runtime.instance import PlaybillInstance
-
-_log = structlog.get_logger("cruxible.procedures.proposal_delivery")
 
 PROPOSAL_CLAIM_ID_DOMAIN = "playbill-procedure-proposal-claim-id-v1"
 PROPOSAL_INTENT_ID_DOMAIN = "playbill-procedure-proposal-intent-id-v1"
@@ -1067,53 +1064,12 @@ class ProposalTerminalEgressSink:
         accepted_oid = self._accepted_oid(result.candidate.candidate_digest, digest=digest)
         if accepted_oid is None:
             accepted_oid = self._activate(result, request=request, mandate=mandate, digest=digest)
-        self._count_settled_refusals(request, admission=admission, result=result)
         return settle_terminal_receipt(
             request,
             result=result,
             item_paths=prepared.item_paths,
             accepted_git_oid=accepted_oid,
         )
-
-    def _count_settled_refusals(
-        self,
-        request: TerminalEgressRequestV2,
-        *,
-        admission: ProcedureRunAdmissionV1,
-        result: ProposalResult,
-    ) -> None:
-        """Count settled items that match earlier refusals against the run's Line version.
-
-        Settled items skip review, so a Line that keeps settling what was refused
-        before must surface by itself (a `next` row per Line). The count is
-        informational: it never waits (a busy or unbuilt index defers it to the
-        next index read) and no error of it fails the settlement.
-        """
-
-        line_identity = getattr(admission, "line_identity", None)
-        line_spec_digest = getattr(admission, "line_spec_digest", None)
-        if line_identity is None or line_spec_digest is None:
-            return
-        try:
-            self.instance.refusal_index().record_settled(
-                self.instance,
-                line_identity=line_identity.qualified,
-                line_spec_digest=line_spec_digest,
-                run_id=request.run_id,
-                proposal_id=result.admission.proposal_id,
-                settled_at=canonical_candidate_timestamp(request.evaluation_time),
-            )
-        except Exception as exc:  # noqa: BLE001 - the settlement is already accepted
-            # Counting is informational: no failure of the derived index (SQLite,
-            # filesystem, a source read) may turn an accepted settlement into a
-            # failed run. It is logged and the settled receipt is returned.
-            _log.warning(
-                "settled_refusal_count_skipped",
-                run_id=request.run_id,
-                proposal_id=result.admission.proposal_id,
-                error_type=type(exc).__name__,
-                reason=str(exc),
-            )
 
     def _accepted_oid(self, candidate_digest: str, *, digest: str) -> str | None:
         """The accepted generation that settled this exact candidate under this mandate.

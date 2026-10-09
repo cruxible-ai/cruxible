@@ -24,12 +24,12 @@ keep a rejection row only while its record exists and says ``rejected``. Once
 the close resolves -- written, lost to a competing close, or failed -- the
 proposal's rows are rewritten from the record that actually won.
 
-Settlements are counted per Line version: when a Line's settle terminal settles
-items that carry earlier refusals, the Line's row for its exact spec digest
-gains the items and the run (once per settled proposal), so a `next` row per
-Line reads one maintained row instead of its runs. These counts come from the
-deliveries themselves; a key-domain rebuild keeps them, and a discarded damaged
-file restarts them (logged) while each run result still lists its receipts.
+Settlements are counted per Line version, in post and never on delivery: a
+background step (and `next`, before it reads the rows) reads settle deliveries
+from the journal index after a persisted cursor, matches each settled item, and
+upserts the Line's row for its exact spec digest together with the cursor, once
+per settled proposal. A rebuild resets the cursor and counts the journal again,
+so nothing is lost with the file.
 
 Lookups are keyed: one probe per proposed Claim, never a scan of history.
 Cruxible resurfaces what was recorded and nothing else: it does not interpret a
@@ -112,6 +112,10 @@ CREATE TABLE IF NOT EXISTS line_settled_refusals (
  PRIMARY KEY(line_identity,line_spec_digest)
 ) STRICT;
 CREATE TABLE IF NOT EXISTS settled_counted (proposal_id TEXT PRIMARY KEY) STRICT;
+CREATE TABLE IF NOT EXISTS settled_cursor (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ journal_identity TEXT, record_id INTEGER NOT NULL CHECK(record_id>=0)
+) STRICT;
 """
 _ACCESS = BodyAccessContext(principal_id="cruxible-refusal-index", can_read_body=True)
 _log = structlog.get_logger("cruxible.refusal_index")
@@ -127,6 +131,9 @@ def _damaged(exc: sqlite3.DatabaseError) -> bool:
     table or column of a torn layout) does.
     """
 
+    if isinstance(exc, sqlite3.IntegrityError):
+        # A constraint failure is a fault in what was written, not a damaged file.
+        return False
     if isinstance(exc, sqlite3.OperationalError):
         text = str(exc).lower()
         return not ("locked" in text or "busy" in text)
@@ -333,16 +340,26 @@ _BUSY_TIMEOUT_MS = 5000
 
 
 class _Deferred(Exception):
-    """An optional index update that would have to wait or build first."""
+    """A background step that would have to wait, or build the index first."""
 
 
 @dataclass(frozen=True)
-class _SettledCount:
+class SettledDelivery:
+    """One settle terminal's accepted delivery, as its journal records it."""
+
     line_identity: str
     line_spec_digest: str
     run_id: str
     proposal_id: str
     settled_at: str
+
+
+@dataclass(frozen=True)
+class SettledCursor:
+    """Where counting stands in the journal index: a position under one identity."""
+
+    journal_identity: str | None
+    record_id: int
 
 
 @dataclass(frozen=True)
@@ -367,9 +384,6 @@ class RefusalIndex:
         self._open: list[sqlite3.Connection] = []
         self._finalizer = weakref.finalize(self, _close_all, self._open)
         self._closing: dict[str, threading.Lock] = {}
-        # Settled counts that could not run without waiting; drained by reads.
-        self._pending: list[_SettledCount] = []
-        self._pending_lock = threading.Lock()
         self._no_wait = False
         # Work counters, for counted-work tests.
         self.generations_indexed = 0
@@ -378,17 +392,16 @@ class RefusalIndex:
         self.rows_read = 0
         self.proposals_keyed = 0
         self.line_probes = 0
+        self.settled_counted = 0
 
     # -- connections ------------------------------------------------------
 
     def _writer(self) -> sqlite3.Connection:
+        connection = self._open_writer()
         if self._no_wait:
-            if self._connection is None and not self.path.exists():
-                raise _Deferred("index_not_built")
-            connection = self._connection or self._open_writer()
+            # A background step gives up at once on contention instead of waiting.
             connection.execute("PRAGMA busy_timeout=0")
-            return connection
-        return self._open_writer()
+        return connection
 
     def _open_writer(self) -> sqlite3.Connection:
         if self._connection is None:
@@ -518,32 +531,10 @@ class RefusalIndex:
 
     # -- maintenance --------------------------------------------------------
 
-    def catch_up(self, instance: PlaybillInstance, *, wait: bool = True) -> None:
-        """Index every accepted generation not yet indexed.
-
-        Acceptance calls this with ``wait=False``: when the index is busy, or would
-        have to be built first, it is left for the next read, which catches up.
-        """
-
-        if not wait:
-            if not self._lock.acquire(blocking=False):
-                return
-            try:
-                self._no_wait = True
-                with self.current(instance):
-                    pass
-            except (_Deferred, sqlite3.DatabaseError) as exc:
-                _log.info("refusal_index_catch_up_deferred", reason=str(exc))
-            finally:
-                self._no_wait = False
-                if self._connection is not None:
-                    with suppress(sqlite3.Error):
-                        self._connection.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-                self._lock.release()
-            return
+    def catch_up(self, instance: PlaybillInstance) -> None:
+        """Index every accepted generation not yet indexed (a read path; it may wait)."""
 
         def run() -> None:
-            self._drain(instance)
             with self.current(instance):
                 pass
 
@@ -576,10 +567,6 @@ class RefusalIndex:
                 return
             if self._no_wait and (progress is None or progress[0] != instance_id):
                 raise _Deferred("index_needs_rebuild")
-            if progress is not None and progress[0] != instance_id:
-                # Another instance's settlement counts are not this one's.
-                connection.execute("DELETE FROM line_settled_refusals")
-                connection.execute("DELETE FROM settled_counted")
             if (
                 progress is None
                 or progress[0] != instance_id
@@ -609,6 +596,10 @@ class RefusalIndex:
         connection.execute("DELETE FROM refusals")
         connection.execute("DELETE FROM proposal_claim_keys")
         connection.execute("DELETE FROM proposals_keyed")
+        # Settled counts derive from the journal: restart them from its start.
+        connection.execute("DELETE FROM line_settled_refusals")
+        connection.execute("DELETE FROM settled_counted")
+        connection.execute("DELETE FROM settled_cursor")
         self._index_rejections(connection, instance, evidence)
         head = instance.accepted_coordinate()
         with instance.bind_accepted_projection(head) as projection:
@@ -799,45 +790,140 @@ class RefusalIndex:
         self._recovering("settle_close", lambda: self._write(instance, change), None)
 
     # -- settled items per Line ----------------------------------------------
+    #
+    # Counted in post, never on delivery: a background step (and `next`, when it
+    # reads the rows) reads settle deliveries from the journal after a persisted
+    # cursor, matches each settled item through this index, and upserts the
+    # Line's row and the cursor in one transaction. Losing the file loses
+    # nothing: a rebuild resets the cursor and the journal is counted again.
 
-    def record_settled(
+    def settled_cursor(self, instance: PlaybillInstance, *, wait: bool) -> SettledCursor | None:
+        """Where counting stands; ``None`` when this step should skip (busy, or unbuilt)."""
+
+        def read(connection: sqlite3.Connection) -> SettledCursor:
+            row = connection.execute(
+                "SELECT journal_identity,record_id FROM settled_cursor"
+            ).fetchone()
+            return (
+                SettledCursor(None, 0) if row is None else SettledCursor(str(row[0]), int(row[1]))
+            )
+
+        return self._step(instance, "settled_cursor", read, wait=wait)
+
+    def advance_settled(
         self,
         instance: PlaybillInstance,
         *,
-        line_identity: str,
-        line_spec_digest: str,
-        run_id: str,
-        proposal_id: str,
-        settled_at: str,
-    ) -> None:
-        """Count one settlement's items that match earlier refusals, without waiting.
+        expected: SettledCursor,
+        through: SettledCursor,
+        deliveries: tuple[SettledDelivery, ...],
+        wait: bool,
+    ) -> bool:
+        """Count one page of settle deliveries and move the cursor past it, atomically.
 
-        Called once a settle terminal's change is accepted (and again, harmlessly,
-        on a recovered delivery: each settled proposal counts once). It never
-        waits: when another thread holds the index, another connection holds its
-        write lock, or the file needs building first, the count is deferred to
-        the next index read in this process (`next` reads drain it first), and
-        logged. Delivery latency never depends on it.
+        Each settled proposal counts once (redeliveries and recoveries are
+        no-ops). Totals take every counted settlement; the latest run moves only
+        to a later settlement instant (ties by run ID), whatever the order.
+        Returns False, changing nothing, when the step must skip or the cursor
+        moved under it (another step counted this page).
         """
 
-        settled = _SettledCount(
-            line_identity=line_identity,
-            line_spec_digest=line_spec_digest,
-            run_id=run_id,
-            proposal_id=proposal_id,
-            settled_at=settled_at,
-        )
+        def advance(connection: sqlite3.Connection) -> bool:
+            matched = {
+                delivery.proposal_id: len(self._prior_refusals_now(instance, delivery.proposal_id))
+                for delivery in deliveries
+            }
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = connection.execute(
+                    "SELECT journal_identity,record_id FROM settled_cursor"
+                ).fetchone()
+                current = (
+                    SettledCursor(None, 0)
+                    if row is None
+                    else SettledCursor(str(row[0]), int(row[1]))
+                )
+                if current != expected:
+                    connection.execute("ROLLBACK")
+                    return False
+                for delivery in deliveries:
+                    count = matched[delivery.proposal_id]
+                    if (
+                        not count
+                        or connection.execute(
+                            "SELECT 1 FROM settled_counted WHERE proposal_id=?",
+                            (delivery.proposal_id,),
+                        ).fetchone()
+                    ):
+                        continue
+                    connection.execute(
+                        "INSERT INTO settled_counted VALUES (?)", (delivery.proposal_id,)
+                    )
+                    connection.execute(
+                        "INSERT INTO line_settled_refusals VALUES (?,?,?,1,?,?) "
+                        "ON CONFLICT(line_identity,line_spec_digest) DO UPDATE SET "
+                        "items=items+excluded.items, runs=runs+1, "
+                        "latest_run_id=CASE WHEN "
+                        "(excluded.latest_settled_at, excluded.latest_run_id) > "
+                        "(latest_settled_at, latest_run_id) "
+                        "THEN excluded.latest_run_id ELSE latest_run_id END, "
+                        "latest_settled_at=MAX(latest_settled_at, excluded.latest_settled_at)",
+                        (
+                            delivery.line_identity,
+                            delivery.line_spec_digest,
+                            count,
+                            delivery.run_id,
+                            delivery.settled_at,
+                        ),
+                    )
+                connection.execute(
+                    "INSERT OR REPLACE INTO settled_cursor VALUES (1,?,?)",
+                    (through.journal_identity, through.record_id),
+                )
+                connection.execute("COMMIT")
+            except BaseException:
+                with suppress(sqlite3.Error):
+                    connection.execute("ROLLBACK")
+                raise
+            self.settled_counted += len(deliveries)
+            return True
+
+        return bool(self._step(instance, "advance_settled", advance, wait=wait))
+
+    def _step(
+        self,
+        instance: PlaybillInstance,
+        operation: str,
+        body: Callable[[sqlite3.Connection], _T],
+        *,
+        wait: bool,
+    ) -> _T | None:
+        """Run one background-counting body on a current index, or skip it.
+
+        Without ``wait`` the step takes the index only if it is free, never builds
+        the index (an unbuilt one is left to the next read), and gives up at once
+        on SQLite contention: the cursor makes skipping lossless.
+        """
+
+        if is_previewing() or history_reads_detached():
+            # A read-only view never counts or moves the cursor.
+            return None
+        if wait:
+
+            def run() -> _T:
+                with self.current(instance) as connection:
+                    return body(connection)
+
+            return self._recovering(operation, run, None)
         if not self._lock.acquire(blocking=False):
-            self._defer(settled, "index_busy")
-            return
+            return None
         try:
             self._no_wait = True
-            self._count(instance, settled)
-        except _Deferred as exc:
-            self._defer(settled, str(exc))
-        except sqlite3.DatabaseError as exc:
-            # Contention (busy timeout 0) or damage: a later read repairs and drains.
-            self._defer(settled, str(exc))
+            with self.current(instance) as connection:
+                return body(connection)
+        except (_Deferred, sqlite3.DatabaseError) as exc:
+            _log.info("settled_refusal_step_skipped", operation=operation, reason=str(exc))
+            return None
         finally:
             self._no_wait = False
             if self._connection is not None:
@@ -845,78 +931,12 @@ class RefusalIndex:
                     self._connection.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
             self._lock.release()
 
-    def _defer(self, settled: _SettledCount, reason: str) -> None:
-        with self._pending_lock:
-            self._pending.append(settled)
-        _log.info(
-            "settled_refusal_count_deferred",
-            proposal_id=settled.proposal_id,
-            run_id=settled.run_id,
-            reason=reason,
-        )
-
-    def _drain(self, instance: PlaybillInstance) -> None:
-        """Apply deferred counts (inside the index lock, waiting normally)."""
-
-        with self._pending_lock:
-            pending, self._pending = self._pending, []
-        for position, settled in enumerate(pending):
-            try:
-                self._count(instance, settled)
-            except sqlite3.DatabaseError:
-                # Keep what is left for after the file is repaired.
-                with self._pending_lock:
-                    self._pending[:0] = pending[position:]
-                raise
-            except Exception as exc:  # noqa: BLE001 - one count never blocks a read
-                _log.warning(
-                    "settled_refusal_count_dropped",
-                    proposal_id=settled.proposal_id,
-                    run_id=settled.run_id,
-                    error_type=type(exc).__name__,
-                    reason=str(exc),
-                )
-
-    def _count(self, instance: PlaybillInstance, settled: _SettledCount) -> None:
-        matched = len(self._prior_refusals_now(instance, settled.proposal_id))
-        if not matched:
-            return
-
-        def change(connection: sqlite3.Connection) -> None:
-            if connection.execute(
-                "SELECT 1 FROM settled_counted WHERE proposal_id=?", (settled.proposal_id,)
-            ).fetchone():
-                return
-            connection.execute("INSERT INTO settled_counted VALUES (?)", (settled.proposal_id,))
-            # Totals take every counted settlement; the latest run moves only to a
-            # later settlement instant (ties by run ID), whatever the arrival order.
-            connection.execute(
-                "INSERT INTO line_settled_refusals VALUES (?,?,?,1,?,?) "
-                "ON CONFLICT(line_identity,line_spec_digest) DO UPDATE SET "
-                "items=items+excluded.items, runs=runs+1, "
-                "latest_run_id=CASE WHEN "
-                "(excluded.latest_settled_at, excluded.latest_run_id) > "
-                "(latest_settled_at, latest_run_id) "
-                "THEN excluded.latest_run_id ELSE latest_run_id END, "
-                "latest_settled_at=MAX(latest_settled_at, excluded.latest_settled_at)",
-                (
-                    settled.line_identity,
-                    settled.line_spec_digest,
-                    matched,
-                    settled.run_id,
-                    settled.settled_at,
-                ),
-            )
-
-        self._write(instance, change)
-
     def settled_refusals(
         self, instance: PlaybillInstance, lines: tuple[tuple[str, str], ...]
     ) -> dict[tuple[str, str], LineSettledRefusals]:
         """The maintained count of each (Line, spec digest) given: one keyed probe each."""
 
         def run() -> dict[tuple[str, str], LineSettledRefusals]:
-            self._drain(instance)
             found: dict[tuple[str, str], LineSettledRefusals] = {}
             with self.current(instance) as connection:
                 for line_identity, spec_digest in lines:
@@ -1118,6 +1138,8 @@ def _receipt(
 __all__ = [
     "LineSettledRefusals",
     "RefusalIndex",
+    "SettledCursor",
+    "SettledDelivery",
     "candidate_refused_claims",
     "capture_evidence_content",
     "claim_refusal_key",

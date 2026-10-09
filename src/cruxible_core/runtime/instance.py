@@ -7,7 +7,6 @@ import json
 import os
 import secrets
 import shutil
-import sqlite3
 import stat
 import threading
 import time
@@ -41,7 +40,6 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import (
     BootstrapError,
-    CruxibleError,
     FormatError,
     InstanceDecommissioned,
     PrincipalIntegrityError,
@@ -1724,24 +1722,6 @@ class PlaybillInstance:
                     index = RefusalIndex(paths["projections"] / "refusals.sqlite3")
                     self.__dict__["_refusal_index"] = index
         return index
-
-    def maintain_refusal_index(self) -> None:
-        """Index the retirements a just-accepted generation made, once the index exists.
-
-        Activation calls this after it releases the accepted-state locks. An
-        index no lookup has built yet is left to its first lookup, which builds
-        it; acceptance never pays for that rebuild. A failure here leaves the
-        next lookup to catch up: the acceptance stands.
-        """
-
-        index = self.__dict__.get("_refusal_index")
-        if index is None or not index.path.exists():
-            return
-        try:
-            # Never waits: a busy or unbuilt index is caught up by its next read.
-            index.catch_up(self, wait=False)
-        except (sqlite3.Error, OSError, CruxibleError):
-            index.close()
 
     def proposal_ref_target(self, target_ref: str) -> str | None:
         """Read one proposal transport ref without exposing ledger mutation."""

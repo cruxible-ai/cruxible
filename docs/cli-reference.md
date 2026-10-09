@@ -1876,17 +1876,17 @@ statement](#earlier-refusals-of-the-same-statement)) shows as one
 `line_settled_prior_refusals` row per live Line: how many settled items matched
 and in how many runs, for the Line's current version, with the latest run as a
 related identity (`get ProcedureRun:<run>` lists each settled item's receipts).
-The count is maintained at each settlement, so the row is one keyed read.
-Counting never delays or fails a settlement: when the refusal index is busy, or
-not yet built, the count is deferred to the next read in that daemon (a restart
-before then drops it, logged), and any other counting failure is logged and the
-settlement reported as settled. The latest run named is the latest settlement,
-whatever order deliveries and recoveries arrive in. Its
+The row is one keyed read of a count computed in post, never on delivery:
+settle delivery does nothing for it. The next consumer counts, each tick, the
+settle deliveries the run journal holds past a persisted cursor, in bounded
+steps, and `next` runs a bounded catch-up before reading the rows, so the row
+is current when looked at. A busy refusal index skips a step and the cursor
+makes that lossless; a discarded index resets the cursor and the journal is
+counted again. Each settled proposal counts once, and the latest run named is
+the latest settlement, whatever order deliveries and recoveries arrive in. Its
 repair is a Line successor, from `cruxible authoring example line`: demote the
 Line to `max_authority: propose` so its results are reviewed again, or point it
-at a fixed Procedure. Either starts a new Line version, and the row closes. A
-damaged refusal index restarts these counts (logged); run results keep their
-receipts.
+at a fixed Procedure. Either starts a new Line version, and the row closes.
 
 `evaluate` checks a historical `[since, until)` range against every live
 Trigger aimed at the Line and records its matches as pending; it never runs
@@ -3205,9 +3205,10 @@ identical bytes cites the same evidence; different bytes are a new question and
 match nothing. A third-party Provider whose output embeds run-bound values (a
 run ID, a timestamp, a request digest) commits different material on every run,
 so its Captures do not match across runs. A withdrawal is not a refusal. The
-lookup is a keyed index the daemon maintains as generations are accepted and
-as proposals are rejected (closes of one proposal are serialized, and the index
-keeps the close that won). It is derived: when it is missing, damaged, or keyed
+lookup is a keyed index the daemon keeps current as it is read (each read
+indexes the generations accepted since the last) and as proposals are rejected
+(closes of one proposal are serialized, and the index keeps the close that
+won). It is derived: when it is missing, damaged, or keyed
 under an earlier rule, it is rebuilt from accepted history and the rejection
 records, and a read that still cannot use it reports no receipts and logs why
 rather than failing.

@@ -1428,7 +1428,7 @@ def test_demoting_the_line_closes_its_row(tmp_path: Path) -> None:
     assert _next_rows(instance, "line_settled_prior_refusals") == []
 
 
-# --- the count is informational: it never fails, delays or misorders a settlement
+# --- settled counts are computed in post: delivery never touches them ----------
 
 
 def _retired_then_resettle(tmp_path: Path):  # type: ignore[no-untyped-def]
@@ -1441,150 +1441,259 @@ def _retired_then_resettle(tmp_path: Path):  # type: ignore[no-untyped-def]
     return instance, root, line
 
 
-def test_a_count_filesystem_failure_never_fails_an_accepted_settlement(
+def test_settle_delivery_never_touches_the_refusal_index(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """F-004: the settlement is accepted, so the run succeeds and reports it settled."""
+    """Delivery does nothing for the row: no refusal-index call happens inside it."""
 
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
     from cruxible_core.proposals.refusal_index import RefusalIndex
+    from cruxible_core.runtime.instance import PlaybillInstance
 
     instance, root, line = _retired_then_resettle(tmp_path)
+    delivering = {"active": False, "calls": 0}
+    deliver = ProposalTerminalEgressSink.deliver_terminal_egress
+
+    def watched_deliver(self: Any, *args: Any, **kwargs: Any) -> Any:
+        delivering["active"] = True
+        try:
+            return deliver(self, *args, **kwargs)
+        finally:
+            delivering["active"] = False
+
+    def guard(original: Any) -> Any:
+        def guarded(*args: Any, **kwargs: Any) -> Any:
+            if delivering["active"]:
+                delivering["calls"] += 1
+                raise AssertionError("settle delivery called the refusal index")
+            return original(*args, **kwargs)
+
+        return guarded
+
+    monkeypatch.setattr(ProposalTerminalEgressSink, "deliver_terminal_egress", watched_deliver)
+    monkeypatch.setattr(PlaybillInstance, "refusal_index", guard(PlaybillInstance.refusal_index))
+    monkeypatch.setattr(RefusalIndex, "current", guard(RefusalIndex.current))
     base = instance.accepted_coordinate()
 
-    def unavailable(self: Any, *args: Any, **kwargs: Any) -> None:
-        raise OSError("projection filesystem unavailable")
-
-    monkeypatch.setattr(RefusalIndex, "_write", unavailable)
     second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
 
     assert second.status == "succeeded", second.terminal
-    egress = _egress(second)
-    assert egress.settle_outcome == "settled"
-    assert egress.accepted_git_oid == instance.accepted_coordinate().git_oid != base.git_oid
-
-
-def _timed_count(monkeypatch: pytest.MonkeyPatch, hold: Any) -> list[float]:
-    """Time the count at the delivery boundary while ``hold`` contends for the index."""
-
-    import time
-
-    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
-
-    original = ProposalTerminalEgressSink._count_settled_refusals
-    timings: list[float] = []
-
-    def timed(self: Any, *args: Any, **kwargs: Any) -> None:
-        with hold(self.instance):
-            started = time.monotonic()
-            original(self, *args, **kwargs)
-            timings.append(time.monotonic() - started)
-
-    monkeypatch.setattr(ProposalTerminalEgressSink, "_count_settled_refusals", timed)
-    return timings
-
-
-def test_sqlite_contention_never_delays_settle_delivery(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """F-005: another connection holds the index's write lock; delivery does not wait."""
-
-    import sqlite3
-    from contextlib import contextmanager
-
-    instance, root, line = _retired_then_resettle(tmp_path)
-    instance.refusal_index().catch_up(instance)  # the index exists and is current
-
-    @contextmanager
-    def writer_lock(instance: Any):  # type: ignore[no-untyped-def]
-        other = sqlite3.connect(instance.refusal_index().path, isolation_level=None)
-        other.execute("BEGIN IMMEDIATE")
-        try:
-            yield
-        finally:
-            other.execute("ROLLBACK")
-            other.close()
-
-    timings = _timed_count(monkeypatch, writer_lock)
-    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
-
-    assert _egress(second).settle_outcome == "settled", second.terminal
-    (elapsed,) = timings
-    assert elapsed < 1.0
-    # The deferred count lands at the next read.
+    assert _egress(second).settle_outcome == "settled"
+    assert instance.accepted_coordinate() != base
+    assert delivering["calls"] == 0
+    # The count is computed afterwards, from the journal.
     (row,) = _next_rows(instance, "line_settled_prior_refusals")
     assert row.detail["settled_items_matching_refusals"] == 1
 
 
-def test_process_lock_contention_never_delays_settle_delivery(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """F-005: another thread holds the index; delivery defers the count instead of waiting."""
+def test_a_restart_or_a_discarded_index_loses_no_count(tmp_path: Path) -> None:
+    """Nothing is held in memory: a fresh index object, or a rebuilt file, recounts."""
 
-    import threading
-    from contextlib import contextmanager
+    instance, root, line = _retired_then_resettle(tmp_path)
+    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+    assert _egress(second).settle_outcome == "settled", second.terminal
+
+    # A restart before anything read the row: a new process has a new index object.
+    instance.refusal_index().close()
+    del instance.__dict__["_refusal_index"]
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    assert (row.detail["settled_items_matching_refusals"], row.detail["settled_runs"]) == (1, 1)
+
+    # A discarded file: the rebuild resets the cursor and counts the journal again.
+    index = instance.refusal_index()
+    index.close()
+    for suffix in ("", "-wal", "-shm"):
+        Path(str(index.path) + suffix).unlink(missing_ok=True)
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    assert (row.detail["settled_items_matching_refusals"], row.detail["settled_runs"]) == (1, 1)
+    assert row.detail["latest_run_id"] == second.run_id
+
+
+def test_contention_only_delays_the_row(tmp_path: Path) -> None:
+    """A busy index skips the post step at once; the next read counts what was left."""
+
+    import sqlite3
+    import time
 
     instance, root, line = _retired_then_resettle(tmp_path)
     instance.refusal_index().catch_up(instance)
-
-    @contextmanager
-    def thread_lock(instance: Any):  # type: ignore[no-untyped-def]
-        held, release = threading.Event(), threading.Event()
-
-        def holder() -> None:
-            with instance.refusal_index()._lock:  # noqa: SLF001
-                held.set()
-                release.wait(3)
-
-        thread = threading.Thread(target=holder)
-        thread.start()
-        assert held.wait(5)
-        try:
-            yield
-        finally:
-            release.set()
-            thread.join()
-
-    timings = _timed_count(monkeypatch, thread_lock)
     second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
-
     assert _egress(second).settle_outcome == "settled", second.terminal
-    (elapsed,) = timings
-    assert elapsed < 1.0
+
+    other = sqlite3.connect(instance.refusal_index().path, isolation_level=None)
+    other.execute("BEGIN IMMEDIATE")
+    try:
+        from cruxible_core.service.procedures.settled_refusals import (
+            count_settled_refusals_step,
+        )
+
+        started = time.monotonic()
+        step = count_settled_refusals_step(instance)
+        assert time.monotonic() - started < 1.0
+        assert step.ran is False
+    finally:
+        other.execute("ROLLBACK")
+        other.close()
+
     (row,) = _next_rows(instance, "line_settled_prior_refusals")
     assert row.detail["settled_items_matching_refusals"] == 1
 
 
-def test_recovering_an_older_settlement_keeps_the_newer_latest_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """F-006: totals take every settlement; the latest run is the latest settlement."""
+def test_counting_is_idempotent_per_proposal(tmp_path: Path) -> None:
+    """Counting the same journal again (a rebuilt journal index) changes nothing."""
 
-    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+    from cruxible_core.proposals.refusal_index import SettledCursor
+    from cruxible_core.service.procedures.settled_refusals import catch_up_settled_refusals
 
     instance, root, line = _retired_then_resettle(tmp_path)
-    with monkeypatch.context() as patch:
-        # The 12:10 settlement is accepted but its count is lost with the process.
-        patch.setattr(ProposalTerminalEgressSink, "_count_settled_refusals", lambda *a, **k: None)
-        older = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
-    assert _egress(older).settle_outcome == "settled", older.terminal
+    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+    assert _egress(second).settle_outcome == "settled", second.terminal
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    before = dict(row.detail)
+
+    index = instance.refusal_index()
+    cursor = index.settled_cursor(instance, wait=True)
+    assert cursor is not None
+    # Rewind the cursor as a journal-index rebuild would, and count again.
+    assert index.advance_settled(
+        instance,
+        expected=cursor,
+        through=SettledCursor(cursor.journal_identity, 0),
+        deliveries=(),
+        wait=True,
+    )
+    catch_up_settled_refusals(instance, steps=8, wait=True)
+
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    assert dict(row.detail) == before
+
+
+def test_the_latest_run_is_the_latest_settlement_whatever_the_order(tmp_path: Path) -> None:
+    """F-006: totals take every settlement; the latest moves only to a later instant."""
+
+    from cruxible_core.proposals.refusal_index import SettledDelivery
+
+    instance, root, line = _retired_then_resettle(tmp_path)
+    older = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
     _retire_claim(instance, _settled_claim_id(older), at="2026-09-12T12:15:00.000000Z")
     newer = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=20))
     assert _egress(newer).settle_outcome == "settled", newer.terminal
     (row,) = _next_rows(instance, "line_settled_prior_refusals")
-    assert row.detail["latest_run_id"] == newer.run_id
+    spec = row.detail["line_spec_digest"]
 
-    # The older delivery is recovered afterwards and counted then.
-    instance.refusal_index().record_settled(
-        instance,
-        line_identity=line.identity.qualified,
-        line_spec_digest=row.detail["line_spec_digest"],
-        run_id=str(older.run_id),
-        proposal_id=str(_egress(older).proposal_id),
-        settled_at="2026-09-12T12:10:00.000000Z",
-    )
+    # Rebuild, then count the newer delivery before the older one.
+    index = instance.refusal_index()
+    index.close()
+    for suffix in ("", "-wal", "-shm"):
+        Path(str(index.path) + suffix).unlink(missing_ok=True)
+    index.catch_up(instance)
+    for state, at in ((newer, "12:20"), (older, "12:10")):
+        cursor = index.settled_cursor(instance, wait=True)
+        assert cursor is not None
+        assert index.advance_settled(
+            instance,
+            expected=cursor,
+            through=cursor,
+            deliveries=(
+                SettledDelivery(
+                    line_identity=line.identity.qualified,
+                    line_spec_digest=spec,
+                    run_id=str(state.run_id),
+                    proposal_id=str(_egress(state).proposal_id),
+                    settled_at=f"2026-09-12T{at}:00.000000Z",
+                ),
+            ),
+            wait=True,
+        )
 
     (row,) = _next_rows(instance, "line_settled_prior_refusals")
     assert (row.detail["settled_items_matching_refusals"], row.detail["settled_runs"]) == (2, 2)
     assert row.detail["latest_run_id"] == newer.run_id
     assert row.detail["latest_settled_at"] == "2026-09-12T12:20:00.000000Z"
-    assert row.related_identities == (f"ProcedureRun:{newer.run_id}",)
+
+
+def test_a_counting_step_is_bounded_and_flat_with_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caught-up step reads nothing; a one-record step reads the same at any size."""
+
+    from cruxible_core.proposals.refusal_index import SettledCursor
+    from cruxible_core.service.procedures.settled_refusals import count_settled_refusals_step
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    def counted(instance: Any, *, rewind: bool) -> int:
+        index = instance.refusal_index()
+        if rewind:
+            cursor = index.settled_cursor(instance, wait=True)
+            assert cursor is not None
+            index.advance_settled(
+                instance,
+                expected=cursor,
+                through=SettledCursor(cursor.journal_identity, 0),
+                deliveries=(),
+                wait=True,
+            )
+        reads = {"cas": 0}
+        read = ContentAddressedBodyStore.read
+
+        def counted_read(self: Any, digest: str, **kwargs: Any) -> bytes:
+            reads["cas"] += 1
+            return read(self, digest, **kwargs)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(ContentAddressedBodyStore, "read", counted_read)
+            step = count_settled_refusals_step(instance, wait=True, limit=1)
+        assert step.ran and step.records <= 1
+        return reads["cas"]
+
+    sizes = []
+    for runs in (1, 3):
+        (tmp_path / f"runs-{runs}").mkdir()
+        instance, root, line = _retired_then_resettle(tmp_path / f"runs-{runs}")
+        previous = None
+        for offset in range(runs):
+            if previous is not None:
+                _retire_claim(
+                    instance,
+                    _settled_claim_id(previous),
+                    at=f"2026-09-12T12:{15 + 10 * offset:02d}:00.000000Z",
+                )
+            previous = run_settle(
+                instance, root, line, now=fixtures.NOW + timedelta(minutes=10 + 10 * offset)
+            )
+            assert _egress(previous).settle_outcome == "settled", previous.terminal
+        assert _next_rows(instance, "line_settled_prior_refusals")  # caught up
+        sizes.append((counted(instance, rewind=False), counted(instance, rewind=True)))
+    assert sizes[0] == sizes[1]
+    assert sizes[0][0] == 0
+
+
+def test_the_next_consumer_counts_settlements_in_the_background(tmp_path: Path) -> None:
+    """The consumer tick counts from the cursor; no read of `next` is needed."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.consumers.next import settled_refusals as part
+
+    instance, root, line = _retired_then_resettle(tmp_path)
+    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+    assert _egress(second).settle_outcome == "settled", second.terminal
+    index = instance.refusal_index()
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    spec = row.detail["line_spec_digest"]
+
+    # Discard the counts; the tick (not a `next` read) recounts them.
+    index.close()
+    for suffix in ("", "-wal", "-shm"):
+        Path(str(index.path) + suffix).unlink(missing_ok=True)
+    index.catch_up(instance)
+    key = (line.identity.qualified, spec)
+    assert index.settled_refusals(instance, (key,)) == {}
+    (work,) = part._PART.due(instance, now=fixtures.NOW)
+    part._PART.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=fixtures.NOW)
+
+    counted = index.settled_refusals(instance, (key,))[key]
+    assert (counted.items, counted.runs, counted.latest_run_id) == (1, 1, second.run_id)
+    assert part._PART.due(instance, now=fixtures.NOW) == ()
+    (health,) = part._PART.health(instance, now=fixtures.NOW)
+    assert health.state == "running"

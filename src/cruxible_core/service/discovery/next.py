@@ -3855,8 +3855,10 @@ def _line_settled_refusal_items(
     """Live Lines whose current version settled items matching earlier refusals.
 
     Settled items skip review, so a receipt on one is easy to miss. One row per
-    live Line, read from the count maintained at each settlement for the Line's
-    exact spec digest -- one keyed probe per live Line, never a walk of its runs.
+    live Line, read from the count kept for the Line's exact spec digest -- one
+    keyed probe per live Line, never a walk of its runs. Counts are computed in
+    post from the run journal (the next consumer's tick, and a bounded catch-up
+    here), never on settle delivery.
 
     The repair is the Line successor, because that is what closes the row and
     what the evidence asks for: demote the Line to `max_authority: propose` so
@@ -3878,7 +3880,19 @@ def _line_settled_refusal_items(
         )
     if not lines:
         return ()
-    counts = instance.refusal_index().settled_refusals(instance, lines)
+    from cruxible_core.service.procedures.settled_refusals import (
+        NEXT_CATCH_UP_STEPS,
+        catch_up_settled_refusals,
+    )
+
+    # Settlements are counted in post; a bounded catch-up makes the row current
+    # when it is looked at. The read builds the index if it must (as every read
+    # does); a busy index skips the count, and the next read or the consumer's
+    # next tick counts what is left, from the persisted cursor.
+    index = instance.refusal_index()
+    index.catch_up(instance)
+    catch_up_settled_refusals(instance, steps=NEXT_CATCH_UP_STEPS, wait=False)
+    counts = index.settled_refusals(instance, lines)
     items: list[PlaybillNextItemV1] = []
     for key in lines:
         found = counts.get(key)

@@ -551,9 +551,6 @@ def service_activate_playbill_proposal(
         raise SettlementIntegrityError("activation returned an unsupported terminal status")
     if activation.status == "accepted" and activation.accepted is None:
         raise SettlementIntegrityError("accepted activation omitted its coordinate")
-    if activation.status == "accepted":
-        # Retirements this generation made become findable as earlier refusals.
-        instance.maintain_refusal_index()
     status = cast(Literal["accepted", "lost_cas"], activation.status)
     # Accepted state moved. Every per-process read memo keyed on a coordinate is
     # keyed on the old one and would simply miss, but a memo that outlives the
