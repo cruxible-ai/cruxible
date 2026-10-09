@@ -21363,6 +21363,12 @@
                 "default": null,
                 "title": "Disposition"
               },
+              "disposition_count": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Disposition Count",
+                "type": "integer"
+              },
               "first_sighting": {
                 "$ref": "#/$defs/InboxSighting"
               },
@@ -21614,12 +21620,30 @@
     },
     "InboxItem": {
       "fields": {
-        "dispositions": {
+        "item": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "item",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/InboxItemEnvelope"
+          }
+        },
+        "payload": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "payload",
+          "required": true,
+          "schema": {
+            "title": "Payload"
+          }
+        },
+        "recent_dispositions": {
           "default": [],
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
-          "json_name": "dispositions",
+          "json_name": "recent_dispositions",
           "required": false,
           "schema": {
             "default": [],
@@ -21644,26 +21668,9 @@
                 }
               ]
             },
-            "title": "Dispositions",
+            "maxItems": 10,
+            "title": "Recent Dispositions",
             "type": "array"
-          }
-        },
-        "item": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "item",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/InboxItemEnvelope"
-          }
-        },
-        "payload": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "payload",
-          "required": true,
-          "schema": {
-            "title": "Payload"
           }
         },
         "tag": {
@@ -21793,6 +21800,12 @@
                 ],
                 "default": null,
                 "title": "Disposition"
+              },
+              "disposition_count": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Disposition Count",
+                "type": "integer"
               },
               "first_sighting": {
                 "$ref": "#/$defs/InboxSighting"
@@ -22015,9 +22028,15 @@
           }
         },
         "additionalProperties": false,
-        "description": "One inbox item whole: envelope, the payload exactly as posted, and every disposition.",
+        "description": "One inbox item whole: envelope, the payload exactly as posted, and its latest decisions.\n\n``recent_dispositions`` holds the latest ``INBOX_RECENT_DISPOSITIONS``,\nnewest first; the envelope's ``disposition_count`` says how many there\nwere in all, and the inbox journal keeps every one.",
         "properties": {
-          "dispositions": {
+          "item": {
+            "$ref": "#/$defs/InboxItemEnvelope"
+          },
+          "payload": {
+            "title": "Payload"
+          },
+          "recent_dispositions": {
             "default": [],
             "items": {
               "discriminator": {
@@ -22040,14 +22059,9 @@
                 }
               ]
             },
-            "title": "Dispositions",
+            "maxItems": 10,
+            "title": "Recent Dispositions",
             "type": "array"
-          },
-          "item": {
-            "$ref": "#/$defs/InboxItemEnvelope"
-          },
-          "payload": {
-            "title": "Payload"
           },
           "tag": {
             "const": "cruxible-inbox-item-v1",
@@ -22116,6 +22130,20 @@
             ],
             "default": null,
             "title": "Disposition"
+          }
+        },
+        "disposition_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "disposition_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Disposition Count",
+            "type": "integer"
           }
         },
         "first_sighting": {
@@ -22514,6 +22542,12 @@
             ],
             "default": null,
             "title": "Disposition"
+          },
+          "disposition_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Disposition Count",
+            "type": "integer"
           },
           "first_sighting": {
             "$ref": "#/$defs/InboxSighting"
@@ -23293,6 +23327,12 @@
                 "default": null,
                 "title": "Disposition"
               },
+              "disposition_count": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Disposition Count",
+                "type": "integer"
+              },
               "first_sighting": {
                 "$ref": "#/$defs/InboxSighting"
               },
@@ -23910,6 +23950,12 @@
                 ],
                 "default": null,
                 "title": "Disposition"
+              },
+              "disposition_count": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Disposition Count",
+                "type": "integer"
               },
               "first_sighting": {
                 "$ref": "#/$defs/InboxSighting"
@@ -26193,6 +26239,9 @@
                   "proposal_item_invalid",
                   "proposal_item_evidence_missing",
                   "proposal_item_evidence_ambiguous",
+                  "inbox_item_invalid",
+                  "inbox_item_evidence_ambiguous",
+                  "inbox_item_over_budget",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
                   "settle_mandate_missing",
@@ -26885,6 +26934,9 @@
                   "proposal_item_invalid",
                   "proposal_item_evidence_missing",
                   "proposal_item_evidence_ambiguous",
+                  "inbox_item_invalid",
+                  "inbox_item_evidence_ambiguous",
+                  "inbox_item_over_budget",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
                   "settle_mandate_missing",
@@ -49007,6 +49059,9 @@
                   "proposal_item_invalid",
                   "proposal_item_evidence_missing",
                   "proposal_item_evidence_ambiguous",
+                  "inbox_item_invalid",
+                  "inbox_item_evidence_ambiguous",
+                  "inbox_item_over_budget",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
                   "settle_mandate_missing",
@@ -51647,6 +51702,9 @@
                   "proposal_item_invalid",
                   "proposal_item_evidence_missing",
                   "proposal_item_evidence_ambiguous",
+                  "inbox_item_invalid",
+                  "inbox_item_evidence_ambiguous",
+                  "inbox_item_over_budget",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
                   "settle_mandate_missing",
@@ -53731,6 +53789,9 @@
                   "proposal_item_invalid",
                   "proposal_item_evidence_missing",
                   "proposal_item_evidence_ambiguous",
+                  "inbox_item_invalid",
+                  "inbox_item_evidence_ambiguous",
+                  "inbox_item_over_budget",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
                   "settle_mandate_missing",
@@ -56147,6 +56208,9 @@
                   "proposal_item_invalid",
                   "proposal_item_evidence_missing",
                   "proposal_item_evidence_ambiguous",
+                  "inbox_item_invalid",
+                  "inbox_item_evidence_ambiguous",
+                  "inbox_item_over_budget",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
                   "settle_mandate_missing",
@@ -58780,6 +58844,9 @@
                   "proposal_item_invalid",
                   "proposal_item_evidence_missing",
                   "proposal_item_evidence_ambiguous",
+                  "inbox_item_invalid",
+                  "inbox_item_evidence_ambiguous",
+                  "inbox_item_over_budget",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
                   "settle_mandate_missing",
