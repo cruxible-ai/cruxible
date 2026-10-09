@@ -2215,3 +2215,33 @@ def test_an_unchanged_terminal_is_accounted_as_delivered_and_finalized(tmp_path:
         True,
         None,
     )
+
+
+def test_an_unchanged_terminal_records_at_the_live_daemon_clock(tmp_path: Path) -> None:
+    """Review F-021: the frozen evaluation clock never stamps a re-observation."""
+
+    import inspect
+    from pathlib import PurePosixPath
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+
+    # No caller can choose the recording clock: the store owns it.
+    assert "clock" not in inspect.signature(ClaimReobservationStore.record).parameters
+    assert "clock" not in inspect.signature(ProposalTerminalEgressSink.__init__).parameters
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = _accept_first_run(instance, owner, root, line)
+    claim_id = PurePosixPath(first.children[0].path).stem
+    live = {"now": NOW + timedelta(hours=3)}
+
+    def advancing() -> datetime:
+        live["now"] += timedelta(minutes=1)
+        return live["now"]
+
+    instance.recording_clock = advancing
+    # The run's own (deterministic, frozen) clock reads NOW + 1 h throughout.
+    second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    assert second.status == "succeeded", second.terminal
+    (record,) = ClaimReobservationStore(instance).history(claim_id)
+    assert record.recorded_at > NOW + timedelta(hours=3)
+    assert record.recorded_at <= live["now"]

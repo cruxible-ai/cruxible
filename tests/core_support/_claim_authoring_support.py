@@ -290,15 +290,16 @@ def service_reobserve_playbill_claim(
 ) -> AuthoringSubmitResult:
     """Restate a live Claim on content it already cites: a recorded no-op.
 
-    The coordinator's clock reads ``recorded_at`` (the canonical timestamp by
-    default), so the re-observation is recorded at the instant the fixture names.
+    The instance's recording clock reads ``recorded_at`` (the canonical
+    timestamp by default), so the re-observation is recorded at the instant the
+    fixture names.
     """
 
+    instance.recording_clock = lambda: parse_datetime_required(recorded_at or timestamp)
     coordinator = AuthoringIntentCoordinator(
         instance=instance,
         store=AuthoringIntentCoordinator.for_instance(instance).store,
         claim_id_factory=lambda: authoring.claim_id or new_claim_id(),
-        clock=lambda: parse_datetime_required(recorded_at or timestamp),
     )
     actor = AuthenticatedActor(actor_id=actor_id)
     created = coordinator.create(

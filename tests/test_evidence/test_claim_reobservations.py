@@ -47,6 +47,13 @@ _START = datetime(2026, 8, 16, 20, 0, tzinfo=UTC)
 _ACCESS = BodyAccessContext(principal_id="reobservation-test", can_read_body=True)
 
 
+def _record(store, at: datetime, **kwargs: Any):  # type: ignore[no-untyped-def]
+    """Record with the instance's recording clock reading ``at``."""
+
+    store.instance.recording_clock = lambda: at
+    return store.record(**kwargs)
+
+
 def _stamp(value: datetime) -> str:
     return value.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
@@ -124,11 +131,12 @@ def test_a_capture_of_different_content_does_not_refresh(tmp_path: Path) -> None
     (other,) = set(proposed.capture_digests) - cited
     store = ClaimReobservationStore(instance)
     with pytest.raises(ClaimReobservationRefused, match="observed no content"):
-        store.record(
+        _record(
+            store,
+            _START + timedelta(minutes=50),
             claim_id=current.identity.name,
             capture_digest=other,
             actor_id="owner",
-            clock=lambda: _START + timedelta(minutes=50),
         )
     assert store.history(current.identity.name) == ()
     assert _verdict(instance, _START + timedelta(hours=1)).verdict == "stale_evidence"
@@ -161,11 +169,12 @@ def test_a_forged_or_unadmitted_capture_is_refused(tmp_path: Path) -> None:
     store = ClaimReobservationStore(instance)
     for digest in (forged, not_a_capture, "sha256:" + "0" * 64):
         with pytest.raises(ClaimReobservationRefused):
-            store.record(
+            _record(
+                store,
+                _START + timedelta(minutes=50),
                 claim_id=current.identity.name,
                 capture_digest=digest,
                 actor_id="owner",
-                clock=lambda: _START + timedelta(minutes=50),
             )
     assert store.history(current.identity.name) == ()
     # The cited Capture itself observed nothing new: it is not a re-observation.
@@ -431,11 +440,12 @@ def test_an_interrupted_append_never_leaves_a_remembered_verdict_behind(
     with monkeypatch.context() as local:
         local.setattr(ClaimReobservationStore, "_apply", staticmethod(interrupted))
         with pytest.raises(OSError, match="crash"):
-            store.record(
+            _record(
+                store,
+                _START + timedelta(minutes=50),
                 claim_id=claim.identity.name,
                 capture_digest=digest,
                 actor_id="owner",
-                clock=lambda: _START + timedelta(minutes=50),
             )
     # The journal is the authority: the fingerprint moved with the append itself,
     # so no remembered verdict is served before (or without) any recovery.
@@ -443,11 +453,12 @@ def test_an_interrupted_append_never_leaves_a_remembered_verdict_behind(
     assert _statuses(instance, claim, at) == "supported"
     # Catch-up and a retry are the same record.
     assert len(store.history(claim.identity.name)) == 1
-    store.record(
+    _record(
+        store,
+        _START + timedelta(minutes=50),
         claim_id=claim.identity.name,
         capture_digest=digest,
         actor_id="owner",
-        clock=lambda: _START + timedelta(minutes=50),
     )
     assert len(store.history(claim.identity.name)) == 1
     assert _verdict(instance, at).verdict == "supported"
@@ -470,11 +481,12 @@ def test_a_record_for_a_retired_lineage_is_refused(tmp_path: Path) -> None:
     assert head is not None and parse_claim(head, path=path).lifecycle.state == "retired"
     store = ClaimReobservationStore(instance)
     with pytest.raises(ClaimReobservationRefused, match="retired"):
-        store.record(
+        _record(
+            store,
+            _START + timedelta(minutes=50),
             claim_id=claim.identity.name,
             capture_digest=digest,
             actor_id="owner",
-            clock=lambda: _START + timedelta(minutes=50),
         )
     assert store.history(claim.identity.name) == ()
 
@@ -486,19 +498,21 @@ def test_the_cited_capture_itself_and_a_capture_observed_later_are_refused(
     claim = _current_claim(instance)
     store = ClaimReobservationStore(instance)
     with pytest.raises(ClaimReobservationRefused, match="already cites"):
-        store.record(
+        _record(
+            store,
+            _START + timedelta(hours=1),
             claim_id=claim.identity.name,
             capture_digest=claim_citation_references(claim)[0].capture_digest,
             actor_id="owner",
-            clock=lambda: _START + timedelta(hours=1),
         )
     digest = _pending_same_content(instance, _START + timedelta(minutes=50))
     with pytest.raises(ClaimReobservationRefused, match="after the re-observation"):
-        store.record(
+        _record(
+            store,
+            _START + timedelta(minutes=10),
             claim_id=claim.identity.name,
             capture_digest=digest,
             actor_id="owner",
-            clock=lambda: _START + timedelta(minutes=10),
         )
     assert store.history(claim.identity.name) == ()
 
@@ -531,22 +545,24 @@ def test_same_size_crash_tail_recovery_invalidates_a_remembered_verdict(
     with monkeypatch.context() as local:
         local.setattr(os, "write", partial)
         with pytest.raises(OSError, match="interrupted journal frame"):
-            store.record(
+            _record(
+                store,
+                _START + timedelta(minutes=50),
                 claim_id=claim.identity.name,
                 capture_digest=digest,
                 actor_id="x" * 1005,
-                clock=lambda: _START + timedelta(minutes=50),
             )
     assert store.history(claim.identity.name) == ()
     reset_claim_resolution_memo()
     at = _START + timedelta(minutes=70)
     assert _statuses(instance, claim, at) == "stale_evidence"
     torn_size = log.stat().st_size
-    store.record(
+    _record(
+        store,
+        _START + timedelta(minutes=50),
         claim_id=claim.identity.name,
         capture_digest=digest,
         actor_id="owner",
-        clock=lambda: _START + timedelta(minutes=50),
     )
     assert len(store.history(claim.identity.name)) == 1
     assert log.stat().st_size == torn_size  # the recovered log is the same size
@@ -597,11 +613,12 @@ def test_an_acceptance_cannot_land_between_admission_and_append(
 
         monkeypatch.setattr(ClaimReobservationStore, "_admitted", interleave)
         store = ClaimReobservationStore(instance)
-        store.record(
+        _record(
+            store,
+            _START + timedelta(minutes=50),
             claim_id=claim.identity.name,
             capture_digest=digest,
             actor_id="owner",
-            clock=lambda: _START + timedelta(minutes=50),
         )
         seen["future"].result(timeout=60)
     assert seen.get("blocked") is True
@@ -636,11 +653,12 @@ def test_a_head_moved_by_another_process_is_judged_again(
     monkeypatch.setattr(type(instance), "holding_accepted_head", moved)
     store = ClaimReobservationStore(instance)
     with pytest.raises(ClaimReobservationRefused, match="moved"):
-        store.record(
+        _record(
+            store,
+            _START + timedelta(minutes=50),
             claim_id=claim.identity.name,
             capture_digest=digest,
             actor_id="owner",
-            clock=lambda: _START + timedelta(minutes=50),
         )
     assert store.history(claim.identity.name) == ()
 
@@ -733,11 +751,12 @@ def test_the_recording_instant_is_the_daemon_clock_at_append_raised_monotone(
     # The daemon's clock regresses after the first record.
     stamps = []
     for capture, minute in zip(captures, (120, 50, 130), strict=True):
-        made = store.record(
+        made = _record(
+            store,
+            _START + timedelta(minutes=minute),
             claim_id=claim.identity.name,
             capture_digest=capture,
             actor_id="owner",
-            clock=lambda minute=minute: _START + timedelta(minutes=minute),
         )
         assert made is not None
         stamps.append(made.recorded_at)
@@ -768,20 +787,22 @@ def test_a_journal_out_of_recorded_order_is_refused_as_corrupt(tmp_path: Path) -
     later = _pending_same_content(instance, _START + timedelta(minutes=50))
     earlier = _pending_same_content(instance, _START + timedelta(minutes=30))
     store = ClaimReobservationStore(instance)
-    store.record(
+    _record(
+        store,
+        _START + timedelta(hours=2),
         claim_id=claim.identity.name,
         capture_digest=later,
         actor_id="owner",
-        clock=lambda: _START + timedelta(hours=2),
     )
     # A writer that is not this store's: an append stamped before the last record.
     with store._locked() as conn:
         conn.execute("UPDATE progress SET recorded_us=0")
-    store.record(
+    _record(
+        store,
+        _START + timedelta(minutes=40),
         claim_id=claim.identity.name,
         capture_digest=earlier,
         actor_id="owner",
-        clock=lambda: _START + timedelta(minutes=40),
     )
     store.path.unlink()
     with pytest.raises(ClaimReobservationJournalCorrupt, match="before"):
@@ -799,19 +820,20 @@ def test_preview_and_commit_agree_after_the_clock_goes_back(tmp_path: Path) -> N
     first = _pending_same_content(instance, _START + timedelta(minutes=30))
     future = _pending_same_content(instance, _START + timedelta(minutes=45))
     store = ClaimReobservationStore(instance)
-    store.record(
+    _record(
+        store,
+        _START + timedelta(hours=2),
         claim_id=claim.identity.name,
         capture_digest=first,
         actor_id="owner",
-        clock=lambda: _START + timedelta(hours=2),
     )
     # The clock has gone back to +40: the Capture observed at +45 is in its future.
     attempt: dict[str, Any] = {
         "claim_id": claim.identity.name,
         "capture_digest": future,
         "actor_id": "owner",
-        "clock": lambda: _START + timedelta(minutes=40),
     }
+    instance.recording_clock = lambda: _START + timedelta(minutes=40)
     with previewing():
         with pytest.raises(ClaimReobservationRefused, match="after"):
             store.record(**attempt)
@@ -825,7 +847,7 @@ def test_preview_and_commit_agree_after_the_clock_goes_back(tmp_path: Path) -> N
         restarted.record(**attempt)
     assert len(restarted.history(claim.identity.name)) == 1
     # Within the clock's actual instant it is admitted, stamped at the last record's.
-    made = restarted.record(**{**attempt, "clock": lambda: _START + timedelta(minutes=50)})
+    made = _record(restarted, _START + timedelta(minutes=50), **attempt)
     assert made is not None and made.recorded_at == _START + timedelta(hours=2)
 
 

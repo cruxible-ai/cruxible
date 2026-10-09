@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -40,7 +40,7 @@ from cruxible_client.contracts.claims import claim_path, parse_claim
 from cruxible_client.contracts.errors import CruxibleError, ReadRefusalError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.temporal import format_datetime, parse_datetime, utc_now
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.backends import LocalJournalBackend, journal_log_path
 from cruxible_core.exhaust.records import (
     CLAIM_REOBSERVATION_JOURNAL_FAMILY,
@@ -352,7 +352,6 @@ class ClaimReobservationStore:
         claim_id: str,
         capture_digest: str,
         actor_id: str,
-        clock: Callable[[], datetime] = utc_now,
     ) -> ReobservationRecord | None:
         """Record one admissible re-observation at the current head; a repeat is the same record.
 
@@ -362,9 +361,10 @@ class ClaimReobservationStore:
         there and cite a Capture of the same contract and observed content,
         and the re-observing Capture must be
         daemon-admitted, verify there, and not be observed after the clock's
-        actual instant -- the same check a preview makes. ``clock`` is the
-        daemon's own; the record's one recording instant is read from it at
-        the durable append, raised to the previous
+        actual instant -- the same check a preview makes. The clock is the
+        store's own: the instance's live recording clock
+        (``PlaybillInstance.recording_clock``), which no caller supplies. The
+        record's one recording instant is read from it at the durable append, raised to the previous
         record's so the journal is in recorded order by construction, and is
         the ``recorded_at`` the journal record carries. A historical record
         stays readable whatever later happens to its Claim; this decides only
@@ -377,7 +377,7 @@ class ClaimReobservationStore:
                 claim_id=claim_id,
                 capture_digest=capture_digest,
                 head=self.instance.accepted_coordinate(),
-                now=clock(),
+                now=self.instance.recording_clock(),
             )
             return None
         # Accepted main is held still from the admission check through the
@@ -407,7 +407,7 @@ class ClaimReobservationStore:
             # Admission judges the clock's actual instant, as a preview does; only
             # the durable stamp is raised to the last record's, so the journal is
             # in recorded order.
-            now = clock()
+            now = self.instance.recording_clock()
             record = self._admitted(
                 claim_id=claim_id, capture_digest=capture_digest, head=accepted, now=now
             )

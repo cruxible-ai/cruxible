@@ -4455,7 +4455,7 @@ def _run_playbill_line(
                 producer_binding_digest=accepted.artifact_digest,
             ),
             proposal=ProposalTerminalEgressSink(
-                instance=instance, accepted_mandates=dict(mandates), clock=clock.now
+                instance=instance, accepted_mandates=dict(mandates)
             ),
             inbox=InboxTerminalEgressSink(
                 store=LineInboxStore(instance), line=accepted_line.line.identity
