@@ -102,9 +102,6 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "consumer_stalled": "restart_the_consumer_through_its_named_repair",
     "line_coverage_gap": "evaluate_the_uncovered_range_then_dispatch_what_it_finds",
     "line_work_pending": "dispatch_the_lines_pending_work",
-    # Settled items matched earlier refusals: a Line successor (demoted to
-    # propose, or on a fixed Procedure) is what closes the row.
-    "line_settled_prior_refusals": "read_the_runs_then_demote_the_line_or_fix_its_procedure",
     "evidence_unavailable": "restore_the_capture_from_backup_or_recapture_and_recite_its_claims",
     # The row names `settle RSC-...`; the daemon resolves the exact contract and
     # bound window, and which accepted observation settles it is the settler's call.
