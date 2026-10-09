@@ -62089,6 +62089,11 @@
                 "default": "playbill-procedure-terminal-egress-child-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -63714,6 +63719,11 @@
                 "default": "playbill-procedure-terminal-egress-child-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
