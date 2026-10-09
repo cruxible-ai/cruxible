@@ -96,6 +96,33 @@ from cruxible_client.contracts.line_dispatch import (
 from cruxible_client.contracts.line_dispatch import (
     LineTriggerVersion as LineTriggerVersion,
 )
+from cruxible_client.contracts.line_inbox import (
+    INBOX_LIST_DEFAULT_LIMIT as INBOX_LIST_DEFAULT_LIMIT,
+)
+from cruxible_client.contracts.line_inbox import INBOX_LIST_MAX_LIMIT as INBOX_LIST_MAX_LIMIT
+from cruxible_client.contracts.line_inbox import (
+    INBOX_RUN_ITEM_CAP_DEFAULT as INBOX_RUN_ITEM_CAP_DEFAULT,
+)
+from cruxible_client.contracts.line_inbox import (
+    INBOX_RUN_ITEM_CAP_MAX as INBOX_RUN_ITEM_CAP_MAX,
+)
+from cruxible_client.contracts.line_inbox import InboxAcknowledged as InboxAcknowledged
+from cruxible_client.contracts.line_inbox import InboxDismissed as InboxDismissed
+from cruxible_client.contracts.line_inbox import InboxDismissRequest as InboxDismissRequest
+from cruxible_client.contracts.line_inbox import InboxDisposition as InboxDisposition
+from cruxible_client.contracts.line_inbox import (
+    InboxDispositionResult as InboxDispositionResult,
+)
+from cruxible_client.contracts.line_inbox import InboxItem as InboxItem
+from cruxible_client.contracts.line_inbox import InboxItemEnvelope as InboxItemEnvelope
+from cruxible_client.contracts.line_inbox import InboxItemStatus as InboxItemStatus
+from cruxible_client.contracts.line_inbox import InboxLinked as InboxLinked
+from cruxible_client.contracts.line_inbox import InboxLinkProposal as InboxLinkProposal
+from cruxible_client.contracts.line_inbox import InboxLinkRequest as InboxLinkRequest
+from cruxible_client.contracts.line_inbox import InboxLinkSubject as InboxLinkSubject
+from cruxible_client.contracts.line_inbox import InboxLinkTarget as InboxLinkTarget
+from cruxible_client.contracts.line_inbox import InboxList as InboxList
+from cruxible_client.contracts.line_inbox import InboxListEntry as InboxListEntry
 from cruxible_client.contracts.orient import (
     ORIENT_DEFAULT_LIMIT as ORIENT_DEFAULT_LIMIT,
 )
