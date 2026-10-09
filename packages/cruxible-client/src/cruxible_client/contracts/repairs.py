@@ -141,6 +141,14 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "proposal_item_evidence_ambiguous": (
         "flow_exactly_one_source_capture_into_each_proposed_claim_item"
     ),
+    # A `post_inbox` input is the Procedure author's: an explicit fan-out must
+    # resolve to a list, each element's evidence must be its own, and every item
+    # and the run's whole post stay within the inbox byte bounds.
+    "inbox_item_invalid": "resolve_the_inbox_input_or_its_items_to_a_list",
+    "inbox_item_evidence_ambiguous": (
+        "keep_per_element_lineage_for_lists_built_from_several_captures"
+    ),
+    "inbox_item_over_budget": "post_smaller_items_or_fewer_items_per_run",
     "proposal_lowering_refused": "repair_the_proposed_claim_the_lowering_diagnostic_names",
     "proposal_candidate_refused": "repair_the_proposed_member_the_candidate_diagnostic_names",
     "settle_mandate_missing": (

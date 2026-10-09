@@ -97,6 +97,9 @@ from cruxible_client.contracts.line_dispatch import (
     LineTriggerVersion as LineTriggerVersion,
 )
 from cruxible_client.contracts.line_inbox import (
+    INBOX_ITEM_MAX_BYTES as INBOX_ITEM_MAX_BYTES,
+)
+from cruxible_client.contracts.line_inbox import (
     INBOX_LIST_DEFAULT_LIMIT as INBOX_LIST_DEFAULT_LIMIT,
 )
 from cruxible_client.contracts.line_inbox import INBOX_LIST_MAX_LIMIT as INBOX_LIST_MAX_LIMIT
@@ -108,6 +111,9 @@ from cruxible_client.contracts.line_inbox import (
 )
 from cruxible_client.contracts.line_inbox import (
     INBOX_RUN_ITEM_CAP_MAX as INBOX_RUN_ITEM_CAP_MAX,
+)
+from cruxible_client.contracts.line_inbox import (
+    INBOX_RUN_MAX_BYTES as INBOX_RUN_MAX_BYTES,
 )
 from cruxible_client.contracts.line_inbox import InboxAcknowledged as InboxAcknowledged
 from cruxible_client.contracts.line_inbox import InboxDismissed as InboxDismissed

@@ -48,7 +48,11 @@ from cruxible_client.contracts.errors import (
     JournalError,
     JournalIntegrityError,
 )
-from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_DEFAULT
+from cruxible_client.contracts.line_inbox import (
+    INBOX_ITEM_MAX_BYTES,
+    INBOX_RUN_ITEM_CAP_DEFAULT,
+    INBOX_RUN_MAX_BYTES,
+)
 from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicy,
 )
@@ -2404,8 +2408,10 @@ class _RunState:
     provider_invocations_started: int = 0
     provider_invocations_completed: int = 0
     run_started_monotonic_ns: int = 0
-    #: Items this run's post_inbox terminals posted, against the run's inbox cap.
+    #: Items this run's post_inbox terminals posted, against the run's inbox cap,
+    #: and their canonical bytes, against the run's inbox byte bound.
     inbox_items: int = 0
+    inbox_bytes: int = 0
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -4756,6 +4762,8 @@ class ProcedureExecutor:
             values, item_tokens = _fan_out_items(
                 node.candidate_templates, state=state, node_id=node.node_id
             )
+        elif isinstance(node, InboxEgressNode):
+            values, item_tokens = _inbox_items(node, state=state)
         else:
             values, item_tokens = _terminal_items(declared, state=state)
         if isinstance(node, ProposeChangeSetNode):
@@ -4778,6 +4786,9 @@ class ProcedureExecutor:
         selected = len(values)
         if limit is not None:
             values, item_tokens = list(values[:limit]), tuple(item_tokens[:limit])
+        if isinstance(node, InboxEgressNode):
+            # Bytes are bounded before anything is journaled or posted.
+            state.inbox_bytes += _check_inbox_bytes(values, state=state, node_id=node.node_id)
         outcomes = tuple(
             sorted(state.outcomes.values(), key=lambda item: item.input_name.encode("utf-8"))
         )
@@ -5876,46 +5887,165 @@ def _fan_out_items(
     the union.
     """
 
+    return _fan_out_list(
+        fan_out.items,
+        state=state,
+        node_id=node_id,
+        field="candidate_templates.items",
+        noun="proposal items",
+        invalid_code="proposal_item_invalid",
+        ambiguous_code="proposal_item_evidence_ambiguous",
+    )
+
+
+def _fan_out_list(
+    template: object,
+    *,
+    state: _RunState,
+    node_id: str,
+    field: str,
+    noun: str,
+    invalid_code: ProcedureNodeRefusalCode,
+    ambiguous_code: ProcedureNodeRefusalCode,
+) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
+    """The elements of a list the run produced, each with only its own evidence closure."""
+
     try:
         resolved = _resolve_template(
-            fan_out.items, input_payload=state.input_payload, outputs=state.outputs
+            template, input_payload=state.input_payload, outputs=state.outputs
         )
     except ExecutionError as exc:
         raise _RunRefusal(
-            "proposal_item_invalid",
+            invalid_code,
             f"The fan-out's items did not resolve: {exc}",
             node_id=node_id,
-            details={"field": "candidate_templates.items", "reason": "items_unresolved"},
+            details={"field": field, "reason": "items_unresolved"},
         ) from exc
     if not isinstance(resolved, list):
         raise _RunRefusal(
-            "proposal_item_invalid",
-            "The fan-out's items resolved to a "
-            f"{type(resolved).__name__}, not a list of proposal items.",
+            invalid_code,
+            f"The fan-out's items resolved to a {type(resolved).__name__}, not a list of {noun}.",
             node_id=node_id,
-            details={"field": "candidate_templates.items", "reason": "items_not_a_list"},
+            details={"field": field, "reason": "items_not_a_list"},
         )
     values = [normalize_canonical(item) for item in resolved]
-    alias = _template_alias(fan_out.items)
+    alias = _template_alias(template)
     provenance = None if alias is None else state.provenance.get(alias)
     if provenance is None:
-        whole = state.alias_tokens(_referenced_aliases(fan_out.items))
+        whole = state.alias_tokens(_referenced_aliases(template))
         return values, tuple(whole for _ in values)
     # Lineage belongs to the exact path it was recorded for; a sibling or
     # nested path has none of its own.
-    lineage = provenance.items if _lineage_alias(fan_out.items) == alias else None
+    lineage = provenance.items if _lineage_alias(template) == alias else None
     if lineage is None or len(lineage) < len(values):
         if len({token for token in provenance.whole if token.slot in _CAPTURE_SLOTS}) > 1:
             raise _RunRefusal(
-                "proposal_item_evidence_ambiguous",
+                ambiguous_code,
                 "The fan-out's list was built from more than one Capture and keeps no "
                 "per-element lineage, so no element's own evidence can be told apart.",
                 node_id=node_id,
-                details={"field": "candidate_templates.items", "reason": "lineage_unavailable"},
+                details={"field": field, "reason": "lineage_unavailable"},
             )
         return values, tuple(provenance.whole for _ in values)
     shared = frozenset(token for token in provenance.whole if token.slot not in _CAPTURE_SLOTS)
     return values, tuple(shared | lineage[index] for index in range(len(values)))
+
+
+def _inbox_items(
+    node: InboxEgressNode,
+    *,
+    state: _RunState,
+) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
+    """What a post_inbox terminal posts: its input as one item, or an explicit fan-out.
+
+    Only an input that is exactly ``{"items": ...}`` fans out, and then its
+    items must resolve to a list (a typed refusal otherwise, posting nothing).
+    Each element carries only its own evidence: a literal list's elements
+    their own references, a produced list its recorded per-element lineage,
+    and a list built from more than one Capture without that lineage refuses
+    rather than lending every element every Capture. Any other input -- an
+    array, an empty array, an object that happens to hold ``items`` -- is one
+    item, exactly as it resolved.
+    """
+
+    declared = node.input
+    if isinstance(declared, dict) and set(declared) == {"items"}:
+        template = declared["items"]
+        if not isinstance(template, list):
+            return _fan_out_list(
+                template,
+                state=state,
+                node_id=node.node_id,
+                field="input.items",
+                noun="inbox items",
+                invalid_code="inbox_item_invalid",
+                ambiguous_code="inbox_item_evidence_ambiguous",
+            )
+        values: list[CanonicalValue] = []
+        for member in template:
+            try:
+                values.append(
+                    normalize_canonical(
+                        _resolve_template(
+                            member, input_payload=state.input_payload, outputs=state.outputs
+                        )
+                    )
+                )
+            except ExecutionError as exc:
+                raise _RunRefusal(
+                    "inbox_item_invalid",
+                    f"An inbox item did not resolve: {exc}",
+                    node_id=node.node_id,
+                    details={"field": "input.items", "reason": "items_unresolved"},
+                ) from exc
+        return values, tuple(state.alias_tokens(_referenced_aliases(member)) for member in template)
+    try:
+        resolved = _resolve_template(
+            declared, input_payload=state.input_payload, outputs=state.outputs
+        )
+    except ExecutionError as exc:
+        raise _RunRefusal(
+            "inbox_item_invalid",
+            f"The inbox input did not resolve: {exc}",
+            node_id=node.node_id,
+            details={"field": "input", "reason": "input_unresolved"},
+        ) from exc
+    return [normalize_canonical(resolved)], (state.alias_tokens(_referenced_aliases(declared)),)
+
+
+def _check_inbox_bytes(values: list[CanonicalValue], *, state: _RunState, node_id: str) -> int:
+    """Refuse a post whose item or run total exceeds the inbox byte bounds; nothing is posted."""
+
+    total = 0
+    for index, value in enumerate(values):
+        size = len(canonical_bytes(value))
+        if size > INBOX_ITEM_MAX_BYTES:
+            raise _RunRefusal(
+                "inbox_item_over_budget",
+                f"Inbox item {index} is {size} canonical bytes; one item may be at most "
+                f"{INBOX_ITEM_MAX_BYTES}.",
+                node_id=node_id,
+                details={
+                    "bound": "item",
+                    "child_index": index,
+                    "limit": INBOX_ITEM_MAX_BYTES,
+                    "observed": size,
+                },
+            )
+        total += size
+    if state.inbox_bytes + total > INBOX_RUN_MAX_BYTES:
+        raise _RunRefusal(
+            "inbox_item_over_budget",
+            f"This run would post {state.inbox_bytes + total} canonical bytes to the inbox; a "
+            f"run may post at most {INBOX_RUN_MAX_BYTES}.",
+            node_id=node_id,
+            details={
+                "bound": "run",
+                "limit": INBOX_RUN_MAX_BYTES,
+                "observed": state.inbox_bytes + total,
+            },
+        )
+    return total
 
 
 def _terminal_items(

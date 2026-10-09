@@ -6,6 +6,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
@@ -30,13 +32,15 @@ from tests.test_procedures.test_procedure_source_runs import (
 ROWS = [{"cve": "CVE-2026-0001"}, {"cve": "CVE-2026-0002"}, {"cve": "CVE-2026-0003"}]
 
 
-def inbox_world(tmp_path: Path, *, max_items: int | None = None, items: Any = None):  # type: ignore[no-untyped-def]
+def inbox_world(  # type: ignore[no-untyped-def]
+    tmp_path: Path, *, max_items: int | None = None, items: Any = None, extra: Any = None
+):
     """The Source Procedure, ending in a post_inbox over its rows, behind an observe-only Line."""
 
     instance, owner, procedure, root, policy = _world(
         tmp_path,
         accept_procedure=False,
-        contents=canonical_bytes({**ADVISORY, "rows": ROWS}),
+        contents=canonical_bytes({**ADVISORY, "rows": ROWS, **(extra or {})}),
     )
     source, shape = procedure.definition.nodes
     assert isinstance(source, SourceNode) and isinstance(shape, ProjectNode)
@@ -213,3 +217,91 @@ def test_the_same_item_again_resurfaces_with_its_prior_disposition(tmp_path: Pat
         first.run_id,
         second.run_id,
     )
+
+
+# --- a single input is one item, exactly as posted (review F-004) -----------------
+
+
+@pytest.mark.parametrize(
+    ("items", "extra", "expected"),
+    [
+        ([{"note": "a"}, {"note": "b"}], None, [{"note": "a"}, {"note": "b"}]),
+        ([], None, []),
+        (f"$steps.{SOURCE_ALIAS}.content.json.rows", None, ROWS),
+        (
+            f"$steps.{SOURCE_ALIAS}.content.json.bundle",
+            {"bundle": {"items": [1, 2], "kind": "batch"}},
+            {"items": [1, 2], "kind": "batch"},
+        ),
+    ],
+    ids=["literal-array", "empty-array", "referenced-array", "object-holding-items"],
+)
+def test_a_single_input_is_posted_whole(  # type: ignore[no-untyped-def]
+    tmp_path: Path, items, extra, expected
+) -> None:
+    instance, root, line = inbox_world(tmp_path, items=items, extra=extra)
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    (entry,) = _entries(instance)
+    assert entry.payload == expected
+
+
+# --- an explicit fan-out must resolve to a list (review F-005) --------------------
+
+
+@pytest.mark.parametrize(
+    ("field", "extra", "reason"),
+    [
+        ("absent", None, "items_unresolved"),
+        ("nothing", {"nothing": None}, "items_not_a_list"),
+        ("severity", None, "items_not_a_list"),
+        ("bundle", {"bundle": {"rows": ROWS}}, "items_not_a_list"),
+    ],
+    ids=["absent", "null", "string", "object"],
+)
+def test_an_explicit_fan_out_that_is_not_a_list_refuses_typed(  # type: ignore[no-untyped-def]
+    tmp_path: Path, field, extra, reason
+) -> None:
+    instance, root, line = inbox_world(
+        tmp_path, items={"items": f"$steps.{SOURCE_ALIAS}.content.json.{field}"}, extra=extra
+    )
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "inbox_item_invalid"  # type: ignore[union-attr]
+    assert state.terminal.details == {"field": "input.items", "reason": reason}  # type: ignore[union-attr]
+    assert _entries(instance) == []
+
+
+# --- inbox bytes are bounded before anything is posted (review F-003) -------------
+
+
+def test_an_item_over_the_byte_bound_refuses_and_posts_nothing(tmp_path: Path) -> None:
+    from cruxible_client.contracts.line_inbox import INBOX_ITEM_MAX_BYTES
+
+    big = "x" * INBOX_ITEM_MAX_BYTES  # its canonical JSON adds the quotes
+    instance, root, line = inbox_world(tmp_path, items={"items": [{"n": 1}, big]})
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "inbox_item_over_budget"  # type: ignore[union-attr]
+    assert state.terminal.details["bound"] == "item"  # type: ignore[union-attr]
+    assert state.terminal.details["child_index"] == 1  # type: ignore[union-attr]
+    assert _entries(instance) == []
+
+
+def test_an_item_just_under_the_byte_bound_posts(tmp_path: Path) -> None:
+    from cruxible_client.contracts.line_inbox import INBOX_ITEM_MAX_BYTES
+
+    fits = "x" * (INBOX_ITEM_MAX_BYTES - 2)
+    instance, root, line = inbox_world(tmp_path, items=fits)
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    (entry,) = _entries(instance)
+    assert entry.envelope.payload_bytes == INBOX_ITEM_MAX_BYTES

@@ -40,6 +40,10 @@ INBOX_LIST_MAX_LIMIT = 200
 #: and the most any terminal may declare.
 INBOX_RUN_ITEM_CAP_DEFAULT = 100
 INBOX_RUN_ITEM_CAP_MAX = 1_000
+#: The most canonical bytes one inbox item may hold, and one run may post in all.
+#: A post over either bound is refused whole (``inbox_item_over_budget``).
+INBOX_ITEM_MAX_BYTES = 65_536
+INBOX_RUN_MAX_BYTES = 1_048_576
 #: How many of an item's most recent sightings its envelope keeps, beside its first.
 INBOX_RECENT_SIGHTINGS = 5
 #: The longest dismissal reason recorded.
@@ -275,6 +279,8 @@ def is_inbox_item_id(value: str) -> bool:
 
 __all__ = [
     "INBOX_ITEM_ID_PATTERN",
+    "INBOX_ITEM_MAX_BYTES",
+    "INBOX_RUN_MAX_BYTES",
     "INBOX_ITEM_SELECTOR_PATTERN",
     "INBOX_LIST_DEFAULT_LIMIT",
     "INBOX_LIST_MAX_LIMIT",

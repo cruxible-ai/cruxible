@@ -2049,13 +2049,21 @@ propose, it is refused like any other.
 
 A `post_inbox` terminal needs only `observe`: it posts the items the run
 selected, as they are, to the Line inbox (`cruxible inbox`), and never changes
-accepted state. `input` is one item, or `{"items": ...}` to fan out over a list
-the run produced; the daemon attaches to each item the Captures its own
-dependency closure reached. A run posts at most the terminal's `max_items`
-(100 when it declares none, at most 1000), counted across its `post_inbox`
-terminals; the rest are not posted and the terminal reports
-`inbox_truncation` (`cap`, `cap_source`, `selected`, `posted`). Rule of thumb:
-propose when the automation can state the belief, post when it cannot.
+accepted state. An `input` that is exactly `{"items": ...}` fans out: the items
+field must resolve to a list, and an absent or non-list value refuses
+`inbox_item_invalid` without posting. Any other input -- an object, an array,
+an empty array, an object that holds an `items` field -- is one item, posted
+exactly as it resolved. The daemon attaches to each item only the Captures its
+own dependency closure reached; a list built from more than one Capture that
+keeps no per-element lineage refuses `inbox_item_evidence_ambiguous` rather
+than lending every element every Capture. A run posts at most the terminal's
+`max_items` (100 when it declares none, at most 1000), counted across its
+`post_inbox` terminals; the rest are not posted and the terminal reports
+`inbox_truncation` (`cap`, `cap_source`, `selected`, `posted`). One item may be
+at most 65,536 canonical JSON bytes and one run may post at most 1,048,576 in
+all; a post over either bound refuses `inbox_item_over_budget` and posts
+nothing. Rule of thumb: propose when the automation can state the belief, post
+when it cannot.
 
 Known limitation: a settle run submits its delegated proposal against the
 accepted head and then activates it. If another generation is accepted between
