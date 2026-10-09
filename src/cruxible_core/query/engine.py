@@ -92,6 +92,10 @@ from cruxible_client.contracts.query.results import (
 )
 from cruxible_client.contracts.query.values import QueryTypedValue, coerce_query_value
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_aliases import (
+    SubjectReferenceAmbiguous,
+    SubjectReferenceResolver,
+)
 from cruxible_core.query.backends import (
     ClaimFactRowV1,
     ClaimQueryBackendFactoryV1,
@@ -117,6 +121,7 @@ SUBJECT_FIELD_UNAVAILABLE = "cruxible.query.subject_field_unavailable"
 SUBJECT_UNRESOLVED = "cruxible.query.subject_unresolved"
 TRAVERSAL_OBJECT_NOT_SUBJECT = "cruxible.query.traversal_object_not_subject"
 VALUE_TYPE_MISMATCH = "cruxible.query.value_type_mismatch"
+ALIAS_AMBIGUOUS = "cruxible.query.alias_ambiguous"
 
 
 def query_parameter_digest(parameters: Sequence[QueryParameterBinding]) -> str:
@@ -356,12 +361,14 @@ class _Evaluator:
         parameters: Mapping[str, object],
         evaluation_time: datetime,
         canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
+        resolve_reference: SubjectReferenceResolver | None = None,
     ) -> None:
         self._definition = definition
         self._backend = backend
         self._parameters = parameters
         self._evaluation_time = evaluation_time
         self._canonical_forms = canonical_forms or {}
+        self._resolve_reference = resolve_reference
 
     def _form(self, ref: QueryValueRef) -> tuple[str, ...]:
         """The canonical form of the predicate a Claim-value reference reads, if any."""
@@ -504,6 +511,19 @@ class _Evaluator:
                 value = canonicalize_literal(value, form)
             except CanonicalFormDidNotConverge as exc:
                 raise _refuse(VALUE_TYPE_MISMATCH, str(exc)) from exc
+        if (
+            value_type == "subject_reference"
+            and self._resolve_reference is not None
+            and isinstance(ref, QueryLiteralRef | QueryParameterRef)
+            and isinstance(value, str)
+        ):
+            # A Subject reference the definition or caller wrote resolves
+            # exactly as at every other entry point: the exact Subject, else
+            # one alias of its kind. The stored definition is never rewritten.
+            try:
+                value = self._resolve_reference(value)
+            except SubjectReferenceAmbiguous as exc:
+                raise _refuse(ALIAS_AMBIGUOUS, str(exc)) from exc
         coerced = coerce_query_value(value, value_type)
         if not coerced.ok:
             raise _refuse(
@@ -711,6 +731,7 @@ def evaluate_claim_query(
     parameters: Mapping[str, object] | None = None,
     budgets: QueryBudgets | None = None,
     backend_factory: ClaimQueryBackendFactoryV1 = DirectClaimFactIndex,
+    resolve_reference: SubjectReferenceResolver | None = None,
 ) -> ClaimQueryResult:
     """Evaluate one accepted QueryDefinition against accepted Claim facts.
 
@@ -718,6 +739,8 @@ def evaluate_claim_query(
     parameters, the accepted coordinate, and the explicit evaluation time. The
     backend is materialized from those accepted facts inside the evaluation, so
     a caller can choose how state is stored but never what it says.
+    ``resolve_reference`` resolves the Subject references a literal or a
+    parameter compares, at the same coordinate (``indexes.subject_aliases``).
     """
 
     query = definition.query
@@ -746,6 +769,7 @@ def evaluate_claim_query(
             bindings=bindings,
             budgets=_effective_budgets(query, budgets),
             backend_factory=backend_factory,
+            resolve_reference=resolve_reference,
         )
     except _RefusalSignal as signal:
         return ClaimQueryResult(
@@ -980,6 +1004,7 @@ def _evaluate(
     bindings: tuple[QueryParameterBinding, ...],
     budgets: QueryBudgets,
     backend_factory: ClaimQueryBackendFactoryV1,
+    resolve_reference: SubjectReferenceResolver | None = None,
 ) -> ClaimQueryResult:
     query = definition.query
     backend = backend_factory(facts, definition=query, evaluation_time=evaluation_time)
@@ -1001,6 +1026,7 @@ def _evaluate(
             for row in facts.claims
             if row.canonical_form
         },
+        resolve_reference=resolve_reference,
     )
     clipped: set[QueryClippedBudget] = set()
 

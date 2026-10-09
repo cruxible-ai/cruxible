@@ -1257,11 +1257,16 @@ trim`). An instance created before a builtin shipped adopts it with
 offers `Cruxible.builtin_claim_type(name).propose(...)`. Add an alias with
 `cruxible add KIND/ID semantic.alias other-name --because TEXT`.
 
-Every Subject reference resolves through aliases: a write's subject, a
-Subject-valued value or `expect`, a Claim member's subject or object, a compact
-query's `subject_id` or Subject-valued filter, a named query's entry or
-`subject_reference` parameter, a ProcedureMandate's subject scope and fixed
-Subject parameters, and `inbox link --subject`. A reference `kind/id` that names
+These Subject references resolve through aliases: a write's subject, a
+Subject-valued value or `expect`, a Claim member's subject or object (a
+Procedure item's included, before the live Claim it restates is looked up), a
+compact query's `subject_id` or Subject-valued filter, a named query's entry or
+`subject_reference` parameter, a `subject_reference` literal a QueryDefinition
+compares (in a named query, a settle mandate's condition or a corroboration
+requirement; the definition's stored bytes and digest are unchanged), a
+ProcedureMandate's subject scope and fixed Subject parameters, and `inbox link
+--subject`. Other text that happens to look like a reference is not resolved.
+A condition or corroboration query resolves at the parent state it reads. A reference `kind/id` that names
 no Subject resolves to the one live Subject of that kind whose alias, under the
 discovery normalizer, equals `id`; an alias naming several refuses
 (`alias_ambiguous`) with each candidate; none leaves the entry point's own rule

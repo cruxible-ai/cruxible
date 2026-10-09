@@ -59,6 +59,7 @@ from cruxible_core.exhaust.records import (
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_aliases import projection_connection, reference_resolver
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.query.engine import (
     evaluate_artifact_query,
@@ -789,6 +790,9 @@ def evaluate_accepted_query(
         )
     return evaluate_claim_query(
         definition,
+        resolve_reference=reference_resolver(
+            projection_connection(lambda: instance.bind_accepted_projection(coordinate))
+        ),
         facts=facts()
         if facts
         else build_accepted_query_facts(

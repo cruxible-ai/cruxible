@@ -19,8 +19,10 @@ here, so a reference means the same Subject wherever it is written.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from cruxible_client.contracts.discovery import normalize_discovery_term
 
@@ -192,8 +194,126 @@ def resolve_reference_text(
     return value, resolution
 
 
+class SubjectReferenceAmbiguous(ValueError):
+    """A reference that names no Subject and whose alias names several."""
+
+    def __init__(self, value: str, resolution: SubjectRefResolution) -> None:
+        super().__init__(
+            f"{value} names no Subject, and an alias of {resolution.kind} names "
+            f"{len(resolution.candidates)}: {', '.join(resolution.candidates)}"
+        )
+        self.value = value
+        self.resolution = resolution
+
+
+SubjectReferenceResolver = Callable[[str], str]
+"""Resolve Subject-reference text at one accepted coordinate, spelled as given."""
+
+
+def reference_resolver(
+    connect: Callable[[], AbstractContextManager[sqlite3.Connection]],
+) -> SubjectReferenceResolver:
+    """A resolver over one accepted alias index (``connect`` opens it).
+
+    Text that is no reference, and a reference that resolves to nothing, come
+    back as given; an ambiguous alias raises ``SubjectReferenceAmbiguous``. Each
+    distinct text is resolved once.
+    """
+
+    known: dict[str, str] = {}
+
+    def resolve(value: str) -> str:
+        if value in known:
+            return known[value]
+        if split_reference(value) is None:
+            return value
+        with connect() as connection:
+            found = resolve_reference_text(connection, value)
+        if found is None:
+            known[value] = value
+            return value
+        spelled, resolution = found
+        if resolution.ambiguous:
+            raise SubjectReferenceAmbiguous(value, resolution)
+        known[value] = spelled
+        return spelled
+
+    return resolve
+
+
+def projection_connection(
+    bind: Callable[[], AbstractContextManager[Any]],
+) -> Callable[[], AbstractContextManager[sqlite3.Connection]]:
+    """Open an accepted projection (``bind``) as the connection a resolver reads."""
+
+    @contextmanager
+    def connect() -> Iterator[sqlite3.Connection]:
+        with bind() as projection:
+            yield projection.typed.connection
+
+    return connect
+
+
+def tree_reference_resolver(tree: Mapping[str, bytes]) -> SubjectReferenceResolver:
+    """The resolver for references read from one accepted tree.
+
+    An accepted tree that stands on its projection resolves through that
+    projection's alias index. A tree with none (cold replay, genesis) derives the
+    same two tables from its own members with the same row derivation the
+    projection compiler uses (``typed_state.vocabulary_terms``), once, on first
+    use: one rule, whichever way the tree is held.
+    """
+
+    reader = getattr(tree, "_accepted_reader", None)
+    if reader is not None:
+        return reference_resolver(projection_connection(reader))
+    built: list[sqlite3.Connection] = []
+
+    @contextmanager
+    def connect() -> Iterator[sqlite3.Connection]:
+        if not built:
+            built.append(_tree_alias_index(tree))
+        yield built[0]
+
+    return reference_resolver(connect)
+
+
+def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
+    """Subjects and their alias and canonical-token terms, derived from a tree's members."""
+
+    from cruxible_client.contracts.claims import parse_claim
+    from cruxible_client.contracts.subjects import parse_subject
+    from cruxible_core.indexes.typed_state import vocabulary_terms
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE subjects (path TEXT PRIMARY KEY, lifecycle TEXT NOT NULL)")
+    connection.execute(
+        "CREATE TABLE vocabulary_terms (source_identity TEXT, target_path TEXT, "
+        "basis TEXT, term TEXT, value TEXT)"
+    )
+    for path in tree:
+        source: Any
+        if path.startswith(_SUBJECTS) and path.endswith(".json"):
+            source = parse_subject(tree[path], path=path)
+            connection.execute("INSERT INTO subjects VALUES (?,?)", (path, source.lifecycle.state))
+        elif path.startswith("claims/") and b'"semantic.alias"' in tree[path]:
+            source = parse_claim(tree[path], path=path)
+        else:
+            continue
+        connection.executemany(
+            "INSERT INTO vocabulary_terms VALUES (?,?,?,?,?)",
+            vocabulary_terms(source, path=path),
+        )
+    return connection
+
+
 __all__ = [
+    "SubjectReferenceAmbiguous",
+    "SubjectReferenceResolver",
     "SubjectRefResolution",
+    "projection_connection",
+    "reference_resolver",
+    "tree_reference_resolver",
     "alias_targets",
     "creation_collisions",
     "resolve_reference_text",

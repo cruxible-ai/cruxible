@@ -310,6 +310,7 @@ from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProject
 from cruxible_core.indexes.proposals.proposal_note_projection import (
     ProposalNoteIndex,
 )
+from cruxible_core.indexes.subject_aliases import SubjectReferenceResolver, tree_reference_resolver
 from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
     derive_candidate_cards,
@@ -991,6 +992,7 @@ def _run_corroboration_requirements(
     facts_for: Callable[[AcceptedQueryDefinition], ClaimQueryFactsV1],
     current: AcceptedProjectionCoordinate,
     timestamp: str,
+    resolve_reference: SubjectReferenceResolver | None = None,
 ) -> tuple[
     tuple[ClaimCorroborationResult, ...],
     tuple[tuple[str, str], ...],
@@ -1034,6 +1036,7 @@ def _run_corroboration_requirements(
             coordinate=current,
             evaluation_time=evaluated_at,
             parameters=parameters,
+            resolve_reference=resolve_reference,
         )
         receipt = query_execution_receipt(result)
         observed_count = len(result.rows)
@@ -1121,6 +1124,8 @@ def _claim_admission_evaluations(
     accounts: list[ClaimAdmissionEvaluationAccount] = []
     diagnostics: list[CompilerDiagnostic] = []
     facts_by_predicates: dict[tuple[str, ...], ClaimQueryFactsV1] = {}
+    # Subject references a corroboration query compares resolve at the parent.
+    resolve_reference = tree_reference_resolver(current_tree)
 
     def facts_for(definition: AcceptedQueryDefinition) -> ClaimQueryFactsV1:
         if query_facts_provider is None:
@@ -1242,6 +1247,7 @@ def _claim_admission_evaluations(
                     facts_for=facts_for,
                     current=current,
                     timestamp=timestamp,
+                    resolve_reference=resolve_reference,
                 )
             context = ClaimAdmissionCandidateContext(
                 evaluation_time=timestamp,
