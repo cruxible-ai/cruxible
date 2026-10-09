@@ -1098,6 +1098,9 @@ class ProcedureTerminalEgress(_StrictResultModel):
     settle_outcome: Literal["settled", "proposed"] | None = None
     accepted_git_oid: str | None = None
     fallback_reason: str | None = None
+    # A fallback for cruxible.settle.outside_mandate_scope: the ClaimTypes the
+    # settle grant's scope left out, so the change proposed instead.
+    outside_scope_claim_types: tuple[str, ...] = ()
     # A settle terminal the run's authority capped at propose: the term that
     # capped it. Its request asked for propose authority only.
     capped_by: ServedAuthorityTerm | None = None

@@ -141,6 +141,29 @@ def _condition(*, only_subject: str | None, require_claim: bool = False) -> Quer
     )
 
 
+def _predicate_claim_type(predicate: str) -> Any:
+    """The fixture's severity ClaimType, under another predicate when asked."""
+
+    claim_type = _claim_type(capture_contract_digest(capture_contract()).tagged)
+    if predicate == PREDICATE:
+        return claim_type
+    return claim_type.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
+            "predicate": predicate,
+        }
+    )
+
+
+def _predicate_item(predicate: str) -> dict[str, object]:
+    """One settle item stating the shaped severity under ``predicate``."""
+
+    template = item_template()
+    statement = dict(template["statement"])  # type: ignore[call-overload]
+    statement["predicate"] = predicate
+    return {**template, "statement": statement}
+
+
 #: The key that governs each settle world, for tests that approve ordinarily.
 OWNERS: dict[Path, Any] = {}
 #: The settling Procedure of each capture-triggered world, for landing trigger Captures.
@@ -159,6 +182,8 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     max_authority: str = "settle",
     propose_mandate: bool = False,
     require_claim: bool = False,
+    scope_predicates: tuple[str, ...] = (PREDICATE,),
+    item_predicates: tuple[str, ...] = (PREDICATE,),
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
@@ -170,7 +195,9 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
                 shape.model_copy(update={"next": "settle"}),
                 SettleChangeSetNode(
                     node_id="settle",
-                    candidate_templates=(item_template(),),
+                    candidate_templates=tuple(
+                        _predicate_item(predicate) for predicate in item_predicates
+                    ),
                     result="$steps.result",
                 ),
             ),
@@ -211,13 +238,19 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
             capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)
         ] = render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
         PROCEDURES[root] = with_terminal
-    claim_type = _claim_type(capture_contract_digest(capture_contract()).tagged)
+    claim_types = {
+        predicate: _predicate_claim_type(predicate)
+        for predicate in dict.fromkeys((*scope_predicates, *item_predicates))
+    }
     query = _condition(only_subject=only_subject, require_claim=require_claim)
     members: dict[str, bytes] = {
         **trigger_members,
         procedure_path(fixtures.PROCEDURE_NAME): render_procedure(with_terminal),
         line_spec_path(line.identity.name): render_line_spec(line),
-        claim_type_path(claim_type.predicate): render_claim_type(claim_type),
+        **{
+            claim_type_path(item.predicate): render_claim_type(item)
+            for item in claim_types.values()
+        },
         subject_path(SUBJECT_KIND, SUBJECT_ID): render_subject(_subject()),
         query_definition_path(query.identity.name): render_query_definition(query),
     }
@@ -234,15 +267,16 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
             namespace=("claims",),
             valid_from=datetime(2020, 1, 1, tzinfo=UTC),
             expires_at=datetime(2099, 1, 1, tzinfo=UTC),
-            scope=(
+            scope=tuple(
                 MandateClaimScope(
                     claim_type=ArtifactPin(
                         role="claim-type",
-                        target=claim_type.identity,
-                        artifact_digest=claim_type_digest(claim_type).tagged,
+                        target=claim_types[predicate].identity,
+                        artifact_digest=claim_type_digest(claim_types[predicate]).tagged,
                     ),
                     change_kinds=("create", "revise"),
-                ),
+                )
+                for predicate in sorted(scope_predicates)
             ),
             condition=MandateCondition(
                 query=ArtifactPin(
@@ -1142,3 +1176,79 @@ def test_a_capped_settle_request_names_exactly_the_cap_its_rung_allows(tmp_path:
     stale.pop("capped_by")
     with pytest.raises(ValidationError, match="required rung disagrees"):
         TerminalEgressRequestV2.model_validate(stale)
+
+
+# --- per-rule trust: a ClaimType outside the settle grant's scope proposes ------
+
+SCOPED_B = "security.advisory.exploitability"
+UNSCOPED_C = "security.advisory.summary"
+
+
+def test_a_claim_type_outside_the_settle_scope_proposes_naming_it(tmp_path: Path) -> None:
+    """A grant over A and B; a change with A and C proposes under it, naming C."""
+
+    instance, root, line = settle_world(
+        tmp_path,
+        scope_predicates=(PREDICATE, SCOPED_B),
+        item_predicates=(PREDICATE, UNSCOPED_C),
+    )
+    base = instance.accepted_coordinate()
+
+    state = run_settle(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "proposed")
+    assert egress.fallback_reason == "cruxible.settle.outside_mandate_scope"
+    assert egress.outside_scope_claim_types == (f"ClaimType:{UNSCOPED_C}",)
+    assert egress.capped_by is None and egress.accepted_git_oid is None
+    assert egress.proposal_id is not None and len(egress.target_paths) == 2
+    assert instance.accepted_coordinate() == base
+    submission = _settle_submission(instance, egress)
+    assert submission is not None
+    assert (submission.mode, submission.fallback_reason) == (
+        "fallback",
+        "cruxible.settle.outside_mandate_scope",
+    )
+    assert submission.outside_scope_claim_types == (f"ClaimType:{UNSCOPED_C}",)
+    # The settle grant itself is bound, as for a failing condition.
+    assert submission.mandate_digest == egress.procedure_mandate_digest
+    (delivered,) = [item for item in _egress_records(instance, state) if "receipt" in item]
+    receipt = TerminalEgressReceiptV4.model_validate(delivered["receipt"])
+    assert receipt.outside_scope_claim_types == (f"ClaimType:{UNSCOPED_C}",)
+
+
+def test_a_change_inside_the_settle_scope_still_settles(tmp_path: Path) -> None:
+    """The same grant over A and B settles a change carrying A and B alone."""
+
+    instance, root, line = settle_world(
+        tmp_path,
+        scope_predicates=(PREDICATE, SCOPED_B),
+        item_predicates=(PREDICATE, SCOPED_B),
+    )
+    base = instance.accepted_coordinate()
+
+    state = run_settle(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert egress.settle_outcome == "settled" and egress.fallback_reason is None
+    assert egress.outside_scope_claim_types == ()
+    assert egress.accepted_git_oid == instance.accepted_coordinate().git_oid != base.git_oid
+    (delivered,) = [item for item in _egress_records(instance, state) if "receipt" in item]
+    assert "outside_scope_claim_types" not in delivered["receipt"]
+
+
+def test_a_change_with_no_claim_type_in_scope_still_proposes_naming_it(tmp_path: Path) -> None:
+    """The grant applies to this Procedure; every ClaimType it changes is outside scope."""
+
+    instance, root, line = settle_world(
+        tmp_path, scope_predicates=(PREDICATE,), item_predicates=(UNSCOPED_C,)
+    )
+
+    state = run_settle(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert egress.fallback_reason == "cruxible.settle.outside_mandate_scope"
+    assert egress.outside_scope_claim_types == (f"ClaimType:{UNSCOPED_C}",)

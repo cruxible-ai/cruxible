@@ -2002,8 +2002,18 @@ A Line whose Procedure ends in a `settle_change_set` terminal lands the change
 without candidate approvals when, and only when, exactly one live settle
 ProcedureMandate for that Procedure covers every Claim the change touches: its
 namespace, its ClaimType scope and change kinds (`create`, `revise`,
-`retire`), and its Subject scope. No covering mandate refuses
-`settle_mandate_missing`; more than one refuses `settle_mandate_ambiguous`.
+`retire`), and its Subject scope. More than one covering mandate refuses
+`settle_mandate_ambiguous`. When none covers the change but a live settle
+grant for the Procedure covers all of it except Claims of ClaimTypes its scope
+does not name, the terminal proposes under that grant instead (per-rule trust:
+a grant over the ClaimTypes you trust to settle, and every other ClaimType the
+Procedure emits goes to review): `settle_outcome: proposed`, `fallback_reason`
+`cruxible.settle.outside_mandate_scope`, and the typed
+`outside_scope_claim_types` naming them, on the run result and on the
+proposal's settle submission. The grant with the fewest such ClaimTypes is
+bound, then the lowest digest; its condition is not consulted. A change no
+grant covers in any other way (namespace, change kind, Subject scope, or no
+live grant) refuses `settle_mandate_missing`.
 The mandate's pinned condition query is then evaluated at the accepted parent
 for each changed Claim's target Subject; it must return exactly that Subject,
 with every required field present, unconflicted and untruncated. A false or

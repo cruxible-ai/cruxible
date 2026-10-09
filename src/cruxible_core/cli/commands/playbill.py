@@ -5445,8 +5445,13 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
                 f"(proposal {egress.proposal_id})"
             )
         elif egress.verdict == "delivered" and egress.proposal_id is not None:
+            outside = (
+                f"; outside the mandate's scope: {', '.join(egress.outside_scope_claim_types)}"
+                if egress.outside_scope_claim_types
+                else ""
+            )
             fallback = (
-                f" (settle fell back: {egress.fallback_reason})"
+                f" (settle fell back: {egress.fallback_reason}{outside})"
                 if egress.settle_outcome == "proposed"
                 else ""
             )

@@ -68,6 +68,7 @@ from cruxible_client.contracts.procedures.proposal_items import (
 )
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
+    SETTLE_OUTSIDE_MANDATE_SCOPE,
     ProposalResult,
     ProposalSettleSubmission,
 )
@@ -94,8 +95,8 @@ from cruxible_core.procedures.terminal_services import (
     settle_terminal_receipt,
 )
 from cruxible_core.proposals.delegated_authority import (
+    claim_types_outside_scope,
     delegated_authority_issues,
-    mandate_coverage,
 )
 from cruxible_core.proposals.proposals import ProposalService
 
@@ -148,6 +149,21 @@ class PreparedProposal:
     changed_members: tuple[tuple[str, bytes], ...]
     item_paths: dict[str, str]
     rationale: str
+    #: A settle terminal's change carries ClaimTypes its one applicable settle
+    #: grant's scope leaves out: it proposes under that grant instead, naming them.
+    outside_scope_claim_types: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SettleMandateSelection:
+    """The settle grant a settle terminal binds, and the ClaimTypes outside its scope.
+
+    Empty ``outside_scope_claim_types`` means the grant covers every change and
+    the terminal settles under it; otherwise the terminal proposes under it.
+    """
+
+    digest: str
+    outside_scope_claim_types: tuple[str, ...] = ()
 
 
 def proposal_items(
@@ -534,15 +550,22 @@ def select_settle_mandate(
     base_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
     delegation: ProcedureDelegation | None = None,
-) -> str:
-    """Bind the one settle grant that covers every change; none or several refuse.
+) -> SettleMandateSelection:
+    """Bind the one settle grant that covers every change; several refuse.
 
     Coverage is the mandate's own law (Procedure, window, resources, namespace,
     ClaimType and change-kind scope); its condition is decided at delivery.
+
+    When no grant covers the change but a live grant for this Procedure covers
+    all of it except Claims of ClaimTypes its scope does not name, the terminal
+    binds that grant and proposes instead (per-rule trust): the grant with the
+    fewest such ClaimTypes, then the lowest digest. A change no grant covers in
+    any other way refuses ``settle_mandate_missing``.
     """
 
     authority = authority_procedure(admission, delegation)
     covering: list[str] = []
+    partial: list[tuple[int, str, tuple[str, ...]]] = []
     for digest, mandate in sorted(accepted_mandates.items(), key=lambda item: item[0]):
         if not isinstance(mandate, ProcedureMandate) or mandate.grants != "settle":
             continue
@@ -560,28 +583,33 @@ def select_settle_mandate(
         )
         if evaluation.verdict != "permitted":
             continue
-        _targets, issues = mandate_coverage(
+        outside = claim_types_outside_scope(
             mandate,
             scope=target_paths,
             current_tree=base_tree,
             candidate_tree=candidate_tree,
             evaluated_at=request.prepared_at,
         )
-        if not issues:
+        if outside == ():
             covering.append(digest)
-    if not covering:
-        raise ProposalDeliveryRefused(
-            "settle_mandate_missing",
-            "No live settle ProcedureMandate for this Procedure covers every changed Claim.",
-            details={"target_paths": list(target_paths)},
-        )
+        elif outside is not None:
+            partial.append((len(outside), digest, outside))
     if len(covering) > 1:
         raise ProposalDeliveryRefused(
             "settle_mandate_ambiguous",
             "More than one settle ProcedureMandate covers this change; exactly one must.",
             details={"mandates": covering},
         )
-    return covering[0]
+    if covering:
+        return SettleMandateSelection(digest=covering[0])
+    if partial:
+        _count, digest, outside = min(partial)
+        return SettleMandateSelection(digest=digest, outside_scope_claim_types=outside)
+    raise ProposalDeliveryRefused(
+        "settle_mandate_missing",
+        "No live settle ProcedureMandate for this Procedure covers every changed Claim.",
+        details={"target_paths": list(target_paths)},
+    )
 
 
 class ProposalTerminalEgressSink:
@@ -720,8 +748,9 @@ class ProposalTerminalEgressSink:
                 )
         # A settle capped at propose binds the mandate a proposal would (a
         # propose grant first): it never uses a settle grant's settle authority.
-        mandate_digest = (
-            select_settle_mandate(
+        outside_scope: tuple[str, ...] = ()
+        if request.kind == "settle_change_set" and request.capped_by is None:
+            selection = select_settle_mandate(
                 request,
                 admission=admission,
                 accepted_mandates=self.accepted_mandates,
@@ -730,15 +759,16 @@ class ProposalTerminalEgressSink:
                 candidate_tree=lowered.proposed_tree,
                 delegation=self.delegation,
             )
-            if request.kind == "settle_change_set" and request.capped_by is None
-            else select_procedure_mandate(
+            mandate_digest: str | None = selection.digest
+            outside_scope = selection.outside_scope_claim_types
+        else:
+            mandate_digest = select_procedure_mandate(
                 request,
                 admission=admission,
                 accepted_mandates=self.accepted_mandates,
                 target_paths=target_paths,
                 delegation=self.delegation,
             )
-        )
         prepared = PreparedTerminalEgressV1(
             target_paths=target_paths,
             procedure_mandate_digest=mandate_digest,
@@ -754,6 +784,7 @@ class ProposalTerminalEgressSink:
             changed_members=lowered.changed_members,
             item_paths=item_paths,
             rationale=rationale,
+            outside_scope_claim_types=outside_scope,
         )
         return prepared
 
@@ -931,6 +962,9 @@ class ProposalTerminalEgressSink:
         A settle the run's authority caps at propose takes the same fallback and
         never uses a settle grant's settle authority: it proposes under the
         mandate the proposal bound, for `cruxible.settle.authority_capped_by_<term>`.
+        So does a change carrying ClaimTypes the bound grant's scope leaves out:
+        it proposes under that grant, for `cruxible.settle.outside_mandate_scope`,
+        naming them, without consulting the grant's condition.
         """
 
         digest = request.procedure_mandate_digest
@@ -951,6 +985,13 @@ class ProposalTerminalEgressSink:
                     mode="fallback",
                     mandate_digest=digest,
                     fallback_reason=settle_authority_capped_reason(request.capped_by),
+                )
+            elif prepared.outside_scope_claim_types:
+                submission = ProposalSettleSubmission(
+                    mode="fallback",
+                    mandate_digest=digest,
+                    fallback_reason=SETTLE_OUTSIDE_MANDATE_SCOPE,
+                    outside_scope_claim_types=prepared.outside_scope_claim_types,
                 )
             else:
                 assert mandate is not None and mandate.condition is not None  # checked above
@@ -1001,6 +1042,7 @@ class ProposalTerminalEgressSink:
                 item_paths=prepared.item_paths,
                 accepted_git_oid=None,
                 fallback_reason=settle.fallback_reason,
+                outside_scope_claim_types=settle.outside_scope_claim_types,
             )
         if mandate is None:
             # A capped settle only ever submits its fallback; a delegated
@@ -1131,6 +1173,7 @@ __all__ = [
     "PROPOSAL_LOWERING_DOMAIN",
     "PreparedProposal",
     "ProposalTerminalEgressSink",
+    "SettleMandateSelection",
     "evidence_by_item",
     "proposal_claim_id",
     "proposal_items",

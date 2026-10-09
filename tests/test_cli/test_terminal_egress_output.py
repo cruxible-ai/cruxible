@@ -44,6 +44,22 @@ def test_a_fallen_back_settle_prints_its_proposal_and_why(capsys) -> None:
     )
 
 
+def test_an_outside_scope_settle_names_the_claim_types_it_left_out(capsys) -> None:
+    out = _echo(
+        capsys,
+        _settle(
+            settle_outcome="proposed",
+            fallback_reason="cruxible.settle.outside_mandate_scope",
+            outside_scope_claim_types=("ClaimType:security.advisory.summary",),
+        ),
+    )
+    assert out == (
+        f"Proposal settle: {PROPOSAL} candidate {CANDIDATE} "
+        "(settle fell back: cruxible.settle.outside_mandate_scope; outside the mandate's "
+        "scope: ClaimType:security.advisory.summary)\n"
+    )
+
+
 def test_a_capped_terminal_names_the_authority_it_needed_and_had(capsys) -> None:
     capped = ProcedureTerminalEgress(
         node_id="settle",

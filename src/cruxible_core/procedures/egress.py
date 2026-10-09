@@ -65,6 +65,7 @@ from cruxible_client.contracts.procedures.models import (
     authority_for_rung,
 )
 from cruxible_client.contracts.procedures.results import ServedAuthorityTerm
+from cruxible_client.contracts.proposal_models import SETTLE_OUTSIDE_MANDATE_SCOPE
 from cruxible_client.contracts.repairs import (
     HandEditInstruction,
     HandEditRepair,
@@ -973,6 +974,11 @@ class TerminalEgressReceiptV4(TerminalEgressReceiptV3):
     capped_by: ServedAuthorityTerm | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    #: The ClaimTypes the settle grant's scope left out, for an
+    #: outside-mandate-scope fallback (its proposal's settle submission).
+    outside_scope_claim_types: tuple[str, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator("procedure_mandate_digest")
     @classmethod
@@ -990,6 +996,10 @@ class TerminalEgressReceiptV4(TerminalEgressReceiptV3):
             raise ValueError("only a fallback proposal carries the reason it did not settle")
         if settled and self.capped_by is not None:
             raise ValueError("a capped settle never settles")
+        if (self.fallback_reason == SETTLE_OUTSIDE_MANDATE_SCOPE) != bool(
+            self.outside_scope_claim_types
+        ):
+            raise ValueError("exactly an outside-scope fallback names the ClaimTypes outside it")
         return self
 
 

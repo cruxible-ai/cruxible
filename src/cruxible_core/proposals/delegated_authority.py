@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Literal
 
 from cruxible_client.contracts.claims import ClaimFormatError, SubjectClaimObject, parse_claim
 from cruxible_client.contracts.procedure_mandates import (
@@ -252,38 +253,109 @@ def mandate_coverage(
         return (), (
             _issue("mandate_expired", "The settle mandate is outside its validity window."),
         )
-    scope_by_type = {item.claim_type.target.qualified: item for item in mandate.scope}
     targets, issues = settle_targets(
         scope=scope,
         current_tree=current_tree,
         candidate_tree=candidate_tree,
-        binding_roles={name: item.binding_subject_role for name, item in scope_by_type.items()},
+        binding_roles={
+            item.claim_type.target.qualified: item.binding_subject_role for item in mandate.scope
+        },
     )
-    found = list(issues)
-    for target in targets:
-        item = scope_by_type.get(target.claim_type)
-        if not _in_namespace(target.path, mandate.namespace):
-            found.append(_issue("scope_uncovered", f"{target.path!r} is outside the namespace."))
-        elif item is None:
-            found.append(
-                _issue("scope_uncovered", f"ClaimType {target.claim_type} is not in scope.")
-            )
-        elif target.change_kind not in item.change_kinds:
-            allowed = ", ".join(k for k in MANDATE_CHANGE_KIND_ORDER if k in item.change_kinds)
-            found.append(
-                _issue(
-                    "scope_uncovered",
-                    f"A {target.change_kind} of {target.claim_type} is not covered "
-                    f"(covered: {allowed}).",
-                )
-            )
-        elif mandate.subject_scope is not None and target.subject not in mandate.subject_scope:
-            found.append(
-                _issue("scope_uncovered", f"Subject {target.subject_identity} is not in scope.")
-            )
+    found = [*issues, *(issue for _gap, issue in _target_gaps(mandate, targets))]
     if not found and not targets:
         found.append(_issue("scope_uncovered", "The change set changes no Claim."))
     return targets, tuple(found)
+
+
+_TargetGap = Literal["namespace", "claim_type", "change_kind", "subject"]
+
+
+def _target_gaps(
+    mandate: ProcedureMandate, targets: tuple[SettleTarget, ...]
+) -> list[tuple[_TargetGap, tuple[str, str]]]:
+    """Each target a settle grant's scope does not cover, with the term that left it out."""
+
+    scope_by_type = {item.claim_type.target.qualified: item for item in mandate.scope}
+    gaps: list[tuple[_TargetGap, tuple[str, str]]] = []
+    for target in targets:
+        item = scope_by_type.get(target.claim_type)
+        if not _in_namespace(target.path, mandate.namespace):
+            gaps.append(
+                (
+                    "namespace",
+                    _issue("scope_uncovered", f"{target.path!r} is outside the namespace."),
+                )
+            )
+        elif item is None:
+            gaps.append(
+                (
+                    "claim_type",
+                    _issue("scope_uncovered", f"ClaimType {target.claim_type} is not in scope."),
+                )
+            )
+        elif target.change_kind not in item.change_kinds:
+            allowed = ", ".join(k for k in MANDATE_CHANGE_KIND_ORDER if k in item.change_kinds)
+            gaps.append(
+                (
+                    "change_kind",
+                    _issue(
+                        "scope_uncovered",
+                        f"A {target.change_kind} of {target.claim_type} is not covered "
+                        f"(covered: {allowed}).",
+                    ),
+                )
+            )
+        elif mandate.subject_scope is not None and target.subject not in mandate.subject_scope:
+            gaps.append(
+                (
+                    "subject",
+                    _issue(
+                        "scope_uncovered", f"Subject {target.subject_identity} is not in scope."
+                    ),
+                )
+            )
+    return gaps
+
+
+def claim_types_outside_scope(
+    mandate: ProcedureMandate,
+    *,
+    scope: tuple[str, ...],
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    evaluated_at: datetime,
+) -> tuple[str, ...] | None:
+    """The ClaimTypes a live settle grant leaves out, when they are its ONLY gap.
+
+    ``None`` unless the grant is live and every changed Claim is a settle target
+    inside its namespace, change kinds and Subject scope, apart from Claims whose
+    ClaimType the scope does not name. Those ClaimTypes are returned, sorted; an
+    empty result means the grant covers the change. A settle terminal proposes
+    instead of settling a change carrying such a ClaimType (per-rule trust).
+    """
+
+    targets, issues = mandate_coverage(
+        mandate,
+        scope=scope,
+        current_tree=current_tree,
+        candidate_tree=candidate_tree,
+        evaluated_at=evaluated_at,
+    )
+    if not issues:
+        return ()
+    if not targets:
+        return None
+    # Every issue is one target's gap only when no changed member failed to be a
+    # target at all (not a Claim, unparseable, or binding no Subject).
+    gaps = _target_gaps(mandate, targets)
+    if len(issues) != len(gaps) or any(gap != "claim_type" for gap, _detail in gaps):
+        return None
+    outside = {
+        target.claim_type
+        for target in targets
+        if target.claim_type not in {item.claim_type.target.qualified for item in mandate.scope}
+    }
+    return tuple(sorted(outside, key=lambda item: item.encode("utf-8")))
 
 
 def condition_issues(

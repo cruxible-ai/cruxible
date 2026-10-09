@@ -351,6 +351,11 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
         return value
 
 
+#: A settle terminal whose change carries a ClaimType its settle grant's scope
+#: does not name proposes instead, for this reason, naming those ClaimTypes.
+SETTLE_OUTSIDE_MANDATE_SCOPE = "cruxible.settle.outside_mandate_scope"
+
+
 class ProposalSettleSubmission(_StrictProposalModel):
     """How a settle terminal submitted its proposal, retained for recovery.
 
@@ -358,6 +363,9 @@ class ProposalSettleSubmission(_StrictProposalModel):
     is the ordinary proposal that mandate declared when it did not authorize the
     change, for `fallback_reason`. Recovery reads this back rather than
     inferring it from whatever later happened to the proposal.
+
+    A fallback for `cruxible.settle.outside_mandate_scope` names, in
+    `outside_scope_claim_types`, the ClaimTypes the grant's scope left out.
     """
 
     tag: Literal["playbill-proposal-settle-submission-v1"] = (
@@ -366,6 +374,9 @@ class ProposalSettleSubmission(_StrictProposalModel):
     mode: Literal["delegated", "fallback"]
     mandate_digest: str
     fallback_reason: str | None = None
+    outside_scope_claim_types: tuple[str, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator("mandate_digest")
     @classmethod
@@ -373,10 +384,23 @@ class ProposalSettleSubmission(_StrictProposalModel):
         Sha256Value.from_tagged(value)
         return value
 
+    @field_validator("outside_scope_claim_types")
+    @classmethod
+    def _outside_scope(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("outside-scope ClaimTypes must be sorted and unique")
+        return value
+
     @model_validator(mode="after")
     def _reason(self) -> "ProposalSettleSubmission":
         if (self.mode == "fallback") != bool(self.fallback_reason):
             raise ValueError("exactly a settle fallback names why it fell back")
+        if (self.fallback_reason == SETTLE_OUTSIDE_MANDATE_SCOPE) != bool(
+            self.outside_scope_claim_types
+        ):
+            raise ValueError(
+                "exactly an outside-mandate-scope fallback names the ClaimTypes outside it"
+            )
         return self
 
 
@@ -654,6 +678,7 @@ __all__ = [
     "ProposalAdmissionRecord",
     "ProposalReadmissionLink",
     "ProposalSettleSubmission",
+    "SETTLE_OUTSIDE_MANDATE_SCOPE",
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
     "CHANGE_SET_RECORD_BYTES_PER_MEMBER",

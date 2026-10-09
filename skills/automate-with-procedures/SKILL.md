@@ -119,7 +119,11 @@ proposes instead (`fallback_reason`
 `cruxible.settle.authority_capped_by_line_max_authority`), and people review
 each result. To graduate, accept a Line successor with `max_authority: settle`
 and a covering settle mandate; the Procedure is unchanged, so its track record
-carries over.
+carries over. Trust can also graduate per ClaimType: a settle mandate whose
+scope names only the ClaimTypes you trust settles those, and a change that also
+carries another ClaimType proposes instead (`fallback_reason`
+`cruxible.settle.outside_mandate_scope`, naming it in
+`outside_scope_claim_types`).
 
 ## Phase 5: Schedule and enable it
 

@@ -2047,6 +2047,7 @@ def _fold_terminal_egress(
             "settle_outcome": receipt.get("outcome"),
             "accepted_git_oid": receipt.get("accepted_git_oid"),
             "fallback_reason": receipt.get("fallback_reason"),
+            "outside_scope_claim_types": tuple(receipt.get("outside_scope_claim_types", ())),
         }
     # The cap is the journaled request's: the prepared record carries it, and
     # every later record of the node keeps it.
@@ -2132,6 +2133,7 @@ def _fold_terminal_egress(
         settle_outcome=cast(Any, settle.get("settle_outcome")),
         accepted_git_oid=cast(Any, settle.get("accepted_git_oid")),
         fallback_reason=cast(Any, settle.get("fallback_reason")),
+        outside_scope_claim_types=cast(Any, settle.get("outside_scope_claim_types", ())),
         capped_by=capped_by,
     )
 

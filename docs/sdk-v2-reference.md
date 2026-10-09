@@ -941,7 +941,10 @@ ordinary proposal, or a refusal). The run's terminal egress reports
 `fallback_reason`. A run whose authority reaches propose but not settle (a Line
 capped at `propose`, or a propose-only mandate) proposes instead, for
 `cruxible.settle.authority_capped_by_<term>`, so the same Procedure serves a
-Line before and after it graduates to settle. The Sequence step is
+Line before and after it graduates to settle. A change carrying a ClaimType the
+settle grant's scope does not name proposes under that grant, for
+`cruxible.settle.outside_mandate_scope`, with `outside_scope_claim_types`
+naming them. The Sequence step is
 `SettleChangeSet(name, candidate_templates=...)`.
 
 ### `halt`
