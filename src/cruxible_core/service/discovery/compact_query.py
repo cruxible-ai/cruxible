@@ -98,6 +98,7 @@ from cruxible_client.contracts.query.results import ClaimQueryResult
 from cruxible_client.contracts.read_values import summary_value, whole_value_read
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_aliases import resolve_subject_ref
 from cruxible_core.query.backends import ClaimQueryFactsV1
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
@@ -661,8 +662,13 @@ def _require_refs(
     coordinate: AcceptedProjectionCoordinate,
     plan: _CompactPlan,
     checked: Sequence[tuple[_Field, QueryFilterOperator, object]],
-) -> None:
-    """A Subject a filter names by reference or by id must exist; a wrong one refuses."""
+) -> list[tuple[_Field, QueryFilterOperator, object]]:
+    """A Subject a filter names by reference or by id must exist; a wrong one refuses.
+
+    A reference that names no Subject resolves through the aliases of its kind
+    (``semantic.alias``): one match stands for the Subject it names, several
+    refuse ``cruxible.query.alias_ambiguous`` naming each.
+    """
 
     wanted: list[tuple[str, tuple[str, ...], str, int]] = []
     for index, (item, operator, value) in enumerate(checked):
@@ -679,28 +685,42 @@ def _require_refs(
                 (str(entry), (str(entry).split("/", 1)[0],), "ref", index) for entry in values
             )
     if not wanted:
-        return
+        return list(checked)
+    rewritten: dict[tuple[int, str], str] = {}
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
         for value, kinds, form, index in wanted:
+            subject_id = value.split("/", 1)[1] if form == "ref" else value
+            found: list[str] = []
+            for kind in kinds:
+                resolution = resolve_subject_ref(connection, kind, subject_id)
+                if resolution.ambiguous:
+                    raise query_refusal(
+                        "cruxible.query.alias_ambiguous",
+                        f"{kind}/{subject_id} names no Subject, and an alias of {kind} names "
+                        f"{len(resolution.candidates)} of them",
+                        nearest=resolution.candidates,
+                        repair="name one of the listed Subjects",
+                        field_path=f"where[{index}]",
+                    )
+                if resolution.ref is not None:
+                    found.append(resolution.ref)
+            if found:
+                if found[0].split("/", 1)[1] != subject_id or form == "ref":
+                    rewritten[(index, value)] = (
+                        found[0] if form == "ref" else found[0].split("/", 1)[1]
+                    )
+                continue
             marks = ",".join("?" for _ in kinds)
             known = {
-                f"{kind}/{subject_id}"
-                for kind, subject_id in connection.execute(
+                f"{kind}/{known_id}"
+                for kind, known_id in connection.execute(
                     "SELECT subject_kind, subject_id FROM subjects "
                     f"WHERE subject_kind IN ({marks})",
                     kinds,
                 )
             }
-            spelled = value if form == "ref" else None
-            if spelled is None:
-                if any(f"{kind}/{value}" in known for kind in kinds):
-                    continue
-                names = [name.split("/", 1)[1] for name in known]
-            else:
-                if spelled in known:
-                    continue
-                names = sorted(known)
+            names = sorted(known) if form == "ref" else [name.split("/", 1)[1] for name in known]
             raise query_refusal(
                 "cruxible.query.unknown_ref",
                 f"no accepted Subject {value!r} of {' / '.join(kinds)} exists",
@@ -708,6 +728,17 @@ def _require_refs(
                 repair="name an existing Subject (query the kind without where to list them)",
                 field_path=f"where[{index}]",
             )
+    if not rewritten:
+        return list(checked)
+    result: list[tuple[_Field, QueryFilterOperator, object]] = []
+    for index, (item, operator, value) in enumerate(checked):
+        if operator == "in":
+            entries = cast(tuple[object, ...], value)
+            value = tuple(rewritten.get((index, str(entry)), entry) for entry in entries)
+        elif operator in {"eq", "ne"}:
+            value = rewritten.get((index, str(value)), value)
+        result.append((item, operator, value))
+    return result
 
 
 def _comparable(info: PredicateInfo | Literal["subject_id"], value: object) -> object:
@@ -1154,8 +1185,7 @@ def _compact_subject_query(
     content: ExactContentReader,
 ) -> _Answer:
     plan = _CompactPlan(vocabulary, request)
-    checked = _checked_filters(plan, request.where)
-    _require_refs(instance, coordinate, plan, checked)
+    checked = _require_refs(instance, coordinate, plan, _checked_filters(plan, request.where))
     lowered: list[GrammarFilter] = []
     inline: list[_InlineFilter] = []
     for resolved, operator, value in checked:

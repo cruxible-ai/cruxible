@@ -15,13 +15,22 @@ from cruxible_client.contracts.authoring.models import (
     ProcedureAuthoringPayload,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical_forms import (
+    CanonicalFormDidNotConverge,
+    canonicalize_literal,
+)
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
+    observed_content,
     parse_capture_contract,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.claim_types import parse_claim_type
+from cruxible_client.contracts.claim_types import (
+    claim_type_path,
+    effective_canonical_form,
+    parse_claim_type,
+)
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidence,
     ClaimVerdictResultAny,
@@ -32,6 +41,7 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
+    ClaimStatement,
     LiteralClaimObject,
     claim_artifact_digest,
     claim_statement_digest,
@@ -387,6 +397,34 @@ def _qualifier_crystallization(
     return tuple(detections), frozen_coverage
 
 
+def _canonical_statement(
+    statement: ClaimStatement, *, tree: Mapping[str, bytes], forms: dict[str, tuple[str, ...]]
+) -> ClaimStatement:
+    """A statement with its literal in the canonical form its live ClaimType declares."""
+
+    value = statement.object
+    if not isinstance(value, LiteralClaimObject):
+        return statement
+    if statement.predicate not in forms:
+        path = claim_type_path(statement.predicate)
+        content = tree.get(path)
+        forms[statement.predicate] = (
+            ()
+            if content is None
+            else effective_canonical_form(parse_claim_type(content, path=path))
+        )
+    form = forms[statement.predicate]
+    if not form:
+        return statement
+    try:
+        canonical = canonicalize_literal(value.value, form)
+    except CanonicalFormDidNotConverge:
+        return statement
+    if canonical == value.value:
+        return statement
+    return statement.model_copy(update={"object": LiteralClaimObject(value=canonical)})
+
+
 def _duplicate_statements(
     *,
     tree: Mapping[str, bytes],
@@ -395,12 +433,18 @@ def _duplicate_statements(
     kind: CurationPatternKind = "playbill.curation.duplicate_statement_lineages.v1"
     coverage = _Coverage(kind)
     grouped: dict[tuple[str, str], dict[str, CurationEvidenceRefV1]] = defaultdict(dict)
+    forms: dict[str, tuple[str, ...]] = {}
     for state in dependency_artifacts(tree):
         if state.artifact_kind != "claim" or state.lifecycle.state != "live":
             continue
         claim = parse_claim(tree[state.path], path=state.path)
         coverage.evaluated += 1
-        statement = claim_statement_digest(claim.statement).tagged
+        # Statements compare canonical: a literal in the form its ClaimType
+        # declares now (identity-design-1009). Without a form the digest is the
+        # stored statement's, exactly as before.
+        statement = claim_statement_digest(
+            _canonical_statement(claim.statement, tree=tree, forms=forms)
+        ).tagged
         grouped[(claim.statement.predicate, statement)][claim.identity.qualified] = _artifact_ref(
             identity=claim.identity,
             path=state.path,
@@ -901,7 +945,10 @@ class _CaptureObservation:
     selector_key: bytes
     selector_digest: str
     coordinate_digest: str
+    #: What the Capture observed, by content (``captures.observed_content``):
+    #: the commitment digest when the Capture records no observed content.
     commitment_digest: str
+    content_basis: str
     observed_at: datetime
 
 
@@ -948,6 +995,7 @@ def _freshness_calibration(
         if contract_identity is None:
             coverage.omit("capture_contract_identity_unresolved")
             continue
+        observed = observed_content(envelope)
         observations.append(
             _CaptureObservation(
                 predicate=predicate,
@@ -967,7 +1015,8 @@ def _freshness_calibration(
                     "playbill-curation-external-coordinate-v1",
                     {"value": envelope.source.coordinate},
                 ).tagged,
-                commitment_digest=envelope.commitment.digest,
+                commitment_digest=observed.digest,
+                content_basis=observed.basis,
                 observed_at=envelope.observed_at,
             )
         )
@@ -1051,6 +1100,13 @@ def _freshness_calibration(
                         "interval_microseconds": interval,
                         "prior_commitment_digest": prior.commitment_digest,
                         "selector_digest": current.selector_digest,
+                        # The digests above are observed-content identities; a
+                        # Capture recording none falls back to its commitment.
+                        **(
+                            {"content_basis": current.content_basis}
+                            if current.content_basis != "commitment"
+                            else {}
+                        ),
                     },
                 )
             )
@@ -1113,6 +1169,7 @@ def _provenance_concentration(
             claim_effective_until=claim.statement.effective_until,
             referent_current=row.referent_current,
             resolved_authority_basis=row.resolved_authority_basis,
+            reobservations=row.reobservations_at(evaluation_time),
         )
         if verdict.verdict == "supported" and verdict.currency == "current":
             supported[claim.statement.predicate].append((row, verdict))

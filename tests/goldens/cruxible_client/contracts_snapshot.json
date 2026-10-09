@@ -4917,7 +4917,8 @@
                   "playbill-claim-type-v4",
                   "playbill-claim-type-v5",
                   "playbill-claim-type-v6",
-                  "playbill-claim-type-v7"
+                  "playbill-claim-type-v7",
+                  "playbill-claim-type-v8"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -4932,6 +4933,30 @@
                   }
                 ],
                 "default": null
+              },
+              "canonical_form": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "nfc",
+                        "nfkc",
+                        "trim",
+                        "collapse_whitespace",
+                        "casefold",
+                        "upper",
+                        "strip_punctuation"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Canonical Form"
               },
               "cardinality": {
                 "enum": [
@@ -62064,6 +62089,11 @@
                 "default": "playbill-procedure-terminal-egress-child-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -63689,6 +63719,11 @@
                 "default": "playbill-procedure-terminal-egress-child-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -72442,7 +72477,8 @@
                   "playbill-claim-type-v4",
                   "playbill-claim-type-v5",
                   "playbill-claim-type-v6",
-                  "playbill-claim-type-v7"
+                  "playbill-claim-type-v7",
+                  "playbill-claim-type-v8"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -72457,6 +72493,30 @@
                   }
                 ],
                 "default": null
+              },
+              "canonical_form": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "nfc",
+                        "nfkc",
+                        "trim",
+                        "collapse_whitespace",
+                        "casefold",
+                        "upper",
+                        "strip_punctuation"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Canonical Form"
               },
               "cardinality": {
                 "enum": [
@@ -81772,7 +81832,8 @@
                   "playbill-claim-type-v4",
                   "playbill-claim-type-v5",
                   "playbill-claim-type-v6",
-                  "playbill-claim-type-v7"
+                  "playbill-claim-type-v7",
+                  "playbill-claim-type-v8"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -81787,6 +81848,30 @@
                   }
                 ],
                 "default": null
+              },
+              "canonical_form": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "nfc",
+                        "nfkc",
+                        "trim",
+                        "collapse_whitespace",
+                        "casefold",
+                        "upper",
+                        "strip_punctuation"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Canonical Form"
               },
               "cardinality": {
                 "enum": [

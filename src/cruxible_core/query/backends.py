@@ -31,16 +31,17 @@ adjudication.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_verdicts import (
+    CaptureReobservationEvidence,
     CaptureVerdictEvidence,
     ClaimAdjudicationRuleAny,
     claim_verdict_v1_compat,
@@ -82,6 +83,31 @@ class ClaimFactRowV1(_StrictQueryBackendModel):
     cardinality: Literal["one", "many"] = Field(
         default="one", exclude_if=lambda value: value == "one"
     )
+    #: The canonical form its ClaimType declares (v8): a literal compared with
+    #: this Claim's value is canonicalized by it. Omitted when none.
+    canonical_form: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: How to read the recorded re-observations of content this Claim cites at
+    #: an evaluation instant (``evidence.claim_reobservations``). Not part of the
+    #: row's bytes: set only for a lineage that was re-observed.
+    _reobserved: Callable[[datetime], tuple[CaptureReobservationEvidence, ...]] | None = (
+        PrivateAttr(default=None)
+    )
+
+    def attach_reobservations(
+        self, read: Callable[[datetime], tuple[CaptureReobservationEvidence, ...]]
+    ) -> None:
+        self._reobserved = read
+
+    def reobservations_at(self, at: datetime) -> tuple[CaptureReobservationEvidence, ...]:
+        """The recorded re-observations that count for this Claim's verdict at ``at``."""
+
+        return () if self._reobserved is None else self._reobserved(at)
+
+    def __eq__(self, other: object) -> bool:
+        # A row is its fields: how it reads re-observations is not part of it.
+        if type(other) is not type(self):
+            return NotImplemented
+        return self.__dict__ == other.__dict__
 
     @field_validator("resolved_authority_basis")
     @classmethod
@@ -195,6 +221,7 @@ def claim_row_outcome(
         claim_effective_until=statement.effective_until,
         referent_current=row.referent_current,
         resolved_authority_basis=row.resolved_authority_basis,
+        reobservations=row.reobservations_at(evaluation_time),
     )
     # Compare and record the same form. The policy is written in the compat
     # vocabulary and the visible row already reports that form, so testing the

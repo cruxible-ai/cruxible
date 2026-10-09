@@ -1,0 +1,87 @@
+{
+  "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+  },
+  "allowed_object_subject_kinds": [],
+  "allowed_subject_kinds": [
+    "semantic.subject"
+  ],
+  "artifact_format": "playbill-claim-type-v8",
+  "attestation_consequence_policy": null,
+  "canonical_form": [
+    "nfc",
+    "casefold",
+    "collapse_whitespace",
+    "trim"
+  ],
+  "cardinality": "many",
+  "default_role": "normative",
+  "description": "Another name the Subject is known by. A Subject reference that names no Subject resolves through the aliases of its kind: one match resolves, several refuse naming each.",
+  "evidence_admission_policy": {
+    "rules": [
+      {
+        "admission": "direct",
+        "attestation_requirement": "none",
+        "capture_contracts": [
+          {
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "playbill.coordinator-self-source-v1"
+            }
+          }
+        ],
+        "claim_roles": [
+          "normative",
+          "observation"
+        ],
+        "evidence_kinds": [
+          "self_asserted"
+        ],
+        "rule_id": "self",
+        "subject_binding": "exact_claim_subject",
+        "tag": "playbill-claim-evidence-admission-rule-v3"
+      }
+    ],
+    "tag": "playbill-claim-evidence-admission-policy-v3"
+  },
+  "evidence_freshness": null,
+  "evidence_requirement": "self",
+  "identity": {
+    "kind": "ClaimType",
+    "name": "semantic.alias"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "literal_schema": {
+    "minLength": 1,
+    "type": "string"
+  },
+  "member_descriptions": [],
+  "object_kind": "literal",
+  "permitted_roles": [
+    "normative",
+    "observation"
+  ],
+  "pins": [],
+  "predicate": "semantic.alias",
+  "referent_sensitivity": "identity",
+  "resolution_policy": {
+    "cardinality": "many",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+      "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "all",
+    "tag": "playbill-claim-resolution-policy-v1"
+  },
+  "revision_evidence": "replace",
+  "slot_policy": null,
+  "subject_scope": null
+}

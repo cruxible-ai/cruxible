@@ -317,6 +317,11 @@ class PlaybillInstance:
         self._verified_genesis = verified_genesis
         self._recovered = recovered
         self._state_lock = threading.RLock()
+        #: The daemon's live wall clock for evidence-plane recording (each
+        #: re-observation's recording instant). Never an execution's frozen
+        #: evaluation clock; every run, dispatch, nested level and recovery
+        #: records through it. Tests replace it here.
+        self.recording_clock: Callable[[], datetime] = utc_now
         self.derived = DerivedState()
         # Compiled semantic facts per owner version; see TypedStateReader.facts_for.
         self._owner_facts = self.derived.memo(

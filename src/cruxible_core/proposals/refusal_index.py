@@ -54,7 +54,9 @@ from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.candidates import CandidateMemberLawEvidence
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.captures import (
+    CaptureEnvelopeAny,
     ProviderInvocationCaptureEvidence,
+    observed_content,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claims import (
@@ -163,19 +165,29 @@ def _schema(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
 def capture_evidence_content(bodies: ContentAddressedBodyStore, capture_digest: str) -> str:
     """The content-only digest one cited Capture contributes to a match key.
 
-    A Capture is ordinarily its ``commitment.digest``: the digest of the material
-    it committed, independent of the run, the observation time, the contract and
-    where the material is kept. A Capture produced through the core-owned
-    workspace.file interface commits the Provider's output, which also echoes
-    the run's derived request digest; for it the content is the file's own
-    ``bytes_digest`` in that echo. Core verified the echo against its own
-    source-read receipt when it built the Capture, and the material is read here
-    by its committed digest, so nothing a third party supplies is trusted. A
-    workspace Capture whose echo cannot be read keeps its commitment digest,
-    which matches nothing it should not.
+    A Capture is what it observed, by content: the ``observed_content_digest``
+    core records on the envelope when it builds the Capture and re-verifies with
+    it (the bytes a workspace.file read, the body a web.fetch v3 origin sent).
+
+    An envelope written before that field keeps the identity it always had, so
+    every key cached from it still reproduces: a workspace.file Capture is the
+    file's ``bytes_digest`` in its material's source echo (core verified the
+    echo against its own source-read receipt when it built the Capture, and the
+    material is read here by its committed digest); any other Capture is its
+    ``commitment.digest``. A workspace Capture whose echo cannot be read keeps
+    its commitment digest, which matches nothing it should not.
     """
 
     envelope = parse_capture_envelope(bodies.read(capture_digest, access=_ACCESS))
+    observed = observed_content(envelope)
+    if observed.basis != "commitment":
+        return observed.digest
+    return _legacy_workspace_content(bodies, envelope)
+
+
+def _legacy_workspace_content(
+    bodies: ContentAddressedBodyStore, envelope: CaptureEnvelopeAny
+) -> str:
     commitment = envelope.commitment
     evidence = getattr(envelope, "production_evidence", None)
     if (

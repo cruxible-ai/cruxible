@@ -80,7 +80,22 @@ def verdict_input_fingerprint(instance: object) -> str | None:
         token = ""
     except (OSError, ValueError):
         return None
-    return "evidence-generation:" + token
+    # A recorded re-observation moves a cited content's freshness without an
+    # evidence body landing: the re-observation journal's own log is an input
+    # too, read from the authority so an interrupted append is never missed.
+    from cruxible_core.evidence.claim_reobservations import reobservation_journal_signature
+
+    try:
+        journal = reobservation_journal_signature(
+            root,
+            exhaust=str(getattr(storage, "exhaust", "exhaust")),
+            instance_id=str(descriptor.instance_id),
+        )
+    except (OSError, ValueError):
+        return None
+    if journal is None:
+        return "evidence-generation:" + token
+    return "evidence-generation:" + token + "|reobservation:" + journal
 
 
 def memo_key(

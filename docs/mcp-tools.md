@@ -243,7 +243,7 @@ The principal registry is `orient(section="principals")`; one record is
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_claim_type_propose` | Propose a governed predicate interface | `GOVERNED_WRITE` |
+| `cruxible_claim_type_propose` | Propose a governed predicate interface, or adopt a builtin (`builtin: semantic.alias`) | `GOVERNED_WRITE` |
 | `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_claim_type_upgrade` | Propose moving older ClaimTypes to v7 (identity evidence rules included), stating their revision evidence | `GOVERNED_WRITE` |
 | `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
@@ -390,6 +390,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible next` does | `READ_ONLY` |
 | `cruxible_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
 | `cruxible_curation_list` | List one page of the curation queue detection recorded (`limit`, `cursor`), with when detection last ran and which detectors are inactive; a pure read | `READ_ONLY` |
+| `cruxible_curation_duplicates` | List possible duplicates of one kind (`kind`, `limit`, `cursor`): Subjects and values equal under a broad comparison but distinct under the declared rules; a pure, bounded read | `READ_ONLY` |
 | `cruxible_curation_observe` | Scan the MCP workspace's declared blocks and record them for block-churn detection (`dry_run`, `at`) | `GOVERNED_WRITE` |
 | `cruxible_curation_overrule` | Close an item as not applying, permanently, with attribution | `GOVERNED_WRITE` |
 | `cruxible_curation_accept_fixed` | Link an item to the accepted change that fixed it, by `accepted_proposal_id` or `accepted_generation` | `GOVERNED_WRITE` |

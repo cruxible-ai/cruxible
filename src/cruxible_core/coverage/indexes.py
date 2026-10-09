@@ -139,10 +139,23 @@ class EvidenceCitationV1(_StrictCoverageIndexModel):
 
 
 class EvidenceCitationV2(EvidenceCitationV1):
+    """Every accepted citation of one observed content, in one row.
+
+    Captures that observed the same content -- the same bytes a
+    ``workspace.file`` read, the same body a ``web.fetch`` origin sent -- are one
+    row however their envelopes differ; ``observed_content_digest`` names that
+    content, and ``commitment_digest`` the first Capture's commitment. A Capture
+    recording no observed content (every one before the field) is grouped by its
+    commitment exactly as before, and the row carries no observed digest.
+    """
+
     tag: Literal["playbill-coverage-evidence-citation-v2"] = (
         "playbill-coverage-evidence-citation-v2"  # type: ignore[assignment]
     )
     citation_associations: tuple[CoverageClaimCitationV2, ...] = ()
+    observed_content_digest: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("citation_associations")
     @classmethod

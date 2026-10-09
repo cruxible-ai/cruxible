@@ -51,6 +51,7 @@ from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStampAny
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, DuplicatesAuditResult
 from cruxible_client.contracts.errors import (
     BootstrapError,
 )
@@ -2311,6 +2312,19 @@ def playbill_curation_list(
     parsed = validate_playbill_curation_list_request(request)
     result = service_list_playbill_curation(get_playbill_manager().get(instance_id), request=parsed)
     return contracts.CurationListResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_curation_duplicates(
+    instance_id: str,
+    *,
+    request: DuplicatesAuditRequest | Mapping[str, object],
+) -> DuplicatesAuditResult:
+    """One page of the post-hoc duplicates audit of one kind; a pure, bounded read."""
+
+    check_permission("cruxible_curation_duplicates", instance_id=instance_id)
+    from cruxible_core.service.discovery.duplicates import service_duplicates_audit
+
+    return service_duplicates_audit(get_playbill_manager().get(instance_id), request=request)
 
 
 def playbill_curation_observe(

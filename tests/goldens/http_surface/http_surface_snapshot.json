@@ -80,6 +80,9 @@
   "/api/v1/{instance_id}/curation/accept-fixed": {
     "POST": "CurationActionResult"
   },
+  "/api/v1/{instance_id}/curation/duplicates": {
+    "POST": "DuplicatesAuditResult"
+  },
   "/api/v1/{instance_id}/curation/list": {
     "POST": "CurationListResult"
   },

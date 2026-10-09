@@ -21,7 +21,15 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Literal
 
-from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.builtin_claim_types import (
+    SEMANTIC_SUBJECT_KIND,
+    concrete_subject_kinds,
+)
+from cruxible_client.contracts.canonical_forms import (
+    CanonicalFormDidNotConverge,
+    canonicalize_literal,
+)
+from cruxible_client.contracts.claim_types import ClaimType, effective_canonical_form
 from cruxible_client.contracts.compact_query import QueryFilterOperator
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -165,6 +173,19 @@ class QueryVocabulary:
             info for _name, info in sorted(self.predicates.items()) if kind in info.subject_kinds
         )
 
+    def descriptor(self, name: str) -> PredicateInfo | None:
+        """A descriptor predicate (``semantic.alias``) named in full, for any kind.
+
+        A descriptor ClaimType admits ``semantic.subject``: it states something
+        about a Subject of every kind. It is not listed among a kind's fields; a
+        read or a write names it by its full predicate.
+        """
+
+        info = self.predicates.get(name)
+        if info is None or SEMANTIC_SUBJECT_KIND not in info.subject_kinds:
+            return None
+        return info
+
     def incoming(self, kind: str) -> tuple[PredicateInfo, ...]:
         """The Subject-valued predicates whose values may name Subjects of ``kind``.
 
@@ -207,6 +228,9 @@ class QueryVocabulary:
     def _resolved(self, kinds: tuple[str, ...], name: str) -> dict[str, PredicateInfo]:
         """Every predicate one field names for any of these kinds (Addenda 2 and 3)."""
 
+        descriptor = self.descriptor(name)
+        if descriptor is not None:
+            return {descriptor.predicate: descriptor}
         applicable = {
             kind: {info.predicate: info for info in self.predicates_of(kind)} for kind in kinds
         }
@@ -222,6 +246,8 @@ class QueryVocabulary:
         target) the short form is kept only when it names no other predicate.
         """
 
+        if self.descriptor(info.predicate) is not None:
+            return info.predicate
         for kind in kinds:
             if kind not in info.subject_kinds:
                 continue
@@ -293,7 +319,7 @@ def load_query_vocabulary(
                 subject_kinds=tuple(claim_type.allowed_subject_kinds),
                 object_kinds=tuple(claim_type.allowed_object_subject_kinds),
             )
-            kinds.update(claim_type.allowed_subject_kinds)
+            kinds.update(concrete_subject_kinds(claim_type.allowed_subject_kinds))
             kinds.update(claim_type.allowed_object_subject_kinds)
         kinds.update(
             str(row[0])
@@ -351,6 +377,50 @@ def subject_ref(value: str) -> str | None:
     return f"{match.group(1)}/{match.group(2)}"
 
 
+_INTEGER_TEXT = re.compile(r"-?(?:0|[1-9][0-9]*)")
+
+
+def coerce_text_spelling(value: object, value_type: ValueType) -> object:
+    """Read the one canonical text spelling of an integer or a boolean as that value.
+
+    The CLI passes every value as text, and an agent may too. A field whose
+    values are integers or booleans takes exactly one spelling of each value
+    (``42``, ``-3``, ``true``, ``false``) on every surface -- a write, a query,
+    an ``expect``. Any other text stays text, and the caller's type check
+    refuses it with the type it needed.
+    """
+
+    if not isinstance(value, str):
+        return value
+    if value_type in ("integer", "decimal") and _INTEGER_TEXT.fullmatch(value):
+        return int(value)
+    if value_type == "boolean" and value in ("true", "false"):
+        return value == "true"
+    return value
+
+
+def canonical_operand(info: PredicateInfo, value: object, *, field_path: str) -> object:
+    """An incoming operand in the canonical form its predicate declares (ClaimType v8).
+
+    Stored values are canonical by law, so an operand compared with them is
+    canonicalized by the same form first: two spellings equal under the form
+    compare equal, and one distinct under it stays distinct.
+    """
+
+    form = effective_canonical_form(info.claim_type)
+    if not form:
+        return value
+    try:
+        return canonicalize_literal(value, form)
+    except CanonicalFormDidNotConverge as exc:
+        raise query_refusal(
+            "cruxible.query.value_type_mismatch",
+            str(exc),
+            repair="pass a value the field's canonical form settles",
+            field_path=field_path,
+        ) from exc
+
+
 def check_value(
     info: PredicateInfo | Literal["subject_id"],
     operator: QueryFilterOperator,
@@ -379,6 +449,11 @@ def check_value(
             raise _refuse_value(label, value, "string", field_path=field_path, example='"my-id"')
         return value
     value_type = info.value_type
+    value = coerce_text_spelling(value, value_type)
+    if value_type not in {"subject", "exact_content"}:
+        # Canonical before any check: an enum member is matched in the form the
+        # predicate stores its values in.
+        value = canonical_operand(info, value, field_path=field_path)
     if value_type in {"string", "enum"}:
         if not isinstance(value, str):
             raise _refuse_value(label, value, "string", field_path=field_path, example='"text"')
@@ -392,8 +467,6 @@ def check_value(
             )
         return value
     if value_type == "integer":
-        if isinstance(value, str) and re.fullmatch(r"-?[0-9]+", value):
-            return int(value)
         if isinstance(value, bool) or not isinstance(value, int):
             raise _refuse_value(label, value, "integer", field_path=field_path, example="3")
         return value
@@ -404,8 +477,6 @@ def check_value(
             raise _refuse_value(label, value, "number", field_path=field_path, example='"2.5"')
         return value
     if value_type == "boolean":
-        if isinstance(value, str) and value.lower() in {"true", "false"}:
-            return value.lower() == "true"
         if not isinstance(value, bool):
             raise _refuse_value(label, value, "boolean", field_path=field_path, example="true")
         return value
@@ -501,8 +572,10 @@ __all__ = [
     "SUBJECT_ID_FIELD",
     "ValueType",
     "check_operator",
+    "canonical_operand",
     "check_value",
     "claim_type_row",
+    "coerce_text_spelling",
     "load_query_vocabulary",
     "query_not_found",
     "query_refusal",

@@ -53,11 +53,17 @@ from cruxible_core.procedures.egress import (
 
 LINE_TRACK_RECORD_TAG = "playbill-line-track-record-v1"
 
-#: The three terminal-egress verdicts §8.5.2 lets one run report.
+#: A terminal's final egress outcome. The three §8.5.2 verdicts; and, for a
+#: proposal or settle terminal journaled around its sink, ``refused`` and
+#: ``failed`` when that is how it ended, and ``unresolved`` when only its
+#: prepared intent exists (a crash recovery has not yet finished).
 LineEgressVerdictV1 = Literal[
     "delivered",
     "refused_effective_rung",
     "dependencies_bound_egress_pending",
+    "refused",
+    "failed",
+    "unresolved",
 ]
 
 _INPUT_PLANES: tuple[str, ...] = ("accepted_state", "landed_capture", "exhaust")
@@ -301,6 +307,11 @@ class LineEgressTallyV1(_StrictTrackRecordModel):
     capped: int = Field(ge=0)
     pending: int = Field(ge=0)
     capped_by_term: tuple[LineCappedTermTallyV1, ...] = ()
+    #: Terminals whose final outcome was a sink refusal, a failure, or a
+    #: prepared intent nothing resolved yet. Omitted when none.
+    refused: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    failed: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    unresolved: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def _totals(self) -> "LineEgressTallyV1":
@@ -354,7 +365,16 @@ class LineTrackRecordV1(_StrictTrackRecordModel):
         sequences = tuple(item.sequence for item in self.readings)
         if sequences != tuple(sorted(set(sequences))):
             raise ValueError("Line egress readings must be in unique journal order")
-        if len(self.readings) != self.tally.delivered + self.tally.capped + self.tally.pending:
+        tally = self.tally
+        accounted = (
+            tally.delivered
+            + tally.capped
+            + tally.pending
+            + tally.refused
+            + tally.failed
+            + tally.unresolved
+        )
+        if len(self.readings) != accounted:
             raise ValueError("Line egress tally does not account for every reading")
         return self
 
@@ -412,7 +432,10 @@ def _egress_reading(record: VerifiedExhaustRecordV1) -> LineEgressReadingV1:
                 "attempt": record.attempt,
                 "node_id": payload.get("node_id"),
                 "kind": payload.get("kind"),
-                "verdict": payload.get("verdict"),
+                # A prepared intent with no resolution after it is unresolved.
+                "verdict": (
+                    "unresolved" if payload.get("verdict") == "prepared" else payload.get("verdict")
+                ),
                 "required_rung": payload.get("required_rung"),
                 "effective_rung": payload.get("effective_rung"),
                 "effective_rung_digest": payload.get("effective_rung_digest"),
@@ -443,6 +466,9 @@ def _tally(readings: tuple[LineEgressReadingV1, ...]) -> LineEgressTallyV1:
         delivered=sum(1 for item in readings if item.verdict == "delivered"),
         capped=sum(capped.values()),
         pending=sum(1 for item in readings if item.verdict == "dependencies_bound_egress_pending"),
+        refused=sum(1 for item in readings if item.verdict == "refused"),
+        failed=sum(1 for item in readings if item.verdict == "failed"),
+        unresolved=sum(1 for item in readings if item.verdict == "unresolved"),
         capped_by_term=tuple(
             LineCappedTermTallyV1(term=term, capped_count=capped[term])
             for term in EFFECTIVE_RUNG_TERMS
@@ -468,7 +494,7 @@ def build_line_track_record(
     dimensions = line_track_record_dimensions(accepted_line, accepted_procedure)
     deployments: set[str] = set()
     occurrences: set[str] = set()
-    readings: list[LineEgressReadingV1] = []
+    finals: dict[tuple[str, str], VerifiedExhaustRecordV1] = {}
     for record in records:
         if record.line_spec_digest != accepted_line.artifact_digest:
             raise LineTrackRecordError(
@@ -492,7 +518,16 @@ def build_line_track_record(
                 deployments.add(snapshot)
             continue
         if record.event_kind == "terminal_egress":
-            readings.append(_egress_reading(record))
+            if record.run_id is None:
+                _egress_reading(record)  # refuses: a terminal names its run
+            # One terminal of one run can journal several records: a prepared
+            # intent, a failed resolution, and recovery's delivered or refused
+            # one. The latest is its outcome; the rest are intermediate states.
+            key = (record.run_id or "", str(_payload_mapping(record).get("node_id")))
+            held = finals.get(key)
+            if held is None or record.sequence > held.sequence:
+                finals[key] = record
+    readings = [_egress_reading(record) for record in finals.values()]
     ordered = tuple(sorted(readings, key=lambda item: item.sequence))
     return LineTrackRecordV1(
         line_id=accepted_line.line.identity.name,

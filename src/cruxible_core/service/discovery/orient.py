@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from cruxible_client import contracts
+from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     effective_evidence_requirement,
@@ -395,7 +396,7 @@ def _descriptor(
 def _kind_names(state: _State) -> tuple[str, ...]:
     kinds = set(state.subjects_by_kind)
     for claim_type in state.claim_types:
-        kinds.update(claim_type.allowed_subject_kinds)
+        kinds.update(concrete_subject_kinds(claim_type.allowed_subject_kinds))
     return tuple(sorted(kinds, key=lambda item: item.encode("utf-8")))
 
 

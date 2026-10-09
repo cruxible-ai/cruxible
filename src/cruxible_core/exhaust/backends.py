@@ -129,6 +129,16 @@ def _partition_key(partition_id: str) -> str:
     return hashlib.sha256(partition_id.encode("utf-8")).hexdigest()
 
 
+def journal_log_path(root: Path, stream: JournalStreamIdentityV1, partition_id: str) -> Path:
+    """Where one partition's append-only log lives under a journal root, touching nothing.
+
+    The log is the journal's authority: a reader that must notice an append
+    without opening the journal stats this file.
+    """
+
+    return root / "streams" / _identity_key(stream) / _partition_key(partition_id) / "records.log"
+
+
 def _record_matches_draft(
     record: ProcedureJournalRecordV1,
     draft: ProcedureJournalRecordDraftV1,
@@ -601,6 +611,11 @@ class LocalJournalBackend:
 
         self._records(stream, partition_id, recover_tail=True)
         return self.read_head(stream, partition_id)
+
+    def catch_up_index(self, stream: JournalStreamIdentityV1) -> None:
+        """Bring the journal index up to every record appended since its last sync."""
+
+        self.index.catch_up(stream, self.partition_ids(stream))
 
     def all_records(
         self,

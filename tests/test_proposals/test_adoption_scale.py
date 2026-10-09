@@ -32,7 +32,8 @@ def test_the_miniature_fixture_has_its_declared_composition(tmp_path: Path) -> N
     tree = reopened.tree_at(reopened.accepted_coordinate().git_oid)
     kinds = {
         "subjects/": MINIATURE.subjects,
-        "claim-types/": MINIATURE.claim_types,
+        # The authored ClaimTypes and the seeded builtin semantic.alias.
+        "claim-types/": MINIATURE.claim_types + 1,
         "documents/": MINIATURE.documents,
         "query-definitions/": MINIATURE.query_definitions,
         "capture-contracts/": 1,

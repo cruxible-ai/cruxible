@@ -120,3 +120,34 @@ def test_supporting_evidence_reaches_a_resolvable_row_nested_in_a_conflict() -> 
         "claim_uncovered",
         "claim_new_evidence_supporting",
     ]
+
+
+def test_two_captures_of_the_same_observed_content_are_one_piece_of_evidence() -> None:
+    content = "sha256:" + "9" * 64
+    support = _row(
+        "claim_new_evidence_supporting",
+        "Claim:a",
+        capture_digest="sha256:" + "1" * 64,
+        observed_content_digest=content,
+    )
+    contradict = _row(
+        "claim_contradicting_evidence_available",
+        "Claim:a",
+        severity="repair",
+        capture_digest="sha256:" + "2" * 64,
+        observed_content_digest=content,
+    )
+    other = _row(
+        "claim_new_evidence_unreviewed",
+        "Claim:a",
+        capture_digest="sha256:" + "3" * 64,
+    )
+
+    rows = _group_items((support, contradict, other))
+
+    assert sorted(row.reason for row in rows) == [
+        "claim_contradicting_evidence_available",
+        "claim_new_evidence_unreviewed",
+    ]
+    (grouped,) = [row for row in rows if row.findings]
+    assert [finding.reason for finding in grouped.findings] == ["claim_new_evidence_supporting"]

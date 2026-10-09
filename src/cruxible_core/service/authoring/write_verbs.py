@@ -29,9 +29,8 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 import shlex
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -59,7 +58,12 @@ from cruxible_client.contracts.authoring.models import (
     SubjectAuthoringPayload,
     authoring_member_identity,
 )
+from cruxible_client.contracts.builtin_claim_types import applies_to_kind
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
+from cruxible_client.contracts.canonical_forms import (
+    CanonicalFormDidNotConverge,
+    canonicalize_literal,
+)
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
@@ -69,11 +73,16 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
-from cruxible_client.contracts.claim_types import ClaimType, effective_evidence_requirement
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    effective_canonical_form,
+    effective_evidence_requirement,
+)
 from cruxible_client.contracts.claims import (
     ClaimRetireDependent,
     LiteralClaimObject,
     SubjectClaimObject,
+    claim_artifact_digest,
     claim_path,
     literal_schema_violation,
     new_claim_id,
@@ -129,6 +138,11 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import ComputedPreflight
 from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_aliases import (
+    SubjectRefResolution,
+    creation_collisions,
+    resolve_subject_ref,
+)
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.change_preview import compact_coordinate, preview_guards
@@ -139,6 +153,7 @@ from cruxible_core.service.discovery.query_values import read_live_values, subje
 from cruxible_core.service.discovery.query_vocabulary import (
     PredicateInfo,
     QueryVocabulary,
+    coerce_text_spelling,
     load_query_vocabulary,
 )
 from cruxible_core.service.identity import require_authoring_principal
@@ -257,27 +272,6 @@ def requires_captured_evidence(claim_type: ClaimType) -> bool:
     """
 
     return effective_evidence_requirement(claim_type) == "captured"
-
-
-_INTEGER_TEXT = re.compile(r"-?(?:0|[1-9][0-9]*)")
-
-
-def _coerce_text(value: object, info: PredicateInfo) -> object:
-    """Read a canonical text spelling of a number or boolean as that value.
-
-    The CLI passes every value as text, and an agent may too. A field whose
-    schema is an integer or a boolean takes the one canonical spelling of such
-    a value (``42``, ``-3``, ``true``, ``false``); any other text stays text and
-    is refused by the schema check with the type it needed.
-    """
-
-    if not isinstance(value, str):
-        return value
-    if info.value_type in ("integer", "decimal") and _INTEGER_TEXT.fullmatch(value):
-        return int(value)
-    if info.value_type == "boolean" and value in ("true", "false"):
-        return value == "true"
-    return value
 
 
 def _named(subject: str | None) -> str:
@@ -402,6 +396,7 @@ class _SlotClaim:
     claim_id: str
     digest: str
     value: object
+    role: str = "normative"
 
 
 @dataclass(frozen=True)
@@ -436,6 +431,11 @@ class _Planned:
     pin: _SlotPin | None = None
     # The Capture the evidence cites, by digest, once a handle or contract resolved.
     capture: str | None = None
+    # An add restating a live value: the outcome it reports, and the live
+    # Claim's digest, when the shared re-observation comparison leaves that
+    # Claim unchanged (the same association on the same content).
+    unchanged_outcome: dict[str, Any] | None = None
+    unchanged_digest: str | None = None
 
 
 @dataclass
@@ -468,6 +468,7 @@ class _Planner:
         # One Capture verification context for the whole write.
         self.captures = instance.capture_verification_context()
         self._read_sequence: int | None = None
+        self._refs: dict[tuple[str, str], SubjectRefResolution] = {}
 
     # -- accepted state ----------------------------------------------------------
 
@@ -505,7 +506,14 @@ class _Planner:
             shown: object = None
             if live is not None:
                 shown = self.exact.value(str(live.value), live.span) if live.exact else live.value
-            found.append(_SlotClaim(claim_id=_bare(identity), digest=digest, value=shown))
+            found.append(
+                _SlotClaim(
+                    claim_id=_bare(identity),
+                    digest=digest,
+                    value=shown,
+                    role="normative" if live is None else live.role,
+                )
+            )
         return tuple(found)
 
     def slot_pin(
@@ -609,7 +617,9 @@ class _Planner:
                 # content as its text: compared as written, so a value no Claim
                 # holds is simply not what it holds.
                 shown = (
-                    subject_reference(item) if info.claim_type.object_kind == "subject" else item
+                    self.expected_subject(str(subject_reference(item)), index=index, path=path)
+                    if info.claim_type.object_kind == "subject"
+                    else item
                 )
             else:
                 taken = (
@@ -624,6 +634,15 @@ class _Planner:
                 )
             found[_value_key(shown)] = shown
         return found
+
+    def expected_subject(self, ref: str, *, index: int, path: str) -> str:
+        """An expected Subject value as the Subject it names, through its alias."""
+
+        kind, _, subject_id = ref.partition("/")
+        if not kind or not subject_id:
+            return ref
+        resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
+        return resolved.ref if resolved.via == "alias" and resolved.ref is not None else ref
 
     def check_expected(
         self,
@@ -681,6 +700,80 @@ class _Planner:
 
     # -- vocabulary --------------------------------------------------------------
 
+    def resolve_ref(
+        self, kind: str, subject_id: str, *, index: int, path: str
+    ) -> SubjectRefResolution:
+        """One Subject reference at the head: the exact Subject, else one alias.
+
+        An alias naming several Subjects of the kind refuses with each of them.
+        """
+
+        key = (kind, subject_id)
+        if key not in self._refs:
+            with self.instance.bind_accepted_projection(self.head) as projection:
+                self._refs[key] = resolve_subject_ref(projection.typed.connection, kind, subject_id)
+        resolution = self._refs[key]
+        if resolution.ambiguous:
+            raise _refuse(
+                "cruxible.write.alias_ambiguous",
+                f"{kind}/{subject_id} names no Subject, and an alias of {kind} names "
+                f"{len(resolution.candidates)} of them",
+                change=index,
+                candidates=resolution.candidates,
+                repair="Name one of the listed Subjects as kind/id",
+                field_path=path,
+            )
+        return resolution
+
+    def _asserted_distinct(self, created: str) -> frozenset[str]:
+        """Subject paths this write asserts ``semantic.distinct_from`` the created one."""
+
+        found: set[str] = set()
+        for change in self.request.changes:
+            if not isinstance(change, SetChange | AddChange):
+                continue
+            if change.field != "semantic.distinct_from" or not isinstance(change.value, str):
+                continue
+            pair: set[str] = set()
+            for ref in (change.subject, str(subject_reference(change.value))):
+                kind, _, subject_id = (ref or "").partition("/")
+                if kind and subject_id:
+                    pair.add(f"subjects/{kind}/{subject_id}.json")
+            if created in pair:
+                found.update(pair - {created})
+        return frozenset(found)
+
+    def check_creation(self, kind: str, subject_id: str, *, index: int, path: str) -> None:
+        """Refuse adding a Subject that collides with an accepted Subject of its kind.
+
+        The new id's canonical token equals an accepted Subject's id, canonical
+        token or alias: the same thing would have two Subjects. A
+        ``semantic.distinct_from`` between the two in the same write exempts it.
+        """
+
+        created = f"subjects/{kind}/{subject_id}.json"
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            collisions = creation_collisions(
+                projection.typed.connection,
+                kind,
+                subject_id,
+                exempt=self._asserted_distinct(created),
+            )
+        if collisions:
+            raise _refuse(
+                "cruxible.write.subject_collision",
+                f"adding {kind}/{subject_id} would collide with {', '.join(collisions)}: "
+                "its id, canonical token or alias is the same name",
+                change=index,
+                candidates=collisions,
+                repair=(
+                    f"Name {collisions[0]} instead; or add a semantic.alias to it; or add "
+                    f"semantic.distinct_from {collisions[0]} to {kind}/{subject_id} in the "
+                    "same write"
+                ),
+                field_path=path,
+            )
+
     def resolve_subject(self, subject: str, *, index: int, path: str) -> tuple[str, str, str]:
         kind, _, subject_id = subject.partition("/")
         if kind not in self.vocabulary.kinds:
@@ -692,9 +785,16 @@ class _Planner:
                 repair="Use one of the listed kinds; orient names every kind",
                 field_path=path,
             )
+        resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
+        if resolved.path is not None and resolved.via == "alias":
+            assert resolved.ref is not None
+            return kind, resolved.ref.partition("/")[2], resolved.path
         return kind, subject_id, subject_path(kind, subject_id)
 
     def resolve_field(self, kind: str, name: str, *, index: int, path: str) -> PredicateInfo:
+        descriptor = self.vocabulary.descriptor(name)
+        if descriptor is not None:
+            return descriptor
         applicable = {kind: {info.predicate: info for info in self.vocabulary.predicates_of(kind)}}
         found = resolve_field_in(name, applicable)
         if len(found) == 1:
@@ -775,7 +875,7 @@ class _Planner:
         path: str | None = None,
     ) -> LiteralClaimObject:
         path = path or f"changes[{index}].value"
-        value = _coerce_text(value, info)
+        value = coerce_text_spelling(value, info.value_type)
         if isinstance(value, float):
             if not value.is_integer():
                 raise _refuse(
@@ -786,6 +886,20 @@ class _Planner:
                     field_path=path,
                 )
             value = int(value)
+        form = effective_canonical_form(info.claim_type)
+        if form:
+            # Stored in the declared canonical form, and checked in it: an enum
+            # member is matched after canonicalization (ClaimType v8).
+            try:
+                value = canonicalize_literal(value, form)
+            except CanonicalFormDidNotConverge as exc:
+                raise _refuse(
+                    "cruxible.write.value_type_mismatch",
+                    str(exc),
+                    change=index,
+                    repair="Pass a value the field's canonical form settles",
+                    field_path=path,
+                ) from exc
         if info.members:
             if value not in info.members:
                 spelled = ", ".join(info.members)
@@ -852,6 +966,10 @@ class _Planner:
                 repair=f"Pass a Subject of kind {' or '.join(allowed)}",
                 field_path=path,
             )
+        resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
+        if resolved.via == "alias" and resolved.path is not None:
+            assert resolved.ref is not None
+            value, subject_id = resolved.ref, resolved.ref.partition("/")[2]
         try:
             target = subject_path(kind, subject_id)
         except (CruxibleError, ValueError) as exc:
@@ -1288,7 +1406,10 @@ class _Planner:
             info, change, role=role, index=index, field_name=name, exact=exact, capture=capture
         )
         if not self.subject_exists(path) and path not in self.plan.subjects:
-            if kind not in claim_type.allowed_subject_kinds:  # pragma: no cover - resolve_field
+            self.check_creation(kind, subject_id, index=index, path=f"{prefix}.subject")
+            if not applies_to_kind(
+                claim_type.allowed_subject_kinds, kind
+            ):  # pragma: no cover - resolve_field
                 raise _refuse(
                     "cruxible.write.unknown_kind",
                     f"{name} does not apply to Subjects of kind {kind!r}",
@@ -1303,6 +1424,8 @@ class _Planner:
         revises: str | None = None
         before: object = None
         contenders: tuple[str, ...] = ()
+        unchanged: dict[str, Any] | None = None
+        unchanged_digest: str | None = None
         if isinstance(change, SetChange):
             self.check_expected(
                 index=index,
@@ -1347,7 +1470,9 @@ class _Planner:
                 (
                     item
                     for item in live
-                    if item.value == shown_after and item.claim_id not in retiring
+                    if item.value == shown_after
+                    and item.role == role
+                    and item.claim_id not in retiring
                 ),
                 None,
             )
@@ -1362,27 +1487,26 @@ class _Planner:
                     field_path=f"changes[{index}].expect_absent",
                 )
             if present is not None:
-                # Adding what is already there is done already: an idempotent
-                # success, with nothing to submit for this change.
-                return _Planned(
-                    index=index,
-                    op=change.op,
-                    outcome={
-                        "subject": subject,
-                        "field": name,
-                        "predicate": info.predicate,
-                        "before": summary_value(
-                            present.value,
-                            read_whole=whole_value_read(present.claim_id, self.head.git_oid),
-                        ),
-                        "after": summary_value(present.value),
-                        "claim": present.claim_id,
-                        "already_live": True,
-                    },
-                    slot=(path, info.predicate),
-                    change=change,
-                    claim_type=claim_type,
-                )
+                # Adding what is already there restates the live Claim: its
+                # lineage is the one revised, and the shared re-observation
+                # comparison in lowering decides. The same association on the
+                # same content changes nothing (already live); new content
+                # refreshes the evidence of that Claim, never a second one.
+                revises = present.claim_id
+                before = present.value
+                unchanged = {
+                    "subject": subject,
+                    "field": name,
+                    "predicate": info.predicate,
+                    "before": summary_value(
+                        present.value,
+                        read_whole=whole_value_read(present.claim_id, self.head.git_oid),
+                    ),
+                    "after": summary_value(present.value),
+                    "claim": present.claim_id,
+                    "already_live": True,
+                }
+                unchanged_digest = present.digest
         statement = AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(path),
             predicate=info.predicate,
@@ -1439,6 +1563,8 @@ class _Planner:
             revises=revises,
             existing=tuple(item.claim_id for item in live if item.claim_id != revises),
             pin=self.slot_pin(path, info.predicate),
+            unchanged_outcome=unchanged,
+            unchanged_digest=unchanged_digest,
         )
 
     def _retiring(self) -> set[str]:
@@ -1825,11 +1951,20 @@ def _minted_claims(intent: AuthoringIntentV1) -> dict[str, str]:
 
 
 def _change_outcomes(
-    plan: _Plan, lowered: _Lowered, intent: AuthoringIntentV1 | None
+    plan: _Plan,
+    lowered: _Lowered,
+    intent: AuthoringIntentV1 | None,
+    *,
+    unchanged: Callable[[_Planned], bool] = lambda _item: False,
 ) -> tuple[ChangeOutcome, ...]:
+    """Each change's outcome; ``unchanged`` names the restating adds lowering left alone."""
+
     minted = {} if intent is None else _minted_claims(intent)
     outcomes: list[ChangeOutcome] = []
     for item in plan.changes:
+        if item.unchanged_outcome is not None and unchanged(item):
+            outcomes.append(ChangeOutcome(op=item.op, **item.unchanged_outcome))
+            continue
         values = dict(item.outcome)
         if item.op != "retire" and item.member is not None:
             identity = lowered.identity_by_change[item.index]
@@ -1896,7 +2031,11 @@ def _pending_verdicts(
     its Claim; its verdict is the one it holds at the head.
     """
 
-    present = [item for item in plan.changes if item.member is None and item.op != "retire"]
+    present = [
+        item
+        for item in plan.changes
+        if (item.member is None or item.unchanged_outcome is not None) and item.op != "retire"
+    ]
     found = _accepted_verdicts(instance, head, _Plan(changes=present)) if present else {}
     return {**found, **candidate}
 
@@ -2356,6 +2495,21 @@ def _service_write(
         surface=request.surface,
         proposal_id=proposal_id,
     )
+    candidate = (
+        None
+        if status.candidate_digest is None
+        else instance.proposal_evidence().read_candidate(status.candidate_digest)
+    )
+    if candidate is not None:
+        written = {member.path for member in getattr(candidate, "members", ())}
+        changes = _change_outcomes(
+            plan,
+            lowered,
+            intent,
+            unchanged=lambda item: (
+                item.revises is not None and claim_path(item.revises) not in written
+            ),
+        )
     changes, warnings = _with_verdicts(
         instance,
         head=evaluated_at,
@@ -2365,11 +2519,7 @@ def _service_write(
             instance,
             evaluated_at,
             plan,
-            {}
-            if status.candidate_digest is None
-            else _candidate_verdicts(
-                instance.proposal_evidence().read_candidate(status.candidate_digest)
-            ),
+            {} if candidate is None else _candidate_verdicts(candidate),
         ),
         surface=request.surface,
         because=request.because,
@@ -2486,6 +2636,7 @@ def _accepted(
             compiler_digest=accepted.compiler_digest,
         )
     )
+    changes = _unchanged_at(instance, coordinate, plan, changes)
     changes, warnings = _with_verdicts(
         instance,
         head=coordinate,
@@ -2510,6 +2661,28 @@ def _accepted(
     )
 
 
+def _unchanged_at(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    plan: _Plan,
+    changes: tuple[ChangeOutcome, ...],
+) -> tuple[ChangeOutcome, ...]:
+    """Report a restating add whose Claim the accepted write left as it was as already live."""
+
+    marked = list(changes)
+    for position, item in enumerate(plan.changes):
+        if item.unchanged_outcome is None or item.revises is None:
+            continue
+        content = instance.blob_at(coordinate.git_oid, claim_path(item.revises))
+        if content is None:
+            continue
+        if claim_artifact_digest(parse_claim(content, path=claim_path(item.revises))).tagged == (
+            item.unchanged_digest
+        ):
+            marked[position] = ChangeOutcome(op=item.op, **item.unchanged_outcome)
+    return tuple(marked)
+
+
 def _dry_run(
     instance: PlaybillInstance,
     *,
@@ -2527,7 +2700,17 @@ def _dry_run(
     intent, computed = coordinator.preview(
         actor=caller.actor, payload=lowered.payload, canonical_timestamp=timestamp
     )
-    changes = _change_outcomes(plan, lowered, intent)
+    changed = (
+        set()
+        if computed.lowered is None
+        else {path for path, _content in computed.lowered.changed_members}
+    )
+    changes = _change_outcomes(
+        plan,
+        lowered,
+        intent,
+        unchanged=lambda item: item.revises is not None and claim_path(item.revises) not in changed,
+    )
     compact = compact_coordinate(instance, head)
     if computed.result.verdict != "passed":
         return WriteOutcome(

@@ -32,6 +32,7 @@ from cruxible_client.contracts.captures import (
     CaptureEnvelope,
     CaptureEnvelopeV1,
     CaptureProductionRecord,
+    CaptureProductionUnproven,
     CaptureRunCoordinateV1,
     build_cas_capture,
     capture_contract_digest,
@@ -443,26 +444,73 @@ def _verifies_with_proof(world: ProducedCaptures, digest: str) -> bool:
     return isinstance(verified, CaptureEnvelope)
 
 
-def test_an_index_missing_the_run_falls_back_to_the_journal(
-    world: ProducedCaptures, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source_capture, terminal_capture = _genuine(world)
-    index = (
+def _journal_index(world: ProducedCaptures) -> Path:
+    return (
         world.instance.root
         / world.instance.descriptor.storage.exhaust
         / "procedure-runs"
         / "event-index.sqlite3"
     )
-    # The SQL index is a rebuildable locator: drop the run's rows, as if another
-    # process's append had not reached it yet.
-    with sqlite3.connect(index) as connection:
-        connection.execute("DELETE FROM records WHERE run_id=?", (world.run_id,))
+
+
+def test_a_run_appended_since_the_index_synced_is_found_by_catching_up(
+    world: ProducedCaptures, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_capture, terminal_capture = _genuine(world)
+    # Roll the SQL index back to just before the cited run, as if its records
+    # were appended after the index last synced: the log holds them, the index
+    # does not.
+    with sqlite3.connect(_journal_index(world)) as connection:
+        stream, partition, sequence, offset, previous = connection.execute(
+            "SELECT stream, partition_id, sequence, offset, previous FROM records "
+            "WHERE run_id=? ORDER BY sequence LIMIT 1",
+            (world.run_id,),
+        ).fetchone()
+        connection.execute(
+            "DELETE FROM records WHERE stream=? AND partition_id=? AND sequence>=?",
+            (stream, partition, sequence),
+        )
+        signature = connection.execute(
+            "SELECT signature FROM partitions WHERE stream=? AND partition_id=?",
+            (stream, partition),
+        ).fetchone()[0]
+        device, inode = signature.split(":")[:2]
+        connection.execute(
+            "UPDATE partitions SET end_offset=?, sequence=?, digest=?, signature=? "
+            "WHERE stream=? AND partition_id=?",
+            (offset, sequence - 1, previous, f"{device}:{inode}:0:0:0", stream, partition),
+        )
     calls = _count_run_lookups(monkeypatch)
+    catch_ups = {"count": 0}
+    original = producer_receipts.JournalProducerReceiptResolver._catch_up
+
+    def counted(self):  # type: ignore[no-untyped-def]
+        catch_ups["count"] += 1
+        return original(self)
+
+    monkeypatch.setattr(producer_receipts.JournalProducerReceiptResolver, "_catch_up", counted)
 
     assert _verifies_with_proof(world, source_capture)
     assert _verifies_with_proof(world, terminal_capture)
-    assert calls["runs"] == 2  # one per context, each finding nothing
-    assert calls["journal"] == 2  # each fell back to one pass over the journal
+    # The first context misses, catches the index up and finds the run on its
+    # second lookup; the second context finds it on its first. Never the journal.
+    assert (catch_ups["count"], calls["runs"], calls["journal"]) == (1, 3, 0)
+
+
+def test_a_run_the_caught_up_index_still_lacks_refuses_without_reading_the_journal(
+    world: ProducedCaptures, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_capture, _terminal = _genuine(world)
+    # Rows dropped from the index with the log unchanged: nothing was appended
+    # since the last sync, so catching up adds nothing and the citation refuses.
+    with sqlite3.connect(_journal_index(world)) as connection:
+        connection.execute("DELETE FROM records WHERE run_id=?", (world.run_id,))
+    calls = _count_run_lookups(monkeypatch)
+
+    with pytest.raises(CaptureProductionUnproven):
+        _verifies_with_proof(world, source_capture)
+    assert calls["journal"] == 0
+    assert calls["runs"] == 2
 
 
 def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(

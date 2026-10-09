@@ -37,6 +37,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claim_verdicts import (
+    CaptureReobservationEvidence,
     CaptureVerdictEvidence,
     ClaimAdjudicationRuleAny,
     ClaimVerdictResult,
@@ -67,6 +68,10 @@ from cruxible_client.contracts.source_references import (
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.derived.memo import memo_get, memo_put
+from cruxible_core.evidence.claim_reobservations import (
+    ReobservationReader,
+    reobservations_at,
+)
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.indexes.history.history_index import HistoryReader, RetainedRecordReader
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -201,6 +206,11 @@ class VerdictReads:
     # reader, or a file that moved while it was read): nothing may be
     # fingerprinted, so the whole derivation is not remembered.
     bodies_complete: bool = True
+    # Each Claim lineage's re-observation journal sequence its verdict read
+    # (0: none recorded): like availability, an input outside the accepted
+    # coordinate, so a remembered answer is keyed on the record set it used.
+    # Within that set, the answer's time boundaries bound it.
+    used_reobservations: dict[str, int] = dataclass_field(default_factory=dict)
 
     def update(self, other: VerdictReads) -> None:
         self.paths |= other.paths
@@ -209,6 +219,9 @@ class VerdictReads:
         self.providers |= other.providers
         self.captures |= other.captures
         self.used_availability.update(other.used_availability)
+        for claim_id, used in other.used_reobservations.items():
+            if self.used_reobservations.setdefault(claim_id, used) != used:
+                self.inconsistent = True
         self.inconsistent = self.inconsistent or other.inconsistent
         self.note_bodies(other.body_identities if other.bodies_complete else None)
 
@@ -230,6 +243,7 @@ class VerdictReads:
             *(("law", path) for path in sorted(self.law_paths)),
             *(("provider", identity) for identity in sorted(self.providers)),
             *(("capture", digest) for digest in sorted(self.captures)),
+            *(("reobserved", claim_id) for claim_id in sorted(self.used_reobservations)),
         )
 
 
@@ -441,6 +455,13 @@ class ClaimVerdictReadContext:
         if self._recording is not None:
             self._recording.law_paths.add(path)
 
+    def note_reobservations(self, claim_id: str, sequence: int) -> None:
+        """Attribute the re-observation record set one Claim lineage's verdict read."""
+
+        if self._recording is not None:
+            if self._recording.used_reobservations.setdefault(claim_id, sequence) != sequence:
+                self._recording.inconsistent = True
+
     def note_capture(
         self,
         digest: str,
@@ -519,6 +540,10 @@ class ClaimVerdictReadContext:
             )
             if bodies is not None:
                 bodies.note_bodies(None if _UNKNOWN_BODIES in used else used)
+        if reads.used_reobservations:
+            reader = ReobservationReader.of(self.instance)
+            for claim_id in sorted(reads.used_reobservations):
+                values[("reobserved", claim_id)] = reader.sequence(claim_id)
         values[("compiler",)] = self.coordinate.compiler.rule_digest
         return values
 
@@ -1147,12 +1172,14 @@ def _record_verdict_time_boundaries(
     claim: ClaimArtifactAny,
     captures: tuple[CaptureVerdictEvidence, ...],
     attestations: tuple[ClaimAttestationEvidence, ...],
+    reobservations: tuple[CaptureReobservationEvidence, ...] = (),
 ) -> None:
     """Record every instant at which this verdict's answer could change.
 
     A verdict is a step function of the evaluation instant, and these are its
     only breakpoints: the Claim's own effective interval, each capture's
-    observation, source expiry and freshness horizon, and each attestation's
+    observation, source expiry and freshness horizon, each recorded
+    re-observation's instants and freshness horizon, and each attestation's
     observation and validity end. Between two consecutive breakpoints the answer
     is the same at every instant, which is what lets a read be remembered
     without pinning the wall clock into its key.
@@ -1168,6 +1195,13 @@ def _record_verdict_time_boundaries(
         if rule.max_evidence_age is not None:
             boundaries.add(
                 capture.observed_at + timedelta(microseconds=rule.max_evidence_age.microseconds)
+            )
+    for item in reobservations:
+        boundaries.add(item.observed_at)
+        boundaries.add(item.recorded_at)
+        if rule.max_evidence_age is not None:
+            boundaries.add(
+                item.observed_at + timedelta(microseconds=rule.max_evidence_age.microseconds)
             )
     for attestation in attestations:
         boundaries.add(attestation.statement.observed_at)
@@ -1277,6 +1311,17 @@ def service_evaluate_playbill_claim_verdict(
             else None
         ),
     )
+    reading = reobservations_at(
+        instance,
+        coordinate=coordinate,
+        claim_id=accepted.claim.identity.name,
+        captures=captures,
+        at=evaluation_time,
+    )
+    read_context.note_reobservations(accepted.claim.identity.name, reading.sequence)
+    reobservations = reading.evidence
+    if time_boundaries is not None:
+        time_boundaries |= set(reading.boundaries)
     if time_boundaries is not None:
         _record_verdict_time_boundaries(
             time_boundaries,
@@ -1284,6 +1329,7 @@ def service_evaluate_playbill_claim_verdict(
             claim=accepted.claim,
             captures=captures,
             attestations=attestations,
+            reobservations=reobservations,
         )
     verdict = evaluate_claim_verdict(
         claim_statement_digest=accepted.statement_digest,
@@ -1298,6 +1344,7 @@ def service_evaluate_playbill_claim_verdict(
         # Authority is resolved from live mandate/resolution state by PC-E1's
         # resolver. Acceptance-time verdict output is never carried forward.
         resolved_authority_basis=(),
+        reobservations=reobservations,
     )
     if isinstance(verdict, ClaimVerdictResult):
         return PlaybillClaimVerdictQueryV2(

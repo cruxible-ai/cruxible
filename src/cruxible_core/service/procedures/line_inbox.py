@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from cruxible_client.contracts.errors import SubjectNotFoundError
+from cruxible_client.contracts.errors import ReadRefusalError, SubjectNotFoundError
 from cruxible_client.contracts.line_inbox import (
     INBOX_ITEM_SELECTOR_PATTERN,
     INBOX_LIST_MAX_LIMIT,
@@ -22,6 +22,7 @@ from cruxible_client.contracts.line_inbox import (
     InboxItemStatus,
     InboxLinked,
     InboxLinkProposal,
+    InboxLinkSubject,
     InboxLinkTarget,
     InboxList,
     InboxListEntry,
@@ -30,6 +31,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.exhaust.line_inbox import InboxItemNotFound, LineInboxStore
 from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.subject_aliases import resolve_subject_ref
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.procedures.procedure_runs import ProcedureSurfaceError
 
@@ -183,12 +185,27 @@ def _existing_target(instance: PlaybillInstance, target: InboxLinkTarget) -> Inb
         resolved = service_resolve_playbill_proposal_selector(instance, selector=target.proposal_id)
         return InboxLinkProposal(proposal_id=resolved.proposal_id)
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        if projection.subject(f"Subject:{target.subject}") is None:
-            raise SubjectNotFoundError(
-                f"cruxible.subject_not_found: Subject {target.subject!r} is not accepted; "
-                "link the item to an accepted Subject or to the proposal that adds it"
-            )
-    return target
+        # The exact live Subject, else the aliases of its kind, else a retired one.
+        kind, _, subject_id = target.subject.partition("/")
+        resolution = resolve_subject_ref(projection.typed.connection, kind, subject_id)
+    if resolution.ambiguous:
+        raise ReadRefusalError(
+            "cruxible.subject.alias_ambiguous",
+            f"{target.subject} names no Subject, and an alias of {kind} names "
+            f"{len(resolution.candidates)} of them",
+            http_status=409,
+            candidates=resolution.candidates,
+            repair_line="Link the item to one of the listed Subjects",
+            field_path="target.subject",
+        )
+    if resolution.via == "identity":
+        return target
+    if resolution.via == "alias" and resolution.ref is not None:
+        return InboxLinkSubject(subject=resolution.ref)
+    raise SubjectNotFoundError(
+        f"cruxible.subject_not_found: Subject {target.subject!r} is not accepted; "
+        "link the item to an accepted Subject or to the proposal that adds it"
+    )
 
 
 def service_link_inbox_item(

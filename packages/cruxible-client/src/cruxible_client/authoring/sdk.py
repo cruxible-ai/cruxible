@@ -194,6 +194,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStamp,
     ProjectionCurrencyPolicy,
 )
+from cruxible_client.contracts.duplicates import DuplicatesAuditResult
 from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import (
     GET_BATCH_MAX_REFS,
@@ -2659,8 +2660,13 @@ class Cruxible:
         pins: Sequence[ArtifactPin],
         evidence_freshness: Duration | None,
         attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = None,
+        canonical_form: Sequence[str] | None = None,
     ) -> ClaimTypeDraft:
         """Draft a ClaimType, reading its accepted definition through get.
+
+        ``canonical_form`` names the ordered transforms every literal value is
+        stored and compared in (ClaimType v8); left out, a successor keeps its
+        predecessor's form, and a new ClaimType states none (v7).
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
@@ -2708,6 +2714,7 @@ class Cruxible:
         # its predecessor means, exactly as the daemon's lowering does.
         evidence_requirement: EvidenceRequirement = "self"
         revision_evidence: RevisionEvidence = "replace"
+        form: tuple[str, ...] | None = None if canonical_form is None else tuple(canonical_form)
         if isinstance(predicate, ClaimTypeRef):
             predecessor = self._get(f"ClaimType:{name}", "proof", None, predicate.coordinate)
             assert predecessor.proof is not None
@@ -2719,8 +2726,10 @@ class Cruxible:
                 accepted = ClaimType.model_validate(envelope)
                 evidence_requirement = effective_evidence_requirement(accepted)
                 revision_evidence = effective_revision_evidence(accepted)
+                if form is None and accepted.artifact_format == "playbill-claim-type-v8":
+                    form = accepted.canonical_form or ()
         definition = ClaimType(
-            artifact_format="playbill-claim-type-v7",
+            artifact_format="playbill-claim-type-v7" if form is None else "playbill-claim-type-v8",
             identity=ArtifactIdentity(kind="ClaimType", name=name),
             predicate=name,
             allowed_subject_kinds=tuple(subject_kinds),
@@ -2745,8 +2754,22 @@ class Cruxible:
             attestation_consequence_policy=attestation_consequence_policy,
             evidence_requirement=evidence_requirement,
             revision_evidence=revision_evidence,
+            canonical_form=cast(Any, form),
         )
         return ClaimTypeDraft(self, definition)
+
+    def builtin_claim_type(self, name: str) -> ClaimTypeDraft:
+        """A ClaimType core ships (``semantic.alias``), as a draft to adopt it.
+
+        New instances start with every builtin; an instance created before one
+        shipped adopts it by proposing its exact envelope.
+
+        Next: ``draft.propose(proposal_name=...)``.
+        """
+
+        from cruxible_client.contracts.builtin_claim_types import builtin_claim_type
+
+        return ClaimTypeDraft(self, builtin_claim_type(name))
 
     def world(self) -> World:
         """Read this instance's accepted vocabulary as typed objects.
@@ -4138,6 +4161,25 @@ class Cruxible:
             access_profile=self._access_profile.model_dump(),
             limit=limit,
             cursor=cursor,
+        )
+
+    def curation_duplicates(
+        self, kind: str, *, limit: int | None = None, cursor: str | None = None
+    ) -> DuplicatesAuditResult:
+        """List possible duplicates of one kind for you to resolve; a pure, bounded read.
+
+        Groups Subjects whose ids or aliases, and values of one predicate, that
+        meet under a broad comparison (casefold, no punctuation, the alias graph)
+        but differ under the declared rules. A truncated page carries
+        ``next_cursor``; pass it back as ``cursor``.
+
+        Next: add a ``semantic.alias`` and retire one Subject, or assert
+        ``semantic.distinct_from``; for values, succeed the ClaimType with a wider
+        ``canonical_form``.
+        """
+
+        return self._client.curation_duplicates(
+            self._instance_id, kind=kind, limit=limit, cursor=cursor
         )
 
     def curation_observe(

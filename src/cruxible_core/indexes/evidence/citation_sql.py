@@ -15,6 +15,7 @@ from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC, Artifact
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     capture_digest,
+    observed_content,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext, BodyProjectionProtocol
@@ -61,9 +62,13 @@ CREATE TABLE captures (
  logical_source_id TEXT,
  source_ref_key TEXT NOT NULL REFERENCES source_references(source_ref_key),
  producer_identity TEXT NOT NULL, observed_at_us INTEGER NOT NULL,
- access_class TEXT NOT NULL CHECK(access_class IN ('public','instance','restricted'))
+ access_class TEXT NOT NULL CHECK(access_class IN ('public','instance','restricted')),
+ observed_content_digest TEXT NOT NULL,
+ observed_content_basis TEXT NOT NULL
+  CHECK(observed_content_basis IN ('workspace_file_bytes','web_fetch_body','commitment'))
 ) STRICT;
 CREATE INDEX captures_by_commitment ON captures(evidence_commitment_digest,capture_digest);
+CREATE INDEX captures_by_observed_content ON captures(observed_content_digest,capture_digest);
 CREATE INDEX captures_by_logical_source ON captures(logical_source_id,capture_digest);
 CREATE INDEX captures_by_source_ref ON captures(source_ref_key,capture_digest);
 CREATE TABLE citation_uses (
@@ -132,8 +137,9 @@ def _insert_capture(
     )
     elapsed = envelope.observed_at.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
     observed_us = (elapsed.days * 86400 + elapsed.seconds) * 1000000 + elapsed.microseconds
+    observed = observed_content(envelope)
     connection.execute(
-        "INSERT OR IGNORE INTO captures VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT OR IGNORE INTO captures VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (
             digest,
             envelope.capture_contract_digest,
@@ -148,6 +154,8 @@ def _insert_capture(
             envelope.producer.qualified,
             observed_us,
             "instance",
+            observed.digest,
+            observed.basis,
         ),
     )
     return envelope

@@ -310,6 +310,13 @@ from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProject
 from cruxible_core.indexes.proposals.proposal_note_projection import (
     ProposalNoteIndex,
 )
+from cruxible_core.indexes.subject_aliases import (
+    SUBJECT_CREATION_COLLISION,
+    SubjectReferenceResolver,
+    candidate_creation_collisions,
+    subject_collision_message,
+    tree_reference_resolver,
+)
 from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
     derive_candidate_cards,
@@ -991,6 +998,7 @@ def _run_corroboration_requirements(
     facts_for: Callable[[AcceptedQueryDefinition], ClaimQueryFactsV1],
     current: AcceptedProjectionCoordinate,
     timestamp: str,
+    resolve_reference: SubjectReferenceResolver | None = None,
 ) -> tuple[
     tuple[ClaimCorroborationResult, ...],
     tuple[tuple[str, str], ...],
@@ -1034,6 +1042,7 @@ def _run_corroboration_requirements(
             coordinate=current,
             evaluation_time=evaluated_at,
             parameters=parameters,
+            resolve_reference=resolve_reference,
         )
         receipt = query_execution_receipt(result)
         observed_count = len(result.rows)
@@ -1121,6 +1130,8 @@ def _claim_admission_evaluations(
     accounts: list[ClaimAdmissionEvaluationAccount] = []
     diagnostics: list[CompilerDiagnostic] = []
     facts_by_predicates: dict[tuple[str, ...], ClaimQueryFactsV1] = {}
+    # Subject references a corroboration query compares resolve at the parent.
+    resolve_reference = tree_reference_resolver(current_tree)
 
     def facts_for(definition: AcceptedQueryDefinition) -> ClaimQueryFactsV1:
         if query_facts_provider is None:
@@ -1242,6 +1253,7 @@ def _claim_admission_evaluations(
                     facts_for=facts_for,
                     current=current,
                     timestamp=timestamp,
+                    resolve_reference=resolve_reference,
                 )
             context = ClaimAdmissionCandidateContext(
                 evaluation_time=timestamp,
@@ -3138,6 +3150,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
     if claim_type.artifact_format in {
         "playbill-claim-type-v6",
         "playbill-claim-type-v7",
+        "playbill-claim-type-v8",
     } and claim_type.lifecycle.state == ("live"):
         unresolved = _claim_type_v6_unresolved(context, claim_type)
         if unresolved:
@@ -4273,6 +4286,30 @@ def _evaluate_scoped_members(
         )
     if tuple(item.path for item in accepted) != scope:
         raise ProposalIntegrityError("evaluator did not cover every scoped member")
+    if not replaying_accepted:
+        # The authoritative Subject-creation boundary (identity-design-1009): a
+        # Subject this change creates must not collide with a live one of its
+        # kind, read from the parent overlaid with this change. Admission and
+        # settlement both evaluate here, so every route is held to it. History
+        # accepted before the rule is not refused again on replay.
+        collisions = candidate_creation_collisions(
+            current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
+        )
+        if collisions:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                tuple(
+                    _diagnostic(
+                        SUBJECT_CREATION_COLLISION,
+                        subject_collision_message(path, others),
+                        path,
+                    )
+                    for path, others in collisions
+                ),
+                rebased,
+                claim_admission_accounts=claim_admission_accounts,
+            )
     if delegated_mandate_digest is not None:
         # A settle mandate replaces candidate approval only when, read from the
         # parent state, it covers every member and its condition holds for each.

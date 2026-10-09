@@ -369,6 +369,7 @@ def condition_issues(
 ) -> tuple[tuple[str, str], ...]:
     """Evaluate the pinned condition query for every target at the parent state."""
 
+    from cruxible_core.indexes.subject_aliases import tree_reference_resolver
     from cruxible_core.query.engine import evaluate_claim_query
 
     assert mandate.condition is not None  # mandate_coverage requires a settle grant
@@ -397,12 +398,16 @@ def condition_issues(
     accepted = AcceptedQueryDefinition(
         path=query_path, query=definition, artifact_digest=condition.query.artifact_digest
     )
+    # A Subject reference the condition compares resolves at the parent exactly
+    # as at every other entry point; the pinned definition is never rewritten.
+    resolve_reference = tree_reference_resolver(current_tree)
     for target in targets:
         result = evaluate_claim_query(
             accepted,
             facts=query_facts,
             coordinate=current,
             evaluation_time=evaluated_at,
+            resolve_reference=resolve_reference,
             parameters={
                 **condition.fixed_parameters,
                 condition.binding_parameter: target.subject_id,

@@ -18,6 +18,7 @@ from cruxible_client.contracts.authoring.models import (
     BlockDetachResult,
     WorkingSelectionObservation,
 )
+from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
@@ -34,6 +35,11 @@ from cruxible_client.contracts.compact_query import (
 )
 from cruxible_client.contracts.declared_blocks import BlockRepinResult
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.duplicates import (
+    DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    DUPLICATES_AUDIT_MAX_LIMIT,
+    DuplicatesAuditResult,
+)
 from cruxible_client.contracts.get_reads import (
     GET_HISTORY_MAX_LIMIT,
     ByteRange,
@@ -635,12 +641,24 @@ def register_tools(
     def cruxible_claim_type_propose(
         instance_id: InstanceId = None,
         *,
-        input: ClaimTypeInputRecord,
+        input: ClaimTypeInputRecord | None = None,
+        builtin: BuiltinClaimTypeName | None = None,
         proposal_name: str,
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> contracts.ClaimTypeInputProposalResult:
-        """Propose one governed ClaimType interface."""
+        """Propose one governed ClaimType interface, or adopt a builtin by name."""
+        if (input is None) == (builtin is None):
+            raise ValueError("pass exactly one of input or builtin")
+        if builtin is not None:
+            return handlers.handle_playbill_adopt_builtin_claim_type(
+                require_instance_id(instance_id),
+                builtin,
+                proposal_name,
+                dry_run=dry_run,
+                at=at,
+            )
+        assert input is not None
         return handlers.handle_playbill_propose_claim_type(
             require_instance_id(instance_id),
             input.model_dump(mode="json"),
@@ -1515,6 +1533,24 @@ def register_tools(
             access_profile=_dump(access_profile),
             limit=limit,
             cursor=cursor,
+        )
+
+    @_tool
+    def cruxible_curation_duplicates(
+        instance_id: InstanceId = None,
+        *,
+        kind: str,
+        limit: Annotated[
+            int, Field(ge=1, le=DUPLICATES_AUDIT_MAX_LIMIT)
+        ] = DUPLICATES_AUDIT_DEFAULT_LIMIT,
+        cursor: str | None = None,
+    ) -> DuplicatesAuditResult:
+        """List possible duplicates of one kind for you to resolve; a pure, bounded read.
+
+        Pass next_cursor back while the result is truncated.
+        """
+        return handlers.handle_playbill_curation_duplicates(
+            require_instance_id(instance_id), kind=kind, limit=limit, cursor=cursor
         )
 
     @_tool

@@ -2088,6 +2088,8 @@ def _fold_terminal_egress(
                     "path": (
                         handles[child.item_key].get("path") if child.item_key in handles else None
                     ),
+                    "unchanged": child.item_key in handles
+                    and handles[child.item_key].get("disposition") == "unchanged",
                 }
             )
             for child in children

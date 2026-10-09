@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
+from cruxible_client.contracts.captures import WEB_FETCH_V3_INTERFACE_DIGEST
 from cruxible_client.contracts.provider_interfaces import (
     ProviderBucketConformanceFixture,
     ProviderBucketConformanceFixtureProof,
@@ -86,9 +87,7 @@ _INTERFACE_DOMAIN: Final = "cruxible.interface.stub.v1"
 WEB_FETCH_INTERFACE_DEFINITION: dict[str, Any] = json.loads(
     files("cruxible_core.providers").joinpath("web-fetch-interface-v3.json").read_bytes()
 )
-WEB_FETCH_INTERFACE_DIGEST = (
-    "sha256:f09e1553b05d72a9e58ed3a260417c41992ccd34b2f2541958c5733723ac2121"
-)
+WEB_FETCH_INTERFACE_DIGEST = WEB_FETCH_V3_INTERFACE_DIGEST
 #: Interface digest -> the definition revision core owns under it.
 _DEFINITIONS: Mapping[str, Mapping[str, Any]] = {
     WEB_FETCH_INTERFACE_V2_DIGEST: WEB_FETCH_INTERFACE_V2_DEFINITION,

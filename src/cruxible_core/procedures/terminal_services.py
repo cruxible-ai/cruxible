@@ -20,6 +20,7 @@ from cruxible_client.contracts.proposal_models import ProposalSettleSubmission
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV2,
+    TerminalEgressChildReceiptV3,
     TerminalEgressError,
     TerminalEgressReceiptV2,
     TerminalEgressReceiptV3,
@@ -145,6 +146,7 @@ class ProposalTerminalAdapter:
         base_tree: Mapping[str, bytes] | None = None,
         changed_paths: tuple[str, ...] | None = None,
         delegation: ProcedureDelegation | None = None,
+        unchanged: Mapping[str, TerminalEgressChildReceiptV3] | None = None,
     ) -> TerminalEgressReceiptV2:
         result = self.submit(
             request=request,
@@ -156,7 +158,9 @@ class ProposalTerminalAdapter:
             changed_paths=changed_paths,
             delegation=delegation,
         )
-        return proposal_terminal_receipt(request, result=result, item_paths=item_paths)
+        return proposal_terminal_receipt(
+            request, result=result, item_paths=item_paths, unchanged=unchanged
+        )
 
     def submit(
         self,
@@ -267,10 +271,16 @@ def proposal_terminal_receipt(
     *,
     result: ProposalResult,
     item_paths: Mapping[str, str] | None,
+    unchanged: Mapping[str, TerminalEgressChildReceiptV3] | None = None,
 ) -> TerminalEgressReceiptV2:
-    """Bind every terminal item to the exact candidate member it lowered into."""
+    """Bind every terminal item to the exact candidate member it lowered into.
 
-    children, candidate = _receipt_children(request, result=result, item_paths=item_paths)
+    An item that changed nothing (``unchanged``) is reported as such instead.
+    """
+
+    children, candidate = _receipt_children(
+        request, result=result, item_paths=item_paths, unchanged=unchanged
+    )
     assert request.operation_key is not None  # request shape
     return TerminalEgressReceiptV3(
         kind=request.kind,
@@ -293,10 +303,13 @@ def settle_terminal_receipt(
     accepted_git_oid: str | None,
     fallback_reason: str | None = None,
     outside_scope_claim_types: tuple[str, ...] = (),
+    unchanged: Mapping[str, TerminalEgressChildReceiptV3] | None = None,
 ) -> TerminalEgressReceiptV4:
     """A settle outcome: the accepted generation, or the ordinary proposal it fell back to."""
 
-    children, candidate = _receipt_children(request, result=result, item_paths=item_paths)
+    children, candidate = _receipt_children(
+        request, result=result, item_paths=item_paths, unchanged=unchanged
+    )
     assert request.operation_key is not None and request.procedure_mandate_digest is not None
     settled = accepted_git_oid is not None
     return TerminalEgressReceiptV4(
@@ -323,7 +336,11 @@ def _receipt_children(
     *,
     result: ProposalResult,
     item_paths: Mapping[str, str] | None,
-) -> tuple[tuple[TerminalEgressChildReceiptV2, ...], CandidateRecordAnyVersion]:
+    unchanged: Mapping[str, TerminalEgressChildReceiptV3] | None = None,
+) -> tuple[
+    tuple[TerminalEgressChildReceiptV2 | TerminalEgressChildReceiptV3, ...],
+    CandidateRecordAnyVersion,
+]:
 
     candidate = result.candidate
     if candidate is None:
@@ -340,8 +357,12 @@ def _receipt_children(
             },
         )
     by_path = {member.path: member for member in candidate.members}
-    children: list[TerminalEgressChildReceiptV2] = []
+    children: list[TerminalEgressChildReceiptV2 | TerminalEgressChildReceiptV3] = []
     for item in request.items:
+        kept = None if unchanged is None else unchanged.get(item.item_key)
+        if kept is not None:
+            children.append(kept)
+            continue
         path = item.item_key if item_paths is None else item_paths.get(item.item_key)
         member = None if path is None else by_path.get(path)
         candidate_artifact_digest = None if member is None else _candidate_member_digest(member)

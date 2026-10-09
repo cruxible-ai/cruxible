@@ -35,6 +35,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.captures import (
     FOREIGN_SOURCE_COORDINATE_TYPE,
     CanonicalDuration,
+    observed_content,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_attestation_store import (
@@ -1590,14 +1591,25 @@ def _detail_value(item: PlaybillNextItemV1, key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _evidence_content(item: PlaybillNextItemV1) -> str | None:
+    """What a new-evidence row's Capture observed, by content.
+
+    Two Captures of the same content -- the same file bytes, the same fetched
+    body -- are one piece of evidence: the row names the observed content when
+    it differs from the Capture's own commitment, and its Capture otherwise.
+    """
+
+    return _detail_value(item, "observed_content_digest") or _detail_value(item, "capture_digest")
+
+
 def _group_key(
     item: PlaybillNextItemV1, *, edited_sources: frozenset[str]
 ) -> tuple[str, ...] | None:
     if item.reason in _BLOCK_REASONS:
         return ("block", item.subject_identity)
     if item.reason in _EVIDENCE_REASON_ORDER:
-        capture = _detail_value(item, "capture_digest")
-        return None if capture is None else ("evidence", item.subject_identity, capture)
+        content = _evidence_content(item)
+        return None if content is None else ("evidence", item.subject_identity, content)
     source_id = _detail_value(item, "source_id")
     if source_id is None:
         return None
@@ -1689,7 +1701,7 @@ def _fold_supporting(
     """
 
     contested = {
-        (item.subject_identity, _detail_value(item, "capture_digest"))
+        (item.subject_identity, _evidence_content(item))
         for item in items
         if item.reason in _EVIDENCE_REASON_ORDER and item.reason != "claim_new_evidence_supporting"
     }
@@ -1708,7 +1720,7 @@ def _fold_supporting(
     for item in sorted(items, key=lambda item: carrier_order.get(item.reason, len(carrier_order))):
         if item.reason != "claim_new_evidence_supporting":
             kept.append(item)
-        elif (item.subject_identity, _detail_value(item, "capture_digest")) in contested:
+        elif (item.subject_identity, _evidence_content(item)) in contested:
             kept.append(item)
         elif item.subject_identity in resolvable:
             folded[item.subject_identity].append(item)
@@ -3129,6 +3141,53 @@ def _attestation_resolving_accounts(
     return artifact_accounts, incomplete
 
 
+class _ObservedContents:
+    """Each Capture's observed-content identity, read once per request.
+
+    An accepted (cited) Capture is answered from the evidence index; any other
+    from its envelope. A Capture that cannot be read keys as itself.
+    """
+
+    def __init__(self, instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate):
+        self._instance = instance
+        self._coordinate = coordinate
+        self._known: dict[str, tuple[str, str]] = {}
+
+    def _read(self, capture_digest: str) -> tuple[str, str]:
+        found = self._known.get(capture_digest)
+        if found is not None:
+            return found
+        row = None
+        with self._instance.bind_accepted_projection(self._coordinate) as projection:
+            row = projection.typed.connection.execute(
+                "SELECT observed_content_digest, evidence_commitment_digest FROM captures "
+                "WHERE capture_digest=?",
+                (capture_digest,),
+            ).fetchone()
+        if row is not None:
+            found = (str(row[0]), str(row[1]))
+        else:
+            try:
+                envelope = parse_capture_envelope(
+                    self._instance.body_store().read(
+                        capture_digest,
+                        access=BodyAccessContext(principal_id="playbill-next", can_read_body=True),
+                    )
+                )
+            except (OSError, CruxibleError, ValueError):
+                found = (capture_digest, capture_digest)
+            else:
+                found = (observed_content(envelope).digest, envelope.commitment.digest)
+        self._known[capture_digest] = found
+        return found
+
+    def digest(self, capture_digest: str) -> str:
+        return self._read(capture_digest)[0]
+
+    def commitment(self, capture_digest: str) -> str:
+        return self._read(capture_digest)[1]
+
+
 def _claim_attestation_door_items(
     instance: PlaybillInstance,
     *,
@@ -3166,6 +3225,7 @@ def _claim_attestation_door_items(
     if not observations:
         return ()
     law_by_artifact = _claim_law_evidence_by_artifact_index(instance, at=coordinate)
+    contents = _ObservedContents(instance, coordinate)
     lineage_cache: dict[str, tuple[tuple[_AttestationLineageArtifact, ...], bool]] = {}
     account_cache: dict[str, tuple[dict[str, tuple[CaptureAdmissionAccountV1, ...]], bool]] = {}
     items: list[PlaybillNextItemV1] = []
@@ -3226,9 +3286,13 @@ def _claim_attestation_door_items(
             and lineage[-1].claim.lifecycle.state == "retired"
         )
         for capture_digest in statement.cited_capture_digests:
+            # A Claim that already admits a Capture of the same observed content
+            # has this evidence: re-observing it asks nothing new.
+            content = contents.digest(capture_digest)
             resolved = terminal or any(
                 any(
-                    account.capture_digest == capture_digest and account.status == "admitted"
+                    account.status == "admitted"
+                    and contents.digest(account.capture_digest) == content
                     for account in accounts
                 )
                 for accounts in accounts_by_artifact.values()
@@ -3269,6 +3333,11 @@ def _claim_attestation_door_items(
                         "attested_at": format_datetime(statement.attested_at),
                         "current_at_append": current_at_append,
                         "lineage_status": lineage_status,
+                        **(
+                            {"observed_content_digest": content}
+                            if content != contents.commitment(capture_digest)
+                            else {}
+                        ),
                     },
                     # Each door example revises the Claim citing this Capture as
                     # evidence: the `set` of its field with capture evidence.

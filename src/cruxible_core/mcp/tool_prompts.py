@@ -302,6 +302,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "need; detection says when it last ran, inactive_detectors which detectors cannot run. "
         "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
     ),
+    "cruxible_curation_duplicates": (
+        "Use to find what may name one thing twice in one kind: Subjects whose ids or aliases, "
+        "and values of one predicate, that meet under a broad comparison (casefold, no "
+        "punctuation, the alias graph) but differ under the declared rules. Resolve a Subject "
+        "group with semantic.alias plus retire, or semantic.distinct_from; a value group with "
+        "a canonical_form succession. A pure, bounded read; pass next_cursor while truncated."
+    ),
     "cruxible_curation_observe": (
         "Beta curation (detection only with an authored curation-detect Trigger). "
         "Record this workspace's declared blocks for block-churn detection, which needs the "

@@ -1065,10 +1065,11 @@ def parse_projection_tree(
                         "identity evidence rules (ClaimType v6) require compiler revision 31"
                     )
                 if (
-                    claim_type.artifact_format == "playbill-claim-type-v7"
+                    claim_type.artifact_format
+                    in {"playbill-claim-type-v7", "playbill-claim-type-v8"}
                     and artifact_kinds not in _REVISION_31_AND_LATER
                 ):
-                    raise ProjectionFormatError("ClaimType v7 requires compiler revision 31")
+                    raise ProjectionFormatError("ClaimType v7 and v8 require compiler revision 31")
                 if (
                     claim_type.artifact_format == "playbill-claim-type-v5"
                     and artifact_kinds

@@ -21,6 +21,13 @@ finalized `failed` with `terminal_egress_recovered`, because it did not
 complete on its own; the receipt on the run state is what says the proposal
 exists and which one it is. Recovery interrupted between its own two appends
 is just another run in the second shape, and the next sweep finishes it.
+
+A terminal whose every item restated what is live proposes nothing, but its
+delivery records re-observations, a durable effect: it journals the same
+`prepared` record (its v1 request and unchanged preparation) first, and
+recovery re-derives and checks the unchanged children, records them
+idempotently (an already-appended record keeps its instant), and resolves it
+with the unchanged receipt -- no proposal.
 """
 
 from __future__ import annotations
@@ -49,7 +56,9 @@ from cruxible_core.exhaust.records import (
     parse_journal_payload,
 )
 from cruxible_core.procedures.egress import (
+    PreparedTerminalEgressV1,
     TerminalEgressError,
+    TerminalEgressRequestV1,
     TerminalEgressRequestV2,
     verify_terminal_egress_receipt,
 )
@@ -360,6 +369,15 @@ def _resolve_prepared(
         for key, value in prepared_payload.items()
         if key not in {"verdict", "request", "prepared", "evidence"}
     }
+    journaled = prepared_payload.get("prepared")
+    if isinstance(journaled, dict) and not journaled.get("target_paths"):
+        return _resolve_unchanged(
+            instance,
+            admission=admission,
+            prepared_payload=prepared_payload,
+            base_payload=base_payload,
+            recorded_at=recorded_at,
+        )
     try:
         request = TerminalEgressRequestV2.model_validate(prepared_payload.get("request"))
     except ValidationError as exc:
@@ -425,6 +443,81 @@ def _resolve_prepared(
                 "preparation.",
                 details={
                     "journaled_target_paths": list(request.target_paths),
+                    "rederived_target_paths": list(prepared.target_paths),
+                },
+            )
+        receipt = sink.deliver_terminal_egress(request=request, admission=admission)
+        verify_terminal_egress_receipt(request, receipt)
+    except TerminalEgressError as exc:
+        code = getattr(exc, "code", "terminal_egress_unverified")
+        return "refused", {
+            **base_payload,
+            "verdict": "refused",
+            "refusal_code": str(code),
+            "recovery": {"detail": str(exc)},
+        }
+    return "delivered", {
+        **base_payload,
+        "verdict": "delivered",
+        "granted_operation": request.granted_operation,
+        "receipt": receipt.model_dump(mode="json"),
+        "recovery": {"resolved_at": format_datetime(recorded_at)},
+    }
+
+
+def _resolve_unchanged(
+    instance: PlaybillInstance,
+    *,
+    admission: ProcedureRunAdmissionV5,
+    prepared_payload: Mapping[str, Any],
+    base_payload: dict[str, CanonicalValue],
+    recorded_at: datetime,
+) -> tuple[RecoveredProposalEgressDisposition, dict[str, CanonicalValue]]:
+    """Finish a terminal whose every item was unchanged, from its journaled preparation.
+
+    The items are re-derived at the admitted base and must reproduce the
+    journaled unchanged children exactly. Delivery then records each
+    re-observation idempotently -- one already appended keeps its original
+    recording instant -- and reports every child unchanged. No proposal is made.
+    """
+
+    try:
+        request = TerminalEgressRequestV1.model_validate(prepared_payload.get("request"))
+        journaled = PreparedTerminalEgressV1.model_validate(prepared_payload.get("prepared"))
+    except ValidationError as exc:
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: run {admission.run_id} journaled an "
+            "invalid unchanged terminal preparation"
+        ) from exc
+    if (
+        request.run_id != admission.run_id
+        or request.admission_binding_digest != admission.admission_binding_digest
+        or request.kind not in {"propose_change_set", "settle_change_set"}
+        or not journaled.changes_nothing
+    ):
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: run {admission.run_id} journaled an "
+            "unchanged preparation for another run"
+        )
+    raw_evidence = prepared_payload.get("evidence")
+    evidence = (
+        {str(key): str(value) for key, value in raw_evidence.items()}
+        if isinstance(raw_evidence, dict)
+        else {}
+    )
+    # Nothing is proposed, so no mandate is bound.
+    sink = ProposalTerminalEgressSink(instance=instance, accepted_mandates={})
+    try:
+        prepared = sink.prepare_terminal_egress(
+            request=request, admission=admission, evidence=evidence
+        )
+        if prepared != journaled:
+            raise ProposalDeliveryRefused(
+                "effectful_operation_payload_mismatch",
+                "Recovery re-derived other unchanged children than the journaled preparation.",
+                details={
+                    "journaled_unchanged": [item.item_key for item in journaled.unchanged],
+                    "rederived_unchanged": [item.item_key for item in prepared.unchanged],
                     "rederived_target_paths": list(prepared.target_paths),
                 },
             )

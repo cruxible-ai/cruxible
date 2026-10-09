@@ -25,6 +25,7 @@ from cruxible_client.contracts.artifacts import (
     parse_artifact_identity,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical_forms import CanonicalTransform
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     foreign_source_capture_contract,
@@ -32,6 +33,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
+    V7_AND_LATER_FORMATS,
     ClaimAttestationConsequencePolicy,
     ClaimEvidenceFreshness,
     ClaimFreshnessDuration,
@@ -88,6 +90,7 @@ _V7_INPUT_FIELDS = (
     "default_role",
     "evidence_requirement",
     "revision_evidence",
+    "canonical_form",
 )
 
 
@@ -172,6 +175,11 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     #: Omitted: kept from the predecessor (``accumulate`` before v7); a new
     #: ClaimType takes ``replace``. Never ``null``.
     revision_evidence: RevisionEvidence | None = None
+    #: The ordered transforms every literal value is stored and compared in
+    #: (ClaimType v8; ``contracts.canonical_forms``). Stating it lowers to v8.
+    #: Omitted: kept from the predecessor (none before v8). ``null`` or ``[]``:
+    #: no transform.
+    canonical_form: tuple[CanonicalTransform, ...] | None = None
     anticipated_source_ids: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -395,7 +403,7 @@ def _v7_fields(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> di
 
     v7 = (
         predecessor
-        if predecessor is not None and predecessor.artifact_format == "playbill-claim-type-v7"
+        if predecessor is not None and predecessor.artifact_format in V7_AND_LATER_FORMATS
         else None
     )
     if value.states("description"):
@@ -447,6 +455,29 @@ def _v7_fields(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> di
     }
 
 
+def _canonical_form(
+    value: ClaimTypeInputRecord, predecessor: ClaimType | None
+) -> tuple[CanonicalTransform, ...] | None:
+    """The canonical form a lowered ClaimType states, or ``None`` to stay v7.
+
+    Stating ``canonical_form`` lowers to v8. Left out, a v8 predecessor's form is
+    kept (merge-patch, like the v7 fields), so an unrelated edit never changes
+    what the predicate's values compare as; over anything else it stays v7. A v8
+    ClaimType never lowers back to v7: ``null`` over one states no transform.
+    """
+
+    inherited = (
+        predecessor.canonical_form
+        if predecessor is not None and predecessor.artifact_format == "playbill-claim-type-v8"
+        else None
+    )
+    if value.states("canonical_form"):
+        if value.canonical_form is None:
+            return None if inherited is None else ()
+        return value.canonical_form
+    return inherited
+
+
 def lower_claim_type_input(
     value: ClaimTypeInputRecord,
     *,
@@ -467,6 +498,10 @@ def lower_claim_type_input(
     for field in _V7_INPUT_FIELDS:
         payload.pop(field, None)
     payload["artifact_format"] = "playbill-claim-type-v7"
+    canonical_form = _canonical_form(value, predecessor)
+    if canonical_form is not None:
+        payload["artifact_format"] = "playbill-claim-type-v8"
+        payload["canonical_form"] = list(canonical_form)
     # Every rule names its contracts by identity. A rule naming an exact digest
     # no accepted contract version carries has no identity to follow, so it is
     # refused rather than authored as a v5 exact-digest rule.

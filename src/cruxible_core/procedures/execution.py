@@ -4472,10 +4472,14 @@ class ProcedureExecutor:
                 observed=elapsed_us,
                 node_id=node.node_id,
             )
-        effectful = isinstance(request, TerminalEgressRequestV2) and request.kind in {
-            "propose_change_set",
-            "settle_change_set",
-        }
+        # A proposal or settle terminal is journaled around its sink: a durable
+        # `prepared` record before the sink is called, a resolving record after,
+        # so recovery can finish it. That holds for one whose every item is
+        # unchanged too: its delivery records re-observations, a durable effect.
+        effectful = (
+            isinstance(request, TerminalEgressRequestV2)
+            and request.kind in {"propose_change_set", "settle_change_set"}
+        ) or (prepared is not None and prepared.changes_nothing)
         if isinstance(request, TerminalEgressRequestV2) and effectful:
             payload = {
                 **payload,
@@ -4483,6 +4487,7 @@ class ProcedureExecutor:
                 "target_paths": list(request.target_paths),
                 "procedure_mandate_digest": request.procedure_mandate_digest,
             }
+        if effectful:
             self._append_event(
                 admission,
                 records,
@@ -4664,7 +4669,8 @@ class ProcedureExecutor:
         lowering actually changed and the exact live mandate it bound, and the
         v2 request is built from THOSE, so the mandate law sees what will be
         proposed rather than what the template declared. A settle terminal
-        `capped_by` a term asks for propose authority only.
+        `capped_by` a term asks for propose authority only. One whose every item
+        restated what is already live keeps its v1 request: nothing is proposed.
         """
 
         bound_pin: ArtifactPin | None = None
@@ -4722,6 +4728,10 @@ class ProcedureExecutor:
                 admission=admission,
                 manifests=manifests or {},
             )
+            if prepared.changes_nothing:
+                # Every item restated what is already live: there is nothing to
+                # propose and no authority to exercise, so no effectful request.
+                return request, prepared
             return (
                 build_terminal_egress_request_v2(
                     request,

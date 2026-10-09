@@ -1214,6 +1214,7 @@ section nothing answers "what touches this package" from the object side.
 ~~~text
 cruxible claim-type propose --template
 cruxible claim-type propose --input FILE|- --name NAME [--dry-run|--commit] [--at OID] [--json]
+cruxible claim-type propose --builtin semantic.alias [--name NAME] [--dry-run|--commit] [--json]
 cruxible claim-type migrate REQUEST_FILE|- [--json]
 cruxible claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate]
   [--dry-run|--commit] [--at OID] [--json]
@@ -1246,6 +1247,47 @@ preflight deliver the same typed lint; advisories never enter candidate identity
 the approval frontier, or its certificate. `migrate` atomically succeeds the
 ClaimType and disposes every dependent the request names; it never authors
 retirement decisions from diagnostics.
+
+Cruxible ships builtin ClaimTypes, and a new instance starts with every one of them.
+`semantic.alias` states another name a Subject is known by (any kind; many
+values; stored in the canonical form `nfc, casefold, collapse_whitespace,
+trim`). An instance created before a builtin shipped adopts it with
+`propose --builtin NAME`, which proposes its exact envelope; MCP's
+`cruxible_claim_type_propose` takes `builtin` in place of `input`, and the SDK
+offers `Cruxible.builtin_claim_type(name).propose(...)`. Add an alias with
+`cruxible add KIND/ID semantic.alias other-name --because TEXT`.
+
+These Subject references resolve through aliases: a write's subject, a
+Subject-valued value or `expect`, a Claim member's subject or object (a
+Procedure item's included, before the live Claim it restates is looked up), a
+compact query's `subject_id` or Subject-valued filter, a named query's entry or
+`subject_reference` parameter, a `subject_reference` literal a QueryDefinition
+compares (in a named query, a settle mandate's condition or a corroboration
+requirement; the definition's stored bytes and digest are unchanged), a
+ProcedureMandate's subject scope and fixed Subject parameters, and `inbox link
+--subject`. Other text that happens to look like a reference is not resolved.
+A condition or corroboration query resolves at the parent state it reads.
+A reference `kind/id` resolves, in order, to the live Subject at exactly that
+path; else to the one live Subject of that kind whose alias, under the
+discovery normalizer, equals `id` (an alias naming several refuses
+`alias_ambiguous` with each candidate); else to the retired Subject at exactly
+that path. None leaves the entry point's own rule in force (a write adds the
+Subject, a read refuses the unknown reference). So merging Subject A into B --
+alias B with A's id, then retire A -- sends every later reference to A to B.
+
+A change may not create a Subject that collides with a live Subject of its kind:
+one whose id, canonical token or alias equals the new id's canonical token (the
+discovery normalizer), whether accepted already or added by the same change (a
+new alias, another new Subject). Retirements in the same change count: a Subject
+or alias the change retires collides with nothing. The refusal is part of
+candidate evaluation, so every route is held to it -- authoring and its Subject
+drafts, write verbs, Procedure items and raw proposals alike -- at admission and
+again at settlement against the parent it lands on
+(`cruxible.subject.creation_collision`); authoring and writes also refuse it
+early (`cruxible.authoring.subject_collision`, `cruxible.write.subject_collision`).
+Name the existing Subject, add an alias to it, or assert `semantic.distinct_from`
+between the two in the same change, which exempts exactly that pair. History
+accepted before the rule is not refused again on recovery replay.
 
 `migrate` is the operator form of a ClaimType succession: one vocabulary change,
 built from a request file, with nothing else in the generation. The agent form is
@@ -1282,7 +1324,62 @@ ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
 `revision_evidence` rule (`replace`: a revision that changes its statement keeps
 exactly the evidence it cites; `accumulate`: it keeps everything its
 predecessors cited). A revision that states the same thing again keeps its
-evidence either way, and a carry never loses backing. `propose --input` lowers
+evidence either way, and a carry never loses backing. The same statement,
+citation role and origin, under the same verified Capture contract and observed
+content (the same file bytes, the same fetched body, the same words), changes no
+Claim; its admissible re-observation is recorded separately. No revision, no
+citation growth, no proposal. A new association on already-cited content
+(another role, origin or Capture contract) is kept as a revision. On new
+content the Claim's evidence is refreshed by revising it. A Procedure item that
+names no Claim to revise but restates a live one (its Subjects resolved through
+aliases first) targets that Claim's lineage, never a second Claim of the same
+statement: on new content it revises it, on content it already cites the item
+changes nothing and its receipt child says so
+(`playbill-terminal-egress-child-receipt-v3`: the Claim's path, its current
+artifact digest, the re-observing Capture and when it observed the content;
+`unchanged` on the run's terminal child). A terminal whose every item is
+unchanged completes with no proposal and no authority exercised: its receipt
+(`playbill-terminal-egress-unchanged-receipt-v1`) reports every child unchanged.
+It still records re-observations, a durable effect, so it journals its
+`prepared` intent before delivery like any proposal terminal: a run that dies
+around delivery is finished by startup recovery, which re-derives and checks
+the unchanged children, records them idempotently (one already recorded keeps
+its instant), emits the unchanged receipt and finalizes the attempt.
+
+A no-op re-observation still counts for freshness. It is recorded on the
+evidence plane as an append-only re-observation -- its Claim, its Capture, the
+contract, the observed content and when it observed it -- when, at the current
+head read under the record's own lock, the Claim is live, the restating Capture
+is daemon-admitted and verifies there, it observed exactly the content of a
+Capture the Claim cites under the same contract, it is not that very Capture,
+and it was not observed after the record is made. The record is not a Claim
+revision and moves no generation; a record already made stays readable whatever
+later happens to its Claim. Under a ClaimType's `evidence_freshness.stale_after`,
+a cited Capture expires at the latest `observed_at` among it and its recorded
+re-observations of the same contract and content, plus `stale_after`. Only
+re-observations recorded by the evaluation instant count, so a verdict evaluated
+at an earlier instant reproduces byte for byte and its committed expirations
+still verify. Admission checks the Capture's observation against the daemon
+clock's actual instant, in a preview and a commit alike. That clock is the
+daemon's live wall clock, owned by the store: every path (a direct write, a
+manual run, explicit or armed dispatch, each nested level, recovery) records
+through it, never through a run's frozen evaluation clock. The durable
+recording stamp is that instant raised to the previous record's when the clock
+has gone back:
+that one value is the journal record's `recorded_at`, so records append in
+recorded order by construction, a rebuild reproduces the projection exactly,
+and a journal out of recorded order is refused as corrupt
+(`cruxible.claim.reobservation_journal_corrupt`). The latest applicable record of a cited contract and
+content is a step function of the recording instant: freshness reads it with
+one seek at the evaluation instant, however long the Claim's re-observation
+history (kept in full for audit) or however many observations were recorded
+late. A re-observation
+that set an expiry is named in the verdict's `freshness_expirations` entry
+(`reobserved_by`, `reobserved_at`). Anything else is refused
+(`cruxible.claim.reobservation_refused`) and refreshes nothing; a Procedure's
+unchanged item whose Claim was retired after the run's base keeps its receipt
+and records nothing. Re-observing on a schedule (say hourly, under a longer
+`stale_after`) keeps a Claim current without revising it. `propose --input` lowers
 to v7: a new ClaimType takes `self` and `replace`. An edit follows JSON merge-patch
 against its predecessor: a v7 field left out keeps the predecessor's value (over
 a ClaimType before v7: no descriptions, no default role, `self` and
@@ -1295,6 +1392,34 @@ live ClaimTypes (default: all of them) to v7 with `evidence_requirement` kept at
 `self` and `--revision-evidence` (default `replace`), carrying their Claims with
 their backing intact. It lists each ClaimType's revision-evidence change;
 `--dry-run` evaluates the change set and proposes nothing.
+
+ClaimType v8 is v7 plus a `canonical_form`: an ordered list of named transforms
+every literal value of the predicate is stored and compared in. The closed set:
+`nfc` and `nfkc` (Unicode normalization; name at most one), `trim` (drop leading
+and trailing whitespace), `collapse_whitespace` (every whitespace run becomes
+one space), `casefold` and `upper` (Unicode case folding or uppercasing; name at
+most one) and `strip_punctuation` (drop every Unicode punctuation character).
+`casefold`, `upper` and `strip_punctuation` change how a value reads, not only
+how it is spelled. The canonical value is the fixed point of applying the list
+in order (at most 8 rounds; a form that has not settled by then refuses), and
+every string inside a JSON array or object value is canonicalized the same way
+(object keys are not). Every write path stores the canonical value (the raw spelling
+stays in the evidence the Claim cites), and the Claim law refuses a stored
+literal that is not canonical. Enum membership is checked after
+canonicalization, so every enum member must already be canonical. A query,
+`expect`, an enum check or a QueryDefinition comparison canonicalizes its
+operand by the same predicate's form first. `propose --input` lowers to v8 when
+the input names `canonical_form`; an edit that leaves it out keeps the
+predecessor's form, and `null` over a v8 ClaimType states no transform. Changing
+the form is a governed ClaimType succession: a dependent Claim whose stored
+value is not canonical under the new form is re-authored, not carried.
+Canonical forms apply where values become Claims. A Procedure's propose and
+settle terminals put each item's literal in its ClaimType's form before taking
+the item's identity, so two spellings of one value are one statement and a
+restatement of a live Claim finds it. Inside a Procedure -- shaping, joining,
+filtering and deduplicating items -- values compare exactly as produced, since
+those items name no predicate; case-insensitive deduplication there belongs in
+a provider step.
 
 A CaptureContract successor must be compatible with its predecessor: it may
 widen the sources, modes, identities and evidence kinds it accepts and raise its
@@ -2587,6 +2712,7 @@ the row.
 
 ~~~text
 cruxible curation list [--access-profile FILE] [--limit N] [--cursor CURSOR] [--json]
+cruxible curation duplicates --kind KIND [--limit N] [--cursor CURSOR] [--json]
 cruxible curation observe [--workspace-root PATH] [--dry-run|--commit] [--at DIGEST] [--json]
 cruxible curation overrule ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT [--attribution-ref REF]...
@@ -2625,6 +2751,28 @@ The queue is paged (default 25 items, at most 200); a cut page has
 `truncated: true` and a `next_cursor` for `--cursor`, which continues only while
 accepted state and the queue itself are unchanged; otherwise it is refused as
 `cruxible.list.cursor_stale`.
+
+`curation duplicates` is the post-hoc duplicates audit: computed on demand,
+never on the write path and never by detection. For one Subject kind it lists
+what is equal under a broad comparison (NFKC, casefold, punctuation stripped,
+whitespace collapsed and trimmed, plus the alias graph) but distinct under the
+declared rules: Subjects whose ids or aliases meet (`subjects` groups), and live
+values of one literal predicate that meet but differ under its canonical form
+(`values` groups, naming the form). Cruxible proposes no fix; each group names its
+resolutions. Merge two Subjects by adding a `semantic.alias` to the one that
+stays and retiring the other; keep them apart by asserting
+`semantic.distinct_from` between them: no group ever holds a pair asserted
+distinct (a key's Subjects are taken in path order, and each joins the first
+group holding no Subject it is asserted distinct from), though each may still
+appear in a group with a third Subject. Unify values by a governed ClaimType
+succession declaring a wider `canonical_form` (dependents re-authored). The
+audit reads at most 50,000 rows in all, one budget shared by its reads --
+Subjects, aliases, `distinct_from` relations, values -- each asking SQL for no
+more than what remains; when the budget runs out it says so
+(`budget_exhausted`) and the groups cover only what was read. `scanned` counts
+the rows each read returned. It pages like the
+queue (default 25 groups, at most 200), recomputing within the same bound for
+each page.
 
 The rulings append attributed operational events; they do not create governed
 proposals or mutate accepted knowledge. `overrule` closes an item permanently:
@@ -2717,8 +2865,11 @@ before and after, its Claim and its verdict; a verdict other than `supported`
 prints a warning with its repair.
 
 `add` puts one more VALUE in a many-valued FIELD, beside the values already
-there; a value already live is answered as done, and `--expect-absent` refuses
-it instead (`cruxible.write.value_already_present`). `retire` ends one live
+there. A value already live in the same role restates that Claim: on evidence
+of content it already cites the same way it is answered as done (already live);
+on new evidence (other `--because` words, another Capture) that Claim's evidence
+is refreshed, never a second Claim written; `--expect-absent` refuses it
+instead (`cruxible.write.value_already_present`). `retire` ends one live
 Claim, named by ID or by SUBJECT FIELD when that field holds one value; the
 Claims that depend on it retire with it; `--expect` compares the field's values
 as on `set`. `write` applies a
@@ -3197,14 +3348,24 @@ Cruxible resurfaces; it does not judge. A receipt never refuses a proposal, neve
 changes settlement, and is never interpreted: reading it is the reviewer's or
 the agent's job. Evidence is compared by content, never by the Capture's own
 digest, which also binds the run, the observation time and the contract: each
-cited Capture contributes its evidence commitment digest (the digest of the
-material it committed), and a Capture read through the core-owned
-`workspace.file` interface contributes the file's bytes digest, which the
-daemon verified against its own source-read receipt. A re-run that reads
-identical bytes cites the same evidence; different bytes are a new question and
-match nothing. A third-party Provider whose output embeds run-bound values (a
-run ID, a timestamp, a request digest) commits different material on every run,
-so its Captures do not match across runs. A withdrawal is not a refusal. The
+cited Capture contributes its observed content (`observed_content_digest` on
+its envelope): for a `workspace.file` read, the file's bytes digest, which the
+daemon verified against its own source-read receipt; for a `web.fetch` v3 fetch,
+the digest of the body the origin sent, which the daemon recomputes from the
+retained body and refuses (`cruxible.capture.observed_content_mismatch`) when
+the Provider's stated digest differs; for any other Capture, its evidence
+commitment digest (the digest of the material it committed). A Capture written
+before envelopes recorded observed content keeps the identity it always had (a
+`workspace.file` read: the verified file bytes digest in its material), so every
+refusal key already computed still matches. A re-run that
+reads identical bytes cites the same evidence; different bytes are a new
+question and match nothing. A third-party Provider whose output embeds
+run-bound values (a run ID, a timestamp, a request digest) commits different
+material on every run, so its Captures do not match across runs. The same
+observed content is one piece of evidence everywhere else too: coverage groups
+its citations in one row, the floor counts it once, `next` reports new evidence
+of it once and treats a Claim that already admits it as having it, and the
+freshness-drift detector sees a change only when the content changed. A withdrawal is not a refusal. The
 lookup is a keyed index the daemon keeps current as proposals are rejected
 (closes of one proposal are serialized, and the index keeps the close that
 won) and, for retirements, in post: each read indexes at most one bounded page

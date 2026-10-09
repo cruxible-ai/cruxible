@@ -166,8 +166,11 @@ def test_add_puts_one_more_value_in_a_many_valued_field(served: _ServiceClient) 
     (change,) = request.changes
     assert change.op == "add" and not change.expect_absent  # type: ignore[union-attr]
 
-    again = _run("add", WI1, "governs", f"{KIND}/wi-2", "--because", "Again.")
+    again = _run("add", WI1, "governs", f"{KIND}/wi-2", "--because", "Linked.")
     assert again.exit_code == 0 and "already live" in again.output
+    # Other words are new evidence: the live Claim's evidence is refreshed.
+    refreshed = _run("add", WI1, "governs", f"{KIND}/wi-2", "--because", "Again.")
+    assert refreshed.exit_code == 0 and "already live" not in refreshed.output
     absent = _run("add", WI1, "governs", f"{KIND}/wi-2", "--because", "Again.", "--expect-absent")
     assert absent.exit_code == 1
     assert "cruxible.write.value_already_present (change 0)" in absent.output
@@ -246,7 +249,8 @@ def test_write_applies_a_file_of_changes_and_prints_its_schema(
     result = _run("write", str(changes), "--because", "Linked.")
     assert result.exit_code == 0, result.output
     assert result.output.count("add project.work_item/wi-1 governs") == 2
-    again = _run("write", str(changes), "--because", "Linked again.")
+    # The same words again restate both values on the same evidence: no-ops.
+    again = _run("write", str(changes), "--because", "Linked.")
     assert again.exit_code == 0, again.output
     assert again.output.count("already live") == 2
 

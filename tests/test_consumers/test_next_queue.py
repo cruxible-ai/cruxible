@@ -40,6 +40,7 @@ from tests.test_integration.test_next_closed_loop import (
     _foreign_world,
     _freshness_world,
     _refresh_claim,
+    _revise_claim,
 )
 from tests.test_integration.test_next_holds import _all_claims, _attest, _capture
 from tests.test_query.test_dependency_impact import (
@@ -352,7 +353,7 @@ def test_accepted_movement_recomputes_and_serving_guards_fall_back(tmp_path: Pat
     instance, owner = _freshness_world(tmp_path)
     before = instance.accepted_coordinate()
     _drain(instance)
-    _refresh_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
+    _revise_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
     assert _stored(instance, EVALUATION_TIME) is None
     assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "lagging"
     _drain(instance)
@@ -459,7 +460,7 @@ def test_a_failed_target_is_not_retried_until_an_input_changes(
     assert _consumer_stalled_items(WORKER.health(instance, now=EVALUATION_TIME)) == (row,)
     assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
     if changed == "accepted":
-        _refresh_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
+        _revise_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
     elif changed == "door":
         _attest(instance, owner, _current_claim(instance), tmp_path, at=EVALUATION_TIME)
     else:
@@ -498,12 +499,26 @@ def test_request_observations_merge_with_stored_rows_exactly(tmp_path: Path) -> 
     assert served.model_dump_json() == live.model_dump_json()
 
 
+def test_a_recorded_reobservation_withdraws_the_stored_queue(tmp_path: Path) -> None:
+    """A re-observation moves freshness without moving accepted state or bodies."""
+
+    instance, owner = _freshness_world(tmp_path)
+    _drain(instance)
+    assert _stored(instance, EVALUATION_TIME) is not None
+    before = instance.accepted_coordinate()
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:09.000000Z")
+    assert instance.accepted_coordinate() == before
+    assert _stored(instance, EVALUATION_TIME) is None
+    _drain(instance)
+    assert _stored(instance, EVALUATION_TIME) is not None
+
+
 def test_a_queue_behind_head_is_never_used_by_a_read(tmp_path: Path) -> None:
     from cruxible_core.service.discovery import next as next_module
 
     instance, owner = _freshness_world(tmp_path)
     _drain(instance)
-    _refresh_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
+    _revise_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
     request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
     with patch.object(next_module, "_claim_rows", wraps=next_module._claim_rows) as live:
         service_playbill_next(instance, request=request)

@@ -20,7 +20,7 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import capture_contract_digest, parse_capture_envelope
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
-from cruxible_client.contracts.claims import parse_claim
+from cruxible_client.contracts.claims import claim_artifact_digest, parse_claim
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
@@ -1937,3 +1937,526 @@ def test_a_rerun_carries_the_earlier_retirement_exactly_on_identical_bytes(
     assert second.run_id is not None
     again = service_get_playbill_procedure_run(instance, run_id=second.run_id)
     assert again.terminal_egress[0].children[0].prior_refusals == (receipt,)
+
+
+# --- re-observation: a terminal restating what is live (identity-design-1009) --
+
+
+def _accept_first_run(instance, owner, root, line):  # type: ignore[no-untyped-def]
+    first = run_line(instance, root, line)
+    assert first.status == "succeeded", first.terminal
+    (egress,) = first.terminal_egress
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    )
+    return egress
+
+
+def test_a_terminal_that_restates_only_live_claims_completes_with_no_proposal(
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = _accept_first_run(instance, owner, root, line)
+    (first_child,) = first.children
+    head = instance.accepted_coordinate()
+    tree = instance.tree_at(head.git_oid)
+    live = parse_claim(tree[first_child.path], path=first_child.path)
+    refs = _proposal_refs(instance)
+
+    # The same file read again an hour later: the same content, a new Capture.
+    second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+
+    assert second.status == "succeeded", second.terminal
+    (egress,) = second.terminal_egress
+    assert egress.verdict == "delivered"
+    assert egress.proposal_id is None and egress.operation_key is None
+    assert egress.target_paths == ()
+    (child,) = egress.children
+    assert child.unchanged
+    assert child.path == first_child.path
+    assert child.egress_digest == claim_artifact_digest(live).tagged
+    # No proposal, no second Claim, no new generation.
+    assert _proposal_refs(instance) == refs
+    assert instance.accepted_coordinate() == head
+    (observation,) = second.source_observations
+    assert observation.capture_digest not in live.backing.capture_digests
+    # The newer Capture is recorded as a re-observation of the cited content.
+    (record,) = ClaimReobservationStore(instance).history(live.identity.name)
+    assert record.capture_digest == observation.capture_digest
+    receipt = _journaled_receipt(instance, second.run_id)
+    assert receipt["tag"] == "playbill-terminal-egress-unchanged-receipt-v1"
+    (unchanged,) = receipt["children"]
+    assert unchanged["tag"] == "playbill-terminal-egress-child-receipt-v3"
+    assert unchanged["reobserving_capture_digest"] == observation.capture_digest
+    assert unchanged["reobserved_at"] is not None
+
+
+def test_a_mixed_terminal_proposes_the_change_and_reports_the_unchanged_item(
+    tmp_path: Path,
+) -> None:
+    from tests.core_support._published_world import retire_claim
+
+    second_template = item_template(
+        statement={
+            **item_template()["statement"],  # type: ignore[dict-item]
+            "qualifier": "reported",
+        },
+        rationale="The reported severity, qualified.",
+    )
+    instance, owner, root, line, _procedure = proposal_world(
+        tmp_path, templates=(item_template(), second_template)
+    )
+    first = _accept_first_run(instance, owner, root, line)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    claims = {
+        parse_claim(tree[child.path], path=child.path).statement.qualifier: child.path
+        for child in first.children
+    }
+    retired = parse_claim(tree[claims["reported"]], path=claims["reported"])
+    retire_claim(instance, owner, retired.identity.name)
+
+    second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+
+    assert second.status == "succeeded", second.terminal
+    (egress,) = second.terminal_egress
+    assert egress.proposal_id is not None
+    kept, written = sorted(egress.children, key=lambda child: child.unchanged, reverse=True)
+    assert kept.unchanged and kept.path == claims[None]
+    assert kept.path not in egress.target_paths
+    assert not written.unchanged and written.path in egress.target_paths
+    assert written.path != claims["reported"]
+
+
+def _journaled_receipt(instance: PlaybillInstance, run_id: str | None) -> dict[str, Any]:
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.service.procedures.procedure_runs import _records_for_run
+
+    assert run_id is not None
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    for stored in _records_for_run(instance, run_id):
+        payload = parse_journal_payload(
+            instance.body_store().read(stored.record.payload_digest, access=access)
+        )
+        if (
+            stored.record.event_kind == "terminal_egress"
+            and isinstance(payload, dict)
+            and payload.get("verdict") == "delivered"
+        ):
+            return payload["receipt"]
+    raise AssertionError("no delivered terminal_egress record")
+
+
+def _canonical_claim_type(form: tuple[str, ...]) -> ClaimType:
+    """The world's ClaimType as v8, declaring ``form``."""
+
+    from cruxible_client.contracts.artifacts import ArtifactRef
+    from cruxible_client.contracts.policies import (
+        CAPTURE_CONTRACT_REF_ROLE,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
+    )
+
+    return ClaimType.model_validate(
+        {
+            "artifact_format": "playbill-claim-type-v8",
+            "identity": ArtifactIdentity(kind="ClaimType", name=PREDICATE),
+            "predicate": PREDICATE,
+            "allowed_subject_kinds": (SUBJECT_KIND,),
+            "object_kind": "literal",
+            "literal_schema": {"type": "string"},
+            "cardinality": "one",
+            "permitted_roles": ("observation",),
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="workspace-record",
+                        claim_roles=("observation",),
+                        capture_contracts=(
+                            ArtifactRef(
+                                role=CAPTURE_CONTRACT_REF_ROLE,
+                                target=capture_contract().identity,
+                            ),
+                        ),
+                        evidence_kinds=("database_record",),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            ),
+            "admission_policy": ClaimAdmissionPolicy(),
+            "resolution_policy": ClaimResolutionPolicy(
+                cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
+            ),
+            "evidence_requirement": "self",
+            "revision_evidence": "replace",
+            "canonical_form": form,
+        }
+    )
+
+
+def test_a_terminal_canonicalizes_each_item_before_taking_its_identity(tmp_path: Path) -> None:
+    """Canonical forms apply where values become Claims: at the terminal.
+
+    The advisory later spells the same severity " High ". Under the predicate's
+    form it is the live Claim's statement, so the terminal finds that Claim and
+    revises it on the new content instead of proposing a second Claim.
+    """
+
+    instance, owner, root, line, _procedure = proposal_world(
+        tmp_path, claim_type=_canonical_claim_type(("trim", "upper"))
+    )
+    first = _accept_first_run(instance, owner, root, line)
+    (first_child,) = first.children
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    live = parse_claim(tree[first_child.path], path=first_child.path)
+    assert live.statement.object.model_dump(mode="json")["value"] == "HIGH"
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        fixtures.canonical_bytes({"advisory_id": "OSV-2026-0001", "severity": " High "})
+    )
+
+    second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+
+    assert second.status == "succeeded", second.terminal
+    (egress,) = second.terminal_egress
+    (child,) = egress.children
+    assert not child.unchanged
+    assert child.path == first_child.path
+    assert egress.target_paths == (first_child.path,)
+
+
+def test_an_unchanged_terminal_does_not_record_for_a_claim_retired_after_prepare(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-011: the receipt keeps the admitted base; no record is written."""
+
+    from pathlib import PurePosixPath
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+    from tests.core_support._published_world import retire_claim
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = _accept_first_run(instance, owner, root, line)
+    (first_child,) = first.children
+    claim_id = PurePosixPath(first_child.path).stem
+    original = ProposalTerminalEgressSink.prepare_terminal_egress
+
+    def retire_after_prepare(self, **kwargs):  # type: ignore[no-untyped-def]
+        prepared = original(self, **kwargs)
+        assert prepared.changes_nothing
+        retire_claim(instance, owner, claim_id)
+        return prepared
+
+    monkeypatch.setattr(ProposalTerminalEgressSink, "prepare_terminal_egress", retire_after_prepare)
+    second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+
+    assert second.status == "succeeded", second.terminal
+    (egress,) = second.terminal_egress
+    (child,) = egress.children
+    assert child.unchanged and child.path == first_child.path
+    assert ClaimReobservationStore(instance).history(claim_id) == ()
+
+
+def test_an_unchanged_terminal_is_accounted_as_delivered_and_finalized(tmp_path: Path) -> None:
+    """Reviewer accounting probe: tallies, finalization and measurement grains."""
+
+    from types import SimpleNamespace
+
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.procedures.results import ProcedureTerminalEgress
+    from cruxible_core.exhaust.line_track_records import _egress_reading, _tally
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.service.procedures.measurements import _grain_occurred
+    from cruxible_core.service.procedures.procedure_runs import (
+        _records_for_run,
+        load_playbill_procedure_run_grain,
+    )
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    _accept_first_run(instance, owner, root, line)
+    run = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    assert run.status == "succeeded"
+    assert run.run_id is not None
+    (terminal,) = run.terminal_egress
+    assert all(child.unchanged for child in terminal.children)
+    changed = terminal.model_dump(mode="json")
+    changed["children"][0]["unchanged"] = False
+    with pytest.raises(ValidationError, match="delivered proposal"):
+        ProcedureTerminalEgress.model_validate(changed)
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    readings = []
+    kinds = []
+    for stored in _records_for_run(instance, run.run_id):
+        record = stored.record
+        kinds.append(record.event_kind)
+        if record.event_kind == "terminal_egress":
+            payload = parse_journal_payload(
+                instance.body_store().read(record.payload_digest, access=access)
+            )
+            if payload.get("verdict") == "prepared":
+                continue  # the intent; the track record reads the outcome
+            readings.append(
+                _egress_reading(
+                    SimpleNamespace(
+                        payload=payload,
+                        run_id=record.run_id,
+                        occurrence_id=record.occurrence_id,
+                        attempt=record.attempt,
+                        sequence=record.sequence,
+                    )
+                )
+            )
+    assert _tally(tuple(readings)).delivered == 1
+    assert "attempt_finalized" in kinds, kinds
+    grain = load_playbill_procedure_run_grain(instance, run_id=run.run_id)
+    assert _grain_occurred(SimpleNamespace(subject_grain="procedure_unit"), grain) == (True, None)
+    assert _grain_occurred(SimpleNamespace(subject_grain="node", node_id="propose"), grain) == (
+        True,
+        None,
+    )
+
+
+def test_an_unchanged_terminal_records_at_the_live_daemon_clock(tmp_path: Path) -> None:
+    """Review F-021: the frozen evaluation clock never stamps a re-observation."""
+
+    import inspect
+    from pathlib import PurePosixPath
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+
+    # No caller can choose the recording clock: the store owns it.
+    assert "clock" not in inspect.signature(ClaimReobservationStore.record).parameters
+    assert "clock" not in inspect.signature(ProposalTerminalEgressSink.__init__).parameters
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = _accept_first_run(instance, owner, root, line)
+    claim_id = PurePosixPath(first.children[0].path).stem
+    live = {"now": NOW + timedelta(hours=3)}
+
+    def advancing() -> datetime:
+        live["now"] += timedelta(minutes=1)
+        return live["now"]
+
+    instance.recording_clock = advancing
+    # The run's own (deterministic, frozen) clock reads NOW + 1 h throughout.
+    second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    assert second.status == "succeeded", second.terminal
+    (record,) = ClaimReobservationStore(instance).history(claim_id)
+    assert record.recorded_at > NOW + timedelta(hours=3)
+    assert record.recorded_at <= live["now"]
+
+
+@pytest.mark.parametrize("after_record", [False, True])
+def test_an_interrupted_unchanged_terminal_is_recovered_without_a_proposal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, after_record: bool
+) -> None:
+    """Review F-022 probe: death before or after the re-observation append."""
+
+    from pathlib import PurePosixPath
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+    from cruxible_core.runtime.instance import PlaybillInstance as Instance
+    from cruxible_core.service.procedures.procedure_runs import (
+        _records_for_run,
+        service_get_playbill_procedure_run,
+        service_recover_provider_invocations,
+    )
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = _accept_first_run(instance, owner, root, line)
+    claim_id = PurePosixPath(first.children[0].path).stem
+    refs = _proposal_refs(instance)
+    saved: dict[str, str] = {}
+    original = ProposalTerminalEgressSink.deliver_terminal_egress
+
+    def crash(self, **kwargs):  # type: ignore[no-untyped-def]
+        saved["run_id"] = kwargs["request"].run_id
+        if after_record:
+            original(self, **kwargs)
+        raise _Crash()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ProposalTerminalEgressSink, "deliver_terminal_egress", crash)
+        with pytest.raises(_Crash):
+            run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    store = ClaimReobservationStore(instance)
+    before = store.history(claim_id)
+    assert len(before) == int(after_record)
+    # The intent was journaled before any re-observation append.
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    prepared = [
+        payload
+        for stored in _records_for_run(instance, saved["run_id"])
+        if stored.record.event_kind == "terminal_egress"
+        for payload in (
+            parse_journal_payload(
+                instance.body_store().read(stored.record.payload_digest, access=access)
+            ),
+        )
+        if payload.get("verdict") == "prepared"
+    ]
+    assert len(prepared) == 1 and prepared[0]["prepared"]["target_paths"] == []
+
+    # A restart: reopen the instance and run both startup recoveries.
+    reopened = Instance.open(instance.root, trust_root=instance.trust_root)
+    assert (
+        service_recover_provider_invocations(
+            reopened,
+            invocation_ids=(),
+            recorded_at=NOW + timedelta(hours=2),
+            close_in_process_starts=True,
+        )
+        == ()
+    )
+    recovered = service_recover_proposal_egress(reopened, recorded_at=NOW + timedelta(hours=2))
+    assert recovered == {saved["run_id"]: "delivered"}
+    state = service_get_playbill_procedure_run(reopened, run_id=saved["run_id"])
+    assert state.status == "operational_failed"
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered" and egress.proposal_id is None
+    assert all(child.unchanged for child in egress.children)
+    after = ClaimReobservationStore(reopened).history(claim_id)
+    assert len(after) == 1
+    if after_record:
+        assert after == before  # the appended record keeps its instant
+    assert _proposal_refs(reopened) == refs
+    # A second sweep finds nothing left to do.
+    assert service_recover_proposal_egress(reopened, recorded_at=NOW + timedelta(hours=3)) == {}
+    assert ClaimReobservationStore(reopened).history(claim_id) == after
+
+
+# --- Line track records fold each terminal to its outcome (review F-023) -------
+
+
+def _track(instance: PlaybillInstance, run_id: str, line: Any, procedure: Any) -> Any:
+    from cruxible_client.contracts.procedures.artifacts import (
+        AcceptedProcedure,
+        procedure_artifact_digest,
+    )
+    from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec, line_spec_digest
+    from cruxible_core.exhaust.line_track_records import build_line_track_record
+    from cruxible_core.exhaust.promotions import VerifiedExhaustRecordV1
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.service.procedures.procedure_runs import _records_for_run
+
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    records = []
+    for stored in _records_for_run(instance, run_id):
+        record = stored.record
+        records.append(
+            VerifiedExhaustRecordV1(
+                record_digest=stored.record_digest,
+                sequence=record.sequence,
+                event_kind=record.event_kind,
+                generation_digest=record.accepted_coordinate.generation_root,
+                payload_digest=record.payload_digest,
+                payload=parse_journal_payload(
+                    instance.body_store().read(record.payload_digest, access=access)
+                ),
+                procedure_artifact_digest=record.procedure_artifact_digest,
+                definition_digest=record.definition_digest,
+                run_id=record.run_id,
+                occurrence_id=record.occurrence_id,
+                attempt=record.attempt,
+                line_spec_digest=record.line_spec_digest,
+            )
+        )
+    return build_line_track_record(
+        tuple(records),
+        accepted_line=AcceptedLineSpec(
+            path=line_spec_path(line.identity.name),
+            line=line,
+            artifact_digest=line_spec_digest(line).tagged,
+        ),
+        accepted_procedure=AcceptedProcedure(
+            path=procedure_path(procedure.identity.name),
+            procedure=procedure,
+            artifact_digest=procedure_artifact_digest(procedure).tagged,
+        ),
+    )
+
+
+def _die_at_delivery(monkeypatch: pytest.MonkeyPatch, *, journal_failure: bool) -> dict[str, str]:
+    """Kill the process at the sink; with ``journal_failure`` the executor's failed
+    record is written on the way out, otherwise the process is gone before it."""
+
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+
+    saved: dict[str, Any] = {}
+    append = ProcedureExecutor._append_event
+
+    def die(self, **kwargs):  # type: ignore[no-untyped-def]
+        saved["run_id"] = kwargs["request"].run_id
+        saved["dead"] = not journal_failure
+        raise _Crash()
+
+    def dead_append(self, admission, records, event_kind, payload):  # type: ignore[no-untyped-def]
+        if saved.get("dead") or (journal_failure and event_kind == "attempt_finalized"):
+            raise _Crash()
+        return append(self, admission, records, event_kind, payload)
+
+    monkeypatch.setattr(ProposalTerminalEgressSink, "deliver_terminal_egress", die)
+    monkeypatch.setattr(ProcedureExecutor, "_append_event", dead_append)
+    return saved
+
+
+@pytest.mark.parametrize("lane", ["unchanged", "effectful"])
+def test_a_failed_then_recovered_terminal_reads_as_one_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lane: str
+) -> None:
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, owner, root, line, procedure = proposal_world(tmp_path)
+    if lane == "unchanged":
+        _accept_first_run(instance, owner, root, line)
+    with monkeypatch.context() as patch:
+        saved = _die_at_delivery(patch, journal_failure=True)
+        with pytest.raises(_Crash):
+            run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    failed = _track(instance, saved["run_id"], line, procedure)
+    assert [item.verdict for item in failed.readings] == ["failed"]
+    assert (failed.tally.failed, failed.tally.delivered) == (1, 0)
+    recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(hours=2))
+    assert recovered == {saved["run_id"]: "delivered"}
+    got = _track(instance, saved["run_id"], line, procedure)
+    # The failed record is an intermediate state, superseded by recovery's.
+    assert [item.verdict for item in got.readings] == ["delivered"]
+    assert got.tally.delivered == 1 and got.tally.failed == 0
+    assert "failed" not in got.tally.model_dump(mode="json")
+
+
+def test_a_prepared_only_terminal_reads_as_unresolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, owner, root, line, procedure = proposal_world(tmp_path)
+    _accept_first_run(instance, owner, root, line)
+    with monkeypatch.context() as patch:
+        saved = _die_at_delivery(patch, journal_failure=False)
+        with pytest.raises(_Crash):
+            run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    got = _track(instance, saved["run_id"], line, procedure)
+    assert [item.verdict for item in got.readings] == ["unresolved"]
+    assert (got.tally.unresolved, got.tally.delivered) == (1, 0)
+
+
+def test_a_prepared_then_delivered_terminal_reads_as_one_delivery(tmp_path: Path) -> None:
+    instance, owner, root, line, procedure = proposal_world(tmp_path)
+    _accept_first_run(instance, owner, root, line)
+    run = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    assert run.run_id is not None
+    got = _track(instance, run.run_id, line, procedure)
+    assert [item.verdict for item in got.readings] == ["delivered"]
+    # A track record with no refusal, failure or open intent keeps its old bytes.
+    assert set(got.tally.model_dump(mode="json")) == {
+        "tag",
+        "delivered",
+        "capped",
+        "pending",
+        "capped_by_term",
+    }

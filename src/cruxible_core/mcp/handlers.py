@@ -46,6 +46,7 @@ from cruxible_client.authoring.write_evidence import observe_changes, observe_ev
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockDetachResult
+from cruxible_client.contracts.builtin_claim_types import builtin_claim_type
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendResult,
@@ -61,6 +62,10 @@ from cruxible_client.contracts.declared_blocks import (
     BlockRepinResult,
 )
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.duplicates import (
+    DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    DuplicatesAuditResult,
+)
 from cruxible_client.contracts.get_reads import (
     ByteRange,
     GetRequest,
@@ -763,6 +768,33 @@ def handle_playbill_propose_claim_type(
             at=at,
         ),
         operation_name="cruxible_claim_type_propose",
+    )
+
+
+def handle_playbill_adopt_builtin_claim_type(
+    instance_id: str,
+    builtin: str,
+    proposal_name: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.ClaimTypeInputProposalResult:
+    """Propose a builtin ClaimType's exact envelope on an instance that lacks it."""
+
+    claim_type = builtin_claim_type(builtin)
+    inspection = _daemon_call(
+        lambda client: client.propose_claim_type(
+            instance_id,
+            claim_type=claim_type.model_dump(mode="json"),
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
+        ),
+        operation_name="cruxible_claim_type_propose",
+    )
+    return contracts.ClaimTypeInputProposalResult(
+        proposal=inspection,
+        lint=inspection.lint or contracts.ClaimTypeProposalLint(warnings=()),
     )
 
 
@@ -1616,6 +1648,21 @@ def handle_playbill_curation_list(
             instance_id, access_profile=profile, limit=limit, cursor=cursor
         ),
         operation_name="cruxible_curation_list",
+    )
+
+
+def handle_playbill_curation_duplicates(
+    instance_id: str,
+    *,
+    kind: str,
+    limit: int = DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> DuplicatesAuditResult:
+    return _daemon_call(
+        lambda client: client.curation_duplicates(
+            instance_id, kind=kind, limit=limit, cursor=cursor
+        ),
+        operation_name="cruxible_curation_duplicates",
     )
 
 

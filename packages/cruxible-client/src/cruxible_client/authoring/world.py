@@ -55,6 +55,7 @@ from cruxible_client.authoring.sdk_types import (
     SdkError,
     SubjectRef,
 )
+from cruxible_client.contracts.builtin_claim_types import DESCRIPTOR_KINDS
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.claim_type_structure import (
     ClaimTypeStructure,
@@ -1565,6 +1566,9 @@ def build_world(
         _replace(root, structure.predicate, structure=structure, meaning=_meaning(envelope))
         subject_kinds.update(structure.allowed_subject_kinds)
         subject_kinds.update(structure.allowed_object_subject_kinds)
+    # A descriptor ClaimType (semantic.alias) admits the pseudo-kind
+    # semantic.subject -- every Subject -- which is never a kind of its own.
+    subject_kinds.difference_update(DESCRIPTOR_KINDS)
     for subject_kind in sorted(subject_kinds):
         if not all(_SEGMENT_RE.fullmatch(segment) for segment in subject_kind.split(".")):
             continue

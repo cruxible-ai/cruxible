@@ -73,6 +73,7 @@ from cruxible_client.authoring.write_evidence import observe_changes, observe_ev
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockSyncResult
+from cruxible_client.contracts.builtin_claim_types import BUILTIN_CLAIM_TYPES
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
@@ -82,6 +83,10 @@ from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.compact_query import QueryClaim
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.duplicates import (
+    DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    DUPLICATES_AUDIT_MAX_LIMIT,
+)
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
     SigningKeyError,
@@ -3091,6 +3096,11 @@ def claim_type_group() -> None:
     is_flag=True,
     help="Print one complete model-generated ClaimTypeInputRecord without contacting the daemon.",
 )
+@click.option(
+    "--builtin",
+    type=click.Choice(sorted(BUILTIN_CLAIM_TYPES)),
+    help="Adopt a ClaimType core ships (new instances start with it) by its exact envelope.",
+)
 @click.option("--name", "proposal_name")
 @change_control_options
 @json_option
@@ -3099,6 +3109,7 @@ def propose_claim_type(
     input_path: str | None,
     envelope: str | None,
     template: bool,
+    builtin: str | None,
     proposal_name: str | None,
     dry_run: bool | None,
     at: str | None,
@@ -3106,10 +3117,26 @@ def propose_claim_type(
 ) -> None:
     """Use the sanctioned typed-input ClaimType proposal path."""
 
-    if sum((input_path is not None, envelope is not None, template)) != 1:
-        raise click.UsageError("provide exactly one of --input or --template")
+    if sum((input_path is not None, envelope is not None, template, builtin is not None)) != 1:
+        raise click.UsageError("provide exactly one of --input, --template or --builtin")
     if template:
         _emit_json(claim_type_input_template().model_dump(mode="json"))
+        return
+    if builtin is not None:
+        builtin_result = _server_call(
+            lambda client, instance_id: client.propose_claim_type(
+                instance_id,
+                claim_type=BUILTIN_CLAIM_TYPES[builtin].model_dump(mode="json"),
+                proposal_name=proposal_name or f"builtin-{builtin.replace('.', '-')}",
+                dry_run=dry_run,
+                at=at,
+            ),
+            command_name="cruxible claim-type propose",
+        )
+        if output_json:
+            _emit_json(builtin_result.model_dump(mode="json"))
+            return
+        _echo_claim_type_proposal(builtin_result, builtin_result.lint)
         return
     if envelope is not None:
         envelope_payload = _read_mapping(envelope)
@@ -6470,6 +6497,56 @@ def curation_list(
         click.echo(f"  {_curation_item_line(item)}")
     for inactive in result.inactive_detectors:
         click.echo(f"Inactive: {inactive.pattern_kind} ({inactive.reason})")
+    _echo_list_continuation(result.next_cursor)
+
+
+@curation_group.command("duplicates")
+@click.option("--kind", required=True, help="The Subject kind to audit.")
+@click.option(
+    "--limit",
+    default=DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    show_default=True,
+    type=click.IntRange(1, DUPLICATES_AUDIT_MAX_LIMIT),
+    help="Groups per page.",
+)
+@click.option("--cursor", default=None, help="Continue a previous page of the same audit.")
+@json_option
+@handle_errors
+def curation_duplicates(kind: str, limit: int, cursor: str | None, output_json: bool) -> None:
+    """List possible duplicates of one kind; a pure, bounded read.
+
+    Subjects whose ids or aliases, and values of one predicate, that meet under
+    a broad comparison (casefold, no punctuation, the alias graph) but differ
+    under the declared rules. Resolve a Subject group with an alias plus a
+    retirement or with semantic.distinct_from; a value group with a governed
+    canonical_form succession.
+    """
+
+    result = _server_call(
+        lambda client, instance_id: client.curation_duplicates(
+            instance_id, kind=kind, limit=limit, cursor=cursor
+        ),
+        command_name="cruxible curation duplicates",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    scanned = result.scanned
+    click.echo(
+        f"Possible duplicates of {result.kind}: {len(result.groups)} group(s); read "
+        f"{scanned.subjects} Subject(s), {scanned.aliases} alias(es), {scanned.values} value(s)"
+        + (" (stopped at its bound)" if result.budget_exhausted else "")
+        + "."
+    )
+    for group in result.groups:
+        if group.group == "subjects":
+            members = ", ".join(
+                f"{item.subject} ({', '.join(item.names)})" for item in group.subjects
+            )
+            click.echo(f"  subjects {group.key!r}: {members}")
+        else:
+            members = ", ".join(f"{item.value!r} {item.claim}" for item in group.values)
+            click.echo(f"  {group.predicate} {group.key!r}: {members}")
     _echo_list_continuation(result.next_cursor)
 
 

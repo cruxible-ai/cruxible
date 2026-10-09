@@ -231,7 +231,7 @@ def test_world_writes_keep_references_valid_after_their_own_write(
         item.add(governs=world.project.work_item["wi-2"], because="Again.", expect_absent=True)
     assert present.value.error_code == "cruxible.write.value_already_present"
     assert (
-        item.add(governs=world.project.work_item["wi-2"], because="Again.").changes[0].already_live
+        item.add(governs=world.project.work_item["wi-2"], because="Linked.").changes[0].already_live
     )
     assert item.retire("title", because="Untitled.").status == "accepted"
     # A name the World does not know refuses before the wire.

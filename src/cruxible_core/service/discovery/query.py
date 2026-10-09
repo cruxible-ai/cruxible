@@ -19,6 +19,7 @@ from cruxible_client.contracts.claim_attestations import ClaimAttestation
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_path,
+    effective_canonical_form,
     parse_claim_type,
 )
 from cruxible_client.contracts.claims import (
@@ -43,6 +44,10 @@ from cruxible_client.contracts.query.results import (
 )
 from cruxible_client.contracts.subjects import AcceptedSubject, parse_subject, subject_digest
 from cruxible_core.errors import DataValidationError
+from cruxible_core.evidence.claim_reobservations import (
+    ReobservationReader,
+    reobservations_at,
+)
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.exhaust.records import (
     QUERY_RECEIPT_EVENT_KIND,
@@ -53,6 +58,7 @@ from cruxible_core.exhaust.records import (
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_aliases import projection_connection, reference_resolver
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.query.engine import (
     evaluate_artifact_query,
@@ -139,6 +145,7 @@ def _fact_row(
     claim_types: dict[str, ClaimType],
     attestation_envelopes: tuple[ClaimAttestation, ...],
     store: Any = None,
+    reobserved: bool = False,
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does."""
 
@@ -189,7 +196,7 @@ def _fact_row(
         historical=evidence.verified_attestations,
         envelopes=attestation_envelopes,
     )
-    return ClaimFactRowV1(
+    row = ClaimFactRowV1(
         accepted=accepted,
         rule=rule,
         captures=captures,
@@ -199,7 +206,21 @@ def _fact_row(
         # resolver; acceptance-time verdict output is never carried forward.
         resolved_authority_basis=(),
         cardinality=claim_type.cardinality,
+        canonical_form=effective_canonical_form(claim_type),
     )
+    if reobserved and isinstance(instance, PlaybillInstance):
+        # A re-observed lineage reads its freshness at each evaluation instant,
+        # one indexed probe per cited (contract, content).
+        live = instance
+        claim_id = claim.identity.name
+        row.attach_reobservations(
+            lambda at: (
+                reobservations_at(
+                    live, coordinate=coordinate, claim_id=claim_id, captures=captures, at=at
+                ).evidence
+            )
+        )
+    return row
 
 
 def verify_retired_claim_adjudication(
@@ -471,6 +492,13 @@ class _AcceptedQueryFactsRead:
         # One store per build: obtaining it checks the storage binding.
         store = self._instance.body_store()
         rows: list[ClaimFactRowV1] = []
+        # A lineage someone re-observed reads its freshness at evaluation time;
+        # whether it was is one indexed probe per assembled Claim.
+        reader = (
+            ReobservationReader.of(self._instance)
+            if isinstance(self._instance, PlaybillInstance)
+            else None
+        )
         for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
             # The full-history path historically looked up evidence before
             # parsing the Claim; live-only reads parsed lifecycle first and
@@ -502,6 +530,7 @@ class _AcceptedQueryFactsRead:
                             (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()
                         )
                     ),
+                    reobserved=reader is not None and bool(reader.sequence(claim.identity.name)),
                 )
                 self._rows[path] = row
             rows.append(row)
@@ -639,6 +668,81 @@ class PlaybillQueryReceiptJournal:
         )
 
 
+def parameters_through_aliases(
+    instance: PlaybillInstance,
+    definition: AcceptedQueryDefinition,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    parameters: Mapping[str, object],
+) -> Mapping[str, object]:
+    """Caller parameters with every Subject reference resolved through its aliases.
+
+    The entry's Subject-id parameter, and every parameter the query declares as a
+    ``subject_reference``, is a Subject reference: one that names no Subject
+    resolves through the aliases of its kind (``semantic.alias``), and an alias
+    naming several refuses ``cruxible.query.alias_ambiguous`` with each.
+    """
+
+    from cruxible_core.indexes.subject_aliases import resolve_reference_text, resolve_subject_ref
+    from cruxible_core.service.discovery.query_vocabulary import query_refusal
+
+    query = definition.query
+    entry = query.entry
+    entry_parameter = (
+        entry.subject_id.parameter
+        if not isinstance(entry, QueryArtifactsEntry) and entry.subject_id is not None
+        else None
+    )
+    references = {item.name for item in query.parameters if item.value_type == "subject_reference"}
+    wanted = [
+        name
+        for name, value in parameters.items()
+        if isinstance(value, str) and (name == entry_parameter or name in references)
+    ]
+    if not wanted:
+        return parameters
+
+    def ambiguous(name: str, kind: str, candidates: tuple[str, ...]) -> Exception:
+        return query_refusal(
+            "cruxible.query.alias_ambiguous",
+            f"parameter {name!r} names no Subject, and an alias of {kind} names "
+            f"{len(candidates)} of them",
+            nearest=candidates,
+            repair="pass one of the listed Subjects",
+            field_path=f"params.{name}",
+        )
+
+    resolved = dict(parameters)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        for name in wanted:
+            value = str(parameters[name])
+            if name == entry_parameter and not isinstance(entry, QueryArtifactsEntry):
+                matches: set[str] = set()
+                for kind in entry.subject_kinds:
+                    resolution = resolve_subject_ref(connection, kind, value)
+                    if resolution.ambiguous:
+                        raise ambiguous(name, kind, resolution.candidates)
+                    if resolution.via == "identity":
+                        matches = {value}
+                        break
+                    if resolution.ref is not None:
+                        matches.add(resolution.ref.partition("/")[2])
+                if len(matches) > 1:
+                    raise ambiguous(name, "/".join(entry.subject_kinds), tuple(sorted(matches)))
+                if matches:
+                    resolved[name] = next(iter(matches))
+                continue
+            found = resolve_reference_text(connection, value)
+            if found is None:
+                continue
+            spelled, resolution = found
+            if resolution.ambiguous:
+                raise ambiguous(name, resolution.kind, resolution.candidates)
+            resolved[name] = spelled
+    return resolved
+
+
 def evaluate_accepted_query(
     instance: PlaybillInstance,
     definition: AcceptedQueryDefinition,
@@ -651,6 +755,10 @@ def evaluate_accepted_query(
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
 ) -> ClaimQueryResult:
     """One dispatch for public reads and projection currency, with lazy Claim facts."""
+    if parameters:
+        parameters = parameters_through_aliases(
+            instance, definition, coordinate=coordinate, parameters=parameters
+        )
     if isinstance(definition.query.entry, QueryArtifactsEntry):
 
         def read(
@@ -688,6 +796,9 @@ def evaluate_accepted_query(
         )
     return evaluate_claim_query(
         definition,
+        resolve_reference=reference_resolver(
+            projection_connection(lambda: instance.bind_accepted_projection(coordinate))
+        ),
         facts=facts()
         if facts
         else build_accepted_query_facts(

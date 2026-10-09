@@ -5,10 +5,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from collections.abc import Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import NoReturn, TypeAlias
+from typing import NoReturn, TypeAlias, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -67,6 +67,10 @@ from cruxible_client.contracts.authoring.models import (
     blueprint_instantiation,
 )
 from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
+from cruxible_client.contracts.canonical_forms import (
+    CanonicalFormDidNotConverge,
+    canonicalize_literal,
+)
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
@@ -83,6 +87,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     classify_capture_reuse,
     foreign_source_capture_contract,
+    observed_content,
     parse_capture_contract,
     parse_capture_envelope,
     render_capture_contract,
@@ -90,8 +95,10 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import (
+    ClaimType,
     claim_type_digest,
     claim_type_path,
+    effective_canonical_form,
     effective_revision_evidence,
     parse_claim_type,
     render_claim_type,
@@ -103,6 +110,7 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimArtifactV2,
     ClaimBacking,
+    ClaimCitation,
     ClaimReferentContext,
     ClaimRetireDependent,
     ClaimStatement,
@@ -247,6 +255,13 @@ from cruxible_core.compiler.projection_artifacts import (
 )
 from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree, fork_tree
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_aliases import (
+    candidate_creation_collisions,
+    resolve_reference_text,
+    resolve_subject_ref,
+    split_reference,
+    subject_collision_message,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 
 
@@ -587,6 +602,242 @@ def _exact_object(
             end_byte=len(content),
         ),
     )
+
+
+_PayloadV1T = TypeVar("_PayloadV1T", bound=ClaimAuthoringPayloadV1)
+
+
+def _live_subject_in(tree: Mapping[str, bytes], path: str) -> bool:
+    """Whether ``tree`` holds a live Subject at ``path``: it stands as written.
+
+    A retired Subject does not: a reference to it resolves through the aliases
+    first, so after a merge it reaches the surviving Subject.
+    """
+
+    content = tree.get(path)
+    if content is None:
+        return False
+    try:
+        return parse_subject(content, path=path).lifecycle.state == "live"
+    except (CruxibleError, ValueError):
+        return True  # malformed bytes are the referent laws' to refuse
+
+
+def _with_aliases_resolved(
+    instance: PlaybillInstance,
+    base: AcceptedProjectionCoordinate,
+    tree: Mapping[str, bytes],
+    payload: _PayloadV1T,
+) -> _PayloadV1T:
+    """Resolve a Subject the Claim names through its aliases (``semantic.alias``).
+
+    A statement subject or Subject-valued object whose path is not in the tree
+    being written resolves to the one live Subject of its kind an alias names
+    (``indexes.subject_aliases``); several refuse naming each; none leaves the
+    address as written, for the referent laws to refuse.
+    """
+
+    def resolved(address: SemanticAddress, element: str) -> SemanticAddress:
+        path = address.artifact_path
+        if (
+            address.selector.scheme != "artifact-v1"
+            or not path.startswith("subjects/")
+            or _live_subject_in(tree, path)
+        ):
+            return address
+        kind, _, rest = path.removeprefix("subjects/").partition("/")
+        subject_id = rest.removesuffix(".json")
+        if not kind or not subject_id:
+            return address
+        with instance.bind_accepted_projection(base) as projection:
+            resolution = resolve_subject_ref(projection.typed.connection, kind, subject_id)
+        if resolution.ambiguous:
+            _refuse(
+                "cruxible.authoring.alias_ambiguous",
+                element,
+                f"{kind}/{subject_id} names no Subject, and an alias of {kind} names "
+                f"{len(resolution.candidates)}: {', '.join(resolution.candidates)}.",
+                repair_kind="replace_subject",
+                repair_description="Name one of the listed Subjects as kind/id.",
+                replacement={"candidates": list(resolution.candidates)},
+            )
+        if resolution.via != "alias" or resolution.path is None or resolution.path not in tree:
+            return address
+        return SemanticAddress.whole_artifact(resolution.path)
+
+    statement = payload.statement
+    drafted = (
+        isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayload)
+        and payload.dependency_drafts.subject is not None
+    )
+    # A Subject the Claim drafts in the same change is named exactly, never by alias.
+    subject = statement.subject if drafted else resolved(statement.subject, "statement.subject")
+    value = statement.object
+    if isinstance(value, SubjectClaimObject):
+        target = resolved(value.address, "statement.object.address")
+        if target != value.address:
+            value = SubjectClaimObject(address=target)
+    if subject == statement.subject and value is statement.object:
+        return payload
+    return payload.model_copy(
+        update={"statement": statement.model_copy(update={"subject": subject, "object": value})}
+    )
+
+
+def claim_aliases_resolved(
+    instance: PlaybillInstance,
+    base: AcceptedProjectionCoordinate,
+    tree: Mapping[str, bytes],
+    payload: _PayloadV1T,
+) -> _PayloadV1T:
+    """The Claim payload with the Subjects it names resolved through their aliases.
+
+    The same resolution lowering applies, for a caller that must locate the
+    statement before lowering (a Procedure item restating a live Claim).
+    """
+
+    return _with_aliases_resolved(instance, base, tree, payload)
+
+
+def cited_observation(instance: PlaybillInstance, capture_digest: str) -> tuple[str, str]:
+    """What one Capture observed: its exact contract digest and observed content.
+
+    A Capture whose envelope cannot be read contributes its own digest for
+    both, which no other Capture's observation equals.
+    """
+
+    access = BodyAccessContext(principal_id="playbill-authoring", can_read_body=True)
+    try:
+        envelope = parse_capture_envelope(instance.body_store().read(capture_digest, access=access))
+    except (CruxibleError, OSError, ValueError):
+        return capture_digest, capture_digest
+    return envelope.capture_contract_digest, observed_content(envelope).digest
+
+
+def _cited_associations(
+    instance: PlaybillInstance, citations: Iterable[ClaimCitation]
+) -> set[tuple[str, str, str, str]]:
+    """Each citation a Claim holds, as (contract, observed content, role, origin)."""
+
+    return {
+        (*cited_observation(instance, item.capture_digest), item.role, item.origin)
+        for item in citations
+    }
+
+
+def _canonical_object(
+    value: LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject,
+    claim_type: ClaimType,
+) -> LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject:
+    """Store a literal in the canonical form its ClaimType declares (v8).
+
+    Every Claim lowering path -- a change-set member, a write verb, a Procedure
+    terminal item -- comes through here, so the stored object is canonical and
+    the raw spelling stays only in the evidence the Claim cites.
+    """
+
+    form = effective_canonical_form(claim_type)
+    if not form or not isinstance(value, LiteralClaimObject):
+        return value
+    try:
+        canonical = canonicalize_literal(value.value, form)
+    except CanonicalFormDidNotConverge as exc:
+        _refuse(
+            "cruxible.claim.literal_not_canonical",
+            "statement.object",
+            str(exc),
+            repair_kind="replace_object",
+            repair_description="State a value the ClaimType's canonical form settles.",
+        )
+    return value if canonical == value.value else LiteralClaimObject(value=canonical)
+
+
+_PayloadT = TypeVar("_PayloadT")
+
+
+def canonical_authored_claims(payload: _PayloadT, read: Callable[[str], bytes | None]) -> _PayloadT:
+    """Rewrite authored Claim literals into their ClaimType's canonical form (v8).
+
+    Lowering stores the canonical value anyway; doing it before identities are
+    minted makes two spellings equal under the form one authored statement, so
+    member identity, duplicate detection and idempotent re-authoring all compare
+    canonical statements. A ClaimType the same change set defines or succeeds is
+    the one read; otherwise ``read`` returns the accepted bytes at ``path``. A
+    value the form cannot settle is left as written: lowering refuses it.
+    """
+
+    forms: dict[str, tuple[str, ...]] = {}
+    members = payload.members if isinstance(payload, ChangeSetAuthoringPayload) else (payload,)
+    for member in members:
+        if isinstance(member, ClaimTypeAuthoringPayload):
+            forms[member.claim_type.predicate] = effective_canonical_form(member.claim_type)
+        elif isinstance(member, ClaimTypeSuccessionMember):
+            forms[member.successor.predicate] = effective_canonical_form(member.successor)
+
+    def form_of(predicate: str) -> tuple[str, ...]:
+        if predicate not in forms:
+            path = claim_type_path(predicate)
+            content = read(path)
+            forms[predicate] = (
+                ()
+                if content is None
+                else effective_canonical_form(parse_claim_type(content, path=path))
+            )
+        return forms[predicate]
+
+    def canonical(member: object) -> object:
+        if not isinstance(member, ClaimAuthoringPayloadV1):
+            return member
+        value = member.statement.object
+        if not isinstance(value, LiteralClaimObject):
+            return member
+        form = form_of(member.statement.predicate)
+        if not form:
+            return member
+        try:
+            settled = canonicalize_literal(value.value, form)
+        except CanonicalFormDidNotConverge:
+            return member
+        if settled == value.value:
+            return member
+        statement = member.statement.model_copy(
+            update={"object": LiteralClaimObject(value=settled)}
+        )
+        return member.model_copy(update={"statement": statement})
+
+    if isinstance(payload, ChangeSetAuthoringPayload):
+        rewritten = tuple(canonical(member) for member in payload.members)
+        if all(new is old for new, old in zip(rewritten, payload.members, strict=True)):
+            return payload
+        by_identity: dict[str, int] = {}
+        for index, written in enumerate(rewritten):
+            identity = authoring_member_identity(cast(AuthoringChangeSetMember, written))
+            if identity in by_identity:
+                raise AuthoringDuplicateStatement(
+                    f"{AuthoringDuplicateStatement.error_code}: members "
+                    f"{by_identity[identity]} and {index} state one statement once their "
+                    "values are in the canonical form the ClaimType declares; leave one out"
+                )
+            by_identity[identity] = index
+        ordered = sorted(
+            rewritten,
+            key=lambda member: authoring_member_identity(
+                cast(AuthoringChangeSetMember, member)
+            ).encode("utf-8"),
+        )
+        return cast(
+            _PayloadT,
+            ChangeSetAuthoringPayload.model_validate(
+                {**payload.model_dump(mode="python"), "members": ordered}
+            ),
+        )
+    return cast(_PayloadT, canonical(payload))
+
+
+class AuthoringDuplicateStatement(FormatError):
+    """Two authored members state one statement once canonicalized (ClaimType v8)."""
+
+    error_code = "cruxible.authoring.duplicate_statement"
 
 
 def _same_predicate_claims(
@@ -1011,6 +1262,7 @@ def _lower_claim(
             )
     claim_id = intent.semantic_identity if claim_identity is None else claim_identity
     type_path = claim_type_path(payload.statement.predicate)
+    payload = _with_aliases_resolved(instance, base, base_tree, payload)
     candidate_base_tree, dependency_paths = _install_claim_dependencies(
         payload,
         base_tree=base_tree,
@@ -1046,6 +1298,7 @@ def _lower_claim(
             ),
             replacement={"required_object_kind": claim_type.object_kind},
         )
+    statement_object = _canonical_object(statement_object, claim_type)
     qualifier = payload.statement.qualifier
     object_referent: tuple[ArtifactIdentity, str] | None = None
     if isinstance(statement_object, SubjectClaimObject):
@@ -1551,14 +1804,39 @@ def _lower_claim(
         )
         if base_tree.get(member_path) != candidate_tree[member_path]
     )
-    idempotent = (
-        isinstance(payload.source, ExistingCaptureCitationSource)
-        and predecessor is not None
+    # Re-observation (identity-design-1009): the same canonical statement whose
+    # citation association -- the exact verified Capture contract and observed
+    # content cited, its role and its origin -- the Claim already holds is a
+    # no-op: no revision, no citation growth. The re-observation journal admits
+    # exactly these (same contract and content), so preflight and submit agree.
+    # It is the very Capture again, or another Capture of the same content (a
+    # re-run reading the same bytes) cited the same way. A new association on
+    # already-cited content (another role, origin or contract) is kept,
+    # and new content under the same statement refreshes the evidence by
+    # revising the Claim, never by writing a second one.
+    # A disposition that takes no stance (not_tested: the other slot Claims a
+    # many-valued restatement keeps) changes nothing about the Claim restated.
+    same_statement = (
+        predecessor is not None
         and claim.statement == predecessor.statement
-        and citation in predecessor_citations
-        and not payload.existing_claim_dispositions
+        and all(item.disposition == "not_tested" for item in payload.existing_claim_dispositions)
         and not dependency_paths
     )
+    recited = same_statement and citation in predecessor_citations
+    reobserved = (
+        same_statement
+        and not recited
+        and (
+            capture_envelope.capture_contract_digest,
+            observed_content(capture_envelope).digest,
+            citation.role,
+            citation.origin,
+        )
+        in _cited_associations(instance, predecessor_citations)
+    )
+    idempotent = (
+        isinstance(payload.source, ExistingCaptureCitationSource) and bool(recited)
+    ) or bool(reobserved)
     if idempotent:
         candidate_tree = fork_tree(candidate_base_tree)
         changed = ()
@@ -1575,7 +1853,11 @@ def _lower_claim(
             "citation_id": citation.citation_id,
             **(
                 {
-                    "outcome": "cruxible.authoring.existing_capture_already_associated",
+                    "outcome": (
+                        "cruxible.authoring.content_already_cited"
+                        if reobserved
+                        else "cruxible.authoring.existing_capture_already_associated"
+                    ),
                 }
                 if idempotent
                 else {}
@@ -2731,10 +3013,50 @@ def _check_line_parameters(
         )
 
 
+def _mandate_alias_resolver(
+    instance: PlaybillInstance,
+    base: AcceptedProjectionCoordinate,
+    tree: Mapping[str, bytes],
+) -> Callable[[str, str], str]:
+    """Resolve a Subject reference a mandate names through its aliases, at ``base``.
+
+    A reference already in ``tree`` stands as written; one that names no Subject
+    resolves to the one live Subject of its kind an alias names; several refuse
+    ``cruxible.authoring.alias_ambiguous`` naming each.
+    """
+
+    def resolve(value: str, element: str) -> str:
+        parts = split_reference(value)
+        if parts is None:
+            return value
+        _prefix, kind, subject_id = parts
+        if _live_subject_in(tree, f"subjects/{kind}/{subject_id}.json"):
+            return value
+        with instance.bind_accepted_projection(base) as projection:
+            found = resolve_reference_text(projection.typed.connection, value)
+        if found is None:
+            return value
+        spelled, resolution = found
+        if resolution.ambiguous:
+            _refuse(
+                "cruxible.authoring.alias_ambiguous",
+                element,
+                f"{kind}/{subject_id} names no Subject, and an alias of {kind} names "
+                f"{len(resolution.candidates)}: {', '.join(resolution.candidates)}.",
+                repair_kind="replace_subject",
+                repair_description="Name one of the listed Subjects as kind/id.",
+                replacement={"candidates": list(resolution.candidates)},
+            )
+        return spelled
+
+    return resolve
+
+
 def _render_procedure_mandate_member(
     payload: ProcedureMandateAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
+    resolve: Callable[[str, str], str] | None = None,
 ) -> tuple[str, bytes, str]:
     target_path = procedure_path(payload.procedure_name)
     target_content = tree.get(target_path)
@@ -2793,6 +3115,15 @@ def _render_procedure_mandate_member(
                 repair_description="Name a QueryDefinition present at the authoring coordinate.",
             )
         query = parse_query_definition(query_content, path=query_path)
+        fixed = dict(payload.condition.fixed_parameters)
+        if resolve is not None:
+            # A fixed Subject reference names its Subject through its aliases.
+            for declared in query.parameters:
+                value = fixed.get(declared.name)
+                if declared.value_type == "subject_reference" and isinstance(value, str):
+                    fixed[declared.name] = resolve(
+                        value, f"condition.fixed_parameters.{declared.name}"
+                    )
         condition = MandateCondition(
             query=ArtifactPin(
                 role="condition-query",
@@ -2800,7 +3131,7 @@ def _render_procedure_mandate_member(
                 artifact_digest=query_definition_digest(query).tagged,
             ),
             binding_parameter=payload.condition.binding_parameter,
-            fixed_parameters=payload.condition.fixed_parameters,
+            fixed_parameters=fixed,
             required_fields=tuple(sorted(set(payload.condition.required_fields))),
             fallback=payload.condition.fallback,
         )
@@ -2820,7 +3151,19 @@ def _render_procedure_mandate_member(
         subject_scope=(
             None
             if payload.subject_scope is None
-            else tuple(sorted(set(payload.subject_scope), key=lambda item: item.artifact_path))
+            else tuple(
+                sorted(
+                    {
+                        address
+                        if resolve is None or address.selector.scheme != "artifact-v1"
+                        else SemanticAddress.whole_artifact(
+                            resolve(address.artifact_path, f"subject_scope[{index}]")
+                        )
+                        for index, address in enumerate(payload.subject_scope)
+                    },
+                    key=lambda item: item.artifact_path,
+                )
+            )
         ),
         condition=condition,
         suspended=payload.suspended,
@@ -3276,7 +3619,11 @@ def _stage_change_set_member(
         )
         return fork_tree(lowered.proposed_tree), dict(lowered.resolved_authoring), set(), {}
     if isinstance(member, ProcedureMandateAuthoringPayload):
-        mandate_path, content, digest = _render_procedure_mandate_member(member, tree=staged_tree)
+        mandate_path, content, digest = _render_procedure_mandate_member(
+            member,
+            tree=staged_tree,
+            resolve=_mandate_alias_resolver(instance, base, staged_tree),
+        )
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[mandate_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
@@ -3868,6 +4215,82 @@ def lower_authoring(
 ) -> LoweredAuthoring:
     """Resolve one intent against its immutable base without submitting anything.
 
+    Every Subject the lowering creates is checked for a collision with an
+    accepted Subject of its kind (``_refuse_subject_collisions``).
+    """
+
+    lowered = _lower_authoring(
+        instance,
+        intent=intent,
+        actor_id=actor_id,
+        derivation_procedure=derivation_procedure,
+        captures=captures,
+    )
+    _refuse_subject_collisions(instance, intent=intent, lowered=lowered)
+    return lowered
+
+
+_DISTINCT_FROM = "semantic.distinct_from"
+
+
+def _refuse_subject_collisions(
+    instance: PlaybillInstance, *, intent: AuthoringIntentV1, lowered: LoweredAuthoring
+) -> None:
+    """Refuse early a new Subject that collides with a live Subject of its kind.
+
+    The authoritative check is candidate evaluation's (admission and
+    settlement, ``indexes.subject_aliases.candidate_creation_collisions``);
+    this is the same check run on the lowered candidate, so the author learns
+    which member to repair before anything is proposed. A Subject this lowering
+    creates -- a Subject member, a Claim's Subject draft, a write's added
+    Subject, a Procedure item's Subject -- collides when its id's canonical
+    token equals another live Subject's id, canonical token or alias of the
+    same kind, accepted or added by this change. The author resolves it by
+    naming the existing Subject, by adding an alias to it, or by asserting
+    ``semantic.distinct_from`` between the two in the same change, which
+    exempts that pair.
+    """
+
+    if not any(path.startswith("subjects/") for path, _content in lowered.changed_members):
+        return
+    base = instance.resolve_accepted_coordinate(
+        git_oid=intent.base_coordinate.git_oid,
+        semantic_root=intent.base_coordinate.semantic_root,
+        generation_root=intent.base_coordinate.generation_root,
+    )
+    collisions = candidate_creation_collisions(
+        current_tree=instance.immutable_tree_at(base.git_oid),
+        candidate_tree=lowered.proposed_tree,
+        scope=tuple(path for path, _content in lowered.changed_members),
+    )
+    for path, others in collisions:
+        kind, _, rest = path.removeprefix("subjects/").partition("/")
+        subject_id = rest.removesuffix(".json")
+        _refuse(
+            "cruxible.authoring.subject_collision",
+            path
+            if path not in lowered.member_by_path
+            else f"members[{lowered.member_by_path[path]}]",
+            subject_collision_message(path, others),
+            repair_kind="use_existing_subject",
+            repair_description=(
+                f"Name {others[0]} instead, add a semantic.alias to it, or "
+                f"assert {_DISTINCT_FROM} between {kind}/{subject_id} and it."
+            ),
+            replacement={"existing": list(others)},
+        )
+
+
+def _lower_authoring(
+    instance: PlaybillInstance,
+    *,
+    intent: AuthoringIntentV1,
+    actor_id: str,
+    derivation_procedure: ArtifactPin | None = None,
+    captures: ProducerReceiptResolverProtocol | None = None,
+) -> LoweredAuthoring:
+    """Resolve one intent against its immutable base without submitting anything.
+
     Only the Procedure terminal supplies `derivation_procedure`, from the actual
     run. It is not a wire field or inferred from the intent's ID or payload.
     Proposal admission separately checks authority over the exact lowered bytes.
@@ -3901,6 +4324,7 @@ def lower_authoring(
         path, content, digest = _render_procedure_mandate_member(
             intent.payload,
             tree=base_tree,
+            resolve=_mandate_alias_resolver(instance, base, base_tree),
         )
         candidate_tree = fork_tree(base_tree)
         candidate_tree[path] = content

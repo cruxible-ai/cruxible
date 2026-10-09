@@ -37,6 +37,11 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.canonical_forms import (
+    CanonicalTransform,
+    is_canonical_literal,
+    validate_canonical_form,
+)
 from cruxible_client.contracts.claim_type_structure import ClaimRole, ClaimTypeStructure
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
@@ -115,9 +120,18 @@ class ClaimAttestationConsequencePolicy(_StrictClaimTypeModel):
 
 CURRENT_CLAIM_TYPE_FORMAT: Final = "playbill-claim-type-v7"
 _CURRENT_POLICY_FORMATS: Final = frozenset(
-    {"playbill-claim-type-v5", "playbill-claim-type-v6", "playbill-claim-type-v7"}
+    {
+        "playbill-claim-type-v5",
+        "playbill-claim-type-v6",
+        "playbill-claim-type-v7",
+        "playbill-claim-type-v8",
+    }
 )
-_IDENTITY_RULE_FORMATS: Final = frozenset({"playbill-claim-type-v6", "playbill-claim-type-v7"})
+_IDENTITY_RULE_FORMATS: Final = frozenset(
+    {"playbill-claim-type-v6", "playbill-claim-type-v7", "playbill-claim-type-v8"}
+)
+#: The formats that carry the v7 fields: v7, and v8 (v7 plus a canonical form).
+V7_AND_LATER_FORMATS: Final = frozenset({"playbill-claim-type-v7", "playbill-claim-type-v8"})
 CLAIM_TYPE_FORMATS: Final = (
     "playbill-claim-type-v1",
     "playbill-claim-type-v3",
@@ -125,6 +139,7 @@ CLAIM_TYPE_FORMATS: Final = (
     "playbill-claim-type-v5",
     "playbill-claim-type-v6",
     "playbill-claim-type-v7",
+    "playbill-claim-type-v8",
 )
 
 #: What a Claim of this type must be backed by. ``none``: the Claim's own origin
@@ -142,6 +157,8 @@ V7_FIELDS: Final = (
     "evidence_requirement",
     "revision_evidence",
 )
+#: ClaimType v8 adds the canonical form its literal values are stored and compared in.
+V8_FIELDS: Final = ("canonical_form",)
 _DESCRIPTION_MAX: Final = 1024
 _MEMBER_DESCRIPTION_MAX: Final = 256
 
@@ -204,6 +221,7 @@ class ClaimType(_StrictClaimTypeModel):
         "playbill-claim-type-v5",
         "playbill-claim-type-v6",
         "playbill-claim-type-v7",
+        "playbill-claim-type-v8",
     ] = "playbill-claim-type-v7"
     identity: ArtifactIdentity
     predicate: str
@@ -247,12 +265,19 @@ class ClaimType(_StrictClaimTypeModel):
     evidence_requirement: EvidenceRequirement | None = None
     #: Read through ``effective_revision_evidence``; null before v7.
     revision_evidence: RevisionEvidence | None = None
+    # ClaimType v8. Every earlier format holds it at null and never writes it.
+    #: The ordered transforms (``contracts.canonical_forms``) every literal value
+    #: of this predicate is stored and compared in. ``()`` states no transform.
+    canonical_form: tuple[CanonicalTransform, ...] | None = None
 
     @model_serializer(mode="wrap")
     def _versioned_wire(self, handler: Any) -> dict[str, object]:
         payload = cast(dict[str, object], handler(self))
-        if self.artifact_format != "playbill-claim-type-v7":
+        if self.artifact_format not in V7_AND_LATER_FORMATS:
             for field in V7_FIELDS:
+                payload.pop(field, None)
+        if self.artifact_format != "playbill-claim-type-v8":
+            for field in V8_FIELDS:
                 payload.pop(field, None)
         if self.unsure_hold_for is None:
             payload.pop("unsure_hold_for", None)
@@ -306,8 +331,35 @@ class ClaimType(_StrictClaimTypeModel):
             )
         return value
 
+    @field_validator("canonical_form")
+    @classmethod
+    def _canonical_form(
+        cls, value: tuple[CanonicalTransform, ...] | None
+    ) -> tuple[CanonicalTransform, ...] | None:
+        if value is None:
+            return None
+        return validate_canonical_form(value)
+
+    def _validate_v8_fields(self) -> None:
+        if self.artifact_format != "playbill-claim-type-v8":
+            if self.canonical_form is not None:
+                raise ValueError("only ClaimType v8 can carry a canonical_form")
+            return
+        if self.canonical_form is None:
+            raise ValueError("ClaimType v8 states its canonical_form explicitly ([] for none)")
+        if self.canonical_form and self.object_kind != "literal":
+            raise ValueError("a canonical_form applies only to literal ClaimTypes")
+        members = None if self.literal_schema is None else self.literal_schema.get("enum")
+        if self.canonical_form and isinstance(members, list):
+            for member in members:
+                if not is_canonical_literal(member, self.canonical_form):
+                    raise ValueError(
+                        f"enum member {member!r} is not in the declared canonical form, so "
+                        "no stored value could ever equal it"
+                    )
+
     def _validate_v7_fields(self) -> None:
-        if self.artifact_format != "playbill-claim-type-v7":
+        if self.artifact_format not in V7_AND_LATER_FORMATS:
             if (
                 self.description is not None
                 or self.member_descriptions
@@ -370,6 +422,7 @@ class ClaimType(_StrictClaimTypeModel):
             if self.unsure_hold_for.microseconds <= 0:
                 raise ValueError("ClaimType unsure_hold_for must be positive")
         self._validate_v7_fields()
+        self._validate_v8_fields()
         if self.artifact_format in _IDENTITY_RULE_FORMATS:
             version = self.artifact_format.removeprefix("playbill-claim-type-")
             if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicy):
@@ -537,6 +590,14 @@ def _claim_type_digest_v7(claim_type: ClaimType) -> ArtifactDigest:
     )
 
 
+def _claim_type_digest_v8(claim_type: ClaimType) -> ArtifactDigest:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-envelope-v1",
+        claim_type.model_dump(mode="json"),
+    )
+
+
 CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = {
     "playbill-claim-type-v1": _claim_type_digest_v1,
     "playbill-claim-type-v3": _claim_type_digest_v3,
@@ -544,6 +605,7 @@ CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = 
     "playbill-claim-type-v5": _claim_type_digest_v5,
     "playbill-claim-type-v6": _claim_type_digest_v6,
     "playbill-claim-type-v7": _claim_type_digest_v7,
+    "playbill-claim-type-v8": _claim_type_digest_v8,
 }
 
 
@@ -555,6 +617,12 @@ def effective_revision_evidence(claim_type: ClaimType) -> RevisionEvidence:
     """What a statement-changing revision keeps; every format before v7 accumulates."""
 
     return claim_type.revision_evidence or "accumulate"
+
+
+def effective_canonical_form(claim_type: ClaimType) -> tuple[CanonicalTransform, ...]:
+    """The transforms a literal of this type is stored and compared in; none before v8."""
+
+    return claim_type.canonical_form or ()
 
 
 def effective_evidence_requirement(claim_type: ClaimType) -> EvidenceRequirement:
@@ -675,7 +743,7 @@ def evaluate_claim_type_law(
             verdict="refused",
             diagnostics=(_diagnostic("cruxible.claim_type.path_mismatch", str(exc), path=path),),
         )
-    if claim_type.artifact_format == "playbill-claim-type-v7":
+    if claim_type.artifact_format in V7_AND_LATER_FORMATS:
         refusal = _v7_law_refusal(claim_type, path=path)
         if refusal is not None:
             return ClaimTypeLawResult(verdict="refused", diagnostics=(refusal,))
@@ -770,8 +838,11 @@ __all__ = [
     "ClaimTypeMemberDescription",
     "EvidenceRequirement",
     "RevisionEvidence",
+    "V7_AND_LATER_FORMATS",
     "V7_FIELDS",
+    "V8_FIELDS",
     "canonical_description_text",
+    "effective_canonical_form",
     "effective_evidence_requirement",
     "effective_revision_evidence",
     "ClaimEvidenceFreshness",

@@ -298,3 +298,49 @@ def test_run_reads_use_bounded_index_ranges(tmp_path: Path, monkeypatch) -> None
     running = [plan for sql, plan in plans if "open_runs o" in sql]
     assert len(running) == 2
     assert all(plan[0].startswith("SEARCH o USING COVERING INDEX open_runs") for plan in running)
+
+
+def test_catching_up_reads_only_the_records_since_the_last_sync(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import sqlite3
+
+    backend = _backend(tmp_path, "journal")
+    _activate(backend)
+    for index in range(10):
+        _append(backend, f"indexed-{index}")
+    with monkeypatch.context() as patch:
+        # Appends whose post-write index update never ran (another process's
+        # append the index has not reached yet).
+        original_sync = JournalIndex.sync
+
+        def pre_append_only(self, *args, recover_tail=False):
+            if recover_tail:
+                return original_sync(self, *args, recover_tail=True)
+            return None
+
+        patch.setattr(JournalIndex, "sync", pre_append_only)
+        patch.setattr(JournalIndex, "mark_dirty", lambda self, *args: None)
+        for index in range(3):
+            _append(backend, f"unsynced-{index}")
+    with sqlite3.connect(backend.index.path) as connection:
+        indexed = connection.execute("SELECT count(*) FROM records").fetchone()[0]
+    missing = 13 - indexed
+    assert 1 <= missing < 13
+    original = LocalJournalBackend._read_frames
+    read: list[int] = []
+
+    def frames(*args, **kwargs):
+        for frame in original(*args, **kwargs):
+            read.append(1)
+            yield frame
+
+    monkeypatch.setattr(LocalJournalBackend, "_read_frames", staticmethod(frames))
+    backend.catch_up_index(_stream())
+    # A miss costs the records since the last sync, not the journal.
+    assert len(read) == missing
+    with sqlite3.connect(backend.index.path) as connection:
+        assert connection.execute("SELECT count(*) FROM records").fetchone()[0] == 13
+    read.clear()
+    backend.catch_up_index(_stream())
+    assert read == []

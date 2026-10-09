@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -52,7 +53,8 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
-from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_client.contracts.temporal import parse_datetime
+from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator, AuthoringSubmitResult
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -276,6 +278,45 @@ def _payload(
             claim_type=claim_type,
         ),
     )
+
+
+def service_reobserve_playbill_claim(
+    instance: PlaybillInstance,
+    *,
+    authoring: DirectClaimAuthoringV1,
+    actor_id: str,
+    timestamp: str,
+    recorded_at: str | None = None,
+) -> AuthoringSubmitResult:
+    """Restate a live Claim on content it already cites: a recorded no-op.
+
+    The instance's recording clock reads ``recorded_at`` (the canonical
+    timestamp by default), so the re-observation is recorded at the instant the
+    fixture names.
+    """
+
+    instance.recording_clock = lambda: parse_datetime_required(recorded_at or timestamp)
+    coordinator = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentCoordinator.for_instance(instance).store,
+        claim_id_factory=lambda: authoring.claim_id or new_claim_id(),
+    )
+    actor = AuthenticatedActor(actor_id=actor_id)
+    created = coordinator.create(
+        actor=actor,
+        payload=_payload(instance, authoring),
+        canonical_timestamp=timestamp,
+    )
+    submitted = coordinator.submit(created.intent.intent_id, actor=actor)
+    if submitted.status.proposal_id is not None or submitted.status.state != "accepted":
+        raise AssertionError(submitted.status)
+    return submitted
+
+
+def parse_datetime_required(value: str) -> datetime:
+    parsed = parse_datetime(value)
+    assert parsed is not None
+    return parsed
 
 
 def service_propose_playbill_claim(

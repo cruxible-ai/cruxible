@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Literal, cast
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -205,6 +205,66 @@ class CaptureVerdictEvidence(_StrictVerdictModel):
         return value
 
 
+class CaptureReobservationEvidence(_StrictVerdictModel):
+    """One recorded re-observation of content a Claim already cites (identity-design-1009).
+
+    A daemon-admitted Capture observed the same content as the cited Capture,
+    under the same contract, and restating the Claim on it changed nothing. The
+    record does not revise the Claim; it moves the cited content's freshness to
+    ``observed_at`` once it was recorded (``recorded_at``) by the evaluation
+    instant.
+    """
+
+    tag: Literal["cruxible-capture-reobservation-evidence-v1"] = (
+        "cruxible-capture-reobservation-evidence-v1"
+    )
+    cited_capture_digest: str
+    reobserving_capture_digest: str
+    observed_at: datetime
+    recorded_at: datetime
+
+    @field_validator("cited_capture_digest", "reobserving_capture_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        CasDigest.from_tagged(value)
+        return value
+
+    @field_validator("observed_at", "recorded_at")
+    @classmethod
+    def _time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("re-observation times must be timezone-aware")
+        return value
+
+
+def _freshest_observation(
+    capture: CaptureVerdictEvidence,
+    reobservations: tuple[CaptureReobservationEvidence, ...],
+    evaluation_time: datetime,
+) -> tuple[datetime, CaptureReobservationEvidence | None]:
+    """When the cited content was last observed, as recorded by ``evaluation_time``.
+
+    The cited Capture's own instant, or a later re-observation's when one was
+    recorded (and made) by the evaluation instant; ties keep the cited Capture.
+    """
+
+    latest: CaptureReobservationEvidence | None = None
+    for item in reobservations:
+        if (
+            item.cited_capture_digest != capture.capture_digest
+            or item.recorded_at > evaluation_time
+            or item.observed_at > evaluation_time
+            or item.observed_at <= capture.observed_at
+        ):
+            continue
+        if latest is None or (item.observed_at, item.reobserving_capture_digest) > (
+            latest.observed_at,
+            latest.reobserving_capture_digest,
+        ):
+            latest = item
+    return (capture.observed_at, None) if latest is None else (latest.observed_at, latest)
+
+
 class EvidenceControlComponent(_StrictVerdictModel):
     evidence_digests: tuple[str, ...]
     control_domains: tuple[str, ...]
@@ -353,6 +413,10 @@ class EvidenceFreshnessExpiration(_StrictVerdictModel):
     capture_digest: str
     observed_at: datetime
     expires_at: datetime
+    #: The Capture whose recorded re-observation of the same content set
+    #: ``expires_at``, and when it observed it; absent when none did.
+    reobserved_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    reobserved_at: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("capture_digest")
     @classmethod
@@ -444,11 +508,30 @@ def claim_verdict_v1_compat(result: ClaimVerdictResultAny) -> ClaimVerdictResult
     )
 
 
+def _expiration(
+    item: CaptureVerdictEvidence,
+    *,
+    rule: ClaimAdjudicationRuleAny,
+    reobservations: tuple[CaptureReobservationEvidence, ...],
+    evaluation_time: datetime,
+) -> EvidenceFreshnessExpiration:
+    assert rule.max_evidence_age is not None
+    freshest, by = _freshest_observation(item, reobservations, evaluation_time)
+    return EvidenceFreshnessExpiration(
+        capture_digest=item.capture_digest,
+        observed_at=item.observed_at,
+        expires_at=freshest + timedelta(microseconds=rule.max_evidence_age.microseconds),
+        reobserved_by=None if by is None else by.reobserving_capture_digest,
+        reobserved_at=None if by is None else by.observed_at,
+    )
+
+
 def verify_claim_verdict_freshness(
     result: ClaimVerdictResultAny,
     *,
     rule: ClaimAdjudicationRuleAny,
     captures: tuple[CaptureVerdictEvidence, ...],
+    reobservations: tuple[CaptureReobservationEvidence, ...] = (),
 ) -> None:
     """Refuse a v3 verdict whose committed expiration vector cannot reproduce."""
 
@@ -464,11 +547,11 @@ def verify_claim_verdict_freshness(
             "cruxible.claim.evidence_freshness_invalid: freshness rule requires a v2 verdict"
         )
     expected = tuple(
-        EvidenceFreshnessExpiration(
-            capture_digest=item.capture_digest,
-            observed_at=item.observed_at,
-            expires_at=item.observed_at
-            + timedelta(microseconds=rule.max_evidence_age.microseconds),
+        _expiration(
+            item,
+            rule=rule,
+            reobservations=reobservations,
+            evaluation_time=result.evaluation_time,
         )
         for item in sorted(captures, key=lambda item: item.capture_digest.encode("ascii"))
         if item.admission in admitted_kinds
@@ -484,6 +567,7 @@ def _capture_current(
     *,
     rule: ClaimAdjudicationRuleAny,
     evaluation_time: datetime,
+    reobservations: tuple[CaptureReobservationEvidence, ...] = (),
 ) -> bool:
     if evaluation_time < evidence.observed_at:
         return False
@@ -491,7 +575,8 @@ def _capture_current(
         evaluation_time >= evidence.source_effective_until
     ):
         return False
-    if rule.max_evidence_age is not None and evaluation_time >= evidence.observed_at + timedelta(
+    freshest, _by = _freshest_observation(evidence, reobservations, evaluation_time)
+    if rule.max_evidence_age is not None and evaluation_time >= freshest + timedelta(
         microseconds=rule.max_evidence_age.microseconds
     ):
         return False
@@ -512,12 +597,17 @@ def evaluate_claim_verdict(
     claim_effective_until: datetime | None = None,
     referent_current: bool = True,
     resolved_authority_basis: tuple[str, ...] = (),
+    reobservations: tuple[CaptureReobservationEvidence, ...] = (),
 ) -> ClaimVerdictResultAny:
     """Compute one replayable verdict from current evidence and resolved authority.
 
     ``resolved_authority_basis`` must already have been revalidated at
     ``evaluation_time`` and the evaluated accepted coordinate. Historical
     verdict output is never a valid input to this parameter.
+
+    ``reobservations`` are the recorded re-observations of content the Claim
+    cites: a cited Capture is as fresh as its latest one recorded by
+    ``evaluation_time``. None leaves every verdict exactly as before.
     """
 
     Sha256Value.from_tagged(claim_statement_digest)
@@ -539,7 +629,9 @@ def evaluate_claim_verdict(
     current_captures = tuple(
         item
         for item in captures
-        if _capture_current(item, rule=rule, evaluation_time=evaluation_time)
+        if _capture_current(
+            item, rule=rule, evaluation_time=evaluation_time, reobservations=reobservations
+        )
         and (not rule.shell_sensitive or referent_current)
     )
     current_attestations = tuple(
@@ -614,7 +706,8 @@ def evaluate_claim_verdict(
         item.admission in admitted_kinds
         and item.observed_at <= evaluation_time
         and evaluation_time
-        >= item.observed_at + timedelta(microseconds=rule.max_evidence_age.microseconds)
+        >= _freshest_observation(item, reobservations, evaluation_time)[0]
+        + timedelta(microseconds=rule.max_evidence_age.microseconds)
         and (item.source_effective_until is None or evaluation_time < item.source_effective_until)
         and (not rule.require_current_replay or item.current_replay_available)
         and (not rule.shell_sensitive or referent_current)
@@ -675,17 +768,19 @@ def evaluate_claim_verdict(
             unsure_evidence_digests=tuple(sorted(all_unsure)),
             control_components=all_components,
             freshness_expirations=tuple(
-                EvidenceFreshnessExpiration(
-                    capture_digest=item.capture_digest,
-                    observed_at=item.observed_at,
-                    expires_at=item.observed_at
-                    + timedelta(microseconds=rule.max_evidence_age.microseconds),
+                _expiration(
+                    item,
+                    rule=rule,
+                    reobservations=reobservations,
+                    evaluation_time=evaluation_time,
                 )
                 for item in sorted(captures, key=lambda item: item.capture_digest.encode("ascii"))
                 if item.admission in admitted_kinds
             ),
         )
-        verify_claim_verdict_freshness(result, rule=rule, captures=captures)
+        verify_claim_verdict_freshness(
+            result, rule=rule, captures=captures, reobservations=reobservations
+        )
         return result
     return ClaimVerdictResultV1(
         claim_statement_digest=claim_statement_digest,
@@ -705,6 +800,7 @@ def evaluate_claim_verdict(
 
 
 __all__ = [
+    "CaptureReobservationEvidence",
     "CaptureVerdictEvidence",
     "ClaimAdjudicationRuleAny",
     "ClaimAdjudicationRuleV1",
