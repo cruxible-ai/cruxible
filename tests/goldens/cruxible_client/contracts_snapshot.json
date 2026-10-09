@@ -759,6 +759,34 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
+            "type": "object"
+          },
           "PriorRefusalReceipt": {
             "additionalProperties": false,
             "description": "An earlier refusal of the same statement on the same evidence, as recorded.\n\n``claim_retired``: ``claim_id`` was retired by ``decided_by`` at ``decided_at``\nwith ``reason_code`` (its retirement reason, when attributed) and the\nretiring change's ``rationale``; ``proposal_id`` is that change's proposal\nwhen known. ``proposal_rejected``: a reviewer, ``decided_by``, rejected\n``proposal_id`` (which proposed ``claim_id``) at ``decided_at``, giving\n``rationale``; a rejection records no reason code. ``producer`` is the\nProcedure the prior Claim named, when it named one. Nothing here is a\nverdict on the new Claim.",
@@ -993,6 +1021,17 @@
               "parent_semantic_root": {
                 "title": "Parent Semantic Root",
                 "type": "string"
+              },
+              "prior_refusal_coverage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PriorRefusalCoverage"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "projection_advisory": {
                 "anyOf": [
@@ -37577,6 +37616,78 @@
         "resolved_authoring_digest"
       ]
     },
+    "PriorRefusalCoverage": {
+      "fields": {
+        "accepted_generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Accepted Generation",
+            "type": "integer"
+          }
+        },
+        "indexed_through_generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "indexed_through_generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Indexed Through Generation",
+            "type": "integer"
+          }
+        },
+        "tag": {
+          "default": "cruxible-prior-refusal-coverage-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-prior-refusal-coverage-v1",
+            "default": "cruxible-prior-refusal-coverage-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+        "properties": {
+          "accepted_generation": {
+            "minimum": 0,
+            "title": "Accepted Generation",
+            "type": "integer"
+          },
+          "indexed_through_generation": {
+            "minimum": 0,
+            "title": "Indexed Through Generation",
+            "type": "integer"
+          },
+          "tag": {
+            "const": "cruxible-prior-refusal-coverage-v1",
+            "default": "cruxible-prior-refusal-coverage-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "indexed_through_generation",
+          "accepted_generation"
+        ],
+        "title": "PriorRefusalCoverage",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_generation",
+        "indexed_through_generation"
+      ]
+    },
     "PriorRefusalReceipt": {
       "fields": {
         "claim_id": {
@@ -58484,6 +58595,34 @@
             "title": "LineTriggerBinding",
             "type": "object"
           },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
+            "type": "object"
+          },
           "PriorRefusalReceipt": {
             "additionalProperties": false,
             "description": "An earlier refusal of the same statement on the same evidence, as recorded.\n\n``claim_retired``: ``claim_id`` was retired by ``decided_by`` at ``decided_at``\nwith ``reason_code`` (its retirement reason, when attributed) and the\nretiring change's ``rationale``; ``proposal_id`` is that change's proposal\nwhen known. ``proposal_rejected``: a reviewer, ``decided_by``, rejected\n``proposal_id`` (which proposed ``claim_id``) at ``decided_at``, giving\n``rationale``; a rejection records no reason code. ``producer`` is the\nProcedure the prior Claim named, when it named one. Nothing here is a\nverdict on the new Claim.",
@@ -61666,6 +61805,17 @@
                 "title": "Outside Scope Claim Types",
                 "type": "array"
               },
+              "prior_refusal_coverage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PriorRefusalCoverage"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "procedure_mandate_digest": {
                 "anyOf": [
                   {
@@ -62972,6 +63122,25 @@
             "type": "array"
           }
         },
+        "prior_refusal_coverage": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "prior_refusal_coverage",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "procedure_mandate_digest": {
           "default": null,
           "default_json_serializable": true,
@@ -63206,6 +63375,34 @@
               "posted"
             ],
             "title": "InboxPostTruncation",
+            "type": "object"
+          },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
             "type": "object"
           },
           "PriorRefusalReceipt": {
@@ -63562,6 +63759,17 @@
             },
             "title": "Outside Scope Claim Types",
             "type": "array"
+          },
+          "prior_refusal_coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "procedure_mandate_digest": {
             "anyOf": [
@@ -66695,6 +66903,25 @@
             "type": "string"
           }
         },
+        "prior_refusal_coverage": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "prior_refusal_coverage",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "projection_advisory": {
           "default": null,
           "default_json_serializable": true,
@@ -66890,6 +67117,34 @@
               "artifact_digest"
             ],
             "title": "ArtifactPin",
+            "type": "object"
+          },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
             "type": "object"
           },
           "PriorRefusalReceipt": {
@@ -67300,6 +67555,17 @@
           "parent_semantic_root": {
             "title": "Parent Semantic Root",
             "type": "string"
+          },
+          "prior_refusal_coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "projection_advisory": {
             "anyOf": [
