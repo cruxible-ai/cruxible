@@ -8,11 +8,12 @@ CAS-addressed payload, so there is exactly one durable append path.
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime
 from typing import Any
 
-from cruxible_client.contracts.errors import ExecutionError, JournalError
+import structlog
+
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.exhaust.records import (
     JournalEventKindV1,
@@ -133,12 +134,17 @@ class ProcedureExhaustWriter:
         return stored
 
 
+_log = structlog.get_logger("cruxible.exhaust")
+
+
 def note_invocation_start(
     journal: Any, stored: StoredProcedureJournalRecordV1, payload: object
 ) -> None:
     """Give a just-appended Provider start its locator, when the journal keeps an index.
 
-    A start left unnoted (no index, a crash before this) is projected later.
+    Locator maintenance is best effort: journal, SQLite and filesystem failures
+    leave the durable start available for later projection. Nothing here can
+    fail the append it follows.
     """
 
     index = getattr(journal, "index", None)
@@ -152,10 +158,16 @@ def note_invocation_start(
             sequence=stored.record.sequence,
             invocation_id=invocation_id,
         )
-    except (JournalError, sqlite3.DatabaseError):
-        # The start is durable; its locator is a cache. Left pending, the next
-        # lookup projects it from the payload.
-        pass
+    except Exception as exc:  # noqa: BLE001 -- the append already succeeded
+        # Locator maintenance is best effort: journal, SQLite and filesystem
+        # failures leave the durable start pending, and the next lookup
+        # projects it from its payload.
+        _log.warning(
+            "invocation_locator_note_failed",
+            partition_id=stored.record.partition_id,
+            sequence=stored.record.sequence,
+            reason=f"{type(exc).__name__}: {exc}",
+        )
 
 
 __all__ = ["ProcedureExhaustWriter", "note_invocation_start"]
