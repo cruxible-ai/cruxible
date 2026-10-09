@@ -1248,7 +1248,7 @@ the approval frontier, or its certificate. `migrate` atomically succeeds the
 ClaimType and disposes every dependent the request names; it never authors
 retirement decisions from diagnostics.
 
-Core ships builtin ClaimTypes, and a new instance starts with every one of them.
+Cruxible ships builtin ClaimTypes, and a new instance starts with every one of them.
 `semantic.alias` states another name a Subject is known by (any kind; many
 values; stored in the canonical form `nfc, casefold, collapse_whitespace,
 trim`). An instance created before a builtin shipped adopts it with
@@ -2633,6 +2633,7 @@ the row.
 
 ~~~text
 cruxible curation list [--access-profile FILE] [--limit N] [--cursor CURSOR] [--json]
+cruxible curation duplicates --kind KIND [--limit N] [--cursor CURSOR] [--json]
 cruxible curation observe [--workspace-root PATH] [--dry-run|--commit] [--at DIGEST] [--json]
 cruxible curation overrule ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT [--attribution-ref REF]...
@@ -2671,6 +2672,22 @@ The queue is paged (default 25 items, at most 200); a cut page has
 `truncated: true` and a `next_cursor` for `--cursor`, which continues only while
 accepted state and the queue itself are unchanged; otherwise it is refused as
 `cruxible.list.cursor_stale`.
+
+`curation duplicates` is the post-hoc duplicates audit: computed on demand,
+never on the write path and never by detection. For one Subject kind it lists
+what is equal under a broad comparison (NFKC, casefold, punctuation stripped,
+whitespace collapsed and trimmed, plus the alias graph) but distinct under the
+declared rules: Subjects whose ids or aliases meet (`subjects` groups), and live
+values of one literal predicate that meet but differ under its canonical form
+(`values` groups, naming the form). Cruxible proposes no fix; each group names its
+resolutions. Merge two Subjects by adding a `semantic.alias` to the one that
+stays and retiring the other; keep them apart by asserting
+`semantic.distinct_from` between them, which suppresses the pair from then on;
+unify values by a governed ClaimType succession declaring a wider
+`canonical_form` (dependents re-authored). The audit reads at most 50,000
+Subjects, aliases and values and says when it stopped (`budget_exhausted`);
+`scanned` counts what it read. It pages like the queue (default 25 groups, at
+most 200).
 
 The rulings append attributed operational events; they do not create governed
 proposals or mutate accepted knowledge. `overrule` closes an item permanently:

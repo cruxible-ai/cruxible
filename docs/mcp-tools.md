@@ -390,6 +390,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible next` does | `READ_ONLY` |
 | `cruxible_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
 | `cruxible_curation_list` | List one page of the curation queue detection recorded (`limit`, `cursor`), with when detection last ran and which detectors are inactive; a pure read | `READ_ONLY` |
+| `cruxible_curation_duplicates` | List possible duplicates of one kind (`kind`, `limit`, `cursor`): Subjects and values equal under a broad comparison but distinct under the declared rules; a pure, bounded read | `READ_ONLY` |
 | `cruxible_curation_observe` | Scan the MCP workspace's declared blocks and record them for block-churn detection (`dry_run`, `at`) | `GOVERNED_WRITE` |
 | `cruxible_curation_overrule` | Close an item as not applying, permanently, with attribution | `GOVERNED_WRITE` |
 | `cruxible_curation_accept_fixed` | Link an item to the accepted change that fixed it, by `accepted_proposal_id` or `accepted_generation` | `GOVERNED_WRITE` |

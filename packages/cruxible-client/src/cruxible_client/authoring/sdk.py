@@ -194,6 +194,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStamp,
     ProjectionCurrencyPolicy,
 )
+from cruxible_client.contracts.duplicates import DuplicatesAuditResult
 from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import (
     GET_BATCH_MAX_REFS,
@@ -4160,6 +4161,25 @@ class Cruxible:
             access_profile=self._access_profile.model_dump(),
             limit=limit,
             cursor=cursor,
+        )
+
+    def curation_duplicates(
+        self, kind: str, *, limit: int | None = None, cursor: str | None = None
+    ) -> DuplicatesAuditResult:
+        """List possible duplicates of one kind for you to resolve; a pure, bounded read.
+
+        Groups Subjects whose ids or aliases, and values of one predicate, that
+        meet under a broad comparison (casefold, no punctuation, the alias graph)
+        but differ under the declared rules. A truncated page carries
+        ``next_cursor``; pass it back as ``cursor``.
+
+        Next: add a ``semantic.alias`` and retire one Subject, or assert
+        ``semantic.distinct_from``; for values, succeed the ClaimType with a wider
+        ``canonical_form``.
+        """
+
+        return self._client.curation_duplicates(
+            self._instance_id, kind=kind, limit=limit, cursor=cursor
         )
 
     def curation_observe(

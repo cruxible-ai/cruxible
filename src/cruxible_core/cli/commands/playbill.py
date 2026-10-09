@@ -83,6 +83,10 @@ from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.compact_query import QueryClaim
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.duplicates import (
+    DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    DUPLICATES_AUDIT_MAX_LIMIT,
+)
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
     SigningKeyError,
@@ -6493,6 +6497,56 @@ def curation_list(
         click.echo(f"  {_curation_item_line(item)}")
     for inactive in result.inactive_detectors:
         click.echo(f"Inactive: {inactive.pattern_kind} ({inactive.reason})")
+    _echo_list_continuation(result.next_cursor)
+
+
+@curation_group.command("duplicates")
+@click.option("--kind", required=True, help="The Subject kind to audit.")
+@click.option(
+    "--limit",
+    default=DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    show_default=True,
+    type=click.IntRange(1, DUPLICATES_AUDIT_MAX_LIMIT),
+    help="Groups per page.",
+)
+@click.option("--cursor", default=None, help="Continue a previous page of the same audit.")
+@json_option
+@handle_errors
+def curation_duplicates(kind: str, limit: int, cursor: str | None, output_json: bool) -> None:
+    """List possible duplicates of one kind; a pure, bounded read.
+
+    Subjects whose ids or aliases, and values of one predicate, that meet under
+    a broad comparison (casefold, no punctuation, the alias graph) but differ
+    under the declared rules. Resolve a Subject group with an alias plus a
+    retirement or with semantic.distinct_from; a value group with a governed
+    canonical_form succession.
+    """
+
+    result = _server_call(
+        lambda client, instance_id: client.curation_duplicates(
+            instance_id, kind=kind, limit=limit, cursor=cursor
+        ),
+        command_name="cruxible curation duplicates",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    scanned = result.scanned
+    click.echo(
+        f"Possible duplicates of {result.kind}: {len(result.groups)} group(s); read "
+        f"{scanned.subjects} Subject(s), {scanned.aliases} alias(es), {scanned.values} value(s)"
+        + (" (stopped at its bound)" if result.budget_exhausted else "")
+        + "."
+    )
+    for group in result.groups:
+        if group.group == "subjects":
+            members = ", ".join(
+                f"{item.subject} ({', '.join(item.names)})" for item in group.subjects
+            )
+            click.echo(f"  subjects {group.key!r}: {members}")
+        else:
+            members = ", ".join(f"{item.value!r} {item.claim}" for item in group.values)
+            click.echo(f"  {group.predicate} {group.key!r}: {members}")
     _echo_list_continuation(result.next_cursor)
 
 

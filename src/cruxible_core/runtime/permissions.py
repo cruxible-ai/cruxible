@@ -108,6 +108,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_since": PermissionMode.READ_ONLY,
     "cruxible_next": PermissionMode.READ_ONLY,
     "cruxible_curation_list": PermissionMode.READ_ONLY,
+    "cruxible_curation_duplicates": PermissionMode.READ_ONLY,
     "cruxible_audit": PermissionMode.READ_ONLY,
     "cruxible_curation_overrule": PermissionMode.GOVERNED_WRITE,
     "cruxible_curation_accept_fixed": PermissionMode.GOVERNED_WRITE,

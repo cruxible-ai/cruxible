@@ -62,6 +62,10 @@ from cruxible_client.contracts.declared_blocks import (
     BlockRepinResult,
 )
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.duplicates import (
+    DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    DuplicatesAuditResult,
+)
 from cruxible_client.contracts.get_reads import (
     ByteRange,
     GetRequest,
@@ -1644,6 +1648,21 @@ def handle_playbill_curation_list(
             instance_id, access_profile=profile, limit=limit, cursor=cursor
         ),
         operation_name="cruxible_curation_list",
+    )
+
+
+def handle_playbill_curation_duplicates(
+    instance_id: str,
+    *,
+    kind: str,
+    limit: int = DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> DuplicatesAuditResult:
+    return _daemon_call(
+        lambda client: client.curation_duplicates(
+            instance_id, kind=kind, limit=limit, cursor=cursor
+        ),
+        operation_name="cruxible_curation_duplicates",
     )
 
 

@@ -35,6 +35,11 @@ from cruxible_client.contracts.compact_query import (
 )
 from cruxible_client.contracts.declared_blocks import BlockRepinResult
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.duplicates import (
+    DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    DUPLICATES_AUDIT_MAX_LIMIT,
+    DuplicatesAuditResult,
+)
 from cruxible_client.contracts.get_reads import (
     GET_HISTORY_MAX_LIMIT,
     ByteRange,
@@ -1528,6 +1533,24 @@ def register_tools(
             access_profile=_dump(access_profile),
             limit=limit,
             cursor=cursor,
+        )
+
+    @_tool
+    def cruxible_curation_duplicates(
+        instance_id: InstanceId = None,
+        *,
+        kind: str,
+        limit: Annotated[
+            int, Field(ge=1, le=DUPLICATES_AUDIT_MAX_LIMIT)
+        ] = DUPLICATES_AUDIT_DEFAULT_LIMIT,
+        cursor: str | None = None,
+    ) -> DuplicatesAuditResult:
+        """List possible duplicates of one kind for you to resolve; a pure, bounded read.
+
+        Pass next_cursor back while the result is truncated.
+        """
+        return handlers.handle_playbill_curation_duplicates(
+            require_instance_id(instance_id), kind=kind, limit=limit, cursor=cursor
         )
 
     @_tool

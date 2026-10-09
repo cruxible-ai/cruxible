@@ -29,6 +29,7 @@ from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeRequest,
     ClaimTypeUpgradeResult,
 )
+from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, DuplicatesAuditResult
 from cruxible_client.contracts.errors import (
     SinceRequestInvalid,
 )
@@ -1665,6 +1666,28 @@ class CruxibleClient:
             json=body,
         )
         return self._parse_model(response, contracts.CurationListResult)
+
+    def curation_duplicates(
+        self,
+        instance_id: str,
+        *,
+        kind: str,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> DuplicatesAuditResult:
+        """One page of possible duplicates of ``kind``; follow ``next_cursor`` while truncated."""
+        request = DuplicatesAuditRequest.model_validate(
+            {
+                "kind": kind,
+                **({} if limit is None else {"limit": limit}),
+                **({} if cursor is None else {"cursor": cursor}),
+            }
+        )
+        response = self._client.post(
+            f"/api/v1/{instance_id}/curation/duplicates",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return self._parse_model(response, DuplicatesAuditResult)
 
     def observe_curation(
         self,

@@ -732,6 +732,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "Trigger).",
         {
             "list": _command("playbill", "curation_list", "Read the curation queue."),
+            "duplicates": _command(
+                "playbill",
+                "curation_duplicates",
+                "List possible duplicates of one kind for an agent to resolve.",
+            ),
             "observe": _command(
                 "playbill",
                 "curation_observe",

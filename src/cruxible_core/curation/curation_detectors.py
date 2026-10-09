@@ -15,6 +15,10 @@ from cruxible_client.contracts.authoring.models import (
     ProcedureAuthoringPayload,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical_forms import (
+    CanonicalFormDidNotConverge,
+    canonicalize_literal,
+)
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     observed_content,
@@ -22,7 +26,11 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.claim_types import parse_claim_type
+from cruxible_client.contracts.claim_types import (
+    claim_type_path,
+    effective_canonical_form,
+    parse_claim_type,
+)
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidence,
     ClaimVerdictResultAny,
@@ -33,6 +41,7 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
+    ClaimStatement,
     LiteralClaimObject,
     claim_artifact_digest,
     claim_statement_digest,
@@ -388,6 +397,34 @@ def _qualifier_crystallization(
     return tuple(detections), frozen_coverage
 
 
+def _canonical_statement(
+    statement: ClaimStatement, *, tree: Mapping[str, bytes], forms: dict[str, tuple[str, ...]]
+) -> ClaimStatement:
+    """A statement with its literal in the canonical form its live ClaimType declares."""
+
+    value = statement.object
+    if not isinstance(value, LiteralClaimObject):
+        return statement
+    if statement.predicate not in forms:
+        path = claim_type_path(statement.predicate)
+        content = tree.get(path)
+        forms[statement.predicate] = (
+            ()
+            if content is None
+            else effective_canonical_form(parse_claim_type(content, path=path))
+        )
+    form = forms[statement.predicate]
+    if not form:
+        return statement
+    try:
+        canonical = canonicalize_literal(value.value, form)
+    except CanonicalFormDidNotConverge:
+        return statement
+    if canonical == value.value:
+        return statement
+    return statement.model_copy(update={"object": LiteralClaimObject(value=canonical)})
+
+
 def _duplicate_statements(
     *,
     tree: Mapping[str, bytes],
@@ -396,12 +433,18 @@ def _duplicate_statements(
     kind: CurationPatternKind = "playbill.curation.duplicate_statement_lineages.v1"
     coverage = _Coverage(kind)
     grouped: dict[tuple[str, str], dict[str, CurationEvidenceRefV1]] = defaultdict(dict)
+    forms: dict[str, tuple[str, ...]] = {}
     for state in dependency_artifacts(tree):
         if state.artifact_kind != "claim" or state.lifecycle.state != "live":
             continue
         claim = parse_claim(tree[state.path], path=state.path)
         coverage.evaluated += 1
-        statement = claim_statement_digest(claim.statement).tagged
+        # Statements compare canonical: a literal in the form its ClaimType
+        # declares now (identity-design-1009). Without a form the digest is the
+        # stored statement's, exactly as before.
+        statement = claim_statement_digest(
+            _canonical_statement(claim.statement, tree=tree, forms=forms)
+        ).tagged
         grouped[(claim.statement.predicate, statement)][claim.identity.qualified] = _artifact_ref(
             identity=claim.identity,
             path=state.path,
