@@ -1738,7 +1738,8 @@ class PlaybillInstance:
         if index is None or not index.path.exists():
             return
         try:
-            index.catch_up(self)
+            # Never waits: a busy or unbuilt index is caught up by its next read.
+            index.catch_up(self, wait=False)
         except (sqlite3.Error, OSError, CruxibleError):
             index.close()
 

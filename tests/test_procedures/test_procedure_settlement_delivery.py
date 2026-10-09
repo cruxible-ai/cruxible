@@ -1426,3 +1426,165 @@ def test_demoting_the_line_closes_its_row(tmp_path: Path) -> None:
     )
     accept_proposal(instance, OWNERS[instance.root], inspection)
     assert _next_rows(instance, "line_settled_prior_refusals") == []
+
+
+# --- the count is informational: it never fails, delays or misorders a settlement
+
+
+def _retired_then_resettle(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """A settled Claim, retired: the next run on the same bytes settles a matching item."""
+
+    instance, root, line = settle_world(tmp_path)
+    first = run_settle(instance, root, line)
+    assert _egress(first).settle_outcome == "settled", first.terminal
+    _retire_claim(instance, _settled_claim_id(first), at=RETIRED_AT)
+    return instance, root, line
+
+
+def test_a_count_filesystem_failure_never_fails_an_accepted_settlement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-004: the settlement is accepted, so the run succeeds and reports it settled."""
+
+    from cruxible_core.proposals.refusal_index import RefusalIndex
+
+    instance, root, line = _retired_then_resettle(tmp_path)
+    base = instance.accepted_coordinate()
+
+    def unavailable(self: Any, *args: Any, **kwargs: Any) -> None:
+        raise OSError("projection filesystem unavailable")
+
+    monkeypatch.setattr(RefusalIndex, "_write", unavailable)
+    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+
+    assert second.status == "succeeded", second.terminal
+    egress = _egress(second)
+    assert egress.settle_outcome == "settled"
+    assert egress.accepted_git_oid == instance.accepted_coordinate().git_oid != base.git_oid
+
+
+def _timed_count(monkeypatch: pytest.MonkeyPatch, hold: Any) -> list[float]:
+    """Time the count at the delivery boundary while ``hold`` contends for the index."""
+
+    import time
+
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+
+    original = ProposalTerminalEgressSink._count_settled_refusals
+    timings: list[float] = []
+
+    def timed(self: Any, *args: Any, **kwargs: Any) -> None:
+        with hold(self.instance):
+            started = time.monotonic()
+            original(self, *args, **kwargs)
+            timings.append(time.monotonic() - started)
+
+    monkeypatch.setattr(ProposalTerminalEgressSink, "_count_settled_refusals", timed)
+    return timings
+
+
+def test_sqlite_contention_never_delays_settle_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-005: another connection holds the index's write lock; delivery does not wait."""
+
+    import sqlite3
+    from contextlib import contextmanager
+
+    instance, root, line = _retired_then_resettle(tmp_path)
+    instance.refusal_index().catch_up(instance)  # the index exists and is current
+
+    @contextmanager
+    def writer_lock(instance: Any):  # type: ignore[no-untyped-def]
+        other = sqlite3.connect(instance.refusal_index().path, isolation_level=None)
+        other.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        finally:
+            other.execute("ROLLBACK")
+            other.close()
+
+    timings = _timed_count(monkeypatch, writer_lock)
+    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+
+    assert _egress(second).settle_outcome == "settled", second.terminal
+    (elapsed,) = timings
+    assert elapsed < 1.0
+    # The deferred count lands at the next read.
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    assert row.detail["settled_items_matching_refusals"] == 1
+
+
+def test_process_lock_contention_never_delays_settle_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-005: another thread holds the index; delivery defers the count instead of waiting."""
+
+    import threading
+    from contextlib import contextmanager
+
+    instance, root, line = _retired_then_resettle(tmp_path)
+    instance.refusal_index().catch_up(instance)
+
+    @contextmanager
+    def thread_lock(instance: Any):  # type: ignore[no-untyped-def]
+        held, release = threading.Event(), threading.Event()
+
+        def holder() -> None:
+            with instance.refusal_index()._lock:  # noqa: SLF001
+                held.set()
+                release.wait(3)
+
+        thread = threading.Thread(target=holder)
+        thread.start()
+        assert held.wait(5)
+        try:
+            yield
+        finally:
+            release.set()
+            thread.join()
+
+    timings = _timed_count(monkeypatch, thread_lock)
+    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+
+    assert _egress(second).settle_outcome == "settled", second.terminal
+    (elapsed,) = timings
+    assert elapsed < 1.0
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    assert row.detail["settled_items_matching_refusals"] == 1
+
+
+def test_recovering_an_older_settlement_keeps_the_newer_latest_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-006: totals take every settlement; the latest run is the latest settlement."""
+
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+
+    instance, root, line = _retired_then_resettle(tmp_path)
+    with monkeypatch.context() as patch:
+        # The 12:10 settlement is accepted but its count is lost with the process.
+        patch.setattr(ProposalTerminalEgressSink, "_count_settled_refusals", lambda *a, **k: None)
+        older = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+    assert _egress(older).settle_outcome == "settled", older.terminal
+    _retire_claim(instance, _settled_claim_id(older), at="2026-09-12T12:15:00.000000Z")
+    newer = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=20))
+    assert _egress(newer).settle_outcome == "settled", newer.terminal
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    assert row.detail["latest_run_id"] == newer.run_id
+
+    # The older delivery is recovered afterwards and counted then.
+    instance.refusal_index().record_settled(
+        instance,
+        line_identity=line.identity.qualified,
+        line_spec_digest=row.detail["line_spec_digest"],
+        run_id=str(older.run_id),
+        proposal_id=str(_egress(older).proposal_id),
+        settled_at="2026-09-12T12:10:00.000000Z",
+    )
+
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    assert (row.detail["settled_items_matching_refusals"], row.detail["settled_runs"]) == (2, 2)
+    assert row.detail["latest_run_id"] == newer.run_id
+    assert row.detail["latest_settled_at"] == "2026-09-12T12:20:00.000000Z"
+    assert row.related_identities == (f"ProcedureRun:{newer.run_id}",)

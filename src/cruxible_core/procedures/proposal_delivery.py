@@ -56,7 +56,6 @@ from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import claim_path, parse_claim
-from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
     ProcedureMandateAny,
@@ -1087,7 +1086,8 @@ class ProposalTerminalEgressSink:
 
         Settled items skip review, so a Line that keeps settling what was refused
         before must surface by itself (a `next` row per Line). The count is
-        informational: it never changes, delays or fails the settlement.
+        informational: it never waits (a busy or unbuilt index defers it to the
+        next index read) and no error of it fails the settlement.
         """
 
         line_identity = getattr(admission, "line_identity", None)
@@ -1103,11 +1103,15 @@ class ProposalTerminalEgressSink:
                 proposal_id=result.admission.proposal_id,
                 settled_at=canonical_candidate_timestamp(request.evaluation_time),
             )
-        except CruxibleError as exc:
+        except Exception as exc:  # noqa: BLE001 - the settlement is already accepted
+            # Counting is informational: no failure of the derived index (SQLite,
+            # filesystem, a source read) may turn an accepted settlement into a
+            # failed run. It is logged and the settled receipt is returned.
             _log.warning(
                 "settled_refusal_count_skipped",
                 run_id=request.run_id,
                 proposal_id=result.admission.proposal_id,
+                error_type=type(exc).__name__,
                 reason=str(exc),
             )
 

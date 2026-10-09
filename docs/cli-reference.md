@@ -1876,7 +1876,12 @@ statement](#earlier-refusals-of-the-same-statement)) shows as one
 `line_settled_prior_refusals` row per live Line: how many settled items matched
 and in how many runs, for the Line's current version, with the latest run as a
 related identity (`get ProcedureRun:<run>` lists each settled item's receipts).
-The count is maintained at each settlement, so the row is one keyed read. Its
+The count is maintained at each settlement, so the row is one keyed read.
+Counting never delays or fails a settlement: when the refusal index is busy, or
+not yet built, the count is deferred to the next read in that daemon (a restart
+before then drops it, logged), and any other counting failure is logged and the
+settlement reported as settled. The latest run named is the latest settlement,
+whatever order deliveries and recoveries arrive in. Its
 repair is a Line successor, from `cruxible authoring example line`: demote the
 Line to `max_authority: propose` so its results are reviewed again, or point it
 at a fixed Procedure. Either starts a new Line version, and the row closes. A

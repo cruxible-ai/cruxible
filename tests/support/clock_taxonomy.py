@@ -437,6 +437,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillProposalRejectResultV1", "rejected_at"): "ASSERTION TIME",
     ("PriorRefusalReceipt", "decided_at"): "ASSERTION TIME",
     ("LineSettledRefusals", "latest_settled_at"): "EVALUATION INSTANT",
+    ("_SettledCount", "settled_at"): "EVALUATION INSTANT",
     ("ProposalRejectResult", "rejected_at"): "ASSERTION TIME",
     # An agent's inbox disposition is asserted at its request time; an item is
     # posted at the evaluation instant of the run that posted it.
