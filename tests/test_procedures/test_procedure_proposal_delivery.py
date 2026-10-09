@@ -2157,3 +2157,61 @@ def test_an_unchanged_terminal_does_not_record_for_a_claim_retired_after_prepare
     (child,) = egress.children
     assert child.unchanged and child.path == first_child.path
     assert ClaimReobservationStore(instance).history(claim_id) == ()
+
+
+def test_an_unchanged_terminal_is_accounted_as_delivered_and_finalized(tmp_path: Path) -> None:
+    """Reviewer accounting probe: tallies, finalization and measurement grains."""
+
+    from types import SimpleNamespace
+
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.procedures.results import ProcedureTerminalEgress
+    from cruxible_core.exhaust.line_track_records import _egress_reading, _tally
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.service.procedures.measurements import _grain_occurred
+    from cruxible_core.service.procedures.procedure_runs import (
+        _records_for_run,
+        load_playbill_procedure_run_grain,
+    )
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    _accept_first_run(instance, owner, root, line)
+    run = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    assert run.status == "succeeded"
+    assert run.run_id is not None
+    (terminal,) = run.terminal_egress
+    assert all(child.unchanged for child in terminal.children)
+    changed = terminal.model_dump(mode="json")
+    changed["children"][0]["unchanged"] = False
+    with pytest.raises(ValidationError, match="delivered proposal"):
+        ProcedureTerminalEgress.model_validate(changed)
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    readings = []
+    kinds = []
+    for stored in _records_for_run(instance, run.run_id):
+        record = stored.record
+        kinds.append(record.event_kind)
+        if record.event_kind == "terminal_egress":
+            payload = parse_journal_payload(
+                instance.body_store().read(record.payload_digest, access=access)
+            )
+            readings.append(
+                _egress_reading(
+                    SimpleNamespace(
+                        payload=payload,
+                        run_id=record.run_id,
+                        occurrence_id=record.occurrence_id,
+                        attempt=record.attempt,
+                        sequence=record.sequence,
+                    )
+                )
+            )
+    assert _tally(tuple(readings)).delivered == 1
+    assert "attempt_finalized" in kinds, kinds
+    grain = load_playbill_procedure_run_grain(instance, run_id=run.run_id)
+    assert _grain_occurred(SimpleNamespace(subject_grain="procedure_unit"), grain) == (True, None)
+    assert _grain_occurred(SimpleNamespace(subject_grain="node", node_id="propose"), grain) == (
+        True,
+        None,
+    )
