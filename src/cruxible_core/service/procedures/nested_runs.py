@@ -188,7 +188,9 @@ class ServedNestedProcedureRunner:
                 definition = child.procedure.definition
                 supported = set(DIRECT_NODE_KINDS)
                 if admission.invocation_origin == "line":
-                    supported |= {"emit_capture", "propose_change_set"}
+                    # A Line's child runs under the root Line's authority; its
+                    # inbox posts land in that Line's inbox.
+                    supported |= {"emit_capture", "post_inbox", "propose_change_set"}
                 if any(step.kind not in supported for step in definition.nodes):
                     raise ProcedureBoundaryRefused(
                         "pin_binding_mismatch",
