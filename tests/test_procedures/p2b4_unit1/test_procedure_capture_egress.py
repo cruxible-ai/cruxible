@@ -9,6 +9,7 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.captures import (
     CaptureEnvelope,
+    CaptureProductionRecord,
     ProcedureEgressCaptureEvidence,
     capture_contract_digest,
     parse_capture_envelope,
@@ -25,6 +26,7 @@ from cruxible_core.procedures.egress import (
 )
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from tests.core_support._pc_c_support import capture_contract
+from tests.support.capture_receipts import StaticReceipts
 from tests.test_procedures.test_procedure_effectful_terminals import (
     _admission,
     _base_request,
@@ -96,8 +98,16 @@ def test_procedure_capture_is_below_the_exact_pre_egress_producer_receipt(
             producer_artifact_digests={
                 admission.procedure_identity.qualified: admission.procedure_artifact_digest
             },
-            producer_receipt_resolver=lambda value: (
-                request.producer_receipt if value == expected_producer_digest else None
+            producer_receipt_resolver=StaticReceipts(
+                {expected_producer_digest: request.producer_receipt},
+                produced=(
+                    CaptureProductionRecord(
+                        capture_digest=receipt.children[0].egress_digest,
+                        capture_contract_digest=contract_digest,
+                        run_id=request.run_id,
+                        receipt_digest=expected_producer_digest,
+                    ),
+                ),
             ),
         )
         == capture

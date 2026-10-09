@@ -10,6 +10,7 @@ from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequ
 from cruxible_client.contracts.captures import (
     CaptureContract,
     CaptureEnvelopeAny,
+    ProducerReceiptResolverProtocol,
     classify_capture_reuse,
     parse_capture_envelope,
     verify_capture,
@@ -25,7 +26,6 @@ from cruxible_client.contracts.source_references import (
     SourceHandle,
 )
 from cruxible_core.errors import PermissionDeniedError
-from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import service_open_playbill_source
@@ -193,13 +193,17 @@ def verify_accepted_capture(
     digest: str,
     *,
     access: BodyAccessContext,
+    captures: ProducerReceiptResolverProtocol | None = None,
 ) -> VerifiedCapture | CaptureUnavailableReason:
     """Verify one retained Capture against the contract accepted at ``coordinate``.
 
     Answers why it is unavailable when its bytes, its contract at the coordinate
     or its committed body are missing; raises ``CaptureReadInvalid`` when it is
     present but does not verify, and ``cruxible.capture.not_a_capture`` when the
-    bytes are not a Capture envelope at all.
+    bytes are not a Capture envelope at all. A Capture no accepted Claim cites at
+    the coordinate is held to what a new citation is: daemon proof that a run
+    produced it. ``captures`` is the caller's verification context, shared by
+    every Capture one request verifies.
     """
 
     store = instance.body_store()
@@ -220,6 +224,12 @@ def verify_accepted_capture(
             path = projection.citations.capture_contract_path(envelope.capture_contract_digest)
             if path is None:
                 return "contract_not_at_coordinate"
+            cited = (
+                projection.typed.connection.execute(
+                    "SELECT 1 FROM captures WHERE capture_digest=?", (digest,)
+                ).fetchone()
+                is not None
+            )
             row = projection.typed.connection.execute(
                 "SELECT identity FROM capture_contracts WHERE path=? AND artifact_digest=?",
                 (path, envelope.capture_contract_digest),
@@ -247,11 +257,10 @@ def verify_accepted_capture(
             contract=contract,
             ledger_resolver=_LedgerResolver(instance),
             producer_artifact_digests=producers,
-            producer_receipt_resolver=local_producer_receipt_resolver(
-                exhaust_root=instance.root / instance.descriptor.storage.exhaust,
-                instance_id=instance.descriptor.instance_id,
-                bodies=store,
+            producer_receipt_resolver=(
+                instance.capture_verification_context() if captures is None else captures
             ),
+            require_production_proof=not cited,
         )
     except CaptureReadInvalid:
         raise
@@ -287,7 +296,6 @@ def retained_captures(
     *,
     budget: int,
     hex_prefix: str = "",
-    contract_digests: Collection[str] | None = None,
     nearest: int = 0,
 ) -> RetainedCaptureInventory:
     """The Captures the instance holds whose digest starts with ``hex_prefix``.
@@ -295,24 +303,17 @@ def retained_captures(
     Cited or not: a Capture is retained as soon as it is stored. At most
     ``budget`` stored objects are examined; when the store holds more under the
     prefix the inventory is incomplete and says so, and callers refuse rather
-    than treat a partial inventory as the whole. ``contract_digests`` keeps only
-    Captures under those contract versions, judged from each object's leading
-    bytes before it is read in full. ``nearest`` passes on that many digests
-    sharing the longest prefix with ``hex_prefix``. Nothing here is verified;
-    ``verify_accepted_capture`` verifies what a caller keeps.
+    than treat a partial inventory as the whole. ``nearest`` passes on that many
+    digests sharing the longest prefix with ``hex_prefix``. Nothing here is
+    verified; ``verify_accepted_capture`` verifies what a caller keeps.
     """
 
     store = instance.body_store()
     scan = store.scan(hex_prefix, budget=budget, nearest=nearest)
-    wanted = (
-        None if contract_digests is None else {item.encode("ascii") for item in contract_digests}
-    )
     found: list[RetainedCapture] = []
     for digest in scan.digests:
         head = store.peek(digest, _HEAD_LENGTH)
         if not head.startswith(_ENVELOPE_HEAD):
-            continue
-        if wanted is not None and head[len(_ENVELOPE_HEAD) :] not in wanted:
             continue
         try:
             envelope = parse_capture_envelope(store.read(digest, access=_INVENTORY_ACCESS))
@@ -325,6 +326,34 @@ def retained_captures(
 
 
 _INVENTORY_ACCESS = BodyAccessContext(principal_id="playbill-capture-inventory", can_read_body=True)
+
+
+def contract_captures(
+    instance: PlaybillInstance,
+    *,
+    contract_digests: Collection[str],
+    budget: int,
+) -> RetainedCaptureInventory:
+    """The retained Captures under these contract versions, by index, never by a CAS walk.
+
+    Every Capture envelope the body store holds is indexed by the contract it
+    names when it is stored: a run's Source acquisition or ``emit_capture``
+    terminal, a self-asserted selection, cited or not. At most ``budget`` are
+    read; past it the inventory is incomplete and says so. Nothing here is
+    verified; citation verifies what a caller keeps, at its coordinate.
+    """
+
+    store = instance.body_store()
+    digests, complete = store.capture_envelopes.captures(contract_digests, limit=budget)
+    found: list[RetainedCapture] = []
+    for digest in digests:
+        try:
+            envelope = parse_capture_envelope(store.read(digest, access=_INVENTORY_ACCESS))
+        except (CruxibleError, ValueError):
+            continue
+        found.append(RetainedCapture(digest=digest, envelope=envelope))
+    return RetainedCaptureInventory(captures=tuple(found), complete=complete)
+
 
 #: How many stored objects one handle lookup examines in its shard.
 CAPTURE_HANDLE_SCAN_BUDGET = 65_536
@@ -404,7 +433,9 @@ def resolve_capture_handle(
     if len(inventory.captures) > CAPTURE_HANDLE_MAX_VERIFIED:
         return CaptureHandleExhausted("verify_limit")
     uncited = [item.digest for item in inventory.captures if item.digest not in cited]
-    check = verified or (lambda digest: _verifies(instance, coordinate, digest))
+    if verified is None:
+        captures = instance.capture_verification_context()
+    check = verified or (lambda digest: _verifies(instance, coordinate, digest, captures))
     found = sorted(cited | {digest for digest in uncited if check(digest)})
     if len(found) == 1:
         return CaptureHandleResolved(found[0])
@@ -414,12 +445,17 @@ def resolve_capture_handle(
 
 
 def _verifies(
-    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, digest: str
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    digest: str,
+    captures: ProducerReceiptResolverProtocol,
 ) -> bool:
     """Whether a retained Capture verifies against its contract accepted at ``coordinate``."""
 
     try:
-        verified = verify_accepted_capture(instance, coordinate, digest, access=_INVENTORY_ACCESS)
+        verified = verify_accepted_capture(
+            instance, coordinate, digest, access=_INVENTORY_ACCESS, captures=captures
+        )
     except (CaptureReadInvalid, ReadRefusalError, CruxibleError, ValueError):
         return False
     return not isinstance(verified, str)

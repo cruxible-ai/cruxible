@@ -312,6 +312,9 @@ def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path:
     source_read_payload_digest = records[kinds.index("source_read")].record.payload_digest
 
     class _ForgedReadBodies:
+        def verify(self, digest: str) -> bool:
+            return fixture.bodies.verify(digest)
+
         def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
             content = fixture.bodies.read(digest, access=access)
             if digest != source_read_payload_digest:

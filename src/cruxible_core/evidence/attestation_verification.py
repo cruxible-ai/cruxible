@@ -11,6 +11,7 @@ from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     CaptureContract,
     CaptureObjectStoreProtocol,
+    CaptureProductionUnproven,
     ProducerReceiptResolverProtocol,
     capture_contract_digest,
     capture_contract_is_self_asserted,
@@ -210,6 +211,7 @@ def _new_capture_accounts(
     referent_tree: Mapping[str, bytes],
     append_tree: Mapping[str, bytes],
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
+    require_production_proof: bool = True,
 ) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifact, ...]]:
     contracts = _capture_contracts(referent_tree)
     live_identities = {
@@ -328,9 +330,15 @@ def _new_capture_accounts(
                 ),
                 producer_artifact_digests=producers,
                 producer_receipt_resolver=producer_receipt_resolver,
+                require_production_proof=require_production_proof,
             )
         except ClaimAttestationRefusal:
             raise
+        except CaptureProductionUnproven as exc:
+            raise ClaimAttestationRefusal(
+                "capture_production_unproven",
+                "Capture has no daemon proof that a run produced it",
+            ) from exc
         except (CruxibleError, ValueError) as exc:
             raise ClaimAttestationRefusal(
                 "capture_binding_invalid",
@@ -460,12 +468,15 @@ def verify_attestation_admission(
     law: ClaimLawEvidenceAny | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
+    require_production_proof: bool = True,
 ) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifact, ...]]:
     """Check current eligibility after authenticating the exact signed referent.
 
     `historical_capture_contract` resolves an exact contract version accepted at
     or before the signed referent, for Captures made under a since-succeeded
-    version of a still-live contract.
+    version of a still-live contract. `require_production_proof` holds each
+    newly cited Capture to daemon proof that a run produced it; a replay of an
+    accepted attestation passes False.
     """
     s = attestation.statement
     _verify_principal(attestation, current_principals, phase="append")
@@ -488,6 +499,7 @@ def verify_attestation_admission(
         referent_tree=referent_tree,
         append_tree=current_tree,
         historical_capture_contract=historical_capture_contract,
+        require_production_proof=require_production_proof,
     )
 
 
@@ -504,6 +516,7 @@ def verify_attestation_binding(
     law: ClaimLawEvidenceAny | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
+    require_production_proof: bool = True,
 ) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifact, ...]]:
     claim = verify_attestation_referent(
         attestation,
@@ -523,4 +536,5 @@ def verify_attestation_binding(
         law=law,
         producer_receipt_resolver=producer_receipt_resolver,
         historical_capture_contract=historical_capture_contract,
+        require_production_proof=require_production_proof,
     )

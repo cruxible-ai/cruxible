@@ -16,7 +16,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.captures import CaptureObjectStoreProtocol
+from cruxible_client.contracts.captures import (
+    CaptureObjectStoreProtocol,
+    CaptureProductionRecord,
+    ProcedureProducerReceiptProtocol,
+    ProducerReceiptResolverProtocol,
+    ProviderProducerReceiptResolution,
+    VerifiedCaptureMemo,
+)
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.documents import BodyVerifierProtocol
 from cruxible_client.contracts.proposal_models import (
@@ -107,6 +114,36 @@ class _OperationalVerifier:
         return self.source.verify_promotion(promotion)
 
 
+class _ObservedReceipts:
+    def __init__(self, source: ProducerReceiptResolverProtocol, scope: PreparedEvaluationScope):
+        self.source, self.scope = source, scope
+        # Verifications this evaluation finished itself, through its observed bodies.
+        self._own: set[str] = set()
+
+    def producer_receipt(
+        self, digest: str, *, run_id: str
+    ) -> ProviderProducerReceiptResolution | ProcedureProducerReceiptProtocol | None:
+        self.scope.ineligible = True
+        return self.source.producer_receipt(digest, run_id=run_id)
+
+    def produced_capture(
+        self, capture_digest: str, *, run_id: str
+    ) -> tuple[CaptureProductionRecord, ...]:
+        self.scope.ineligible = True
+        return self.source.produced_capture(capture_digest, run_id=run_id)
+
+    def recall_verified(self, capture_digest: str) -> VerifiedCaptureMemo | None:
+        memo = self.source.recall_verified(capture_digest)
+        if memo is not None and capture_digest not in self._own:
+            # An answer this evaluation did not observe in the bodies it reads.
+            self.scope.ineligible = True
+        return memo
+
+    def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
+        self._own.add(memo.capture_digest)
+        self.source.remember_verified(memo)
+
+
 class PreparedEvaluationScope:
     """Private capability held by exactly one synchronous coordinator submit."""
 
@@ -159,6 +196,13 @@ class PreparedEvaluationScope:
             return source(*args, **kwargs)
 
         return observed
+
+    def receipts(
+        self, source: ProducerReceiptResolverProtocol | None
+    ) -> ProducerReceiptResolverProtocol | None:
+        """Journal facts are not body observations: consulting them ends reuse."""
+
+        return None if source is None else _ObservedReceipts(source, self)
 
     def promotion(self, source: Any) -> Any:
         return None if source is None else _OperationalVerifier(source, self)

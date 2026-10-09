@@ -1057,7 +1057,7 @@ class ProposalTerminalEgressSink:
         mandate: ProcedureMandate,
         digest: str,
     ) -> str:
-        from cruxible_client.contracts.errors import SettlementIntegrityError
+        from cruxible_client.contracts.errors import ProposalStale, SettlementIntegrityError
         from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 
         # No late acceptance: the mandate must still stand when the change lands.
@@ -1074,6 +1074,13 @@ class ProposalTerminalEgressSink:
                 activated_by=request.actor_context.actor_id,
                 mandate_digest=digest,
             )
+        except ProposalStale:
+            # Accepted state moved past the candidate before it published.
+            raise ProposalDeliveryRefused(
+                "settle_publication_refused",
+                "Accepted state moved before the settlement published.",
+                details={"proposal_id": result.admission.proposal_id, "status": "stale"},
+            ) from None
         except SettlementIntegrityError:
             raise ProposalDeliveryRefused(
                 "settle_publication_refused",

@@ -37,6 +37,7 @@ from tests.core_support._write_support import (
     report_evidence,
     seed_write_surface,
 )
+from tests.support.capture_receipts import admit_legacy_v1_citations
 
 WI1 = f"{KIND}/wi-1"
 WI2 = f"{KIND}/wi-2"
@@ -683,7 +684,7 @@ def _contract_of(instance: PlaybillInstance, digest: str) -> str:
     )
 
 
-def _seed_record_source(instance: PlaybillInstance) -> tuple[Any, Any]:
+def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> tuple[Any, Any]:
     """Accept an external record contract and its provider; answer (contract, provider)."""
 
     from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -702,7 +703,7 @@ def _seed_record_source(instance: PlaybillInstance) -> tuple[Any, Any]:
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from tests.core_support._pc_c_support import capture_contract, provider
 
-    contract = capture_contract()
+    contract = capture_contract() if contract is None else contract
     provider_artifact = provider(contract)
     # A field whose evidence is the record, bound to its Subject by the source.
     predicate = f"{KIND}.recorded_status"
@@ -827,10 +828,11 @@ def _record_capture(
 
 
 def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subject(
-    instance: PlaybillInstance,
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from cruxible_client.contracts.write import capture_handle
 
+    admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
     contract, provider_artifact = _seed_record_source(instance)
     held = _record_capture(instance, contract, provider_artifact, WI1)
     assert held not in _accepted_capture_digests(instance)
@@ -847,11 +849,37 @@ def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subje
     assert other.code == "cruxible.write.contract_capture_not_found"
 
 
-def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
+def test_contract_evidence_finds_an_uncited_self_asserted_capture(
     instance: PlaybillInstance,
+) -> None:
+    """A proposer-asserted contract's Capture needs no run: it is found by contract too."""
+
+    from cruxible_client.contracts.write import capture_handle
+    from tests.core_support._pc_c_support import capture_contract
+    from tests.test_authoring.test_authoring_existing_capture import _self_asserted
+
+    contract, provider_artifact = _seed_record_source(
+        instance, contract=_self_asserted(capture_contract())
+    )
+    held = _record_capture(instance, contract, provider_artifact, WI1)
+    assert held not in _accepted_capture_digests(instance)
+    by_contract = {"kind": "contract", "contract": contract.identity.name}
+    outcome = _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_contract})
+    assert outcome.status == "accepted", outcome
+    assert outcome.changes[0].capture == capture_handle(held)
+    by_digest = _write(
+        instance,
+        _set(WI1, "recorded_status", "done") | {"evidence": {"kind": "capture", "capture": held}},
+    )
+    assert by_digest.status == "accepted", by_digest
+
+
+def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only a canonical-value record: a refusal naming it, never 'capture it first'."""
 
+    admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
     from datetime import timedelta
 
     from cruxible_client.contracts.write import capture_handle
@@ -890,6 +918,37 @@ def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
     )
     assert preview.status == "would_accept", preview
     assert "cruxible.write.newer_capture_not_citable" in {item.code for item in preview.warnings}
+
+
+def test_contract_evidence_reads_indexes_not_the_body_store(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lookup by contract never walks the CAS: its size is not the lookup's limit."""
+
+    from cruxible_client.contracts.write import capture_handle
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
+    contract, provider_artifact = _seed_record_source(instance)
+    held = _record_capture(instance, contract, provider_artifact, WI1)
+
+    def no_scan(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a contract lookup walked the body store")
+
+    monkeypatch.setattr(ContentAddressedBodyStore, "scan", no_scan)
+    by_contract = {"kind": "contract", "contract": contract.identity.name}
+    outcome = _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_contract})
+    assert outcome.status == "accepted", outcome
+    assert outcome.changes[0].capture == capture_handle(held)
+
+    # Its budget counts the contract's own Captures, not the objects stored.
+    _record_capture(instance, contract, provider_artifact, WI2)
+    _record_capture(instance, contract, provider_artifact, WI3)
+    monkeypatch.setattr(write_verbs, "_CONTRACT_CAPTURE_BUDGET", 2)
+    crowded = _refusal(
+        _write(instance, _set(WI2, "recorded_status", "ready") | {"evidence": by_contract})
+    )
+    assert crowded.code == "cruxible.write.capture_scan_exhausted"
 
 
 def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(
@@ -1225,7 +1284,7 @@ def test_a_contender_after_admission_refuses_activation_and_readmission(
 ) -> None:
     from cruxible_client.contracts.errors import (
         ProposalReadmitRequiresResubmission,
-        SettlementIntegrityError,
+        ProposalStale,
     )
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
@@ -1234,7 +1293,8 @@ def test_a_contender_after_admission_refuses_activation_and_readmission(
     pending = _write(instance, _RETIRE_BY_SLOT, accept="never")
     assert pending.status == "awaiting_approval" and pending.proposal is not None
     _contend(instance)
-    with pytest.raises(SettlementIntegrityError):
+    # Accepted state moved: activation refuses it as stale, naming readmit.
+    with pytest.raises(ProposalStale):
         service_activate_playbill_proposal(
             instance, proposal_id=pending.proposal.proposal_id, activated_by="owner"
         )

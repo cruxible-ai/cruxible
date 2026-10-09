@@ -889,7 +889,13 @@ def compute_preflight(
                 actor=actor,
                 accepted=current_public,
                 receive_limits=service.receive_limits,
-                compute=lambda: lower_authoring(instance, intent=intent, actor_id=actor.actor_id),
+                # One Capture verification context for lowering and the laws.
+                compute=lambda: lower_authoring(
+                    instance,
+                    intent=intent,
+                    actor_id=actor.actor_id,
+                    captures=service.producer_receipt_resolver,
+                ),
             )
             record_entries = len(lowered.changed_members)
             if lowered.idempotent:
@@ -991,7 +997,7 @@ def compute_preflight(
                         producer_receipt_resolver=(
                             service.producer_receipt_resolver
                             if prepared is None
-                            else prepared.operational(service.producer_receipt_resolver)
+                            else prepared.receipts(service.producer_receipt_resolver)
                         ),
                         query_facts_provider=(
                             service.query_facts_provider

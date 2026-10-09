@@ -44,6 +44,7 @@ from tests.core_support._pc_c_support import (
     provider_run,
 )
 from tests.core_support._support import initialize_local
+from tests.support.capture_receipts import admit_legacy_v1_citations
 from tests.test_claims.test_claims import TIMESTAMP, _claim, _claim_type, _subject
 
 
@@ -98,6 +99,8 @@ def test_general_contract_and_exact_external_capture_do_not_copy_a_table(tmp_pat
         producer_artifact_digests={
             provider_artifact.identity.qualified: provider_digest(provider_artifact).tagged
         },
+        # A fixture-reader v1 envelope: it replays, but is never a new citation.
+        require_production_proof=False,
     )
     assert verified.source == result.envelope.source
 
@@ -175,7 +178,11 @@ def test_external_coordinates_refuse_secrets_and_unpinned_schemas() -> None:
 
 def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The fixture reader builds v1 envelopes; this pins the mapping law that
+    # judges such evidence once accepted, not whether a new citation is admitted.
+    admit_legacy_v1_citations(monkeypatch)
     instance, _owner = initialize_local(tmp_path)
     base = instance.accepted_coordinate()
     contract = capture_contract()

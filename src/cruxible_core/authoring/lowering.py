@@ -72,7 +72,11 @@ from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     CaptureBuildResult,
     CaptureEnvelopeAny,
+    CaptureObjectStoreProtocol,
+    CaptureProductionUnproven,
     DirectCaptureBuildResult,
+    ProducerReceiptResolverProtocol,
+    VerifiedCaptureMemo,
     build_coordinator_self_source_capture,
     build_working_selection_capture,
     capture_contract_digest,
@@ -242,7 +246,6 @@ from cruxible_core.compiler.projection_artifacts import (
     parse_projection_tree,
 )
 from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree, fork_tree
-from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -452,6 +455,65 @@ def _refuse(
         offending_element=offending_element,
         message=message,
         repairs=(bounded_repair(repair_kind, repair_description, replacement),),
+    )
+
+
+def _read_existing_capture(store: CaptureObjectStoreProtocol, digest: str) -> CaptureEnvelopeAny:
+    """The cited Capture envelope, or the typed refusal for a missing or foreign body."""
+
+    try:
+        raw_envelope = store.read(
+            digest,
+            access=BodyAccessContext(principal_id="playbill-authoring", can_read_body=True),
+        )
+    except CruxibleError:
+        _refuse(
+            "cruxible.authoring.existing_capture_not_found",
+            "source.capture_digest",
+            "The existing Capture digest is not present in the daemon CAS.",
+            repair_kind="replace_capture",
+            repair_description="Use a Capture digest returned by a typed Claim/evidence read.",
+        )
+    try:
+        return parse_capture_envelope(raw_envelope)
+    except (CruxibleError, ValueError):
+        _refuse(
+            "cruxible.authoring.existing_capture_invalid",
+            "source.capture_digest",
+            "The referenced bytes are not a canonical Capture envelope.",
+            repair_kind="replace_capture",
+            repair_description="Use a Capture digest returned by a typed Claim/evidence read.",
+        )
+
+
+def _refuse_unproduced_capture(gap: CaptureProductionUnproven) -> NoReturn:
+    """Refuse a cited Capture no daemon run is recorded as producing."""
+
+    if gap.reason == "v1_envelope":
+        _refuse(
+            "cruxible.authoring.capture_v1_citation_refused",
+            "source.capture_digest",
+            "This is a version-1 Capture under a contract that is not self-asserted: it "
+            "carries no producer receipt, so nothing proves a daemon run produced it, and "
+            "it cannot be cited as new evidence. Claims that already cite it keep it.",
+            repair_kind="replace_capture",
+            repair_description=(
+                "Re-run the Procedure or Line that produces this evidence and cite the "
+                "Capture it records, or author the evidence as a working selection."
+            ),
+        )
+    _refuse(
+        "cruxible.authoring.capture_production_unproven",
+        "source.capture_digest",
+        "No daemon run is recorded producing this Capture: its digest is named by no "
+        "produced_capture record or delivered emit_capture terminal. A Source read the "
+        "acquisition rule did not select is never published, and bytes stored outside "
+        "a run prove nothing.",
+        repair_kind="replace_capture",
+        repair_description=(
+            "Cite a Capture a run produced (a run's produced Captures, or a Capture a "
+            "typed evidence read returned), or author the evidence as a working selection."
+        ),
     )
 
 
@@ -776,6 +838,7 @@ def _refuse_citation_into_projection_window(
     *,
     payload: ClaimAuthoringPayloadV1,
     envelope: CaptureEnvelopeAny,
+    memo: VerifiedCaptureMemo | None = None,
 ) -> None:
     """Refuse a citation whose span lies inside a stamped projection block.
 
@@ -819,7 +882,7 @@ def _refuse_citation_into_projection_window(
                     end_byte=payload.source.selector.end_byte,
                 )
     if page is None:
-        cited = projection_window_cited(envelope, store=store)
+        cited = projection_window_cited(envelope, store=store, memo=memo)
         if cited is not None:
             resolved, window = cited
             _refuse_evidence_from_projection(
@@ -828,7 +891,7 @@ def _refuse_citation_into_projection_window(
                 start_byte=resolved.start_byte,
                 end_byte=resolved.end_byte,
             )
-        resolved_source = resolve_cited_source_window(envelope, store=store)
+        resolved_source = resolve_cited_source_window(envelope, store=store, memo=memo)
         if resolved_source is not None and resolved_source.whole_source:
             page = resolved_source.content
     cited_source = (
@@ -916,6 +979,7 @@ def _lower_claim(
     claim_identity: str | None = None,
     claim_index: _ClaimPredicateIndex | None = None,
     derivation_procedure: ArtifactPin | None = None,
+    captures: ProducerReceiptResolverProtocol,
 ) -> LoweredAuthoring:
     """Lower one authored Claim against the tree it is being written onto.
 
@@ -1131,32 +1195,13 @@ def _lower_claim(
     elif isinstance(payload.source, ExistingCaptureCitationSource):
         install_contract = False
         store = instance.body_store()
-        try:
-            raw_envelope = store.read(
-                payload.source.capture_digest,
-                access=BodyAccessContext(
-                    principal_id="playbill-authoring",
-                    can_read_body=True,
-                ),
-            )
-        except CruxibleError:
-            _refuse(
-                "cruxible.authoring.existing_capture_not_found",
-                "source.capture_digest",
-                "The existing Capture digest is not present in the daemon CAS.",
-                repair_kind="replace_capture",
-                repair_description="Use a Capture digest returned by a typed Claim/evidence read.",
-            )
-        try:
-            envelope = parse_capture_envelope(raw_envelope)
-        except (CruxibleError, ValueError):
-            _refuse(
-                "cruxible.authoring.existing_capture_invalid",
-                "source.capture_digest",
-                "The referenced bytes are not a canonical Capture envelope.",
-                repair_kind="replace_capture",
-                repair_description="Use a Capture digest returned by a typed Claim/evidence read.",
-            )
+        # The request may already have verified this Capture for a sibling Claim.
+        verified = captures.recall_verified(payload.source.capture_digest)
+        envelope = (
+            verified.envelope
+            if verified is not None
+            else _read_existing_capture(store, payload.source.capture_digest)
+        )
         accepted_contract = _capture_contract_at_base(
             instance,
             base=base,
@@ -1178,12 +1223,18 @@ def _lower_claim(
                     AcceptedCoordinate.from_internal(base),
                 ),
                 producer_artifact_digests=accepted_producer_digests,
-                producer_receipt_resolver=local_producer_receipt_resolver(
-                    exhaust_root=instance.root / instance.descriptor.storage.exhaust,
-                    instance_id=instance.descriptor.instance_id,
-                    bodies=store,
+                producer_receipt_resolver=captures,
+                # A Capture the accepted predecessor already cites is not new
+                # evidence; the Claim law judges whether the revision cites it
+                # a new way.
+                require_production_proof=not (
+                    predecessor is not None
+                    and isinstance(predecessor.backing, ClaimBacking)
+                    and payload.source.capture_digest in predecessor.backing.capture_digests
                 ),
             )
+        except CaptureProductionUnproven as exc:
+            _refuse_unproduced_capture(exc)
         except (CruxibleError, ValueError):
             _refuse(
                 "cruxible.authoring.existing_capture_invalid",
@@ -1292,6 +1343,11 @@ def _lower_claim(
         instance,
         payload=payload,
         envelope=capture_envelope,
+        memo=(
+            captures.recall_verified(payload.source.capture_digest)
+            if isinstance(payload.source, ExistingCaptureCitationSource)
+            else None
+        ),
     )
 
     identity = ArtifactIdentity(kind="Claim", name=claim_id)
@@ -2982,6 +3038,7 @@ def _lower_change_set(
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
     derivation_procedure: ArtifactPin | None = None,
+    captures: ProducerReceiptResolverProtocol,
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ChangeSetAuthoringPayload)
@@ -3083,6 +3140,7 @@ def _lower_change_set(
                         candidate_paths=candidate_paths,
                         re_author_siblings=re_author_siblings.get(index, {}),
                         derivation_procedure=derivation_procedure,
+                        captures=captures,
                     )
                 except AuthoringLoweringError as error:
                     raise _rescope_member_error(
@@ -3161,6 +3219,7 @@ def _stage_change_set_member(
     candidate_paths: tuple[str, ...],
     re_author_siblings: Mapping[str, int],
     derivation_procedure: ArtifactPin | None = None,
+    captures: ProducerReceiptResolverProtocol,
 ) -> StagedMember:
     """Write one member into the staged tree and report what it resolved to."""
 
@@ -3176,6 +3235,7 @@ def _stage_change_set_member(
             claim_identity=claim_id,
             claim_index=claim_index,
             derivation_procedure=derivation_procedure,
+            captures=captures,
         )
         member_resolved = dict(lowered.resolved_authoring)
         member_resolved["claim_id"] = claim_id
@@ -3193,6 +3253,7 @@ def _stage_change_set_member(
             members=members,
             claim_identities=claim_identities,
             re_author_siblings=re_author_siblings,
+            captures=captures,
         )
     if isinstance(member, ClaimRetirementMember):
         tree, resolved, extra = _stage_claim_retirement(
@@ -3425,6 +3486,7 @@ def _stage_claim_type_succession(
     members: tuple[AuthoringChangeSetMember, ...],
     claim_identities: Mapping[str, str],
     re_author_siblings: Mapping[str, int],
+    captures: ProducerReceiptResolverProtocol,
 ) -> StagedMember:
     """Succeed one ClaimType and settle its whole closure inside this change set.
 
@@ -3590,6 +3652,7 @@ def _stage_claim_type_succession(
                 base_tree=lowering_tree,
                 payload=sibling,
                 claim_identity=claim_id,
+                captures=captures,
             )
         except AuthoringLoweringError as error:
             _refuse(
@@ -3801,12 +3864,17 @@ def lower_authoring(
     intent: AuthoringIntentV1,
     actor_id: str,
     derivation_procedure: ArtifactPin | None = None,
+    captures: ProducerReceiptResolverProtocol | None = None,
 ) -> LoweredAuthoring:
     """Resolve one intent against its immutable base without submitting anything.
 
     Only the Procedure terminal supplies `derivation_procedure`, from the actual
     run. It is not a wire field or inferred from the intent's ID or payload.
     Proposal admission separately checks authority over the exact lowered bytes.
+
+    `captures` is the request's Capture verification context; without one the
+    lowering builds its own, shared by every Claim it lowers, so N Claims citing
+    one Capture read that Capture's run once.
     """
 
     base = instance.resolve_accepted_coordinate(
@@ -3815,6 +3883,8 @@ def lower_authoring(
         generation_root=intent.base_coordinate.generation_root,
     )
     base_tree = instance.immutable_tree_at(base.git_oid)
+    if captures is None:
+        captures = instance.capture_verification_context()
     if isinstance(intent.payload, ClaimAuthoringPayloadV1):
         return _lower_claim(
             instance,
@@ -3823,6 +3893,7 @@ def lower_authoring(
             base=base,
             base_tree=base_tree,
             derivation_procedure=derivation_procedure,
+            captures=captures,
         )
     if isinstance(intent.payload, ProcedureAuthoringPayload):
         return _lower_procedure(instance, intent=intent, base=base, base_tree=base_tree)
@@ -3852,6 +3923,7 @@ def lower_authoring(
             base=base,
             base_tree=base_tree,
             derivation_procedure=derivation_procedure,
+            captures=captures,
         )
     if isinstance(intent.payload, LineAuthoringPayload | TriggerAuthoringPayload):
         path, content, digest = (

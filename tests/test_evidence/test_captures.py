@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    CaptureProductionUnproven,
     CaptureRunCoordinateV1,
     InputReceiptSetManifest,
     build_cas_capture,
@@ -70,16 +73,26 @@ def test_cas_and_ledger_capture_commitments_verify_without_copying_ledger_bytes(
         producer_binding_digest=digest("binding", "cas"),
         observed_at=NOW,
     )
+    producers = {
+        provider_artifact.identity.qualified: provider_run(provider_artifact).executable_digest
+    }
+    # A v1 envelope under a daemon-fetched contract carries no producer receipt:
+    # it replays, but only an accepted citation of it may stand.
+    with pytest.raises(CaptureProductionUnproven) as refused:
+        verify_capture(
+            cas_result.capture_digest,
+            store=store,
+            contract=contract,
+            producer_artifact_digests=producers,
+        )
+    assert refused.value.reason == "v1_envelope"
     assert (
         verify_capture(
             cas_result.capture_digest,
             store=store,
             contract=contract,
-            producer_artifact_digests={
-                provider_artifact.identity.qualified: provider_run(
-                    provider_artifact
-                ).executable_digest
-            },
+            producer_artifact_digests=producers,
+            require_production_proof=False,
         )
         == cas_result.envelope
     )
@@ -107,11 +120,8 @@ def test_cas_and_ledger_capture_commitments_verify_without_copying_ledger_bytes(
             store=store,
             contract=contract,
             ledger_resolver=_LedgerResolver(ledger_source, ledger_body),
-            producer_artifact_digests={
-                provider_artifact.identity.qualified: provider_run(
-                    provider_artifact
-                ).executable_digest
-            },
+            producer_artifact_digests=producers,
+            require_production_proof=False,
         )
         == ledger_result.envelope
     )
@@ -149,6 +159,7 @@ def test_derived_capture_requires_and_replays_exact_input_manifest(tmp_path: Pat
                     provider_artifact
                 ).executable_digest
             },
+            require_production_proof=False,
         )
         == result.envelope
     )

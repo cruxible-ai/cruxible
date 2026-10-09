@@ -8,7 +8,7 @@ import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -41,8 +41,10 @@ from cruxible_client.contracts.captures import (
     CaptureContract,
     CaptureEnvelopeAny,
     CaptureObjectStoreProtocol,
+    CaptureProductionUnproven,
     LedgerMaterialResolverProtocol,
     ProducerReceiptResolverProtocol,
+    VerifiedCaptureMemo,
     capture_contract_digest,
     capture_contract_is_self_asserted,
     capture_is_coordinator_self_source,
@@ -1186,6 +1188,7 @@ def resolve_cited_source_window(
     envelope: CaptureEnvelopeAny,
     *,
     store: CaptureObjectStoreProtocol,
+    memo: VerifiedCaptureMemo | None = None,
 ) -> CitedSourceWindow | None:
     """Resolve the bytes a citation's span is measured against, when they resolve.
 
@@ -1196,8 +1199,51 @@ def resolve_cited_source_window(
     A coordinator body is its own source. Anything else materialized in the
     store is measured against its own commitment. ``None`` means nothing
     resolves, and the caller decides whether that is allowed to pass.
+
+    ``memo`` is the request's verification of this Capture. The window is a
+    function of immutable bytes AND of which of them the store holds now -- a
+    foreign source's whole page may land later in the same request -- so a
+    kept window is reused only while every body it consulted is held exactly
+    as it was when it was derived: a warm answer is always the cold one.
     """
 
+    held = _window_bodies_held(envelope, store=store)
+    if memo is not None:
+        kept = memo.derived.get(_CITED_WINDOW)
+        if isinstance(kept, tuple) and kept[0] == held:
+            return cast(CitedSourceWindow | None, kept[1])
+    window = _resolve_cited_source_window(envelope, store=store)
+    if memo is not None:
+        memo.derived[_CITED_WINDOW] = (held, window)
+    return window
+
+
+def _window_bodies_held(
+    envelope: CaptureEnvelopeAny,
+    *,
+    store: CaptureObjectStoreProtocol,
+) -> tuple[tuple[str, bool], ...]:
+    """Every body the window derivation may consult, and whether the store holds it."""
+
+    consulted: list[str] = [envelope.commitment.digest]
+    source = envelope.source
+    if isinstance(source, CasSourceReference):
+        consulted.append(source.content_digest)
+    if isinstance(source, ExternalSourceReference) and isinstance(source.coordinate, Mapping):
+        page_digest = source.coordinate.get("source_content_digest")
+        if isinstance(page_digest, str):
+            consulted.append(page_digest)
+    return tuple((digest, bool(store.verify(digest))) for digest in dict.fromkeys(consulted))
+
+
+_CITED_WINDOW = "cited_source_window"
+
+
+def _resolve_cited_source_window(
+    envelope: CaptureEnvelopeAny,
+    *,
+    store: CaptureObjectStoreProtocol,
+) -> CitedSourceWindow | None:
     source = envelope.source
     commitment = envelope.commitment
     if isinstance(source, ExternalSourceReference) and (
@@ -1296,10 +1342,11 @@ def projection_window_cited(
     envelope: CaptureEnvelopeAny,
     *,
     store: CaptureObjectStoreProtocol,
+    memo: VerifiedCaptureMemo | None = None,
 ) -> tuple[CitedSourceWindow, ProjectionWindow] | None:
     """The stamped block window a capture's span touches, if its source resolves and it does."""
 
-    resolved = resolve_cited_source_window(envelope, store=store)
+    resolved = resolve_cited_source_window(envelope, store=store, memo=memo)
     if resolved is None:
         return None
     window = projection_window_intersecting(
@@ -1770,6 +1817,7 @@ def evaluate_claim_law(
     allow_claim_type_retirement_shape_exemption: bool = False,
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
     claim_type_v7_semantics: bool = False,
+    require_new_citation_proof: bool = True,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
 
@@ -1791,6 +1839,12 @@ def evaluate_claim_law(
       unchanged statement keeps accruing evidence, as under `accumulate`.
     - `captured` refuses a new Claim or revision with no admitted Capture under a
       declared contract; `none` records the Claim's own origin as support.
+
+    With `require_new_citation_proof`, a Capture cited for the first time (not
+    inherited unchanged from the accepted predecessor) must carry daemon proof
+    that a run produced it: a journal record naming its exact digest, and no
+    version-1 envelope under a contract that is not self-asserted. A replay of
+    an already-accepted acceptance passes False, so accepted state stays valid.
     """
 
     try:
@@ -2293,7 +2347,20 @@ def evaluate_claim_law(
                 ).append(candidate)
         # The envelope names its exact contract digest, which verification
         # requires to match; only contracts with that digest can verify it.
-        named = _named_capture_contract(capture_store, capture_digest_value)
+        verified = (
+            None
+            if producer_receipt_resolver is None
+            else producer_receipt_resolver.recall_verified(capture_digest_value)
+        )
+        named = (
+            verified.envelope.capture_contract_digest
+            if verified is not None
+            else _named_capture_contract(capture_store, capture_digest_value)
+        )
+        require_proof = (
+            require_new_citation_proof and capture_digest_value not in inherited_captures
+        )
+        production_gap: CaptureProductionUnproven | None = None
         if (
             named
             and named not in contracts_by_digest
@@ -2310,12 +2377,23 @@ def evaluate_claim_law(
                     ledger_resolver=ledger_resolver,
                     producer_artifact_digests=known_producer_digests,
                     producer_receipt_resolver=producer_receipt_resolver,
+                    require_production_proof=require_proof,
                 )
+            except CaptureProductionUnproven as exc:
+                production_gap = exc
+                continue
             except (FormatError, ValueError):
                 continue
             envelope = candidate_envelope
             resolved_contract = contract_candidate
             break
+        if (envelope is None or resolved_contract is None) and production_gap is not None:
+            return _diagnostic(
+                "cruxible.claim.capture_production_unproven",
+                "A newly cited Capture has no daemon proof that a run produced it: "
+                + str(production_gap),
+                path=path,
+            )
         if envelope is None or resolved_contract is None:
             return _diagnostic(
                 "cruxible.claim.capture_unverified",
@@ -2351,7 +2429,15 @@ def evaluate_claim_law(
         cited = (
             None
             if capture_digest_value in inherited_captures
-            else projection_window_cited(envelope, store=capture_store)
+            else projection_window_cited(
+                envelope,
+                store=capture_store,
+                memo=(
+                    None
+                    if producer_receipt_resolver is None
+                    else producer_receipt_resolver.recall_verified(capture_digest_value)
+                ),
+            )
         )
         if cited is not None:
             resolved, window = cited

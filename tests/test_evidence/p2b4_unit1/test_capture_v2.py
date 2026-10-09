@@ -32,6 +32,7 @@ from cruxible_client.contracts.source_references import (
 )
 from tests.core_support._pc_c_support import NOW, body_store, capture_contract, digest, provider
 from tests.core_support.p2b4_unit1._support import provider_capture_fixture
+from tests.support.capture_receipts import StaticReceipts, produced_by_run
 
 EXPECTED_V1_CAPTURE_DIGEST = (
     "sha256:e872ed81e6058cf9a01138a0c6a9b8c02e01d30b0e85a6014d12ef9e56718431"
@@ -89,6 +90,9 @@ def test_v1_bytes_and_digest_are_unchanged_under_the_exact_tag_union(tmp_path: P
             producer_artifact_digests={
                 provider_artifact.identity.qualified: provider_digest(provider_artifact).tagged
             },
+            # A v1 envelope is never a new citation under a daemon contract; this
+            # pins only its bytes and their replay.
+            require_production_proof=False,
         )
         == built.envelope
     )
@@ -118,13 +122,14 @@ def test_provider_v2_round_trips_and_replays_complete_runtime_evidence(tmp_path:
             producer_artifact_digests={
                 fixture.producer.qualified: fixture.receipt.provider_artifact_digest
             },
-            producer_receipt_resolver=lambda value: (
-                ProviderProducerReceiptResolution(
-                    receipt=fixture.receipt,
-                    occurrence=fixture.occurrence,
-                )
-                if value == built.envelope.producer_receipt_digest
-                else None
+            producer_receipt_resolver=StaticReceipts(
+                {
+                    built.envelope.producer_receipt_digest: ProviderProducerReceiptResolution(
+                        receipt=fixture.receipt,
+                        occurrence=fixture.occurrence,
+                    )
+                },
+                produced=(produced_by_run(built),),
             ),
         )
         == built.envelope
@@ -186,14 +191,16 @@ def test_every_provider_evidence_edge_is_mutation_sensitive(
             producer_artifact_digests={
                 fixture.producer.qualified: fixture.receipt.provider_artifact_digest
             },
-            producer_receipt_resolver=lambda value: (
-                ProviderProducerReceiptResolution(
-                    receipt=fixture.receipt,
-                    occurrence=fixture.occurrence,
-                )
-                if value == built.envelope.producer_receipt_digest
-                else None
+            producer_receipt_resolver=StaticReceipts(
+                {
+                    built.envelope.producer_receipt_digest: ProviderProducerReceiptResolution(
+                        receipt=fixture.receipt,
+                        occurrence=fixture.occurrence,
+                    )
+                }
             ),
+            # The mutated envelope is no run's output; this pins the receipt edges.
+            require_production_proof=False,
         )
 
 
@@ -225,10 +232,10 @@ def test_capture_validation_refusal_exposes_only_the_law_clause(tmp_path: Path) 
     assert "errors.pydantic.dev" not in str(caught.value)
 
 
-@pytest.mark.parametrize("resolver", [None, lambda _digest: None])
+@pytest.mark.parametrize("journaled", [None, False])
 def test_v2_verification_refuses_and_names_an_unresolved_producer_receipt(
     tmp_path: Path,
-    resolver,  # type: ignore[no-untyped-def]
+    journaled: bool | None,
 ) -> None:
     fixture = provider_capture_fixture(tmp_path)
     built = build_provider_external_capture_v2(
@@ -240,6 +247,8 @@ def test_v2_verification_refuses_and_names_an_unresolved_producer_receipt(
         producer=fixture.producer,
         bound_generation=fixture.bound_generation,
     )
+    # The run recorded producing the Capture, but its receipt does not resolve.
+    resolver = None if journaled is None else StaticReceipts(produced=(produced_by_run(built),))
 
     with pytest.raises(
         CaptureFormatError,

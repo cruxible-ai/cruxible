@@ -82,6 +82,7 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
     CruxibleError,
+    ProposalStale,
     ReadRefusalError,
     SettlementIntegrityError,
     WriteRefusalError,
@@ -153,8 +154,8 @@ _MAX_CANDIDATES = 8
 # How many of a contract's Captures about the Subject, newest first, are tried
 # for the newest one that verifies.
 _MAX_CONTRACT_CAPTURES = 32
-# How many stored objects one contract lookup examines for its Captures.
-_CONTRACT_SCAN_BUDGET = 16_384
+# How many of a contract's Captures one contract lookup reads.
+_CONTRACT_CAPTURE_BUDGET = 16_384
 _CONTRACT_QUALIFIER = "CaptureContract:"
 
 
@@ -464,6 +465,8 @@ class _Planner:
         self.plan = _Plan()
         self._subject_exists: dict[str, bool] = {}
         self._verified: dict[str, bool] = {}
+        # One Capture verification context for the whole write.
+        self.captures = instance.capture_verification_context()
         self._read_sequence: int | None = None
 
     # -- accepted state ----------------------------------------------------------
@@ -976,7 +979,11 @@ class _Planner:
         if digest not in self._verified:
             try:
                 verified = verify_accepted_capture(
-                    self.instance, self.head, digest, access=_VALUE_READ_ACCESS
+                    self.instance,
+                    self.head,
+                    digest,
+                    access=_VALUE_READ_ACCESS,
+                    captures=self.captures,
                 )
             except (CaptureReadInvalid, ReadRefusalError, CruxibleError, ValueError):
                 self._verified[digest] = False
@@ -1092,7 +1099,7 @@ class _Planner:
         from cruxible_core.service.evidence.capture_reads import (
             CaptureReadInvalid,
             RetainedCapture,
-            retained_captures,
+            contract_captures,
             verify_accepted_capture,
         )
 
@@ -1126,15 +1133,16 @@ class _Planner:
                     (subject_path_value, *versions),
                 )
             }
-        # Every retained Capture of the contract counts, cited or not.
-        inventory = retained_captures(
-            self.instance, budget=_CONTRACT_SCAN_BUDGET, contract_digests=versions
+        # Every retained Capture of the contract counts, cited or not; the body
+        # store indexes each envelope by its contract when it is stored.
+        inventory = contract_captures(
+            self.instance, contract_digests=versions, budget=_CONTRACT_CAPTURE_BUDGET
         )
         if not inventory.complete:
             raise _refuse(
                 "cruxible.write.capture_scan_exhausted",
-                f"the newest Capture of {bare} about {subject} was not found: the body "
-                "store holds more objects than one lookup examines",
+                f"the newest Capture of {bare} about {subject} was not found: the "
+                "contract has more Captures than one lookup reads",
                 change=index,
                 repair="Cite the Capture by its CAP- handle or its full sha256 digest",
                 field_path=path,
@@ -1162,7 +1170,11 @@ class _Planner:
         for item in bound[:_MAX_CONTRACT_CAPTURES]:
             try:
                 verified = verify_accepted_capture(
-                    self.instance, self.head, item.digest, access=_VALUE_READ_ACCESS
+                    self.instance,
+                    self.head,
+                    item.digest,
+                    access=_VALUE_READ_ACCESS,
+                    captures=self.captures,
                 )
             except (CaptureReadInvalid, ReadRefusalError):
                 continue
@@ -2191,7 +2203,9 @@ def service_playbill_write(
     # shared preview guards (R12), so every history read it makes, from planning
     # to the verdicts, is served without touching the index, and no write door
     # opens.
-    with preview_guards(request.dry_run):
+    # One Capture verification context for the whole write: planning, lowering,
+    # preflight, admission and an activation in the same call.
+    with preview_guards(request.dry_run), instance.capture_verification_request():
         outcome = _service_write(instance, request=request, caller=caller)
         if request.full_coordinate and outcome.accepted_coordinate is None:
             pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)
@@ -2296,9 +2310,10 @@ def _service_write(
             receipt = service_activate_playbill_proposal(
                 instance, proposal_id=proposal_id, activated_by=caller.actor.actor_id
             )
-        except SettlementIntegrityError:
-            # Settlement refuses a candidate evaluated at any head but the
-            # current one; a write the head moved past is refused, not settled.
+        except (SettlementIntegrityError, ProposalStale):
+            # Activation refuses a candidate evaluated at any head but the
+            # current one (as stale, or in settlement); a write the head moved
+            # past is refused, not settled.
             if instance.accepted_coordinate().git_oid == evaluated_at.git_oid:
                 raise
             receipt = None

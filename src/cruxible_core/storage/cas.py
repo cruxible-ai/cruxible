@@ -26,6 +26,7 @@ from cruxible_client.contracts.cas_contracts import (
     digest_bytes,
 )
 from cruxible_client.contracts.errors import CasError
+from cruxible_core.storage.capture_envelope_index import ENVELOPE_HEAD, CaptureEnvelopeIndex
 
 # Objects already hashed against their address, with the file identity observed
 # when they were: (device, inode, size, mtime, ctime). Bytes are reused without
@@ -229,6 +230,12 @@ class ContentAddressedBodyStore:
             raise CasError("CAS algorithm directory changed while it was opened")
         self._root_fd = descriptor
         weakref.finalize(self, os.close, descriptor)
+
+    @property
+    def capture_envelopes(self) -> CaptureEnvelopeIndex:
+        """Every stored Capture envelope by the contract it names (an index, not a walk)."""
+
+        return CaptureEnvelopeIndex(self)
 
     @staticmethod
     def digest_bytes(content: bytes) -> CasDigest:
@@ -452,6 +459,9 @@ class ContentAddressedBodyStore:
         """
 
         digest = self.digest_bytes(content)
+        # Before the object exists: a stored envelope is never missing from the index.
+        if content.startswith(ENVELOPE_HEAD):
+            self.capture_envelopes.note(digest.tagged, content)
         shard, name = self._names(digest.tagged)
         directory = self._shard(shard, create=True)
         assert directory is not None

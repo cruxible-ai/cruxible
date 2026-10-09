@@ -64,6 +64,19 @@ A Claim's evidence is one or more of:
   example by a Procedure that fetched or read something (`--capture CAP-…`, or
   `--evidence-contract` for the newest one about the Subject).
 
+A Capture under a contract the daemon fetches for (not one recording an
+author's own words or a quoted file) is evidence only when the journal records
+a run producing it: a Source read the run selected, or an `emit_capture`
+terminal. Anything else holding Capture bytes, such as bytes put with `body
+store` or a Source read its acquisition rule did not select, is refused when
+first cited (`capture_production_unproven`). A version-1 Capture under such a
+contract carries no producer receipt and is refused when first cited
+(`capture_v1_citation_refused`); a Claim already citing one keeps it. A
+proposal is held to this again when it is activated, so one admitted before
+the rule existed that cites such a Capture is refused
+(`cruxible.proposal.capture_production_unproven`): readmit it to see which
+citation fails, then resubmit it citing a Capture a run produced.
+
 A ClaimType's evidence rules say which of these support a value of that
 field. A Claim whose evidence the rules do not admit is still recorded, with
 the verdict `uncovered`.

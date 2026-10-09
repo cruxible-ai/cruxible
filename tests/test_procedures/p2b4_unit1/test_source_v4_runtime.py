@@ -1023,22 +1023,33 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
                 contract=contract,
                 producer_artifact_digests=provider_artifacts,
                 producer_receipt_resolver=resolver,
+                # No run produced the forgery; this pins each receipt edge.
+                require_production_proof=False,
             )
-    assert scan_calls == {
-        "partitions": 1,
-        "records": len(original_partition_ids(prepared.admission.journal_stream)),
-    }
+    # Every lookup read only the cited run's records, once: no journal scan.
+    assert scan_calls == {"partitions": 0, "records": 0}
+    assert resolver.lookups == 1
 
     unrelated = next(
         stored
         for stored in records
         if stored.record.event_kind
-        not in {"admission_bound", "provider_invocation_completed", "terminal_egress"}
+        not in {
+            "admission_bound",
+            "source_request_derived",
+            "source_read",
+            "provider_invocation_completed",
+            "terminal_egress",
+            "produced_capture",
+        }
     )
     original_body_read = fixture.bodies.read
+    unrelated_reads = 0
 
     def read_with_unrelated_damage(body_digest, *, access):  # type: ignore[no-untyped-def]
+        nonlocal unrelated_reads
         if body_digest == unrelated.record.payload_digest:
+            unrelated_reads += 1
             return b"not a journal payload"
         return original_body_read(body_digest, access=access)
 
@@ -1050,6 +1061,7 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
             instance_id=prepared.admission.instance_id,
             bodies=fixture.bodies,
             note_sink=notes.append,
+            full_journal=True,
         )
         assert (
             verify_capture(
@@ -1061,11 +1073,9 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
             )
             == provider_capture
         )
-    assert any(
-        note.code == "producer_receipt_unrelated_record_skipped"
-        and note.record_digest == unrelated.record_digest
-        for note in notes
-    )
+    # A record no receipt or production proof is built from is never read.
+    assert unrelated_reads == 0
+    assert notes == []
 
     completed_record = records[kinds.index("provider_invocation_completed")]
     completed_digest = str(produced["invocation_receipt_digest"])
@@ -1085,13 +1095,15 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
             journal=fixture.journal,
             instance_id=prepared.admission.instance_id,
             bodies=fixture.bodies,
+            full_journal=True,
         )
+        run_id = prepared.admission.run_id
         with pytest.raises(
             CaptureFormatError,
             match="producer receipt journal partition is unavailable",
         ):
-            transient_resolver(completed_digest)
-        recovered = transient_resolver(completed_digest)
+            transient_resolver.producer_receipt(completed_digest, run_id=run_id)
+        recovered = transient_resolver.producer_receipt(completed_digest, run_id=run_id)
     assert isinstance(recovered, ProviderProducerReceiptResolution)
     assert provider_invocation_receipt_digest(recovered.receipt) == completed_digest
     assert transient_reads > 1
@@ -1109,5 +1121,5 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
             bodies=fixture.bodies,
         )
         with pytest.raises(CaptureFormatError, match=completed_digest):
-            damaged_resolver(completed_digest)
+            damaged_resolver.producer_receipt(completed_digest, run_id=run_id)
     assert result.receipt.chain_head_digest == records[-1].record_digest
