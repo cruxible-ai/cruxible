@@ -1308,9 +1308,16 @@ content: the same file bytes, the same fetched body, the same words) under the
 same contract and in the same citation association (role and origin) is a
 no-op: no revision, no citation growth, no proposal. A new association on
 already-cited content (another role or origin) is kept as a revision. On new
-content the Claim's evidence is refreshed by revising it; a Procedure item that
-names no Claim to revise but restates a live one on new content revises that
-one rather than writing a second Claim of the same statement.
+content the Claim's evidence is refreshed by revising it. A Procedure item that
+names no Claim to revise but restates a live one (its Subjects resolved through
+aliases first) targets that Claim's lineage, never a second Claim of the same
+statement: on new content it revises it, on content it already cites the item
+changes nothing and its receipt child says so
+(`playbill-terminal-egress-child-receipt-v3`: the Claim's path, its current
+artifact digest, the re-observing Capture and when it observed the content;
+`unchanged` on the run's terminal child). A terminal whose every item is
+unchanged completes with no proposal and no authority exercised: its receipt
+(`playbill-terminal-egress-unchanged-receipt-v1`) reports every child unchanged.
 
 A no-op re-observation still counts for freshness. When the restating Capture
 is daemon-admitted, verifies at the head, and observed exactly the content of

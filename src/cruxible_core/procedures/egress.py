@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -913,6 +913,64 @@ class TerminalEgressChildReceiptV2(TerminalEgressChildReceiptV1):
     path: str
 
 
+class TerminalEgressChildReceiptV3(TerminalEgressChildReceiptV2):
+    """A terminal item that changed nothing (identity-design-1009).
+
+    It restated a live Claim on content that Claim already cites, so it lowered
+    into no changed member: ``path`` is the existing Claim's path and
+    ``egress_digest`` its current artifact digest at the admitted base. The
+    re-observing Capture and when it observed the content ride along; the
+    re-observation is recorded on the evidence plane, never as a revision.
+    """
+
+    tag: Literal["playbill-terminal-egress-child-receipt-v3"] = (
+        "playbill-terminal-egress-child-receipt-v3"  # type: ignore[assignment]
+    )
+    disposition: Literal["unchanged"] = "unchanged"
+    reobserving_capture_digest: str
+    reobserved_at: datetime = Field(description="Reads ASSERTION TIME.")
+
+    _reobserving = field_validator("reobserving_capture_digest")(_tagged)
+
+    @field_validator("reobserved_at")
+    @classmethod
+    def _reobserved_at(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+
+#: A proposal child: the candidate member it lowered into, or an unchanged item.
+ProposalChildReceiptAny = Annotated[
+    TerminalEgressChildReceiptV2 | TerminalEgressChildReceiptV3, Field(discriminator="tag")
+]
+
+
+class TerminalEgressUnchangedReceiptV1(TerminalEgressReceiptV1):
+    """A proposal or settle terminal whose every item changed nothing.
+
+    Every child restated a live Claim on content it already cites: there is
+    nothing to propose, so no proposal is made and no authority is exercised.
+    The terminal completes with every child reported unchanged.
+    """
+
+    tag: Literal["playbill-terminal-egress-unchanged-receipt-v1"] = (
+        "playbill-terminal-egress-unchanged-receipt-v1"  # type: ignore[assignment]
+    )
+    disposition: Literal["unchanged"] = "unchanged"  # type: ignore[assignment]
+    children: tuple[TerminalEgressChildReceiptV3, ...]
+
+    @model_validator(mode="after")
+    def _shape(self) -> "TerminalEgressUnchangedReceiptV1":
+        if self.kind not in {"propose_change_set", "settle_change_set"}:
+            raise ValueError("only proposal and settle egress report an unchanged terminal")
+        if self.bound_artifact_digest is not None:
+            raise ValueError("an unchanged terminal traversed no artifact")
+        if not self.children:
+            raise ValueError("terminal egress reports at least one delivered child")
+        if tuple(item.child_index for item in self.children) != tuple(range(len(self.children))):
+            raise ValueError("terminal egress children must be reported in fanout order")
+        return self
+
+
 class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
     """A proposal receipt that names the proposal and exact candidate it produced.
 
@@ -925,7 +983,9 @@ class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
     proposal_id: str
     candidate_digest: str
     target_paths: tuple[str, ...]
-    children: tuple[TerminalEgressChildReceiptV2, ...]
+    #: A changed child settles into one of ``target_paths``; an unchanged one
+    #: (``TerminalEgressChildReceiptV3``) names a live Claim outside them.
+    children: tuple[ProposalChildReceiptAny, ...]
 
     @field_validator("proposal_id")
     @classmethod
@@ -952,8 +1012,14 @@ class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
             raise ValueError("only proposal and settle egress report a proposal receipt")
         if (self.kind == "settle_change_set") != isinstance(self, TerminalEgressReceiptV4):
             raise ValueError("settle egress reports a settlement receipt, and only it does")
-        if any(child.path not in self.target_paths for child in self.children):
-            raise ValueError("every proposal child settles into one of the receipt's targets")
+        if any(
+            (child.path in self.target_paths) == isinstance(child, TerminalEgressChildReceiptV3)
+            for child in self.children
+        ):
+            raise ValueError(
+                "every changed proposal child settles into one of the receipt's targets, "
+                "and no unchanged child does"
+            )
         return self
 
 
@@ -1018,6 +1084,12 @@ class PreparedTerminalEgressV1(_StrictEgressModel):
     procedure_mandate_digest: str | None = None
     lowering_digest: str
     item_paths: tuple[tuple[str, str], ...]
+    #: The items that changed nothing (identity-design-1009), each the receipt
+    #: child it is reported as; when every item is one, ``target_paths`` is
+    #: empty and no proposal is made. Omitted when none.
+    unchanged: tuple[TerminalEgressChildReceiptV3, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     _lowering = field_validator("lowering_digest")(_tagged)
 
@@ -1029,9 +1101,23 @@ class PreparedTerminalEgressV1(_StrictEgressModel):
     @field_validator("target_paths")
     @classmethod
     def _targets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value or value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("prepared target paths must be nonempty, sorted, and unique")
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("prepared target paths must be sorted and unique")
         return value
+
+    @model_validator(mode="after")
+    def _changed_or_unchanged(self) -> "PreparedTerminalEgressV1":
+        if not self.target_paths and not self.unchanged:
+            raise ValueError("prepared target paths must be nonempty unless no item changed")
+        if not self.target_paths and self.procedure_mandate_digest is not None:
+            raise ValueError("a terminal that changes nothing binds no mandate")
+        return self
+
+    @property
+    def changes_nothing(self) -> bool:
+        """Whether every item restated what is already live: nothing to propose."""
+
+        return not self.target_paths
 
     @field_validator("item_paths")
     @classmethod
@@ -1481,6 +1567,8 @@ __all__ = [
     "TerminalEgressReceiptV4",
     "EFFECTFUL_TERMINAL_KINDS",
     "TerminalEgressChildReceiptV2",
+    "TerminalEgressChildReceiptV3",
+    "TerminalEgressUnchangedReceiptV1",
     "PreparedTerminalEgressV1",
     "SettleGrantHolderProtocol",
     "TerminalEgressPreparerProtocol",

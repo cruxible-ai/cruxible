@@ -1060,6 +1060,10 @@ class ProcedureTerminalEgressChild(_StrictResultModel):
     manifest_digest: str
     egress_digest: str | None = None
     path: str | None = None
+    #: The item restated a live Claim on content it already cites: it changed
+    #: nothing, ``path`` and ``egress_digest`` name that Claim as it stands.
+    #: Omitted when the item changed a member.
+    unchanged: bool = Field(default=False, exclude_if=lambda value: not value)
     # A delivered proposal item whose statement, on the same evidence, was
     # retired or rejected before: each earlier refusal, exactly as recorded.
     prior_refusals: tuple[PriorRefusalReceipt, ...] = ()
@@ -1159,8 +1163,17 @@ class ProcedureTerminalEgress(_StrictResultModel):
 
     @model_validator(mode="after")
     def _delivered_shape(self) -> "ProcedureTerminalEgress":
-        delivered_settle = self.verdict == "delivered" and self.kind == "settle_change_set"
-        if self.verdict == "delivered" and self.kind in {"propose_change_set", "settle_change_set"}:
+        # A proposal or settle terminal whose every item restated what is live
+        # changed nothing: it is delivered with no proposal and no outcome.
+        changed_nothing = bool(self.children) and all(child.unchanged for child in self.children)
+        delivered_settle = (
+            self.verdict == "delivered" and self.kind == "settle_change_set" and not changed_nothing
+        )
+        if (
+            self.verdict == "delivered"
+            and self.kind in {"propose_change_set", "settle_change_set"}
+            and not changed_nothing
+        ):
             if self.proposal_id is None or self.candidate_digest is None:
                 raise ValueError(
                     "a delivered proposal egress names its proposal and exact candidate"

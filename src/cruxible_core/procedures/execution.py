@@ -4664,7 +4664,8 @@ class ProcedureExecutor:
         lowering actually changed and the exact live mandate it bound, and the
         v2 request is built from THOSE, so the mandate law sees what will be
         proposed rather than what the template declared. A settle terminal
-        `capped_by` a term asks for propose authority only.
+        `capped_by` a term asks for propose authority only. One whose every item
+        restated what is already live keeps its v1 request: nothing is proposed.
         """
 
         bound_pin: ArtifactPin | None = None
@@ -4722,6 +4723,10 @@ class ProcedureExecutor:
                 admission=admission,
                 manifests=manifests or {},
             )
+            if prepared.changes_nothing:
+                # Every item restated what is already live: there is nothing to
+                # propose and no authority to exercise, so no effectful request.
+                return request, prepared
             return (
                 build_terminal_egress_request_v2(
                     request,

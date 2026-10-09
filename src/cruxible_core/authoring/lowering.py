@@ -667,6 +667,21 @@ def _with_aliases_resolved(
     )
 
 
+def claim_aliases_resolved(
+    instance: PlaybillInstance,
+    base: AcceptedProjectionCoordinate,
+    tree: Mapping[str, bytes],
+    payload: _PayloadV1T,
+) -> _PayloadV1T:
+    """The Claim payload with the Subjects it names resolved through their aliases.
+
+    The same resolution lowering applies, for a caller that must locate the
+    statement before lowering (a Procedure item restating a live Claim).
+    """
+
+    return _with_aliases_resolved(instance, base, tree, payload)
+
+
 def cited_content(instance: PlaybillInstance, capture_digest: str) -> str:
     """What one Capture observed, by content (``observed_content``).
 
