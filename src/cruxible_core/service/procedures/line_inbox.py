@@ -185,9 +185,7 @@ def _existing_target(instance: PlaybillInstance, target: InboxLinkTarget) -> Inb
         resolved = service_resolve_playbill_proposal_selector(instance, selector=target.proposal_id)
         return InboxLinkProposal(proposal_id=resolved.proposal_id)
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        if projection.subject(f"Subject:{target.subject}") is not None:
-            return target
-        # A reference that names no Subject resolves through the aliases of its kind.
+        # The exact live Subject, else the aliases of its kind, else a retired one.
         kind, _, subject_id = target.subject.partition("/")
         resolution = resolve_subject_ref(projection.typed.connection, kind, subject_id)
     if resolution.ambiguous:
@@ -200,6 +198,8 @@ def _existing_target(instance: PlaybillInstance, target: InboxLinkTarget) -> Inb
             repair_line="Link the item to one of the listed Subjects",
             field_path="target.subject",
         )
+    if resolution.via == "identity":
+        return target
     if resolution.via == "alias" and resolution.ref is not None:
         return InboxLinkSubject(subject=resolution.ref)
     raise SubjectNotFoundError(

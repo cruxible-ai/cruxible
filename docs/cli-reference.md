@@ -1266,11 +1266,14 @@ compares (in a named query, a settle mandate's condition or a corroboration
 requirement; the definition's stored bytes and digest are unchanged), a
 ProcedureMandate's subject scope and fixed Subject parameters, and `inbox link
 --subject`. Other text that happens to look like a reference is not resolved.
-A condition or corroboration query resolves at the parent state it reads. A reference `kind/id` that names
-no Subject resolves to the one live Subject of that kind whose alias, under the
-discovery normalizer, equals `id`; an alias naming several refuses
-(`alias_ambiguous`) with each candidate; none leaves the entry point's own rule
-in force (a write adds the Subject, a read refuses the unknown reference).
+A condition or corroboration query resolves at the parent state it reads.
+A reference `kind/id` resolves, in order, to the live Subject at exactly that
+path; else to the one live Subject of that kind whose alias, under the
+discovery normalizer, equals `id` (an alias naming several refuses
+`alias_ambiguous` with each candidate); else to the retired Subject at exactly
+that path. None leaves the entry point's own rule in force (a write adds the
+Subject, a read refuses the unknown reference). So merging Subject A into B --
+alias B with A's id, then retire A -- sends every later reference to A to B.
 
 A change may not create a Subject that collides with a live Subject of its kind:
 one whose id, canonical token or alias equals the new id's canonical token (the

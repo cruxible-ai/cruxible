@@ -1,19 +1,24 @@
-"""One Subject-reference resolver: an exact Subject, else one alias of the kind.
+"""One Subject-reference resolver: the exact live Subject, else one alias, else the retired one.
 
 A Subject reference names ``kind/id``. It resolves, in order:
 
-1. to the accepted Subject at exactly that path, whatever its lifecycle;
+1. to the live accepted Subject at exactly that path;
 2. otherwise through the aliases of that kind: every live ``semantic.alias``
    Claim contributes a ``vocabulary_terms`` row (basis ``alias``) whose ``term``
    is the alias under the discovery normalizer (``normalize_discovery_term``:
    NFC, casefold, whitespace collapsed and trimmed). The reference's id under the
    same normalizer is looked up there, restricted to Subjects of the kind. One
    match resolves; several are ambiguous and the caller refuses naming every
-   candidate; none leaves the reference unresolved for the caller's own rule.
+   candidate;
+3. otherwise to the retired accepted Subject at exactly that path; none leaves
+   the reference unresolved for the caller's own rule.
+
+So after a merge (alias the survivor with the retired Subject's id, retire it),
+a reference to the retired Subject reaches the survivor.
 
 Core applies the agent-authored aliases mechanically: it never guesses a match
-the index does not hold. Every Subject-reference entry point resolves through
-here, so a reference means the same Subject wherever it is written.
+the index does not hold. The Subject-reference entry points the CLI reference
+lists all resolve through here, so a reference means the same Subject at each.
 """
 
 from __future__ import annotations
@@ -101,16 +106,23 @@ def resolve_subject_ref(
     terms_table: str = "vocabulary_terms",
     subjects_table: str = "subjects",
 ) -> SubjectRefResolution:
-    """Resolve one reference: the exact Subject, else exactly one alias of the kind."""
+    """Resolve one reference: the exact live Subject, else one alias, else the exact retired one.
+
+    After a merge -- an alias of the surviving Subject naming the retired one --
+    a reference to the retired Subject reaches the survivor.
+    """
 
     exact = f"{_SUBJECTS}{kind}/{subject_id}.json"
-    if _subject(connection, exact, table=subjects_table, live=False):
+    if _subject(connection, exact, table=subjects_table, live=True):
         return SubjectRefResolution(kind=kind, subject_id=subject_id, path=exact, via="identity")
     targets = alias_targets(
         connection, kind, subject_id, terms_table=terms_table, subjects_table=subjects_table
     )
     if len(targets) == 1:
         return SubjectRefResolution(kind=kind, subject_id=subject_id, path=targets[0], via="alias")
+    if not targets and _subject(connection, exact, table=subjects_table, live=False):
+        # A retired Subject no alias supersedes is still the one it names.
+        return SubjectRefResolution(kind=kind, subject_id=subject_id, path=exact, via="identity")
     return SubjectRefResolution(
         kind=kind,
         subject_id=subject_id,

@@ -607,6 +607,22 @@ def _exact_object(
 _PayloadV1T = TypeVar("_PayloadV1T", bound=ClaimAuthoringPayloadV1)
 
 
+def _live_subject_in(tree: Mapping[str, bytes], path: str) -> bool:
+    """Whether ``tree`` holds a live Subject at ``path``: it stands as written.
+
+    A retired Subject does not: a reference to it resolves through the aliases
+    first, so after a merge it reaches the surviving Subject.
+    """
+
+    content = tree.get(path)
+    if content is None:
+        return False
+    try:
+        return parse_subject(content, path=path).lifecycle.state == "live"
+    except (CruxibleError, ValueError):
+        return True  # malformed bytes are the referent laws' to refuse
+
+
 def _with_aliases_resolved(
     instance: PlaybillInstance,
     base: AcceptedProjectionCoordinate,
@@ -626,7 +642,7 @@ def _with_aliases_resolved(
         if (
             address.selector.scheme != "artifact-v1"
             or not path.startswith("subjects/")
-            or path in tree
+            or _live_subject_in(tree, path)
         ):
             return address
         kind, _, rest = path.removeprefix("subjects/").partition("/")
@@ -3006,7 +3022,7 @@ def _mandate_alias_resolver(
         if parts is None:
             return value
         _prefix, kind, subject_id = parts
-        if f"subjects/{kind}/{subject_id}.json" in tree:
+        if _live_subject_in(tree, f"subjects/{kind}/{subject_id}.json"):
             return value
         with instance.bind_accepted_projection(base) as projection:
             found = resolve_reference_text(projection.typed.connection, value)

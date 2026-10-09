@@ -564,3 +564,63 @@ def test_a_retirement_in_the_same_change_lifts_the_collision(instance: PlaybillI
             candidate_tree={**plain, created: render_subject(shell("a-one"))},
             scope=(created,),
         ) == ((created, (ALPHA,)),)
+
+
+def test_a_reference_to_a_merged_subject_reaches_the_survivor(
+    instance: PlaybillInstance,
+) -> None:
+    """D5: exact live path, then alias (live target), then exact retired path."""
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.subjects import parse_subject, render_subject, subject_digest
+    from tests.core_support._identity_support import accept_tree
+
+    def resolved(subject_id: str) -> tuple[str | None, str | None]:
+        with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+            found = resolve_subject_ref(projection.typed.connection, KIND, subject_id)
+        return found.ref, found.via
+
+    # Merge alpha into beta: alias beta with alpha's id, then retire alpha.
+    alias(instance, BETA, "alpha")
+    # While alpha is live, its exact path wins over beta's alias.
+    assert resolved("alpha") == (ALPHA, "identity")
+    alpha_path = subject_path(KIND, "alpha")
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    alpha = parse_subject(tree[alpha_path], path=alpha_path)
+    retired = alpha.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=subject_digest(alpha).tagged
+            )
+        }
+    )
+    accept_tree(instance, {alpha_path: render_subject(retired)}, name="retire-alpha")
+
+    assert resolved("alpha") == (BETA, "alias")
+    outcome = write(instance, {"op": "set", "subject": ALPHA, "field": "code", "value": "x"})
+    assert outcome.status == "accepted", outcome
+    assert values(instance, BETA, f"{KIND}.code") == ["x"]
+    # A retired Subject no alias supersedes is still the one it names.
+    gamma_path = subject_path(KIND, "gamma")
+    from tests.core_support._identity_support import shell
+
+    accept_tree(instance, {gamma_path: render_subject(shell("gamma"))}, name="gamma")
+    gamma = parse_subject(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[gamma_path], path=gamma_path
+    )
+    accept_tree(
+        instance,
+        {
+            gamma_path: render_subject(
+                gamma.model_copy(
+                    update={
+                        "lifecycle": ArtifactLifecycle(
+                            state="retired", predecessor_digest=subject_digest(gamma).tagged
+                        )
+                    }
+                )
+            )
+        },
+        name="retire-gamma",
+    )
+    assert resolved("gamma") == (f"{KIND}/gamma", "identity")
