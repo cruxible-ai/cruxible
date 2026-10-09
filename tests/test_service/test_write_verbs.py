@@ -1284,7 +1284,7 @@ def test_a_contender_after_admission_refuses_activation_and_readmission(
 ) -> None:
     from cruxible_client.contracts.errors import (
         ProposalReadmitRequiresResubmission,
-        SettlementIntegrityError,
+        ProposalStale,
     )
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
@@ -1293,7 +1293,8 @@ def test_a_contender_after_admission_refuses_activation_and_readmission(
     pending = _write(instance, _RETIRE_BY_SLOT, accept="never")
     assert pending.status == "awaiting_approval" and pending.proposal is not None
     _contend(instance)
-    with pytest.raises(SettlementIntegrityError):
+    # Accepted state moved: activation refuses it as stale, naming readmit.
+    with pytest.raises(ProposalStale):
         service_activate_playbill_proposal(
             instance, proposal_id=pending.proposal.proposal_id, activated_by="owner"
         )

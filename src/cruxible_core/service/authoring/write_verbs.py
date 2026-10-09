@@ -82,6 +82,7 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
     CruxibleError,
+    ProposalStale,
     ReadRefusalError,
     SettlementIntegrityError,
     WriteRefusalError,
@@ -2309,9 +2310,10 @@ def _service_write(
             receipt = service_activate_playbill_proposal(
                 instance, proposal_id=proposal_id, activated_by=caller.actor.actor_id
             )
-        except SettlementIntegrityError:
-            # Settlement refuses a candidate evaluated at any head but the
-            # current one; a write the head moved past is refused, not settled.
+        except (SettlementIntegrityError, ProposalStale):
+            # Activation refuses a candidate evaluated at any head but the
+            # current one (as stale, or in settlement); a write the head moved
+            # past is refused, not settled.
             if instance.accepted_coordinate().git_oid == evaluated_at.git_oid:
                 raise
             receipt = None
