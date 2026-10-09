@@ -83,6 +83,7 @@ from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityErr
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate, ProcedureMandateV1
+from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
@@ -772,6 +773,12 @@ class PlaybillNextStatusV1(_StrictNextModel):
     #: surface, tool profile or permission tier cannot run is kept with its
     #: repair withheld and ``repair_requires`` set.
     held: int = Field(default=0, ge=0)
+    #: Present only while the earlier-refusal index lags the accepted head, read
+    #: after this answer's own maintenance: receipt counts on proposal rows and
+    #: settled-item counts on Line rows cover retirements through that generation.
+    prior_refusal_coverage: PriorRefusalCoverage | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def _states(self) -> "PlaybillNextStatusV1":
@@ -3883,6 +3890,7 @@ def _line_settled_refusal_items(
     from cruxible_core.service.procedures.settled_refusals import (
         NEXT_CATCH_UP_STEPS,
         catch_up_settled_refusals,
+        count_settled_refusals_step,
     )
 
     # Settlements are counted in post; a bounded catch-up makes the row current
@@ -3890,9 +3898,17 @@ def _line_settled_refusal_items(
     # does); a busy index skips the count, and the next read or the consumer's
     # next tick counts what is left, from the persisted cursor.
     index = instance.refusal_index()
-    coverage = index.coverage(instance)
+    index.coverage(instance)  # a read allowed to wait builds the index if it must
     catch_up_settled_refusals(instance, steps=NEXT_CATCH_UP_STEPS, wait=False)
-    counts = index.settled_refusals(instance, lines)
+    # The counts and their coverage come from one final read, after this
+    # request's own catch-up: they describe the same snapshot.
+    counts, coverage = index.settled_refusals_with_coverage(instance, lines)
+    if coverage is None:
+        # That read may have completed the retirements the steps were spending
+        # themselves on; count what was waiting on them before answering.
+        step = count_settled_refusals_step(instance, wait=False)
+        if step.records:
+            counts, coverage = index.settled_refusals_with_coverage(instance, lines)
     items: list[PlaybillNextItemV1] = []
     for key in lines:
         found = counts.get(key)
@@ -5724,6 +5740,7 @@ def service_playbill_next(
     status = PlaybillNextStatusV1(
         blocking=terminal is not None,
         held=held,
+        prior_refusal_coverage=instance.refusal_index().peek_coverage(instance),
         instance=(
             PlaybillNextHealthV1(state="active")
             if terminal is None

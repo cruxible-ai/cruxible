@@ -338,6 +338,9 @@ def _rejection_keys(
 
 
 _BUSY_TIMEOUT_MS = 5000
+_SettledRead: TypeAlias = tuple[
+    dict[tuple[str, str], "LineSettledRefusals"], PriorRefusalCoverage | None
+]
 _ReceiptsRead: TypeAlias = tuple[
     dict[str, tuple[PriorRefusalReceipt, ...]], PriorRefusalCoverage | None
 ]
@@ -863,6 +866,21 @@ class RefusalIndex:
 
         return self._step(instance, "settled_state", read, wait=wait)
 
+    def peek_coverage(self, instance: PlaybillInstance) -> PriorRefusalCoverage | None:
+        """Retirement coverage now, read-only and without waiting; ``None`` if current.
+
+        ``None`` too when the index is missing, busy or not in this layout: then
+        nothing is known to report.
+        """
+
+        peeked = self.peek(instance)
+        if peeked is None:
+            return None
+        head = instance.accepted_history()[-1].sequence
+        if peeked[0] >= head:
+            return None
+        return PriorRefusalCoverage(indexed_through_generation=peeked[0], accepted_generation=head)
+
     def peek(self, instance: PlaybillInstance) -> tuple[int, SettledCursor] | None:
         """Retirements indexed through, and the counting cursor: a read-only look.
 
@@ -1007,7 +1025,14 @@ class RefusalIndex:
     ) -> dict[tuple[str, str], LineSettledRefusals]:
         """The maintained count of each (Line, spec digest) given: one keyed probe each."""
 
-        def run() -> dict[tuple[str, str], LineSettledRefusals]:
+        return self.settled_refusals_with_coverage(instance, lines)[0]
+
+    def settled_refusals_with_coverage(
+        self, instance: PlaybillInstance, lines: tuple[tuple[str, str], ...]
+    ) -> tuple[dict[tuple[str, str], LineSettledRefusals], PriorRefusalCoverage | None]:
+        """The counts, and the retirement coverage of the same read (``None`` if current)."""
+
+        def run() -> tuple[dict[tuple[str, str], LineSettledRefusals], PriorRefusalCoverage | None]:
             found: dict[tuple[str, str], LineSettledRefusals] = {}
             with self.current(instance) as connection:
                 for line_identity, spec_digest in lines:
@@ -1026,9 +1051,10 @@ class RefusalIndex:
                             latest_run_id=str(row[2]),
                             latest_settled_at=str(row[3]),
                         )
-            return found
+                coverage = self._coverage
+            return found, coverage
 
-        return self._recovering("settled_refusals", run, {})
+        return self._recovering("settled_refusals", run, cast(_SettledRead, ({}, None)))
 
     # -- lookups ------------------------------------------------------------
 

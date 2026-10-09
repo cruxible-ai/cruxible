@@ -1697,3 +1697,94 @@ def test_the_next_consumer_counts_settlements_in_the_background(tmp_path: Path) 
     assert part._PART.due(instance, now=fixtures.NOW) == ()
     (health,) = part._PART.health(instance, now=fixtures.NOW)
     assert health.state == "running"
+
+
+# --- next reports retirement coverage from its final snapshot (review F-011, F-012)
+
+
+def _next_result(instance: Any) -> Any:
+    from cruxible_core.coverage.contracts import CoverageAccessProfile
+    from cruxible_core.indexes.projection import AcceptedCoordinate
+    from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
+
+    return service_playbill_next(
+        instance,
+        request=NextRequestV1(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=fixtures.NOW + timedelta(hours=1),
+            access_profile=CoverageAccessProfile(
+                profile_id="settled-refusals", permitted_access_classes=("instance", "public")
+            ),
+        ),
+    )
+
+
+def _unrelated_generations(instance: Any, count: int) -> None:
+    from cruxible_client.contracts.subjects import SubjectShell
+
+    for number in range(count):
+        shell = SubjectShell(
+            identity=ArtifactIdentity(kind="Subject", name=f"{SUBJECT_KIND}/backlog-{number}"),
+            subject_kind=SUBJECT_KIND,
+            subject_id=f"backlog-{number}",
+        )
+        fixtures._accept_more(
+            instance,
+            OWNERS[instance.root],
+            {subject_path(SUBJECT_KIND, f"backlog-{number}"): render_subject(shell)},
+            name=f"backlog-{number}",
+        )
+
+
+def test_next_reports_coverage_while_a_first_matching_count_waits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-011: with no count row yet, the answer still says how far retirements are covered."""
+
+    from cruxible_core.proposals import refusal_index as module
+
+    instance, root, line = _retired_then_resettle(tmp_path)
+    instance.refusal_index().catch_up(instance)
+    monkeypatch.setattr(module, "RETIREMENT_PAGE", 1)
+    _unrelated_generations(instance, 12)
+    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+    assert _egress(second).settle_outcome == "settled", second.terminal
+    head = instance.accepted_history()[-1].sequence
+
+    result = _next_result(instance)
+
+    coverage = result.status.prior_refusal_coverage
+    assert coverage is not None
+    assert coverage.accepted_generation == head
+    assert coverage.indexed_through_generation < head
+    assert [item for item in result.items if item.reason == "line_settled_prior_refusals"] == []
+    # Later answers resume until current; then the row appears, without the note.
+    for _attempt in range(10):
+        result = _next_result(instance)
+        if result.status.prior_refusal_coverage is None:
+            break
+    assert result.status.prior_refusal_coverage is None
+    (row,) = [item for item in result.items if item.reason == "line_settled_prior_refusals"]
+    assert row.detail["settled_items_matching_refusals"] == 1
+    assert "counted_through_generation" not in row.detail
+
+
+def test_next_coverage_is_read_after_its_own_catch_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-012: a backlog this answer's own catch-up clears is not reported as lagging."""
+
+    from cruxible_core.proposals import refusal_index as module
+
+    instance, _root, _line, _second = settled_refusal_world(tmp_path)
+    assert _next_rows(instance, "line_settled_prior_refusals")  # a maintained count
+    monkeypatch.setattr(module, "RETIREMENT_PAGE", 1)
+    _unrelated_generations(instance, 2)
+
+    result = _next_result(instance)
+
+    (row,) = [item for item in result.items if item.reason == "line_settled_prior_refusals"]
+    assert "counted_through_generation" not in row.detail
+    assert result.status.prior_refusal_coverage is None
+    peeked = instance.refusal_index().peek(instance)
+    assert peeked is not None and peeked[0] == instance.accepted_history()[-1].sequence

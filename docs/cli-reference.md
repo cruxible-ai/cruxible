@@ -3210,8 +3210,9 @@ lookup is a keyed index the daemon keeps current as proposals are rejected
 won) and, for retirements, in post: each read indexes at most one bounded page
 of newly accepted generations and the next consumer works through the rest.
 While retirements lag, a review, a run result and `next` say how far they are
-covered (`prior_refusal_coverage`: indexed through generation G of H) rather
-than implying there are no receipts, and settled items are not counted until
+covered (`prior_refusal_coverage`: indexed through generation G of H; on `next`
+in its status, read after the answer's own maintenance, whether or not any row
+exists) rather than implying there are no receipts, and settled items are not counted until
 the retirements before them are in. It is derived: when it is missing, damaged, or keyed
 under an earlier rule, it is rebuilt from accepted history and the rejection
 records, and a read that still cannot use it reports no receipts and logs why

@@ -1543,6 +1543,8 @@ class NextStatus(BaseModel):
     #: Rows parked by a current ``unsure`` attestation. No row is left out for
     #: the caller: one whose repair it cannot run keeps `repair_requires`.
     held: int = Field(default=0, ge=0)
+    #: Present only while the earlier-refusal index lags the accepted head.
+    prior_refusal_coverage: PriorRefusalCoverage | None = None
 
 
 class NextResult(BaseModel):
