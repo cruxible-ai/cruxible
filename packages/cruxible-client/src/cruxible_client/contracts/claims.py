@@ -1200,16 +1200,40 @@ def resolve_cited_source_window(
     store is measured against its own commitment. ``None`` means nothing
     resolves, and the caller decides whether that is allowed to pass.
 
-    ``memo`` is the request's verification of this Capture: the window is
-    derived from its immutable bytes once per request and kept there.
+    ``memo`` is the request's verification of this Capture. The window is a
+    function of immutable bytes AND of which of them the store holds now -- a
+    foreign source's whole page may land later in the same request -- so a
+    kept window is reused only while every body it consulted is held exactly
+    as it was when it was derived: a warm answer is always the cold one.
     """
 
-    if memo is not None and _CITED_WINDOW in memo.derived:
-        return cast(CitedSourceWindow | None, memo.derived[_CITED_WINDOW])
+    held = _window_bodies_held(envelope, store=store)
+    if memo is not None:
+        kept = memo.derived.get(_CITED_WINDOW)
+        if isinstance(kept, tuple) and kept[0] == held:
+            return cast(CitedSourceWindow | None, kept[1])
     window = _resolve_cited_source_window(envelope, store=store)
     if memo is not None:
-        memo.derived[_CITED_WINDOW] = window
+        memo.derived[_CITED_WINDOW] = (held, window)
     return window
+
+
+def _window_bodies_held(
+    envelope: CaptureEnvelopeAny,
+    *,
+    store: CaptureObjectStoreProtocol,
+) -> tuple[tuple[str, bool], ...]:
+    """Every body the window derivation may consult, and whether the store holds it."""
+
+    consulted: list[str] = [envelope.commitment.digest]
+    source = envelope.source
+    if isinstance(source, CasSourceReference):
+        consulted.append(source.content_digest)
+    if isinstance(source, ExternalSourceReference) and isinstance(source.coordinate, Mapping):
+        page_digest = source.coordinate.get("source_content_digest")
+        if isinstance(page_digest, str):
+            consulted.append(page_digest)
+    return tuple((digest, bool(store.verify(digest))) for digest in dict.fromkeys(consulted))
 
 
 _CITED_WINDOW = "cited_source_window"

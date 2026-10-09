@@ -1127,8 +1127,9 @@ class VerifiedCaptureMemo:
     #: executable is the contract itself.
     executable_digest: str | None
     production_proven: bool
-    #: Facts derived from the Capture's own immutable bytes (the cited source
-    #: window), kept beside the verification so one request derives them once.
+    #: Facts derived from the Capture's bytes (the cited source window), each
+    #: kept with the body availability it was derived under and reused only
+    #: while that availability still holds.
     derived: dict[str, object] = field(default_factory=dict, compare=False, repr=False)
 
 
@@ -2696,6 +2697,26 @@ def verify_capture(
     return envelope
 
 
+def required_capture_bodies(
+    envelope: CaptureEnvelopeV1 | CaptureEnvelope, capture_digest: str
+) -> tuple[str, ...]:
+    """Every retained body verification requires for this Capture, in one list.
+
+    The envelope itself, its CAS-retained commitment and CAS source, and a
+    derived Capture's input receipt-set manifest. A finished verification is
+    reused only while the store still holds each of them.
+    """
+
+    required = [capture_digest]
+    if envelope.commitment.materialization == "cas":
+        required.append(envelope.commitment.digest)
+    if isinstance(envelope.source, CasSourceReference):
+        required.append(envelope.source.content_digest)
+    if envelope.input_receipt_set_manifest_digest is not None:
+        required.append(envelope.input_receipt_set_manifest_digest)
+    return tuple(dict.fromkeys(required))
+
+
 def _memo_answers(
     memo: VerifiedCaptureMemo,
     *,
@@ -2713,13 +2734,9 @@ def _memo_answers(
 
     if memo.contract_digest != contract_digest:
         return False
-    envelope = memo.envelope
-    held = {memo.capture_digest}
-    if envelope.commitment.materialization == "cas":
-        held.add(envelope.commitment.digest)
-    if isinstance(envelope.source, CasSourceReference):
-        held.add(envelope.source.content_digest)
-    if not all(store.verify(item) for item in sorted(held)):
+    if not all(
+        store.verify(item) for item in required_capture_bodies(memo.envelope, memo.capture_digest)
+    ):
         return False
     if require_production_proof and not memo.production_proven:
         return False
@@ -3070,6 +3087,7 @@ __all__ = [
     "CaptureProductionRecord",
     "CaptureProductionUnproven",
     "VerifiedCaptureMemo",
+    "required_capture_bodies",
     "DirectCaptureBuildResult",
     "DirectByteSpanSelection",
     "DirectClaimSelection",
