@@ -22,7 +22,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -362,8 +362,9 @@ class ClaimReobservationStore:
         there and cite a Capture of the same contract and observed content,
         and the re-observing Capture must be
         daemon-admitted, verify there, and not be observed after the clock's
-        instant. ``clock`` is the daemon's own; the record's one recording
-        instant is read from it at the durable append, raised to the previous
+        actual instant -- the same check a preview makes. ``clock`` is the
+        daemon's own; the record's one recording instant is read from it at
+        the durable append, raised to the previous
         record's so the journal is in recorded order by construction, and is
         the ``recorded_at`` the journal record carries. A historical record
         stays readable whatever later happens to its Claim; this decides only
@@ -403,15 +404,17 @@ class ClaimReobservationStore:
                     "accepted state moved past this instance's verified head; "
                     "the re-observation is judged again at the new head"
                 )
-            # The one recording instant: the daemon's clock at the append, never
-            # before the last record's, so the journal is in recorded order.
+            # Admission judges the clock's actual instant, as a preview does; only
+            # the durable stamp is raised to the last record's, so the journal is
+            # in recorded order.
             now = clock()
-            last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
-            if last is not None and _micros(now) < int(last[0]):
-                now = _from_micros(last[0])
             record = self._admitted(
                 claim_id=claim_id, capture_digest=capture_digest, head=accepted, now=now
             )
+            last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
+            if last is not None and _micros(now) < int(last[0]):
+                record = replace(record, recorded_at=_from_micros(last[0]))
+            now = record.recorded_at
             payload = {
                 "tag": _EVENT_TAG,
                 "claim_id": record.claim_id,

@@ -1354,8 +1354,9 @@ a cited Capture expires at the latest `observed_at` among it and its recorded
 re-observations of the same contract and content, plus `stale_after`. Only
 re-observations recorded by the evaluation instant count, so a verdict evaluated
 at an earlier instant reproduces byte for byte and its committed expirations
-still verify. A record's recording instant is the daemon's own clock at the
-durable append, raised to the previous record's when the clock has gone back:
+still verify. Admission checks the Capture's observation against the daemon
+clock's actual instant, in a preview and a commit alike; the durable recording
+stamp is that instant raised to the previous record's when the clock has gone back:
 that one value is the journal record's `recorded_at`, so records append in
 recorded order by construction, a rebuild reproduces the projection exactly,
 and a journal out of recorded order is refused as corrupt

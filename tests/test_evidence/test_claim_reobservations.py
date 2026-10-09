@@ -786,3 +786,44 @@ def test_a_journal_out_of_recorded_order_is_refused_as_corrupt(tmp_path: Path) -
     store.path.unlink()
     with pytest.raises(ClaimReobservationJournalCorrupt, match="before"):
         store.history(claim.identity.name)
+
+
+def test_preview_and_commit_agree_after_the_clock_goes_back(tmp_path: Path) -> None:
+    """Review F-018 probe: a later stamp never relaxes the observed-after-now check."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+    from cruxible_core.storage.preview_fence import previewing
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    first = _pending_same_content(instance, _START + timedelta(minutes=30))
+    future = _pending_same_content(instance, _START + timedelta(minutes=45))
+    store = ClaimReobservationStore(instance)
+    store.record(
+        claim_id=claim.identity.name,
+        capture_digest=first,
+        actor_id="owner",
+        clock=lambda: _START + timedelta(hours=2),
+    )
+    # The clock has gone back to +40: the Capture observed at +45 is in its future.
+    attempt: dict[str, Any] = {
+        "claim_id": claim.identity.name,
+        "capture_digest": future,
+        "actor_id": "owner",
+        "clock": lambda: _START + timedelta(minutes=40),
+    }
+    with previewing():
+        with pytest.raises(ClaimReobservationRefused, match="after"):
+            store.record(**attempt)
+    with pytest.raises(ClaimReobservationRefused, match="after"):
+        store.record(**attempt)
+    # After a restart (a fresh store and reader over a rebuilt projection) too.
+    store.path.unlink()
+    ReobservationReader._cache.clear()
+    restarted = ClaimReobservationStore(instance)
+    with pytest.raises(ClaimReobservationRefused, match="after"):
+        restarted.record(**attempt)
+    assert len(restarted.history(claim.identity.name)) == 1
+    # Within the clock's actual instant it is admitted, stamped at the last record's.
+    made = restarted.record(**{**attempt, "clock": lambda: _START + timedelta(minutes=50)})
+    assert made is not None and made.recorded_at == _START + timedelta(hours=2)
