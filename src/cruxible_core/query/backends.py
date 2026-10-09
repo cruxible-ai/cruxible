@@ -41,6 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_verdicts import (
+    CaptureReobservationEvidence,
     CaptureVerdictEvidence,
     ClaimAdjudicationRuleAny,
     claim_verdict_v1_compat,
@@ -85,6 +86,11 @@ class ClaimFactRowV1(_StrictQueryBackendModel):
     #: The canonical form its ClaimType declares (v8): a literal compared with
     #: this Claim's value is canonicalized by it. Omitted when none.
     canonical_form: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: Recorded re-observations of content this Claim cites: each moves that
+    #: cited Capture's freshness once recorded. Omitted when none.
+    reobservations: tuple[CaptureReobservationEvidence, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator("resolved_authority_basis")
     @classmethod
@@ -198,6 +204,7 @@ def claim_row_outcome(
         claim_effective_until=statement.effective_until,
         referent_current=row.referent_current,
         resolved_authority_basis=row.resolved_authority_basis,
+        reobservations=row.reobservations,
     )
     # Compare and record the same form. The policy is written in the compat
     # vocabulary and the visible row already reports that form, so testing the

@@ -1169,6 +1169,7 @@ def _provenance_concentration(
             claim_effective_until=claim.statement.effective_until,
             referent_current=row.referent_current,
             resolved_authority_basis=row.resolved_authority_basis,
+            reobservations=row.reobservations,
         )
         if verdict.verdict == "supported" and verdict.currency == "current":
             supported[claim.statement.predicate].append((row, verdict))

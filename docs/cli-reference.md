@@ -1304,11 +1304,30 @@ exactly the evidence it cites; `accumulate`: it keeps everything its
 predecessors cited). A revision that states the same thing again keeps its
 evidence either way, and a carry never loses backing. Restating a live Claim's
 canonical statement on evidence of content it already cites (the same observed
-content: the same file bytes, the same fetched body, the same words) is a
-no-op: no revision, no citation growth, no proposal. On new content the Claim's
-evidence is refreshed by revising it; a Procedure item that names no Claim to
-revise but restates a live one on new content revises that one rather than
-writing a second Claim of the same statement. `propose --input` lowers
+content: the same file bytes, the same fetched body, the same words) under the
+same contract and in the same citation association (role and origin) is a
+no-op: no revision, no citation growth, no proposal. A new association on
+already-cited content (another role or origin) is kept as a revision. On new
+content the Claim's evidence is refreshed by revising it; a Procedure item that
+names no Claim to revise but restates a live one on new content revises that
+one rather than writing a second Claim of the same statement.
+
+A no-op re-observation still counts for freshness. When the restating Capture
+is daemon-admitted, verifies at the head, and observed exactly the content of
+a Capture the Claim cites under the same contract, it is recorded on the
+evidence plane as an append-only re-observation: its Claim, its Capture, the
+contract, the observed content and when it observed it. The record is not a
+Claim revision and moves no generation. Under a ClaimType's
+`evidence_freshness.stale_after`, a cited Capture expires at the latest
+`observed_at` among it and its recorded re-observations, plus `stale_after`.
+Only re-observations recorded by the evaluation instant count, so a verdict
+evaluated at an earlier instant reproduces byte for byte and its committed
+expirations still verify. A re-observation that set an expiry is named in the
+verdict's `freshness_expirations` entry (`reobserved_by`, `reobserved_at`). A
+forged or unadmitted Capture, or one of other content, is refused
+(`cruxible.claim.reobservation_refused`) and refreshes nothing. Re-observing on a
+schedule (say hourly, under a longer `stale_after`) keeps a Claim current
+without revising it. `propose --input` lowers
 to v7: a new ClaimType takes `self` and `replace`. An edit follows JSON merge-patch
 against its predecessor: a v7 field left out keeps the predecessor's value (over
 a ClaimType before v7: no descriptions, no default role, `self` and

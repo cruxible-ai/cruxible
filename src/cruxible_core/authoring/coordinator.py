@@ -6,6 +6,7 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Callable, cast
 
 from cruxible_client.contracts.attestations import (
@@ -53,9 +54,13 @@ from cruxible_client.contracts.claims import (
     claim_path,
     new_claim_id,
 )
-from cruxible_client.contracts.errors import ApprovalIntegrityError, CruxibleError
+from cruxible_client.contracts.errors import (
+    ApprovalIntegrityError,
+    CruxibleError,
+    ProposalIntegrityError,
+)
 from cruxible_client.contracts.temporal import utc_now
-from cruxible_core.authoring.lowering import canonical_authored_claims
+from cruxible_core.authoring.lowering import LoweredAuthoring, canonical_authored_claims
 from cruxible_core.authoring.preflight import (
     ComputedPreflight,
     authoring_operation,
@@ -63,6 +68,7 @@ from cruxible_core.authoring.preflight import (
 )
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.compiler.projection_artifacts import projected_revision
+from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
 from cruxible_core.indexes.history.history_index import detached_history_reads
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.candidate_cards import is_candidate_card_path
@@ -809,6 +815,41 @@ class AuthoringIntentCoordinator:
             )
         return tuple(sorted(members, key=lambda item: item.identity.encode("utf-8")))
 
+    def _record_reobservations(self, lowered: LoweredAuthoring, *, actor_id: str) -> None:
+        """Record each member that re-observed content its Claim already cites.
+
+        Such a member changes nothing (``content_already_cited``), but the newer
+        Capture is not discarded: the evidence plane keeps it so the cited
+        content stays as fresh as its latest observation. A submit records; a
+        preview never does.
+        """
+
+        resolved = lowered.resolved_authoring
+        members = resolved.get("members")
+        items = members if isinstance(members, list) else [resolved]
+        for item in items:
+            if item.get("outcome") != "cruxible.authoring.content_already_cited":
+                continue
+            path = item.get("path")
+            identity = item.get("identity")
+            claim_id = (
+                PurePosixPath(path).stem
+                if isinstance(path, str)
+                else identity.get("name")
+                if isinstance(identity, dict)
+                else None
+            )
+            capture_digest = item.get("capture_digest")
+            if not isinstance(claim_id, str) or not isinstance(capture_digest, str):
+                raise ProposalIntegrityError("a re-observation names its Claim and its Capture")
+            ClaimReobservationStore(self.instance).record(
+                claim_id=claim_id,
+                capture_digest=capture_digest,
+                coordinate=self.instance.accepted_coordinate(),
+                actor_id=actor_id,
+                now=self.clock(),
+            )
+
     def submit(
         self,
         intent_id: str,
@@ -865,6 +906,8 @@ class AuthoringIntentCoordinator:
                     status=status,
                     workspace_advertisement=self.instance.advertise_workspace(),
                 )
+            if computed.lowered is not None:
+                self._record_reobservations(computed.lowered, actor_id=actor.actor_id)
             if computed.lowered is not None and computed.lowered.idempotent:
                 accepted = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
                 status = CandidateStatus(

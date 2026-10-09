@@ -94,6 +94,7 @@ from tests.core_support._claim_authoring_support import (
     ExistingStatementHandoffV1,
     _activate_direct_claim,
     service_propose_playbill_claim,
+    service_reobserve_playbill_claim,
 )
 from tests.core_support._knowledge_loop_support import (
     activate,
@@ -474,7 +475,7 @@ def _claim_uncovered(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "claim_uncovered", _request(instance))
 
 
-def _freshness_world(root: Path):  # type: ignore[no-untyped-def]
+def _freshness_world(root: Path, *, stale_after: int = 10_000_000):  # type: ignore[no-untyped-def]
     instance, owner = initialize_local(root)
     source_id = "fixture.freshness"
     _seed_claim_surface(
@@ -512,7 +513,7 @@ def _freshness_world(root: Path):  # type: ignore[no-untyped-def]
             **predecessor.model_dump(mode="json"),
             "artifact_format": "playbill-claim-type-v3",
             "evidence_freshness": ClaimEvidenceFreshness(
-                stale_after=ClaimFreshnessDuration(microseconds=10_000_000)
+                stale_after=ClaimFreshnessDuration(microseconds=stale_after)
             ).model_dump(mode="json"),
             "lifecycle": ArtifactLifecycle(
                 predecessor_digest=claim_type_digest(predecessor).tagged
@@ -544,9 +545,16 @@ def _freshness_world(root: Path):  # type: ignore[no-untyped-def]
 
 
 def _refresh_claim(instance, owner, *, timestamp: str) -> None:  # type: ignore[no-untyped-def]
+    """Re-observe the still-standing statement: the same content, observed again.
+
+    It changes nothing about the Claim -- no revision, no proposal -- and the
+    recorded re-observation is what keeps the cited content fresh.
+    """
+
+    del owner
     current = _current_claim(instance)
     body = instance.body_store().store(b"status: ready\n")
-    proposed = service_propose_playbill_claim(
+    submitted = service_reobserve_playbill_claim(
         instance,
         authoring=DirectClaimAuthoringV1(
             statement=current.statement,
@@ -563,7 +571,31 @@ def _refresh_claim(instance, owner, *, timestamp: str) -> None:  # type: ignore[
             ),
         ),
         actor_id="owner",
-        proposal_name="closed-loop-refresh-evidence",
+        timestamp=timestamp,
+    )
+    assert _current_claim(instance) == current
+    assert submitted.status.state == "accepted"
+
+
+def _revise_claim(instance, owner, *, timestamp: str) -> None:  # type: ignore[no-untyped-def]
+    """Restate the statement on newly observed bytes: a revision that moves accepted state."""
+
+    current = _current_claim(instance)
+    body = instance.body_store().store(b"status: ready\n")
+    proposed = service_propose_playbill_claim(
+        instance,
+        authoring=DirectClaimAuthoringV1(
+            statement=current.statement,
+            rationale="Recapture the still-standing statement from new bytes.",
+            claim_id=current.identity.name,
+            predecessor_artifact_digest=claim_artifact_digest(current).tagged,
+            source_selection=DirectForeignSourceSelection(
+                logical_source_identity="fixture.freshness",
+                span=ContentSpan(content_digest=body.digest, start_byte=8, end_byte=14),
+            ),
+        ),
+        actor_id="owner",
+        proposal_name="closed-loop-revise-evidence",
         timestamp=timestamp,
     )
     _activate_direct_claim(instance, owner, proposed)

@@ -8,7 +8,7 @@ queried Claim and an explained Claim can never disagree about their verdict.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, Literal
 
@@ -44,6 +44,11 @@ from cruxible_client.contracts.query.results import (
 )
 from cruxible_client.contracts.subjects import AcceptedSubject, parse_subject, subject_digest
 from cruxible_core.errors import DataValidationError
+from cruxible_core.evidence.claim_reobservations import (
+    ClaimReobservationStore,
+    ReobservationRecord,
+    claim_reobservation_evidence,
+)
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.exhaust.records import (
     QUERY_RECEIPT_EVENT_KIND,
@@ -140,6 +145,7 @@ def _fact_row(
     claim_types: dict[str, ClaimType],
     attestation_envelopes: tuple[ClaimAttestation, ...],
     store: Any = None,
+    reobserved: Sequence[ReobservationRecord] = (),
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does."""
 
@@ -201,6 +207,13 @@ def _fact_row(
         resolved_authority_basis=(),
         cardinality=claim_type.cardinality,
         canonical_form=effective_canonical_form(claim_type),
+        reobservations=(
+            claim_reobservation_evidence(
+                instance, coordinate=coordinate, captures=captures, records=reobserved
+            )
+            if reobserved and isinstance(instance, PlaybillInstance)
+            else ()
+        ),
     )
 
 
@@ -473,40 +486,47 @@ class _AcceptedQueryFactsRead:
         # One store per build: obtaining it checks the storage binding.
         store = self._instance.body_store()
         rows: list[ClaimFactRowV1] = []
-        for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
-            # The full-history path historically looked up evidence before
-            # parsing the Claim; live-only reads parsed lifecycle first and
-            # never demanded evidence for retired heads. Keep both orders.
-            evidence = evidence_for(path) if include_retired else None
-            claim = self._claims.get(path)
-            if claim is None:
-                claim = parse_claim(tree[path], path=path)
-                self._claims[path] = claim
-            if self._predicates is not None and claim.statement.predicate not in self._predicates:
-                continue
-            if not include_retired and claim.lifecycle.state != "live":
-                continue
-            row = self._rows.get(path)
-            if row is None:
-                row = _fact_row(
-                    self._instance,
-                    path=path,
-                    tree=tree,
-                    coordinate=self._coordinate,
-                    readers=self._readers,
-                    evidence=evidence if evidence is not None else evidence_for(path),
-                    history=history,
-                    claim=claim,
-                    claim_types=self._claim_types,
-                    store=store,
-                    attestation_envelopes=tuple(
-                        self._attestations.get(
-                            (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()
-                        )
-                    ),
-                )
-                self._rows[path] = row
-            rows.append(row)
+        # Recorded re-observations move a cited content's freshness: one indexed
+        # probe per Claim lineage this build assembles, on one connection.
+        with ClaimReobservationStore.lookup(self._instance) as reobserved:
+            for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
+                # The full-history path historically looked up evidence before
+                # parsing the Claim; live-only reads parsed lifecycle first and
+                # never demanded evidence for retired heads. Keep both orders.
+                evidence = evidence_for(path) if include_retired else None
+                claim = self._claims.get(path)
+                if claim is None:
+                    claim = parse_claim(tree[path], path=path)
+                    self._claims[path] = claim
+                if (
+                    self._predicates is not None
+                    and claim.statement.predicate not in self._predicates
+                ):
+                    continue
+                if not include_retired and claim.lifecycle.state != "live":
+                    continue
+                row = self._rows.get(path)
+                if row is None:
+                    row = _fact_row(
+                        self._instance,
+                        path=path,
+                        tree=tree,
+                        coordinate=self._coordinate,
+                        readers=self._readers,
+                        evidence=evidence if evidence is not None else evidence_for(path),
+                        history=history,
+                        claim=claim,
+                        claim_types=self._claim_types,
+                        store=store,
+                        attestation_envelopes=tuple(
+                            self._attestations.get(
+                                (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()
+                            )
+                        ),
+                        reobserved=reobserved(claim.identity.name),
+                    )
+                    self._rows[path] = row
+                rows.append(row)
         assembled = next(iter(self._results.values()), None)
         if assembled is None:
             providers = accepted_claim_providers(self._instance, coordinate=self._coordinate)

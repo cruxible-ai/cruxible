@@ -751,6 +751,7 @@ def _predicate_verdict(
                 claim_effective_until=row.accepted.claim.statement.effective_until,
                 referent_current=row.referent_current,
                 resolved_authority_basis=row.resolved_authority_basis,
+                reobservations=row.reobservations,
             )
             for row in rows
         )

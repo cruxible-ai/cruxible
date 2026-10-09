@@ -341,6 +341,11 @@ def claim_resolution_statuses(
                         ("capture", digest): used
                         for digest, used in reads.used_availability.items()
                     },
+                    # Re-observations as the verdicts used them, likewise.
+                    **{
+                        ("reobserved", claim_id): used
+                        for claim_id, used in reads.used_reobservations.items()
+                    },
                 },
                 interval=invariance_interval(group_boundaries, evaluation_time=evaluation_time),
                 statuses=dict(group_statuses),
