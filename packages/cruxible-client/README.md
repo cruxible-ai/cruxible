@@ -1227,6 +1227,36 @@ Returns a handle on one accepted Line by name. Each handle call reaches the daem
 | `.ref` | `"Line:<name>"`, for `cx.get(line.ref)`. |
 | `.name` | The Line's name. |
 
+<a id="api-cruxible-inbox"></a>
+
+### `Cruxible.inbox`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+inbox() -> Inbox
+```
+
+Returns a handle on the Line inbox: the items Lines posted for judgment through
+a `post_inbox` terminal. Each handle call reaches the daemon.
+
+**Conditions and effects:** An item is the payload exactly as posted (untyped
+instance data) inside a core envelope: the Line, Procedure, node and runs that
+posted it, when, the Captures its dependency closure reached, its dedupe key
+(payload, Captures and Line), its status and your latest disposition. Posting
+never changes accepted state. An item posted again is one item seen again
+(`occurrences`); if you already decided it, it is `unread` again with that
+decision still shown. Reads need read permission; dispositions need governed
+write.
+
+| Method | Effect |
+|---|---|
+| `.list(*, line=None, status=None, limit=None, cursor=None) -> InboxList` | One page, most recently posted first, with a bounded `payload_preview` per item; follow `next_cursor`. `line` is a Line name; `status` is `unread`, `acknowledged`, `dismissed` or `linked`. |
+| `.get(item_id) -> InboxItem` | One item whole: envelope, payload and every disposition. `item_id` may be a unique `INB-` prefix of 12+ hex digits. |
+| `.ack(item_id) -> InboxDispositionResult` | Acknowledge it: seen, owed nothing further. Repeating the current decision records nothing (`recorded=False`). |
+| `.dismiss(item_id, *, reason) -> InboxDispositionResult` | Dismiss it with a recorded reason. |
+| `.link(item_id, *, proposal=None, subject=None) -> InboxDispositionResult` | Link it to the proposal you wrote, or to an accepted Subject (`kind/id`, such as a note). Name exactly one. |
+
 <a id="api-writebatch"></a>
 
 ## `WriteBatch`
@@ -3360,8 +3390,8 @@ Every definition is graph format 6.
 | Run surface | Availability |
 |---|---|
 | Direct run (`Procedure.run`) | state_tap, state_claim, transform, project, guard, repeat, select, constant, return, invoke, halt, source and call nodes |
-| Accepted Line (`cx.line(name).run()`) | Adds authorized emit_capture, propose_change_set and settle_change_set paths; a Repeat whose body calls a provider also runs only on a Line |
-| Nowhere | exhaust_tap, and post_inbox (no lane delivers it); open slots belong only to a Blueprint |
+| Accepted Line (`cx.line(name).run()`) | Adds authorized emit_capture, post_inbox, propose_change_set and settle_change_set paths; a Repeat whose body calls a provider also runs only on a Line |
+| Nowhere | exhaust_tap; open slots belong only to a Blueprint |
 
 `cx.get(f"Procedure:{name}")` reports which of these applies as `runnable`
 (`direct`, `line` or `unsupported`) with the nodes behind it.

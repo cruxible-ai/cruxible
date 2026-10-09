@@ -1051,6 +1051,55 @@ def evaluate_line(
     )
 
 
+@router.get("/{instance_id}/inbox", response_model=contracts.InboxList)
+def list_inbox(
+    instance_id: str,
+    line: str | None = Query(default=None, max_length=512),
+    status: contracts.InboxItemStatus | None = None,
+    limit: int = Query(
+        default=contracts.INBOX_LIST_DEFAULT_LIMIT, ge=1, le=contracts.INBOX_LIST_MAX_LIMIT
+    ),
+    cursor: str | None = Query(default=None, max_length=4096),
+) -> contracts.InboxList:
+    return playbill_api.playbill_inbox_list(
+        resolve_server_instance_id(instance_id),
+        line=line,
+        status=status,
+        limit=limit,
+        cursor=cursor,
+    )
+
+
+@router.get("/{instance_id}/inbox/{item_id}", response_model=contracts.InboxItem)
+def get_inbox_item(instance_id: str, item_id: str) -> contracts.InboxItem:
+    return playbill_api.playbill_inbox_get(resolve_server_instance_id(instance_id), item_id)
+
+
+@router.post("/{instance_id}/inbox/{item_id}/ack", response_model=contracts.InboxDispositionResult)
+def ack_inbox_item(instance_id: str, item_id: str) -> contracts.InboxDispositionResult:
+    return playbill_api.playbill_inbox_ack(resolve_server_instance_id(instance_id), item_id)
+
+
+@router.post(
+    "/{instance_id}/inbox/{item_id}/dismiss", response_model=contracts.InboxDispositionResult
+)
+def dismiss_inbox_item(
+    instance_id: str, item_id: str, req: contracts.InboxDismissRequest
+) -> contracts.InboxDispositionResult:
+    return playbill_api.playbill_inbox_dismiss(
+        resolve_server_instance_id(instance_id), item_id, reason=req.reason
+    )
+
+
+@router.post("/{instance_id}/inbox/{item_id}/link", response_model=contracts.InboxDispositionResult)
+def link_inbox_item(
+    instance_id: str, item_id: str, req: contracts.InboxLinkRequest
+) -> contracts.InboxDispositionResult:
+    return playbill_api.playbill_inbox_link(
+        resolve_server_instance_id(instance_id), item_id, target=req.target
+    )
+
+
 @router.post("/{instance_id}/lines/{line}/dispatch", response_model=contracts.LineDispatchResult)
 def dispatch_line(
     instance_id: str, line: str, req: contracts.LineDispatchRequest

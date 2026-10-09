@@ -1381,6 +1381,54 @@ def handle_playbill_line_dispatch(
     )
 
 
+def handle_playbill_inbox_list(
+    instance_id: str,
+    *,
+    line: str | None = None,
+    status: contracts.InboxItemStatus | None = None,
+    limit: int = contracts.INBOX_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> contracts.InboxList:
+    return _daemon_call(
+        lambda client: client.list_inbox(
+            instance_id, line=line, status=status, limit=limit, cursor=cursor
+        ),
+        operation_name="cruxible_inbox_list",
+    )
+
+
+def handle_playbill_inbox_get(instance_id: str, item_id: str) -> contracts.InboxItem:
+    return _daemon_call(
+        lambda client: client.get_inbox_item(instance_id, item_id),
+        operation_name="cruxible_inbox_get",
+    )
+
+
+def handle_playbill_inbox_ack(instance_id: str, item_id: str) -> contracts.InboxDispositionResult:
+    return _daemon_call(
+        lambda client: client.ack_inbox_item(instance_id, item_id),
+        operation_name="cruxible_inbox_ack",
+    )
+
+
+def handle_playbill_inbox_dismiss(
+    instance_id: str, item_id: str, reason: str
+) -> contracts.InboxDispositionResult:
+    return _daemon_call(
+        lambda client: client.dismiss_inbox_item(instance_id, item_id, reason=reason),
+        operation_name="cruxible_inbox_dismiss",
+    )
+
+
+def handle_playbill_inbox_link(
+    instance_id: str, item_id: str, target: contracts.InboxLinkTarget
+) -> contracts.InboxDispositionResult:
+    return _daemon_call(
+        lambda client: client.link_inbox_item(instance_id, item_id, target=target),
+        operation_name="cruxible_inbox_link",
+    )
+
+
 def handle_playbill_line_run(
     instance_id: str,
     line: str,

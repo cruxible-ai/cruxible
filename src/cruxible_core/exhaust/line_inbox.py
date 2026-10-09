@@ -143,8 +143,7 @@ def inbox_root(instance: PlaybillInstance) -> Path:
 
 
 def _encode_cursor(last_seen: str, item_id: str) -> str:
-    raw = json.dumps([last_seen, item_id], separators=(",", ":")).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("ascii")
+    return base64.urlsafe_b64encode(canonical_bytes([last_seen, item_id])).decode("ascii")
 
 
 def decode_inbox_cursor(cursor: str) -> tuple[str, str]:
@@ -351,7 +350,7 @@ class LineInboxStore:
             (
                 disposition.disposition,
                 updated.model_dump_json(),
-                json.dumps(history, separators=(",", ":"), sort_keys=True),
+                canonical_bytes(history).decode("utf-8"),
                 item_id,
             ),
         )

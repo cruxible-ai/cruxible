@@ -873,9 +873,9 @@ there is no accidental Python `None` success.
 The chosen terminal capability and execution lane must permit every reachable
 terminal. Current direct Procedure runs do not supply the accepted Line lane's
 capture/proposal authority. Source syntax does not remove that restriction.
-`PostInbox` has no source frontend. The graph format defines it, but no run
-lane delivers it today, even where `get` reports such a Procedure as runnable
-on a Line.
+`PostInbox` has no source frontend yet. The graph format's `post_inbox`
+terminal runs on a Line and posts its items, as they are, to the Line inbox
+(`cx.inbox()`); author it in a `ProcedureInput` graph.
 
 ### `emit_capture`
 

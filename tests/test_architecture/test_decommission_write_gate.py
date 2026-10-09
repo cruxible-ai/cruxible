@@ -74,6 +74,8 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
     "cruxible_core/service/procedures/provider_installation.py": frozenset(
         {"service_install_provider"}
     ),
+    # Every inbox disposition records through one gated door.
+    "cruxible_core/service/procedures/line_inbox.py": frozenset({"_record"}),
     "cruxible_core/runtime/instance.py": frozenset(
         {
             "PlaybillInstance.decommission",

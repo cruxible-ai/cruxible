@@ -1582,12 +1582,10 @@ Read a Procedure with `cruxible get Procedure:NAME`: its card says how it runs
 nodes behind that answer. Procedures are graph format 6 and pin every Provider
 exactly; open slots belong only to a Blueprint. The direct lane runs `state_tap`,
 `state_claim`, `transform`, `project`, `guard`, `repeat`, `select`, `constant`,
-`return`, `invoke`, `halt`, `source` and `call` nodes. The effectful terminals --
-`emit_capture`, `propose_change_set`, `settle_change_set` -- run
+`return`, `invoke`, `halt`, `source` and `call` nodes. The terminals --
+`emit_capture`, `post_inbox`, `propose_change_set`, `settle_change_set` -- run
 only as a Line: a direct invocation carries no requested authority, no
-occurrence, and no mandate coordinate, and none is fabricated for it. No lane
-delivers a `post_inbox` terminal yet, so a Procedure ending in one reports
-`unsupported`.
+occurrence, and no mandate coordinate, and none is fabricated for it.
 
 A **Blueprint** is the same definition with interface-typed Provider slots left
 open (`cruxible authoring example blueprint`); it is accepted but never runs.
@@ -2049,6 +2047,16 @@ refuses `terminal_authority_capped_by_<term>`. The one exception is a settle
 terminal capped at propose, which proposes as described above; capped below
 propose, it is refused like any other.
 
+A `post_inbox` terminal needs only `observe`: it posts the items the run
+selected, as they are, to the Line inbox (`cruxible inbox`), and never changes
+accepted state. `input` is one item, or `{"items": ...}` to fan out over a list
+the run produced; the daemon attaches to each item the Captures its own
+dependency closure reached. A run posts at most the terminal's `max_items`
+(100 when it declares none, at most 1000), counted across its `post_inbox`
+terminals; the rest are not posted and the terminal reports
+`inbox_truncation` (`cap`, `cap_source`, `selected`, `posted`). Rule of thumb:
+propose when the automation can state the belief, post when it cannot.
+
 Known limitation: a settle run submits its delegated proposal against the
 accepted head and then activates it. If another generation is accepted between
 the two, activation refuses `settle_publication_refused`, and that proposal
@@ -2057,6 +2065,39 @@ reproduces against the new head. Retrying the same operation recovers the
 same proposal and refuses the same way. Withdraw it with `cruxible proposal
 withdraw`; the Line's next due occurrence settles against the current head
 under a new operation key.
+
+## inbox
+
+~~~text
+cruxible inbox list [--line LINE] [--status unread|acknowledged|dismissed|linked]
+  [--limit 50] [--cursor CURSOR] [--json]
+cruxible inbox get ITEM [--json]
+cruxible inbox ack ITEM [--json]
+cruxible inbox dismiss ITEM --reason TEXT [--json]
+cruxible inbox link ITEM (--proposal ID | --subject KIND/ID) [--json]
+~~~
+
+The Line inbox holds what Lines sent to intelligence: the items a `post_inbox`
+terminal selected and could not decide. It is operational state (a journal and
+a rebuildable index under the instance's exhaust), never accepted state.
+
+Each item is its payload exactly as posted -- untyped instance data -- inside a
+core envelope: `line`, `procedure`, `node_id`, the first and latest posting
+(`run_id`/`posted_at`, `last_run_id`/`last_posted_at`), `occurrences`,
+`source_capture_digests` (the Captures its dependency closure reached), its
+`dedupe_key` (payload digest, source Captures and Line), `status` and your
+latest `disposition`. `ITEM` is the `INB-` id or a unique prefix of it with at
+least 12 hex digits.
+
+`list` returns the newest postings first with a bounded payload preview (a long
+payload is a `TruncatedText` of its canonical JSON); `get` returns the whole
+payload and every disposition. Dispositions are yours, never automatic: `ack`
+(seen, owed nothing), `dismiss --reason` (recorded verbatim), or `link` to the
+proposal you wrote or to an accepted Subject such as a note. Repeating the
+item's current decision records nothing. Posting the same dedupe key again
+creates no new item: it counts the occurrence, and an item you already decided
+is `unread` again with that decision still shown, so you judge it again.
+Reading needs read permission; dispositions need governed write.
 
 ## prediction
 

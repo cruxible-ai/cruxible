@@ -3736,6 +3736,15 @@ class Cruxible:
 
         return Line(self, name.removeprefix("Line:"))
 
+    def inbox(self) -> Inbox:
+        """The Line inbox: what Lines sent to intelligence, and your dispositions of it.
+
+        Next: ``cx.inbox().list(status="unread")``, then ``.get(item_id)`` and
+        ``.ack``, ``.dismiss`` or ``.link`` for each item you judged.
+        """
+
+        return Inbox(self)
+
     def get(
         self,
         ref: str | TypedRef,
@@ -4629,6 +4638,72 @@ class Line:
             evaluation_time=cx._evaluation_time(),
         )
         return ProcedureRun(cx, result)
+
+
+class Inbox:
+    """The Line inbox. A Line's post_inbox terminal posts items it could not decide.
+
+    Items are untyped instance data with a core envelope (Line, run, source
+    Captures, dedupe key, disposition). Posting never changes accepted state.
+    An item that recurs is unread again, its prior disposition still shown.
+
+    Next: ``inbox.list(status="unread")``.
+    """
+
+    def __init__(self, cx: Cruxible) -> None:
+        self._playbill = cx
+
+    def list(
+        self,
+        *,
+        line: str | None = None,
+        status: api.InboxItemStatus | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> api.InboxList:
+        """One page of items, most recently posted first; follow ``next_cursor``.
+
+        Next: ``inbox.get(entry.item.item_id)`` to read one whole.
+        """
+        cx = self._playbill
+        return cx._client.list_inbox(
+            cx._instance_id, line=line, status=status, limit=limit, cursor=cursor
+        )
+
+    def get(self, item_id: str) -> api.InboxItem:
+        """One item whole: envelope, payload as posted, and every disposition.
+
+        Next: ``inbox.ack(item_id)``, ``inbox.dismiss(item_id, reason=...)`` or ``inbox.link``.
+        """
+        cx = self._playbill
+        return cx._client.get_inbox_item(cx._instance_id, item_id)
+
+    def ack(self, item_id: str) -> api.InboxDispositionResult:
+        """Acknowledge an item: seen, and owed nothing further. Next: ``inbox.list()``."""
+        cx = self._playbill
+        return cx._client.ack_inbox_item(cx._instance_id, item_id)
+
+    def dismiss(self, item_id: str, *, reason: str) -> api.InboxDispositionResult:
+        """Dismiss an item, recording why it needs nothing. Next: ``inbox.list()``."""
+        cx = self._playbill
+        return cx._client.dismiss_inbox_item(cx._instance_id, item_id, reason=reason)
+
+    def link(
+        self, item_id: str, *, proposal: str | None = None, subject: str | None = None
+    ) -> api.InboxDispositionResult:
+        """Link an item to the proposal or Subject (``kind/id``) that records your judgment.
+
+        Name exactly one. Next: ``inbox.list()``.
+        """
+        if (proposal is None) == (subject is None):
+            raise ValueError("link names exactly one of proposal or subject")
+        target: api.InboxLinkTarget = (
+            api.InboxLinkProposal(proposal_id=proposal)
+            if proposal is not None
+            else api.InboxLinkSubject(subject=cast(str, subject))
+        )
+        cx = self._playbill
+        return cx._client.link_inbox_item(cx._instance_id, item_id, target=target)
 
 
 class Procedure:

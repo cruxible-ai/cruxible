@@ -85,6 +85,9 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("line", "disable"): "active",
     ("line", "evaluate"): "active",
     ("line", "dispatch"): "active",
+    ("inbox", "ack"): "active",
+    ("inbox", "dismiss"): "active",
+    ("inbox", "link"): "active",
     ("proposal", "approve"): "active",
     ("proposal", "activate"): "active",
     ("proposal", "readmit"): "active",
@@ -705,6 +708,22 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         },
         module="playbill",
         attr="line_group",
+    ),
+    "inbox": _group(
+        "Judge what Lines sent to intelligence.",
+        {
+            "list": _command("playbill", "inbox_list", "List inbox items, most recent first."),
+            "get": _command("playbill", "inbox_get", "Read one inbox item whole."),
+            "ack": _command("playbill", "inbox_ack", "Acknowledge an inbox item."),
+            "dismiss": _command(
+                "playbill", "inbox_dismiss", "Dismiss an inbox item, with a reason."
+            ),
+            "link": _command(
+                "playbill", "inbox_link", "Link an inbox item to a proposal or Subject."
+            ),
+        },
+        module="playbill",
+        attr="inbox_group",
     ),
     "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
     "audit": _command("playbill", "audit", "Read ranked Claim verification work."),
