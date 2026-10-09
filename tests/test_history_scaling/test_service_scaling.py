@@ -31,6 +31,12 @@ def _counted(monkeypatch: pytest.MonkeyPatch) -> Iterator[Counter[str]]:
     read = ContentAddressedBodyStore.read
     blobs = PlaybillInstance.blobs_at
     connect = sqlite3.connect
+    partition_ids = LocalJournalBackend.partition_ids
+
+    def counted_partition_ids(self: Any, stream: Any) -> Any:
+        found = partition_ids(self, stream)
+        work["partitions_enumerated"] += len(found)
+        return found
 
     def counted_frames(*args: Any, **kwargs: Any) -> Iterator[Any]:
         for item in frames(*args, **kwargs):
@@ -58,6 +64,7 @@ def _counted(monkeypatch: pytest.MonkeyPatch) -> Iterator[Counter[str]]:
 
     with monkeypatch.context() as patch:
         patch.setattr(LocalJournalBackend, "_read_frames", staticmethod(counted_frames))
+        patch.setattr(LocalJournalBackend, "partition_ids", counted_partition_ids)
         patch.setattr(ContentAddressedBodyStore, "read", counted_read)
         patch.setattr(PlaybillInstance, "blobs_at", counted_blobs)
         patch.setattr(sqlite3, "connect", counted_connect)
@@ -110,8 +117,13 @@ def test_a_line_admission_does_not_grow_with_the_lines_past_runs(
 # -- a prediction settlement on retained terminal evidence --------------------------
 
 
-def _unrelated_history(instance: PlaybillInstance, *, count: int) -> None:
-    """Finished work the settlement never names: other runs' records, other settlements."""
+def _unrelated_history(instance: PlaybillInstance, *, count: int, run_partition: str) -> None:
+    """Finished work the settlement never names, where a scan would meet it first.
+
+    Other runs' records inside the settled run's own partition (before its
+    terminal record), partitions that sort before it, and other contracts'
+    settlement partitions in the resolution journal.
+    """
 
     from cruxible_core.exhaust import ProcedureExhaustWriter
     from cruxible_core.service.procedures import predictions, procedure_runs
@@ -119,34 +131,50 @@ def _unrelated_history(instance: PlaybillInstance, *, count: int) -> None:
 
     journal, _root = procedure_runs._journal_for_write(instance)
     resolutions, resolution_stream = predictions._journal(instance)
+    stream = procedure_runs._stream(instance)
     coordinate = procedure_runs.AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    for backend, stream, kind, run in (
-        (journal, procedure_runs._stream(instance), "node_fired", True),
-        (resolutions, resolution_stream, "resolution_disposition", False),
+
+    def append(backend, stream, partition, token, kind, ordinal, run):  # type: ignore[no-untyped-def]
+        ProcedureExhaustWriter(
+            journal=backend, bodies=instance.body_store(), fencing_token=token
+        ).append(
+            stream=stream,
+            partition_id=partition,
+            event_kind=kind,
+            accepted_coordinate=coordinate,
+            procedure_artifact_digest="sha256:" + "1" * 64 if run else None,
+            definition_digest="sha256:" + "2" * 64,
+            run_id=f"RUN-unrelated-{partition}-{ordinal}" if run else None,
+            admission_binding_digest="sha256:" + "3" * 64 if run else None,
+            actor_context=_actor(),
+            recorded_at=RECORDED_AT,
+            payload={"unrelated": ordinal},
+        )
+
+    procedure_runs._activate_writer(journal, stream, run_partition)
+    for ordinal in range(count):
+        append(
+            journal,
+            stream,
+            run_partition,
+            procedure_runs.PROCEDURE_RUN_FENCING_TOKEN,
+            "node_fired",
+            ordinal,
+            True,
+        )
+    for backend, journal_stream, kind, run, prefix in (
+        (journal, stream, "node_fired", True, "0unrelated"),
+        (resolutions, resolution_stream, "resolution_disposition", False, "unrelated"),
     ):
         for ordinal in range(count):
-            partition = f"unrelated-{ordinal}"
+            partition = f"{prefix}-{ordinal}"
             backend.activate_writer(
-                stream,
+                journal_stream,
                 partition,
                 fencing_token="unrelated",
-                expected_head=backend.read_head(stream, partition),
+                expected_head=backend.read_head(journal_stream, partition),
             )
-            ProcedureExhaustWriter(
-                journal=backend, bodies=instance.body_store(), fencing_token="unrelated"
-            ).append(
-                stream=stream,
-                partition_id=partition,
-                event_kind=kind,  # type: ignore[arg-type]
-                accepted_coordinate=coordinate,
-                procedure_artifact_digest="sha256:" + "1" * 64 if run else None,
-                definition_digest="sha256:" + "2" * 64,
-                run_id=f"RUN-unrelated-{ordinal}" if run else None,
-                admission_binding_digest="sha256:" + "3" * 64 if run else None,
-                actor_context=_actor(),
-                recorded_at=RECORDED_AT,
-                payload={"unrelated": ordinal},
-            )
+            append(backend, journal_stream, partition, "unrelated", kind, ordinal, run)
 
 
 def _settle_on_a_retained_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, history: int):  # type: ignore[no-untyped-def]
@@ -193,6 +221,7 @@ def _settle_on_a_retained_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     admission = next(r.record for r in records if r.record.event_kind == "admission_bound")
     journal, _ = procedure_runs._journal_for_write(instance)
     stream = procedure_runs._stream(instance)
+    _unrelated_history(instance, count=history, run_partition=admission.partition_id)
     procedure_runs._activate_writer(journal, stream, admission.partition_id)
     target = claim_path(observation.identity.name)
     receipt = TerminalEgressReceiptV4(
@@ -243,7 +272,6 @@ def _settle_on_a_retained_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             "receipt": receipt.model_dump(mode="json"),
         },
     )
-    _unrelated_history(instance, count=history)
     request = SettleRequest(
         contract=contract,
         evidence=TerminalSettlementEvidence(
@@ -266,7 +294,8 @@ def test_a_prediction_settlement_does_not_grow_with_unrelated_runs_or_settlement
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Settling on a retained terminal reads the run's terminal records and the one
-    contract's partition; it once verified every partition of both journals."""
+    contract's partition; it once enumerated and verified every partition of both
+    journals, meeting other runs' records in the run's own partition first."""
 
     (tmp_path / "small").mkdir()
     (tmp_path / "large").mkdir()
