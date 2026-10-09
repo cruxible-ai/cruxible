@@ -360,6 +360,7 @@ NextReason: TypeAlias = Literal[
     "consumer_stalled",
     "line_coverage_gap",
     "line_work_pending",
+    "line_inbox_unread",
     "evidence_unavailable",
     "prediction_settleable",
     "prediction_window_unbindable",
@@ -384,6 +385,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.line.enable",
     "cruxible.line.evaluate",
     "cruxible.line.dispatch",
+    "cruxible.inbox.list",
     "cruxible.prediction.settle",
     "hand_edit",
 ]

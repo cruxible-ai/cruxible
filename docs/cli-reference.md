@@ -2099,6 +2099,10 @@ creates no new item: it counts the occurrence, and an item you already decided
 is `unread` again with that decision still shown, so you judge it again.
 Reading needs read permission; dispositions need governed write.
 
+`cruxible next` reports one `line_inbox_unread` row per Line with unread items,
+with the count (the Line's volume) and the `cruxible inbox list --line LINE
+--status unread` that shows them; the row clears once each item is judged.
+
 ## prediction
 
 ~~~text

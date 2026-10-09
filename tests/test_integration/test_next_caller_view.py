@@ -375,6 +375,7 @@ def test_supporting_evidence_folded_into_a_conflict_is_rendered_for_the_caller(
 _SDK_REPAIRS: tuple[tuple[str, dict[str, object]], ...] = (
     ("cruxible.line.enable", {"line": "hourly"}),
     ("cruxible.line.dispatch", {"line": "hourly", "limit": 3}),
+    ("cruxible.inbox.list", {"line": "hourly", "status": "unread"}),
     (
         "cruxible.line.evaluate",
         {"line": "hourly", "since": "2026-08-24T16:00:00Z", "until": "2026-08-24T17:00:00Z"},
@@ -402,6 +403,21 @@ def test_block_detach_renders_on_every_surface() -> None:
     )
     assert _repair_command("cruxible.block.detach", arguments=arguments, surface="sdk") == (
         'cx.block.detach("docs/page.md")'
+    )
+
+
+def test_the_inbox_repair_renders_on_every_surface() -> None:
+    from cruxible_core.service.discovery.next import _repair_command
+
+    arguments = {"line": "hourly", "status": "unread"}
+    assert _repair_command("cruxible.inbox.list", arguments=arguments) == (
+        "cruxible inbox list --line hourly --status unread"
+    )
+    assert _repair_command("cruxible.inbox.list", arguments=arguments, surface="mcp") == (
+        'cruxible_inbox_list(line="hourly", status="unread")'
+    )
+    assert _repair_command("cruxible.inbox.list", arguments=arguments, surface="sdk") == (
+        'cx.inbox().list(line="hourly", status="unread")'
     )
 
 
