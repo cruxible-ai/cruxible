@@ -1778,10 +1778,13 @@ def _lower_claim(
         and not dependency_paths
     )
     recited = same_statement and citation in predecessor_citations
+    # Another Capture of content already cited. Citing the very same Capture in
+    # a new role is a new citation, never a re-observation.
     reobserved = (
         same_statement
         and not recited
         and predecessor is not None
+        and capture_digest_value not in predecessor.backing.capture_digests
         and observed_content(capture_envelope).digest
         in _cited_contents(instance, predecessor.backing.capture_digests)
     )
