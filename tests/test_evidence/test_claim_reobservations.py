@@ -499,3 +499,94 @@ def test_same_size_crash_tail_recovery_invalidates_a_remembered_verdict(
     assert log.stat().st_size == torn_size  # the recovered log is the same size
     assert _verdict(instance, at).verdict == "supported"
     assert _statuses(instance, claim, at) == "supported"
+
+
+# -- the accepted head held through admission and append (review F-014) ------
+
+
+@pytest.mark.parametrize("change", ["retirement", "citation_replacement"])
+def test_an_acceptance_cannot_land_between_admission_and_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    """An acceptance started mid-admission waits until the record is durable."""
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    from cruxible_client.contracts.claims import claim_path, parse_claim
+    from tests.core_support._published_world import retire_claim
+    from tests.test_integration.test_next_closed_loop import _revise_claim
+
+    instance, owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    digest = _pending_same_content(instance, _START + timedelta(minutes=50))
+    head_before = instance.accepted_coordinate().git_oid
+    admitted = ClaimReobservationStore._admitted
+    seen: dict[str, Any] = {}
+
+    def accept() -> None:
+        if change == "retirement":
+            retire_claim(instance, owner, claim.identity.name)
+        else:
+            _revise_claim(instance, owner, timestamp="2026-08-16T20:55:00.000000Z")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+
+        def interleave(self, **kwargs):  # type: ignore[no-untyped-def]
+            result = admitted(self, **kwargs)
+            seen["future"] = future = pool.submit(accept)
+            # The acceptance cannot finish while the head is held.
+            try:
+                future.result(timeout=1.0)
+            except TimeoutError:
+                seen["blocked"] = True
+            seen["head_at_append"] = instance.accepted_coordinate().git_oid
+            return result
+
+        monkeypatch.setattr(ClaimReobservationStore, "_admitted", interleave)
+        store = ClaimReobservationStore(instance)
+        store.record(
+            claim_id=claim.identity.name,
+            capture_digest=digest,
+            actor_id="owner",
+            now=_START + timedelta(minutes=50),
+        )
+        seen["future"].result(timeout=60)
+    assert seen.get("blocked") is True
+    assert seen["head_at_append"] == head_before
+    # The record was made against the head it was admitted at; the change landed after.
+    assert len(store.history(claim.identity.name)) == 1
+    assert instance.accepted_coordinate().git_oid != head_before
+    path = claim_path(claim.identity.name)
+    after = parse_claim(
+        instance.blob_at(instance.accepted_coordinate().git_oid, path) or b"", path=path
+    )
+    if change == "retirement":
+        assert after.lifecycle.state == "retired"
+    else:
+        assert after.backing.capture_digests != claim.backing.capture_digests
+
+
+def test_a_head_moved_by_another_process_is_judged_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    digest = _pending_same_content(instance, _START + timedelta(minutes=50))
+    real = type(instance).holding_accepted_head
+    from contextlib import contextmanager
+
+    @contextmanager
+    def moved(self):  # type: ignore[no-untyped-def]
+        with real(self):
+            yield "0" * 64  # the ledger's main is not the verified coordinate
+
+    monkeypatch.setattr(type(instance), "holding_accepted_head", moved)
+    store = ClaimReobservationStore(instance)
+    with pytest.raises(ClaimReobservationRefused, match="moved"):
+        store.record(
+            claim_id=claim.identity.name,
+            capture_digest=digest,
+            actor_id="owner",
+            now=_START + timedelta(minutes=50),
+        )
+    assert store.history(claim.identity.name) == ()

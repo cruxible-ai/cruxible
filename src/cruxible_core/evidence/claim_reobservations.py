@@ -9,7 +9,7 @@ to when it was last observed (``claim_verdicts.CaptureReobservationEvidence``).
 Storage follows the Line inbox's pattern: a journal (``claim-reobservation-v1``)
 is the append-only authority, and a SQLite projection keyed by Claim lineage is
 caught up from its last applied sequence on every open. A record is admitted only
-for a Claim live at the current head, read under the append's lock, and a
+for a Claim live at the current head, held still through the append, and a
 daemon-admitted Capture that verifies there and whose observed content equals a
 Capture that Claim cites under the same contract. The
 freshness lookup reads one indexed range per Claim lineage, never a scan.
@@ -302,9 +302,11 @@ class ClaimReobservationStore:
     ) -> ReobservationRecord | None:
         """Record one admissible re-observation at the current head; a repeat is the same record.
 
-        Admission is judged at the accepted head read under the same lock as the
-        append: the Claim must be live there and cite a Capture of the same
-        contract and observed content, and the re-observing Capture must be
+        Admission is judged at the accepted head, held still from the check
+        through the durable append (``holding_accepted_head``), and only when the
+        held ledger head is the verified coordinate: the Claim must be live
+        there and cite a Capture of the same contract and observed content,
+        and the re-observing Capture must be
         daemon-admitted, verify there, and not be observed after ``now``. A
         historical record stays readable whatever later happens to its Claim;
         this decides only whether a new one may be written. Nothing is written
@@ -319,7 +321,10 @@ class ClaimReobservationStore:
                 now=now,
             )
             return None
-        with self._locked(create=True) as conn:
+        # Accepted main is held still from the admission check through the
+        # durable append, under the locks every acceptance takes in the order
+        # it takes them (instance state, ledger activation), then this store's.
+        with self.instance.holding_accepted_head() as main, self._locked(create=True) as conn:
             known = conn.execute(
                 "SELECT contract_digest, observed_content_digest, observed_at, recorded_at "
                 "FROM reobservations WHERE claim_id=? AND capture_digest=?",
@@ -335,6 +340,11 @@ class ClaimReobservationStore:
                     recorded_at=_instant(known[3]),
                 )
             accepted = self.instance.accepted_coordinate()
+            if accepted.git_oid != main:
+                raise ClaimReobservationRefused(
+                    "accepted state moved past this instance's verified head; "
+                    "the re-observation is judged again at the new head"
+                )
             record = self._admitted(
                 claim_id=claim_id, capture_digest=capture_digest, head=accepted, now=now
             )
