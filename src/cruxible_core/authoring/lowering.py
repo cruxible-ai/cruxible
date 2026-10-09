@@ -87,6 +87,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     classify_capture_reuse,
     foreign_source_capture_contract,
+    observed_content,
     parse_capture_contract,
     parse_capture_envelope,
     render_capture_contract,
@@ -663,6 +664,26 @@ def _with_aliases_resolved(
     return payload.model_copy(
         update={"statement": statement.model_copy(update={"subject": subject, "object": value})}
     )
+
+
+def _cited_contents(instance: PlaybillInstance, capture_digests: Iterable[str]) -> set[str]:
+    """What the Captures a Claim cites observed, by content (``observed_content``).
+
+    A Capture whose envelope cannot be read contributes its own digest, which
+    no other Capture's content equals.
+    """
+
+    store = instance.body_store()
+    access = BodyAccessContext(principal_id="playbill-authoring", can_read_body=True)
+    found: set[str] = set()
+    for digest in capture_digests:
+        try:
+            found.add(
+                observed_content(parse_capture_envelope(store.read(digest, access=access))).digest
+            )
+        except (CruxibleError, OSError, ValueError):
+            found.add(digest)
+    return found
 
 
 def _canonical_object(
@@ -1744,14 +1765,29 @@ def _lower_claim(
         )
         if base_tree.get(member_path) != candidate_tree[member_path]
     )
-    idempotent = (
-        isinstance(payload.source, ExistingCaptureCitationSource)
-        and predecessor is not None
+    # Re-observation (identity-design-1009): the same canonical statement on
+    # evidence whose observed content the Claim already cites is a no-op -- no
+    # revision, no citation growth -- whether it is the very Capture again or
+    # another Capture of the same content (a re-run reading the same bytes).
+    # New content under the same statement refreshes the evidence by revising
+    # the Claim, never by writing a second one.
+    same_statement = (
+        predecessor is not None
         and claim.statement == predecessor.statement
-        and citation in predecessor_citations
         and not payload.existing_claim_dispositions
         and not dependency_paths
     )
+    recited = same_statement and citation in predecessor_citations
+    reobserved = (
+        same_statement
+        and not recited
+        and predecessor is not None
+        and observed_content(capture_envelope).digest
+        in _cited_contents(instance, predecessor.backing.capture_digests)
+    )
+    idempotent = (
+        isinstance(payload.source, ExistingCaptureCitationSource) and bool(recited)
+    ) or bool(reobserved)
     if idempotent:
         candidate_tree = fork_tree(candidate_base_tree)
         changed = ()
@@ -1768,7 +1804,11 @@ def _lower_claim(
             "citation_id": citation.citation_id,
             **(
                 {
-                    "outcome": "cruxible.authoring.existing_capture_already_associated",
+                    "outcome": (
+                        "cruxible.authoring.content_already_cited"
+                        if reobserved
+                        else "cruxible.authoring.existing_capture_already_associated"
+                    ),
                 }
                 if idempotent
                 else {}

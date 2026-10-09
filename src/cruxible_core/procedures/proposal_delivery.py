@@ -53,8 +53,16 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.captures import observed_content, parse_capture_envelope
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
-from cruxible_client.contracts.claims import claim_path, parse_claim
+from cruxible_client.contracts.claims import (
+    LiteralClaimObject,
+    SubjectClaimObject,
+    claim_path,
+    parse_claim,
+)
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
     ProcedureMandateAny,
@@ -260,12 +268,15 @@ def _claim_members(
     items: tuple[ProcedureClaimProposalItemV1, ...],
     evidence: Mapping[str, str],
     read: Callable[[str], bytes | None] = lambda _path: None,
+    restated: Callable[[ClaimAuthoringPayload], str | None] = lambda _member: None,
 ) -> tuple[tuple[ClaimAuthoringPayload, ...], dict[str, str], dict[str, str]]:
     """Build one Claim member per item; return members, item->claim id, identity->item.
 
     Each item's literal is put in its ClaimType's canonical form (v8) before its
     identity is taken, so two items that state one canonical statement are the
-    same statement twice, whatever spelling the run produced.
+    same statement twice, whatever spelling the run produced. An item naming no
+    Claim it revises, that restates a live Claim on new content, revises that
+    Claim (``restated``): the evidence is refreshed, never a second Claim written.
     """
 
     members: list[ClaimAuthoringPayload] = []
@@ -298,6 +309,11 @@ def _claim_members(
             dependency_drafts=ClaimDependencyDrafts(),
         )
         member = canonical_authored_claims(member, read)
+        if member.revises is None:
+            refreshed = restated(member)
+            if refreshed is not None:
+                member = member.model_copy(update={"revises": refreshed})
+                claim_id = refreshed
         identity = authoring_member_identity(member)
         if identity in identity_to_item:
             raise ProposalDeliveryRefused(
@@ -312,6 +328,53 @@ def _claim_members(
         claim_ids[egress_item.item_key] = claim_id
         members.append(member)
     return tuple(members), claim_ids, identity_to_item
+
+
+def _restated_on_new_content(
+    instance: PlaybillInstance, tree: SnapshotTree, member: ClaimAuthoringPayload
+) -> str | None:
+    """The live Claim a terminal item restates on new observed content, if exactly one.
+
+    Re-observation (identity-design-1009): the same canonical statement on new
+    content refreshes the live Claim's evidence by revising it. On content that
+    Claim already cites, the item is left as authored (see the report: a no-op
+    terminal item has no receipt child to name).
+    """
+
+    if not isinstance(member.source, ExistingCaptureCitationSource):
+        return None
+    statement = member.statement
+    authored = statement.object
+    if not isinstance(authored, LiteralClaimObject | SubjectClaimObject):
+        return None
+    same = [
+        claim
+        for claim in tree.claims_for(statement)
+        if claim.lifecycle.state == "live"
+        and claim.statement.subject == statement.subject
+        and claim.statement.predicate == statement.predicate
+        and claim.statement.qualifier == statement.qualifier
+        and claim.statement.object == authored
+        and claim.statement.role == statement.role
+        and claim.statement.effective_from == statement.effective_from
+        and claim.statement.effective_until == statement.effective_until
+    ]
+    if len(same) != 1:
+        return None
+    store = instance.body_store()
+    access = BodyAccessContext(principal_id="procedure-proposal", can_read_body=True)
+
+    def content(digest: str) -> str:
+        try:
+            envelope = parse_capture_envelope(store.read(digest, access=access))
+            return observed_content(envelope).digest
+        except (CruxibleError, OSError, ValueError):
+            return digest
+
+    cited = {content(digest) for digest in same[0].backing.capture_digests}
+    if content(member.source.capture_digest) in cited:
+        return None
+    return same[0].identity.name
 
 
 def proposal_rationale(
@@ -691,6 +754,7 @@ class ProposalTerminalEgressSink:
             items=items,
             evidence=evidence,
             read=base_tree.get,
+            restated=lambda member: _restated_on_new_content(self.instance, base_tree, member),
         )
         ordered = _with_many_valued_dispositions(
             tuple(

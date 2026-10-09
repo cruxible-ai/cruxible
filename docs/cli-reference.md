@@ -1302,7 +1302,13 @@ ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
 `revision_evidence` rule (`replace`: a revision that changes its statement keeps
 exactly the evidence it cites; `accumulate`: it keeps everything its
 predecessors cited). A revision that states the same thing again keeps its
-evidence either way, and a carry never loses backing. `propose --input` lowers
+evidence either way, and a carry never loses backing. Restating a live Claim's
+canonical statement on evidence of content it already cites (the same observed
+content: the same file bytes, the same fetched body, the same words) is a
+no-op: no revision, no citation growth, no proposal. On new content the Claim's
+evidence is refreshed by revising it; a Procedure item that names no Claim to
+revise but restates a live one on new content revises that one rather than
+writing a second Claim of the same statement. `propose --input` lowers
 to v7: a new ClaimType takes `self` and `replace`. An edit follows JSON merge-patch
 against its predecessor: a v7 field left out keeps the predecessor's value (over
 a ClaimType before v7: no descriptions, no default role, `self` and
