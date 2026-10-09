@@ -320,17 +320,16 @@ class ClaimReobservationStore:
             "cites under its contract"
         )
 
-    def _admitted(
-        self,
-        *,
-        claim_id: str,
-        capture_digest: str,
-        head: AcceptedProjectionCoordinate,
-        now: datetime,
+    @staticmethod
+    def _at(
+        *, claim_id: str, capture_digest: str, envelope: CaptureEnvelopeAny, now: datetime
     ) -> ReobservationRecord:
-        envelope = self._admissible(
-            claim_id=claim_id, capture_digest=capture_digest, coordinate=head
-        )
+        """The record an admitted Capture makes at the clock's actual ``now``.
+
+        Refuses a Capture observed after ``now``: the same check whether
+        previewing or recording, against the instant the clock actually read.
+        """
+
         observed_at = envelope.observed_at.astimezone(UTC)
         if observed_at > now:
             raise ClaimReobservationRefused(
@@ -373,10 +372,15 @@ class ClaimReobservationStore:
         """
 
         if is_previewing():
-            self._admitted(
+            envelope = self._admissible(
                 claim_id=claim_id,
                 capture_digest=capture_digest,
-                head=self.instance.accepted_coordinate(),
+                coordinate=self.instance.accepted_coordinate(),
+            )
+            self._at(
+                claim_id=claim_id,
+                capture_digest=capture_digest,
+                envelope=envelope,
                 now=self.instance.recording_clock(),
             )
             return None
@@ -404,25 +408,12 @@ class ClaimReobservationStore:
                     "accepted state moved past this instance's verified head; "
                     "the re-observation is judged again at the new head"
                 )
-            # Admission judges the clock's actual instant, as a preview does; only
-            # the durable stamp is raised to the last record's, so the journal is
-            # in recorded order.
-            now = self.instance.recording_clock()
-            record = self._admitted(
-                claim_id=claim_id, capture_digest=capture_digest, head=accepted, now=now
+            # Admission's immutable work first: verify the Capture, the live Claim
+            # and its citations at the held head, then recover any reserved
+            # material and the journal head and activate the writer.
+            envelope = self._admissible(
+                claim_id=claim_id, capture_digest=capture_digest, coordinate=accepted
             )
-            last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
-            if last is not None and _micros(now) < int(last[0]):
-                record = replace(record, recorded_at=_from_micros(last[0]))
-            now = record.recorded_at
-            payload = {
-                "tag": _EVENT_TAG,
-                "claim_id": record.claim_id,
-                "capture_digest": record.capture_digest,
-                "contract_digest": record.contract_digest,
-                "observed_content_digest": record.observed_content_digest,
-                "observed_at": format_datetime(record.observed_at),
-            }
             journal = self._journal(create=True)
             assert journal is not None
             from cruxible_core.storage.material_reservations import (
@@ -443,6 +434,29 @@ class ClaimReobservationStore:
             journal.activate_writer(
                 self.stream, _PARTITION, fencing_token=_FENCE, expected_head=head
             )
+            # Then the clock, at the append boundary: the observation is judged
+            # against the instant it actually reads (as a preview judges it),
+            # and only the durable stamp is raised to the last record's, so the
+            # journal is in recorded order. That one stamp is the journal
+            # record's recorded_at and the projection's.
+            record = self._at(
+                claim_id=claim_id,
+                capture_digest=capture_digest,
+                envelope=envelope,
+                now=self.instance.recording_clock(),
+            )
+            last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
+            if last is not None and _micros(record.recorded_at) < int(last[0]):
+                record = replace(record, recorded_at=_from_micros(last[0]))
+            now = record.recorded_at
+            payload = {
+                "tag": _EVENT_TAG,
+                "claim_id": record.claim_id,
+                "capture_digest": record.capture_digest,
+                "contract_digest": record.contract_digest,
+                "observed_content_digest": record.observed_content_digest,
+                "observed_at": format_datetime(record.observed_at),
+            }
             stored = ProcedureExhaustWriter(
                 journal=journal, bodies=bodies, fencing_token=_FENCE
             ).append(

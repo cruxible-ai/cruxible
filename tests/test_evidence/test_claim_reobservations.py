@@ -589,7 +589,7 @@ def test_an_acceptance_cannot_land_between_admission_and_append(
     claim = _current_claim(instance)
     digest = _pending_same_content(instance, _START + timedelta(minutes=50))
     head_before = instance.accepted_coordinate().git_oid
-    admitted = ClaimReobservationStore._admitted
+    admitted = ClaimReobservationStore._admissible
     seen: dict[str, Any] = {}
 
     def accept() -> None:
@@ -611,7 +611,7 @@ def test_an_acceptance_cannot_land_between_admission_and_append(
             seen["head_at_append"] = instance.accepted_coordinate().git_oid
             return result
 
-        monkeypatch.setattr(ClaimReobservationStore, "_admitted", interleave)
+        monkeypatch.setattr(ClaimReobservationStore, "_admissible", interleave)
         store = ClaimReobservationStore(instance)
         _record(
             store,
@@ -882,3 +882,59 @@ def test_a_reader_outside_the_cache_resets_before_its_inherited_lock(tmp_path: P
         reader._lock.release()
     _, status = os.waitpid(pid, 0)
     assert os.waitstatus_to_exitcode(status) == 0
+
+
+# -- the clock read at the append boundary (review F-020) ---------------------
+
+
+@pytest.mark.parametrize("drift", ["advances", "regresses"])
+def test_the_clock_is_read_after_admission_work_at_the_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drift: str
+) -> None:
+    """Review F-020 probe: the stamp is the clock at the append, not before admission."""
+
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+    from cruxible_core.storage.material_reservations import ProcedureMaterialReservationStore
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    capture = _pending_same_content(instance, _START + timedelta(minutes=50))
+    start, end = (
+        (_START + timedelta(minutes=50), _START + timedelta(minutes=90))
+        if drift == "advances"
+        else (_START + timedelta(minutes=90), _START + timedelta(minutes=55))
+    )
+    actual = {"now": start}
+    instance.recording_clock = lambda: actual["now"]
+    at = _START + timedelta(minutes=70)
+    before = _verdict(instance, at)
+    verify = ClaimReobservationStore._admissible
+    recover = ProcedureMaterialReservationStore.recover_run_material
+
+    def slow_verify(self, **kwargs):  # type: ignore[no-untyped-def]
+        result = verify(self, **kwargs)
+        actual["now"] = start + (end - start) / 2
+        return result
+
+    def slow_recover(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        result = recover(self, *args, **kwargs)
+        actual["now"] = end
+        return result
+
+    monkeypatch.setattr(ClaimReobservationStore, "_admissible", slow_verify)
+    monkeypatch.setattr(ProcedureMaterialReservationStore, "recover_run_material", slow_recover)
+    store = ClaimReobservationStore(instance)
+    made = store.record(claim_id=claim.identity.name, capture_digest=capture, actor_id="owner")
+    assert made is not None and made.recorded_at == end
+    (journaled,) = LocalJournalBackend(store.root).select_records(
+        store.stream, partition_id="reobservations"
+    )
+    assert journaled.record.recorded_at == end
+    (audited,) = store.history(claim.identity.name)
+    assert audited.recorded_at == end
+    after = _verdict(instance, at)
+    if drift == "advances":
+        # Durable only at +90: a verdict at +70 is what it was before.
+        assert after.model_dump(mode="json") == before.model_dump(mode="json")
+    else:
+        assert after.verdict == "supported"
