@@ -172,10 +172,49 @@ def test_a_forged_or_unadmitted_capture_is_refused(tmp_path: Path) -> None:
     assert parse_capture_envelope(instance.body_store().read(cited, access=_ACCESS))
 
 
-def test_the_freshness_lookup_is_bounded_by_cited_contents_not_history(tmp_path: Path) -> None:
-    """One lineage observed thousands of times costs one ordered probe per cited content."""
+def _apply_synthetic(  # type: ignore[no-untyped-def]
+    store, rows: list[tuple[str, str, str, datetime, datetime]], first_sequence: int
+) -> None:
+    """Project synthetic records as catch-up would, in recorded order."""
 
-    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+    with store._locked() as conn:
+        for offset, (claim_id, capture, content, observed, recorded) in enumerate(rows):
+            store._apply(
+                conn,
+                {
+                    "claim_id": claim_id,
+                    "capture_digest": capture,
+                    "contract_digest": store.contract_for_tests,
+                    "observed_content_digest": content,
+                    "observed_at": _stamp(observed),
+                },
+                first_sequence + offset,
+                recorded,
+            )
+
+
+def _vm_steps(reader, read) -> int:  # type: ignore[no-untyped-def]
+    """SQLite virtual-machine instructions one read executes."""
+
+    steps = [0]
+
+    def count() -> int:
+        steps[0] += 1
+        return 0
+
+    conn = reader._connection()
+    conn.set_progress_handler(count, 1)
+    try:
+        read()
+    finally:
+        conn.set_progress_handler(None, 0)
+    return steps[0]
+
+
+def test_the_freshness_lookup_is_bounded_by_cited_contents_not_history(tmp_path: Path) -> None:
+    """One lineage observed thousands of times costs two seeks per cited content."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, ReobservationReader
 
     instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
     current = _current_claim(instance)
@@ -185,65 +224,79 @@ def test_the_freshness_lookup_is_bounded_by_cited_contents_not_history(tmp_path:
     assert "|reobservation:" in str(verdict_input_fingerprint(instance))
     store = ClaimReobservationStore(instance)
     (real,) = store.history(current.identity.name)
-    start_us = (_START - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
-    second = 1_000_000
-
-    def row(index: int, content: str, claim_id: str) -> tuple[object, ...]:
-        observed = start_us + 3 * index * second
-        return (
-            claim_id,
-            "sha256:" + f"{index:060x}" + content[-4:],
-            real.contract_digest,
-            content,
-            "2026-08-16T20:00:00+00:00",
-            "2026-08-16T20:00:30+00:00",
-            observed,
-            observed + 30 * second,
-            100 + index,
-        )
-
+    store.contract_for_tests = real.contract_digest  # type: ignore[attr-defined]
     replaced = "sha256:" + "2" * 64  # content a later revision no longer cites
-    with store._locked() as conn:
-        conn.executemany(
-            "INSERT INTO reobservations VALUES (?,?,?,?,?,?,?,?,?)",
-            [row(i, real.observed_content_digest, current.identity.name) for i in range(3000)]
-            + [row(i, replaced, current.identity.name) for i in range(3000)]
-            + [row(i, real.observed_content_digest, f"CLM-{i:032x}") for i in range(2000)],
+    hourly = [
+        (
+            current.identity.name,
+            "sha256:" + f"{i:060x}" + content[-4:],
+            content,
+            _START + timedelta(minutes=50, seconds=3 * i),
+            _START + timedelta(minutes=50, seconds=3 * i + 30),
         )
-        plans = [
-            " ".join(str(item[-1]) for item in conn.execute("EXPLAIN QUERY PLAN " + sql, args))
-            for sql, args in (
-                (
-                    "SELECT capture_digest FROM reobservations INDEXED BY reobservations_latest "
-                    "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? "
-                    "AND observed_us<=? AND recorded_us<=? "
-                    "ORDER BY observed_us DESC, capture_digest DESC LIMIT 1",
-                    (current.identity.name, "c", "o", 0, 0),
-                ),
-                (
-                    "SELECT MIN(recorded_us) FROM reobservations INDEXED BY reobservations_next "
-                    "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? "
-                    "AND recorded_us>?",
-                    (current.identity.name, "c", "o", 0),
-                ),
-            )
-        ]
-    assert all("SEARCH" in plan and "SCAN" not in plan for plan in plans), plans
+        for i in range(1, 3000)
+        for content in (real.observed_content_digest, replaced)
+    ]
+    _apply_synthetic(store, hourly, first_sequence=100)
     # The full history stays for audit.
-    assert len(store.history(current.identity.name)) == 6001
+    assert len(store.history(current.identity.name)) == 1 + 2 * 2999
 
     reader = ReobservationReader.of(instance)
     reader.probes = reader.rows_read = 0
     at = _START + timedelta(hours=2)
     verdict = _verdict(instance, at)
-    # Recorded by 2:00 means observed by 1:59:30: the latest such is 3 * 2390 s.
+    # Recorded by 2:00 means observed by 1:59:30 (the record at 50 min + 3 * 1390 s).
     (expiration,) = verdict.freshness_expirations
-    assert expiration.reobserved_at == _START + timedelta(seconds=3 * 2390)
+    assert expiration.reobserved_at == _START + timedelta(minutes=50, seconds=3 * 1390)
     assert verdict.verdict == "supported"
-    # Whether the lineage was re-observed, then one ordered probe and one
-    # next-recording probe for the one cited content: never its history.
+    # Whether the lineage was re-observed, then two seeks for the one cited content.
     assert reader.probes == 4
     assert reader.rows_read == 1
+    key = ReobservationKey("sha256:" + "f" * 64, real.contract_digest, real.observed_content_digest)
+    current_read = _vm_steps(reader, lambda: reader.latest(current.identity.name, (key,), at))
+    assert current_read < 400, current_read
+
+
+@pytest.mark.parametrize("backfills", [100, 10_000])
+def test_historical_reads_do_not_walk_late_backfills(tmp_path: Path, backfills: int) -> None:
+    """Review F-016: records observed early but recorded late cost a read nothing."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, ReobservationReader
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim = _current_claim(instance)
+    _reobserve(instance, _START + timedelta(minutes=10))
+    store = ClaimReobservationStore(instance)
+    (real,) = store.history(claim.identity.name)
+    store.contract_for_tests = real.contract_digest  # type: ignore[attr-defined]
+    # Observed at +30 min, recorded at +2 h: valid backfills for a later instant.
+    _apply_synthetic(
+        store,
+        [
+            (
+                claim.identity.name,
+                "sha256:" + f"{i:064x}",
+                real.observed_content_digest,
+                _START + timedelta(minutes=30),
+                _START + timedelta(hours=2),
+            )
+            for i in range(backfills)
+        ],
+        first_sequence=100,
+    )
+    reader = ReobservationReader.of(instance)
+    key = ReobservationKey("sha256:" + "f" * 64, real.contract_digest, real.observed_content_digest)
+    at = _START + timedelta(minutes=40)
+    reading = reader.latest(claim.identity.name, (key,), at)
+    (selected,) = reading.evidence
+    assert selected.observed_at == _START + timedelta(minutes=10)
+    assert _START + timedelta(hours=2) in reading.boundaries
+    later = reader.latest(claim.identity.name, (key,), _START + timedelta(hours=3))
+    assert later.evidence[0].observed_at == _START + timedelta(minutes=30)
+    steps = _vm_steps(reader, lambda: reader.latest(claim.identity.name, (key,), at))
+    # Flat: the same handful of seeks with 100 backfills as with 10,000.
+    print(f"late backfills={backfills} sqlite_vm_steps={steps}")
+    assert steps < 400, (backfills, steps)
 
 
 def test_old_verdict_and_receipt_bytes_are_unchanged(tmp_path: Path) -> None:

@@ -58,28 +58,45 @@ _FENCE = "claim-reobservation-local-v1"
 _PARTITION = "reobservations"
 _EVENT_TAG = "cruxible-claim-reobservation-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
-# The full history is kept (audit, historical verification). Freshness reads
-# never materialize it: ``reobservations_latest`` answers the latest applicable
-# record of one (lineage, contract, content) at an instant with one ordered
-# probe, ``reobservations_next`` the next instant a record starts counting, and
-# ``reobservations_by_sequence`` whether a lineage's records changed at all.
+# ``reobservations`` keeps the full history (audit, historical verification).
+# Freshness never reads it: records append in recorded order, so the latest
+# observation of one (lineage, contract, content) is a step function of the
+# recording instant. ``reobservation_points`` holds one row per step -- written
+# only when a record raises that key's running latest observation (the larger
+# Capture digest breaks a tie) -- keyed by recording instant, and the answer at
+# an instant is the last step recorded by it: one seek, whatever the history.
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS progress (singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS progress (
+ singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS reobservations (
  claim_id TEXT NOT NULL, capture_digest TEXT NOT NULL, contract_digest TEXT NOT NULL,
  observed_content_digest TEXT NOT NULL, observed_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
  observed_us INTEGER NOT NULL, recorded_us INTEGER NOT NULL, sequence INTEGER NOT NULL,
  PRIMARY KEY(claim_id, capture_digest)
 ) STRICT;
-CREATE INDEX IF NOT EXISTS reobservations_latest ON reobservations
- (claim_id, contract_digest, observed_content_digest, observed_us, capture_digest);
-CREATE INDEX IF NOT EXISTS reobservations_next ON reobservations
- (claim_id, contract_digest, observed_content_digest, recorded_us);
 CREATE INDEX IF NOT EXISTS reobservations_by_sequence ON reobservations (claim_id, sequence);
+CREATE TABLE IF NOT EXISTS reobservation_points (
+ claim_id TEXT NOT NULL, contract_digest TEXT NOT NULL, observed_content_digest TEXT NOT NULL,
+ recorded_us INTEGER NOT NULL, observed_us INTEGER NOT NULL, capture_digest TEXT NOT NULL,
+ PRIMARY KEY(claim_id, contract_digest, observed_content_digest, recorded_us, observed_us,
+  capture_digest)
+) STRICT, WITHOUT ROWID;
 """
+_LAST_POINT = (
+    "SELECT capture_digest, observed_us, recorded_us FROM reobservation_points "
+    "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? AND recorded_us<=? "
+    "ORDER BY recorded_us DESC, observed_us DESC, capture_digest DESC LIMIT 1"
+)
+_NEXT_POINT = (
+    "SELECT recorded_us FROM reobservation_points "
+    "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? AND recorded_us>? "
+    "ORDER BY recorded_us LIMIT 1"
+)
+_NEVER = 1 << 62
 
 
 def _micros(value: datetime) -> int:
@@ -154,6 +171,7 @@ class ClaimReobservationStore:
                 if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
                     conn.execute("DROP TABLE IF EXISTS progress")
                     conn.execute("DROP TABLE IF EXISTS reobservations")
+                    conn.execute("DROP TABLE IF EXISTS reobservation_points")
                     conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                 conn.executescript(_SCHEMA)
                 row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
@@ -184,7 +202,13 @@ class ClaimReobservationStore:
         conn: sqlite3.Connection, payload: Mapping[str, Any], sequence: int, recorded_at: datetime
     ) -> None:
         observed_at = _instant(payload["observed_at"])
-        conn.execute(
+        row = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
+        # Journal order is recorded order (``record`` never records before the
+        # last record); a step is never placed before an earlier one.
+        recorded_us = max(_micros(recorded_at), 0 if row is None else int(row[0]))
+        observed_us = _micros(observed_at)
+        key = (payload["claim_id"], payload["contract_digest"], payload["observed_content_digest"])
+        inserted = conn.execute(
             "INSERT OR IGNORE INTO reobservations VALUES (?,?,?,?,?,?,?,?,?)",
             (
                 payload["claim_id"],
@@ -193,12 +217,22 @@ class ClaimReobservationStore:
                 payload["observed_content_digest"],
                 format_datetime(observed_at),
                 format_datetime(recorded_at),
-                _micros(observed_at),
-                _micros(recorded_at),
+                observed_us,
+                recorded_us,
                 sequence,
             ),
-        )
-        conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?)", (sequence,))
+        ).rowcount
+        if inserted:
+            last = conn.execute(_LAST_POINT, (*key, _NEVER)).fetchone()
+            if last is None or (observed_us, payload["capture_digest"]) > (
+                int(last[1]),
+                str(last[0]),
+            ):
+                conn.execute(
+                    "INSERT OR IGNORE INTO reobservation_points VALUES (?,?,?,?,?,?)",
+                    (*key, recorded_us, observed_us, payload["capture_digest"]),
+                )
+        conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
 
     # -- admission ----------------------------------------------------------
 
@@ -345,6 +379,11 @@ class ClaimReobservationStore:
                     "accepted state moved past this instance's verified head; "
                     "the re-observation is judged again at the new head"
                 )
+            # Records append in recorded order: one is never recorded before the
+            # last (its own instant is the later of ``now`` and that record's).
+            last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
+            if last is not None and _micros(now) < int(last[0]):
+                now = _from_micros(last[0])
             record = self._admitted(
                 claim_id=claim_id, capture_digest=capture_digest, head=accepted, now=now
             )
@@ -566,13 +605,15 @@ class ReobservationReader:
     def latest(
         self, claim_id: str, keys: Sequence[ReobservationKey], at: datetime
     ) -> ReobservationReading:
-        """The latest record per key applicable at ``at``: one ordered probe each.
+        """The latest record per key applicable at ``at``: one seek each.
 
         Applicable means recorded by ``at`` (and so observed by it: admission
         refuses a Capture observed after its record). Among those the latest
         observation wins, ties broken by the larger Capture digest, exactly as
-        ``claim_verdicts`` selects. Work is one indexed probe per distinct key,
-        never the lineage's history.
+        ``claim_verdicts`` selects -- which is the last change point of that key
+        recorded by ``at``. Work is two seeks per distinct key (that point, and
+        the next one as a time boundary), however many records the lineage
+        holds or were recorded late.
         """
 
         at_us = _micros(at)
@@ -594,22 +635,10 @@ class ReobservationReader:
                 pair = (key.contract_digest, key.observed_content_digest)
                 if pair not in found:
                     self.probes += 2
-                    hit = conn.execute(
-                        "SELECT capture_digest, observed_us, recorded_us FROM reobservations "
-                        "INDEXED BY reobservations_latest WHERE claim_id=? AND "
-                        "contract_digest=? AND observed_content_digest=? AND observed_us<=? "
-                        "AND recorded_us<=? ORDER BY observed_us DESC, capture_digest DESC "
-                        "LIMIT 1",
-                        (claim_id, *pair, at_us, at_us),
-                    ).fetchone()
-                    upcoming = conn.execute(
-                        "SELECT MIN(recorded_us) FROM reobservations "
-                        "INDEXED BY reobservations_next WHERE claim_id=? AND "
-                        "contract_digest=? AND observed_content_digest=? AND recorded_us>?",
-                        (claim_id, *pair, at_us),
-                    ).fetchone()
+                    hit = conn.execute(_LAST_POINT, (claim_id, *pair, at_us)).fetchone()
+                    upcoming = conn.execute(_NEXT_POINT, (claim_id, *pair, at_us)).fetchone()
                     self.rows_read += int(hit is not None)
-                    if upcoming is not None and upcoming[0] is not None:
+                    if upcoming is not None:
                         boundaries.add(_from_micros(upcoming[0]))
                     found[pair] = None if hit is None else (str(hit[0]), int(hit[1]), int(hit[2]))
                 selected = found[pair]

@@ -1354,9 +1354,12 @@ a cited Capture expires at the latest `observed_at` among it and its recorded
 re-observations of the same contract and content, plus `stale_after`. Only
 re-observations recorded by the evaluation instant count, so a verdict evaluated
 at an earlier instant reproduces byte for byte and its committed expirations
-still verify. The latest applicable record is found by one indexed probe per
-cited contract and content at the evaluation instant, never by reading the
-Claim's whole re-observation history, which is kept for audit. A re-observation
+still verify. Records append in recorded order (a record is never recorded
+before the last one), so the latest applicable record of a cited contract and
+content is a step function of the recording instant: freshness reads it with
+one seek at the evaluation instant, however long the Claim's re-observation
+history (kept in full for audit) or however many observations were recorded
+late. A re-observation
 that set an expiry is named in the verdict's `freshness_expirations` entry
 (`reobserved_by`, `reobserved_at`). Anything else is refused
 (`cruxible.claim.reobservation_refused`) and refreshes nothing; a Procedure's
