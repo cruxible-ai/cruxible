@@ -464,14 +464,14 @@ def test_partition_tip_removes_per_append_full_scan_and_cold_fold_loads_once(
 
     reopened = _store(tmp_path)
     payload_loads = 0
-    original_payload = reopened._payload_for_event
+    original_load = reopened._load_object
 
-    def counted_payload(event):  # type: ignore[no-untyped-def]
+    def counted_payload(kind, digest, model):  # type: ignore[no-untyped-def]
         nonlocal payload_loads
-        payload_loads += 1
-        return original_payload(event)
+        payload_loads += kind == "payload"
+        return original_load(kind, digest, model)
 
-    monkeypatch.setattr(reopened, "_payload_for_event", counted_payload)
+    monkeypatch.setattr(reopened, "_load_object", counted_payload)
     assert len(reopened.fold_events()) == 300
     assert payload_loads == 300
     assert len(reopened.fold_events()) == 300

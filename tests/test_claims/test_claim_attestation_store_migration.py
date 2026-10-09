@@ -171,3 +171,42 @@ def test_warm_reads_refuse_lost_or_rewritten_evidence_as_cold_reads_do(
             reader.events()
         with pytest.raises(ClaimAttestationStoreError, match="store_corrupt"):
             reader.events(partition_digest=first.partition_digest)
+
+
+@pytest.mark.parametrize("damage", ["delete", "rewrite_same_size"])
+def test_an_account_changed_while_it_is_read_refuses_now_and_on_every_later_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    """Damage between the account's authentication and its identity capture is caught."""
+
+    from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
+
+    store = _legacy(tmp_path)
+    store.head()
+    store._event_pair_cache.clear()
+    load = ClaimAttestationEvidenceStore._load_object
+    damaged: list[Path] = []
+
+    def load_then_damage(self, kind, digest, model):  # type: ignore[no-untyped-def]
+        value = load(self, kind, digest, model)
+        if kind == "verification-account" and not damaged:
+            path = self._object_path(kind, digest)
+            damaged.append(path)
+            if damage == "delete":
+                path.unlink()
+            else:
+                raw = path.read_bytes()
+                path.chmod(0o600)
+                path.write_bytes(raw.replace(b'"owner"', b'"ownex"', 1))
+        return value
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ClaimAttestationEvidenceStore, "_load_object", load_then_damage)
+        with pytest.raises(ClaimAttestationStoreError, match="store_corrupt"):
+            store.events()
+    assert damaged
+    for _ in range(2):
+        with pytest.raises(ClaimAttestationStoreError, match="store_corrupt"):
+            store.events()
+    with pytest.raises(ClaimAttestationStoreError, match="store_corrupt"):
+        ClaimAttestationEvidenceStore(tmp_path / "exhaust", instance_id="inst_test").events()

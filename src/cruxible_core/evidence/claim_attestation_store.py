@@ -803,29 +803,39 @@ class ClaimAttestationEvidenceStore:
             pair, identities = cached
             if all(_file_identity(path) == seen for path, seen in identities):
                 return pair
+        # Every object's identity is taken before its read and again after all
+        # reads. Published attestation objects are immutable once written, so an
+        # identity that is missing or moved across its read is corruption: it
+        # refuses now, and nothing is remembered, so every later read refuses too.
         event_path = self._object_path("event", event_digest)
-        event_before = _file_identity(event_path)
+        before = [(event_path, _file_identity(event_path))]
         event = self._load_object("event", event_digest, ClaimAttestationEvent)
         assert isinstance(event, ClaimAttestationEvent)
         marker_path = self._chain_marker_path(event)
         payload_path = self._object_path("payload", event.payload_digest)
-        before = (event_before, _file_identity(marker_path), _file_identity(payload_path))
+        before += [(marker_path, _file_identity(marker_path))]
         marker = self._load_marker(marker_path)
         if marker != event:
             raise _error("store_corrupt", "attestation event object and marker differ")
-        payload = self._payload_for_event(event)
+        before += [(payload_path, _file_identity(payload_path))]
+        payload = self._load_object("payload", event.payload_digest, ClaimAttestationEventPayload)
+        assert isinstance(payload, ClaimAttestationEventPayload)
         account_path = self._object_path(
             "verification-account", payload.verification_account_digest
         )
-        identities = tuple(
-            (path, _file_identity(path))
-            for path in (event_path, marker_path, payload_path, account_path)
+        before += [(account_path, _file_identity(account_path))]
+        account = self._load_object(
+            "verification-account",
+            payload.verification_account_digest,
+            VerifiedClaimAttestation,
         )
+        if account != payload.verification_account:
+            raise _error("store_corrupt", "attestation verification account object differs")
+        identities = tuple((path, _file_identity(path)) for path, _seen in before)
+        if any(seen is None for _path, seen in before) or identities != tuple(before):
+            raise _error("store_corrupt", "attestation evidence object changed while it was read")
         pair = (event, payload)
-        # Remembered only when the identities bracket the read: an object that
-        # moved while it was read is reloaded next time, never served stale.
-        if None not in before and tuple(seen for _path, seen in identities[:3]) == before:
-            self._event_pair_cache[event_digest] = (pair, identities)
+        self._event_pair_cache[event_digest] = (pair, identities)
         return pair
 
     def _frontier_through(self, chain: _Chain, position: int) -> _Frontier:
