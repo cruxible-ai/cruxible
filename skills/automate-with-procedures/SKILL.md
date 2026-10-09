@@ -152,6 +152,11 @@ cruxible next                    # stopped enablements, coverage gaps, stalled w
   `line_coverage_gap` row with the exact `cruxible line evaluate LINE --since S
   --until U`, which records every tick the range skipped as pending work, and
   `line_work_pending` while work waits for `cruxible line dispatch LINE`.
+- A settling Line whose settled items match earlier refusals (a retired Claim,
+  or a rejected proposal, of the same statement on the same evidence) shows as
+  `line_settled_prior_refusals`. Read the runs it names, then fix the
+  Procedure or demote the Line to `max_authority: propose` with a Line
+  successor (`cruxible authoring example line`).
 - `line evaluate LINE --dry-run` shows what a range would make eligible,
   without recording anything.
 - An enablement that stopped by itself (a revoked credential, a changed Line

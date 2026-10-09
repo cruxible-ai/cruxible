@@ -1872,6 +1872,19 @@ index similarly opens a new forward range, while retained pending work
 survives. Pending work bound to an older Line version is closed as superseded
 rather than silently rebound.
 
+Settled items skip review, so a Line whose settle terminal settles items
+matching earlier refusals (see [Earlier refusals of the same
+statement](#earlier-refusals-of-the-same-statement)) shows as one
+`line_settled_prior_refusals` row per live Line: how many settled items matched
+and in how many runs, for the Line's current version, with the latest run as a
+related identity (`get ProcedureRun:<run>` lists each settled item's receipts).
+The count is maintained at each settlement, so the row is one keyed read. Its
+repair is a Line successor, from `cruxible authoring example line`: demote the
+Line to `max_authority: propose` so its results are reviewed again, or point it
+at a fixed Procedure. Either starts a new Line version, and the row closes. A
+damaged refusal index restarts these counts (logged); run results keep their
+receipts.
+
 `evaluate` checks a historical `[since, until)` range against every live
 Trigger aimed at the Line and records its matches as pending; it never runs
 anything. A cadence or cron Trigger matches every instant of its schedule in

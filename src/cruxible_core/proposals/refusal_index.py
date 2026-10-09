@@ -24,6 +24,13 @@ keep a rejection row only while its record exists and says ``rejected``. Once
 the close resolves -- written, lost to a competing close, or failed -- the
 proposal's rows are rewritten from the record that actually won.
 
+Settlements are counted per Line version: when a Line's settle terminal settles
+items that carry earlier refusals, the Line's row for its exact spec digest
+gains the items and the run (once per settled proposal), so a `next` row per
+Line reads one maintained row instead of its runs. These counts come from the
+deliveries themselves; a key-domain rebuild keeps them, and a discarded damaged
+file restarts them (logged) while each run result still lists its receipts.
+
 Lookups are keyed: one probe per proposed Claim, never a scan of history.
 Cruxible resurfaces what was recorded and nothing else: it does not interpret a
 reason, refuse, or change settlement.
@@ -37,6 +44,7 @@ import threading
 import weakref
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
@@ -97,6 +105,13 @@ CREATE TABLE IF NOT EXISTS proposal_claim_keys (
  PRIMARY KEY(proposal_id,path)
 ) STRICT;
 CREATE TABLE IF NOT EXISTS proposals_keyed (proposal_id TEXT PRIMARY KEY) STRICT;
+CREATE TABLE IF NOT EXISTS line_settled_refusals (
+ line_identity TEXT NOT NULL, line_spec_digest TEXT NOT NULL,
+ items INTEGER NOT NULL CHECK(items>0), runs INTEGER NOT NULL CHECK(runs>0),
+ latest_run_id TEXT NOT NULL, latest_settled_at TEXT NOT NULL,
+ PRIMARY KEY(line_identity,line_spec_digest)
+) STRICT;
+CREATE TABLE IF NOT EXISTS settled_counted (proposal_id TEXT PRIMARY KEY) STRICT;
 """
 _ACCESS = BodyAccessContext(principal_id="cruxible-refusal-index", can_read_body=True)
 _log = structlog.get_logger("cruxible.refusal_index")
@@ -314,6 +329,18 @@ def _rejection_keys(
     return tuple(keyed)
 
 
+@dataclass(frozen=True)
+class LineSettledRefusals:
+    """Settled items of one Line version that matched earlier refusals."""
+
+    line_identity: str
+    line_spec_digest: str
+    items: int
+    runs: int
+    latest_run_id: str
+    latest_settled_at: str
+
+
 class RefusalIndex:
     """The refusal rows of one instance, in one rebuildable SQLite file."""
 
@@ -330,6 +357,7 @@ class RefusalIndex:
         self.key_probes = 0
         self.rows_read = 0
         self.proposals_keyed = 0
+        self.line_probes = 0
 
     # -- connections ------------------------------------------------------
 
@@ -490,6 +518,10 @@ class RefusalIndex:
                 and progress[3] == CLAIM_REFUSAL_MATCH_KEY_DOMAIN
             ):
                 return
+            if progress is not None and progress[0] != instance_id:
+                # Another instance's settlement counts are not this one's.
+                connection.execute("DELETE FROM line_settled_refusals")
+                connection.execute("DELETE FROM settled_counted")
             if (
                 progress is None
                 or progress[0] != instance_id
@@ -706,6 +738,76 @@ class RefusalIndex:
 
         self._recovering("settle_close", lambda: self._write(instance, change), None)
 
+    # -- settled items per Line ----------------------------------------------
+
+    def record_settled(
+        self,
+        instance: PlaybillInstance,
+        *,
+        line_identity: str,
+        line_spec_digest: str,
+        run_id: str,
+        proposal_id: str,
+        settled_at: str,
+    ) -> int:
+        """Count one settlement's items that match earlier refusals for its Line version.
+
+        Called once a settle terminal's change is accepted (and again, harmlessly,
+        on a recovered delivery: each settled proposal counts once). Returns how
+        many settled items carry receipts. Never fails the settlement: a cache
+        failure is logged and counts nothing.
+        """
+
+        matched = len(self.prior_refusals(instance, proposal_id))
+        if not matched:
+            return 0
+
+        def change(connection: sqlite3.Connection) -> None:
+            if connection.execute(
+                "SELECT 1 FROM settled_counted WHERE proposal_id=?", (proposal_id,)
+            ).fetchone():
+                return
+            connection.execute("INSERT INTO settled_counted VALUES (?)", (proposal_id,))
+            connection.execute(
+                "INSERT INTO line_settled_refusals VALUES (?,?,?,1,?,?) "
+                "ON CONFLICT(line_identity,line_spec_digest) DO UPDATE SET "
+                "items=items+excluded.items, runs=runs+1, "
+                "latest_run_id=excluded.latest_run_id, "
+                "latest_settled_at=excluded.latest_settled_at",
+                (line_identity, line_spec_digest, matched, run_id, settled_at),
+            )
+
+        self._recovering("record_settled", lambda: self._write(instance, change), None)
+        return matched
+
+    def settled_refusals(
+        self, instance: PlaybillInstance, lines: tuple[tuple[str, str], ...]
+    ) -> dict[tuple[str, str], LineSettledRefusals]:
+        """The maintained count of each (Line, spec digest) given: one keyed probe each."""
+
+        def run() -> dict[tuple[str, str], LineSettledRefusals]:
+            found: dict[tuple[str, str], LineSettledRefusals] = {}
+            with self.current(instance) as connection:
+                for line_identity, spec_digest in lines:
+                    self.line_probes += 1
+                    row = connection.execute(
+                        "SELECT items,runs,latest_run_id,latest_settled_at "
+                        "FROM line_settled_refusals WHERE line_identity=? AND line_spec_digest=?",
+                        (line_identity, spec_digest),
+                    ).fetchone()
+                    if row is not None:
+                        found[(line_identity, spec_digest)] = LineSettledRefusals(
+                            line_identity=line_identity,
+                            line_spec_digest=spec_digest,
+                            items=int(row[0]),
+                            runs=int(row[1]),
+                            latest_run_id=str(row[2]),
+                            latest_settled_at=str(row[3]),
+                        )
+            return found
+
+        return self._recovering("settled_refusals", run, {})
+
     # -- lookups ------------------------------------------------------------
 
     def _proposal_keys(
@@ -878,6 +980,7 @@ def _receipt(
 
 
 __all__ = [
+    "LineSettledRefusals",
     "RefusalIndex",
     "candidate_refused_claims",
     "capture_evidence_content",

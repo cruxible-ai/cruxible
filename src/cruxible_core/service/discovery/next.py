@@ -3835,6 +3835,74 @@ def _consumer_stalled_items(healths: tuple[ConsumerHealth, ...]) -> tuple[Playbi
     )
 
 
+def _line_settled_refusal_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    access_profile: CoverageAccessProfile,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Live Lines whose current version settled items matching earlier refusals.
+
+    Settled items skip review, so a receipt on one is easy to miss. One row per
+    live Line, read from the count maintained at each settlement for the Line's
+    exact spec digest -- one keyed probe per live Line, never a walk of its runs.
+
+    The repair is the Line successor, because that is what closes the row and
+    what the evidence asks for: demote the Line to `max_authority: propose` so
+    its results are reviewed again, or point it at a fixed Procedure. Either is a
+    new Line version, whose count starts empty. The runs that settled the items
+    are named for `get` (the latest in related identities, which `run get` reads
+    with each item's receipts) before deciding which.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        lines = tuple(
+            (str(identity), str(digest))
+            for identity, digest in projection.typed.connection.execute(
+                "SELECT identity,artifact_digest FROM lines WHERE lifecycle='live' "
+                "ORDER BY identity"
+            )
+        )
+    if not lines:
+        return ()
+    counts = instance.refusal_index().settled_refusals(instance, lines)
+    items: list[PlaybillNextItemV1] = []
+    for key in lines:
+        found = counts.get(key)
+        if found is None:
+            continue
+        items.append(
+            _item(
+                severity="warning",
+                reason="line_settled_prior_refusals",
+                subject_identity=found.line_identity,
+                related_identities=(f"ProcedureRun:{found.latest_run_id}",),
+                detail={
+                    "line_spec_digest": found.line_spec_digest,
+                    "settled_items_matching_refusals": found.items,
+                    "settled_runs": found.runs,
+                    "latest_run_id": found.latest_run_id,
+                    "latest_settled_at": found.latest_settled_at,
+                    "detail": (
+                        f"{found.line_identity} settled {found.items} item"
+                        f"{'s' if found.items != 1 else ''} that match earlier refusals "
+                        "of the same statement on the same evidence; settled items skip "
+                        "review. Read the runs, then fix the Procedure or demote the Line."
+                    ),
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="cruxible.authoring.example",
+                    target=found.line_identity,
+                    required_change="read_the_runs_then_demote_the_line_or_fix_its_procedure",
+                    arguments={"example": "line"},
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _line_attention_items(
     instance: PlaybillInstance,
     *,
@@ -5451,6 +5519,9 @@ def _next_queue(
         *_consumer_stalled_items(consumer_healths),
         *_line_attention_items(
             instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
+        ),
+        *_line_settled_refusal_items(
+            instance, coordinate=coordinate, access_profile=request.access_profile
         ),
     )
     caller = _CallerView(

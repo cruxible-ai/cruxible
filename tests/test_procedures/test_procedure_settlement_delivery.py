@@ -61,6 +61,7 @@ from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.procedures.egress import TerminalEgressReceiptV4
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
+    service_get_playbill_procedure_run,
     service_run_playbill_line,
 )
 from tests.core_support._pc_c_support import capture_contract
@@ -1252,3 +1253,176 @@ def test_a_change_with_no_claim_type_in_scope_still_proposes_naming_it(tmp_path:
     egress = _egress(state)
     assert egress.fallback_reason == "cruxible.settle.outside_mandate_scope"
     assert egress.outside_scope_claim_types == (f"ClaimType:{UNSCOPED_C}",)
+
+
+# --- settled items that match earlier refusals surface per Line in `next` -----
+
+RETIRED_AT = "2026-09-12T12:05:00.000000Z"
+
+
+def _retire_claim(instance: Any, claim_id: str, *, at: str) -> None:
+    from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayload
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.core_support._retirement_support import activate_submitted, retirement_member
+
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    created = coordinator.create(
+        actor=actor,
+        payload=ChangeSetAuthoringPayload(
+            members=(retirement_member(instance, claim_id, reason="was-wrong"),),
+            rationale="The advisory feed misreported this severity.",
+        ),
+        canonical_timestamp=at,
+    )
+    activate_submitted(
+        instance, OWNERS[instance.root], coordinator.submit(created.intent.intent_id, actor=actor)
+    )
+
+
+def _settled_claim_id(state: Any) -> str:
+    (child,) = _egress(state).children
+    assert child.path is not None
+    return str(child.path.rsplit("/", 1)[1].removesuffix(".json"))
+
+
+def settled_refusal_world(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """A Line that settled, had that Claim retired, then settled it again on the same bytes."""
+
+    instance, root, line = settle_world(tmp_path)
+    first = run_settle(instance, root, line)
+    assert _egress(first).settle_outcome == "settled", first.terminal
+    _retire_claim(instance, _settled_claim_id(first), at=RETIRED_AT)
+    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+    assert _egress(second).settle_outcome == "settled", second.terminal
+    return instance, root, line, second
+
+
+def _next_rows(instance: Any, reason: str) -> list[Any]:
+    from cruxible_core.coverage.contracts import CoverageAccessProfile
+    from cruxible_core.indexes.projection import AcceptedCoordinate
+    from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
+
+    request = NextRequestV1(
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=fixtures.NOW + timedelta(hours=1),
+        access_profile=CoverageAccessProfile(
+            profile_id="settled-refusals", permitted_access_classes=("instance", "public")
+        ),
+    )
+    return [
+        item
+        for item in service_playbill_next(instance, request=request).items
+        if item.reason == reason
+    ]
+
+
+def test_a_settled_item_lists_its_earlier_refusals_on_the_run_result(tmp_path: Path) -> None:
+    """The settle terminal's run result names each settled item's receipts, as recorded."""
+
+    instance, _root, _line, second = settled_refusal_world(tmp_path)
+    (child,) = _egress(second).children
+    (receipt,) = child.prior_refusals
+    assert (receipt.kind, receipt.reason_code, receipt.decided_at) == (
+        "claim_retired",
+        "was-wrong",
+        RETIRED_AT,
+    )
+    assert second.run_id is not None
+    again = service_get_playbill_procedure_run(instance, run_id=second.run_id)
+    assert again.terminal_egress[0].children[0].prior_refusals == (receipt,)
+
+
+def test_next_names_a_line_that_settles_what_was_refused_before(tmp_path: Path) -> None:
+    instance, _root, line, second = settled_refusal_world(tmp_path)
+
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+
+    assert row.subject_identity == line.identity.qualified
+    assert row.related_identities == (f"ProcedureRun:{second.run_id}",)
+    assert row.detail["settled_items_matching_refusals"] == 1
+    assert row.detail["settled_runs"] == 1
+    assert row.repair.operation == "cruxible.authoring.example"
+    assert row.repair.command == "cruxible authoring example line"
+
+
+def test_the_line_row_reads_a_maintained_count_not_the_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One keyed probe per live Line, no blob or CAS reads, whatever the settled runs."""
+
+    from cruxible_core.coverage.contracts import CoverageAccessProfile
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from cruxible_core.service.discovery.next import _line_settled_refusal_items
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    instance, root, line, second = settled_refusal_world(tmp_path)
+    profile = CoverageAccessProfile(
+        profile_id="settled-refusals", permitted_access_classes=("instance", "public")
+    )
+
+    def counted() -> tuple[Any, ...]:
+        index = instance.refusal_index()
+        _line_settled_refusal_items(
+            instance, coordinate=instance.accepted_coordinate(), access_profile=profile
+        )  # warm: catch the index up to the head
+        reads = {"blobs": 0, "cas": 0}
+        blobs, read = PlaybillInstance.blobs_at, ContentAddressedBodyStore.read
+
+        def counted_blobs(self: Any, oid: str, paths: Any) -> Any:
+            reads["blobs"] += len(tuple(paths))
+            return blobs(self, oid, paths)
+
+        def counted_read(self: Any, digest: str, **kwargs: Any) -> bytes:
+            reads["cas"] += 1
+            return read(self, digest, **kwargs)
+
+        before = index.line_probes
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(PlaybillInstance, "blobs_at", counted_blobs)
+            patch.setattr(ContentAddressedBodyStore, "read", counted_read)
+            (row,) = _line_settled_refusal_items(
+                instance, coordinate=instance.accepted_coordinate(), access_profile=profile
+            )
+        return (index.line_probes - before, reads["blobs"], reads["cas"]), row
+
+    small, row = counted()
+    assert row.detail["settled_items_matching_refusals"] == 1
+    # A third run settles the same statement again after its second retirement.
+    _retire_claim(instance, _settled_claim_id(second), at="2026-09-12T12:15:00.000000Z")
+    third = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=20))
+    assert _egress(third).settle_outcome == "settled", third.terminal
+    large, row = counted()
+    assert row.detail["settled_items_matching_refusals"] == 2
+    assert row.detail["settled_runs"] == 2
+    assert small == large == (1, 0, 0)
+
+
+def test_demoting_the_line_closes_its_row(tmp_path: Path) -> None:
+    """The repair: a Line successor (here capped at propose) starts a new, empty count."""
+
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest
+    from tests.core_support._candidate_support import submit_member_candidate
+    from tests.core_support._knowledge_loop_support import accept_proposal
+
+    instance, _root, line, _second = settled_refusal_world(tmp_path)
+    assert _next_rows(instance, "line_settled_prior_refusals")
+    demoted = line.model_copy(
+        update={
+            "max_authority": "propose",
+            "lifecycle": line.lifecycle.model_copy(
+                update={"predecessor_digest": line_spec_digest(line).tagged}
+            ),
+        }
+    )
+    inspection = submit_member_candidate(
+        instance,
+        members={line_spec_path(demoted.identity.name): render_line_spec(demoted)},
+        actor_id="owner",
+        proposal_name="demote-line",
+        proposal_family="procedure",
+        timestamp="2026-09-12T12:30:00.000000Z",
+    )
+    accept_proposal(instance, OWNERS[instance.root], inspection)
+    assert _next_rows(instance, "line_settled_prior_refusals") == []
