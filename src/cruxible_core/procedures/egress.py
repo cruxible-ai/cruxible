@@ -11,7 +11,7 @@ is a minimum, the refusal it produces names the exact limiting term; honest
 scarcity is a property of the refusal, not a later reconstruction.
 
 Egress above the cap does not exist, and egress below it is typed by kind:
-``emit_capture`` emits inert evidence, ``post_inbox`` posts human attention,
+``emit_capture`` emits inert evidence, ``post_inbox`` posts items to the inbox for intelligence,
 ``propose_change_set`` reaches proposal *receive* only under a rung-2 grant, and
 ``settle_change_set`` settles under one exact rung-3 Procedure mandate or falls
 back to an ordinary proposal.  A receipt cannot relabel one as another: its
@@ -150,10 +150,10 @@ def served_capped_by(request: TerminalEgressRequestV1) -> ServedAuthorityTerm | 
 NO_TERMINAL_EGRESS = -1
 
 #: The highest rung reachable without an exact live Procedure mandate. Capture
-#: and human attention remain free; proposals and settlement consume authority.
+#: and inbox posting remain free; proposals and settlement consume authority.
 MANDATE_FREE_RUNG_CEILING = 1
 
-#: The mandate operation each rung consumes.  Rung 1 posts human attention and
+#: The mandate operation each rung consumes.  Rung 1 posts to the Line inbox and
 #: consumes none, which is why a cap is folded as a monotone prefix.
 RUNG_REQUIRED_OPERATIONS: dict[int, MandateOperationV1 | None] = {
     0: "compile_capture",
@@ -1192,6 +1192,23 @@ def producer_receipt_for_request(
 
 
 @runtime_checkable
+class InboxEgressSinkProtocol(Protocol):
+    """A sink that posts ``post_inbox`` items, attaching each one's own evidence.
+
+    It receives each item's dependency manifest so it can attach exactly the
+    Captures the item's closure reached: an item cannot cite evidence the run
+    did not see.
+    """
+
+    def deliver_inbox_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+    ) -> TerminalEgressReceiptV1: ...
+
+
+@runtime_checkable
 class TerminalEgressSinkProtocol(Protocol):
     def deliver_terminal_egress(
         self,
@@ -1441,6 +1458,7 @@ __all__ = [
     "EffectiveRungTermReadingV1",
     "EffectiveRungTermV1",
     "EffectiveRungV1",
+    "InboxEgressSinkProtocol",
     "MandateOperationV1",
     "TerminalEgressChildReceiptV1",
     "TerminalEgressDispositionV1",

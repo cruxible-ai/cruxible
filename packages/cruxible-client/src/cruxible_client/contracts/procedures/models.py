@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
+from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
 from cruxible_client.contracts.procedures.measurements import (
     ProcedureMeasurementDeclaration,
 )
@@ -581,9 +582,23 @@ class CaptureEgressNode(_StrictProcedureModel):
 
 
 class InboxEgressNode(_StrictProcedureModel):
+    """Terminal output into the Line inbox: items sent, as they are, to intelligence.
+
+    ``input`` is one item, or ``{"items": ...}`` to fan out over a list the run
+    produced. Posting is inert: it never touches accepted state. ``max_items``
+    caps what one run posts (``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items
+    past it are not posted and the run reports the truncation.
+    """
+
     kind: Literal["post_inbox"] = "post_inbox"
     node_id: str
     input: object
+    max_items: int | None = Field(
+        default=None,
+        ge=1,
+        le=INBOX_RUN_ITEM_CAP_MAX,
+        exclude_if=lambda value: value is None,
+    )
 
     @field_validator("input", mode="before")
     @classmethod

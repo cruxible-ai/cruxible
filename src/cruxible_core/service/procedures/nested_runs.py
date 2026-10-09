@@ -17,6 +17,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
+from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import CaptureTerminalEgressSink
 from cruxible_core.procedures.execution import (
@@ -26,6 +27,7 @@ from cruxible_core.procedures.execution import (
     ProcedureRunAdmissionV8,
     ProcedureRunResultV1,
 )
+from cruxible_core.procedures.inbox_delivery import InboxTerminalEgressSink
 from cruxible_core.procedures.nested import (
     ParentInvocationContext,
     ProcedureDelegation,
@@ -298,6 +300,10 @@ class ServedNestedProcedureRunner:
                     accepted_mandates=self.mandates,
                     delegation=ProcedureDelegation(context, accepted),
                 ),
+                # A child posts under the Line its root run ran as.
+                inbox=None
+                if (line := getattr(parent, "line_identity", None)) is None
+                else InboxTerminalEgressSink(store=LineInboxStore(self.instance), line=line),
             )
         journal, root = _journal_for_write(self.instance)
         _activate_writer(

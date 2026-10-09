@@ -1062,6 +1062,22 @@ class ProcedureTerminalEgressChild(_StrictResultModel):
         return None if value is None else _digest(value)
 
 
+class InboxPostTruncation(_StrictResultModel):
+    """A ``post_inbox`` terminal selected more items than its run may post.
+
+    ``cap`` is the terminal's declared ``max_items`` (``cap_source="declared"``)
+    or the core default; a run posting from more than one terminal counts them
+    together. The first ``posted`` of the ``selected`` items were posted; the
+    rest were not posted anywhere.
+    """
+
+    tag: Literal["cruxible-inbox-post-truncation-v1"] = "cruxible-inbox-post-truncation-v1"
+    cap: int = Field(ge=1)
+    cap_source: Literal["declared", "default"]
+    selected: int = Field(ge=0)
+    posted: int = Field(ge=0)
+
+
 class ProcedureTerminalEgress(_StrictResultModel):
     """What one terminal node of a run did, reconstructed from its journal.
 
@@ -1101,6 +1117,10 @@ class ProcedureTerminalEgress(_StrictResultModel):
     # A settle terminal the run's authority capped at propose: the term that
     # capped it. Its request asked for propose authority only.
     capped_by: ServedAuthorityTerm | None = None
+    # A post_inbox terminal that selected more items than its run may post.
+    inbox_truncation: InboxPostTruncation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("operation_key", "procedure_mandate_digest", "candidate_digest")
     @classmethod
@@ -1141,6 +1161,8 @@ class ProcedureTerminalEgress(_StrictResultModel):
             self.kind != "settle_change_set" or self.settle_outcome == "settled"
         ):
             raise ValueError("only a settle terminal that did not settle is capped")
+        if self.inbox_truncation is not None and self.kind != "post_inbox":
+            raise ValueError("only a post_inbox terminal reports an inbox truncation")
         return self
 
 
@@ -1382,6 +1404,7 @@ __all__ = [
     "ProcedureSelectionDecision",
     "ProcedureTerminalEgressChild",
     "ProcedureTerminalEgress",
+    "InboxPostTruncation",
     "ProcedureTerminal",
     "ServedAuthorityTerm",
     "TerminalEgressVerdict",

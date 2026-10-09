@@ -48,6 +48,7 @@ from cruxible_client.contracts.errors import (
     JournalError,
     JournalIntegrityError,
 )
+from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_DEFAULT
 from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicy,
 )
@@ -96,6 +97,7 @@ from cruxible_client.contracts.procedures.models import (
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import (
+    InboxPostTruncation,
     ProcedureAcquisitionPlan,
     ProcedureAdmissionMaterialManifest,
     ProcedureAdmissionMaterialMember,
@@ -170,6 +172,7 @@ from cruxible_core.procedures.egress import (
     SERVED_AUTHORITY_TERMS,
     EffectiveRungTermV1,
     EffectiveRungV1,
+    InboxEgressSinkProtocol,
     PreparedTerminalEgressV1,
     SettleGrantHolderProtocol,
     TerminalAuthorityRefusal,
@@ -2401,6 +2404,8 @@ class _RunState:
     provider_invocations_started: int = 0
     provider_invocations_completed: int = 0
     run_started_monotonic_ns: int = 0
+    #: Items this run's post_inbox terminals posted, against the run's inbox cap.
+    inbox_items: int = 0
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -4333,13 +4338,25 @@ class ProcedureExecutor:
         operation instead of re-run as a second one.
         """
 
-        children, values, manifests = self._record_terminal_items(
+        inbox_cap = _inbox_cap(node) if isinstance(node, InboxEgressNode) else None
+        children, values, manifests, selected = self._record_terminal_items(
             node,
             admission=admission,
             state=state,
             records=records,
+            limit=None if inbox_cap is None else max(inbox_cap[0] - state.inbox_items, 0),
         )
-        if not values:
+        truncation = (
+            None
+            if inbox_cap is None or selected <= len(values)
+            else InboxPostTruncation(
+                cap=inbox_cap[0],
+                cap_source=inbox_cap[1],
+                selected=selected,
+                posted=len(values),
+            ).model_dump(mode="json")
+        )
+        if not values and truncation is None:
             # A fan-out over an empty list has nothing to emit: no egress is
             # prepared or delivered (a proposal with no member is no proposal),
             # and the run ends at this terminal with its typed result.
@@ -4351,6 +4368,9 @@ class ProcedureExecutor:
             "required_rung": required,
             "children": [item.model_dump(mode="json") for item in children],
         }
+        if truncation is not None:
+            # Every record of this terminal carries what its cap left unposted.
+            payload["inbox_truncation"] = truncation
         rung = self.effective_rung
         if rung is None or self.egress_sink is None:
             self._append_event(
@@ -4401,6 +4421,13 @@ class ProcedureExecutor:
             # A caller's tier lifted the mandate term to settle, but no live
             # mandate grants settling: the grant caps it at propose.
             capped_by = "mandate_grant"
+        if not values:
+            # The run's inbox cap was spent by an earlier post_inbox terminal:
+            # nothing is posted, and the record says what the cap left out.
+            self._append_event(
+                admission, records, "terminal_egress", {**payload, "verdict": "delivered"}
+            )
+            return
         try:
             request, prepared = self._terminal_egress_request(
                 node,
@@ -4477,7 +4504,9 @@ class ProcedureExecutor:
                 )
             state.capture_bytes += emitted_bytes
         try:
-            receipt = self._deliver_terminal_egress(request, admission=admission)
+            receipt = self._deliver_terminal_egress(
+                request, admission=admission, manifests=manifests
+            )
         except TerminalEgressError as exc:
             refusal = self._terminal_refusal(exc, node_id=node.node_id)
             if effectful:
@@ -4523,6 +4552,8 @@ class ProcedureExecutor:
                 "receipt": receipt.model_dump(mode="json"),
             },
         )
+        if request.kind == "post_inbox":
+            state.inbox_items += len(request.items)
         if isinstance(request, TerminalEgressRequestV2) and request.kind == "emit_capture":
             assert isinstance(receipt, TerminalEgressReceiptV2)  # verified above
             for child in receipt.children:
@@ -4560,10 +4591,19 @@ class ProcedureExecutor:
         request: TerminalEgressRequestV1,
         *,
         admission: ProcedureRunAdmissionV1,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1],
     ) -> TerminalEgressReceiptV1:
-        """Hand the request to the sink; a preparer sink also receives the admission."""
+        """Hand the request to the sink; a preparer sink also receives the admission.
+
+        An inbox post goes to the sink's inbox door with each item's manifest,
+        from which it attaches exactly the Captures that item's closure reached.
+        """
 
         assert self.egress_sink is not None
+        if request.kind == "post_inbox":
+            if not isinstance(self.egress_sink, InboxEgressSinkProtocol):
+                raise TerminalEgressError("this run's egress sink does not deliver post_inbox")
+            return self.egress_sink.deliver_inbox_egress(request=request, manifests=manifests)
         if isinstance(self.egress_sink, TerminalEgressPreparerProtocol):
             return self.egress_sink.deliver_terminal_egress(  # type: ignore[call-arg]
                 request=request,
@@ -4695,12 +4735,18 @@ class ProcedureExecutor:
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
+        limit: int | None = None,
     ) -> tuple[
         tuple[TerminalChildReceiptV1, ...],
         tuple[CanonicalValue, ...],
         dict[str, TerminalItemDependencyManifestV1],
+        int,
     ]:
-        """Derive one manifest per terminal item from the exact closure it consumed."""
+        """Derive one manifest per terminal item from the exact closure it consumed.
+
+        ``limit`` keeps the first items only (an inbox cap); the last element is
+        how many items the terminal selected before it.
+        """
 
         declared = _terminal_item_templates(node)
         base = _node_policy_tokens(node) | state.control
@@ -4729,6 +4775,9 @@ class ProcedureExecutor:
                 ]
             except (ValueError, KeyError) as exc:
                 raise _RunRefusal("proposal_item_invalid", str(exc), node_id=node.node_id) from exc
+        selected = len(values)
+        if limit is not None:
+            values, item_tokens = list(values[:limit]), tuple(item_tokens[:limit])
         outcomes = tuple(
             sorted(state.outcomes.values(), key=lambda item: item.input_name.encode("utf-8"))
         )
@@ -4778,7 +4827,7 @@ class ProcedureExecutor:
                 )
             )
             manifests[item_key] = manifest
-        return tuple(receipts), tuple(values), manifests
+        return tuple(receipts), tuple(values), manifests, selected
 
     @staticmethod
     def _bucket_is_accepted(bucket: str, selectors: tuple[str, ...]) -> bool:
@@ -5786,6 +5835,14 @@ def _projected_provenance(
         whole=base,
         items=tuple(_item_closure(state, template, index) for index in range(len(projected))),
     )
+
+
+def _inbox_cap(node: InboxEgressNode) -> tuple[int, Literal["declared", "default"]]:
+    """The most items a run posts to the inbox, and whether the terminal declared it."""
+
+    if node.max_items is not None:
+        return node.max_items, "declared"
+    return INBOX_RUN_ITEM_CAP_DEFAULT, "default"
 
 
 def _terminal_item_templates(
