@@ -8,7 +8,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol, runtime_checkable
 
@@ -1108,8 +1108,37 @@ class CaptureProductionRecord:
     receipt_digest: str | None
 
 
+@dataclass(frozen=True)
+class VerifiedCaptureMemo:
+    """One Capture verification a request context already did, and what it relied on.
+
+    Everything it records is bound to the Capture digest -- the envelope, its
+    material and its journal records are immutable -- except what the caller
+    supplies: the contract version and producer artifact it was verified
+    against, and whether it was held to production proof. A later verification
+    reuses it only when those agree, and a lenient verification never answers a
+    strict one.
+    """
+
+    capture_digest: str
+    envelope: CaptureEnvelopeV1 | CaptureEnvelope
+    contract_digest: str
+    #: The accepted producer artifact digest consulted; None when the
+    #: executable is the contract itself.
+    executable_digest: str | None
+    production_proven: bool
+    #: Facts derived from the Capture's own immutable bytes (the cited source
+    #: window), kept beside the verification so one request derives them once.
+    derived: dict[str, object] = field(default_factory=dict, compare=False, repr=False)
+
+
 class ProducerReceiptResolverProtocol(Protocol):
-    """Resolve only receipts and production records the daemon journal holds."""
+    """Resolve only receipts and production records the daemon journal holds.
+
+    One resolver is one request's verification context: it also keeps each
+    Capture verification it finished, so N citations of one Capture verify it
+    once.
+    """
 
     def producer_receipt(
         self,
@@ -1127,6 +1156,14 @@ class ProducerReceiptResolverProtocol(Protocol):
         run_id: str,
     ) -> tuple[CaptureProductionRecord, ...]:
         """Every daemon record naming this exact Capture digest as produced."""
+        ...
+
+    def recall_verified(self, capture_digest: str) -> VerifiedCaptureMemo | None:
+        """The verification this context already finished for the Capture, if any."""
+        ...
+
+    def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
+        """Keep one finished verification; a strict one is never replaced by a lenient one."""
         ...
 
 
@@ -2610,9 +2647,101 @@ def verify_capture(
     under a self-asserted contract, since it carries no producer receipt. Only
     a citation the accepted state already carries (an inherited citation, or a
     replay of an accepted acceptance) is verified without it.
+
+    The resolver is the request's verification context: a verification it
+    already finished for this digest answers again when the contract version,
+    the producer artifact and the strictness agree. Ledger-sourced Captures are
+    always verified afresh, against the caller's own ledger resolver.
     """
 
     CasDigest.from_tagged(digest)
+    expected_contract = capture_contract_digest(contract).tagged
+    if producer_receipt_resolver is not None:
+        memo = producer_receipt_resolver.recall_verified(digest)
+        if memo is not None and _memo_answers(
+            memo,
+            store=store,
+            contract=contract,
+            contract_digest=expected_contract,
+            producer_artifact_digests=producer_artifact_digests,
+            require_production_proof=require_production_proof,
+        ):
+            return memo.envelope
+    envelope = _verify_capture_once(
+        digest,
+        store=store,
+        contract=contract,
+        ledger_resolver=ledger_resolver,
+        producer_artifact_digests=producer_artifact_digests,
+        producer_receipt_resolver=producer_receipt_resolver,
+        require_production_proof=require_production_proof,
+    )
+    if producer_receipt_resolver is not None and not isinstance(
+        envelope.source, LedgerSourceReference
+    ):
+        executable = envelope.run_coordinate.executable_identity
+        producer_receipt_resolver.remember_verified(
+            VerifiedCaptureMemo(
+                capture_digest=digest,
+                envelope=envelope,
+                contract_digest=expected_contract,
+                executable_digest=(
+                    None
+                    if executable == contract.identity
+                    else (producer_artifact_digests or {}).get(executable.qualified)
+                ),
+                production_proven=require_production_proof,
+            )
+        )
+    return envelope
+
+
+def _memo_answers(
+    memo: VerifiedCaptureMemo,
+    *,
+    store: CaptureObjectStoreProtocol,
+    contract: CaptureContract,
+    contract_digest: str,
+    producer_artifact_digests: Mapping[str, str] | None,
+    require_production_proof: bool,
+) -> bool:
+    """Whether a finished verification holds for this caller's contract, producers and store.
+
+    The bytes behind a digest never change, but they can go missing: the
+    caller's store must still hold the envelope and its retained material.
+    """
+
+    if memo.contract_digest != contract_digest:
+        return False
+    envelope = memo.envelope
+    held = {memo.capture_digest}
+    if envelope.commitment.materialization == "cas":
+        held.add(envelope.commitment.digest)
+    if isinstance(envelope.source, CasSourceReference):
+        held.add(envelope.source.content_digest)
+    if not all(store.verify(item) for item in sorted(held)):
+        return False
+    if require_production_proof and not memo.production_proven:
+        return False
+    executable = memo.envelope.run_coordinate.executable_identity
+    if memo.executable_digest is None:
+        return executable == contract.identity
+    return (
+        producer_artifact_digests is not None
+        and producer_artifact_digests.get(executable.qualified) == memo.executable_digest
+    )
+
+
+def _verify_capture_once(
+    digest: str,
+    *,
+    store: CaptureObjectStoreProtocol,
+    contract: CaptureContract,
+    ledger_resolver: LedgerMaterialResolverProtocol | None,
+    producer_artifact_digests: Mapping[str, str] | None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
+    require_production_proof: bool,
+) -> CaptureEnvelopeV1 | CaptureEnvelope:
     content = store.read(
         digest,
         access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True),
@@ -2940,6 +3069,7 @@ __all__ = [
     "CaptureProductionGap",
     "CaptureProductionRecord",
     "CaptureProductionUnproven",
+    "VerifiedCaptureMemo",
     "DirectCaptureBuildResult",
     "DirectByteSpanSelection",
     "DirectClaimSelection",

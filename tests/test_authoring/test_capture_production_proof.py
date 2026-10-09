@@ -241,6 +241,12 @@ class _AnyRunProduced:
     def producer_receipt(self, digest: str, *, run_id: str):  # type: ignore[no-untyped-def]
         return self.inner.producer_receipt(digest, run_id=run_id)
 
+    def recall_verified(self, capture_digest: str) -> None:
+        return None
+
+    def remember_verified(self, memo: object) -> None:
+        return None
+
     def produced_capture(
         self, capture_digest: str, *, run_id: str
     ) -> tuple[CaptureProductionRecord, ...]:
@@ -336,8 +342,7 @@ def _count_run_lookups(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     original_parse = producer_receipts.parse_journal_payload
 
     def run(self, run_id):  # type: ignore[no-untyped-def]
-        if not self._full and run_id not in self._runs:
-            calls["runs"] += 1
+        calls["runs"] += 1
         return original_run(self, run_id)
 
     def full(self):  # type: ignore[no-untyped-def]
@@ -628,3 +633,69 @@ def test_a_pending_forged_citation_admitted_before_the_fix_is_refused_at_settlem
             sequence=len(instance.accepted_history()),
         )
     assert instance.accepted_coordinate() == base  # nothing was accepted
+
+
+def test_one_submit_verifies_a_shared_capture_once(
+    world: ProducedCaptures, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts import captures as capture_contracts
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    _source, terminal_capture = _genuine(world)
+    material = _envelope(world.instance, terminal_capture).commitment.digest
+    members = [_citing(terminal_capture, qualifier=f"one-submit-{index}") for index in range(6)]
+    payload = ChangeSetAuthoringPayload(
+        members=tuple(
+            sorted(members, key=lambda member: authoring_member_identity(member).encode("utf-8"))
+        ),
+        rationale="Six statements backed by one Capture, in one submit.",
+    )
+    coordinator = _coordinator(world.instance)
+    intent = coordinator.create(
+        actor=_ACTOR, payload=payload, canonical_timestamp="2026-09-02T15:00:00.000000Z"
+    ).intent
+
+    counts = {"contexts": 0, "runs": 0, "verifications": 0, "envelope": 0, "material": 0}
+    opened = producer_receipts.LocalProducerReceiptResolver.__init__
+    indexed = producer_receipts.JournalProducerReceiptResolver._index_run
+    verify_once = capture_contracts._verify_capture_once
+    read = ContentAddressedBodyStore.read
+
+    def count_context(self, **kwargs):  # type: ignore[no-untyped-def]
+        counts["contexts"] += 1
+        opened(self, **kwargs)
+
+    def count_run(self, run_id):  # type: ignore[no-untyped-def]
+        counts["runs"] += 1
+        return indexed(self, run_id)
+
+    def count_verification(*args, **kwargs):  # type: ignore[no-untyped-def]
+        counts["verifications"] += 1
+        return verify_once(*args, **kwargs)
+
+    def count_read(self, digest, *, access):  # type: ignore[no-untyped-def]
+        if digest == terminal_capture:
+            counts["envelope"] += 1
+        elif digest == material:
+            counts["material"] += 1
+        return read(self, digest, access=access)
+
+    monkeypatch.setattr(producer_receipts.LocalProducerReceiptResolver, "__init__", count_context)
+    monkeypatch.setattr(producer_receipts.JournalProducerReceiptResolver, "_index_run", count_run)
+    monkeypatch.setattr(capture_contracts, "_verify_capture_once", count_verification)
+    monkeypatch.setattr(ContentAddressedBodyStore, "read", count_read)
+
+    submitted = coordinator.submit(intent.intent_id, actor=_ACTOR)
+
+    assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
+    # Lowering, the preflight laws and admission share the submit's one context:
+    # one run lookup and one verification for six Claims. The Capture is read
+    # once to lower its first citation and once to verify it; its material once
+    # to verify it and once to derive its cited source window.
+    assert counts == {
+        "contexts": 1,
+        "runs": 1,
+        "verifications": 1,
+        "envelope": 2,
+        "material": 2,
+    }

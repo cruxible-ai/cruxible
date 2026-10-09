@@ -22,6 +22,7 @@ from cruxible_client.contracts.captures import (
     ProcedureProducerReceiptProtocol,
     ProducerReceiptResolverProtocol,
     ProviderProducerReceiptResolution,
+    VerifiedCaptureMemo,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.documents import BodyVerifierProtocol
@@ -113,6 +114,8 @@ class _OperationalVerifier:
 class _ObservedReceipts:
     def __init__(self, source: ProducerReceiptResolverProtocol, scope: PreparedEvaluationScope):
         self.source, self.scope = source, scope
+        # Verifications this evaluation finished itself, through its observed bodies.
+        self._own: set[str] = set()
 
     def producer_receipt(
         self, digest: str, *, run_id: str
@@ -125,6 +128,17 @@ class _ObservedReceipts:
     ) -> tuple[CaptureProductionRecord, ...]:
         self.scope.ineligible = True
         return self.source.produced_capture(capture_digest, run_id=run_id)
+
+    def recall_verified(self, capture_digest: str) -> VerifiedCaptureMemo | None:
+        memo = self.source.recall_verified(capture_digest)
+        if memo is not None and capture_digest not in self._own:
+            # An answer this evaluation did not observe in the bodies it reads.
+            self.scope.ineligible = True
+        return memo
+
+    def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
+        self._own.add(memo.capture_digest)
+        self.source.remember_verified(memo)
 
 
 class PreparedEvaluationScope:

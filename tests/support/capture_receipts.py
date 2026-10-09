@@ -13,6 +13,7 @@ from cruxible_client.contracts.captures import (
     CaptureProductionRecord,
     ProcedureProducerReceiptProtocol,
     ProviderProducerReceiptResolution,
+    VerifiedCaptureMemo,
 )
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.exhaust import LocalJournalBackend
@@ -31,6 +32,7 @@ class StaticReceipts:
 
     receipts: Mapping[str, Resolution] = field(default_factory=dict)
     produced: tuple[CaptureProductionRecord, ...] = ()
+    verified: dict[str, VerifiedCaptureMemo] = field(default_factory=dict)
 
     def producer_receipt(self, digest: str, *, run_id: str) -> Resolution | None:
         return self.receipts.get(digest)
@@ -39,6 +41,12 @@ class StaticReceipts:
         self, capture_digest: str, *, run_id: str
     ) -> tuple[CaptureProductionRecord, ...]:
         return tuple(record for record in self.produced if record.capture_digest == capture_digest)
+
+    def recall_verified(self, capture_digest: str) -> VerifiedCaptureMemo | None:
+        return self.verified.get(capture_digest)
+
+    def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
+        self.verified[memo.capture_digest] = memo
 
 
 def produced_by_run(built: CaptureBuildResult) -> CaptureProductionRecord:

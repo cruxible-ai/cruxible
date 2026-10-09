@@ -2198,7 +2198,9 @@ def service_playbill_write(
     # shared preview guards (R12), so every history read it makes, from planning
     # to the verdicts, is served without touching the index, and no write door
     # opens.
-    with preview_guards(request.dry_run):
+    # One Capture verification context for the whole write: planning, lowering,
+    # preflight, admission and an activation in the same call.
+    with preview_guards(request.dry_run), instance.capture_verification_request():
         outcome = _service_write(instance, request=request, caller=caller)
         if request.full_coordinate and outcome.accepted_coordinate is None:
             pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)

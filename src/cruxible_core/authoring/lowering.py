@@ -72,9 +72,11 @@ from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     CaptureBuildResult,
     CaptureEnvelopeAny,
+    CaptureObjectStoreProtocol,
     CaptureProductionUnproven,
     DirectCaptureBuildResult,
     ProducerReceiptResolverProtocol,
+    VerifiedCaptureMemo,
     build_coordinator_self_source_capture,
     build_working_selection_capture,
     capture_contract_digest,
@@ -456,6 +458,34 @@ def _refuse(
     )
 
 
+def _read_existing_capture(store: CaptureObjectStoreProtocol, digest: str) -> CaptureEnvelopeAny:
+    """The cited Capture envelope, or the typed refusal for a missing or foreign body."""
+
+    try:
+        raw_envelope = store.read(
+            digest,
+            access=BodyAccessContext(principal_id="playbill-authoring", can_read_body=True),
+        )
+    except CruxibleError:
+        _refuse(
+            "cruxible.authoring.existing_capture_not_found",
+            "source.capture_digest",
+            "The existing Capture digest is not present in the daemon CAS.",
+            repair_kind="replace_capture",
+            repair_description="Use a Capture digest returned by a typed Claim/evidence read.",
+        )
+    try:
+        return parse_capture_envelope(raw_envelope)
+    except (CruxibleError, ValueError):
+        _refuse(
+            "cruxible.authoring.existing_capture_invalid",
+            "source.capture_digest",
+            "The referenced bytes are not a canonical Capture envelope.",
+            repair_kind="replace_capture",
+            repair_description="Use a Capture digest returned by a typed Claim/evidence read.",
+        )
+
+
 def _refuse_unproduced_capture(gap: CaptureProductionUnproven) -> NoReturn:
     """Refuse a cited Capture no daemon run is recorded as producing."""
 
@@ -808,6 +838,7 @@ def _refuse_citation_into_projection_window(
     *,
     payload: ClaimAuthoringPayloadV1,
     envelope: CaptureEnvelopeAny,
+    memo: VerifiedCaptureMemo | None = None,
 ) -> None:
     """Refuse a citation whose span lies inside a stamped projection block.
 
@@ -851,7 +882,7 @@ def _refuse_citation_into_projection_window(
                     end_byte=payload.source.selector.end_byte,
                 )
     if page is None:
-        cited = projection_window_cited(envelope, store=store)
+        cited = projection_window_cited(envelope, store=store, memo=memo)
         if cited is not None:
             resolved, window = cited
             _refuse_evidence_from_projection(
@@ -860,7 +891,7 @@ def _refuse_citation_into_projection_window(
                 start_byte=resolved.start_byte,
                 end_byte=resolved.end_byte,
             )
-        resolved_source = resolve_cited_source_window(envelope, store=store)
+        resolved_source = resolve_cited_source_window(envelope, store=store, memo=memo)
         if resolved_source is not None and resolved_source.whole_source:
             page = resolved_source.content
     cited_source = (
@@ -1164,32 +1195,13 @@ def _lower_claim(
     elif isinstance(payload.source, ExistingCaptureCitationSource):
         install_contract = False
         store = instance.body_store()
-        try:
-            raw_envelope = store.read(
-                payload.source.capture_digest,
-                access=BodyAccessContext(
-                    principal_id="playbill-authoring",
-                    can_read_body=True,
-                ),
-            )
-        except CruxibleError:
-            _refuse(
-                "cruxible.authoring.existing_capture_not_found",
-                "source.capture_digest",
-                "The existing Capture digest is not present in the daemon CAS.",
-                repair_kind="replace_capture",
-                repair_description="Use a Capture digest returned by a typed Claim/evidence read.",
-            )
-        try:
-            envelope = parse_capture_envelope(raw_envelope)
-        except (CruxibleError, ValueError):
-            _refuse(
-                "cruxible.authoring.existing_capture_invalid",
-                "source.capture_digest",
-                "The referenced bytes are not a canonical Capture envelope.",
-                repair_kind="replace_capture",
-                repair_description="Use a Capture digest returned by a typed Claim/evidence read.",
-            )
+        # The request may already have verified this Capture for a sibling Claim.
+        verified = captures.recall_verified(payload.source.capture_digest)
+        envelope = (
+            verified.envelope
+            if verified is not None
+            else _read_existing_capture(store, payload.source.capture_digest)
+        )
         accepted_contract = _capture_contract_at_base(
             instance,
             base=base,
@@ -1331,6 +1343,11 @@ def _lower_claim(
         instance,
         payload=payload,
         envelope=capture_envelope,
+        memo=(
+            captures.recall_verified(payload.source.capture_digest)
+            if isinstance(payload.source, ExistingCaptureCitationSource)
+            else None
+        ),
     )
 
     identity = ArtifactIdentity(kind="Claim", name=claim_id)

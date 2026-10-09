@@ -97,6 +97,8 @@ from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.exhaust.producer_receipts import (
     LocalProducerReceiptResolver,
     local_producer_receipt_resolver,
+    requested_verification_context,
+    verification_request,
 )
 from cruxible_core.governance.keys import (
     ALLOWED_SIGNERS_FILE,
@@ -1382,13 +1384,30 @@ class PlaybillInstance:
         )
 
     def capture_verification_context(self) -> LocalProducerReceiptResolver:
-        """One request's Capture verification context over this daemon's journal.
+        """The Capture verification context of the current request.
 
-        Pass the same context to every verification one request makes: it reads
-        each cited run's journal records once and keeps every answer, so N Claims
-        citing one Capture verify it with one journal lookup.
+        Inside ``capture_verification_request`` every stage of the request --
+        lowering, preflight, admission, settlement, capture reads -- gets the
+        one context the request owns: it reads each cited run's journal records
+        once and verifies each Capture once. Outside one, a fresh context.
         """
 
+        active = requested_verification_context(self._verification_key())
+        return active if active is not None else self._open_verification_context()
+
+    @contextmanager
+    def capture_verification_request(self) -> Iterator[LocalProducerReceiptResolver]:
+        """Own one Capture verification context for a whole request."""
+
+        with verification_request(
+            self._verification_key(), self._open_verification_context
+        ) as context:
+            yield context
+
+    def _verification_key(self) -> tuple[str, str]:
+        return (str(self.root), self.descriptor.instance_id)
+
+    def _open_verification_context(self) -> LocalProducerReceiptResolver:
         return local_producer_receipt_resolver(
             exhaust_root=self._validated_paths(self.root, self.descriptor.storage)["exhaust"],
             instance_id=self.descriptor.instance_id,

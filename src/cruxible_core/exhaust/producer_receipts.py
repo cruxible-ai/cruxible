@@ -10,7 +10,9 @@ another process -- which is also what recovery uses (``full_journal``).
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeAlias
@@ -22,6 +24,7 @@ from cruxible_client.contracts.captures import (
     CaptureProductionRecord,
     ProcedureProducerReceiptProtocol,
     ProviderProducerReceiptResolution,
+    VerifiedCaptureMemo,
     provider_capture_receipt_matches_occurrence,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
@@ -63,6 +66,22 @@ _PROOF_EVENT_KINDS = frozenset(
 )
 
 
+class _VerifiedCaptures:
+    """The Capture verifications one context finished, keyed by Capture digest."""
+
+    def __init__(self) -> None:
+        self._memos: dict[str, VerifiedCaptureMemo] = {}
+
+    def recall(self, capture_digest: str) -> VerifiedCaptureMemo | None:
+        return self._memos.get(capture_digest)
+
+    def remember(self, memo: VerifiedCaptureMemo) -> None:
+        held = self._memos.get(memo.capture_digest)
+        # A strict verification is the stronger fact: a lenient one never replaces it.
+        if held is None or memo.production_proven or not held.production_proven:
+            self._memos[memo.capture_digest] = memo
+
+
 class LocalProducerReceiptResolver:
     """One verification context over the daemon's own journal, opened on first use."""
 
@@ -79,6 +98,7 @@ class LocalProducerReceiptResolver:
         self._bodies = bodies
         self._full_journal = full_journal
         self._resolver: JournalProducerReceiptResolver | None = None
+        self._verified = _VerifiedCaptures()
 
     def _opened(self) -> JournalProducerReceiptResolver | None:
         if self._resolver is None:
@@ -103,6 +123,46 @@ class LocalProducerReceiptResolver:
     ) -> tuple[CaptureProductionRecord, ...]:
         resolver = self._opened()
         return () if resolver is None else resolver.produced_capture(capture_digest, run_id=run_id)
+
+    def recall_verified(self, capture_digest: str) -> VerifiedCaptureMemo | None:
+        return self._verified.recall(capture_digest)
+
+    def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
+        self._verified.remember(memo)
+
+
+#: The verification context the current request owns, with the instance it serves.
+_REQUEST_CONTEXT: ContextVar[tuple[tuple[str, str], LocalProducerReceiptResolver] | None] = (
+    ContextVar("cruxible_capture_verification_request", default=None)
+)
+
+
+def requested_verification_context(
+    instance_key: tuple[str, str],
+) -> LocalProducerReceiptResolver | None:
+    """The context a request already owns for this instance, if one is open."""
+
+    active = _REQUEST_CONTEXT.get()
+    return active[1] if active is not None and active[0] == instance_key else None
+
+
+@contextmanager
+def verification_request(
+    instance_key: tuple[str, str],
+    open_context: Callable[[], LocalProducerReceiptResolver],
+) -> Iterator[LocalProducerReceiptResolver]:
+    """Own one verification context for a whole request; a nested request shares it."""
+
+    active = requested_verification_context(instance_key)
+    if active is not None:
+        yield active
+        return
+    context = open_context()
+    token = _REQUEST_CONTEXT.set((instance_key, context))
+    try:
+        yield context
+    finally:
+        _REQUEST_CONTEXT.reset(token)
 
 
 def local_producer_receipt_resolver(
@@ -171,12 +231,12 @@ class JournalProducerReceiptResolver:
         self._note_sink = note_sink
         self._full_journal = full_journal
         self._full = False
-        self._runs: set[str] = set()
         #: How many runs this context located through the journal index.
         self.lookups = 0
         self._resolutions: dict[str, ProducerReceiptResolution] = {}
         self._errors: dict[str, CaptureFormatError] = {}
         self._productions: dict[str, set[CaptureProductionRecord]] = {}
+        self._verified = _VerifiedCaptures()
         self._notes: list[ProducerReceiptJournalNote] = []
         self._access = BodyAccessContext(
             principal_id="capture-verifier",
@@ -320,8 +380,7 @@ class JournalProducerReceiptResolver:
     def _index_run(self, run_id: str) -> None:
         """Index only one run's records, located through the journal index."""
 
-        if self._full or run_id in self._runs:
-            return
+        self.lookups += 1
         try:
             records = self._journal.select_records(self._stream, run_id=run_id)
         except (OSError, CruxibleError, ValueError) as exc:
@@ -331,7 +390,6 @@ class JournalProducerReceiptResolver:
             partitions.setdefault(stored.record.partition_id, []).append(stored)
         for partition in partitions.values():
             self._index_records(partition)
-        self._runs.add(run_id)
 
     def _index_records(self, records: Iterable[StoredProcedureJournalRecordV1]) -> None:
         """Re-check the receipt links within one partition's records, in order."""
@@ -590,11 +648,16 @@ class JournalProducerReceiptResolver:
         *,
         run_id: str,
     ) -> None:
-        """Index the cited run, then the whole journal, until ``found`` answers."""
+        """Index the cited run, then the whole journal, until ``found`` answers.
 
-        if found() is None and not self._full and run_id not in self._runs:
-            self.lookups += 1
-            self._index_run(run_id)
+        Only answers are kept. A miss reads the run again, since a context may
+        outlive an append to a run it already read; the whole journal is read at
+        most once per context.
+        """
+
+        if found() is not None:
+            return
+        self._index_run(run_id)
         if found() is None and not self._full:
             self.index_all()
 
@@ -626,6 +689,12 @@ class JournalProducerReceiptResolver:
         self._lookup(lambda: self._productions.get(capture_digest), run_id=run_id)
         return tuple(self._productions.get(capture_digest, ()))
 
+    def recall_verified(self, capture_digest: str) -> VerifiedCaptureMemo | None:
+        return self._verified.recall(capture_digest)
+
+    def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
+        self._verified.remember(memo)
+
 
 def journal_producer_receipt_resolver(
     *,
@@ -647,6 +716,8 @@ def journal_producer_receipt_resolver(
 
 __all__ = [
     "JournalProducerReceiptResolver",
+    "requested_verification_context",
+    "verification_request",
     "LocalProducerReceiptResolver",
     "ProducerReceiptJournalNote",
     "journal_producer_receipt_resolver",

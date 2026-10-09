@@ -296,7 +296,11 @@ class AuthoringIntentCoordinator:
         self.instance.require_writable()
         # A preview refuses exactly the actor a create would.
         require_authoring_principal(self.instance, actor.actor_id)
-        with dry_run_bodies(), detached_history_reads():
+        with (
+            dry_run_bodies(),
+            detached_history_reads(),
+            self.instance.capture_verification_request(),
+        ):
             intent = self._draft_intent(
                 actor=actor,
                 payload=payload,
@@ -456,7 +460,8 @@ class AuthoringIntentCoordinator:
         actor: AuthenticatedActor,
     ) -> PreflightResult:
         self.instance.require_writable()
-        _computed, updated = self._compute_and_bind_preflight(intent_id, actor=actor)
+        with self.instance.capture_verification_request():
+            _computed, updated = self._compute_and_bind_preflight(intent_id, actor=actor)
         if updated.last_preflight is None:  # pragma: no cover - transition invariant
             raise RuntimeError("preflight transition omitted its result")
         return updated.last_preflight
@@ -804,7 +809,12 @@ class AuthoringIntentCoordinator:
         actor: AuthenticatedActor,
     ) -> AuthoringSubmitResult:
         self.instance.require_writable()
-        with self.instance.prepared_evaluations.scope() as prepared:
+        # One Capture verification context for the whole submit: lowering, the
+        # preflight laws, admission and any settlement it reaches.
+        with (
+            self.instance.capture_verification_request(),
+            self.instance.prepared_evaluations.scope() as prepared,
+        ):
             current = self._refreshed(self.store.get(intent_id, actor_id=actor.actor_id))
             reduced = current.candidate_status
             if reduced.state == "accepted":

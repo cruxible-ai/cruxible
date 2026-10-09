@@ -8,7 +8,7 @@ import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -44,6 +44,7 @@ from cruxible_client.contracts.captures import (
     CaptureProductionUnproven,
     LedgerMaterialResolverProtocol,
     ProducerReceiptResolverProtocol,
+    VerifiedCaptureMemo,
     capture_contract_digest,
     capture_contract_is_self_asserted,
     capture_is_coordinator_self_source,
@@ -1187,6 +1188,7 @@ def resolve_cited_source_window(
     envelope: CaptureEnvelopeAny,
     *,
     store: CaptureObjectStoreProtocol,
+    memo: VerifiedCaptureMemo | None = None,
 ) -> CitedSourceWindow | None:
     """Resolve the bytes a citation's span is measured against, when they resolve.
 
@@ -1197,8 +1199,27 @@ def resolve_cited_source_window(
     A coordinator body is its own source. Anything else materialized in the
     store is measured against its own commitment. ``None`` means nothing
     resolves, and the caller decides whether that is allowed to pass.
+
+    ``memo`` is the request's verification of this Capture: the window is
+    derived from its immutable bytes once per request and kept there.
     """
 
+    if memo is not None and _CITED_WINDOW in memo.derived:
+        return cast(CitedSourceWindow | None, memo.derived[_CITED_WINDOW])
+    window = _resolve_cited_source_window(envelope, store=store)
+    if memo is not None:
+        memo.derived[_CITED_WINDOW] = window
+    return window
+
+
+_CITED_WINDOW = "cited_source_window"
+
+
+def _resolve_cited_source_window(
+    envelope: CaptureEnvelopeAny,
+    *,
+    store: CaptureObjectStoreProtocol,
+) -> CitedSourceWindow | None:
     source = envelope.source
     commitment = envelope.commitment
     if isinstance(source, ExternalSourceReference) and (
@@ -1297,10 +1318,11 @@ def projection_window_cited(
     envelope: CaptureEnvelopeAny,
     *,
     store: CaptureObjectStoreProtocol,
+    memo: VerifiedCaptureMemo | None = None,
 ) -> tuple[CitedSourceWindow, ProjectionWindow] | None:
     """The stamped block window a capture's span touches, if its source resolves and it does."""
 
-    resolved = resolve_cited_source_window(envelope, store=store)
+    resolved = resolve_cited_source_window(envelope, store=store, memo=memo)
     if resolved is None:
         return None
     window = projection_window_intersecting(
@@ -2301,7 +2323,16 @@ def evaluate_claim_law(
                 ).append(candidate)
         # The envelope names its exact contract digest, which verification
         # requires to match; only contracts with that digest can verify it.
-        named = _named_capture_contract(capture_store, capture_digest_value)
+        verified = (
+            None
+            if producer_receipt_resolver is None
+            else producer_receipt_resolver.recall_verified(capture_digest_value)
+        )
+        named = (
+            verified.envelope.capture_contract_digest
+            if verified is not None
+            else _named_capture_contract(capture_store, capture_digest_value)
+        )
         require_proof = (
             require_new_citation_proof and capture_digest_value not in inherited_captures
         )
@@ -2374,7 +2405,15 @@ def evaluate_claim_law(
         cited = (
             None
             if capture_digest_value in inherited_captures
-            else projection_window_cited(envelope, store=capture_store)
+            else projection_window_cited(
+                envelope,
+                store=capture_store,
+                memo=(
+                    None
+                    if producer_receipt_resolver is None
+                    else producer_receipt_resolver.recall_verified(capture_digest_value)
+                ),
+            )
         )
         if cited is not None:
             resolved, window = cited
