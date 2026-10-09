@@ -1,16 +1,18 @@
 """Neutral receipts of earlier refusals of the same statement on the same evidence.
 
 When a Claim is proposed whose statement (subject, predicate, qualifier, object)
-and cited evidence (its backing Capture digests) match a Claim previously
-retired, for any reason, or a Claim in a proposal a reviewer rejected,
-Cruxible resurfaces what was recorded then: which Claim or proposal, who
-decided, when, the reason code and rationale exactly as recorded, and the
-producing Procedure when the Claim names one. It never interprets the reason,
-never refuses, and never changes settlement because of it; an authored policy
-may.
+and cited evidence match a Claim previously retired, for any reason, or a Claim
+in a proposal a reviewer rejected, Cruxible resurfaces what was recorded then:
+which Claim or proposal, who decided, when, the reason code and rationale
+exactly as recorded, and the producing Procedure when the Claim names one. It
+never interprets the reason, never refuses, and never changes settlement
+because of it; an authored policy may.
 
-New evidence is a new question: a Claim citing any other set of Captures does
-not match.
+Evidence is compared by content: the evidence commitment digest of each Capture
+the Claim cites (the digest of the observed bytes or value), never the Capture
+envelope's own digest, which also binds the run, the observation time and the
+contract. A re-run that re-fetches identical bytes cites the same evidence;
+different bytes are a new question and match nothing.
 """
 
 from __future__ import annotations
@@ -24,14 +26,17 @@ from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import ProposalDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.claims import ClaimArtifactAny, ClaimStatement, claim_path
 
-CLAIM_REFUSAL_MATCH_KEY_DOMAIN = "cruxible-claim-refusal-match-v1"
+CLAIM_REFUSAL_MATCH_KEY_DOMAIN = "cruxible-claim-refusal-match-v2"
 
 
-def claim_refusal_match_key(statement: ClaimStatement, evidence_digests: Iterable[str]) -> str:
-    """The key a refusal is indexed and found under: the statement and its exact evidence.
+def claim_refusal_match_key(statement: ClaimStatement, evidence_commitments: Iterable[str]) -> str:
+    """The key a refusal is indexed and found under: the statement and its evidence content.
 
-    Role, effective times and the ClaimType version are not part of it: the same
-    belief about the same thing on the same evidence matches across them.
+    ``evidence_commitments`` are the evidence commitment digests of the Captures
+    the Claim cites (``CaptureEnvelope.commitment.digest``), deduplicated and
+    sorted here. Role, effective times and the ClaimType version are not part of
+    the key: the same belief about the same thing on the same evidence matches
+    across them.
     """
 
     return typed_digest(
@@ -42,15 +47,9 @@ def claim_refusal_match_key(statement: ClaimStatement, evidence_digests: Iterabl
             "predicate": statement.predicate,
             "qualifier": statement.qualifier,
             "object": statement.object.model_dump(mode="json"),
-            "evidence": sorted(set(evidence_digests), key=lambda item: item.encode("ascii")),
+            "evidence": sorted(set(evidence_commitments), key=lambda item: item.encode("ascii")),
         },
     ).tagged
-
-
-def claim_refusal_key(claim: ClaimArtifactAny) -> str:
-    """The match key of one Claim artifact, over the Captures its backing cites."""
-
-    return claim_refusal_match_key(claim.statement, claim.backing.capture_digests)
 
 
 def claim_producer(claim: ClaimArtifactAny) -> ArtifactPin | None:
@@ -146,6 +145,5 @@ __all__ = [
     "PriorRefusalReceipt",
     "RefusedClaim",
     "claim_producer",
-    "claim_refusal_key",
     "claim_refusal_match_key",
 ]

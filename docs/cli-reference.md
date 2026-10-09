@@ -3099,7 +3099,7 @@ proposed (`refused_claims`): its statement and the exact Captures it cites.
 ### Earlier refusals of the same statement
 
 When a proposed Claim's statement (subject, predicate, qualifier, object) and
-the exact set of Captures it cites match a Claim retired earlier, for any
+the content of the evidence it cites match a Claim retired earlier, for any
 reason, or a Claim of a proposal a reviewer rejected earlier, the proposal
 carries a typed receipt of each such decision, exactly as recorded:
 `prior_refusals` on each member of `proposal review --json`, and on each child
@@ -3113,11 +3113,14 @@ open proposal count them as `prior_refusal_count`.
 
 Cruxible resurfaces; it does not judge. A receipt never refuses a proposal, never
 changes settlement, and is never interpreted: reading it is the reviewer's or
-the agent's job. New evidence is a new question, so a Claim citing any other
-Captures matches nothing; a Procedure run's own fetched Capture is new evidence
-on every run, so its items match only when they cite the same retained Capture
-(a Line's admitted trigger input, or an explicitly selected Capture). A
-withdrawal is not a refusal. The lookup is a keyed index the daemon maintains
+the agent's job. Evidence is compared by content: the evidence commitment
+digest of each cited Capture (the digest of the material it committed), never
+the Capture's own digest, which also binds the run, the observation time and
+the contract. A fresh Capture of identical material is the same evidence;
+different material is a new question and matches nothing. A Capture whose
+producer commits run-bound values alongside the content (the builtin
+`workspace.file` Provider's output carries its run's request digest) is new
+evidence on every run. A withdrawal is not a refusal. The lookup is a keyed index the daemon maintains
 as generations are accepted and as proposals are rejected; it is derived, and
 rebuilt from accepted history and rejection records when missing.
 

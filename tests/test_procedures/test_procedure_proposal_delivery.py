@@ -1850,45 +1850,62 @@ def test_a_revision_moving_a_claim_out_leaves_the_slot_it_left(tmp_path: Path) -
 # --- earlier refusals of a proposed item resurface on the run result ---------
 
 
-def test_a_delivered_item_carries_its_earlier_refusals_on_the_run_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Each delivered child carries the receipts its Claim's key found, as recorded.
+def _accept_and_retire(instance: PlaybillInstance, owner: Any, proposal_id: str) -> str:
+    """Accept a run's proposal, then retire its one Claim (was-wrong); return the Claim ID."""
 
-    A run's own Capture is new evidence, so nothing earlier matches here; the
-    receipts are read through the same lookup `proposal review` uses, which the
-    refusal-index tests exercise against real retirements and rejections.
+    from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayload
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.core_support._retirement_support import activate_submitted, retirement_member
+
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
+    accept_proposal(instance, owner, inspection)
+    candidate = inspection.proposal.candidate
+    assert candidate is not None
+    (path,) = [item.path for item in candidate.members if item.artifact_kind == "claim"]
+    claim_id = path.rsplit("/", 1)[1].removesuffix(".json")
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    created = coordinator.create(
+        actor=actor,
+        payload=ChangeSetAuthoringPayload(
+            members=(retirement_member(instance, claim_id, reason="was-wrong"),),
+            rationale="The advisory feed misreported this severity.",
+        ),
+        canonical_timestamp="2026-09-12T12:05:00.000000Z",
+    )
+    activate_submitted(instance, owner, coordinator.submit(created.intent.intent_id, actor=actor))
+    return claim_id
+
+
+def test_a_rerun_on_other_bytes_carries_no_earlier_retirement(tmp_path: Path) -> None:
+    """A second run whose source bytes changed proposes the same severity on new evidence.
+
+    The first run's Claim was accepted and then retired; the re-run's item states
+    the same statement, but its Capture's content differs, so it carries no
+    receipt. (On identical bytes the builtin workspace.file Provider still yields
+    a different content commitment: its output echoes the run-bound derived
+    request digest. See the batch report.)
     """
 
-    from cruxible_client.contracts.refusal_receipts import PriorRefusalReceipt
-    from cruxible_core.proposals.refusal_index import RefusalIndex
+    from cruxible_client.contracts.canonical import canonical_bytes
 
-    instance, _owner, root, line, _procedure = proposal_world(tmp_path)
-    state = run_line(instance, root, line)
-    assert state.status == "succeeded", state.terminal
-    (egress,) = state.terminal_egress
-    (child,) = egress.children
-    assert child.prior_refusals == ()
-    assert child.path is not None and egress.proposal_id is not None
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = run_line(instance, root, line)
+    assert first.status == "succeeded", first.terminal
+    (first_egress,) = first.terminal_egress
+    assert first_egress.proposal_id is not None
+    assert first_egress.children[0].prior_refusals == ()
+    _accept_and_retire(instance, owner, first_egress.proposal_id)
 
-    receipt = PriorRefusalReceipt(
-        kind="proposal_rejected",
-        claim_id=child.path.rsplit("/", 1)[1].removesuffix(".json"),
-        proposal_id=egress.proposal_id,
-        decided_by="reviewer",
-        decided_at="2026-09-12T11:00:00.000000Z",
-        rationale="the feed was stale",
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        canonical_bytes({**fixtures.ADVISORY, "note": "re-read"})
     )
-    asked: list[str] = []
+    second = run_line(instance, root, line, at=NOW + timedelta(minutes=10))
 
-    def found(self: RefusalIndex, _instance: Any, proposal_id: str) -> dict[str, Any]:
-        asked.append(proposal_id)
-        return {child.path: (receipt,)}  # type: ignore[dict-item]
-
-    monkeypatch.setattr(RefusalIndex, "prior_refusals", found)
-    assert state.run_id is not None
-    again = service_get_playbill_procedure_run(instance, run_id=state.run_id)
-
-    assert asked == [egress.proposal_id]
-    (served,) = again.terminal_egress[0].children
-    assert served.prior_refusals == (receipt,)
+    assert second.status == "succeeded", second.terminal
+    assert second.result == first.result
+    (egress,) = second.terminal_egress
+    (child,) = egress.children
+    assert child.path is not None and child.path != first_egress.children[0].path
+    assert child.prior_refusals == ()

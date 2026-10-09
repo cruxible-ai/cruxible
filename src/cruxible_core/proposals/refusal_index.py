@@ -1,8 +1,9 @@
 """A rebuildable index of earlier refusals, found by statement and evidence.
 
 Two kinds of decision are indexed under the Claim's refusal match key
-(`claim_refusal_match_key`: subject, predicate, qualifier, object, and the exact
-set of Captures its backing cites):
+(`claim_refusal_match_key`: subject, predicate, qualifier, object, and the
+evidence commitment digests -- the content -- of the Captures its backing
+cites):
 
 * a Claim retired in accepted history, for any reason, indexed as accepted
   generations are caught up -- each generation once, from its change-set record;
@@ -10,10 +11,12 @@ set of Captures its backing cites):
   the rejection record carries (taken while the candidate is still readable).
 
 Everything here is derived: the file lives with the other projections and is
-rebuilt from accepted history and the rejection records when it is missing or
-belongs to another instance. A rejection row is written before its record, so a
-crash between them leaves a row with no record; reads keep a rejection row only
-while its record exists and says ``rejected``, and read the receipt from it.
+rebuilt from accepted history and the rejection records when it is missing,
+belongs to another instance, or was keyed under another match-key domain (an
+earlier layout is dropped first). A rejection row is written before its
+record, so a crash between them leaves a row with no record; reads keep a
+rejection row only while its record exists and says ``rejected``, and read the
+receipt from it.
 
 Lookups are keyed: one probe per proposed Claim, never a scan of history.
 Cruxible resurfaces what was recorded and nothing else: it does not interpret a
@@ -33,6 +36,7 @@ from typing import TYPE_CHECKING
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.candidates import CandidateMemberLawEvidence
+from cruxible_client.contracts.captures import parse_capture_envelope
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimArtifactAny,
@@ -42,13 +46,15 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
 from cruxible_client.contracts.refusal_receipts import (
+    CLAIM_REFUSAL_MATCH_KEY_DOMAIN,
     PriorRefusalReceipt,
     RefusedClaim,
     claim_producer,
-    claim_refusal_key,
+    claim_refusal_match_key,
 )
 from cruxible_core.indexes.history.history_index import history_reads_detached
 from cruxible_core.indexes.proposals.proposal_index import _micros
+from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.preview_fence import is_previewing
 
 if TYPE_CHECKING:
@@ -61,7 +67,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS refusal_progress (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  instance_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence>=0),
- generation_root TEXT NOT NULL
+ generation_root TEXT NOT NULL, key_domain TEXT NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS refusals (
  match_key TEXT NOT NULL,
@@ -78,7 +84,42 @@ CREATE TABLE IF NOT EXISTS proposal_claim_keys (
 ) STRICT;
 CREATE TABLE IF NOT EXISTS proposals_keyed (proposal_id TEXT PRIMARY KEY) STRICT;
 """
-_TABLES = ("proposal_claim_keys", "proposals_keyed", "refusal_progress", "refusals")
+_ACCESS = BodyAccessContext(principal_id="cruxible-refusal-index", can_read_body=True)
+
+
+def _expected_schema() -> list[tuple[object, ...]]:
+    reference = sqlite3.connect(":memory:")
+    try:
+        reference.executescript(_SCHEMA)
+        return _schema(reference)
+    finally:
+        reference.close()
+
+
+def _schema(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
+    return [
+        tuple(row)
+        for row in connection.execute(
+            "SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' "
+            "ORDER BY type,name"
+        )
+    ]
+
+
+def claim_refusal_key(instance: PlaybillInstance, claim: ClaimArtifactAny) -> str:
+    """A Claim's match key, over the content commitments of the Captures it cites.
+
+    Each cited Capture's envelope is read once to take ``commitment.digest``: the
+    digest of the observed bytes or value, which does not depend on the run,
+    the observation time, the contract or where the material is kept.
+    """
+
+    bodies = instance.body_store()
+    commitments = {
+        parse_capture_envelope(bodies.read(digest, access=_ACCESS)).commitment.digest
+        for digest in claim.backing.capture_digests
+    }
+    return claim_refusal_match_key(claim.statement, commitments)
 
 
 def _producer_text(pin: ArtifactPin | None) -> str | None:
@@ -137,7 +178,7 @@ def candidate_refused_claims(
             RefusedClaim(
                 claim_id=claim.identity.name,
                 path=path,
-                match_key=claim_refusal_key(claim),
+                match_key=claim_refusal_key(instance, claim),
                 producer=claim_producer(claim),
             )
         )
@@ -167,13 +208,16 @@ class RefusalIndex:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             connection = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
             connection.execute("PRAGMA journal_mode=WAL")
-            tables = {
-                row[0]
-                for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            }
-            if tables and tables != set(_TABLES):
-                # Derived rows only: an unknown layout is dropped and rebuilt.
-                for table in tables:
+            schema = _schema(connection)
+            if schema and schema != _expected_schema():
+                # Derived rows only: an earlier or unknown layout is dropped and
+                # rebuilt from history and the rejection records.
+                for table in {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }:
                     connection.execute(f'DROP TABLE IF EXISTS "{table}"')
             connection.executescript(_SCHEMA)
             self._connection = connection
@@ -238,7 +282,7 @@ class RefusalIndex:
 
         instance_id = instance.descriptor.instance_id
         progress = connection.execute(
-            "SELECT instance_id,sequence,generation_root FROM refusal_progress"
+            "SELECT instance_id,sequence,generation_root,key_domain FROM refusal_progress"
         ).fetchone()
         evidence = instance.proposal_evidence()
         with instance.accepted_history_reader() as history:
@@ -248,11 +292,13 @@ class RefusalIndex:
                 and progress[0] == instance_id
                 and progress[1] == head.sequence
                 and progress[2] == head.generation_root
+                and progress[3] == CLAIM_REFUSAL_MATCH_KEY_DOMAIN
             ):
                 return
             if (
                 progress is None
                 or progress[0] != instance_id
+                or progress[3] != CLAIM_REFUSAL_MATCH_KEY_DOMAIN
                 or progress[1] > head.sequence
                 or history.generation(progress[1]).generation_root != progress[2]
             ):
@@ -261,8 +307,8 @@ class RefusalIndex:
                 for sequence in range(progress[1] + 1, head.sequence + 1):
                     self._index_generation(connection, instance, evidence, history, sequence)
         connection.execute(
-            "INSERT OR REPLACE INTO refusal_progress VALUES (1,?,?,?)",
-            (instance_id, head.sequence, head.generation_root),
+            "INSERT OR REPLACE INTO refusal_progress VALUES (1,?,?,?,?)",
+            (instance_id, head.sequence, head.generation_root, CLAIM_REFUSAL_MATCH_KEY_DOMAIN),
         )
 
     def _rebuild(
@@ -294,7 +340,7 @@ class RefusalIndex:
             if sequence is None:
                 continue
             record = history.read_generation_record(sequence, instance.blob_at)
-            self._put_retirements(connection, evidence, record, (claim,))
+            self._put_retirements(connection, instance, evidence, record, (claim,))
 
     def _index_generation(
         self,
@@ -331,11 +377,12 @@ class RefusalIndex:
             if claim.lifecycle.state == "retired":
                 retired.append(claim)
         if retired:
-            self._put_retirements(connection, evidence, record, tuple(retired))
+            self._put_retirements(connection, instance, evidence, record, tuple(retired))
 
     @staticmethod
     def _put_retirements(
         connection: sqlite3.Connection,
+        instance: PlaybillInstance,
         evidence: ProposalEvidenceStore,
         record: ChangeSetRecordAnyVersion,
         claims: tuple[ClaimArtifactAny, ...],
@@ -346,7 +393,7 @@ class RefusalIndex:
             "INSERT OR IGNORE INTO refusals VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
-                    claim_refusal_key(claim),
+                    claim_refusal_key(instance, claim),
                     "claim_retired",
                     claim.identity.name,
                     claim.identity.name,
@@ -588,4 +635,5 @@ def _receipt(
 __all__ = [
     "RefusalIndex",
     "candidate_refused_claims",
+    "claim_refusal_key",
 ]

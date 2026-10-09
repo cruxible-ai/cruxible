@@ -36,7 +36,7 @@ from cruxible_core.service.proposals.review import (
     render_playbill_proposal_review_pointer,
     service_review_playbill_proposal,
 )
-from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from tests.core_support._claim_authoring_support import (
     DirectForeignSourceSelection,
     service_propose_playbill_claim,
@@ -231,6 +231,32 @@ def test_a_rejected_statement_on_the_same_evidence_resurfaces_neutrally(tmp_path
     assert _prior_refusal_detail(instance, _proposal_id(first)) == {}
 
 
+def test_identical_bytes_captured_again_are_the_same_evidence(tmp_path: Path) -> None:
+    """A fresh Capture of identical bytes (another envelope, another time) matches."""
+
+    instance, owner = seed_claims(tmp_path)
+    accepted = _propose(instance, "wi-44", "ready", body=b"status: ready (44)", rationale="A.")
+    activate(instance, owner, accepted)
+    _retire(instance, owner, _claim_id(accepted), "was-wrong")
+
+    again = _propose(
+        instance,
+        "wi-44",
+        "ready",
+        body=b"status: ready (44)",
+        rationale="Captured again.",
+        timestamp=LATER,
+    )
+
+    assert again.capture_digests != accepted.capture_digests
+    (receipt,) = _receipts(instance, again)
+    assert (receipt.kind, receipt.claim_id, receipt.reason_code) == (
+        "claim_retired",
+        _claim_id(accepted),
+        "was-wrong",
+    )
+
+
 def test_new_evidence_another_value_or_an_earlier_proposal_matches_nothing(
     tmp_path: Path,
 ) -> None:
@@ -332,10 +358,17 @@ def _counted_lookup(instance: PlaybillInstance, proposal_id: str) -> Counter[str
         work["blobs"] += len(paths)
         return proposal_blobs(self, oid, paths, **kwargs)
 
+    read = ContentAddressedBodyStore.read
+
+    def counted_read(self: Any, digest: str, **kwargs: Any) -> bytes:
+        work["cas_reads"] += 1
+        return read(self, digest, **kwargs)
+
     before = (index.generations_indexed, index.key_probes, index.rows_read, index.rebuilds)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(PlaybillInstance, "blobs_at", counted)
         patch.setattr(PlaybillInstance, "proposal_blobs", counted_proposal)
+        patch.setattr(ContentAddressedBodyStore, "read", counted_read)
         index.prior_refusals(instance, proposal_id)
     after = (index.generations_indexed, index.key_probes, index.rows_read, index.rebuilds)
     work.update(
@@ -387,6 +420,7 @@ def test_the_lookup_does_not_grow_with_history(tmp_path: Path) -> None:
     assert counts[0] == counts[1]
     assert counts[0]["generations"] == 0 and counts[0]["rebuilds"] == 0
     assert counts[0]["probes"] == 1 and counts[0]["rows"] == 1 and counts[0]["blobs"] == 0
+    assert counts[0]["cas_reads"] == 0
 
 
 def test_an_acceptance_indexes_only_its_own_generation(tmp_path: Path) -> None:
@@ -461,3 +495,38 @@ def test_a_rebuild_finds_retirements_from_the_projection_not_a_history_walk(
         "was-wrong",
         RETIRED_AT,
     )
+
+
+def test_an_index_from_an_earlier_layout_or_key_is_rebuilt(tmp_path: Path) -> None:
+    """Rows keyed or laid out by an earlier build are never read: the file rebuilds."""
+
+    instance, owner = seed_claims(tmp_path)
+    accepted = _propose(instance, "wi-44", "ready", body=b"status: ready (44)", rationale="A.")
+    activate(instance, owner, accepted)
+    _retire(instance, owner, _claim_id(accepted), "was-wrong")
+    again = _cite(
+        instance, "wi-44", "ready", capture_digest=accepted.capture_digest, rationale="Again."
+    )
+    index = instance.refusal_index()
+    assert len(index.prior_refusals(instance, _proposal_id(again))) == 1
+
+    # Another match-key domain recorded in progress: rebuilt in place.
+    with sqlite3.connect(index.path) as connection:
+        connection.execute(
+            "UPDATE refusal_progress SET key_domain='cruxible-claim-refusal-match-v1'"
+        )
+    rebuilds = index.rebuilds
+    assert len(index.prior_refusals(instance, _proposal_id(again))) == 1
+    assert index.rebuilds == rebuilds + 1
+
+    # The pre-domain layout (progress without key_domain): dropped and rebuilt.
+    index.close()
+    with sqlite3.connect(index.path) as connection:
+        connection.execute("DROP TABLE refusal_progress")
+        connection.execute(
+            "CREATE TABLE refusal_progress (singleton INTEGER PRIMARY KEY CHECK(singleton=1), "
+            "instance_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence>=0), "
+            "generation_root TEXT NOT NULL) STRICT"
+        )
+    (receipt,) = index.prior_refusals(instance, _proposal_id(again))[again.claim_path]
+    assert (receipt.kind, receipt.reason_code) == ("claim_retired", "was-wrong")
