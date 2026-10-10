@@ -307,3 +307,26 @@ def test_a_reason_record_that_still_fails_refuses_typed_to_its_item(
     assert refusal.code == "proposal_item_invalid", refusal
     assert refusal.details["item_key"] and refusal.details["child_index"] == 0
     assert "repair" in refusal.details
+
+
+def test_a_malformed_revises_refuses_as_an_invalid_item(tmp_path: Path) -> None:
+    """A Claim ID format error in `revises` is a typed item refusal, not an internal one."""
+
+    from cruxible_client.contracts.procedures.proposal_items import ProcedureClaimProposalItemV1
+    from tests.test_procedures.test_proposal_fan_out import FAN_OUT, _element
+
+    with pytest.raises(ValueError):
+        ProcedureClaimProposalItemV1.model_validate(
+            {**delivery.item_template(), "revises": "not-a-claim"}
+        )
+    instance, _owner, root, line, _procedure = delivery.proposal_world(
+        tmp_path,
+        templates=FAN_OUT,  # type: ignore[arg-type]
+    )
+    _write_feed(root, [_element(None, revises="not-a-claim")])
+
+    refusal = delivery._refusal(delivery.run_line(instance, root, line))
+
+    assert refusal.code == "proposal_item_invalid", refusal
+    assert refusal.details["child_index"] == 0
+    assert delivery._proposal_refs(instance) == []

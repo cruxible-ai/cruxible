@@ -80,7 +80,10 @@ class ProcedureClaimProposalItemV1(_StrictProposalItemModel):
     @classmethod
     def _revises(cls, value: str | None) -> str | None:
         if value is not None:
-            claim_path(value)
+            try:
+                claim_path(value)
+            except ClaimFormatError as exc:  # a typed item refusal, never an internal one
+                raise ValueError(str(exc)) from exc
         return value
 
 
