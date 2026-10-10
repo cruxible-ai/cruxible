@@ -30,15 +30,13 @@ class _StrictWorkspaceFileModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+# v1 made its author name the root by ``workspace_binding_digest``, a daemon
+# transport detail. Kept byte-for-byte (schema included) so Source requests
+# retained in run history still read and verify; a Procedure now authors
+# ``WorkspaceFileSourceRequestV2`` and the daemon executes it as an
+# ``ExecutedWorkspaceFileSourceRequestV2``.
 class WorkspaceFileSourceRequest(_StrictWorkspaceFileModel):
-    """Logical Source request v1; no canonical host root is representable.
-
-    v1 made its author name the root by ``workspace_binding_digest``, a daemon
-    transport detail. Kept exactly so Source requests retained in run history
-    still read and verify; a Procedure now authors
-    ``WorkspaceFileSourceRequestV2`` and the daemon executes it as an
-    ``ExecutedWorkspaceFileSourceRequestV2``.
-    """
+    """Logical Source request; no canonical host root is representable."""
 
     tag: Literal["playbill-workspace-file-source-request-v1"] = (
         "playbill-workspace-file-source-request-v1"
