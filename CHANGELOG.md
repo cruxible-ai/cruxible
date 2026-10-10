@@ -37,8 +37,9 @@
   (`cruxible.subject_kind.key_claim_type_broken`), and changing a key
   ClaimType's canonical form is a re-keying
   (`cruxible.subject_kind.rekey_unhandled`). Kits carry SubjectKinds.
-  Typed projection storage schema 14 (rebuilt from accepted state). See the CLI
-  reference, "Subject kinds and creation".
+  Typed projection storage schema 15: every retained projection, historical
+  ones included, is rebuilt under it. See the CLI reference, "Subject kinds and
+  creation".
 
 - The documentation and agent skills describe this surface. New pages: a
   rewritten quickstart verified end to end, concepts, modeling state (when
