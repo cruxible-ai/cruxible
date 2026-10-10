@@ -8,7 +8,14 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, field_serializer, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
@@ -37,6 +44,7 @@ if TYPE_CHECKING:
     )
 
 _MANDATE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
+_SUBJECT_KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*$")
 
 
 class ProcedureMandateError(FormatError):
@@ -463,6 +471,18 @@ def _path_is_in_namespace(path: str, namespace: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in namespace)
 
 
+def mandate_creates_subject(mandate: "ProcedureMandateV1 | ProcedureMandate", path: str) -> bool:
+    """Whether ``path`` is a Subject of a kind the settle grant's ``subject_creation`` names.
+
+    Only the path's kind is read here; that the Subject is new to the change is
+    the settle verifier's to check (``settle_targets``).
+    """
+
+    if not isinstance(mandate, ProcedureMandate) or not path.startswith("subjects/"):
+        return False
+    return path.removeprefix("subjects/").partition("/")[0] in mandate.subject_creation
+
+
 def evaluate_procedure_mandate(
     mandate: "ProcedureMandateV1 | ProcedureMandate",
     invocation: ProcedureMandateInvocation,
@@ -485,7 +505,11 @@ def evaluate_procedure_mandate(
         refusals.add("procedure_mandate_grant_insufficient")
     if not _ceiling_within(invocation.requested_authority, _resources(mandate)):
         refusals.add("procedure_mandate_authority_ceiling_insufficient")
-    if any(not _path_is_in_namespace(path, mandate.namespace) for path in invocation.target_paths):
+    if any(
+        not _path_is_in_namespace(path, mandate.namespace)
+        and not mandate_creates_subject(mandate, path)
+        for path in invocation.target_paths
+    ):
         refusals.add("procedure_mandate_namespace_mismatch")
     return ProcedureMandateEvaluation(
         verdict="refused" if refusals else "permitted",
@@ -597,6 +621,11 @@ class ProcedureMandate(_StrictProcedureMandateModel):
     scope: tuple[MandateClaimScope, ...] = ()
     subject_scope: tuple[SemanticAddress, ...] | None = None
     condition: MandateCondition | None = None
+    #: The Subject kinds a settle grant may create (identity D1): a new Subject
+    #: of one of them, and the key Claims its creation writes, settle as part of
+    #: the change without being condition targets. A propose grant reaches
+    #: Subjects through its ``namespace`` (``subjects/<kind>``) instead.
+    subject_creation: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     # The fast-path kill switch: a suspended mandate grants nothing until a
     # governed successor clears it.
     suspended: bool = False
@@ -637,6 +666,10 @@ class ProcedureMandate(_StrictProcedureMandateModel):
             != sorted(set(self.subject_scope), key=lambda item: item.artifact_path)
         ):
             raise ValueError("mandate subject_scope must be None or nonempty, sorted and unique")
+        if list(self.subject_creation) != sorted(
+            set(self.subject_creation), key=lambda item: item.encode("utf-8")
+        ) or any(not _SUBJECT_KIND_RE.fullmatch(kind) for kind in self.subject_creation):
+            raise ValueError("mandate subject_creation must name Subject kinds, sorted and unique")
         if self.grants == "settle":
             if not self.scope or self.condition is None:
                 raise ValueError("a settle grant requires a Claim scope and a condition query")
@@ -646,7 +679,12 @@ class ProcedureMandate(_StrictProcedureMandateModel):
                 for member in self.namespace
             ):
                 raise ValueError("a settle grant may only reach accepted Claims")
-        elif self.scope or self.condition is not None or self.subject_scope is not None:
+        elif (
+            self.scope
+            or self.condition is not None
+            or self.subject_scope is not None
+            or self.subject_creation
+        ):
             raise ValueError("a propose grant carries no settle scope or condition")
         return self
 
@@ -716,6 +754,8 @@ def mandate_change_is_narrowing(new: ProcedureMandateAny, old: ProcedureMandateA
     if old.subject_scope is not None and (
         new.subject_scope is None or not set(new.subject_scope) <= set(old.subject_scope)
     ):
+        return False
+    if not set(new.subject_creation) <= set(old.subject_creation):
         return False
     return True
 
@@ -815,6 +855,7 @@ def condition_query_refusal(
 
 
 __all__ = [
+    "mandate_creates_subject",
     "MANDATE_CHANGE_KIND_ORDER",
     "MandateChangeKind",
     "MandateClaimScope",

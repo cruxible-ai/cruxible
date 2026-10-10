@@ -365,6 +365,14 @@ class ProcedureMandateInput(_StrictInputModel):
     scope: tuple[MandateScopeAuthoring, ...] = ()
     subject_scope: tuple[SemanticAddress, ...] | None = None
     condition: MandateConditionAuthoring | None = None
+    subject_creation: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Settle grants only: Subject kinds a run may create by key; their new Subjects "
+            "and key Claims settle with the change. A propose grant names subjects/<kind> "
+            "in its namespace instead."
+        ),
+    )
     suspended: bool = False
     retire: bool = False
 

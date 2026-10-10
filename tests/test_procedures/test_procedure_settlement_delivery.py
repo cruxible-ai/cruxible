@@ -165,6 +165,61 @@ def _predicate_item(predicate: str) -> dict[str, object]:
     return {**template, "statement": statement}
 
 
+LEVEL_KIND = "security.severity_level"
+
+
+def _level_kind_members() -> dict[str, bytes]:
+    """Severity levels keyed by a slug whose key Claims cite the run's own Capture."""
+
+    from cruxible_client.contracts.artifacts import ArtifactRef
+    from cruxible_client.contracts.policies import (
+        CAPTURE_CONTRACT_REF_ROLE,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
+    )
+    from cruxible_client.contracts.subject_kinds import render_subject_kind, subject_kind_path
+    from tests.core_support._subject_kind_support import keyed_subject_kind, slug_claim_type
+
+    slug = slug_claim_type(LEVEL_KIND).model_copy(  # type: ignore[attr-defined]
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="workspace-record",
+                        claim_roles=("observation",),
+                        capture_contracts=(
+                            ArtifactRef(
+                                role=CAPTURE_CONTRACT_REF_ROLE,
+                                target=capture_contract().identity,
+                            ),
+                        ),
+                        evidence_kinds=("database_record",),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
+    return {
+        claim_type_path(slug.predicate): render_claim_type(slug),
+        subject_kind_path(LEVEL_KIND): render_subject_kind(
+            keyed_subject_kind(LEVEL_KIND, (slug.predicate,))
+        ),
+    }
+
+
+def _level_item() -> dict[str, object]:
+    """The severity level the run read, created by key: its key Claim cites the read."""
+
+    return {
+        "tag": "playbill-procedure-subject-proposal-item-v1",
+        "subject_kind": LEVEL_KIND,
+        "key": {"slug": "$steps.result.severity"},
+        "rationale": "The advisory names this severity level.",
+    }
+
+
 #: The key that governs each settle world, for tests that approve ordinarily.
 OWNERS: dict[Path, Any] = {}
 #: The settling Procedure of each capture-triggered world, for landing trigger Captures.
@@ -185,6 +240,8 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     require_claim: bool = False,
     scope_predicates: tuple[str, ...] = (PREDICATE,),
     item_predicates: tuple[str, ...] = (PREDICATE,),
+    subject_items: tuple[dict[str, object], ...] = (),
+    subject_creation: tuple[str, ...] = (),
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
@@ -196,8 +253,9 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
                 shape.model_copy(update={"next": "settle"}),
                 SettleChangeSetNode(
                     node_id="settle",
-                    candidate_templates=tuple(
-                        _predicate_item(predicate) for predicate in item_predicates
+                    candidate_templates=(
+                        *subject_items,
+                        *(_predicate_item(predicate) for predicate in item_predicates),
                     ),
                     result="$steps.result",
                 ),
@@ -254,6 +312,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         },
         subject_path(SUBJECT_KIND, SUBJECT_ID): render_subject(_subject()),
         query_definition_path(query.identity.name): render_query_definition(query),
+        **(_level_kind_members() if subject_items else {}),
     }
     for index in range(mandates):
         mandate = ProcedureMandate(
@@ -289,6 +348,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
                 required_fields=("id", "severity") if require_claim else ("id",),
                 fallback=fallback,  # type: ignore[arg-type]
             ),
+            subject_creation=subject_creation,
         )
         members[procedure_mandate_path(mandate.identity.name)] = render_procedure_mandate(mandate)
     if propose_mandate:
@@ -1788,3 +1848,39 @@ def test_next_coverage_is_read_after_its_own_catch_up(
     assert result.status.prior_refusal_coverage is None
     peeked = instance.refusal_index().peek(instance)
     assert peeked is not None and peeked[0] == instance.accepted_history()[-1].sequence
+
+
+# --- a settle grant creates Subjects only of the kinds it names (identity D1) ---
+
+
+def test_a_settle_grant_naming_a_kind_settles_its_new_subjects(tmp_path: Path) -> None:
+    instance, root, line = settle_world(
+        tmp_path, subject_items=(_level_item(),), subject_creation=(LEVEL_KIND,)
+    )
+    base = instance.accepted_coordinate()
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "settled"), egress
+    head = instance.accepted_coordinate()
+    assert head != base
+    tree = instance.tree_at(head.git_oid)
+    created = f"subjects/{LEVEL_KIND}/high.json"
+    assert created in egress.target_paths and created in tree
+    # The level's key Claim settled with it; only the advisory's Claim was a
+    # condition target.
+    predicates = sorted(
+        parse_claim(tree[path], path=path).statement.predicate
+        for path in egress.target_paths
+        if path.startswith("claims/")
+    )
+    assert predicates == sorted((PREDICATE, f"{LEVEL_KIND}.slug"))
+
+
+def test_a_settle_grant_naming_no_kind_never_creates_a_subject(tmp_path: Path) -> None:
+    instance, root, line = settle_world(tmp_path, subject_items=(_level_item(),))
+    base = instance.accepted_coordinate()
+    state = run_settle(instance, root, line)
+    egress = _egress(state)
+    assert (egress.verdict, egress.refusal_code) == ("refused", "settle_mandate_missing"), egress
+    assert instance.accepted_coordinate() == base

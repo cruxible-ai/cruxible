@@ -892,6 +892,8 @@ class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
     scope: tuple[MandateScopeAuthoring, ...] = ()
     subject_scope: tuple[SemanticAddress, ...] | None = None
     condition: MandateConditionAuthoring | None = None
+    #: Settle grants only: the Subject kinds it may create (identity D1).
+    subject_creation: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     suspended: bool = False
     retire: bool = False
 

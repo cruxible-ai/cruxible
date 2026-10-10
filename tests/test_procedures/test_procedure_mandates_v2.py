@@ -389,6 +389,62 @@ def test_narrowing_takes_the_fast_path_and_widening_does_not() -> None:
     assert not mandate_change_is_narrowing(lifted, suspended.mandate)
 
 
+def test_a_settle_grant_names_the_subject_kinds_it_may_create() -> None:
+    """``subject_creation`` (identity D1): settle-only, sorted kinds, narrowed by subset."""
+
+    from cruxible_client.contracts.procedure_mandates import (
+        ProcedureMandateInvocation,
+        evaluate_procedure_mandate,
+        procedure_mandate_digest,
+    )
+
+    query = _accepted_query(_query())
+    base = _settle(query, subject_creation=("ops.asset", "ops.host"))
+    path = procedure_mandate_path("triage")
+    assert parse_procedure_mandate_any(render_procedure_mandate(base), path=path) == base
+    # An empty list leaves the wire (and every existing digest) as it was.
+    assert b"subject_creation" not in render_procedure_mandate(_settle(query))
+    for bad in (("ops.host", "ops.asset"), ("ops.asset", "ops.asset"), ("Ops",)):
+        with pytest.raises(ValueError, match="subject_creation"):
+            _settle(query, subject_creation=bad)
+    with pytest.raises(ValueError, match="propose grant carries no settle"):
+        _settle(query, grants="propose", scope=(), condition=None, subject_creation=("ops.asset",))
+
+    # The grant reaches a Subject of a named kind beside its Claims, and no other.
+    def evaluated(*targets: str) -> tuple[str, ...]:
+        return evaluate_procedure_mandate(
+            base,
+            ProcedureMandateInvocation(
+                procedure_identity=base.procedure.target,
+                procedure_artifact_digest=base.procedure.artifact_digest,
+                requested_rung=3,
+                requested_authority=_caps(),
+                target_paths=targets,
+                evaluation_time=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                accepted_mandate_digest=procedure_mandate_digest(base).tagged,
+            ),
+        ).refusal_codes
+
+    assert evaluated("claims/ab/CLM-1.json", "subjects/ops.asset/web.json") == ()
+    assert evaluated("subjects/ops.other/web.json") == ("procedure_mandate_namespace_mismatch",)
+
+    predecessor = _accepted(base)
+    fewer = base.model_copy(
+        update={
+            "subject_creation": ("ops.asset",),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest),
+        }
+    )
+    more = base.model_copy(
+        update={
+            "subject_creation": ("ops.asset", "ops.host", "ops.zone"),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest),
+        }
+    )
+    assert mandate_change_is_narrowing(fewer, base)
+    assert not mandate_change_is_narrowing(more, base)
+
+
 # -- Proposal evaluation on a revision-30 instance ---------------------------------
 
 

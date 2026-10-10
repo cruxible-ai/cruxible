@@ -3294,6 +3294,9 @@ def _render_procedure_mandate_member(
             )
         ),
         condition=condition,
+        subject_creation=tuple(
+            sorted(set(payload.subject_creation), key=lambda item: item.encode("utf-8"))
+        ),
         suspended=payload.suspended,
         lifecycle=ArtifactLifecycle(
             state="retired" if payload.retire else "live",
