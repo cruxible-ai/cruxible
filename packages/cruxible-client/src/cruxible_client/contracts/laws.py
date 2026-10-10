@@ -652,6 +652,16 @@ GOVERNED_TRIGGERS_UPGRADE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-compiler-upgrade-v1",
     current=False,
 )
+# Revision 11 (to compiler revision 33, subject identity). Existing Subjects of
+# kinds no SubjectKind declares are grandfathered; nothing held is refused.
+SUBJECT_IDENTITY_UPGRADE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=11
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+    current=False,
+)
 AUTHORITY_VERBS_UPGRADE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=9
@@ -790,6 +800,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         TRIGGER_CAPTURE_UPGRADE_LAW,
         AUTHORITY_VERBS_UPGRADE_LAW,
         GOVERNED_TRIGGERS_UPGRADE_LAW,
+        SUBJECT_IDENTITY_UPGRADE_LAW,
         PROVIDER_CONTRACT_UPGRADE_LAW,
         COMPILER_UPGRADE_ACCEPTANCE_LAW,
         APPROVAL_POLICY_ACCEPTANCE_LAW,

@@ -31,6 +31,7 @@ from cruxible_core.compiler.compiler import (
     PC_HR_COMPILER,
     PROVIDER_PACKAGE_COMPILER,
     RESOURCE_BUDGET_COMPILER,
+    SUBJECT_IDENTITY_COMPILER,
     artifact_kinds_for_compiler,
     current_compiler_coordinate,
     projection_registry_for_compiler,
@@ -98,7 +99,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     assert P2_B2_COMPILER != P2_B4_COMPILER
     assert P2_B4_COMPILER != P2_B4_UNIT2_COMPILER
     assert P2_B4_UNIT2_COMPILER != P2_B5_COMPILER
-    assert current_compiler_coordinate() == GOVERNED_TRIGGERS_COMPILER
+    assert current_compiler_coordinate() == SUBJECT_IDENTITY_COMPILER
     assert (
         projection_registry_for_compiler(PC_HR_COMPILER).supports(
             "cruxible.provider.runtime",

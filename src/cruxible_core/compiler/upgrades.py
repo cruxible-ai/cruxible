@@ -20,6 +20,7 @@ from cruxible_client.contracts.laws import (
     RESOURCE_BUDGET_UPGRADE_LAW,
     SDK_SOURCE_UPGRADE_LAW,
     SOURCE_CHECKED_UPGRADE_LAW,
+    SUBJECT_IDENTITY_UPGRADE_LAW,
     TRIGGER_CAPTURE_UPGRADE_LAW,
     InstalledAcceptanceLaw,
 )
@@ -44,6 +45,7 @@ from cruxible_core.compiler.compiler import (
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
     SOURCE_CHECKED_COMPILER,
+    SUBJECT_IDENTITY_COMPILER,
     TRIGGER_CAPTURE_COMPILER,
     UPGRADE_COMPILER,
 )
@@ -167,6 +169,20 @@ def upgrade_law(source: CompilerCoordinate, target: CompilerCoordinate) -> Insta
         AUTHORITY_VERBS_COMPILER,
     }:
         return GOVERNED_TRIGGERS_UPGRADE_LAW
+    if target == SUBJECT_IDENTITY_COMPILER and source in {
+        *UPGRADE_V1_SOURCES,
+        UPGRADE_COMPILER,
+        PROVIDER_CONTRACT_COMPILER,
+        PROVIDER_PACKAGE_COMPILER,
+        RESOURCE_BUDGET_COMPILER,
+        SDK_SOURCE_COMPILER,
+        CLAIM_EVIDENCE_COMPILER,
+        SOURCE_CHECKED_COMPILER,
+        TRIGGER_CAPTURE_COMPILER,
+        AUTHORITY_VERBS_COMPILER,
+        GOVERNED_TRIGGERS_COMPILER,
+    }:
+        return SUBJECT_IDENTITY_UPGRADE_LAW
     raise ValueError("unsupported compiler transition; only explicit forward edges are allowed")
 
 
@@ -182,6 +198,7 @@ _UPGRADE_TARGETS = (
     TRIGGER_CAPTURE_COMPILER,
     AUTHORITY_VERBS_COMPILER,
     GOVERNED_TRIGGERS_COMPILER,
+    SUBJECT_IDENTITY_COMPILER,
 )
 
 

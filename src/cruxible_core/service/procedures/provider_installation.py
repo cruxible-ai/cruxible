@@ -54,7 +54,7 @@ from cruxible_client.contracts.repairs import (
     HandEditRepair,
     RepairOperation,
 )
-from cruxible_core.compiler.compiler import GOVERNED_TRIGGERS_COMPILER
+from cruxible_core.compiler.compiler import SUBJECT_IDENTITY_COMPILER
 from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError, RequestRefusedError
 from cruxible_core.governance.seed_artifacts.workspace_file import (
@@ -613,7 +613,7 @@ def service_install_provider(
 
     instance.require_writable()
     enforce_customer_code_execution_supported()
-    if instance.accepted_coordinate().compiler != GOVERNED_TRIGGERS_COMPILER:
+    if instance.accepted_coordinate().compiler != SUBJECT_IDENTITY_COMPILER:
         raise ConfigError(
             "provider installation requires the current compiler; "
             "run cruxible compiler upgrade first"

@@ -2259,17 +2259,16 @@ def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one SubjectKind: its succession, and the key ClaimTypes it names.
 
     A key ClaimType is read from the candidate, so one accepted in the same
-    change counts. SubjectKinds are admitted where Triggers are (compiler
-    revision 32).
+    change counts. SubjectKinds are admitted from compiler revision 33.
     """
 
-    if not _admits_triggers(context.current.compiler):
+    if not admits_subject_kinds(context.current.compiler):
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
                     "cruxible.subject_kind.compiler_unsupported",
-                    "SubjectKind artifacts require compiler revision 32; upgrade the "
-                    "instance first.",
+                    "SubjectKind artifacts require compiler revision 33 (subject identity); "
+                    "upgrade the instance first.",
                     context.path,
                 ),
             )
@@ -3206,6 +3205,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         CLAIM_EVIDENCE_COMPILER,
         GOVERNED_TRIGGERS_COMPILER,
         SOURCE_CHECKED_COMPILER,
+        SUBJECT_IDENTITY_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
     )
 
@@ -3215,6 +3215,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         TRIGGER_CAPTURE_COMPILER,
         AUTHORITY_VERBS_COMPILER,
         GOVERNED_TRIGGERS_COMPILER,
+        SUBJECT_IDENTITY_COMPILER,
     }:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())

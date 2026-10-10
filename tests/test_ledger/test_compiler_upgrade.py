@@ -17,6 +17,7 @@ from cruxible_core.compiler.compiler import (
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
     SOURCE_CHECKED_COMPILER,
+    SUBJECT_IDENTITY_COMPILER,
     TRIGGER_CAPTURE_COMPILER,
     UPGRADE_COMPILER,
 )
@@ -77,6 +78,8 @@ def approve(instance, proposal, reviewer):
         (SOURCE_CHECKED_COMPILER, TRIGGER_CAPTURE_COMPILER),
         (TRIGGER_CAPTURE_COMPILER, AUTHORITY_VERBS_COMPILER),
         (AUTHORITY_VERBS_COMPILER, GOVERNED_TRIGGERS_COMPILER),
+        (GOVERNED_TRIGGERS_COMPILER, SUBJECT_IDENTITY_COMPILER),
+        (AUTHORITY_VERBS_COMPILER, SUBJECT_IDENTITY_COMPILER),
         (PROVIDER_PACKAGE_COMPILER, RESOURCE_BUDGET_COMPILER),
         (UPGRADE_COMPILER, PROVIDER_CONTRACT_COMPILER),
         (RESOLUTION_COMPILER, PROVIDER_CONTRACT_COMPILER),
@@ -504,7 +507,7 @@ def test_provider_installation_uses_accepted_compiler_after_upgrade_and_reopen(
     with pytest.raises(ConfigError, match="compiler upgrade"):
         install(instance)
     assert not reached
-    proposal = propose(instance, GOVERNED_TRIGGERS_COMPILER)
+    proposal = propose(instance, SUBJECT_IDENTITY_COMPILER)
     approve(instance, proposal, reviewer)
     receipt = service_activate_playbill_proposal(
         instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
@@ -513,4 +516,4 @@ def test_provider_installation_uses_accepted_compiler_after_upgrade_and_reopen(
     assert instance.descriptor.compiler == AUTHORITY_VERBS_COMPILER
     install(instance)
     install(PlaybillInstance.open(instance.root, trust_root=instance.trust_root))
-    assert reached == [GOVERNED_TRIGGERS_COMPILER, GOVERNED_TRIGGERS_COMPILER]
+    assert reached == [SUBJECT_IDENTITY_COMPILER, SUBJECT_IDENTITY_COMPILER]
