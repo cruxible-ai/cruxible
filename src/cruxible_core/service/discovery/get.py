@@ -1713,9 +1713,16 @@ class _AcceptingProposal:
 def _accepting_proposal(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, path: str
 ) -> _AcceptingProposal | None:
-    """Find the proposal that accepted ``path``'s latest revision, then its item reason.
+    """Find the exact admission that accepted ``path``'s latest revision, then its item reason.
 
-    One history lookup, one candidate locator, one admission, one reason file:
+    The accepted generation's retained change-set record names the candidate
+    and the admission's actor binding (actor and source compilation digest). An
+    admission is the accepting one only when it matches all three and was not
+    withdrawn or rejected; a candidate digest alone names the semantic change,
+    which an unrelated admission can share. No match, or more than one, and the
+    revision has no attributed proposal: nothing is picked by id order.
+
+    One history record, one candidate locator, one admission, one reason file:
     the work never grows with the size of the change set that accepted it.
     """
 
@@ -1723,18 +1730,32 @@ def _accepting_proposal(
         latest = h.latest_member(path)
         if latest is None:
             return None
-        candidate_digest = h.generation(latest.sequence).candidate_digest
-    if candidate_digest is None:
-        return None
+        generation = h.generation(latest.sequence)
+        if generation.source_record_path is None or generation.candidate_digest is None:
+            return None
+        record = h.read_generation_record(latest.sequence, instance.blob_at)
+    binding = record.actor_binding
     evidence = instance.proposal_evidence()
     if evidence.index is None:
         return None
-    found: _AcceptingProposal | None = None
-    for row in evidence.index.rows(evidence, "candidate_digest=?", (candidate_digest,)):
+    matches = []
+    for row in evidence.index.rows(evidence, "candidate_digest=?", (record.candidate_digest,)):
+        if row["withdrawal_path"] is not None:
+            continue  # withdrawn or rejected: never the admission that was accepted
         admission = evidence.read_admission(row["proposal_id"])
-        operation = evidence.item_reason_operation(admission)
-        item = None if operation is None else evidence.read_item_reason(operation, path)
-        reason = (
+        if (
+            admission.actor_id == binding.actor_id
+            and admission.source_compilation_digest == binding.source_compilation_digest
+        ):
+            matches.append(admission)
+    if len(matches) != 1:
+        return None
+    (admission,) = matches
+    operation = evidence.item_reason_operation(admission)
+    item = None if operation is None else evidence.read_item_reason(operation, path)
+    return _AcceptingProposal(
+        rationale=admission.rationale,
+        reason=(
             None
             if item is None
             else GetProposedReason(
@@ -1745,11 +1766,8 @@ def _accepting_proposal(
                 run=item.run_id,
                 terminal=item.terminal,
             )
-        )
-        if reason is not None or admission.rationale:
-            return _AcceptingProposal(rationale=admission.rationale, reason=reason)
-        found = found or _AcceptingProposal(rationale=None, reason=None)
-    return found
+        ),
+    )
 
 
 def _claim_rationale(

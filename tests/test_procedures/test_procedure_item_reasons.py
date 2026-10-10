@@ -107,3 +107,107 @@ def test_ref_reuse_after_withdrawal_on_the_same_member_shows_only_its_own(
     assert [(item.path, item.reason) for item in kept.item_reasons] == [
         (egress.children[0].path, retire.GONE)
     ]
+
+
+# --- the exact accepting admission (F-001) --------------------------------------
+
+
+def _why(instance, claim_id: str):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+
+    return service_playbill_get(
+        instance, request=GetRequest(ref=claim_id, detail="why"), access=delivery._READER
+    )
+
+
+def _evidence_rationale(instance, claim_id: str):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+
+    result = service_playbill_get(
+        instance, request=GetRequest(ref=claim_id, detail="evidence"), access=delivery._READER
+    )
+    assert result.evidence is not None
+    return result.evidence.rationale
+
+
+def test_accepted_manual_retirement_does_not_use_withdrawn_procedure_reason(
+    tmp_path: Path,
+) -> None:
+    """A withdrawn Procedure proposal sharing the accepted candidate attributes nothing."""
+
+    from tests.core_support._retirement_support import (
+        activate_submitted,
+        retirement_member,
+        submit_retirement,
+    )
+
+    instance, owner, root, line, claim_id = retire._proposed_world(tmp_path)
+    _write_feed(root, [retire._retire(claim_id)])
+    state = delivery.run_line(instance, root, line, at=retire.LATER)
+    (egress,) = state.terminal_egress
+    original = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    service_withdraw_playbill_proposal(
+        instance,
+        proposal_id=egress.proposal_id,
+        actor_id=original.proposal.admission.actor_id,
+        reason="Wrong rationale; use a manually reviewed retirement.",
+        withdrawn_at="2026-09-12T12:07:00.000000Z",
+        dry_run=False,
+    )
+    manual = submit_retirement(
+        instance,
+        retirement_member(instance, claim_id, reason="was-wrong"),
+        timestamp=canonical_candidate_timestamp(retire.LATER),
+    )
+    assert manual.status.proposal_id is not None, manual
+    manual_proposal = service_inspect_playbill_proposal(
+        instance, proposal_id=manual.status.proposal_id
+    )
+    assert original.proposal.candidate is not None and manual_proposal.proposal.candidate
+    # The same semantic candidate, two distinct admissions.
+    assert (
+        manual_proposal.proposal.candidate.candidate_digest
+        == original.proposal.candidate.candidate_digest
+    )
+    activate_submitted(instance, owner, manual)
+
+    assert _why(instance, claim_id).reason is None
+    assert _evidence_rationale(instance, claim_id) != retire.GONE
+    assert _evidence_rationale(instance, claim_id) == (manual_proposal.proposal.admission.rationale)
+
+
+def test_a_readmitted_procedure_proposal_keeps_its_items_reasons(tmp_path: Path) -> None:
+    """Provenance follows the exact accepting admission, a readmission, to its source's link."""
+
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
+    from tests.core_support._retirement_support import activate_proposal
+    from tests.test_procedures import test_procedure_settlement_delivery as settlement
+    from tests.test_procedures import test_procedure_source_runs as fixtures
+
+    instance, owner, root, line, _procedure = delivery.proposal_world(tmp_path)
+    state = delivery.run_line(instance, root, line)
+    (egress,) = state.terminal_egress
+    # Accepted state moves under the proposal, so it goes stale and is readmitted.
+    other = settlement._predicate_claim_type("security.advisory.unrelated")
+    fixtures._accept_more(
+        instance,
+        owner,
+        {claim_type_path(other.predicate): render_claim_type(other)},
+        name="unrelated",
+    )
+    readmitted = service_readmit_playbill_proposal(
+        instance, proposal_id=egress.proposal_id, actor_id="owner"
+    )
+    accepted_id = readmitted.proposal.proposal.admission.proposal_id
+    assert accepted_id != egress.proposal_id
+    activate_proposal(instance, owner, accepted_id)
+    claim_id = egress.children[0].path.rsplit("/", 1)[-1].removesuffix(".json")
+
+    why = _why(instance, claim_id)
+
+    assert why.reason is not None
+    assert why.reason.proposal == accepted_id and why.reason.run == state.run_id
+    assert why.reason.reason == delivery.item_template()["rationale"]

@@ -2317,8 +2317,13 @@ longer one is kept to that bound and marked `truncated`): the proposal's own
 with `item_reason_count` and `item_reasons_next_cursor`), and once accepted
 `get CLM-... --detail why` carries the Claim's own `reason` -- with the
 proposal, Procedure, run and terminal that proposed it -- and `--detail
-evidence` its `rationale`. Reading one Claim's reason is one record read
-however many items its proposal carried. The reasons are provenance, not
+evidence` its `rationale`. Both come from the exact admission that was
+accepted -- the one the accepted change-set record binds by actor, source
+compilation and candidate, never withdrawn or rejected; when no single
+admission matches, the revision carries no attributed `reason` or `rationale`.
+A proposal reads its items' reasons only through its own link to the Procedure
+operation that wrote them, never through its (reusable) proposal ref. Reading
+one Claim's reason is one record read however many items its proposal carried. The reasons are provenance, not
 evidence: the Claim's Captures are unchanged.
 
 An item may also be a Subject item

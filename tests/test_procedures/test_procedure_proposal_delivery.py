@@ -1598,9 +1598,10 @@ def test_an_item_rationale_is_kept_with_its_claim_through_review_and_acceptance(
         "propose",
     )
     assert review.item_reason_count == 1 and review.item_reasons_next_cursor is None
-    accept_proposal(
-        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
-    )
+    from tests.core_support._retirement_support import activate_proposal
+
+    # Accepted through the service, so the record binds this exact admission.
+    activate_proposal(instance, owner, egress.proposal_id)
     claim_id = child.path.rsplit("/", 1)[-1].removesuffix(".json")
     evidence = service_playbill_get(
         instance, request=GetRequest(ref=claim_id, detail="evidence"), access=_READER

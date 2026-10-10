@@ -141,8 +141,10 @@ def test_a_subject_item_creates_by_key_and_a_claim_item_names_it_by_key(tmp_path
     assert claimed.path is not None and claimed.path in egress.target_paths
     assert any(path.startswith("claims/") for path in egress.target_paths)
 
-    inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
-    accept_proposal(instance, owner, inspection)
+    from tests.core_support._retirement_support import activate_proposal
+
+    # Accepted through the service, so the record binds this exact admission.
+    activate_proposal(instance, owner, egress.proposal_id)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert parse_subject(tree[created.path], path=created.path).subject_id == "click"
     claim = parse_claim(tree[claimed.path], path=claimed.path)

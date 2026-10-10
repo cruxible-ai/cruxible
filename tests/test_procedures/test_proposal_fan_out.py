@@ -412,9 +412,9 @@ def test_a_400_item_terminal_keeps_every_reason_and_reads_one_in_constant_work(
     assert seen[by_index[399]] == "Reason for item 399."
     assert review.rationale is not None and "400 items;" in review.rationale
 
-    accept_proposal(
-        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
-    )
+    from tests.core_support._retirement_support import activate_proposal
+
+    activate_proposal(instance, owner, egress.proposal_id)
     claim_id = by_index[123].rsplit("/", 1)[-1].removesuffix(".json")
     reads: list[str] = []
     original = ProposalEvidenceStore.read_record_bytes
