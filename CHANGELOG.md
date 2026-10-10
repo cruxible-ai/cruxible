@@ -28,7 +28,13 @@
   existing Subjects stay readable, claimable and retirable. Every new Subject
   carries a verifiable assignment binding that the candidate boundary
   recomputes at admission and settlement, so a raw proposal cannot pick an id
-  (`cruxible.subject.id_not_assigned`). The SDK's pending Subject references
+  (`cruxible.subject.id_not_assigned`): a minted or further-holder Subject must
+  name a durable core record of the operation that created it (a stored
+  authoring intent, or a Procedure operation's creation record), so raw
+  proposals create only keyed first holders. Procedure terminals keep a key
+  reference to their own Subject item until final lowering assigns it, and
+  resolve other key references through the common resolver over the whole
+  terminal. The SDK's pending Subject references
   name the creation member and core resolves them to the path it assigns. One
   resolver serves every route: exact live id, alias, canonical key, exact
   retired id; a new id never takes an existing alias. Keys compare by their

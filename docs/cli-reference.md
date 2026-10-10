@@ -1635,13 +1635,20 @@ new Subject at all -- every route refuses
 Its existing Subjects stay readable, claimable and retirable, and accepted
 history replays as it was accepted.
 
-Every new Subject carries a binding to how core assigned its id, and the
-candidate boundary recomputes it at admission and again at settlement: a keyed
-first holder's id must be the rendering of its key (disambiguated against the
-parent), a minted id or a further holder's id must be the digest of the
-operation and member recorded in its `assignment`. A raw creation whose id does
-not match refuses `cruxible.subject.id_not_assigned`, and a successor may not
-change its `assignment` (`cruxible.subject.assignment_changed`).
+Every new Subject's id is checked against how core assigns it, at admission and
+again at settlement. A keyed first holder's id must be the rendering of its key
+(disambiguated against the parent). A minted Subject, or a further holder of a
+`hint` key, records the operation and member that created it (`assignment`),
+and its id is a digest of the two; that operation must be a durable core record
+-- a stored authoring intent, or the record a Procedure terminal writes when it
+delivers -- whose own content creates exactly that member of that kind. The
+boundary finds the record by the operation id alone. An invented or copied
+binding, or one from a preview never stored, refuses
+`cruxible.subject.id_not_assigned`: a raw proposal creates only keyed first
+holders, and minted and further-holder Subjects are created through authoring
+or a Procedure. Rebasing or readmitting a proposal does not change its
+operation's record, so its bindings stay valid. A successor may not change its
+`assignment` (`cruxible.subject.assignment_changed`).
 
 A new Subject must be of a declared kind on every route -- authoring, writes,
 Procedure items, settle, raw proposals -- or the change refuses
@@ -1688,7 +1695,20 @@ queries, creations): an exact live id, then an alias, then the canonical key
 because an alias is an assertion naming exactly one Subject (a merge leaves
 one behind); several alias holders refuse `alias_ambiguous`, several key
 holders `key_ambiguous`. A creation skips the id steps: its text is a key, so a
-coincidental id never resolves it.
+coincidental id never resolves it. For example, with `dev.decision/original`
+holding the alias `other name` and `dev.decision/other-name` holding the key
+`other name`, a reference to `other name` (a write's `dev.decision/other name`,
+a Procedure Claim item's `{"subject_kind": "dev.decision", "key": {"slug":
+"other name"}}`) names `original`, and so does a creation by that key: it
+reuses `original` and creates nothing.
+
+A Procedure terminal resolves its items the same way, over the whole terminal.
+A Claim item naming a Subject by a key one of the terminal's Subject items
+carries names that item, and resolves to the Subject final shared lowering
+assigns or reuses for it after every key change in the terminal; its receipt
+reports that same Subject. Any other key reference resolves through the order
+above, against the admitted base overlaid with the terminal's own Subject items
+and the key and alias Claims its Claim items add, revise or retire.
 
 A unique key is checked where every change is judged, against the parent it
 lands on with the change's own creations overlaid: a key-Claim revision, or a
