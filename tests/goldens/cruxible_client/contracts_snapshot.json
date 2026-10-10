@@ -965,6 +965,70 @@
             "title": "ProjectionEvidence",
             "type": "object"
           },
+          "ProposalItemReason": {
+            "additionalProperties": false,
+            "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``propose_change_set`` or ``settle_change_set`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the proposal ref\nof the operation and the path of the Claim (or Subject) it lowered into.\nIt is provenance, not evidence: the Claim's Captures are unchanged. An\naccepted Claim keeps the link through the proposal that accepted it.",
+            "properties": {
+              "child_index": {
+                "minimum": 0,
+                "title": "Child Index",
+                "type": "integer"
+              },
+              "item_key": {
+                "title": "Item Key",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 16384,
+                "minLength": 1,
+                "title": "Reason",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-proposal-item-reason-v1",
+                "default": "playbill-proposal-item-reason-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_ref": {
+                "title": "Target Ref",
+                "type": "string"
+              },
+              "terminal": {
+                "title": "Terminal",
+                "type": "string"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "target_ref",
+              "path",
+              "item_key",
+              "child_index",
+              "procedure",
+              "run_id",
+              "terminal",
+              "reason"
+            ],
+            "title": "ProposalItemReason",
+            "type": "object"
+          },
           "ProposalReview": {
             "additionalProperties": false,
             "properties": {
@@ -1012,6 +1076,30 @@
                 "additionalProperties": true,
                 "title": "Governance",
                 "type": "object"
+              },
+              "item_reason_count": {
+                "default": 0,
+                "title": "Item Reason Count",
+                "type": "integer"
+              },
+              "item_reasons": {
+                "items": {
+                  "$ref": "#/$defs/ProposalItemReason"
+                },
+                "title": "Item Reasons",
+                "type": "array"
+              },
+              "item_reasons_next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Item Reasons Next Cursor"
               },
               "members": {
                 "items": {
@@ -18818,6 +18906,192 @@
         "type": "object"
       },
       "required_fields": []
+    },
+    "ExecutedWorkspaceFileSourceRequestV2": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "title": "Coordinate"
+          }
+        },
+        "coordinate_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate_type",
+          "required": true,
+          "schema": {
+            "title": "Coordinate Type",
+            "type": "string"
+          }
+        },
+        "logical_source": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "logical_source",
+          "required": true,
+          "schema": {
+            "title": "Logical Source",
+            "type": "string"
+          }
+        },
+        "relative_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "relative_path",
+          "required": true,
+          "schema": {
+            "title": "Relative Path",
+            "type": "string"
+          }
+        },
+        "replayability": {
+          "default": "exact",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "replayability",
+          "required": false,
+          "schema": {
+            "default": "exact",
+            "enum": [
+              "exact",
+              "attested_only"
+            ],
+            "title": "Replayability",
+            "type": "string"
+          }
+        },
+        "selector": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "selector",
+          "required": true,
+          "schema": {
+            "title": "Selector"
+          }
+        },
+        "selector_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "selector_type",
+          "required": true,
+          "schema": {
+            "title": "Selector Type",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-workspace-file-executed-source-request-v2",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-workspace-file-executed-source-request-v2",
+            "default": "playbill-workspace-file-executed-source-request-v2",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "workspace": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "workspace",
+          "required": true,
+          "schema": {
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "workspace_binding_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "workspace_binding_digest",
+          "required": true,
+          "schema": {
+            "title": "Workspace Binding Digest",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "What the daemon executed for one authored v2 request: the root it resolved.\n\n``workspace`` is the logical name of the root the daemon read under (the\nauthored name, or the one it defaulted to), and ``workspace_binding_digest``\nthat root's binding to this instance. This, not the authored request, is the\nderived Source request a read receipt names, so provenance is unchanged: a\nmoved instance records a different binding.",
+        "properties": {
+          "coordinate": {
+            "title": "Coordinate"
+          },
+          "coordinate_type": {
+            "title": "Coordinate Type",
+            "type": "string"
+          },
+          "logical_source": {
+            "title": "Logical Source",
+            "type": "string"
+          },
+          "relative_path": {
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "replayability": {
+            "default": "exact",
+            "enum": [
+              "exact",
+              "attested_only"
+            ],
+            "title": "Replayability",
+            "type": "string"
+          },
+          "selector": {
+            "title": "Selector"
+          },
+          "selector_type": {
+            "title": "Selector Type",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-workspace-file-executed-source-request-v2",
+            "default": "playbill-workspace-file-executed-source-request-v2",
+            "title": "Tag",
+            "type": "string"
+          },
+          "workspace": {
+            "title": "Workspace",
+            "type": "string"
+          },
+          "workspace_binding_digest": {
+            "title": "Workspace Binding Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "logical_source",
+          "workspace",
+          "workspace_binding_digest",
+          "relative_path",
+          "coordinate_type",
+          "coordinate",
+          "selector_type",
+          "selector"
+        ],
+        "title": "ExecutedWorkspaceFileSourceRequestV2",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "coordinate_type",
+        "logical_source",
+        "relative_path",
+        "selector",
+        "selector_type",
+        "workspace",
+        "workspace_binding_digest"
+      ]
     },
     "FloorConsumerOutcome": {
       "fields": {
@@ -65941,6 +66215,194 @@
         "proposal"
       ]
     },
+    "ProposalItemReason": {
+      "fields": {
+        "child_index": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "child_index",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Child Index",
+            "type": "integer"
+          }
+        },
+        "item_key": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "item_key",
+          "required": true,
+          "schema": {
+            "title": "Item Key",
+            "type": "string"
+          }
+        },
+        "path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "path",
+          "required": true,
+          "schema": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "procedure": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure",
+          "required": true,
+          "schema": {
+            "title": "Procedure",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "run_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": true,
+          "schema": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-proposal-item-reason-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-proposal-item-reason-v1",
+            "default": "playbill-proposal-item-reason-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "target_ref": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target_ref",
+          "required": true,
+          "schema": {
+            "title": "Target Ref",
+            "type": "string"
+          }
+        },
+        "terminal": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "terminal",
+          "required": true,
+          "schema": {
+            "title": "Terminal",
+            "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``propose_change_set`` or ``settle_change_set`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the proposal ref\nof the operation and the path of the Claim (or Subject) it lowered into.\nIt is provenance, not evidence: the Claim's Captures are unchanged. An\naccepted Claim keeps the link through the proposal that accepted it.",
+        "properties": {
+          "child_index": {
+            "minimum": 0,
+            "title": "Child Index",
+            "type": "integer"
+          },
+          "item_key": {
+            "title": "Item Key",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "procedure": {
+            "title": "Procedure",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-proposal-item-reason-v1",
+            "default": "playbill-proposal-item-reason-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "target_ref": {
+            "title": "Target Ref",
+            "type": "string"
+          },
+          "terminal": {
+            "title": "Terminal",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "target_ref",
+          "path",
+          "item_key",
+          "child_index",
+          "procedure",
+          "run_id",
+          "terminal",
+          "reason"
+        ],
+        "title": "ProposalItemReason",
+        "type": "object"
+      },
+      "required_fields": [
+        "child_index",
+        "item_key",
+        "path",
+        "procedure",
+        "reason",
+        "run_id",
+        "target_ref",
+        "terminal"
+      ]
+    },
     "ProposalList": {
       "fields": {
         "coordinate": {
@@ -67254,6 +67716,52 @@
             "type": "object"
           }
         },
+        "item_reason_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "item_reason_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Item Reason Count",
+            "type": "integer"
+          }
+        },
+        "item_reasons": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "item_reasons",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ProposalItemReason"
+            },
+            "title": "Item Reasons",
+            "type": "array"
+          }
+        },
+        "item_reasons_next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "item_reasons_next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Item Reasons Next Cursor"
+          }
+        },
         "members": {
           "has_default": false,
           "has_default_factory": false,
@@ -67697,6 +68205,70 @@
             "title": "ProjectionEvidence",
             "type": "object"
           },
+          "ProposalItemReason": {
+            "additionalProperties": false,
+            "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``propose_change_set`` or ``settle_change_set`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the proposal ref\nof the operation and the path of the Claim (or Subject) it lowered into.\nIt is provenance, not evidence: the Claim's Captures are unchanged. An\naccepted Claim keeps the link through the proposal that accepted it.",
+            "properties": {
+              "child_index": {
+                "minimum": 0,
+                "title": "Child Index",
+                "type": "integer"
+              },
+              "item_key": {
+                "title": "Item Key",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 16384,
+                "minLength": 1,
+                "title": "Reason",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-proposal-item-reason-v1",
+                "default": "playbill-proposal-item-reason-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_ref": {
+                "title": "Target Ref",
+                "type": "string"
+              },
+              "terminal": {
+                "title": "Terminal",
+                "type": "string"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "target_ref",
+              "path",
+              "item_key",
+              "child_index",
+              "procedure",
+              "run_id",
+              "terminal",
+              "reason"
+            ],
+            "title": "ProposalItemReason",
+            "type": "object"
+          },
           "ReviewedMember": {
             "additionalProperties": false,
             "properties": {
@@ -67918,6 +68490,30 @@
             "additionalProperties": true,
             "title": "Governance",
             "type": "object"
+          },
+          "item_reason_count": {
+            "default": 0,
+            "title": "Item Reason Count",
+            "type": "integer"
+          },
+          "item_reasons": {
+            "items": {
+              "$ref": "#/$defs/ProposalItemReason"
+            },
+            "title": "Item Reasons",
+            "type": "array"
+          },
+          "item_reasons_next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Item Reasons Next Cursor"
           },
           "members": {
             "items": {
@@ -96432,6 +97028,192 @@
         "selector",
         "selector_type",
         "workspace_binding_digest"
+      ]
+    },
+    "WorkspaceFileSourceRequestV2": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "title": "Coordinate"
+          }
+        },
+        "coordinate_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate_type",
+          "required": true,
+          "schema": {
+            "title": "Coordinate Type",
+            "type": "string"
+          }
+        },
+        "logical_source": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "logical_source",
+          "required": true,
+          "schema": {
+            "title": "Logical Source",
+            "type": "string"
+          }
+        },
+        "relative_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "relative_path",
+          "required": true,
+          "schema": {
+            "title": "Relative Path",
+            "type": "string"
+          }
+        },
+        "replayability": {
+          "default": "exact",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "replayability",
+          "required": false,
+          "schema": {
+            "default": "exact",
+            "enum": [
+              "exact",
+              "attested_only"
+            ],
+            "title": "Replayability",
+            "type": "string"
+          }
+        },
+        "selector": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "selector",
+          "required": true,
+          "schema": {
+            "title": "Selector"
+          }
+        },
+        "selector_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "selector_type",
+          "required": true,
+          "schema": {
+            "title": "Selector Type",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-workspace-file-source-request-v2",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-workspace-file-source-request-v2",
+            "default": "playbill-workspace-file-source-request-v2",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "workspace": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "workspace",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The authored ``workspace.file`` Source request: intent only, no transport.\n\n``workspace`` names an authorized root logically -- the last component of\nits path -- or is omitted: the instance's attached workspace, else its only\nauthorized root. The daemon resolves the root and records its binding\ndigest on the executed request, the read receipt and the Capture; an author\nnever supplies it.",
+        "properties": {
+          "coordinate": {
+            "title": "Coordinate"
+          },
+          "coordinate_type": {
+            "title": "Coordinate Type",
+            "type": "string"
+          },
+          "logical_source": {
+            "title": "Logical Source",
+            "type": "string"
+          },
+          "relative_path": {
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "replayability": {
+            "default": "exact",
+            "enum": [
+              "exact",
+              "attested_only"
+            ],
+            "title": "Replayability",
+            "type": "string"
+          },
+          "selector": {
+            "title": "Selector"
+          },
+          "selector_type": {
+            "title": "Selector Type",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-workspace-file-source-request-v2",
+            "default": "playbill-workspace-file-source-request-v2",
+            "title": "Tag",
+            "type": "string"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace"
+          }
+        },
+        "required": [
+          "logical_source",
+          "relative_path",
+          "coordinate_type",
+          "coordinate",
+          "selector_type",
+          "selector"
+        ],
+        "title": "WorkspaceFileSourceRequestV2",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "coordinate_type",
+        "logical_source",
+        "relative_path",
+        "selector",
+        "selector_type"
       ]
     },
     "WorkspaceFloorStatus": {

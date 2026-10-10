@@ -226,6 +226,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "ProposalListEntry",
         "ProposalReadmitResult",
         "ProposalReview",
+        "ProposalItemReason",
         "ProposalSelectorResult",
         "ProposalWithdrawResult",
         "ProposalRejectResult",
@@ -307,6 +308,8 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "SourceReadReceipt",
         "TerminalSettlementEvidence",
         "WorkspaceFileSourceRequest",
+        "WorkspaceFileSourceRequestV2",
+        "ExecutedWorkspaceFileSourceRequestV2",
     }
     assert set(current["literal_aliases"]) == {
         "ProcedureMeasurementRefusalCode",
