@@ -527,6 +527,52 @@ class IdentityView:
             return SubjectRefResolution(kind=kind, subject_id=text, path=exact, via="identity")
         return SubjectRefResolution(kind=kind, subject_id=text, path=None, via=None)
 
+    def resolve_key_reference(
+        self, kind: str, key: KeyTuple, *, single_text: str | None
+    ) -> SubjectRefResolution:
+        """A reference to an existing Subject by its key, through the one resolver order.
+
+        A one-key reference is ``kind/<text>`` (``resolve``): exact live id,
+        alias, the key, exact retired id. A composite key has no text: only its
+        holders name it.
+        """
+
+        from cruxible_core.indexes.subject_aliases import SubjectRefResolution
+
+        if single_text is not None:
+            exact = f"{_SUBJECTS}{kind}/{single_text}.json"
+            if self.live(exact):
+                return SubjectRefResolution(
+                    kind=kind, subject_id=single_text, path=exact, via="identity"
+                )
+            aliased = self.alias_targets(kind, single_text)
+            if aliased:
+                return SubjectRefResolution(
+                    kind=kind,
+                    subject_id=single_text,
+                    path=aliased[0] if len(aliased) == 1 else None,
+                    via="alias",
+                    candidates=() if len(aliased) == 1 else tuple(_ref(item) for item in aliased),
+                )
+        text = single_text or ", ".join(f"{predicate}={value!r}" for predicate, value in key)
+        held = self.holders(kind, key)
+        if held:
+            return SubjectRefResolution(
+                kind=kind,
+                subject_id=text,
+                path=held[0] if len(held) == 1 else None,
+                via="key",
+                candidates=() if len(held) == 1 else tuple(_ref(item) for item in held),
+            )
+        if single_text is not None and self.exists(f"{_SUBJECTS}{kind}/{single_text}.json"):
+            return SubjectRefResolution(
+                kind=kind,
+                subject_id=single_text,
+                path=f"{_SUBJECTS}{kind}/{single_text}.json",
+                via="identity",
+            )
+        return SubjectRefResolution(kind=kind, subject_id=text, path=None, via=None)
+
     def resolve_creation(
         self, kind: str, key: KeyTuple, *, single_text: str | None, create_new: bool
     ) -> CreationResolution:

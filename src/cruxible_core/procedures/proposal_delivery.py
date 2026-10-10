@@ -107,6 +107,7 @@ from cruxible_core.authoring.lowering import (
     LoweredAuthoring,
     canonical_authored_claims,
     claim_aliases_resolved,
+    members_identity_overlay,
     subject_creation_paths,
 )
 from cruxible_core.evidence.claim_reobservations import (
@@ -114,12 +115,13 @@ from cruxible_core.evidence.claim_reobservations import (
     ClaimReobservationStore,
 )
 from cruxible_core.indexes.subject_identity import (
+    IdentityView,
     KeyTuple,
     SubjectKeyInvalid,
     canonical_key,
     key_ambiguous_message,
-    key_order,
-    subjects_with_key,
+    key_encoding,
+    tree_key_reader,
 )
 from cruxible_core.procedures.egress import (
     PreparedTerminalEgressV1,
@@ -480,10 +482,19 @@ def _key_refusal(message: str, *, code: str, **details: object) -> ProposalDeliv
 class _SubjectKeys:
     """Resolve the Subjects a terminal's Claim items name by key (v3 items).
 
-    A key one of the terminal's own Subject items carries names the Subject that
-    item lands on (created, or reused); any other key names the one live Subject
-    holding it at the admitted base. None refuses (create it with a Subject
-    item), several refuse as ambiguous -- as every create-by-key route does.
+    A key one of the terminal's own Subject items carries names that item: the
+    reference stays a creation-member reference (``subject-creation-v1``) that
+    shared lowering resolves to the path it finally assigns or reuses, after
+    every key change in the terminal (review F-002). Any other key resolves
+    through the one resolver (``IdentityView.resolve_key_reference``: exact
+    live id, alias, key, exact retired id) over the admitted base overlaid with
+    the terminal's own Subject and key-affecting Claim changes (``bind``). None
+    refuses (create it with a Subject item), several refuse as ambiguous -- as
+    every create-by-key route does.
+
+    Before ``bind`` the overlay is not known yet: such a reference reads as a
+    placeholder creation address no lowering ever sees, so the terminal's
+    members can be built once to compute the overlay from.
     """
 
     _SEVERAL = ""
@@ -498,14 +509,12 @@ class _SubjectKeys:
         self.instance = instance
         self.base = base
         self.base_tree = base_tree
-        self.created: dict[tuple[str, bytes], str] = {}
+        self.created: dict[tuple[str, str], str] = {}
+        self.view: IdentityView | None = None
+        self.deferred = False
 
-    def add_created(
-        self,
-        members: tuple[SubjectCreationAuthoringPayload, ...],
-        paths: Mapping[str, tuple[str, bool]],
-    ) -> None:
-        """Index where each Subject item of the terminal lands, by its canonical key."""
+    def add_created(self, members: tuple[SubjectCreationAuthoringPayload, ...]) -> None:
+        """Index each Subject item of the terminal by its kind and canonical key encoding."""
 
         for member in members:
             try:
@@ -516,10 +525,15 @@ class _SubjectKeys:
                 continue  # lowering refuses the item itself
             if key is None:
                 continue
-            slot = (member.subject_kind, key_order(key))
-            path = paths[member.member_identity][0]
+            slot = (member.subject_kind, key_encoding(key))
             held = self.created.get(slot)
-            self.created[slot] = path if held in {None, path} else self._SEVERAL
+            identity = member.member_identity
+            self.created[slot] = identity if held in {None, identity} else self._SEVERAL
+
+    def bind(self, view: IdentityView | None) -> None:
+        """Resolve every later reference against ``view`` (the overlaid base)."""
+
+        self.view = view
 
     def claim_type(self, predicate: str) -> ClaimType | None:
         path = claim_type_path(predicate)
@@ -545,27 +559,43 @@ class _SubjectKeys:
                 f"{kind} has no declared keys, so no Subject of it is named by key.",
                 code="cruxible.subject.key_invalid",
             )
-        path = self.created.get((kind, key_order(key)))
-        if path == self._SEVERAL:
+        encoded = key_encoding(key)
+        member = self.created.get((kind, encoded))
+        if member == self._SEVERAL:
             raise _key_refusal(
                 f"Several Subject items of this terminal hold this {kind} key; name one by id.",
                 code="cruxible.subject.key_ambiguous",
             )
-        if path is not None:
-            return SemanticAddress.whole_artifact(path)
-        with self.instance.bind_accepted_projection(self.base) as projection:
-            holders = tuple(subjects_with_key(projection.typed.connection, kind, key))
-        if not holders:
+        if member is not None:
+            return SemanticAddress.subject_creation(kind, member.rpartition("@")[2])
+        if self.view is None:
+            self.deferred = True
+            placeholder = hashlib.sha256(f"{kind}\0{encoded}".encode()).hexdigest()[:32]
+            return SemanticAddress.subject_creation(kind, placeholder)
+        values = tuple(reference.key.values())
+        single = values[0] if len(key) == 1 and len(values) == 1 else None
+        resolution = self.view.resolve_key_reference(
+            kind, key, single_text=single if isinstance(single, str) else None
+        )
+        if resolution.ambiguous:
+            holders = [f"subjects/{item}.json" for item in resolution.candidates]
+            raise _key_refusal(
+                key_ambiguous_message(kind, holders)
+                if resolution.via == "key"
+                else f"An alias of {kind} names {len(holders)} Subjects: "
+                + ", ".join(resolution.candidates)
+                + "; name one by id.",
+                code="cruxible.subject.key_ambiguous"
+                if resolution.via == "key"
+                else "cruxible.authoring.alias_ambiguous",
+            )
+        if resolution.path is None:
             raise _key_refusal(
                 f"No live {kind} Subject holds this key; add a Subject item creating it "
                 "to the same terminal.",
                 code="cruxible.subject.key_missing",
             )
-        if len(holders) > 1:
-            raise _key_refusal(
-                key_ambiguous_message(kind, holders), code="cruxible.subject.key_ambiguous"
-            )
-        return SemanticAddress.whole_artifact(holders[0])
+        return SemanticAddress.whole_artifact(resolution.path)
 
     def statement(self, item: ProcedureClaimProposalItemV1) -> AuthoringClaimStatement:
         if not isinstance(item, ProcedureKeyedClaimProposalItem):
@@ -588,6 +618,20 @@ class _SubjectKeys:
             effective_from=statement.effective_from,
             effective_until=statement.effective_until,
         )
+
+
+def _lowered_subject_paths(
+    lowered: LoweredAuthoring, subject_items: Mapping[str, str]
+) -> dict[str, tuple[str, bool]]:
+    """Where final shared lowering put each Subject item: (path, whether it reused one)."""
+
+    found: dict[str, tuple[str, bool]] = {}
+    members = lowered.resolved_authoring.get("members")
+    for entry in members if isinstance(members, list) else ():
+        identity = str(entry.get("identity"))
+        if identity in subject_items:
+            found[identity] = (str(entry.get("path")), entry.get("resolved") is True)
+    return found
 
 
 def _restated_lineage(tree: SnapshotTree, member: ClaimAuthoringPayload) -> str | None:
@@ -1068,20 +1112,35 @@ class ProposalTerminalEgressSink:
                 ) from exc
 
         subject_members, subject_items = _subject_members(request, items=items, evidence=evidence)
-        subject_paths = self._subject_paths(
-            request, base=base, base_tree=base_tree, members=subject_members
-        )
         keys = _SubjectKeys(self.instance, base=base, base_tree=base_tree)
-        keys.add_created(subject_members, subject_paths)
-        members, claim_ids, identity_to_item = _claim_members(
-            request,
-            items=items,
-            evidence=evidence,
-            read=base_tree.get,
-            resolve=resolve,
-            restated=lambda member: _restated_lineage(base_tree, member),
-            statement_of=keys.statement,
-        )
+        keys.add_created(subject_members)
+
+        def claim_members() -> tuple[
+            tuple[ClaimAuthoringPayload, ...], dict[str, str], dict[str, str]
+        ]:
+            return _claim_members(
+                request,
+                items=items,
+                evidence=evidence,
+                read=base_tree.get,
+                resolve=resolve,
+                restated=lambda member: _restated_lineage(base_tree, member),
+                statement_of=keys.statement,
+            )
+
+        members, claim_ids, identity_to_item = claim_members()
+        if keys.deferred:
+            # A key no Subject item of this terminal carries names an existing
+            # Subject: resolve it over the base as this terminal leaves it -- its
+            # Subject items and the key and alias Claims its Claim items add,
+            # revise or retire (review F-002/F-003) -- then build the members again.
+            with self.instance.bind_accepted_projection(base) as projection:
+                connection = projection.typed.connection
+                overlay = members_identity_overlay(
+                    connection, members=(*members, *subject_members), base_tree=base_tree
+                )
+                keys.bind(IdentityView(connection, overlay, key_reader=tree_key_reader(base_tree)))
+                members, claim_ids, identity_to_item = claim_members()
         ordered = _with_many_valued_dispositions(
             tuple(
                 sorted(
@@ -1093,17 +1152,23 @@ class ProposalTerminalEgressSink:
             },
             base_tree=self.instance.immutable_tree_at(request.accepted_coordinate.git_oid),
         )
-        labels = dict(claim_ids)
-        for identity, item_key in subject_items.items():
-            path = subject_paths[identity][0]
-            labels[item_key] = path.removeprefix("subjects/").removesuffix(".json")
-        rationale = proposal_rationale(request, items=items, claim_ids=labels)
         all_members: tuple[AuthoringChangeSetMember, ...] = tuple(
             sorted(
                 (*ordered, *subject_members),
                 key=lambda member: authoring_member_identity(member).encode("utf-8"),
             )
         )
+        # The rationale names each Subject item by the id shared lowering assigns
+        # it over the whole terminal (every member, so every key change counts);
+        # the receipt below reads the same assignment from the lowered result.
+        subject_paths = self._subject_paths(
+            request, base=base, base_tree=base_tree, members=all_members
+        )
+        labels = dict(claim_ids)
+        for identity, item_key in subject_items.items():
+            path = subject_paths[identity][0]
+            labels[item_key] = path.removeprefix("subjects/").removesuffix(".json")
+        rationale = proposal_rationale(request, items=items, claim_ids=labels)
         payload = ChangeSetAuthoringPayload(members=all_members, rationale=rationale)
         claim_identities = tuple(
             sorted(
@@ -1157,8 +1222,16 @@ class ProposalTerminalEgressSink:
             )
         )
         child_index = {item.item_key: item.child_index for item in request.items}
+        lowered_subjects = _lowered_subject_paths(lowered, subject_items)
+        if lowered_subjects != {identity: subject_paths[identity] for identity in subject_items}:
+            raise ProposalDeliveryRefused(
+                "proposal_lowering_refused",
+                "Shared lowering assigned the terminal's Subject items differently than "
+                "the assignment the rationale names.",
+                details={"lowered": {key: list(value) for key, value in lowered_subjects.items()}},
+            )
         for identity, item_key in subject_items.items():
-            path, reused = subject_paths[identity]
+            path, reused = lowered_subjects[identity]
             item_paths[item_key] = path
             if reused:
                 unchanged[item_key] = TerminalEgressChildReceiptV4(
@@ -1246,11 +1319,11 @@ class ProposalTerminalEgressSink:
         *,
         base: AcceptedProjectionCoordinate,
         base_tree: SnapshotTree,
-        members: tuple[SubjectCreationAuthoringPayload, ...],
+        members: tuple[AuthoringChangeSetMember, ...],
     ) -> dict[str, tuple[str, bool]]:
-        """Where each Subject item lands, as shared lowering will name it."""
+        """Where each Subject item lands, as shared lowering names it over all ``members``."""
 
-        if not members:
+        if not any(isinstance(member, SubjectCreationAuthoringPayload) for member in members):
             return {}
         try:
             return subject_creation_paths(

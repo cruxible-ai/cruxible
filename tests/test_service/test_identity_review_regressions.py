@@ -765,3 +765,101 @@ def test_a_raw_proposal_still_creates_a_keyed_first_holder(instance: PlaybillIns
     shutil.rmtree(exhaust / "authoring-intents" / intent.intent_id)
     raw = _submit_raw(instance, changed, "raw-first-holder")
     assert raw.candidate is not None, raw.evaluation.diagnostics
+
+
+# F-003 (delta): Procedure key references go through the common resolver.
+
+
+def _procedure_address(
+    instance: PlaybillInstance, key: Any, *, created: tuple[Any, ...] = ()
+) -> Any:
+    from cruxible_client.contracts.procedures.proposal_items import SubjectKeyReference
+    from cruxible_core.indexes.subject_identity import IdentityView, tree_key_reader
+    from cruxible_core.procedures.proposal_delivery import _SubjectKeys
+
+    base = instance.accepted_coordinate()
+    base_tree = instance.immutable_tree_at(base.git_oid)
+    keys = _SubjectKeys(instance, base=base, base_tree=base_tree)
+    keys.add_created(created)
+    with instance.bind_accepted_projection(base) as projection:
+        keys.bind(IdentityView(projection.typed.connection, key_reader=tree_key_reader(base_tree)))
+        return keys.address(SubjectKeyReference(subject_kind=DECISION, key=key))
+
+
+def test_a_procedure_key_reference_reads_an_alias_before_a_key(
+    instance: PlaybillInstance,
+) -> None:
+    """Review probe ``alias_route.py``: alias ``other name`` and key ``other name`` differ."""
+
+    from cruxible_core.indexes.subject_identity import IdentityView
+    from tests.test_service.test_subject_identity import _alias_member, _create
+
+    _create(instance, DECISION, "original")
+    _create(instance, DECISION, "other name")
+    accept(instance, change_set(_alias_member(DECISION, "original", "other name")))
+    address = _procedure_address(instance, {"slug": "other name"})
+    assert address.artifact_path == subject_path(DECISION, "original")
+    # The creation resolver reads the same text the same way.
+    base = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(base) as projection:
+        creation = IdentityView(projection.typed.connection).resolve_creation(
+            DECISION,
+            _decision_key(instance, "other name"),
+            single_text="other name",
+            create_new=False,
+        )
+    assert creation.path == address.artifact_path
+
+
+def _decision_key(instance: PlaybillInstance, value: str) -> Any:
+    from cruxible_client.contracts.subject_kinds import live_subject_kind
+    from cruxible_core.indexes.subject_identity import canonical_key
+
+    base_tree = tree(instance)
+    declared = live_subject_kind(base_tree, DECISION)
+    assert declared is not None
+
+    def claim_type(predicate: str) -> Any:
+        from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
+
+        path = claim_type_path(predicate)
+        return parse_claim_type(base_tree[path], path=path)
+
+    return canonical_key(declared, {"slug": value}, claim_type=claim_type)
+
+
+def test_a_procedure_key_reference_by_an_alias_alone_or_two_aliases(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_core.procedures.proposal_delivery import ProposalDeliveryRefused
+    from tests.test_service.test_subject_identity import _alias_member, _create
+
+    _create(instance, DECISION, "first")
+    _create(instance, DECISION, "second")
+    accept(instance, change_set(_alias_member(DECISION, "first", "nickname")))
+    # Only an alias names it: the reference resolves (it no longer refuses key_missing).
+    assert _procedure_address(instance, {"slug": "nickname"}).artifact_path == subject_path(
+        DECISION, "first"
+    )
+    accept(instance, change_set(_alias_member(DECISION, "second", "nickname")))
+    with pytest.raises(ProposalDeliveryRefused) as refused:
+        _procedure_address(instance, {"slug": "nickname"})
+    assert refused.value.details["code"] == "cruxible.authoring.alias_ambiguous"
+
+
+def test_a_sibling_subject_item_keeps_the_reference_a_creation_member(
+    instance: PlaybillInstance,
+) -> None:
+    """With a Subject item carrying the key, the reference names that item, unresolved."""
+
+    from tests.test_service.test_subject_identity import _alias_member, _create
+
+    _create(instance, DECISION, "original")
+    accept(instance, change_set(_alias_member(DECISION, "original", "other name")))
+    item = SubjectCreationAuthoringPayload(
+        subject_kind=DECISION,
+        key=(SubjectKeyPart(predicate=f"{DECISION}.slug", value="other name"),),
+    )
+    address = _procedure_address(instance, {"slug": "other name"}, created=(item,))
+    assert address.selector.scheme == "subject-creation-v1"
+    assert item.member_identity.endswith(address.selector.value)

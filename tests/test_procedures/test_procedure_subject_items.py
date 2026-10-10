@@ -202,3 +202,155 @@ def test_create_new_on_a_unique_kind_refuses(tmp_path: Path) -> None:
 
     assert refusal.code == "proposal_lowering_refused", refusal
     assert refusal.details["code"] == "cruxible.subject.create_new_refused"
+
+
+# -- E-b delta review F-002: one terminal's key changes are one overlay -------------------
+
+
+def _second_terminal(instance, owner, templates: tuple[object, ...]):  # type: ignore[no-untyped-def]
+    """A second accepted Procedure, Line and mandate whose terminal carries ``templates``."""
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.procedure_mandates import (
+        parse_procedure_mandate,
+        procedure_mandate_digest,
+    )
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = procedure_path(fixtures.PROCEDURE_NAME)
+    line = delivery._revising_line(
+        instance, owner, parse_procedure(tree[path], path=path), templates
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    mandate_path = procedure_mandate_path("advisory-revise-mandate")
+    mandate = parse_procedure_mandate(tree[mandate_path], path=mandate_path)
+    reaching = mandate.model_copy(
+        update={
+            "namespace": (
+                "capture-contracts/playbill.coordinator-self-source-v1.json",
+                "claims",
+                f"subjects/{KIND}",
+            ),
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=procedure_mandate_digest(mandate).tagged
+            ),
+        }
+    )
+    fixtures._accept_more(
+        instance, owner, {mandate_path: render_procedure_mandate(reaching)}, name="reach-packages"
+    )
+    return line
+
+
+def _key_move(instance, subject: str, value: str) -> dict[str, object]:  # type: ignore[no-untyped-def]
+    """A v2 Claim item revising ``subject``'s slug key Claim to ``value``."""
+
+    from cruxible_client.contracts.semantic import SemanticAddress
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    (key,) = (
+        parse_claim(tree[path], path=path)
+        for path in tree
+        if path.startswith("claims/")
+        and parse_claim(tree[path], path=path).statement.predicate == SLUG
+        and parse_claim(tree[path], path=path).statement.subject.artifact_path == subject
+    )
+    return {
+        "tag": "playbill-procedure-claim-proposal-item-v2",
+        "statement": {
+            "tag": "playbill-authoring-claim-statement-v1",
+            "subject": SemanticAddress.whole_artifact(subject).model_dump(mode="json"),
+            "predicate": SLUG,
+            "object": {"kind": "literal", "value": value},
+            "role": "normative",
+        },
+        "rationale": "The old Subject now has another key.",
+        "revises": key.identity.name,
+        "source": _self_source(value),
+    }
+
+
+def test_a_terminal_moving_a_key_and_recreating_it_names_the_new_subject(
+    tmp_path: Path,
+) -> None:
+    """Review probe ``procedure_overlay2``: key revision + recreation + keyed Claim.
+
+    The terminal moves ``click``'s key to ``renamed``, creates a Subject keyed
+    ``click``, and states a Claim about the Subject keyed ``click``. Over the
+    whole terminal that key is free, so core creates a new Subject; the Claim
+    and the Subject item's receipt both name it, not the Subject that held the
+    key at the admitted base.
+    """
+
+    instance, owner, root, line = subject_world(tmp_path, (subject_item(),))
+    first = _delivered(instance, delivery.run_line(instance, root, line))
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=first.proposal_id)
+    )
+    old = f"subjects/{KIND}/click.json"
+    revising = _second_terminal(
+        instance, owner, (_key_move(instance, old, "renamed"), subject_item(), keyed_claim_item())
+    )
+
+    egress = _delivered(instance, delivery.run_line(instance, root, revising))
+
+    moved, created, claimed = egress.children
+    assert created.path != old and created.path.startswith(f"subjects/{KIND}/click-")
+    assert not created.unchanged and created.path in egress.target_paths
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    live = [
+        parse_claim(tree[path], path=path)
+        for path in tree
+        if path.startswith("claims/")
+        and parse_claim(tree[path], path=path).lifecycle.state == "live"
+    ]
+    severity = [claim for claim in live if claim.statement.predicate == SEVERITY]
+    assert [claim.statement.subject.artifact_path for claim in severity] == [created.path]
+    keys = {
+        claim.statement.subject.artifact_path: claim.statement.object.model_dump(mode="json")[
+            "value"
+        ]
+        for claim in live
+        if claim.statement.predicate == SLUG
+    }
+    assert keys == {old: "renamed", created.path: "click"}
+    assert claimed.path is not None and moved.path is not None
+
+
+def test_a_keyed_reference_after_a_sibling_moves_the_key_names_the_new_holder(
+    tmp_path: Path,
+) -> None:
+    """A key reference no Subject item carries resolves over the terminal's own key changes."""
+
+    instance, owner, root, line = subject_world(tmp_path, (subject_item(), subject_item("Flask")))
+    first = _delivered(instance, delivery.run_line(instance, root, line))
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=first.proposal_id)
+    )
+    flask = f"subjects/{KIND}/flask.json"
+    # The terminal gives flask the key ``requests``, which no Subject holds at the
+    # base (no Subject's id is ``requests`` either): read over the base alone the
+    # reference would refuse ``key_missing``; over the terminal it names flask.
+    revising = _second_terminal(
+        instance,
+        owner,
+        (_key_move(instance, flask, "requests"), keyed_claim_item("requests")),
+    )
+
+    egress = _delivered(instance, delivery.run_line(instance, root, revising))
+
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    severity = [
+        parse_claim(tree[path], path=path)
+        for path in tree
+        if path.startswith("claims/")
+        and parse_claim(tree[path], path=path).statement.predicate == SEVERITY
+    ]
+    assert [claim.statement.subject.artifact_path for claim in severity] == [flask]

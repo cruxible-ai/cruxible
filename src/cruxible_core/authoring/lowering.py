@@ -3414,7 +3414,7 @@ def _claim_type_in_change(
     return None if content is None else parse_claim_type(content, path=claim_type_path(predicate))
 
 
-def _members_overlay(
+def members_identity_overlay(
     connection: sqlite3.Connection,
     *,
     members: tuple[AuthoringChangeSetMember, ...],
@@ -3544,7 +3544,7 @@ def _assign_creations(
     """Name every Subject the change creates, as core does (identity D1).
 
     A keyed creation resolves through the shared resolver (``IdentityView``)
-    over the parent overlaid with the change itself (``_members_overlay``): a
+    over the parent overlaid with the change itself (``members_identity_overlay``): a
     one-key creation's text names a Subject an alias of the kind names; else
     its canonical key's live holders -- none, create; one, reuse it and create
     nothing; several, refuse ``key_ambiguous``. Only ``create_new`` on a
@@ -3643,7 +3643,7 @@ def _assign_creations(
     with instance.bind_accepted_projection(base) as projection:
         connection = projection.typed.connection
         view = IdentityView(
-            connection, _members_overlay(connection, members=members, base_tree=base_tree)
+            connection, members_identity_overlay(connection, members=members, base_tree=base_tree)
         )
         for _encoding, index, member, declared, key in sorted(
             keyed, key=lambda item: (item[3].subject_kind, key_order(item[4]), item[1])
