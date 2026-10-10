@@ -73,6 +73,7 @@ from cruxible_core.indexes.projection import (
     AcceptedProjectionCoordinate,
     CandidateGenerationProjectionCoordinate,
 )
+from cruxible_core.indexes.subject_identity import SubjectAssignmentAuthority
 from cruxible_core.ledger.bootstrap import generation_root
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.proposals.proposal_message import generation_commit_message
@@ -757,6 +758,7 @@ def prepare_generation(
     principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
     | None = None,
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
+    subject_assignment_authority: SubjectAssignmentAuthority | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
@@ -793,6 +795,7 @@ def prepare_generation(
         principal_registry_provider=principal_registry_provider,
         delegated_mandate_digest=mandate_digest,
         historical_artifact_provider=historical_artifact_provider,
+        subject_assignment_authority=subject_assignment_authority,
         historical_law_coordinates={
             member.path: (
                 member.law_identifier,

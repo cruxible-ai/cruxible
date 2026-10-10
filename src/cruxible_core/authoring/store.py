@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import threading
@@ -60,6 +61,7 @@ _STALE_DRAFT_SECONDS = 24 * 60 * 60
 # read still answers; the newest few are kept, on disk only.
 _FINISHED_RECEIPTS_RETAINED = 16
 _FINISHED_RECEIPTS = ".finished"
+_INTENT_ID = re.compile(r"AIT-[A-Za-z0-9]{1,128}")
 
 
 def authoring_intent_retention() -> Literal["off", "durable"]:
@@ -620,6 +622,24 @@ class AuthoringIntentStore:
             if intent.actor_id != actor_id:
                 raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
             return intent.model_copy(deep=True)
+
+    def intent_record(self, intent_id: str) -> AuthoringIntentV1 | None:
+        """The stored intent with exactly this id, or None: one directory, any actor.
+
+        Read without the store lock (event files are written whole, then never
+        changed): the candidate boundary calls this while an intent's own submit
+        may hold it. A stream or receipt that does not validate is absent.
+        """
+
+        if not _INTENT_ID.fullmatch(intent_id):
+            return None
+        directory = self.root / intent_id
+        try:
+            if directory.is_dir() and not directory.is_symlink():
+                return self._validated_events(directory)[-1].intent.model_copy(deep=True)
+            return self._finished_receipt(intent_id)
+        except (AuthoringIntentStoreError, OSError, IndexError):
+            return None
 
     @property
     def finishes_completed(self) -> bool:

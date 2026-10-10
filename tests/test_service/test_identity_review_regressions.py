@@ -71,15 +71,28 @@ def _submit_raw(instance: PlaybillInstance, updates: dict[str, bytes], name: str
 
 
 def _preview(instance: PlaybillInstance, *members: Any) -> Any:
+    return _preview_intent(instance, *members)[1]
+
+
+def _preview_intent(instance: PlaybillInstance, *members: Any) -> tuple[Any, Any]:
     payload = ChangeSetAuthoringPayload(
         members=tuple(
             sorted(members, key=lambda item: authoring_member_identity(item).encode("utf-8"))
         )
     )
-    _intent, computed = AuthoringIntentCoordinator.for_instance(instance).preview(
+    return AuthoringIntentCoordinator.for_instance(instance).preview(
         actor=OWNER, payload=payload, canonical_timestamp="2026-10-09T12:00:00.000000Z"
     )
-    return computed
+
+
+def _own(intent: Any) -> Any:
+    """The assignment authority of one intent core lowered (its own creations)."""
+
+    from cruxible_core.authoring.assignment_records import intent_creates
+
+    return lambda operation, member, kind: (
+        operation == intent.intent_id and intent_creates(intent, member, kind)
+    )
 
 
 def _subjects(computed: Any) -> list[str]:
@@ -168,7 +181,7 @@ def test_a_further_hint_holder_with_an_unbound_suffix_refuses(instance: Playbill
     accept(
         instance, lower_authoring_input(SubjectInput(kind="subject", subject_kind=NOTE, key="twin"))
     )
-    computed = _preview(
+    intent, computed = _preview_intent(
         instance,
         SubjectCreationAuthoringPayload(subject_kind=NOTE, key_value="Twin", create_new=True),
     )
@@ -178,9 +191,17 @@ def test_a_further_hint_holder_with_an_unbound_suffix_refuses(instance: Playbill
     assert held.assignment is not None and held.assignment.rule == "further_holder"
     parent = tree(instance)
     honest = candidate_identity_issues(
-        current_tree=parent, candidate_tree={**parent, **changed}, scope=tuple(changed)
+        current_tree=parent,
+        candidate_tree={**parent, **changed},
+        scope=tuple(changed),
+        assignment_authority=_own(intent),
     )
     assert honest == ()
+    # The binding recorded without its core record (no authority) refuses too.
+    unrecorded = candidate_identity_issues(
+        current_tree=parent, candidate_tree={**parent, **changed}, scope=tuple(changed)
+    )
+    assert [item.code for item in unrecorded] == ["cruxible.subject.id_not_assigned"]
     tampered = held.model_copy(
         update={
             "assignment": SubjectAssignment(rule="further_holder", operation="AIT-x", member="m")
@@ -190,6 +211,7 @@ def test_a_further_hint_holder_with_an_unbound_suffix_refuses(instance: Playbill
         current_tree=parent,
         candidate_tree={**parent, **changed, path: render_subject(tampered)},
         scope=tuple(changed),
+        assignment_authority=_own(intent),
     )
     assert [item.code for item in issues] == ["cruxible.subject.id_not_assigned"]
 
@@ -561,3 +583,185 @@ def test_a_composite_key_partly_revised_in_the_change_is_free(
     )
     subjects = _subjects(_preview(instance, revised, again))
     assert len(subjects) == 1 and subjects[0].startswith(f"subjects/{PAIR}/a--b-")
+
+
+# == E-b delta review ==================================================================
+#
+# F-001 (delta): a recorded assignment names an authoritative core record.
+
+
+def _forged(kind: str, operation: str, member: str) -> tuple[str, bytes]:
+    from cruxible_client.contracts.subject_kinds import minted_subject_id
+    from cruxible_client.contracts.subjects import SubjectAssignment
+
+    assignment = SubjectAssignment(rule="minted", operation=operation, member=member)
+    subject_id = minted_subject_id(operation=operation, member=member)
+    return subject_path(kind, subject_id), render_subject(
+        shell(subject_id, kind).model_copy(update={"assignment": assignment})
+    )
+
+
+def _accepted_minted(instance: PlaybillInstance) -> Any:
+    before = set(tree(instance))
+    accept(instance, lower_authoring_input(SubjectInput(kind="subject", subject_kind=TICKET)))
+    (path,) = [
+        item
+        for item in tree(instance)
+        if item.startswith(f"subjects/{TICKET}/") and item not in before
+    ]
+    held = parse_subject(tree(instance)[path], path=path)
+    assert held.assignment is not None
+    return held.assignment
+
+
+def _refusals(result: Any) -> set[str]:
+    return {item.code for item in result.evaluation.diagnostics}
+
+
+def test_an_invented_binding_whose_id_matches_refuses_at_admission(
+    instance: PlaybillInstance,
+) -> None:
+    """Review probe ``forge.py``: id = digest(invented operation, invented member)."""
+
+    path, content = _forged(TICKET, "AIT-never-created-by-core", "copied-or-invented-member")
+    raw = _submit_raw(instance, {path: content}, "invented")
+    assert raw.candidate is None
+    assert _refusals(raw) == {"cruxible.subject.id_not_assigned"}
+    message = raw.evaluation.diagnostics[0].message
+    assert "no core record of that operation" in message and "through authoring" in message
+
+
+def test_a_real_binding_copied_to_another_kind_or_operation_refuses(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.authoring.inputs import SubjectKindInput
+
+    real = _accepted_minted(instance)
+    accept(
+        instance,
+        lower_authoring_input(SubjectKindInput(kind="subject_kind", name="dev.other", minted=True)),
+    )
+    # The same operation and member, another minted kind: that record creates a ticket.
+    path, content = _forged("dev.other", real.operation, real.member)
+    assert _refusals(_submit_raw(instance, {path: content}, "cross-kind")) == {
+        "cruxible.subject.id_not_assigned"
+    }
+    # The member of one real operation under another real operation (a stored
+    # intent that creates something else).
+    other, _changed = _stored(
+        instance, SubjectCreationAuthoringPayload(subject_kind=NOTE, key_value="elsewhere")
+    )
+    path, content = _forged(TICKET, other.intent_id, real.member)
+    assert _refusals(_submit_raw(instance, {path: content}, "cross-operation")) == {
+        "cruxible.subject.id_not_assigned"
+    }
+
+
+def test_a_preview_binding_never_stored_refuses_when_replayed_raw(
+    instance: PlaybillInstance,
+) -> None:
+    """A preview's intent is not a durable record: its lowered Subject cannot be replayed."""
+
+    _intent, computed = _preview_intent(
+        instance, SubjectCreationAuthoringPayload(subject_kind=TICKET)
+    )
+    assert computed.result.verdict == "passed"
+    replay = _submit_raw(instance, dict(computed.lowered.changed_members), "preview-replay")
+    assert replay.candidate is None
+    assert _refusals(replay) == {"cruxible.subject.id_not_assigned"}
+
+
+def _stored(instance: PlaybillInstance, *members: Any) -> tuple[Any, dict[str, bytes]]:
+    """A stored authoring intent of ``members``, and the tree its lowering writes."""
+
+    from cruxible_core.authoring.preflight import compute_preflight
+
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    created = coordinator.create(
+        actor=OWNER,
+        payload=ChangeSetAuthoringPayload(
+            members=tuple(
+                sorted(members, key=lambda item: authoring_member_identity(item).encode("utf-8"))
+            )
+        ),
+        canonical_timestamp="2026-10-09T12:00:00.000000Z",
+    )
+    computed = compute_preflight(instance, intent=created.intent, actor=OWNER)
+    assert computed.lowered is not None, computed.result.frontier
+    return created.intent, dict(computed.lowered.changed_members)
+
+
+def _stored_minted(instance: PlaybillInstance) -> tuple[Any, dict[str, bytes]]:
+    return _stored(instance, SubjectCreationAuthoringPayload(subject_kind=TICKET))
+
+
+def test_a_stored_intents_binding_holds_through_readmission_and_settlement(
+    instance: PlaybillInstance,
+) -> None:
+    """The record is the intent: unchanged by a rebase, read again at settlement."""
+
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+
+    intent, changed = _stored_minted(instance)
+    base = instance.accepted_coordinate()
+    stale_tree = tree(instance)
+    # The head moves on; the proposal is evaluated against the new head (readmitted).
+    accept(
+        instance, lower_authoring_input(SubjectInput(kind="subject", subject_kind=NOTE, key="x"))
+    )
+    readmitted = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/readmitted", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree={**stale_tree, **changed},
+        timestamp="2026-10-09T12:00:00.000000Z",
+    )
+    assert readmitted.candidate is not None, readmitted.evaluation.diagnostics
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=readmitted.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    (path,) = [item for item in changed if item.startswith(f"subjects/{TICKET}/")]
+    held = parse_subject(tree(instance)[path], path=path)
+    assert held.assignment is not None and held.assignment.operation == intent.intent_id
+
+
+def test_settlement_reads_the_record_again(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Admitted with its record; the record gone by settlement, activation refuses."""
+
+    from cruxible_core.authoring import assignment_records
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+
+    _intent, changed = _stored_minted(instance)
+    admitted = _submit_raw(instance, changed, "settled-later")
+    assert admitted.candidate is not None, admitted.evaluation.diagnostics
+    monkeypatch.setattr(
+        assignment_records.SubjectAssignmentRecords, "__call__", lambda *_args: False
+    )
+    base = instance.accepted_coordinate()
+    with pytest.raises(Exception):  # noqa: B017 - settlement refuses before activating
+        service_activate_playbill_proposal(
+            instance, proposal_id=admitted.admission.proposal_id, activated_by="owner"
+        )
+    assert instance.accepted_coordinate() == base
+
+
+def test_a_raw_proposal_still_creates_a_keyed_first_holder(instance: PlaybillInstance) -> None:
+    """No core record needed: a first holder's id is recomputed from its key."""
+
+    from cruxible_core.authoring.store import AuthoringIntentStore
+
+    intent, changed = _stored(
+        instance, SubjectCreationAuthoringPayload(subject_kind=NOTE, key_value="Raw First")
+    )
+    # The proposal stands alone: whatever intent lowered it is gone.
+    exhaust = instance.root / instance.descriptor.storage.exhaust
+    assert AuthoringIntentStore(exhaust).intent_record(intent.intent_id) is not None
+    import shutil
+
+    shutil.rmtree(exhaust / "authoring-intents" / intent.intent_id)
+    raw = _submit_raw(instance, changed, "raw-first-holder")
+    assert raw.candidate is not None, raw.evaluation.diagnostics

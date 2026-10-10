@@ -73,6 +73,7 @@ from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     WorkspaceAdvertisement,
 )
+from cruxible_core.authoring.assignment_records import SubjectAssignmentRecords
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
@@ -1420,6 +1421,11 @@ class PlaybillInstance:
             bodies=self.body_store(),
         )
 
+    def subject_assignment_authority(self) -> SubjectAssignmentRecords:
+        """The core records a new Subject's recorded assignment must name (review F-001)."""
+
+        return SubjectAssignmentRecords(self.root / self.descriptor.storage.exhaust)
+
     def proposal_service(self) -> ProposalService:
         """Bind PB-C proposal evaluation to authenticated main and inert storage."""
 
@@ -1438,6 +1444,7 @@ class PlaybillInstance:
             attestation_principal_provider=self.accepted_principal,
             accepted_referents_provider=self.accepted_referent_coordinates,
             historical_artifact_provider=self.accepted_artifact_version,
+            subject_assignment_authority=self.subject_assignment_authority(),
             prepared_evaluations=self.prepared_evaluations,
             principal_registry_provider=self.accepted_principal_registry,
             active_principal_provider=self.require_accepted_principal,
@@ -2328,6 +2335,7 @@ class PlaybillInstance:
             accepted_referents_provider=self.accepted_referent_coordinates,
             historical_artifact_provider=self.accepted_artifact_version,
             principal_registry_provider=self.accepted_principal_registry,
+            subject_assignment_authority=self.subject_assignment_authority(),
         )
 
     def settle_and_activate(

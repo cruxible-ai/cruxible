@@ -98,6 +98,10 @@ from cruxible_client.contracts.subject_kinds import (
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.authoring import lowering as authoring_lowering
+from cruxible_core.authoring.assignment_records import (
+    PROCEDURE_OPERATION_ID_DOMAIN,
+    procedure_operation_id,
+)
 from cruxible_core.authoring.lowering import (
     AuthoringLoweringError,
     LoweredAuthoring,
@@ -154,7 +158,7 @@ if TYPE_CHECKING:
     from cruxible_core.runtime.instance import PlaybillInstance
 
 PROPOSAL_CLAIM_ID_DOMAIN = "playbill-procedure-proposal-claim-id-v1"
-PROPOSAL_INTENT_ID_DOMAIN = "playbill-procedure-proposal-intent-id-v1"
+PROPOSAL_INTENT_ID_DOMAIN = PROCEDURE_OPERATION_ID_DOMAIN
 PROPOSAL_LOWERING_DOMAIN = "playbill-procedure-proposal-lowering-v1"
 
 
@@ -200,6 +204,9 @@ class PreparedProposal:
     #: A settle terminal's change carries ClaimTypes its one applicable settle
     #: grant's scope leaves out: it proposes under that grant instead, naming them.
     outside_scope_claim_types: tuple[str, ...] = ()
+    #: The Subject items' creation members, (kind, member identity): recorded as
+    #: this operation's core record before it is submitted (review F-001).
+    creations: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -804,15 +811,9 @@ def _with_many_valued_dispositions(
 def _intent_id(request: TerminalEgressRequestV1) -> str:
     """The intent one terminal operation lowers under, from the admitted operation alone."""
 
-    digest = typed_digest(
-        Sha256Value,
-        PROPOSAL_INTENT_ID_DOMAIN,
-        {
-            "admission_binding_digest": request.admission_binding_digest,
-            "node_id": request.node_id,
-        },
-    ).tagged.removeprefix("sha256:")
-    return f"AIT-{digest[:32]}"
+    return procedure_operation_id(
+        admission_binding_digest=request.admission_binding_digest, node_id=request.node_id
+    )
 
 
 def _intent(
@@ -1233,6 +1234,9 @@ class ProposalTerminalEgressSink:
             item_paths=item_paths,
             rationale=rationale,
             outside_scope_claim_types=outside_scope,
+            creations=tuple(
+                sorted((member.subject_kind, member.member_identity) for member in subject_members)
+            ),
         )
         return prepared
 
@@ -1324,6 +1328,14 @@ class ProposalTerminalEgressSink:
                 "Proposal delivery requires the exact admitted run.",
             )
         self._record_reobservations(request, prepared.prepared.unchanged)
+        if prepared.creations:
+            # The operation's own core record, which the candidate boundary reads
+            # back to verify each Subject's recorded assignment (review F-001).
+            self.instance.subject_assignment_authority().record_procedure_operation(
+                admission_binding_digest=request.admission_binding_digest,
+                node_id=request.node_id,
+                creations=prepared.creations,
+            )
         service = self._proposal_service()
         assert request.operation_key is not None  # v2 shape
         existing = self.recover_existing(

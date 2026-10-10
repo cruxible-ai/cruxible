@@ -71,6 +71,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_path,
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
+from cruxible_core.authoring.assignment_records import intent_creates
 from cruxible_core.authoring.lowering import (
     AuthoringLoweringError,
     LoweredAuthoring,
@@ -78,6 +79,7 @@ from cruxible_core.authoring.lowering import (
 )
 from cruxible_core.authoring.prepared_lowering import reuse_lowering
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_identity import SubjectAssignmentAuthority
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
@@ -1011,6 +1013,9 @@ def compute_preflight(
                         attestation_principal_provider=service.attestation_principal_provider,
                         historical_artifact_provider=service.historical_artifact_provider,
                         accepted_referents_provider=service.accepted_referents_provider,
+                        subject_assignment_authority=_with_intent_in_hand(
+                            service.subject_assignment_authority, intent
+                        ),
                     )
                     if prepared is not None:
                         prepared.retain(
@@ -1259,6 +1264,23 @@ def compute_preflight(
         evaluated_tree=evaluated_tree,
         evaluation=evaluation,
     )
+
+
+def _with_intent_in_hand(
+    authority: SubjectAssignmentAuthority | None, intent: AuthoringIntentV1
+) -> SubjectAssignmentAuthority:
+    """The boundary's assignment records, plus the intent core is preflighting now.
+
+    A preview's intent is never stored, and a stored one is the same record: the
+    creations it lowers are core's own (review F-001).
+    """
+
+    def creates(operation: str, member: str, kind: str) -> bool:
+        if operation == intent.intent_id:
+            return intent_creates(intent, member, kind)
+        return authority is not None and authority(operation, member, kind)
+
+    return creates
 
 
 __all__ = ["ComputedPreflight", "compute_preflight"]

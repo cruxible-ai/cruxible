@@ -19,7 +19,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
@@ -682,6 +682,7 @@ def boundary_identity_issues(
     current_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
     scope: tuple[str, ...],
+    assignment_authority: SubjectAssignmentAuthority | None = None,
 ) -> tuple[SubjectIdentityIssue, ...]:
     """The identity issues of a change on its instance's compiler (live admission only).
 
@@ -693,7 +694,10 @@ def boundary_identity_issues(
 
     if admits_subject_kinds(compiler):
         return candidate_identity_issues(
-            current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            scope=scope,
+            assignment_authority=assignment_authority,
         )
     return tuple(
         SubjectIdentityIssue(
@@ -845,11 +849,47 @@ def _alias_rows(content: bytes | None, path: str) -> tuple[tuple[str, str], ...]
     return ((statement.subject.artifact_path, normalize_discovery_term(statement.object.value)),)
 
 
+SubjectAssignmentAuthority: TypeAlias = Callable[[str, str, str], bool]
+"""Whether an authoritative core record creates one member of one kind.
+
+Called as ``(operation, member, kind)``: the operation is a durable core record
+-- a stored authoring intent, or the record a Procedure terminal writes for its
+operation -- found by its id (one lookup), whose content creates exactly the
+member ``member`` of ``kind``. The candidate boundary asks it for every minted
+or further-holder Subject a change creates, at admission and at settlement; the
+record does not change when the proposal is rebased or readmitted, so neither
+does the answer.
+"""
+
+
+def _authoritative(
+    authority: SubjectAssignmentAuthority | None,
+    assignment: Any,
+    kind: str,
+) -> bool:
+    if authority is None or assignment is None:
+        return False
+    return bool(authority(assignment.operation, assignment.member, kind))
+
+
+def _unrecorded_assignment(path: str, kind: str, assignment: Any) -> SubjectIdentityIssue:
+    return SubjectIdentityIssue(
+        SUBJECT_ID_NOT_ASSIGNED,
+        path,
+        f"{_ref(path)} records that operation {assignment.operation!r} (member "
+        f"{assignment.member!r}) created it, and no core record of that operation creates "
+        f"that member of {kind}: a {assignment.rule.replace('_', ' ')} Subject is named only "
+        "by core, for an authoring intent or a Procedure operation it holds. Create it "
+        "through authoring (a subject member naming its kind) and let core name it.",
+    )
+
+
 def candidate_identity_issues(
     *,
     current_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
     scope: tuple[str, ...],
+    assignment_authority: SubjectAssignmentAuthority | None = None,
 ) -> tuple[SubjectIdentityIssue, ...]:
     """Every Subject identity rule a change breaks, judged against its parent.
 
@@ -865,7 +905,12 @@ def candidate_identity_issues(
       suffixed when the rendering is a Subject's id, a live alias of the kind,
       or an id this change assigned first; a further holder of a ``hint`` key,
       the rendering and a digest of its recorded operation and member. A
-      successor keeps its Subject's binding (``assignment_changed``);
+      recorded operation and member must name an authoritative core record
+      (``assignment_authority``: a stored authoring intent, or a Procedure
+      operation record) that creates exactly that member of that kind; without
+      one -- a raw proposal, an invented or copied binding -- only a keyed first
+      holder can be created. A successor keeps its Subject's binding
+      (``assignment_changed``);
     - a created Subject of a keyed kind states each key part as one live Claim
       (``key_missing``, ``key_contended``, ``key_invalid``);
     - under a ``unique`` kind no two live Subjects hold the same canonical key,
@@ -904,7 +949,11 @@ def candidate_identity_issues(
                 if assignment is None or assignment.rule != "minted"
                 else minted_subject_id(operation=assignment.operation, member=assignment.member)
             )
-            if expected != subject_id:
+            if expected == subject_id and not _authoritative(
+                assignment_authority, assignment, kind
+            ):
+                issues.append(_unrecorded_assignment(path, kind, assignment))
+            elif expected != subject_id:
                 issues.append(
                     SubjectIdentityIssue(
                         SUBJECT_ID_NOT_ASSIGNED,
@@ -1121,6 +1170,12 @@ def candidate_identity_issues(
                     expected = distinct_holder_id(
                         key_values(key), operation=assignment.operation, member=assignment.member
                     )
+                if expected == subject_id and not _authoritative(
+                    assignment_authority, assignment, kind
+                ):
+                    assigned.add(subject_id)
+                    issues.append(_unrecorded_assignment(subject, kind, assignment))
+                    continue
             elif assignment is None and not outside and marker not in first_taken:
                 first_taken.add(marker)
                 try:
@@ -1396,6 +1451,7 @@ def _kind_wide_conflicts(
 __all__ = [
     "SUBJECT_COMPILER_UPGRADE_REQUIRED",
     "SUBJECT_ID_NOT_ASSIGNED",
+    "SubjectAssignmentAuthority",
     "SUBJECT_KIND_KEY_BROKEN",
     "SUBJECT_KIND_REKEY_UNHANDLED",
     "key_claim_type_shape",

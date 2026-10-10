@@ -325,6 +325,7 @@ from cruxible_core.indexes.subject_aliases import (
     tree_reference_resolver,
 )
 from cruxible_core.indexes.subject_identity import (
+    SubjectAssignmentAuthority,
     admits_subject_kinds,
     boundary_identity_issues,
     key_claim_type_shape,
@@ -4058,6 +4059,7 @@ def _evaluate_scoped_members(
     accepted_referents_provider: AcceptedReferentsProvider | None,
     delegated_mandate_digest: str | None = None,
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
+    subject_assignment_authority: SubjectAssignmentAuthority | None = None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -4378,6 +4380,7 @@ def _evaluate_scoped_members(
             current_tree=current_tree,
             candidate_tree=candidate_tree,
             scope=scope,
+            assignment_authority=subject_assignment_authority,
         )
         if identity_issues:
             # Identity is decided at this boundary (identity-design-1009, D1/D4/D6):
@@ -4760,6 +4763,7 @@ def evaluate_proposal_tree(
     accepted_referents_provider: AcceptedReferentsProvider | None = None,
     delegated_mandate_digest: str | None = None,
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
+    subject_assignment_authority: SubjectAssignmentAuthority | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -4897,6 +4901,7 @@ def evaluate_proposal_tree(
             historical_artifact_provider=historical_artifact_provider,
             principal_registry_provider=principal_registry_provider,
             delegated_mandate_digest=delegated_mandate_digest,
+            subject_assignment_authority=subject_assignment_authority,
         )
 
 
@@ -4990,6 +4995,7 @@ class ProposalService:
         attestation_principal_provider: AttestationPrincipalProvider | None = None,
         accepted_referents_provider: AcceptedReferentsProvider | None = None,
         historical_artifact_provider: HistoricalArtifactProvider | None = None,
+        subject_assignment_authority: SubjectAssignmentAuthority | None = None,
         prepared_evaluations: PreparedEvaluationAdapter | None = None,
         principal_registry_provider: Callable[
             [AcceptedProjectionCoordinate], PrincipalRegistrySnapshot
@@ -5021,6 +5027,7 @@ class ProposalService:
         self.attestation_principal_provider = attestation_principal_provider
         self.accepted_referents_provider = accepted_referents_provider
         self.historical_artifact_provider = historical_artifact_provider
+        self.subject_assignment_authority = subject_assignment_authority
         self.tree_state_provider = tree_state_provider
         self._accepted_tree_provider = accepted_tree_provider or self.transport.read_tree
         self._prepared_evaluations = prepared_evaluations
@@ -5154,6 +5161,7 @@ class ProposalService:
                 attestation_principal_provider=self.attestation_principal_provider,
                 accepted_referents_provider=self.accepted_referents_provider,
                 historical_artifact_provider=self.historical_artifact_provider,
+                subject_assignment_authority=self.subject_assignment_authority,
                 delegated_mandate_digest=delegated_mandate_digest,
             )
         _require_executed_derivations(

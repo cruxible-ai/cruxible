@@ -262,6 +262,7 @@ from cruxible_client.contracts.triggers import (
     trigger_path,
     trigger_schedule_pins,
 )
+from cruxible_core.authoring.assignment_records import intent_creates
 from cruxible_core.authoring.registrations import registered_projection_blocks
 from cruxible_core.claims.claim_retirement import (
     ClaimRetireError,
@@ -5045,6 +5046,10 @@ def _refuse_subject_collisions(
         current_tree=current_tree,
         candidate_tree=lowered.proposed_tree,
         scope=scope,
+        # The creations this lowering made are its own intent's (review F-001).
+        assignment_authority=lambda operation, member, kind: (
+            operation == intent.intent_id and intent_creates(intent, member, kind)
+        ),
     ):
         kind, _subject_id = subject_kind_of(issue.path)
         _refuse(
