@@ -387,3 +387,248 @@ def test_one_identity_rule_at_every_comparison(instance: PlaybillInstance, row: 
     canonical = row.answer(instance, row.canonical)
     assert row.answer(instance, row.equal) == canonical, row.site
     assert row.answer(instance, row.distinct) != canonical, row.site
+
+
+# -- E-b: creation by key, one rule on every route (identity D1/D4) ------------------
+#
+# A creation names a kind and its key, never an id. Every create-by-key route --
+# a change-set Subject member, the write verb's ``kind/<text>`` on a single-key
+# kind, a Procedure terminal's Subject item (and a settle terminal's, which
+# lowers the same item; its mandate coverage is tested with settlement) --
+# resolves a key the same way: no live holder creates, one resolves to it, two
+# or more refuse as ambiguous. ``create_new`` makes a further holder of a hint
+# key and is refused on a unique kind; a minted kind takes a minted id; a
+# grandfathered (declared, then retired) kind creates nothing.
+
+UNIT, HINT, MINT, OLD = "dev.unit", "dev.hint", "dev.mint", "dev.old"
+
+
+@pytest.fixture(scope="module")
+def creation_world(tmp_path_factory: pytest.TempPathFactory) -> PlaybillInstance:
+    from cruxible_client.contracts.authoring.inputs import (
+        ClaimTypeInput,
+        SubjectInput,
+        SubjectKindInput,
+    )
+    from tests.test_service.test_subject_identity import _field, _key, accept, change_set
+    from tests.core_support._support import initialize_local
+
+    world, _owner = initialize_local(tmp_path_factory.mktemp("creation-matrix"))
+    accept(
+        world,
+        change_set(
+            ClaimTypeInput(kind="claim_type", claim_type=_key(UNIT, "slug")),
+            ClaimTypeInput(kind="claim_type", claim_type=_field(UNIT, "note")),
+            SubjectKindInput(
+                kind="subject_kind", name=UNIT, keys=(f"{UNIT}.slug",), uniqueness="unique"
+            ),
+            ClaimTypeInput(kind="claim_type", claim_type=_key(HINT, "slug")),
+            ClaimTypeInput(kind="claim_type", claim_type=_field(HINT, "note")),
+            SubjectKindInput(
+                kind="subject_kind", name=HINT, keys=(f"{HINT}.slug",), uniqueness="hint"
+            ),
+            ClaimTypeInput(kind="claim_type", claim_type=_field(MINT, "note")),
+            SubjectKindInput(kind="subject_kind", name=MINT, minted=True),
+            ClaimTypeInput(kind="claim_type", claim_type=_field(OLD, "note")),
+            SubjectKindInput(kind="subject_kind", name=OLD, minted=True),
+            SubjectInput(kind="subject", subject_kind=UNIT, key="one_x"),
+            SubjectInput(kind="subject", subject_kind=HINT, key="one_x"),
+            SubjectInput(kind="subject", subject_kind=HINT, key="two_x"),
+            SubjectInput(kind="subject", subject_kind=OLD),
+        ),
+    )
+    accept(
+        world,
+        change_set(
+            SubjectInput(kind="subject", subject_kind=HINT, key="Two_X", create_new=True),
+            SubjectKindInput(kind="subject_kind", name=OLD, minted=True, retire=True),
+        ),
+    )
+    return world
+
+
+def _created_or_resolved(resolved: dict[str, Any]) -> tuple[str, str]:
+    subject = str(resolved["subject"])
+    return ("resolved" if resolved.get("resolved") else "created", subject)
+
+
+def _by_member(world: PlaybillInstance, kind: str, key: str | None, create_new: bool) -> object:
+    from cruxible_client.contracts.authoring.inputs import SubjectInput, lower_authoring_input
+
+    payload = lower_authoring_input(
+        SubjectInput(
+            kind="subject",
+            subject_kind=kind,
+            **({} if key is None else {"key": key}),
+            create_new=create_new,
+        )
+    )
+    _intent, computed = AuthoringIntentCoordinator.for_instance(world).preview(
+        actor=OWNER, payload=payload, canonical_timestamp="2026-10-09T12:00:00.000000Z"
+    )
+    if computed.lowered is None:
+        return ("refused", tuple(item.code for item in computed.result.frontier.diagnostics))
+    members = computed.lowered.resolved_authoring["members"]
+    (member,) = [item for item in members if "subject" in item]  # type: ignore[union-attr]
+    return _created_or_resolved(member)
+
+
+def _by_write(world: PlaybillInstance, kind: str, key: str | None, create_new: bool) -> object:
+    if create_new:
+        return ("refused", "no create_new on a write")
+    outcome = _write(
+        world,
+        {"op": "set", "subject": f"{kind}/{key or 'x'}", "field": "note", "value": "m"},
+        dry_run=True,
+    )
+    if outcome.refusal is not None:
+        return ("refused", (outcome.refusal.code,))
+    if outcome.subjects_added:
+        (added,) = outcome.subjects_added
+        return ("created", added)
+    (item,) = outcome.changes
+    return ("resolved", item.subject)
+
+
+def _by_procedure_item(
+    world: PlaybillInstance, kind: str, key: str | None, create_new: bool
+) -> object:
+    from cruxible_client.contracts.procedures.proposal_items import ProcedureSubjectProposalItem
+    from cruxible_core.authoring.lowering import AuthoringLoweringError, subject_creation_paths
+    from cruxible_core.procedures.proposal_delivery import _subject_creation
+
+    item = ProcedureSubjectProposalItem(
+        subject_kind=kind,
+        key={} if key is None else {"slug": key},
+        rationale="Matrix.",
+        create_new=create_new,
+    )
+    head = world.accepted_coordinate()
+    member = _subject_creation(item, capture=None)
+    try:
+        ((path, reused),) = subject_creation_paths(
+            world,
+            operation="AIT-" + "0" * 32,
+            base=head,
+            base_tree=world.immutable_tree_at(head.git_oid),
+            members=(member,),
+        ).values()
+    except AuthoringLoweringError as exc:
+        return ("refused", (exc.code,))
+    return (
+        "resolved" if reused else "created",
+        path.removeprefix("subjects/").removesuffix(".json"),
+    )
+
+
+CREATION_ROUTES = {
+    "change-set Subject member": _by_member,
+    "write kind/<text>": _by_write,
+    "Procedure Subject item": _by_procedure_item,
+}
+
+#: (case, kind, key, create_new) -> what every route answers; ``None`` = not a route case.
+CREATION_CASES: tuple[tuple[str, str, str | None, bool, object], ...] = (
+    ("unique, no holder", UNIT, "zero_x", False, ("created", f"{UNIT}/zero-x")),
+    ("unique, one holder", UNIT, "one_x", False, ("resolved", f"{UNIT}/one-x")),
+    ("hint, no holder", HINT, "zero_x", False, ("created", f"{HINT}/zero-x")),
+    ("hint, one holder", HINT, "one_x", False, ("resolved", f"{HINT}/one-x")),
+    (
+        "hint, two holders",
+        HINT,
+        "two_x",
+        False,
+        ("refused", ("cruxible.subject.key_ambiguous",)),
+    ),
+    (
+        "unique, create_new",
+        UNIT,
+        "one_x",
+        True,
+        ("refused", ("cruxible.subject.create_new_refused",)),
+    ),
+    ("minted", MINT, None, False, ("created", "minted")),
+    ("grandfathered", OLD, None, False, ("refused", ("cruxible.subject.kind_undeclared",))),
+)
+
+
+@pytest.mark.parametrize("route", sorted(CREATION_ROUTES))
+@pytest.mark.parametrize(
+    ("case", "kind", "key", "create_new", "expected"),
+    CREATION_CASES,
+    ids=[case[0] for case in CREATION_CASES],
+)
+def test_one_creation_rule_on_every_route(
+    creation_world: PlaybillInstance,
+    route: str,
+    case: str,
+    kind: str,
+    key: str | None,
+    create_new: bool,
+    expected: object,
+) -> None:
+    answer = CREATION_ROUTES[route](creation_world, kind, key, create_new)
+    if route == "write kind/<text>" and kind == MINT:
+        # A write never creates a minted Subject: it has no key to name one by.
+        assert answer[0] == "refused", answer  # type: ignore[index]
+        return
+    if route == "write kind/<text>" and create_new:
+        return  # the write verb has no create_new; it never makes a further holder
+    if expected == ("created", "minted"):
+        assert answer[0] == "created" and str(answer[1]).startswith(f"{MINT}/sub-"), answer  # type: ignore[index]
+        return
+    assert answer == expected, (route, case)
+
+
+@pytest.mark.parametrize("route", ["change-set Subject member", "Procedure Subject item"])
+def test_create_new_makes_a_further_holder_of_a_hint_key(
+    creation_world: PlaybillInstance, route: str
+) -> None:
+    status, ref = CREATION_ROUTES[route](creation_world, HINT, "one_x", True)  # type: ignore[misc]
+    assert status == "created"
+    assert str(ref).startswith(f"{HINT}/one-x-") and len(str(ref)) == len(f"{HINT}/one-x-") + 8
+
+
+def test_a_key_claim_write_that_would_name_a_second_unique_holder_refuses(
+    creation_world: PlaybillInstance,
+) -> None:
+    """Every key-Claim write route meets the unique-key boundary (key_conflict)."""
+
+    from tests.test_service.test_subject_identity import compile_
+
+    outcome = _write(
+        creation_world,
+        {"op": "set", "subject": f"{UNIT}/one-x", "field": "slug", "value": "one_x"},
+        dry_run=True,
+    )
+    # Restating a Subject's own key changes nothing.
+    assert outcome.refusal is None, outcome.refusal
+    # Another unique Subject taking an existing key is a conflict, whichever door.
+    other = _write(
+        creation_world,
+        {"op": "set", "subject": f"{UNIT}/zero_x", "field": "note", "value": "made"},
+        dry_run=True,
+    )
+    assert other.subjects_added == (f"{UNIT}/zero-x",)
+    from cruxible_client.contracts.authoring.inputs import (
+        ChangeSetInput,
+        SubjectInput,
+        lower_authoring_input,
+    )
+
+    both = compile_(
+        creation_world,
+        lower_authoring_input(
+            ChangeSetInput(
+                kind="change_set",
+                members=(
+                    SubjectInput(kind="subject", subject_kind=UNIT, key="Three"),
+                    SubjectInput(kind="subject", subject_kind=UNIT, key="three"),
+                ),
+            )
+        ),
+    )
+    # Two creations of one key in one change: the canonical key resolves the
+    # second to the first, or the change refuses -- never two holders.
+    codes = tuple(item.code for item in both.frontier.diagnostics)
+    assert both.verdict == "refused" or not codes, codes

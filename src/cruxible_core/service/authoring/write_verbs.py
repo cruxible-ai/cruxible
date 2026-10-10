@@ -1467,6 +1467,9 @@ class _Planner:
         if not self.subject_exists(path) and path not in self.plan.subjects:
             path = self.create_by_key(kind, subject_id, index=index, path=f"{prefix}.subject")
             subject_id = self.plan.subjects[path].subject_id
+        # The outcome names the Subject written, however the change named it (an
+        # id, an alias or a key): core reports the id.
+        subject = path.removeprefix("subjects/").removesuffix(".json")
         info = self.resolve_field(kind, change.field, index=index, path=f"{prefix}.field")
         creation = self.plan.creations.get(path)
         if creation is not None and info.predicate in {part.predicate for part in creation.key}:
