@@ -2234,12 +2234,25 @@ def reject_proposal(
     type=click.Path(file_okay=False),
     help="Workspace whose projection catalog and markers are observed locally.",
 )
+@click.option(
+    "--item-reasons-after",
+    default=None,
+    help="Page a Procedure proposal's item reasons after this cursor (the last page's More:).",
+)
+@click.option(
+    "--item-reasons-limit",
+    default=None,
+    type=click.IntRange(1, 500),
+    help="Item reasons per page (default 50).",
+)
 @json_option
 @handle_errors
 def review_proposal(
     proposal_id: str,
     include_body: bool,
     workspace_root: str,
+    item_reasons_after: str | None,
+    item_reasons_limit: int | None,
     output_json: bool,
 ) -> None:
     workspace = Path(workspace_root)
@@ -2269,6 +2282,8 @@ def review_proposal(
             resolved_id,
             include_body=include_body,
             workspace_observation=observation,
+            item_reasons_after=item_reasons_after,
+            item_reasons_limit=item_reasons_limit,
         )
 
     result = _server_call(
@@ -4777,7 +4792,28 @@ def _emit_get_text(result: Any) -> None:
                 err=True,
             )
         return
-    _emit_json(result.why if result.why is not None else result.proof)
+    if result.why is not None:
+        _emit_json(result.why)
+        if getattr(result, "reason", None) is not None:
+            _echo_proposed_reason(result.reason)
+        return
+    _emit_json(result.proof)
+
+
+def _echo_proposed_reason(reason: Any) -> None:
+    """The Procedure item's own reason for the accepted revision, and who proposed it.
+
+    Authored text goes through ``printable``: a reason cannot forge a line of
+    daemon output, and a multi-line reason stays one escaped line.
+    """
+
+    click.echo(
+        f"reason: {printable(reason.reason)}" + ("  (truncated)" if reason.truncated else "")
+    )
+    click.echo(
+        f"proposed by {printable(reason.procedure)} run {printable(reason.run)} "
+        f"terminal {printable(reason.terminal)} in proposal {printable(reason.proposal)}"
+    )
 
 
 @playbill_group.group("block")

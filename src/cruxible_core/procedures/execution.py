@@ -143,8 +143,10 @@ from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_DIGESTS,
+    ExecutedWorkspaceFileSourceRequestV2,
     SourceReadReceipt,
-    WorkspaceFileSourceRequest,
+    WorkspaceBindingDigestAuthored,
+    parse_authored_workspace_request,
     source_read_receipt_digest,
 )
 from cruxible_core.documents.workspace_file import (
@@ -2312,6 +2314,37 @@ class _RunRefusal(Exception):
         )
 
 
+def _workspace_refusal(
+    exc: ValidationError | WorkspaceFileReadRefused, *, node_id: str
+) -> _RunRefusal:
+    """A workspace Source refusal, typed to its path class and naming its repair."""
+
+    if isinstance(exc, WorkspaceFileReadRefused):
+        details: dict[str, object] = {
+            "path_class": exc.path_class,
+            "repair_commands": list(exc.repair_commands),
+        }
+        if exc.workspace_names:
+            details["workspace_names"] = list(exc.workspace_names)
+        return _RunRefusal(
+            "workspace_file_read_refused",
+            str(exc),
+            node_id=node_id,
+            detail_code=exc.path_class,
+            details=details,
+        )
+    return _RunRefusal(
+        "workspace_file_read_refused",
+        str(exc),
+        node_id=node_id,
+        detail_code="path_grammar",
+        details={
+            "path_class": "path_grammar",
+            "repair_commands": ["use a normalized workspace-relative POSIX path"],
+        },
+    )
+
+
 class ProcedureBoundaryRefused(ExecutionError):
     """A typed pre-execution or integrity refusal at a real public boundary."""
 
@@ -3701,6 +3734,45 @@ class ProcedureExecutor:
             AliasProvenanceV1(whole=extra) if current is None else current.merged(extra)
         )
 
+    def _executed_workspace_request(
+        self, node: SourceNode, resolved_request: object
+    ) -> ExecutedWorkspaceFileSourceRequestV2:
+        """The authored workspace request as the daemon executes it, or a typed refusal."""
+
+        if self.workspace_file_reader is None:
+            raise _RunRefusal(
+                "workspace_file_read_refused",
+                "No daemon-local workspace reader is available.",
+                node_id=node.node_id,
+                detail_code="binding",
+                details={
+                    "path_class": "binding",
+                    "repair_commands": ["attach a workspace or configure an allowed root"],
+                },
+            )
+        try:
+            authored = parse_authored_workspace_request(resolved_request)
+        except WorkspaceBindingDigestAuthored as exc:
+            raise _RunRefusal(
+                "workspace_file_read_refused",
+                str(exc),
+                node_id=node.node_id,
+                detail_code="binding",
+                details={
+                    "path_class": "binding",
+                    "repair_commands": [
+                        "remove workspace_binding_digest from the Source request; the daemon "
+                        "resolves the workspace"
+                    ],
+                },
+            ) from exc
+        except ValidationError as exc:
+            raise _workspace_refusal(exc, node_id=node.node_id) from exc
+        try:
+            return self.workspace_file_reader.resolve(authored)
+        except WorkspaceFileReadRefused as exc:
+            raise _workspace_refusal(exc, node_id=node.node_id) from exc
+
     def _run_source(
         self,
         node: SourceNode,
@@ -3756,13 +3828,23 @@ class ProcedureExecutor:
                 outputs=state.outputs,
             )
         )
+        workspace_request: ExecutedWorkspaceFileSourceRequestV2 | None = None
+        if occurrence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS:
+            # The author names the workspace logically, or not at all; the daemon
+            # resolves its root and executes -- and journals -- the request with
+            # that root's binding digest, before anything is read.
+            workspace_request = self._executed_workspace_request(node, resolved_request)
         derived_request = build_procedure_derived_source_request(
             run_id=admission.run_id,
             admission_binding_digest=admission.admission_binding_digest,
             occurrence_path=occurrence.occurrence_path,
             node_id=node.node_id,
             input_name=node.as_,
-            request=resolved_request,
+            request=(
+                resolved_request
+                if workspace_request is None
+                else workspace_request.model_dump(mode="json")
+            ),
         )
         self._append_event(
             admission,
@@ -3780,21 +3862,9 @@ class ProcedureExecutor:
             )
         source_read_receipt: SourceReadReceipt | None = None
         provider_payload = resolved_request
-        workspace_request: WorkspaceFileSourceRequest | None = None
-        if occurrence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS:
-            if self.workspace_file_reader is None:
-                raise _RunRefusal(
-                    "workspace_file_read_refused",
-                    "No daemon-local workspace reader is available.",
-                    node_id=node.node_id,
-                    detail_code="binding",
-                    details={
-                        "path_class": "binding",
-                        "repair_commands": ["attach a workspace or configure an allowed root"],
-                    },
-                )
+        if workspace_request is not None:
+            assert self.workspace_file_reader is not None  # resolved by it above
             try:
-                workspace_request = WorkspaceFileSourceRequest.model_validate(resolved_request)
                 workspace_read = self.workspace_file_reader.read(
                     workspace_request,
                     run_id=admission.run_id,
@@ -3806,21 +3876,7 @@ class ProcedureExecutor:
                     read_at=self.clock.now(),
                 )
             except (ValidationError, WorkspaceFileReadRefused) as exc:
-                path_class = (
-                    exc.path_class if isinstance(exc, WorkspaceFileReadRefused) else "path_grammar"
-                )
-                repairs = (
-                    exc.repair_commands
-                    if isinstance(exc, WorkspaceFileReadRefused)
-                    else ("use a normalized workspace-relative POSIX path",)
-                )
-                raise _RunRefusal(
-                    "workspace_file_read_refused",
-                    str(exc),
-                    node_id=node.node_id,
-                    detail_code=path_class,
-                    details={"path_class": path_class, "repair_commands": list(repairs)},
-                ) from exc
+                raise _workspace_refusal(exc, node_id=node.node_id) from exc
             provider_payload = workspace_read.provider_input
             source_read_receipt = workspace_read.receipt
             self._append_event(

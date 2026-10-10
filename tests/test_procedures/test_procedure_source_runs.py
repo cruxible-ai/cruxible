@@ -95,7 +95,7 @@ from cruxible_client.contracts.providers import (
 )
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_V2_DIGEST,
-    WorkspaceFileSourceRequest,
+    WorkspaceFileSourceRequestV2,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader, workspace_binding_digest
 from cruxible_core.exhaust.records import parse_journal_payload
@@ -243,13 +243,11 @@ def _contracts() -> tuple[ProcedureOwnedContract, ProcedureOwnedContract]:
     )
 
 
-def _source_request(instance: PlaybillInstance, root: Path) -> WorkspaceFileSourceRequest:
-    return WorkspaceFileSourceRequest(
+def _source_request(instance: PlaybillInstance, root: Path) -> WorkspaceFileSourceRequestV2:
+    # Authored as intent only: the daemon resolves the attached workspace.
+    del instance, root
+    return WorkspaceFileSourceRequestV2(
         logical_source="commerce.production.orders",
-        workspace_binding_digest=workspace_binding_digest(
-            instance_id=instance.descriptor.instance_id,
-            canonical_root=root.resolve(),
-        ),
         relative_path=RELATIVE_PATH,
         coordinate_type="postgres-lsn-v1",
         coordinate={"lsn": "workspace"},
@@ -570,6 +568,11 @@ def test_a_direct_run_reads_the_workspace_file_and_retains_its_receipt(
     assert observation.source_read_receipt.relative_path == RELATIVE_PATH
     assert observation.source_read_receipt.bytes_digest == (
         "sha256:" + hashlib.sha256(canonical_bytes(ADVISORY)).hexdigest()
+    )
+    # The Source was authored without a binding digest: the one recorded is the
+    # daemon's binding of the attached root to this instance.
+    assert observation.source_read_receipt.workspace_binding_digest == workspace_binding_digest(
+        instance_id=instance.descriptor.instance_id, canonical_root=root.resolve()
     )
     assert observation.capture_digest is not None
     from cruxible_client.contracts.procedures.windows import CaptureEventSelector
@@ -994,6 +997,26 @@ def test_a_run_without_a_daemon_reader_refuses_typed(tmp_path: Path) -> None:
     assert isinstance(state.terminal, ProcedureNodeRefusal)
     assert state.terminal.code == "workspace_file_read_refused"
     assert state.terminal.details["path_class"] == "binding"
+    assert invoker.spawn_calls == 0
+
+
+def test_two_authorized_workspaces_and_no_name_refuse_listing_them(tmp_path: Path) -> None:
+    instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
+    other = tmp_path / "other-workspace"
+    other.mkdir()
+    reader = WorkspaceFileReader(
+        instance_id=instance.descriptor.instance_id,
+        operating_profile="local",
+        attached_roots=(),
+        operational_allowed_roots=(root, other),
+        managed_roots=(instance.root,),
+    )
+
+    state, invoker = _run(instance, root, reader=reader)
+
+    refusal = _read_refusal(state)
+    assert refusal.details["path_class"] == "workspace_unnamed"
+    assert refusal.details["workspace_names"] == sorted([root.name, other.name])
     assert invoker.spawn_calls == 0
 
 

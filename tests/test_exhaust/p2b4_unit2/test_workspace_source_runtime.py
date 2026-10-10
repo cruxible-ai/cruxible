@@ -29,7 +29,7 @@ from cruxible_client.contracts.provider_execution import (
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_DIGEST,
     SourceReadReceipt,
-    WorkspaceFileSourceRequest,
+    WorkspaceFileSourceRequestV2,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader, workspace_binding_digest
 from cruxible_core.exhaust import parse_journal_payload
@@ -130,12 +130,9 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
     accepted, prepared, fixture, policy, contract = _source_fixture(tmp_path)
     root = tmp_path / "workspace"
     root.mkdir()
-    request = WorkspaceFileSourceRequest(
+    # Authored without the binding digest: the daemon resolves the attached root.
+    request = WorkspaceFileSourceRequestV2(
         logical_source="commerce.production.orders",
-        workspace_binding_digest=workspace_binding_digest(
-            instance_id=prepared.admission.instance_id,
-            canonical_root=root.resolve(),
-        ),
         relative_path=relative_path,
         coordinate_type="postgres-lsn-v1",
         coordinate={"lsn": "workspace"},
@@ -285,6 +282,16 @@ def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path:
     completed = payloads[kinds.index("provider_invocation_completed")]["receipt"]
     produced = payloads[kinds.index("produced_capture")]
     assert source_read.provider_input_digest == completed["input_digest"]
+    # The authored request named no binding; the executed (derived) request, the
+    # read receipt and so the Capture record the one the daemon resolved.
+    daemon_binding = workspace_binding_digest(
+        instance_id=prepared.admission.instance_id, canonical_root=_root.resolve()
+    )
+    executed = payloads[kinds.index("source_request_derived")]["request"]
+    assert executed["tag"] == "playbill-workspace-file-executed-source-request-v2"
+    assert executed["workspace"] == "workspace"
+    assert executed["workspace_binding_digest"] == daemon_binding
+    assert source_read.workspace_binding_digest == daemon_binding
     assert (
         produced["invocation_receipt_digest"]
         == payloads[kinds.index("provider_invocation_completed")]["receipt_digest"]
@@ -346,6 +353,52 @@ def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path:
                 bodies=_ForgedReadBodies(),  # type: ignore[arg-type]
             ),
         )
+
+
+def test_v1_derived_request_in_history_still_verifies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run journaled by a daemon before v2 carried the authored v1 request, digest and all."""
+
+    import cruxible_core.procedures.execution as execution_module
+
+    built = execution_module.build_procedure_derived_source_request
+
+    def as_v1(**kwargs):  # type: ignore[no-untyped-def]
+        request = dict(kwargs.pop("request"))
+        if request.get("tag") == "playbill-workspace-file-executed-source-request-v2":
+            request.pop("workspace")
+            request["tag"] = "playbill-workspace-file-source-request-v1"
+        return built(request=request, **kwargs)
+
+    monkeypatch.setattr(execution_module, "build_procedure_derived_source_request", as_v1)
+    result, _invoker, records, payloads, _root, fixture, contract, prepared, accepted = _execute(
+        tmp_path, "docs/note.txt"
+    )
+    assert result.status == "succeeded", result
+    kinds = [item.record.event_kind for item in records]
+    derived = payloads[kinds.index("source_request_derived")]["request"]
+    assert derived["tag"] == "playbill-workspace-file-source-request-v1"
+    completed = payloads[kinds.index("provider_invocation_completed")]["receipt"]
+    source_node = accepted.procedure.definition.nodes[0]
+    assert isinstance(source_node, SourceNode)
+    verified = verify_capture(
+        payloads[kinds.index("produced_capture")]["capture_digest"],
+        store=fixture.bodies,
+        contract=contract,
+        producer_artifact_digests={
+            source_node.provider.target.qualified: completed["provider_artifact_digest"]
+        },
+        producer_receipt_resolver=journal_producer_receipt_resolver(
+            journal=fixture.journal,
+            instance_id=prepared.admission.instance_id,
+            bodies=fixture.bodies,
+        ),
+    )
+    assert (
+        verified.production_evidence.source_read_receipt_digest
+        == (payloads[kinds.index("source_read")]["receipt_digest"])
+    )
 
 
 def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path) -> None:

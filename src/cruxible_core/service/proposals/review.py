@@ -31,7 +31,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import ApprovalIntegrityError, ProposalIntegrityError
-from cruxible_client.contracts.proposal_models import ProposalResult
+from cruxible_client.contracts.proposal_models import ProposalItemReason, ProposalResult
 from cruxible_client.contracts.refusal_receipts import (
     PriorRefusalCoverage,
     PriorRefusalReceipt,
@@ -151,8 +151,13 @@ class ProposalReview(_StrictReviewModel):
     governance: dict[str, object]
     provenance: dict[str, object]
     # The author's own prose for the change set, as admitted: for a Procedure's
-    # proposal, the run that proposed it and each item's rationale.
+    # proposal, the run that proposed it and how many items it carries.
     rationale: str | None = None
+    # A Procedure proposal's items' own reasons, one page at a time: each keyed
+    # by the Claim or Subject path it explains (`item_reasons_after` pages on).
+    item_reasons: tuple[ProposalItemReason, ...] = ()
+    item_reason_count: int = Field(default=0, ge=0)
+    item_reasons_next_cursor: str | None = None
     attestation_coverage: dict[str, object]
     documents: tuple[PlaybillReviewedDocument, ...]
     redactions: tuple[str, ...]
@@ -480,14 +485,25 @@ def _assess_projection_evidence(
     )
 
 
+PROPOSAL_REVIEW_REASONS_DEFAULT_LIMIT = 50
+PROPOSAL_REVIEW_REASONS_MAX_LIMIT = 500
+
+
 def service_review_playbill_proposal(
     instance: PlaybillInstance,
     *,
     proposal_id: str,
     access: BodyAccessContext,
     workspace_observation: ReviewWorkspaceObservation | Mapping[str, object] | None = None,
+    item_reasons_after: str | None = None,
+    item_reasons_limit: int = PROPOSAL_REVIEW_REASONS_DEFAULT_LIMIT,
 ) -> ProposalReview:
-    """Render one immutable candidate from its recorded base and proposal tree."""
+    """Render one immutable candidate from its recorded base and proposal tree.
+
+    A Procedure proposal's item reasons are paged: ``item_reasons_limit`` of
+    them after ``item_reasons_after`` (the previous page's
+    ``item_reasons_next_cursor``).
+    """
 
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
     proposal = inspection.proposal
@@ -540,6 +556,17 @@ def service_review_playbill_proposal(
             candidate_tree=candidate_tree,
         )
     )
+    evidence_store = instance.proposal_evidence()
+    operation = evidence_store.item_reason_operation(proposal.admission)
+    item_reasons, item_reason_count, item_reasons_next_cursor = (
+        ((), 0, None)
+        if operation is None
+        else evidence_store.item_reason_page(
+            operation,
+            after=item_reasons_after,
+            limit=max(1, min(item_reasons_limit, PROPOSAL_REVIEW_REASONS_MAX_LIMIT)),
+        )
+    )
     usable_workspace_observation, projection_evidence, eligible_coordinates = (
         _assess_projection_evidence(
             instance,
@@ -569,6 +596,9 @@ def service_review_playbill_proposal(
             "source_compilation_digest": proposal.admission.source_compilation_digest,
         },
         rationale=proposal.admission.rationale,
+        item_reasons=item_reasons,
+        item_reason_count=item_reason_count,
+        item_reasons_next_cursor=item_reasons_next_cursor,
         attestation_coverage={
             "attestations": attestation_items,
             "coverage": "containing_change_set",
@@ -668,6 +698,20 @@ def _prior_refusal_lines(review: ProposalReview) -> list[str]:
     return lines
 
 
+def _item_reason_lines(review: ProposalReview) -> list[str]:
+    """This page of a Procedure proposal's item reasons, each under the member it explains."""
+
+    if not review.item_reasons:
+        return []
+    lines = ["", f"Item reasons ({len(review.item_reasons)} of {review.item_reason_count}):"]
+    for item in review.item_reasons:
+        lines.append(f"  {item.path}:")
+        lines.extend(f"    {line}" for line in item.reason.splitlines())
+    if review.item_reasons_next_cursor is not None:
+        lines.append(f"  More: --item-reasons-after {review.item_reasons_next_cursor}")
+    return lines
+
+
 def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
     """Point a reviewer at the ledger instead of re-rendering the ledger.
 
@@ -689,6 +733,7 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
                 f"Proposal: {review.proposal_id}",
                 f"Candidate: {review.candidate_digest}",
                 f"Settlement base OID: {review.base_oid}",
+                *_item_reason_lines(review),
                 *_prior_refusal_lines(review),
                 "",
                 "Review this proposal in the ledger, in the attached workspace:",
@@ -747,6 +792,7 @@ def render_playbill_proposal_review(review: ProposalReview) -> str:
     ]
     if review.rationale is not None:
         lines.extend(("", "Rationale:", *(f"  {line}" for line in review.rationale.splitlines())))
+    lines.extend(_item_reason_lines(review))
     lines.extend(_prior_refusal_lines(review))
     if review.projection_evidence is not None:
         evidence = review.projection_evidence

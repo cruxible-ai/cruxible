@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- **Procedures propose Claim retirements.** A `propose_change_set` or
+  `settle_change_set` item may be a retirement
+  (`playbill-procedure-claim-retirement-item-v1`: the Claim ID it `retires`,
+  the retirement `reason`, a required `rationale`, optional
+  `effective_until`), carrying the Claim's live dependent closure and bound by
+  the run's receipt to the retired member. It is reviewed like any proposal;
+  under settle it settles only when the grant's scope lists `retire` for the
+  ClaimType, and otherwise proposes under that grant with
+  `cruxible.settle.outside_mandate_scope` naming the ClaimType. A key Claim
+  retires only with its Subject (`cruxible.procedure.key_claim_retirement`), a
+  Claim not live at the run's state refuses
+  (`cruxible.procedure.retirement_target_not_live`), and retiring a lineage the
+  same terminal revises or dispositions refuses
+  (`cruxible.procedure.retirement_lineage_conflict`).
+- **Each Procedure item keeps its own reason.** A `propose_change_set` or
+  `settle_change_set` item's rationale is recorded with the Claim or Subject it
+  explains (`ProposalItemReason`, up to 16,384 characters, longer ones marked
+  `truncated`) instead of being joined into the change set's 4,096-character
+  rationale, which now names the run and the item count. `proposal review`
+  pages them (`item_reasons`, `--item-reasons-after`, `--item-reasons-limit`;
+  the same fields over HTTP, MCP and the SDK); `get CLM-... --detail why`
+  carries the accepted revision's `reason` with its proposal, Procedure, run and
+  terminal, and `--detail evidence` its `rationale`. Reading one Claim's reason
+  is one record read, whatever the batch size. Provenance only: Captures and
+  citations are unchanged.
+- **Workspace Sources name intent, not transport.** A `workspace.file` Source
+  request (`playbill-workspace-file-source-request-v2`) no longer carries
+  `workspace_binding_digest`: it names the workspace logically (`workspace`,
+  the root's last path component) or not at all -- the instance's attached
+  workspace, else its only authorized root. Several roots and no name refuse
+  `workspace_file_read_refused` with path class `workspace_unnamed`, an unknown
+  or shared name `workspace_unknown`, both listing `workspace_names`. The
+  daemon resolves the root and records its binding digest on the executed
+  request it journals (`playbill-workspace-file-executed-source-request-v2`),
+  the read receipt and the Capture, so provenance is unchanged. An authored
+  request still carrying the digest refuses (path class `binding`); v1 requests
+  in run history still verify. Kits and Procedures that shipped the digest
+  drop it.
 - **Cruxible names every new Subject.** A SubjectKind
   (`subject_kind` change-set member, `subject-kinds/<kind>.json`, `get
   SubjectKind:<kind>`, `identity` in `orient`) declares how a kind's Subjects

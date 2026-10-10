@@ -1008,6 +1008,10 @@ class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
     #: names a live Claim (``TerminalEgressChildReceiptV3``) or Subject
     #: (``TerminalEgressChildReceiptV4``) outside them.
     children: tuple[ProposalChildReceiptAny, ...]
+    #: Recovery delivered to an admission under the operation's ref that this
+    #: operation's terminal did not submit (it names no such binding): the
+    #: items' reasons stay with the operation and are attached to no proposal.
+    item_reasons_unattributed: bool = Field(default=False, exclude_if=lambda value: value is False)
 
     @field_validator("proposal_id")
     @classmethod

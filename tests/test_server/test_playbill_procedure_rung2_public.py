@@ -53,7 +53,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_V2_DIGEST,
-    WorkspaceFileSourceRequest,
+    WorkspaceFileSourceRequestV2,
 )
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.governance.keys import generate_client_principal_key
@@ -225,10 +225,9 @@ def _procedure_definition(
         target=output_contract.identity,
         artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
     )
-    request = WorkspaceFileSourceRequest(
+    request = WorkspaceFileSourceRequestV2(
         logical_source="commerce.production.orders",
         relative_path=RELATIVE_PATH,
-        workspace_binding_digest=_binding_digest(workspace),
         coordinate_type="postgres-lsn-v1",
         coordinate={"lsn": "workspace"},
         selector_type="relation-primary-key-v1",
@@ -623,6 +622,8 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     assert observation.capture_digest is not None
     assert observation.source_read_receipt is not None
     assert observation.source_read_receipt.relative_path == RELATIVE_PATH
+    # Authored without a binding digest; the daemon recorded the attached root's.
+    assert observation.source_read_receipt.workspace_binding_digest == _binding_digest(workspace)
 
     # 4. The manager retrieves the exact candidate, reviews it, and activates it.
     proof = _proposal_proof(transport, instance_id, egress.proposal_id)

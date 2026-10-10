@@ -246,6 +246,7 @@ from cruxible_client.contracts.procedures.windows import (
     TriggerEventReference as TriggerEventReference,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate as AcceptedCoordinate
+from cruxible_client.contracts.proposal_models import ProposalItemReason as ProposalItemReason
 from cruxible_client.contracts.provider_contracts import (
     ProviderOperationContract as _ProviderOperationContractV1,
 )
@@ -317,10 +318,16 @@ from cruxible_client.contracts.workspace_advertisement import (
     WorkspaceAdvertisement,
 )
 from cruxible_client.contracts.workspace_file import (
+    ExecutedWorkspaceFileSourceRequestV2 as ExecutedWorkspaceFileSourceRequestV2,
+)
+from cruxible_client.contracts.workspace_file import (
     SourceReadReceipt as SourceReadReceipt,
 )
 from cruxible_client.contracts.workspace_file import (
     WorkspaceFileSourceRequest as WorkspaceFileSourceRequest,
+)
+from cruxible_client.contracts.workspace_file import (
+    WorkspaceFileSourceRequestV2 as WorkspaceFileSourceRequestV2,
 )
 
 HostStatus = Literal["created", "already_exists", "would_create"]
@@ -930,6 +937,9 @@ class ProposalReview(BaseModel):
     governance: dict[str, Any]
     provenance: dict[str, Any]
     rationale: str | None = None
+    item_reasons: list[ProposalItemReason] = Field(default_factory=list)
+    item_reason_count: int = 0
+    item_reasons_next_cursor: str | None = None
     attestation_coverage: dict[str, Any]
     documents: list[dict[str, Any]]
     redactions: list[str]

@@ -152,6 +152,9 @@ class ApprovalRequest(_StrictPlaybillRequest):
 class ReviewRequest(_StrictPlaybillRequest):
     include_body: bool = False
     workspace_observation: ReviewWorkspaceObservation | None = None
+    # A Procedure proposal's item reasons are paged: the page after this cursor.
+    item_reasons_after: str | None = None
+    item_reasons_limit: int | None = Field(default=None, ge=1, le=500)
 
 
 class ApprovalChallengeRequest(_StrictPlaybillRequest):

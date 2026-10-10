@@ -341,3 +341,94 @@ def test_a_field_without_lineage_from_one_capture_cites_that_capture() -> None:
     _values, evidence = _cited(state, "$steps.only_a.other")
 
     assert evidence == {"item-0": _FEED_A}
+
+
+# --- per-Claim reasons over a large terminal -----------------------------------
+
+
+def test_a_400_item_terminal_keeps_every_reason_and_reads_one_in_constant_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No item's reason is lost to the change-set bound; one Claim's reason is one read."""
+
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_client.contracts.proposal_models import PROPOSAL_ITEM_REASON_MAX_LENGTH
+    from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.service.proposals.review import service_review_playbill_proposal
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    count = 400
+    long_reason = "Reported by the vendor feed. " * 300  # past the old 4096-character cap
+    overlong = "x" * (PROPOSAL_ITEM_REASON_MAX_LENGTH + 10)
+    templates = tuple(
+        item_template(
+            statement={
+                **item_template()["statement"],  # type: ignore[dict-item]
+                "qualifier": f"q{index:03d}",
+            },
+            rationale=(
+                long_reason
+                if index == 7
+                else overlong
+                if index == 8
+                else f"Reason for item {index}."
+            ),
+        )
+        for index in range(count)
+    )
+    instance, owner, root, line, _procedure = proposal_world(tmp_path, templates=templates)
+
+    state = run_line(instance, root, line)
+
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert egress.proposal_id is not None and len(egress.children) == count
+    access = BodyAccessContext(principal_id="unit-test", can_read_body=True)
+    seen: dict[str, str] = {}
+    truncated: set[str] = set()
+    after: str | None = None
+    while True:
+        review = service_review_playbill_proposal(
+            instance,
+            proposal_id=egress.proposal_id,
+            access=access,
+            item_reasons_after=after,
+            item_reasons_limit=150,
+        )
+        assert review.item_reason_count == count
+        assert len(review.item_reasons) <= 150
+        seen.update((item.path, item.reason) for item in review.item_reasons)
+        truncated.update(item.path for item in review.item_reasons if item.truncated)
+        after = review.item_reasons_next_cursor
+        if after is None:
+            break
+    by_index = {child.child_index: child.path for child in egress.children}
+    assert len(seen) == count
+    assert seen[by_index[7]] == long_reason.strip()
+    # A reason past the per-item bound is kept to the bound and marked.
+    assert truncated == {by_index[8]}
+    assert len(seen[by_index[8]]) == PROPOSAL_ITEM_REASON_MAX_LENGTH
+    assert seen[by_index[399]] == "Reason for item 399."
+    assert review.rationale is not None and "400 items;" in review.rationale
+
+    from tests.core_support._retirement_support import activate_proposal
+
+    activate_proposal(instance, owner, egress.proposal_id)
+    claim_id = by_index[123].rsplit("/", 1)[-1].removesuffix(".json")
+    reads: list[str] = []
+    original = ProposalEvidenceStore.read_record_bytes
+
+    def counted(path: Path) -> bytes:
+        if "item-reasons" in path.parts:
+            reads.append(str(path))
+        return original(path)
+
+    monkeypatch.setattr(ProposalEvidenceStore, "read_record_bytes", staticmethod(counted))
+    why = service_playbill_get(
+        instance, request=GetRequest(ref=claim_id, detail="why"), access=access
+    )
+    assert why.reason is not None and why.reason.reason == "Reason for item 123."
+    assert why.reason.run == state.run_id and why.reason.terminal == "propose"
+    # Reading one Claim's reason reads one record, whatever the batch size.
+    assert len(reads) == 1

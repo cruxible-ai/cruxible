@@ -522,6 +522,8 @@ def review_proposal(
             if req.workspace_observation is None
             else req.workspace_observation.model_dump(mode="json")
         ),
+        item_reasons_after=req.item_reasons_after,
+        item_reasons_limit=req.item_reasons_limit,
     )
 
 

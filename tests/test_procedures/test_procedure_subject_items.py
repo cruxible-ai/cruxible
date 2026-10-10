@@ -141,8 +141,10 @@ def test_a_subject_item_creates_by_key_and_a_claim_item_names_it_by_key(tmp_path
     assert claimed.path is not None and claimed.path in egress.target_paths
     assert any(path.startswith("claims/") for path in egress.target_paths)
 
-    inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
-    accept_proposal(instance, owner, inspection)
+    from tests.core_support._retirement_support import activate_proposal
+
+    # Accepted through the service, so the record binds this exact admission.
+    activate_proposal(instance, owner, egress.proposal_id)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert parse_subject(tree[created.path], path=created.path).subject_id == "click"
     claim = parse_claim(tree[claimed.path], path=claimed.path)
@@ -154,6 +156,17 @@ def test_a_subject_item_creates_by_key_and_a_claim_item_names_it_by_key(tmp_path
         and parse_claim(tree[path], path=path).statement.predicate == SLUG
     ]
     assert [item.statement.object.model_dump(mode="json")["value"] for item in keys] == ["click"]
+    # Each item's reason is kept with the member it explains, the Subject included.
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+
+    why = service_playbill_get(
+        instance,
+        request=GetRequest(ref=f"Subject:{KIND}/click", detail="why"),
+        access=delivery._READER,
+    )
+    assert why.reason is not None
+    assert why.reason.reason == "The advisory names this package."
 
 
 def test_a_key_a_live_subject_holds_reuses_it_and_creates_nothing(tmp_path: Path) -> None:

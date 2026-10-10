@@ -1191,6 +1191,8 @@ def playbill_review_proposal(
     *,
     include_body: bool = False,
     workspace_observation: Mapping[str, object] | None = None,
+    item_reasons_after: str | None = None,
+    item_reasons_limit: int | None = None,
 ) -> contracts.ProposalReview:
     check_permission("cruxible_proposal_review", instance_id=instance_id)
     result = service_review_playbill_proposal(
@@ -1198,6 +1200,8 @@ def playbill_review_proposal(
         proposal_id=proposal_id,
         access=_access(instance_id, include_body=include_body),
         workspace_observation=workspace_observation,
+        item_reasons_after=item_reasons_after,
+        **({} if item_reasons_limit is None else {"item_reasons_limit": item_reasons_limit}),
     )
     return contracts.ProposalReview.model_validate(result.model_dump(mode="json"))
 

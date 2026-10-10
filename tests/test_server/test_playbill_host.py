@@ -24,7 +24,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import utc_now
-from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequest
+from cruxible_client.contracts.workspace_file import ExecutedWorkspaceFileSourceRequestV2
 from cruxible_core.documents.workspace_file import (
     WorkspaceFileReader,
     WorkspaceFileReadRefused,
@@ -620,8 +620,9 @@ def test_independent_approval_init_creates_no_provider_proposal(
 
 
 def _read_workspace_path(reader: WorkspaceFileReader, root: Path, relative_path: str) -> None:
-    request = WorkspaceFileSourceRequest(
+    request = ExecutedWorkspaceFileSourceRequestV2(
         logical_source="workspace.docs",
+        workspace=root.name,
         workspace_binding_digest=workspace_binding_digest(
             instance_id=reader.instance_id, canonical_root=root
         ),

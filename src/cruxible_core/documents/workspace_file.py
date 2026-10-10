@@ -26,8 +26,9 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.workspace_file import (
+    ExecutedWorkspaceFileSourceRequestV2,
     SourceReadReceipt,
-    WorkspaceFileSourceRequest,
+    WorkspaceFileSourceRequestV2,
 )
 
 WorkspaceFilePathClass = Literal[
@@ -45,6 +46,10 @@ WorkspaceFilePathClass = Literal[
     "changed_during_read",
     "missing",
     "size_budget",
+    # The authored request names no workspace and several roots are authorized.
+    "workspace_unnamed",
+    # The authored request names a workspace no authorized root (or several) is called.
+    "workspace_unknown",
 ]
 
 
@@ -53,10 +58,25 @@ class WorkspaceFileReadRefused(Exception):
 
     code = "workspace_file_read_refused"
 
-    def __init__(self, path_class: WorkspaceFilePathClass, message: str) -> None:
+    def __init__(
+        self,
+        path_class: WorkspaceFilePathClass,
+        message: str,
+        *,
+        workspace_names: tuple[str, ...] = (),
+    ) -> None:
         self.path_class = path_class
+        #: The logical names of the authorized roots, when naming one is the repair.
+        self.workspace_names = workspace_names
         self.repair_commands = (
-            "select a regular non-linked file inside an attached or operationally allowed root",
+            (
+                "name one of the authorized workspaces in the Source request's `workspace`: "
+                + ", ".join(workspace_names),
+            )
+            if workspace_names
+            else (
+                "select a regular non-linked file inside an attached or operationally allowed root",
+            )
         )
         super().__init__(message)
 
@@ -91,6 +111,7 @@ class WorkspaceFileReader:
     ) -> None:
         self.instance_id = instance_id
         self.operating_profile = operating_profile
+        self._attached = self._canonical_roots(attached_roots)
         self._roots = self._canonical_roots((*attached_roots, *operational_allowed_roots))
         self._managed_roots = self._canonical_roots(managed_roots, require_directory=False)
 
@@ -114,6 +135,62 @@ class WorkspaceFileReader:
         return tuple(
             workspace_binding_digest(instance_id=self.instance_id, canonical_root=root)
             for root in self._roots
+        )
+
+    @property
+    def workspace_names(self) -> tuple[str, ...]:
+        """Each authorized root's logical name (its last component), sorted and unique."""
+
+        return tuple(sorted({root.name for root in self._roots}, key=lambda n: n.encode("utf-8")))
+
+    def resolve(
+        self, request: WorkspaceFileSourceRequestV2
+    ) -> ExecutedWorkspaceFileSourceRequestV2:
+        """Resolve an authored request's workspace to the root the daemon will read.
+
+        Unnamed: the instance's attached workspace, else its only authorized
+        root; several and none attached refuses ``workspace_unnamed`` listing
+        the names. Named: the one authorized root of that name; none, or
+        several, refuses ``workspace_unknown`` listing the names. The binding
+        digest of the resolved root is the daemon's to record, never the
+        author's.
+        """
+
+        if self.operating_profile == "cloud":
+            raise WorkspaceFileReadRefused(
+                "cloud_no_mounts", "cloud profile has no daemon-local workspace mounts"
+            )
+        if request.workspace is None:
+            candidates = self._attached if len(self._attached) == 1 else self._roots
+            if not candidates:
+                raise WorkspaceFileReadRefused(
+                    "binding", "no workspace is attached or operationally allowed"
+                )
+            if len(candidates) > 1:
+                raise WorkspaceFileReadRefused(
+                    "workspace_unnamed",
+                    "several workspaces are authorized and the Source request names none",
+                    workspace_names=self.workspace_names,
+                )
+        else:
+            candidates = tuple(root for root in self._roots if root.name == request.workspace)
+            if len(candidates) != 1:
+                raise WorkspaceFileReadRefused(
+                    "workspace_unknown",
+                    (
+                        f"no authorized workspace is named {request.workspace!r}"
+                        if not candidates
+                        else f"several authorized workspaces are named {request.workspace!r}"
+                    ),
+                    workspace_names=self.workspace_names,
+                )
+        (root,) = candidates
+        return ExecutedWorkspaceFileSourceRequestV2.executing(
+            request,
+            workspace=root.name,
+            binding_digest=workspace_binding_digest(
+                instance_id=self.instance_id, canonical_root=root
+            ),
         )
 
     def _root_for(self, binding_digest: str) -> Path:
@@ -220,7 +297,7 @@ class WorkspaceFileReader:
 
     def read(
         self,
-        request: WorkspaceFileSourceRequest,
+        request: ExecutedWorkspaceFileSourceRequestV2,
         *,
         run_id: str,
         admission_binding_digest: str,
@@ -235,7 +312,7 @@ class WorkspaceFileReader:
                 "cloud_no_mounts", "cloud profile has no daemon-local workspace mounts"
             )
         try:
-            request = WorkspaceFileSourceRequest.model_validate(request)
+            request = ExecutedWorkspaceFileSourceRequestV2.model_validate(request)
         except ValueError as exc:
             raise WorkspaceFileReadRefused(
                 "path_grammar", "workspace path is not normalized relative POSIX"
@@ -322,7 +399,7 @@ class WorkspaceFileReader:
                     "changed_during_read", "workspace source path cannot be confirmed"
                 ) from exc
             try:
-                WorkspaceFileSourceRequest._relative_path(real_relative_path)
+                WorkspaceFileSourceRequestV2._relative_path(real_relative_path)
             except ValueError as exc:
                 raise WorkspaceFileReadRefused(
                     "path_grammar", "real workspace path is not normalized relative POSIX"

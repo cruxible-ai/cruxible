@@ -378,6 +378,93 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
 #: does not name proposes instead, for this reason, naming those ClaimTypes.
 SETTLE_OUTSIDE_MANDATE_SCOPE = "cruxible.settle.outside_mandate_scope"
 
+PROPOSAL_ITEM_REASON_MAX_LENGTH = 16_384
+"""One Procedure item's own reason: far past a change-set rationale, still bounded.
+
+Longer reasons are kept to this many characters and marked ``truncated``.
+"""
+
+
+class ProposalItemReason(_StrictProposalModel):
+    """One Procedure terminal item's own reason, kept with the member it explains.
+
+    A ``propose_change_set`` or ``settle_change_set`` item states why in its
+    ``rationale``; the change set's rationale names only the run and the item
+    count, and each item's reason is recorded here, keyed by the immutable
+    Procedure operation (``operation``: the terminal's admission binding and
+    node, the identity its core creation records use) and the path of the
+    Claim (or Subject) it lowered into. A proposal reads them only through its
+    own ``ProposalItemReasonLink``, never through its (reusable) ref. It is
+    provenance, not evidence: the Claim's Captures are unchanged.
+    """
+
+    tag: Literal["playbill-proposal-item-reason-v1"] = "playbill-proposal-item-reason-v1"
+    operation: str
+    path: str
+    item_key: str
+    child_index: int = Field(ge=0)
+    procedure: str
+    run_id: str
+    terminal: str
+    reason: str = Field(min_length=1, max_length=PROPOSAL_ITEM_REASON_MAX_LENGTH)
+    truncated: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+    @field_validator("operation")
+    @classmethod
+    def _operation(cls, value: str) -> str:
+        return _procedure_operation(value)
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if not (value.startswith(("claims/", "subjects/")) and value.endswith(".json")):
+            raise ValueError("an item reason explains one Claim or Subject member")
+        return value
+
+    @classmethod
+    def bounded(cls, reason: str, **fields: object) -> "ProposalItemReason":
+        """The record for ``reason``, cut to the bound and marked when it was longer."""
+
+        text = reason.replace("\x00", "").strip()
+        truncated = len(text) > PROPOSAL_ITEM_REASON_MAX_LENGTH
+        if truncated:
+            text = text[: PROPOSAL_ITEM_REASON_MAX_LENGTH - 1].rstrip() + "\u2026"
+        return cls(reason=text, truncated=truncated, **fields)  # type: ignore[arg-type]
+
+
+def _procedure_operation(value: str) -> str:
+    if not _PROCEDURE_OPERATION_RE.fullmatch(value):
+        raise ValueError("a Procedure operation is AIT- plus 32 lowercase hexadecimal digits")
+    return value
+
+
+_PROCEDURE_OPERATION_RE = re.compile(r"^AIT-[0-9a-f]{32}$")
+
+
+class ProposalItemReasonLink(_StrictProposalModel):
+    """The Procedure operation whose item reasons one admitted proposal carries.
+
+    Written by the daemon for the exact admission its terminal delivery
+    submitted or recovered, so a proposal's reasons never follow its ref: an
+    unrelated proposal later admitted under the same ref has no link and no
+    reasons. A readmission reads its source admission's link.
+    """
+
+    tag: Literal["playbill-proposal-item-reason-link-v1"] = "playbill-proposal-item-reason-link-v1"
+    proposal_id: str
+    operation: str
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("operation")
+    @classmethod
+    def _operation(cls, value: str) -> str:
+        return _procedure_operation(value)
+
 
 class ProposalSettleSubmission(_StrictProposalModel):
     """How a settle terminal submitted its proposal, retained for recovery.
@@ -388,7 +475,9 @@ class ProposalSettleSubmission(_StrictProposalModel):
     inferring it from whatever later happened to the proposal.
 
     A fallback for `cruxible.settle.outside_mandate_scope` names, in
-    `outside_scope_claim_types`, the ClaimTypes the grant's scope left out.
+    `outside_scope_claim_types`, the ClaimTypes the grant's scope left out --
+    a ClaimType a retirement touches counts as left out when the scope does
+    not list `retire` for it.
     """
 
     tag: Literal["playbill-proposal-settle-submission-v1"] = (
@@ -489,11 +578,23 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     readmits: ProposalReadmissionLink | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # The Procedure operation (AIT-...: its terminal's admission binding and
+    # node) whose terminal submitted this admission. Set only by the Procedure
+    # terminal door -- no public request carries it -- and absent, like
+    # `readmits`, for every other proposal, so admissions already on disk keep
+    # their bytes. A terminal's item reasons attach only to an admission that
+    # names its exact operation here.
+    procedure_operation: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("rationale")
     @classmethod
     def _rationale(cls, value: str | None) -> str | None:
         return validate_change_set_rationale(value)
+
+    @field_validator("procedure_operation")
+    @classmethod
+    def _procedure_operation(cls, value: str | None) -> str | None:
+        return None if value is None else _procedure_operation(value)
 
     @field_validator("proposal_id")
     @classmethod
@@ -702,6 +803,9 @@ __all__ = [
     "ProposalReadmissionLink",
     "ProposalSettleSubmission",
     "SETTLE_OUTSIDE_MANDATE_SCOPE",
+    "PROPOSAL_ITEM_REASON_MAX_LENGTH",
+    "ProposalItemReason",
+    "ProposalItemReasonLink",
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
     "CHANGE_SET_RECORD_BYTES_PER_MEMBER",

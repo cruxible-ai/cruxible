@@ -290,6 +290,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("NextRequestV1", "expiring_within"): "VALIDITY WINDOW",
     ("NextResult", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillNextResultV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("ProcedureClaimRetirementItem", "effective_until"): "VALIDITY WINDOW",
     ("ProcedureRunState", "evaluation_time"): "EVALUATION INSTANT",
     # When the daemon last tried to push. An assertion about an attempt, not a
     # coordinate: the mirror is a copy of accepted state and its timing orders

@@ -141,6 +141,26 @@ def activate_submitted(
     proposal_id = submitted.status.proposal_id
     candidate_digest = submitted.status.candidate_digest
     assert proposal_id is not None and candidate_digest is not None, submitted.intent.last_preflight
+    activate_proposal(instance, owner, proposal_id, candidate_digest=candidate_digest)
+
+
+def activate_proposal(
+    instance: PlaybillInstance,
+    owner: Any,
+    proposal_id: str,
+    *,
+    candidate_digest: str | None = None,
+) -> None:
+    """Approve (when the policy requires it) and activate one proposal through the service.
+
+    The accepted record binds the exact admission (actor and source compilation
+    digest), as production activation does.
+    """
+
+    if candidate_digest is None:
+        evaluation = instance.proposal_evidence().read_evaluation(proposal_id)
+        assert evaluation.candidate_digest is not None
+        candidate_digest = evaluation.candidate_digest
     candidate = instance.proposal_evidence().read_candidate(candidate_digest)
     if candidate.approval_requirements:
         approval = _sign(

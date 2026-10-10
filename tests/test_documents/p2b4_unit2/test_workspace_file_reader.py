@@ -10,8 +10,9 @@ import pytest
 import cruxible_core.documents.workspace_file as workspace_file_module
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_file import (
+    ExecutedWorkspaceFileSourceRequestV2,
     SourceReadReceipt,
-    WorkspaceFileSourceRequest,
+    WorkspaceFileSourceRequestV2,
 )
 from cruxible_core.documents.workspace_file import (
     WorkspaceFileReader,
@@ -39,9 +40,10 @@ def _reader(root: Path, **kwargs: object) -> WorkspaceFileReader:
     )
 
 
-def _request(root: Path, relative_path: str) -> WorkspaceFileSourceRequest:
-    return WorkspaceFileSourceRequest(
+def _request(root: Path, relative_path: str) -> ExecutedWorkspaceFileSourceRequestV2:
+    return ExecutedWorkspaceFileSourceRequestV2(
         logical_source="workspace.docs",
+        workspace=root.name,
         workspace_binding_digest=workspace_binding_digest(
             instance_id="workspace-reader-test", canonical_root=root.resolve()
         ),
@@ -55,7 +57,7 @@ def _request(root: Path, relative_path: str) -> WorkspaceFileSourceRequest:
 
 def _read(
     reader: WorkspaceFileReader,
-    request: WorkspaceFileSourceRequest,
+    request: ExecutedWorkspaceFileSourceRequestV2,
     *,
     max_bytes: int = 1024,
 ):
@@ -420,3 +422,94 @@ def test_disappearing_file_after_open_refuses(
     with pytest.raises(WorkspaceFileReadRefused) as caught:
         _read(_reader(root), _request(root, "note"))
     assert caught.value.path_class == "missing"
+
+
+def _authored(relative_path: str, workspace: str | None = None) -> WorkspaceFileSourceRequestV2:
+    return WorkspaceFileSourceRequestV2(
+        logical_source="workspace.docs",
+        workspace=workspace,
+        relative_path=relative_path,
+        coordinate_type="workspace-snapshot-v1",
+        coordinate={"revision": "working"},
+        selector_type="workspace-file-v1",
+        selector={"document": "docs"},
+    )
+
+
+def test_unnamed_request_resolves_the_attached_workspace_and_records_its_binding(
+    tmp_path: Path,
+) -> None:
+    attached = tmp_path / "attached"
+    allowed = tmp_path / "allowed"
+    for path in (attached, allowed):
+        path.mkdir()
+    (attached / "note.txt").write_bytes(b"attached")
+    reader = WorkspaceFileReader(
+        instance_id="workspace-reader-test",
+        operating_profile="local",
+        attached_roots=(attached,),
+        operational_allowed_roots=(allowed,),
+    )
+
+    executed = reader.resolve(_authored("note.txt"))
+
+    # The digest the daemon records is exactly the attached root's binding.
+    assert executed.workspace == "attached"
+    assert executed.workspace_binding_digest == workspace_binding_digest(
+        instance_id="workspace-reader-test", canonical_root=attached.resolve()
+    )
+    assert _read(reader, executed).receipt.workspace_binding_digest == (
+        executed.workspace_binding_digest
+    )
+    named = reader.resolve(_authored("note.txt", workspace="allowed"))
+    assert named.workspace_binding_digest == workspace_binding_digest(
+        instance_id="workspace-reader-test", canonical_root=allowed.resolve()
+    )
+
+
+def test_several_roots_and_no_name_refuse_listing_the_names(tmp_path: Path) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    for path in (first, second):
+        path.mkdir()
+    reader = WorkspaceFileReader(
+        instance_id="workspace-reader-test",
+        operating_profile="local",
+        attached_roots=(),
+        operational_allowed_roots=(first, second),
+    )
+
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        reader.resolve(_authored("note.txt"))
+    assert caught.value.path_class == "workspace_unnamed"
+    assert caught.value.workspace_names == ("first", "second")
+    assert "first, second" in caught.value.repair_commands[0]
+
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        reader.resolve(_authored("note.txt", workspace="third"))
+    assert caught.value.path_class == "workspace_unknown"
+    assert caught.value.workspace_names == ("first", "second")
+
+    assert reader.resolve(_authored("note.txt", workspace="second")).workspace == "second"
+
+
+def test_no_authorized_root_refuses_binding(tmp_path: Path) -> None:
+    reader = WorkspaceFileReader(
+        instance_id="workspace-reader-test", operating_profile="local", attached_roots=()
+    )
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        reader.resolve(_authored("note.txt"))
+    assert caught.value.path_class == "binding"
+
+
+def test_authored_request_never_carries_the_binding_digest() -> None:
+    from cruxible_client.contracts.workspace_file import (
+        WorkspaceBindingDigestAuthored,
+        parse_authored_workspace_request,
+    )
+
+    authored = _authored("note.txt").model_dump(mode="json")
+    assert "workspace_binding_digest" not in authored and "workspace" not in authored
+    with pytest.raises(WorkspaceBindingDigestAuthored):
+        parse_authored_workspace_request(
+            {**authored, "workspace_binding_digest": "sha256:" + "1" * 64}
+        )

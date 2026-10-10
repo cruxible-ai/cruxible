@@ -242,6 +242,8 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     item_predicates: tuple[str, ...] = (PREDICATE,),
     subject_items: tuple[dict[str, object], ...] = (),
     subject_creation: tuple[str, ...] = (),
+    candidate_templates: Any = None,
+    change_kinds: tuple[str, ...] = ("create", "revise"),
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
@@ -254,8 +256,12 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
                 SettleChangeSetNode(
                     node_id="settle",
                     candidate_templates=(
-                        *subject_items,
-                        *(_predicate_item(predicate) for predicate in item_predicates),
+                        (
+                            *subject_items,
+                            *(_predicate_item(predicate) for predicate in item_predicates),
+                        )
+                        if candidate_templates is None
+                        else candidate_templates
                     ),
                     result="$steps.result",
                 ),
@@ -334,7 +340,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
                         target=claim_types[predicate].identity,
                         artifact_digest=claim_type_digest(claim_types[predicate]).tagged,
                     ),
-                    change_kinds=("create", "revise"),
+                    change_kinds=change_kinds,  # type: ignore[arg-type]
                 )
                 for predicate in sorted(scope_predicates)
             ),

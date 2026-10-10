@@ -5348,6 +5348,7 @@ class ProposalService:
         expected_candidate: tuple[str, str] | None = None,
         readmits: ProposalReadmissionLink | None = None,
         confirm_head: Callable[[str], None] | None = None,
+        procedure_operation: str | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -5385,6 +5386,10 @@ class ProposalService:
         admission: the stale proposal this one re-admits. The record refuses it
         unless the request's `source_compilation_digest` is exactly its
         operation digest. No public door passes it either.
+
+        `procedure_operation` is the Procedure terminal door's alone, and is
+        retained on the admission: the operation whose terminal submitted it,
+        the binding its item reasons require. No public door passes it.
 
         `confirm_head`, when given, is called with the accepted head this
         submission evaluated at, under the activation lock and after that head
@@ -5490,6 +5495,7 @@ class ProposalService:
                 rationale=request.rationale,
                 settle_submission=settle_submission,
                 readmits=readmits,
+                procedure_operation=procedure_operation,
             )
             candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
             try:

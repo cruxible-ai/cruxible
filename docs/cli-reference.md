@@ -1453,7 +1453,9 @@ resolution set aside or that were retired. A query lists a kind's live Subjects;
 `--status retired` also lists its retired Subjects, and every row then states its
 Subject's `lifecycle` (`live` or `retired`). `cruxible get CLM-...`
 reads one Claim's card; `--detail why` its verdict with the law evidence and
-source handles it was computed from, `--detail history` its revisions, and
+source handles it was computed from (and, when a Procedure proposed the
+accepted revision, `reason`: that item's own rationale and the run and terminal
+that proposed it), `--detail history` its revisions, and
 `--detail proof` its full envelope and facts. `orient` counts Claims by status
 under `artifacts.claims`.
 
@@ -1918,6 +1920,21 @@ authorized workspace root, over the CaptureContract's selection budget, or with
 no daemon-local reader refuses `workspace_file_read_refused` and names its path
 class.
 
+A `workspace.file` Source request (`playbill-workspace-file-source-request-v2`)
+says what to read, never how: `logical_source`, `relative_path`, the
+coordinate and selector it records, `replayability`, and optionally
+`workspace`, the logical name (last path component) of the authorized root to
+read under. Omitted, it is the instance's attached workspace, else its only
+authorized root; several authorized roots and none attached refuse with path
+class `workspace_unnamed`, and a name no root (or more than one) carries
+refuses `workspace_unknown` -- both list the names in `workspace_names`. The
+daemon resolves the root and records its binding digest on the executed
+request it journals (`playbill-workspace-file-executed-source-request-v2`),
+the `SourceReadReceipt` and so the Capture, so a moved instance still shows a
+different binding. An authored request carrying `workspace_binding_digest` (the
+v1 shape) refuses with path class `binding`: remove it. Run history written
+with v1 requests still reads and verifies.
+
 A Source request's values may reference the run's input or an earlier step's
 output, but only as a whole value: `{"url": "$input.url"}` resolves, while a
 reference inside a longer string (`"https://example.org/$input.id"`) is passed
@@ -2292,11 +2309,27 @@ it in the ledger, and activate it with the existing proposal verbs.
 An item on a many-valued ClaimType adds a value, as `write`'s `add` does: the
 values already in its slot (and any sibling item in the same slot) stay, and
 each is dispositioned `not_tested`. An item on a single-valued slot that
-already holds a value names the Claim it `revises`. Each item's rationale
-reaches the proposal: the proposal's rationale is the run that proposed it
-followed by the items' own rationales (each labelled with its Claim ID when
-there are several), shown by `proposal review --json` as `rationale` and read
-back by `get CLM-... --detail evidence` once accepted.
+already holds a value names the Claim it `revises`. Each item's rationale is
+kept with the Claim (or Subject) it explains, whole up to 16,384 characters (a
+longer one is kept to that bound and marked `truncated`): the proposal's own
+`rationale` names only the run that proposed it and how many items it carries.
+`proposal review` pages the items' reasons (`item_reasons`, by member path,
+with `item_reason_count` and `item_reasons_next_cursor`), and once accepted
+`get CLM-... --detail why` carries the Claim's own `reason` -- with the
+proposal, Procedure, run and terminal that proposed it -- and `--detail
+evidence` its `rationale`. Both come from the exact admission that was
+accepted -- the one the accepted change-set record binds by actor, source
+compilation and candidate, never withdrawn or rejected; when no single
+admission matches, the revision carries no attributed `reason` or `rationale`.
+A proposal reads its items' reasons only through its own link to the Procedure
+operation that wrote them, never through its (reusable) proposal ref, and only
+an admission the operation's own terminal submitted (it records that
+`procedure_operation`; no public request can) is linked. When recovery
+delivers to an equivalent admission someone else submitted under the
+operation's ref, the reasons stay unattached and the run's receipt says
+`item_reasons_unattributed`. Reading
+one Claim's reason is one record read however many items its proposal carried. The reasons are provenance, not
+evidence: the Claim's Captures are unchanged.
 
 An item may also be a Subject item
 (`playbill-procedure-subject-proposal-item-v1`: `subject_kind`, `key`,
@@ -2314,6 +2347,23 @@ lands on, else to the one live holder of the key; none refuses
 `key_ambiguous`. A v3 item without a `source` cites its closure's Capture as a
 v1 item does. A propose mandate reaches the created Subjects through its
 namespace (`subjects/<kind>`).
+
+An item may also retire a live Claim
+(`playbill-procedure-claim-retirement-item-v1`: `retires`, the Claim ID;
+`reason`, `was-wrong`, `was-rescinded` or `superseded`; `rationale`; optional
+`effective_until`) -- for a record that left an export, say. The Claim is named
+by ID, read from accepted state by a Claim tap, never by statement, so one item
+ends exactly one lineage. The Procedure proposes and an agent judges what a
+disappearance means: the item is reviewed like any other, and it cites no
+evidence. The retirement
+carries the Claim's live dependent closure, each retired for the same reason,
+exactly as `retire` computes it, and the run's receipt binds the item to the
+retired member. A Claim that is not live at the run's admitted state refuses
+`proposal_item_invalid` with `cruxible.procedure.retirement_target_not_live`; a
+key Claim, which retires with its Subject and never on its own,
+`cruxible.procedure.key_claim_retirement`; and a terminal that both retires a
+lineage and revises, restates or dispositions it (or retires it twice)
+`cruxible.procedure.retirement_lineage_conflict`.
 
 The run's wall-clock budget is enforced inside the terminal, after its items
 are prepared and before anything is delivered: a run out of time ends
@@ -2340,9 +2390,12 @@ namespace, its ClaimType scope and change kinds (`create`, `revise`,
 `retire`), and its Subject scope. More than one covering mandate refuses
 `settle_mandate_ambiguous`. When none covers the change but a live settle
 grant for the Procedure covers all of it except Claims of ClaimTypes its scope
-does not name, the terminal proposes under that grant instead (per-rule trust:
+does not name -- or retirements of ClaimTypes whose scope does not list
+`retire` --, the terminal proposes under that grant instead (per-rule trust:
 a grant over the ClaimTypes you trust to settle, and every other ClaimType the
-Procedure emits goes to review): `settle_outcome: proposed`, `fallback_reason`
+Procedure emits goes to review; a Procedure's retirement settles only under a
+grant whose scope explicitly lists `retire` for its ClaimType):
+`settle_outcome: proposed`, `fallback_reason`
 `cruxible.settle.outside_mandate_scope`, and the typed
 `outside_scope_claim_types` naming them, on the run result and on the
 proposal's settle submission. The grant with the fewest such ClaimTypes is
@@ -3463,7 +3516,7 @@ cruxible proposal readmit PROPOSAL_ID [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal withdraw PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal reject PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
-  [--workspace-root DIR] [--json]
+  [--workspace-root DIR] [--item-reasons-after CURSOR] [--item-reasons-limit N] [--json]
 cruxible proposal approve PROPOSAL_ID
   [--signer-id ID] --key FILE [--yes] [--json]
 cruxible proposal activate PROPOSAL_ID [--brief] [--json]
@@ -3626,7 +3679,10 @@ checks original and materialized advisory aliases; recovery restores valid
 incomplete projections without treating modified records as accepted evidence.
 
 `proposal review` prints that pointer and those ref names; `--json` remains the
-structured read. `proposal approve` still renders the whole candidate before
+structured read. A Procedure's proposal also prints one page of its items'
+reasons, each under the Claim or Subject path it explains (50 by default,
+`--item-reasons-limit` up to 500); `--item-reasons-after` with the printed
+cursor reads the next page. `proposal approve` still renders the whole candidate before
 asking for a signature, because that rendering is what the signature covers.
 
 A reviewer without a workspace attachment clones the ledger mirror instead and
