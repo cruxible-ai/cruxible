@@ -154,6 +154,17 @@ def test_a_subject_item_creates_by_key_and_a_claim_item_names_it_by_key(tmp_path
         and parse_claim(tree[path], path=path).statement.predicate == SLUG
     ]
     assert [item.statement.object.model_dump(mode="json")["value"] for item in keys] == ["click"]
+    # Each item's reason is kept with the member it explains, the Subject included.
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+
+    why = service_playbill_get(
+        instance,
+        request=GetRequest(ref=f"Subject:{KIND}/click", detail="why"),
+        access=delivery._READER,
+    )
+    assert why.reason is not None
+    assert why.reason.reason == "The advisory names this package."
 
 
 def test_a_key_a_live_subject_holds_reuses_it_and_creates_nothing(tmp_path: Path) -> None:

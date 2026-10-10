@@ -80,6 +80,7 @@ from cruxible_client.contracts.get_reads import (
     GetProposalCard,
     GetProposalChange,
     GetProposalRefusal,
+    GetProposedReason,
     GetProviderInterfaceCard,
     GetProviderInterfaceProvider,
     GetQueryCard,
@@ -1701,13 +1702,25 @@ def _proposal_card(
 # -- evidence ------------------------------------------------------------------------
 
 
-def _claim_rationale(
-    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, claim_id: str
-) -> str | None:
-    """The change-set rationale of the proposal that accepted this Claim revision."""
+@dataclass(frozen=True)
+class _AcceptingProposal:
+    """The proposal that accepted a member's latest revision, and its item's own reason."""
+
+    rationale: str | None
+    reason: GetProposedReason | None
+
+
+def _accepting_proposal(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, path: str
+) -> _AcceptingProposal | None:
+    """Find the proposal that accepted ``path``'s latest revision, then its item reason.
+
+    One history lookup, one candidate locator, one admission, one reason file:
+    the work never grows with the size of the change set that accepted it.
+    """
 
     with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(coordinate)) as h:
-        latest = h.latest_member(claim_path(claim_id))
+        latest = h.latest_member(path)
         if latest is None:
             return None
         candidate_digest = h.generation(latest.sequence).candidate_digest
@@ -1716,11 +1729,37 @@ def _claim_rationale(
     evidence = instance.proposal_evidence()
     if evidence.index is None:
         return None
+    found: _AcceptingProposal | None = None
     for row in evidence.index.rows(evidence, "candidate_digest=?", (candidate_digest,)):
         admission = evidence.read_admission(row["proposal_id"])
-        if admission.rationale:
-            return admission.rationale
-    return None
+        item = evidence.read_item_reason(evidence.item_reason_target(admission), path)
+        reason = (
+            None
+            if item is None
+            else GetProposedReason(
+                reason=item.reason,
+                truncated=item.truncated,
+                proposal=admission.proposal_id,
+                procedure=item.procedure,
+                run=item.run_id,
+                terminal=item.terminal,
+            )
+        )
+        if reason is not None or admission.rationale:
+            return _AcceptingProposal(rationale=admission.rationale, reason=reason)
+        found = found or _AcceptingProposal(rationale=None, reason=None)
+    return found
+
+
+def _claim_rationale(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, claim_id: str
+) -> str | None:
+    """Why this Claim revision was proposed: its own item's reason, else the change set's."""
+
+    accepting = _accepting_proposal(instance, coordinate, claim_path(claim_id))
+    if accepting is None:
+        return None
+    return accepting.reason.reason if accepting.reason is not None else accepting.rationale
 
 
 def _claim_evidence(
@@ -2393,6 +2432,14 @@ def service_playbill_get(
         fields["why"] = _why(
             instance, coordinate, resolved, evaluation_time=evaluation_time, access=access
         )
+        member = (
+            claim_path(_name(resolved.identity))
+            if resolved.kind == "claim"
+            else resolved.path or f"subjects/{_name(resolved.identity)}.json"
+        )
+        accepting = _accepting_proposal(instance, coordinate, member)
+        if accepting is not None and accepting.reason is not None:
+            fields["reason"] = accepting.reason
     elif request.detail == "history":
         fields["history"], fields["truncated"], fields["next_cursor"] = _history(
             instance,

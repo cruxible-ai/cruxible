@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import stat
 from collections.abc import Callable, Iterator
@@ -37,6 +38,7 @@ from cruxible_client.contracts.errors import (
     ProposalRejectedError,
     ProposalWithdrawnError,
 )
+from cruxible_client.contracts.proposal_models import ProposalItemReason
 from cruxible_client.contracts.source_catalog import SourceCompilationManifest
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.proposals.candidate_review_summary import (
@@ -122,6 +124,7 @@ class ProposalEvidenceStore:
         self.approvals = self._directory("approvals")
         self.source_compilations = self._directory("source-compilations")
         self.withdrawals = self._directory("withdrawals")
+        self.item_reasons = self._directory("item-reasons")
 
     def _directory(self, name: str) -> Path:
         path = self.root / name
@@ -246,6 +249,94 @@ class ProposalEvidenceStore:
             reason=record.reason,
             withdrawn_at=record.withdrawn_at,
         )
+
+    # -- Procedure item reasons ---------------------------------------------------
+
+    def _item_reason_directory(self, target_ref: str) -> Path:
+        return self.item_reasons / hashlib.sha256(target_ref.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _item_reason_name(path: str) -> str:
+        return hashlib.sha256(path.encode("utf-8")).hexdigest() + ".json"
+
+    def write_item_reasons(self, records: tuple[ProposalItemReason, ...]) -> None:
+        """Persist each item's reason under its operation's proposal ref, one file per member.
+
+        Immutable like every record here and idempotent: a retry of the same
+        operation writes the same bytes (an existing identical file is a
+        no-op, a different one refuses). Written before the proposal is
+        submitted, so an admitted proposal never lacks its items' reasons.
+        """
+
+        directories: set[Path] = set()
+        for record in records:
+            directory = self._item_reason_directory(record.target_ref)
+            if directory not in directories:
+                directory.mkdir(mode=0o700, exist_ok=True)
+                if directory.is_symlink() or not directory.is_dir():
+                    raise ProposalIntegrityError(
+                        "proposal item reason directory is not trustworthy"
+                    )
+                directories.add(directory)
+            _exclusive_canonical_write(
+                directory / self._item_reason_name(record.path),
+                canonical_bytes(record.model_dump(mode="json")) + b"\n",
+            )
+        for directory in sorted(directories):
+            _fsync_directory(directory)
+        if directories:
+            _fsync_directory(self.item_reasons)
+
+    def read_item_reason(self, target_ref: str, path: str) -> ProposalItemReason | None:
+        """The reason recorded for one member of one operation's proposal: one file read."""
+
+        file = self._item_reason_directory(target_ref) / self._item_reason_name(path)
+        if not file.exists():
+            return None
+        record = self._read_model(file, ProposalItemReason, label="proposal item reason")
+        if record.target_ref != target_ref or record.path != path:
+            raise ProposalIntegrityError("proposal item reason names another member")
+        return record
+
+    def item_reason_target(self, admission: ProposalAdmissionRecord) -> str:
+        """The proposal ref an admission's item reasons are kept under.
+
+        A readmission re-admits its source under a new ref; its items' reasons
+        stay under the ref of the operation that first proposed them.
+        """
+
+        current = admission
+        seen = {current.proposal_id}
+        while current.readmits is not None:
+            source = current.readmits.source_proposal_id
+            if source in seen:
+                raise ProposalIntegrityError("proposal readmission links form a cycle")
+            seen.add(source)
+            current = self.read_admission(source)
+        return current.target_ref
+
+    def item_reason_page(
+        self, target_ref: str, *, after: str | None, limit: int
+    ) -> tuple[tuple[ProposalItemReason, ...], int, str | None]:
+        """One page of an operation's item reasons; the total; the next cursor.
+
+        Pages follow the records' stable file order (the digest of each
+        member's path), and the cursor is the last record's file stem. Only
+        the page's records are read beyond the directory listing.
+        """
+
+        directory = self._item_reason_directory(target_ref)
+        if not directory.is_dir():
+            return (), 0, None
+        names = sorted(item.name for item in directory.iterdir() if item.name.endswith(".json"))
+        remaining = names if after is None else [name for name in names if name[:-5] > after]
+        page_names = remaining[:limit]
+        page = tuple(
+            self._read_model(directory / name, ProposalItemReason, label="proposal item reason")
+            for name in page_names
+        )
+        cursor = page_names[-1][:-5] if len(remaining) > limit else None
+        return page, len(names), cursor
 
     def write_source_compilation(self, manifest: SourceCompilationManifest) -> Path:
         """Persist a path-free immutable compile receipt beside proposal exhaust."""

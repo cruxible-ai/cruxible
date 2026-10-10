@@ -2234,12 +2234,25 @@ def reject_proposal(
     type=click.Path(file_okay=False),
     help="Workspace whose projection catalog and markers are observed locally.",
 )
+@click.option(
+    "--item-reasons-after",
+    default=None,
+    help="Page a Procedure proposal's item reasons after this cursor (the last page's More:).",
+)
+@click.option(
+    "--item-reasons-limit",
+    default=None,
+    type=click.IntRange(1, 500),
+    help="Item reasons per page (default 50).",
+)
 @json_option
 @handle_errors
 def review_proposal(
     proposal_id: str,
     include_body: bool,
     workspace_root: str,
+    item_reasons_after: str | None,
+    item_reasons_limit: int | None,
     output_json: bool,
 ) -> None:
     workspace = Path(workspace_root)
@@ -2269,6 +2282,8 @@ def review_proposal(
             resolved_id,
             include_body=include_body,
             workspace_observation=observation,
+            item_reasons_after=item_reasons_after,
+            item_reasons_limit=item_reasons_limit,
         )
 
     result = _server_call(

@@ -396,9 +396,17 @@ def handle_playbill_review(
     proposal_id: str,
     *,
     include_body: bool,
+    item_reasons_after: str | None = None,
+    item_reasons_limit: int | None = None,
 ) -> contracts.ProposalReview:
     return _daemon_call(
-        lambda client: client.review_proposal(instance_id, proposal_id, include_body=include_body),
+        lambda client: client.review_proposal(
+            instance_id,
+            proposal_id,
+            include_body=include_body,
+            item_reasons_after=item_reasons_after,
+            item_reasons_limit=item_reasons_limit,
+        ),
         operation_name="cruxible_proposal_review",
     )
 

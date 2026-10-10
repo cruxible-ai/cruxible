@@ -864,6 +864,8 @@ class CruxibleClient:
         *,
         include_body: bool = False,
         workspace_observation: Mapping[str, Any] | None = None,
+        item_reasons_after: str | None = None,
+        item_reasons_limit: int | None = None,
     ) -> contracts.ProposalReview:
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/review",
@@ -872,6 +874,8 @@ class CruxibleClient:
                 "workspace_observation": (
                     None if workspace_observation is None else dict(workspace_observation)
                 ),
+                "item_reasons_after": item_reasons_after,
+                "item_reasons_limit": item_reasons_limit,
             },
         )
         return self._parse_model(response, contracts.ProposalReview)

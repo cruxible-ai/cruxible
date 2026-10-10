@@ -542,6 +542,22 @@ class GetEvidence(_StrictGetModel):
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
 
 
+class GetProposedReason(_StrictGetModel):
+    """Why this revision was proposed, in its own Procedure item's words.
+
+    Read from the proposal that accepted the revision: the item's own
+    ``rationale``, and the run and terminal that proposed it. Provenance, not
+    evidence.
+    """
+
+    reason: str
+    truncated: bool = Field(default=False, exclude_if=lambda value: value is False)
+    proposal: str
+    procedure: str
+    run: str
+    terminal: str
+
+
 class GetRevision(_StrictGetModel):
     revision: int
     sequence: int
@@ -594,6 +610,9 @@ class GetResult(_StrictGetModel):
     body: GetBody | None = Field(default=None, exclude_if=_omit_none)
     # Today's explain output, unchanged.
     why: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
+    # Under ``detail="why"``: the Procedure item's own reason for the accepted
+    # revision of this Claim or Subject, when a Procedure proposed it.
+    reason: GetProposedReason | None = Field(default=None, exclude_if=_omit_none)
     # Today's full accepted envelope, unchanged.
     proof: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
     # ``detail="history"`` paging; absent on every other detail.
@@ -659,6 +678,7 @@ __all__ = [
     "GetContender",
     "GetCoordinate",
     "GetDetail",
+    "GetProposedReason",
     "GetDocumentCard",
     "GetEvidence",
     "GetHistory",

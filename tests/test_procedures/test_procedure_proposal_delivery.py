@@ -542,6 +542,13 @@ def test_a_crash_at_the_proposal_door_recovers_one_proposal_and_publishes_its_re
     inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
     assert inspection.proposal.candidate is not None
     assert inspection.proposal.candidate.candidate_digest == egress.candidate_digest
+    # The item's reason is recorded with the recovered proposal, whichever side crashed.
+    review = service_review_playbill_proposal(
+        instance, proposal_id=egress.proposal_id, access=_READER
+    )
+    assert [(item.path, item.reason) for item in review.item_reasons] == [
+        (egress.children[0].path, item_template()["rationale"])
+    ]
     # Recovery is idempotent: a second sweep finds nothing to do.
     assert service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=2)) == {}
     # And the manager can still accept the recovered proposal.
@@ -1564,7 +1571,7 @@ def test_two_items_for_one_single_valued_slot_still_refuse(tmp_path: Path) -> No
     assert _proposal_refs(instance) == []
 
 
-def test_an_item_rationale_reaches_the_review_and_the_accepted_claims_evidence(
+def test_an_item_rationale_is_kept_with_its_claim_through_review_and_acceptance(
     tmp_path: Path,
 ) -> None:
     instance, owner, root, line, _procedure = proposal_world(tmp_path)
@@ -1574,21 +1581,43 @@ def test_an_item_rationale_reaches_the_review_and_the_accepted_claims_evidence(
 
     (egress,) = state.terminal_egress
     assert egress.proposal_id is not None
+    (child,) = egress.children
     review = service_review_playbill_proposal(
         instance, proposal_id=egress.proposal_id, access=_READER
     )
+    # The change set names the run and its item count; the item's reason is
+    # kept with the Claim it explains.
     assert review.rationale is not None
     assert review.rationale.startswith("Proposed by Procedure ")
-    assert review.rationale.endswith(str(reason))
+    assert "1 item;" in review.rationale and str(reason) not in review.rationale
+    (item,) = review.item_reasons
+    assert (item.path, item.reason, item.run_id, item.terminal) == (
+        child.path,
+        reason,
+        state.run_id,
+        "propose",
+    )
+    assert review.item_reason_count == 1 and review.item_reasons_next_cursor is None
     accept_proposal(
         instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
     )
-    claim_id = egress.children[0].path.rsplit("/", 1)[-1].removesuffix(".json")
-    result = service_playbill_get(
+    claim_id = child.path.rsplit("/", 1)[-1].removesuffix(".json")
+    evidence = service_playbill_get(
         instance, request=GetRequest(ref=claim_id, detail="evidence"), access=_READER
     )
-    assert result.evidence is not None
-    assert result.evidence.rationale == review.rationale
+    assert evidence.evidence is not None
+    assert evidence.evidence.rationale == reason
+    why = service_playbill_get(
+        instance, request=GetRequest(ref=claim_id, detail="why"), access=_READER
+    )
+    assert why.reason is not None
+    assert (why.reason.reason, why.reason.proposal, why.reason.run, why.reason.terminal) == (
+        reason,
+        egress.proposal_id,
+        state.run_id,
+        "propose",
+    )
+    assert why.reason.procedure.endswith(_procedure.identity.name)
 
 
 # --- the run's deadline holds inside the terminal ------------------------------

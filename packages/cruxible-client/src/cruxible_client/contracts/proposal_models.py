@@ -378,6 +378,59 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
 #: does not name proposes instead, for this reason, naming those ClaimTypes.
 SETTLE_OUTSIDE_MANDATE_SCOPE = "cruxible.settle.outside_mandate_scope"
 
+PROPOSAL_ITEM_REASON_MAX_LENGTH = 16_384
+"""One Procedure item's own reason: far past a change-set rationale, still bounded.
+
+Longer reasons are kept to this many characters and marked ``truncated``.
+"""
+
+
+class ProposalItemReason(_StrictProposalModel):
+    """One Procedure terminal item's own reason, kept with the member it explains.
+
+    A ``propose_change_set`` or ``settle_change_set`` item states why in its
+    ``rationale``; the change set's rationale names only the run and the item
+    count, and each item's reason is recorded here, keyed by the proposal ref
+    of the operation and the path of the Claim (or Subject) it lowered into.
+    It is provenance, not evidence: the Claim's Captures are unchanged. An
+    accepted Claim keeps the link through the proposal that accepted it.
+    """
+
+    tag: Literal["playbill-proposal-item-reason-v1"] = "playbill-proposal-item-reason-v1"
+    target_ref: str
+    path: str
+    item_key: str
+    child_index: int = Field(ge=0)
+    procedure: str
+    run_id: str
+    terminal: str
+    reason: str = Field(min_length=1, max_length=PROPOSAL_ITEM_REASON_MAX_LENGTH)
+    truncated: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+    @field_validator("target_ref")
+    @classmethod
+    def _target_ref(cls, value: str) -> str:
+        if not _PROPOSAL_REF_RE.fullmatch(value):
+            raise ValueError("target_ref must be a canonical namespaced proposal ref")
+        return value
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if not (value.startswith(("claims/", "subjects/")) and value.endswith(".json")):
+            raise ValueError("an item reason explains one Claim or Subject member")
+        return value
+
+    @classmethod
+    def bounded(cls, reason: str, **fields: object) -> "ProposalItemReason":
+        """The record for ``reason``, cut to the bound and marked when it was longer."""
+
+        text = reason.replace("\x00", "").strip()
+        truncated = len(text) > PROPOSAL_ITEM_REASON_MAX_LENGTH
+        if truncated:
+            text = text[: PROPOSAL_ITEM_REASON_MAX_LENGTH - 1].rstrip() + "\u2026"
+        return cls(reason=text, truncated=truncated, **fields)  # type: ignore[arg-type]
+
 
 class ProposalSettleSubmission(_StrictProposalModel):
     """How a settle terminal submitted its proposal, retained for recovery.
@@ -702,6 +755,8 @@ __all__ = [
     "ProposalReadmissionLink",
     "ProposalSettleSubmission",
     "SETTLE_OUTSIDE_MANDATE_SCOPE",
+    "PROPOSAL_ITEM_REASON_MAX_LENGTH",
+    "ProposalItemReason",
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
     "CHANGE_SET_RECORD_BYTES_PER_MEMBER",

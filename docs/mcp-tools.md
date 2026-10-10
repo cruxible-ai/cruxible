@@ -185,7 +185,7 @@ ordinary steps.
 |---|---|---|
 | `cruxible_body_store` | Store inert body bytes in CAS | `GOVERNED_WRITE` |
 | `cruxible_document_propose` | Propose a canonical Document envelope | `GOVERNED_WRITE` |
-| `cruxible_proposal_review` | Render review material | `READ_ONLY` |
+| `cruxible_proposal_review` | Render review material; a Procedure proposal's item reasons page with `item_reasons_after` / `item_reasons_limit` | `READ_ONLY` |
 | `cruxible_proposal_approve_prepare` | Return the exact approval challenge | `READ_ONLY` |
 | `cruxible_proposal_approve_submit` | Submit a public signed attestation | `GRAPH_WRITE` |
 | `cruxible_proposal_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call | `GRAPH_WRITE` |

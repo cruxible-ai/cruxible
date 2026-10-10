@@ -1453,7 +1453,9 @@ resolution set aside or that were retired. A query lists a kind's live Subjects;
 `--status retired` also lists its retired Subjects, and every row then states its
 Subject's `lifecycle` (`live` or `retired`). `cruxible get CLM-...`
 reads one Claim's card; `--detail why` its verdict with the law evidence and
-source handles it was computed from, `--detail history` its revisions, and
+source handles it was computed from (and, when a Procedure proposed the
+accepted revision, `reason`: that item's own rationale and the run and terminal
+that proposed it), `--detail history` its revisions, and
 `--detail proof` its full envelope and facts. `orient` counts Claims by status
 under `artifacts.claims`.
 
@@ -2307,11 +2309,17 @@ it in the ledger, and activate it with the existing proposal verbs.
 An item on a many-valued ClaimType adds a value, as `write`'s `add` does: the
 values already in its slot (and any sibling item in the same slot) stay, and
 each is dispositioned `not_tested`. An item on a single-valued slot that
-already holds a value names the Claim it `revises`. Each item's rationale
-reaches the proposal: the proposal's rationale is the run that proposed it
-followed by the items' own rationales (each labelled with its Claim ID when
-there are several), shown by `proposal review --json` as `rationale` and read
-back by `get CLM-... --detail evidence` once accepted.
+already holds a value names the Claim it `revises`. Each item's rationale is
+kept with the Claim (or Subject) it explains, whole up to 16,384 characters (a
+longer one is kept to that bound and marked `truncated`): the proposal's own
+`rationale` names only the run that proposed it and how many items it carries.
+`proposal review` pages the items' reasons (`item_reasons`, by member path,
+with `item_reason_count` and `item_reasons_next_cursor`), and once accepted
+`get CLM-... --detail why` carries the Claim's own `reason` -- with the
+proposal, Procedure, run and terminal that proposed it -- and `--detail
+evidence` its `rationale`. Reading one Claim's reason is one record read
+however many items its proposal carried. The reasons are provenance, not
+evidence: the Claim's Captures are unchanged.
 
 An item may also be a Subject item
 (`playbill-procedure-subject-proposal-item-v1`: `subject_kind`, `key`,
@@ -3478,7 +3486,7 @@ cruxible proposal readmit PROPOSAL_ID [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal withdraw PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal reject PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
-  [--workspace-root DIR] [--json]
+  [--workspace-root DIR] [--item-reasons-after CURSOR] [--item-reasons-limit N] [--json]
 cruxible proposal approve PROPOSAL_ID
   [--signer-id ID] --key FILE [--yes] [--json]
 cruxible proposal activate PROPOSAL_ID [--brief] [--json]
@@ -3641,7 +3649,10 @@ checks original and materialized advisory aliases; recovery restores valid
 incomplete projections without treating modified records as accepted evidence.
 
 `proposal review` prints that pointer and those ref names; `--json` remains the
-structured read. `proposal approve` still renders the whole candidate before
+structured read. A Procedure's proposal also prints one page of its items'
+reasons, each under the Claim or Subject path it explains (50 by default,
+`--item-reasons-limit` up to 500); `--item-reasons-after` with the printed
+cursor reads the next page. `proposal approve` still renders the whole candidate before
 asking for a signature, because that rendering is what the signature covers.
 
 A reviewer without a workspace attachment clones the ledger mirror instead and

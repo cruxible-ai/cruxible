@@ -86,8 +86,8 @@ from cruxible_client.contracts.procedures.proposal_items import (
     SubjectKeyClaimObject,
 )
 from cruxible_client.contracts.proposal_models import (
-    CHANGE_SET_RATIONALE_MAX_LENGTH,
     SETTLE_OUTSIDE_MANDATE_SCOPE,
+    ProposalItemReason,
     ProposalResult,
     ProposalSettleSubmission,
 )
@@ -211,6 +211,19 @@ class PreparedProposal:
     #: The Subject items' actual assignments as lowered: recorded as this
     #: operation's core creation record before it is submitted (review F-001).
     creations: tuple[RecordedCreation, ...] = ()
+    #: Each changed item's own reason and the member it explains, recorded
+    #: with the proposal before it is submitted (per-Claim rationale).
+    item_reasons: tuple[ItemReason, ...] = ()
+
+
+@dataclass(frozen=True)
+class ItemReason:
+    """One terminal item's rationale and the member path it lowered into."""
+
+    item_key: str
+    child_index: int
+    path: str
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -842,36 +855,43 @@ def _unchanged_children(
     return children
 
 
-def proposal_rationale(
+def proposal_rationale(request: TerminalEgressRequestV1, *, item_count: int) -> str:
+    """The change set's prose: which run proposed it, and how many items it carries.
+
+    Each item's own reason is recorded with the member it explains
+    (``ProposalItemReason``), read back per Claim or Subject by `proposal
+    review` and `get --detail why`; the change set no longer joins them into
+    one bounded text.
+    """
+
+    noun = "item" if item_count == 1 else "items"
+    return (
+        f"Proposed by Procedure {request.procedure_identity.name} "
+        f"run {request.run_id} terminal {request.node_id}\n\n"
+        f"{item_count} {noun}; each item's reason is recorded with the Claim or Subject "
+        "it explains."
+    )
+
+
+def proposal_item_reasons(
     request: TerminalEgressRequestV1,
     *,
     items: tuple[ProcedureProposalItemAny, ...],
-    claim_ids: Mapping[str, str],
-) -> str:
-    """The proposal's prose: which run proposed it, then why, in the items' own words.
+    item_paths: Mapping[str, str],
+    unchanged: Mapping[str, object],
+) -> tuple[ItemReason, ...]:
+    """Each item that changed a member, with its own rationale and that member's path."""
 
-    This is the rationale `proposal review` shows and an accepted Claim's
-    evidence detail reads back. One item's rationale follows the header as
-    written; several are each labelled with the Claim (or Subject) they explain. The text is
-    bounded like any change-set rationale.
-    """
-
-    header = (
-        f"Proposed by Procedure {request.procedure_identity.name} "
-        f"run {request.run_id} terminal {request.node_id}"
-    )
-    reasons = [
-        (claim_ids[egress_item.item_key], item.rationale.replace("\x00", "").strip())
+    return tuple(
+        ItemReason(
+            item_key=egress_item.item_key,
+            child_index=egress_item.child_index,
+            path=item_paths[egress_item.item_key],
+            reason=item.rationale,
+        )
         for egress_item, item in zip(request.items, items, strict=True)
-    ]
-    if len(reasons) == 1:
-        body = [reasons[0][1]]
-    else:
-        body = [f"{claim_id}: {reason}" for claim_id, reason in reasons]
-    text = "\n\n".join((header, *(part for part in body if part)))
-    if len(text) > CHANGE_SET_RATIONALE_MAX_LENGTH:
-        text = text[: CHANGE_SET_RATIONALE_MAX_LENGTH - 1].rstrip() + "\u2026"
-    return text
+        if egress_item.item_key not in unchanged and egress_item.item_key in item_paths
+    )
 
 
 _SlotKey = tuple[str, str, str, str, str | None]
@@ -1304,17 +1324,13 @@ class ProposalTerminalEgressSink:
                 key=lambda member: authoring_member_identity(member).encode("utf-8"),
             )
         )
-        # The rationale names each Subject item by the id shared lowering assigns
-        # it over the whole terminal (every member, so every key change counts);
-        # the receipt below reads the same assignment from the lowered result.
+        # Each Subject item's path is the one shared lowering assigns it over the
+        # whole terminal (every member, so every key change counts); the receipt
+        # and the item's recorded reason read the same assignment below.
         subject_paths = self._subject_paths(
             request, base=base, base_tree=base_tree, members=all_members
         )
-        labels = dict(claim_ids)
-        for identity, item_key in subject_items.items():
-            path = subject_paths[identity][0]
-            labels[item_key] = path.removeprefix("subjects/").removesuffix(".json")
-        rationale = proposal_rationale(request, items=items, claim_ids=labels)
+        rationale = proposal_rationale(request, item_count=len(request.items))
         payload = ChangeSetAuthoringPayload(members=all_members, rationale=rationale)
         claim_identities = tuple(
             sorted(
@@ -1390,7 +1406,7 @@ class ProposalTerminalEgressSink:
             raise ProposalDeliveryRefused(
                 "proposal_lowering_refused",
                 "Shared lowering assigned the terminal's Subject items differently than "
-                "the assignment the rationale names.",
+                "the assignment it prepared.",
                 details={"lowered": {key: list(value) for key, value in lowered_subjects.items()}},
             )
         for identity, item_key in subject_items.items():
@@ -1471,6 +1487,9 @@ class ProposalTerminalEgressSink:
             rationale=rationale,
             outside_scope_claim_types=outside_scope,
             creations=tuple(item.record for item in lowered.subject_creations),
+            item_reasons=proposal_item_reasons(
+                request, items=items, item_paths=item_paths, unchanged=unchanged
+            ),
         )
         return prepared
 
@@ -1575,6 +1594,9 @@ class ProposalTerminalEgressSink:
             service=service,
             lowering_digest=prepared.prepared.lowering_digest,
         )
+        # Before the proposal exists (or again, idempotently, on recovery): an
+        # admitted proposal never lacks its items' reasons.
+        self._record_item_reasons(request, prepared)
         adapter = ProposalTerminalAdapter(
             service=service, bind_projection=self.instance.bind_accepted_projection
         )
@@ -1601,6 +1623,31 @@ class ProposalTerminalEgressSink:
             changed_paths=prepared.prepared.target_paths,
             delegation=self.delegation,
             unchanged=unchanged,
+        )
+
+    def _record_item_reasons(
+        self, request: TerminalEgressRequestV2, prepared: PreparedProposal
+    ) -> None:
+        """Record each changed item's reason under the operation's proposal ref."""
+
+        if not prepared.item_reasons:
+            return
+        assert request.operation_key is not None  # v2 shape
+        target_ref = proposal_terminal_ref(request.actor_context.actor_id, request.operation_key)
+        self.instance.proposal_evidence().write_item_reasons(
+            tuple(
+                ProposalItemReason.bounded(
+                    item.reason,
+                    target_ref=target_ref,
+                    path=item.path,
+                    item_key=item.item_key,
+                    child_index=item.child_index,
+                    procedure=request.procedure_identity.qualified,
+                    run_id=request.run_id,
+                    terminal=request.node_id,
+                )
+                for item in prepared.item_reasons
+            )
         )
 
     def _record_reobservations(
