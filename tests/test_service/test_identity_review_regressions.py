@@ -1006,3 +1006,60 @@ def test_a_batch_of_composite_creations_encodes_each_key_a_constant_number_of_ti
         assert len(paths) == size
         counts[size] = seen[0]
     assert counts[100] <= 10 * counts[10]
+
+
+# F-002 (delta 2): a Subject-valued object reference is held to the same rule.
+
+
+def test_a_subject_valued_object_reference_is_checked_like_a_subject(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.authoring.models import ClaimAuthoringPayloadV1
+    from cruxible_client.contracts.procedures.proposal_items import ProcedureKeyedClaimProposalItem
+    from cruxible_core.indexes.subject_identity import IdentityView, tree_key_reader
+    from cruxible_core.procedures.proposal_delivery import ProposalDeliveryRefused, _SubjectKeys
+    from tests.test_service.test_subject_identity import _alias_member, _create
+
+    _create(instance, DECISION, "original")
+    _create(instance, DECISION, "other name")
+    base = instance.accepted_coordinate()
+    base_tree = instance.immutable_tree_at(base.git_oid)
+    item = ProcedureKeyedClaimProposalItem.model_validate(
+        {
+            "tag": "playbill-procedure-claim-proposal-item-v3",
+            "statement": {
+                "tag": "playbill-procedure-claim-statement-v1",
+                "subject": SemanticAddress.whole_artifact(
+                    subject_path(DECISION, "original")
+                ).model_dump(mode="json"),
+                "predicate": f"{DECISION}.related",
+                "object": {
+                    "kind": "subject_key",
+                    "subject": {"subject_kind": DECISION, "key": {"slug": "other name"}},
+                },
+                "role": "observation",
+            },
+            "rationale": "Related decisions.",
+            "revises": None,
+        }
+    )
+    (alias,) = [
+        member
+        for member in change_set(_alias_member(DECISION, "original", "other name")).members
+        if isinstance(member, ClaimAuthoringPayloadV1)
+    ]
+    keys = _SubjectKeys(instance, base=base, base_tree=base_tree)
+    with instance.bind_accepted_projection(base) as projection:
+        connection = projection.typed.connection
+        keys.bind(IdentityView(connection, key_reader=tree_key_reader(base_tree)))
+        statement = keys.statement(item)
+        assert isinstance(statement.object, SubjectClaimObject)
+        # Frozen at the base: the key names other-name.
+        assert statement.object.address.artifact_path == subject_path(DECISION, "other-name")
+        keys.unstable(connection, members=(), subject_members=(), creations={})  # stable alone
+        with pytest.raises(ProposalDeliveryRefused) as refused:
+            # The same terminal adding the alias makes "other name" name original.
+            keys.unstable(connection, members=(alias,), subject_members=(), creations={})
+    assert refused.value.details["code"] == "cruxible.procedure.identity_reference_unstable"
+    (changed,) = refused.value.details["references"]
+    assert changed["final"] == subject_path(DECISION, "original")

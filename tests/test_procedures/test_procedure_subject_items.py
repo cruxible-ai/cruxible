@@ -4,8 +4,11 @@ A Subject item names a declared kind and its key values; core assigns the id. A
 key a live Subject already holds names that Subject, and the item creates
 nothing (reported ``reused``). A Claim item of the same terminal names a Subject
 the run knows only by its key with a ``SubjectKeyReference`` (v3 item): it
-resolves to the Subject the terminal's own Subject item lands on, else to the
-one live holder of the key, and refuses when none or several hold it.
+resolves to the Subject the terminal's own Subject item lands on, else through
+the common resolver over the base (exact live id, alias, key, exact retired
+id), and refuses when none or several hold it. Every reference is checked again
+over the final candidate; one that resolves otherwise there refuses the terminal
+(``cruxible.procedure.identity_reference_unstable``).
 """
 
 from __future__ import annotations
@@ -271,74 +274,137 @@ def _key_move(instance, subject: str, value: str) -> dict[str, object]:  # type:
     }
 
 
-def test_a_terminal_moving_a_key_and_recreating_it_names_the_new_subject(
-    tmp_path: Path,
-) -> None:
-    """Review probe ``procedure_overlay2``: key revision + recreation + keyed Claim.
+def _unstable(instance, root, line) -> Any:  # type: ignore[no-untyped-def]
+    """Run ``line`` and return its refusal, asserting it is the unstable-reference one."""
 
-    The terminal moves ``click``'s key to ``renamed``, creates a Subject keyed
-    ``click``, and states a Claim about the Subject keyed ``click``. Over the
-    whole terminal that key is free, so core creates a new Subject; the Claim
-    and the Subject item's receipt both name it, not the Subject that held the
-    key at the admitted base.
-    """
+    base = instance.accepted_coordinate()
+    refusal = delivery._refusal(delivery.run_line(instance, root, line))
+    assert refusal.code == "proposal_lowering_refused", refusal
+    assert refusal.details["code"] == "cruxible.procedure.identity_reference_unstable", refusal
+    assert "separate runs or terminals" in refusal.message
+    assert instance.accepted_coordinate() == base  # nothing proposed, nothing accepted
+    return refusal
 
-    instance, owner, root, line = subject_world(tmp_path, (subject_item(),))
+
+def _packages(tmp_path: Path, *slugs: str):  # type: ignore[no-untyped-def]
+    """A world whose first run accepted one package per slug."""
+
+    instance, owner, root, line = subject_world(
+        tmp_path, tuple(subject_item(slug) for slug in slugs)
+    )
     first = _delivered(instance, delivery.run_line(instance, root, line))
     accept_proposal(
         instance, owner, service_inspect_playbill_proposal(instance, proposal_id=first.proposal_id)
     )
+    return instance, owner, root
+
+
+def _keyed(item: dict[str, object], slug: str) -> dict[str, object]:
+    """``item`` as a v3 Claim item naming its Subject by the slug ``slug``."""
+
+    statement = dict(item["statement"])  # type: ignore[arg-type]
+    statement["tag"] = "playbill-procedure-claim-statement-v1"
+    statement["subject"] = {"subject_kind": KIND, "key": {"slug": slug}}
+    return {**item, "tag": "playbill-procedure-claim-proposal-item-v3", "statement": statement}
+
+
+def test_a_reference_that_a_key_move_and_recreation_would_redirect_refuses(
+    tmp_path: Path,
+) -> None:
+    """Review probe ``procedure_overlay2`` under the delta-2 rule.
+
+    The terminal moves ``click``'s key to ``renamed``, creates a Subject keyed
+    ``click`` (core names it ``click-<hex>``), and states a Claim naming key
+    ``click``. Frozen, that reference names the new Subject item; over the final
+    state ``click`` is the id of the old Subject. The results differ, so the
+    terminal refuses instead of choosing either.
+    """
+
+    instance, owner, root = _packages(tmp_path, "Click")
     old = f"subjects/{KIND}/click.json"
     revising = _second_terminal(
         instance, owner, (_key_move(instance, old, "renamed"), subject_item(), keyed_claim_item())
     )
 
-    egress = _delivered(instance, delivery.run_line(instance, root, revising))
+    refusal = _unstable(instance, root, revising)
 
-    moved, created, claimed = egress.children
-    assert created.path != old and created.path.startswith(f"subjects/{KIND}/click-")
-    assert not created.unchanged and created.path in egress.target_paths
-    accept_proposal(
-        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
-    )
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    live = [
-        parse_claim(tree[path], path=path)
-        for path in tree
-        if path.startswith("claims/")
-        and parse_claim(tree[path], path=path).lifecycle.state == "live"
-    ]
-    severity = [claim for claim in live if claim.statement.predicate == SEVERITY]
-    assert [claim.statement.subject.artifact_path for claim in severity] == [created.path]
-    keys = {
-        claim.statement.subject.artifact_path: claim.statement.object.model_dump(mode="json")[
-            "value"
-        ]
-        for claim in live
-        if claim.statement.predicate == SLUG
-    }
-    assert keys == {old: "renamed", created.path: "click"}
-    assert claimed.path is not None and moved.path is not None
+    (changed,) = refusal.details["references"]
+    assert changed["final"] == old and str(changed["frozen"]).startswith(f"subjects/{KIND}/click-")
 
 
-def test_a_keyed_reference_after_a_sibling_moves_the_key_names_the_new_holder(
+def test_a_frozen_key_missing_the_terminal_would_supply_refuses_as_unstable(
     tmp_path: Path,
 ) -> None:
-    """A key reference no Subject item carries resolves over the terminal's own key changes."""
+    """A key no Subject holds at the base, given to flask by the terminal itself."""
 
-    instance, owner, root, line = subject_world(tmp_path, (subject_item(), subject_item("Flask")))
-    first = _delivered(instance, delivery.run_line(instance, root, line))
-    accept_proposal(
-        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=first.proposal_id)
-    )
+    instance, owner, root = _packages(tmp_path, "Click", "Flask")
     flask = f"subjects/{KIND}/flask.json"
-    # The terminal gives flask the key ``requests``, which no Subject holds at the
-    # base (no Subject's id is ``requests`` either): read over the base alone the
-    # reference would refuse ``key_missing``; over the terminal it names flask.
     revising = _second_terminal(
-        instance,
-        owner,
-        (_key_move(instance, flask, "requests"), keyed_claim_item("requests")),
+        instance, owner, (_key_move(instance, flask, "requests"), keyed_claim_item("requests"))
+    )
+
+    refusal = _unstable(instance, root, revising)
+
+    (changed,) = refusal.details["references"]
+    assert changed == {
+        "reference": {"subject_kind": KIND, "key": {"slug": "requests"}},
+        "frozen": "key_missing",
+        "final": flask,
+    }
+
+
+def test_a_keyed_alias_owner_that_redirects_a_sibling_reference_refuses(
+    tmp_path: Path,
+) -> None:
+    """Review probe ``extra_delta2`` (keyed alias): never accept the Claim about other-name.
+
+    One item (its owner named by key ``click``) gives click the alias ``other
+    name``; another names the Subject keyed ``other name``. Frozen at the base,
+    that is other-name; over the final state the alias names click first.
+    """
+
+    instance, owner, root = _packages(tmp_path, "Click", "Other Name")
+    alias = {
+        "tag": "playbill-procedure-claim-proposal-item-v3",
+        "statement": {
+            "tag": "playbill-procedure-claim-statement-v1",
+            "subject": {"subject_kind": KIND, "key": {"slug": "click"}},
+            "predicate": "semantic.alias",
+            "object": {"kind": "literal", "value": "other name"},
+            "role": "normative",
+        },
+        "rationale": "Another name for click",
+        "source": _self_source("also known as other name"),
+    }
+    revising = _second_terminal(instance, owner, (alias, keyed_claim_item("other name")))
+
+    refusal = _unstable(instance, root, revising)
+
+    (changed,) = refusal.details["references"]
+    assert changed["frozen"] == f"subjects/{KIND}/other-name.json"
+    assert changed["final"] == f"subjects/{KIND}/click.json"
+
+
+def test_a_keyed_owner_moving_its_key_then_referenced_by_it_refuses(tmp_path: Path) -> None:
+    """Review probe ``extra_delta2`` (keyed key move): never a false ``key_missing``."""
+
+    instance, owner, root = _packages(tmp_path, "Click")
+    move = _keyed(_key_move(instance, f"subjects/{KIND}/click.json", "requests"), "click")
+    revising = _second_terminal(instance, owner, (move, keyed_claim_item("requests")))
+
+    refusal = _unstable(instance, root, revising)
+
+    finals = {str(item["final"]) for item in refusal.details["references"]}
+    assert f"subjects/{KIND}/click.json" in finals
+
+
+def test_a_stable_terminal_still_creates_and_names_its_subject(tmp_path: Path) -> None:
+    """References that resolve alike before and after lowering are delivered as before."""
+
+    instance, owner, root = _packages(tmp_path, "Click")
+    flask = f"subjects/{KIND}/flask.json"
+    revising = _second_terminal(
+        instance, owner, (subject_item("Flask"), keyed_claim_item("flask"), keyed_claim_item())
     )
 
     egress = _delivered(instance, delivery.run_line(instance, root, revising))
@@ -347,10 +413,38 @@ def test_a_keyed_reference_after_a_sibling_moves_the_key_names_the_new_holder(
         instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    severity = [
-        parse_claim(tree[path], path=path)
+    severity = sorted(
+        parse_claim(tree[path], path=path).statement.subject.artifact_path
         for path in tree
         if path.startswith("claims/")
         and parse_claim(tree[path], path=path).statement.predicate == SEVERITY
-    ]
-    assert [claim.statement.subject.artifact_path for claim in severity] == [flask]
+    )
+    assert severity == [f"subjects/{KIND}/click.json", flask]
+
+
+def test_a_procedure_delivery_records_each_creations_actual_outcome(tmp_path: Path) -> None:
+    """The operation's creation record holds the created first holder it assigned (F-001)."""
+
+    from cruxible_core.authoring.assignment_records import SubjectAssignmentRecords
+    from cruxible_core.indexes.subject_identity import RecordedCreation
+
+    instance, _owner, root, line = subject_world(tmp_path, (subject_item(),))
+    _delivered(instance, delivery.run_line(instance, root, line))
+    records = SubjectAssignmentRecords(instance.root / instance.descriptor.storage.exhaust)
+    entries = {
+        entry
+        for path in records.directory.glob("AIT-*.json")
+        for record in (records.record(path.stem),)
+        if record is not None
+        for entry in record.recorded()
+        if entry.kind == KIND
+    }
+    (entry,) = entries
+    assert entry == RecordedCreation(
+        member=entry.member,
+        kind=KIND,
+        key=entry.key,
+        rule="first_holder",
+        outcome="created",
+        subject_id="click",
+    )

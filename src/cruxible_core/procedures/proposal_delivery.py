@@ -28,6 +28,7 @@ Three properties are load-bearing:
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -480,22 +481,45 @@ def _key_refusal(message: str, *, code: str, **details: object) -> ProposalDeliv
     )
 
 
+IDENTITY_REFERENCE_UNSTABLE = "cruxible.procedure.identity_reference_unstable"
+
+
+@dataclass
+class _KeyedReference:
+    """One Claim item's Subject named by key, and what it was frozen to."""
+
+    kind: str
+    key: KeyTuple
+    spelled: Mapping[str, object]
+    single_text: str | None
+    #: The terminal Subject item it names (a creation member), else None.
+    creation: str | None = None
+    #: The existing Subject it resolved to at the admitted base, else None.
+    path: str | None = None
+    #: It resolved to no Subject (``key_missing``) at the admitted base.
+    missing: bool = False
+
+    def described(self) -> dict[str, object]:
+        return {"subject_kind": self.kind, "key": dict(self.spelled)}
+
+
 class _SubjectKeys:
     """Resolve the Subjects a terminal's Claim items name by key (v3 items).
 
-    A key one of the terminal's own Subject items carries names that item: the
-    reference stays a creation-member reference (``subject-creation-v1``) that
-    shared lowering resolves to the path it finally assigns or reuses, after
-    every key change in the terminal (review F-002). Any other key resolves
+    A reference is frozen once, against the admitted base and the terminal's
+    own Subject items: a key one of those items carries names that item (a
+    creation-member reference, ``subject-creation-v1``, which shared lowering
+    resolves to the path it finally assigns or reuses); any other key resolves
     through the one resolver (``IdentityView.resolve_key_reference``: exact
-    live id, alias, key, exact retired id) over the admitted base overlaid with
-    the terminal's own Subject and key-affecting Claim changes (``bind``). None
-    refuses (create it with a Subject item), several refuse as ambiguous -- as
-    every create-by-key route does.
+    live id, alias, key, exact retired id) over the base. None refuses
+    (``key_missing``: create it with a Subject item), several refuse as
+    ambiguous, as every create-by-key route does.
 
-    Before ``bind`` the overlay is not known yet: such a reference reads as a
-    placeholder creation address no lowering ever sees, so the terminal's
-    members can be built once to compute the overlay from.
+    Nothing is resolved to a fixed point. After final lowering every reference
+    is resolved again by the same resolver over the final candidate state
+    (``unstable``): a different result -- or a ``key_missing`` the terminal's
+    own changes would now resolve -- refuses the terminal
+    (``cruxible.procedure.identity_reference_unstable``, review F-002).
     """
 
     _SEVERAL = ""
@@ -512,7 +536,7 @@ class _SubjectKeys:
         self.base_tree = base_tree
         self.created: dict[tuple[str, str], str] = {}
         self.view: IdentityView | None = None
-        self.deferred = False
+        self.references: list[_KeyedReference] = []
 
     def add_created(self, members: tuple[SubjectCreationAuthoringPayload, ...]) -> None:
         """Index each Subject item of the terminal by its kind and canonical key encoding."""
@@ -531,8 +555,8 @@ class _SubjectKeys:
             identity = member.member_identity
             self.created[slot] = identity if held in {None, identity} else self._SEVERAL
 
-    def bind(self, view: IdentityView | None) -> None:
-        """Resolve every later reference against ``view`` (the overlaid base)."""
+    def bind(self, view: IdentityView) -> None:
+        """Freeze references against ``view`` (the admitted base)."""
 
         self.view = view
 
@@ -560,6 +584,15 @@ class _SubjectKeys:
                 f"{kind} has no declared keys, so no Subject of it is named by key.",
                 code="cruxible.subject.key_invalid",
             )
+        values = tuple(reference.key.values())
+        single = values[0] if len(key) == 1 and len(values) == 1 else None
+        frozen = _KeyedReference(
+            kind=kind,
+            key=key,
+            spelled=dict(reference.key),
+            single_text=single if isinstance(single, str) else None,
+        )
+        self.references.append(frozen)
         encoded = key_encoding(key)
         member = self.created.get((kind, encoded))
         if member == self._SEVERAL:
@@ -568,16 +601,10 @@ class _SubjectKeys:
                 code="cruxible.subject.key_ambiguous",
             )
         if member is not None:
+            frozen.creation = member
             return SemanticAddress.subject_creation(kind, member.rpartition("@")[2])
-        if self.view is None:
-            self.deferred = True
-            placeholder = hashlib.sha256(f"{kind}\0{encoded}".encode()).hexdigest()[:32]
-            return SemanticAddress.subject_creation(kind, placeholder)
-        values = tuple(reference.key.values())
-        single = values[0] if len(key) == 1 and len(values) == 1 else None
-        resolution = self.view.resolve_key_reference(
-            kind, key, single_text=single if isinstance(single, str) else None
-        )
+        assert self.view is not None, "references are frozen against the bound base"
+        resolution = self.view.resolve_key_reference(kind, key, single_text=frozen.single_text)
         if resolution.ambiguous:
             holders = [f"subjects/{item}.json" for item in resolution.candidates]
             raise _key_refusal(
@@ -591,12 +618,104 @@ class _SubjectKeys:
                 else "cruxible.authoring.alias_ambiguous",
             )
         if resolution.path is None:
-            raise _key_refusal(
-                f"No live {kind} Subject holds this key; add a Subject item creating it "
-                "to the same terminal.",
-                code="cruxible.subject.key_missing",
-            )
+            # Refused once every member is built, unless the terminal's own changes
+            # would resolve it (then it is unstable, not missing).
+            frozen.missing = True
+            placeholder = hashlib.sha256(f"{kind}\0{encoded}".encode()).hexdigest()[:32]
+            return SemanticAddress.subject_creation(kind, placeholder)
+        frozen.path = resolution.path
         return SemanticAddress.whole_artifact(resolution.path)
+
+    def unstable(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        members: tuple[ClaimAuthoringPayload, ...],
+        subject_members: tuple[SubjectCreationAuthoringPayload, ...],
+        creations: Mapping[str, tuple[str, KeyTuple, bool]],
+    ) -> None:
+        """Refuse when a reference resolves otherwise over the final candidate state.
+
+        ``creations`` is where each Subject item landed: member identity ->
+        (path, key, whether it created that Subject). The final state is the
+        admitted base overlaid with the terminal's members, their Subject
+        references resolved to those paths, and its created Subjects.
+        """
+
+        def resolved(address: SemanticAddress) -> SemanticAddress:
+            if address.selector.scheme != "subject-creation-v1":
+                return address
+            for identity, (path, _key, _created) in creations.items():
+                if identity.endswith(f"@{address.selector.value}"):
+                    return SemanticAddress.whole_artifact(path)
+            return address
+
+        final_members: list[AuthoringChangeSetMember] = list(subject_members)
+        for member in members:
+            statement = member.statement
+            value = statement.object
+            if isinstance(value, SubjectClaimObject):
+                value = SubjectClaimObject(address=resolved(value.address))
+            final_members.append(
+                member.model_copy(
+                    update={
+                        "statement": statement.model_copy(
+                            update={"subject": resolved(statement.subject), "object": value}
+                        )
+                    }
+                )
+            )
+        view = IdentityView(
+            connection,
+            members_identity_overlay(
+                connection, members=tuple(final_members), base_tree=self.base_tree
+            ),
+            key_reader=tree_key_reader(self.base_tree),
+        )
+        for path, key, created in creations.values():
+            if created:
+                view.add_creation(path, key)
+        changed: list[dict[str, object]] = []
+        for reference in self.references:
+            frozen = (
+                creations[reference.creation][0]
+                if reference.creation is not None and reference.creation in creations
+                else reference.path
+            )
+            final = view.resolve_key_reference(
+                reference.kind, reference.key, single_text=reference.single_text
+            )
+            now: object = final.path if not final.ambiguous else list(final.candidates)
+            if now != frozen:
+                changed.append(
+                    {
+                        "reference": reference.described(),
+                        "frozen": "key_missing" if reference.missing else frozen,
+                        "final": now,
+                    }
+                )
+        if changed:
+            first = changed[0]
+            raise _key_refusal(
+                f"The {first['reference']} reference names {first['frozen']} as this terminal "
+                f"was prepared, and {first['final']} once its own identity changes (alias or "
+                "key Claims) apply: put the identity change and the references that depend "
+                "on it in separate runs or terminals.",
+                code=IDENTITY_REFERENCE_UNSTABLE,
+                references=changed,
+                repair=(
+                    "Put the identity change (an alias or key Claim) and the references that "
+                    "depend on it in separate runs or terminals."
+                ),
+            )
+        missing = next((item for item in self.references if item.missing), None)
+        if missing is not None:
+            raise _key_refusal(
+                f"No live {missing.kind} Subject holds this key; add a Subject item creating "
+                "it to the same terminal.",
+                code="cruxible.subject.key_missing",
+                reference=missing.described(),
+            )
 
     def statement(self, item: ProcedureClaimProposalItemV1) -> AuthoringClaimStatement:
         if not isinstance(item, ProcedureKeyedClaimProposalItem):
@@ -1129,19 +1248,41 @@ class ProposalTerminalEgressSink:
                 statement_of=keys.statement,
             )
 
-        members, claim_ids, identity_to_item = claim_members()
-        if keys.deferred:
-            # A key no Subject item of this terminal carries names an existing
-            # Subject: resolve it over the base as this terminal leaves it -- its
-            # Subject items and the key and alias Claims its Claim items add,
-            # revise or retire (review F-002/F-003) -- then build the members again.
-            with self.instance.bind_accepted_projection(base) as projection:
-                connection = projection.typed.connection
-                overlay = members_identity_overlay(
-                    connection, members=(*members, *subject_members), base_tree=base_tree
+        # Every keyed reference is frozen against the admitted base and the
+        # terminal's own Subject items (review F-002), then checked against the
+        # final candidate state below.
+        with self.instance.bind_accepted_projection(base) as projection:
+            keys.bind(
+                IdentityView(projection.typed.connection, key_reader=tree_key_reader(base_tree))
+            )
+            members, claim_ids, identity_to_item = claim_members()
+            if any(reference.missing for reference in keys.references):
+                # Nothing to lower with a missing Subject: refuse it as missing, or as
+                # unstable when the terminal's own changes would supply it.
+                assigned = self._subject_paths(
+                    request,
+                    base=base,
+                    base_tree=base_tree,
+                    members=(*members, *subject_members),
                 )
-                keys.bind(IdentityView(connection, overlay, key_reader=tree_key_reader(base_tree)))
-                members, claim_ids, identity_to_item = claim_members()
+                keys.unstable(
+                    projection.typed.connection,
+                    members=members,
+                    subject_members=subject_members,
+                    creations={
+                        member.member_identity: (
+                            assigned[member.member_identity][0],
+                            keys.key(
+                                member.subject_kind,
+                                {part.predicate: part.value for part in member.key},
+                            )
+                            or (),
+                            not assigned[member.member_identity][1],
+                        )
+                        for member in subject_members
+                        if member.member_identity in assigned
+                    },
+                )
         ordered = _with_many_valued_dispositions(
             tuple(
                 sorted(
@@ -1222,6 +1363,23 @@ class ProposalTerminalEgressSink:
                 base_tree=base_tree,
             )
         )
+        if keys.references:
+            # Each frozen reference must name the same Subject over the final
+            # candidate state, by the same resolver (review F-002).
+            with self.instance.bind_accepted_projection(base) as projection:
+                keys.unstable(
+                    projection.typed.connection,
+                    members=members,
+                    subject_members=subject_members,
+                    creations={
+                        item.record.member: (
+                            item.path,
+                            item.key,
+                            item.record.outcome == "created",
+                        )
+                        for item in lowered.subject_creations
+                    },
+                )
         child_index = {item.item_key: item.child_index for item in request.items}
         lowered_subjects = _lowered_subject_paths(lowered, subject_items)
         if lowered_subjects != {identity: subject_paths[identity] for identity in subject_items}:
