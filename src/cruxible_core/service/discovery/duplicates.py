@@ -4,17 +4,20 @@ Computed on demand at an accepted coordinate, never on the write path, and
 bounded: it reads at most ``DUPLICATES_AUDIT_MAX_SCANNED`` Subjects, aliases
 and values, and says when it stopped. Groups are the things equal under the
 broader comparison (``DUPLICATES_AUDIT_BROAD_FORM`` plus the alias graph) but
-distinct under the declared rules; an agent resolves each with an alias and a
+distinct under the declared rules, and the Subjects of a ``hint`` kind holding
+one canonical key (identity D4); an agent resolves each with an alias and a
 retirement, ``semantic.distinct_from`` (which suppresses the pair thereafter),
 or a governed canonical-form succession. Core never resolves one itself.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
     canonicalize_text,
@@ -24,6 +27,7 @@ from cruxible_client.contracts.duplicates import (
     DUPLICATES_AUDIT_BROAD_FORM,
     DUPLICATES_AUDIT_MAX_SCANNED,
     DuplicateGroup,
+    DuplicateKeyGroup,
     DuplicatesAuditRequest,
     DuplicatesAuditResult,
     DuplicatesAuditScanned,
@@ -32,6 +36,7 @@ from cruxible_client.contracts.duplicates import (
     DuplicateValue,
     DuplicateValueGroup,
 )
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyValue
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query_vocabulary import load_query_vocabulary
@@ -149,6 +154,21 @@ def _audit_groups(
             "ORDER BY identity",
             (_DISTINCT_FROM, prefix, high, prefix, high),
         )
+        hint_keys = _hint_key_predicates(connection, kind)
+        key_rows = (
+            budget.read(
+                connection,
+                "SELECT subject_path, predicate, literal_type, literal_text, "
+                "literal_integer_text, literal_boolean FROM claims WHERE lifecycle='live' "
+                "AND object_kind='literal' AND qualifier IS NULL AND subject_path>=? "
+                "AND subject_path<? AND predicate IN ("
+                + ",".join("?" for _ in hint_keys)
+                + ") ORDER BY subject_path, predicate, identity",
+                (prefix, high, *hint_keys),
+            )
+            if hint_keys
+            else []
+        )
         predicates = tuple(info.predicate for info in literal)
         value_rows = (
             budget.read(
@@ -190,6 +210,7 @@ def _audit_groups(
                     ),
                 )
             )
+    groups.extend(_key_groups(hint_keys, key_rows, live=set(names), apart=apart))
     by_value: dict[tuple[str, str], list[DuplicateValue]] = defaultdict(list)
     for identity, subject, predicate, value in value_rows:
         by_value[(str(predicate), broad_key(str(value)))].append(
@@ -216,13 +237,83 @@ def _audit_groups(
         aliases=len(alias_rows),
         relations=len(relation_rows),
         values=len(value_rows),
+        keys=len(key_rows),
     )
     return groups, scanned
+
+
+def _hint_key_predicates(connection: sqlite3.Connection, kind: str) -> tuple[str, ...]:
+    """The key predicates of ``kind`` when its live SubjectKind keys it as a ``hint``."""
+
+    row = connection.execute(
+        "SELECT key_predicates FROM subject_kinds WHERE identity=? AND lifecycle='live' "
+        "AND rule='keys' AND uniqueness='hint'",
+        (f"SubjectKind:{kind}",),
+    ).fetchone()
+    return () if row is None else tuple(json.loads(str(row[0])))
+
+
+def _key_value(
+    literal_type: object, text: object, integer: object, boolean: object
+) -> SubjectKeyValue | None:
+    if literal_type == "string":
+        return str(text)
+    if literal_type == "integer":
+        return int(str(integer))
+    if literal_type == "boolean":
+        return bool(boolean)
+    return None
+
+
+def _key_groups(
+    keys: tuple[str, ...],
+    rows: Iterable[tuple[object, ...]],
+    *,
+    live: set[str],
+    apart: Mapping[str, set[str]],
+) -> list[DuplicateGroup]:
+    """Live Subjects of a hint kind holding one whole canonical key, kept apart as asserted.
+
+    A Subject with a key part missing, or with two live values of one part (a
+    contended key), names no one key and joins no group.
+    """
+
+    held: dict[str, dict[str, set[SubjectKeyValue]]] = defaultdict(lambda: defaultdict(set))
+    for path, predicate, literal_type, text, integer, boolean in rows:
+        value = _key_value(literal_type, text, integer, boolean)
+        if value is not None and str(path) in live:
+            held[str(path)][str(predicate)].add(value)
+    by_key: dict[bytes, tuple[tuple[SubjectKeyValue, ...], list[str]]] = {}
+    for path, parts in held.items():
+        if any(len(parts.get(predicate, ())) != 1 for predicate in keys):
+            continue
+        values = tuple(next(iter(parts[predicate])) for predicate in keys)
+        _values, holders = by_key.setdefault(canonical_bytes(list(values)), (values, []))
+        holders.append(path)
+    groups: list[DuplicateGroup] = []
+    for _order, (values, holders) in sorted(by_key.items()):
+        for members in _groups_apart(holders, apart):
+            groups.append(
+                DuplicateKeyGroup(
+                    key=tuple(
+                        SubjectKeyPart(predicate=predicate, value=value)
+                        for predicate, value in zip(keys, values, strict=True)
+                    ),
+                    subjects=tuple(_ref(path) for path in members),
+                )
+            )
+    return groups
 
 
 def _group_key(group: DuplicateGroup) -> tuple[str, ...]:
     if isinstance(group, DuplicateSubjectGroup):
         return ("subjects", group.key, group.subjects[0].subject)
+    if isinstance(group, DuplicateKeyGroup):
+        return (
+            "keys",
+            canonical_bytes([part.value for part in group.key]).decode("utf-8"),
+            group.subjects[0],
+        )
     return ("values", group.predicate, group.key)
 
 

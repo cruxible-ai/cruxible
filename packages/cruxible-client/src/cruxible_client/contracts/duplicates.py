@@ -11,6 +11,10 @@ per Subject kind, what is equal under it but distinct under the declared rules:
   ``semantic.distinct_from`` between them: no group ever holds a pair asserted
   distinct (a key's holders are taken in path order, each joining the first
   group it is asserted distinct from no member of).
+- ``keys``: Subjects of a ``hint`` kind holding one canonical key -- every key
+  part equal (identity D4). A hint kind admits a further holder only on purpose
+  (``create_new``); resolve as for ``subjects``: alias and retire, or
+  ``semantic.distinct_from`` (the same grouping rule keeps asserted pairs apart).
 - ``values``: live values of one literal predicate of the kind that meet under
   it but are distinct under the predicate's declared canonical form. Resolve by
   a governed ClaimType succession that declares a wider canonical form (its
@@ -27,10 +31,11 @@ from typing import Annotated, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.canonical_forms import CanonicalTransform
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart
 
 DUPLICATES_AUDIT_DEFAULT_LIMIT: Final = 25
 DUPLICATES_AUDIT_MAX_LIMIT: Final = 200
-#: Rows (Subjects, aliases, distinct_from relations and values) one audit reads
+#: Rows (Subjects, aliases, distinct_from relations, key Claims and values) one audit reads
 #: at most, applied in each SQL read with one overflow sentinel; past it the
 #: answer says it is partial (``budget_exhausted``) rather than silently narrowing.
 DUPLICATES_AUDIT_MAX_SCANNED: Final = 50_000
@@ -75,6 +80,15 @@ class DuplicateSubjectGroup(_StrictDuplicatesModel):
     resolutions: tuple[DuplicateResolution, ...] = ("alias_and_retire", "distinct_from")
 
 
+class DuplicateKeyGroup(_StrictDuplicatesModel):
+    """Subjects of one ``hint`` kind that hold the same canonical key."""
+
+    group: Literal["keys"] = "keys"
+    key: tuple[SubjectKeyPart, ...] = Field(description="The canonical key, in key order.")
+    subjects: tuple[str, ...]
+    resolutions: tuple[DuplicateResolution, ...] = ("alias_and_retire", "distinct_from")
+
+
 class DuplicateValue(_StrictDuplicatesModel):
     """One live Claim holding one of the values that met."""
 
@@ -97,7 +111,8 @@ class DuplicateValueGroup(_StrictDuplicatesModel):
 
 
 DuplicateGroup = Annotated[
-    DuplicateSubjectGroup | DuplicateValueGroup, Field(discriminator="group")
+    DuplicateSubjectGroup | DuplicateKeyGroup | DuplicateValueGroup,
+    Field(discriminator="group"),
 ]
 
 
@@ -108,6 +123,7 @@ class DuplicatesAuditScanned(_StrictDuplicatesModel):
     aliases: int = Field(ge=0)
     relations: int = Field(ge=0, description="semantic.distinct_from Claims read.")
     values: int = Field(ge=0)
+    keys: int = Field(default=0, ge=0, description="Key Claims of a hint kind read.")
 
 
 class DuplicatesAuditResult(_StrictDuplicatesModel):
@@ -132,6 +148,7 @@ __all__ = [
     "DUPLICATES_AUDIT_MAX_LIMIT",
     "DUPLICATES_AUDIT_MAX_SCANNED",
     "DuplicateGroup",
+    "DuplicateKeyGroup",
     "DuplicateResolution",
     "DuplicateSubject",
     "DuplicateSubjectGroup",

@@ -137,17 +137,10 @@ def test_the_duplicate_statement_detector_compares_canonical_statements(
 
 
 def _distinct_from(instance: PlaybillInstance) -> None:
-    distinct = identity_claim_type(
-        "distinct_from",
-        canonical_form=None,
-        object_kind="subject",
-        cardinality="many",
-        object_kinds=(KIND, "semantic.subject"),
-        predicate="semantic.distinct_from",
-        subject_kinds=("semantic.subject",),
-    )
-    accept_tree(
-        instance, {claim_type_path(distinct.predicate): render_claim_type(distinct)}, name="df"
+    """A new instance seeds the builtin semantic.distinct_from: nothing to accept."""
+
+    assert claim_type_path("semantic.distinct_from") in instance.tree_at(
+        instance.accepted_coordinate().git_oid
     )
 
 
@@ -213,3 +206,90 @@ def test_the_budget_is_applied_in_each_read_with_one_overflow_sentinel(
     # Every row the audit read is counted, and together they never pass the bound.
     assert sum(reads) == scanned.subjects + scanned.aliases + scanned.relations + scanned.values
     assert sum(reads) <= 3
+
+
+# -- key-hint groups (identity D4) ------------------------------------------------
+
+PART = "dev.part"
+
+
+def _author(instance: PlaybillInstance, *members: Any) -> None:
+    from cruxible_client.contracts.authoring.inputs import ChangeSetInput, lower_authoring_input
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+
+    submitted = AuthoringIntentCoordinator.for_instance(instance).compile_and_submit(
+        actor=OWNER,
+        payload=lower_authoring_input(ChangeSetInput(kind="change_set", members=members)),
+        canonical_timestamp="2026-10-09T12:00:00.000000Z",
+    )
+    assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=submitted.status.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted", receipt
+
+
+def _two_holders_of_one_hint_key(instance: PlaybillInstance) -> tuple[str, str]:
+    from cruxible_client.contracts.authoring.inputs import (
+        ClaimTypeInput,
+        SubjectInput,
+        SubjectKindInput,
+    )
+    from tests.core_support._subject_kind_support import slug_claim_type
+
+    _author(
+        instance,
+        ClaimTypeInput(kind="claim_type", claim_type=slug_claim_type(PART)),  # type: ignore[arg-type]
+        SubjectKindInput(kind="subject_kind", name=PART, keys=(f"{PART}.slug",), uniqueness="hint"),
+        SubjectInput(kind="subject", subject_kind=PART, key="Widget", rationale="A part."),
+    )
+    _author(
+        instance,
+        SubjectInput(
+            kind="subject",
+            subject_kind=PART,
+            key="widget",
+            rationale="Another part of that name.",
+            create_new=True,
+        ),
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    first, second = sorted(
+        path.removeprefix("subjects/").removesuffix(".json")
+        for path in tree
+        if path.startswith(f"subjects/{PART}/")
+    )
+    return first, second
+
+
+def test_subjects_of_a_hint_kind_holding_one_key_form_a_group(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.duplicates import DuplicateKeyGroup
+
+    first, second = _two_holders_of_one_hint_key(instance)
+    assert first == f"{PART}/widget" and second.startswith(f"{PART}/widget-")
+
+    result = service_duplicates_audit(instance, request={"kind": PART})
+    (group,) = [item for item in result.groups if isinstance(item, DuplicateKeyGroup)]
+    assert [(part.predicate, part.value) for part in group.key] == [(f"{PART}.slug", "widget")]
+    assert set(group.subjects) == {first, second}
+    assert group.resolutions == ("alias_and_retire", "distinct_from")
+    assert result.scanned.keys == 2
+
+    # Asserting them distinct suppresses the group.
+    write(
+        instance,
+        {"op": "add", "subject": first, "field": "semantic.distinct_from", "value": second},
+    )
+    result = service_duplicates_audit(instance, request={"kind": PART})
+    assert not [item for item in result.groups if isinstance(item, DuplicateKeyGroup)]
+
+
+def test_a_unique_kind_lists_no_key_group(instance: PlaybillInstance) -> None:
+    from cruxible_client.contracts.duplicates import DuplicateKeyGroup
+
+    result = audit(instance)
+    assert not [item for item in result.groups if isinstance(item, DuplicateKeyGroup)]
+    assert result.scanned.keys == 0

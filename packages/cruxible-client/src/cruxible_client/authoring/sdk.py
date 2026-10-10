@@ -4308,8 +4308,9 @@ class Cruxible:
 
         Groups Subjects whose ids or aliases, and values of one predicate, that
         meet under a broad comparison (casefold, no punctuation, the alias graph)
-        but differ under the declared rules. A truncated page carries
-        ``next_cursor``; pass it back as ``cursor``.
+        but differ under the declared rules, and Subjects of a ``hint`` kind that
+        hold one key. A truncated page carries ``next_cursor``; pass it back as
+        ``cursor``.
 
         Next: add a ``semantic.alias`` and retire one Subject, or assert
         ``semantic.distinct_from``; for values, succeed the ClaimType with a wider

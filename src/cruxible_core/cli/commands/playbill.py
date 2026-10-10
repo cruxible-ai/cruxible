@@ -3616,15 +3616,15 @@ def authoring_example_command(
 
     \b
     Input kind family: claim | procedure | blueprint | blueprint_instance |
-    subject | subject_kind | query_definition | approval_policy |
-    procedure_runtime_policy | procedure_mandate | acquisition_policy | line |
-    trigger | change_set (tagless).
+    subject | subject_kind | subject_succession | query_definition |
+    approval_policy | procedure_runtime_policy | procedure_mandate |
+    acquisition_policy | line | trigger | change_set (tagless).
 
     \b
     Change-set member kind family: claim | claim_type | claim_type_succession |
-    claim_retirement | subject | subject_kind | query_definition |
-    procedure_mandate | acquisition_policy | line | trigger | procedure |
-    blueprint | blueprint_instance.
+    claim_retirement | subject | subject_kind | subject_succession |
+    query_definition | procedure_mandate | acquisition_policy | line | trigger |
+    procedure | blueprint | blueprint_instance.
     claim_type, claim_type_succession and
     claim_retirement are member kinds only -- none is a top-level input.
     approval_policy and procedure_runtime_policy are the reverse: the member
@@ -6519,9 +6519,10 @@ def curation_duplicates(kind: str, limit: int, cursor: str | None, output_json: 
 
     Subjects whose ids or aliases, and values of one predicate, that meet under
     a broad comparison (casefold, no punctuation, the alias graph) but differ
-    under the declared rules. Resolve a Subject group with an alias plus a
-    retirement or with semantic.distinct_from; a value group with a governed
-    canonical_form succession.
+    under the declared rules; and Subjects of a hint kind holding one key.
+    Resolve a Subject or key group with an alias plus a retirement or with
+    semantic.distinct_from; a value group with a governed canonical_form
+    succession.
     """
 
     result = _server_call(
@@ -6546,6 +6547,9 @@ def curation_duplicates(kind: str, limit: int, cursor: str | None, output_json: 
                 f"{item.subject} ({', '.join(item.names)})" for item in group.subjects
             )
             click.echo(f"  subjects {group.key!r}: {members}")
+        elif group.group == "keys":
+            key = ", ".join(f"{part.predicate}={part.value!r}" for part in group.key)
+            click.echo(f"  key {key}: {', '.join(group.subjects)}")
         else:
             members = ", ".join(f"{item.value!r} {item.claim}" for item in group.values)
             click.echo(f"  {group.predicate} {group.key!r}: {members}")
