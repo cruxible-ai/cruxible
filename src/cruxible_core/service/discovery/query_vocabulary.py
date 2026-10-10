@@ -299,7 +299,7 @@ class QueryVocabulary:
 def load_query_vocabulary(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
 ) -> QueryVocabulary:
-    """Read the live accepted ClaimTypes and every Subject kind in use."""
+    """Read the live accepted ClaimTypes and every Subject kind in use or declared."""
 
     predicates: dict[str, PredicateInfo] = {}
     kinds: set[str] = set()
@@ -325,6 +325,13 @@ def load_query_vocabulary(
             str(row[0])
             for row in projection.typed.connection.execute(
                 "SELECT DISTINCT subject_kind FROM subjects"
+            )
+        )
+        # A kind a live SubjectKind declares is a kind before any Subject of it.
+        kinds.update(
+            str(row[0]).removeprefix("SubjectKind:")
+            for row in projection.typed.connection.execute(
+                "SELECT identity FROM subject_kinds WHERE lifecycle='live'"
             )
         )
     return QueryVocabulary(predicates=predicates, kinds=tuple(sorted(kinds)))

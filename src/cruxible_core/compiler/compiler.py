@@ -403,7 +403,7 @@ def projection_registry_for_compiler(
         return p2c_extension_registry().with_artifact_kinds("attestation", "resolution-contract")
     if compiler == GOVERNED_TRIGGERS_COMPILER:
         return p2c_extension_registry().with_artifact_kinds(
-            "attestation", "resolution-contract", "trigger", "blueprint"
+            "attestation", "resolution-contract", "trigger", "blueprint", "subject-kind"
         )
     if compiler == ATTESTATION_COMPILER:
         return p2c_extension_registry().with_artifact_kinds("attestation")

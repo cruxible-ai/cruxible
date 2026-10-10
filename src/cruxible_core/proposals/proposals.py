@@ -88,6 +88,7 @@ from cruxible_client.contracts.claim_types import (
     ClaimTypeFreshnessHorizonInvalid,
     claim_type_accepts_subject,
     claim_type_digest,
+    claim_type_path,
     evaluate_claim_type_law,
     parse_claim_type,
 )
@@ -246,6 +247,14 @@ from cruxible_client.contracts.resolution_contracts import (
     parse_resolution_contract,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subject_kinds import (
+    AcceptedSubjectKind,
+    KeyClaimTypeShape,
+    SubjectKindFormatError,
+    evaluate_subject_kind_law,
+    parse_subject_kind,
+    subject_kind_digest,
+)
 from cruxible_client.contracts.subjects import (
     AcceptedSubject,
     evaluate_subject_law,
@@ -394,6 +403,9 @@ _PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
 _TRIGGER_PATH_RE = re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")
+_SUBJECT_KIND_PATH_RE = re.compile(
+    r"^subject-kinds/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*\.json$"
+)
 _BLUEPRINT_PATH_RE = re.compile(r"^blueprints/[a-z][a-z0-9_.-]{0,255}\.json$")
 _QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.json$")
 _EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.json$")
@@ -411,6 +423,7 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _PROCEDURE_PATH_RE,
     _LINE_PATH_RE,
     _TRIGGER_PATH_RE,
+    _SUBJECT_KIND_PATH_RE,
     _BLUEPRINT_PATH_RE,
     _QUERY_DEFINITION_PATH_RE,
     _EXHAUST_PROMOTION_PATH_RE,
@@ -2217,6 +2230,81 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _key_claim_type_shape(tree: Mapping[str, bytes], predicate: str) -> KeyClaimTypeShape | None:
+    """What the SubjectKind law reads of one key ClaimType in the candidate tree."""
+
+    try:
+        path = claim_type_path(predicate)
+    except ClaimTypeFormatError:
+        return None
+    content = tree.get(path)
+    if content is None:
+        return None
+    claim_type = parse_claim_type(content, path=path)
+    return KeyClaimTypeShape(
+        predicate=predicate,
+        live=claim_type.lifecycle.state == "live",
+        artifact_format=claim_type.artifact_format,
+        object_kind=claim_type.object_kind,
+        cardinality=claim_type.cardinality,
+        allowed_subject_kinds=tuple(claim_type.allowed_subject_kinds),
+    )
+
+
+def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one SubjectKind: its succession, and the key ClaimTypes it names.
+
+    A key ClaimType is read from the candidate, so one accepted in the same
+    change counts. SubjectKinds are admitted where Triggers are (compiler
+    revision 32).
+    """
+
+    if not _admits_triggers(context.current.compiler):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.subject_kind.compiler_unsupported",
+                    "SubjectKind artifacts require compiler revision 32; upgrade the "
+                    "instance first.",
+                    context.path,
+                ),
+            )
+        )
+    subject_kind = parse_subject_kind(context.content, path=context.path)
+    predecessor: AcceptedSubjectKind | None = None
+    if context.parent_content is not None:
+        previous = parse_subject_kind(context.parent_content, path=context.path)
+        predecessor = AcceptedSubjectKind(
+            path=context.path,
+            subject_kind=previous,
+            artifact_digest=subject_kind_digest(previous).tagged,
+        )
+    law = evaluate_subject_kind_law(
+        subject_kind,
+        path=context.path,
+        predecessor=predecessor,
+        key_claim_types={
+            predicate: _key_claim_type_shape(context.candidate_tree, predicate)
+            for predicate in subject_kind.keys
+        },
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted SubjectKind law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, subject_kind.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=subject_kind.lifecycle.state == "retired",
+    )
+
+
 def _blueprint_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_client.contracts.procedures.blueprints import (
         AcceptedBlueprint,
@@ -3607,6 +3695,14 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         evaluate=_trigger_member,
     ),
     _MemberKind(
+        name="subject-kind",
+        pattern=_SUBJECT_KIND_PATH_RE,
+        removal_code="cruxible.subject_kind.removal_unsupported",
+        removal_message="SubjectKinds are retired by successor, never removed.",
+        evaluate=_subject_kind_member,
+        format_code="cruxible.subject_kind.format_invalid",
+    ),
+    _MemberKind(
         name="blueprint",
         pattern=_BLUEPRINT_PATH_RE,
         removal_code="cruxible.change_set.delete_unsupported",
@@ -3704,6 +3800,7 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "exhaust-promotion",
     "line",
     "trigger",
+    "subject-kind",
     "blueprint",
     "query-definition",
     "provider",
@@ -4031,6 +4128,7 @@ def _evaluate_scoped_members(
             LineSpecFormatError,
             QueryDefinitionFormatError,
             ExhaustPromotionError,
+            SubjectKindFormatError,
         ) as exc:
             return CandidateEvaluation(
                 candidate_tree,

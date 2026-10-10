@@ -137,6 +137,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBody,
     SourceAcquisitionPolicyAuthoringPayload,
     SubjectAuthoringPayload,
+    SubjectKindAuthoringPayload,
     TriggerAuthoringPayload,
     authoring_member_identity,
     authoring_program_digest,
@@ -1198,6 +1199,48 @@ class ChangeSetDraft:
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "trigger", "name": name},
+            )
+        )
+        return self
+
+    def subject_kind(
+        self,
+        *,
+        name: str,
+        keys: Sequence[str] = (),
+        uniqueness: Literal["unique", "hint"] | None = None,
+        minted: bool = False,
+        description: str | None = None,
+        retire: bool = False,
+    ) -> ChangeSetDraft:
+        """Declare how Subjects of one kind are named: by key ClaimTypes, or minted.
+
+        Every new Subject is of a kind with an accepted SubjectKind. Give ``keys``
+        (key ClaimTypes by predicate, in key order: each a ClaimType v8 about this
+        kind only, literal and one-valued, accepted or defined in this set) with
+        ``uniqueness`` -- ``unique`` refuses a second Subject with the same key,
+        ``hint`` only surfaces it in the duplicates audit -- or ``minted=True`` to
+        have core mint opaque ids. Core then names every new Subject of the kind:
+        its id is the readable rendering of its key, or a minted id.
+
+        Next: ``.submit()``; afterwards ``cx.set("<kind>/<key value>", ...)`` creates
+        a Subject of a single-key unique kind by its key.
+        """
+
+        payload = SubjectKindAuthoringPayload(
+            name=name,
+            description=description,
+            keys=tuple(keys),
+            uniqueness=uniqueness,
+            minted=minted,
+            retire=retire,
+        )
+        self._members.append(
+            _ChangeSetMember(
+                payload=payload,
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "subject_kind", "name": name},
             )
         )
         return self

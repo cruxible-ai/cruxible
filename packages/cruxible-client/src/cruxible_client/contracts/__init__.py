@@ -342,6 +342,7 @@ AuthoringExampleName = Literal[
     "query-ontology",
     "query-procedures",
     "subject",
+    "subject-kind",
     "approval-policy",
     "procedure-runtime-policy",
     "procedure-mandate",

@@ -61,6 +61,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBody,
     SourceAcquisitionPolicyAuthoringPayload,
     SubjectAuthoringPayload,
+    SubjectKindAuthoringPayload,
     TriggerAuthoringPayload,
     WorkingSelectionObservation,
     authoring_member_identity,
@@ -210,6 +211,15 @@ from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, Sou
 from cruxible_client.contracts.source_references import (
     ExternalSourceReference,
     LedgerSourceReference,
+)
+from cruxible_client.contracts.subject_kinds import (
+    SubjectKind,
+    SubjectKindKeys,
+    SubjectKindMinted,
+    parse_subject_kind,
+    render_subject_kind,
+    subject_kind_digest,
+    subject_kind_path,
 )
 from cruxible_client.contracts.subjects import (
     parse_subject,
@@ -2956,6 +2966,40 @@ def _render_trigger_member(
     return path, render_trigger(trigger), trigger_digest(trigger).tagged
 
 
+def _render_subject_kind_member(
+    payload: SubjectKindAuthoringPayload,
+    *,
+    tree: Mapping[str, bytes],
+) -> tuple[str, bytes, str]:
+    """Lower one SubjectKind decision as the successor of the accepted one, if any.
+
+    Whether its key ClaimTypes qualify is the SubjectKind law's to judge at
+    acceptance, against the candidate (so a key ClaimType of the same set counts).
+    """
+
+    path = subject_kind_path(payload.name)
+    previous_content = tree.get(path)
+    previous = None if previous_content is None else parse_subject_kind(previous_content, path=path)
+    rule: SubjectKindKeys | SubjectKindMinted = (
+        SubjectKindMinted()
+        if payload.minted
+        else SubjectKindKeys(keys=payload.keys, uniqueness=payload.uniqueness or "unique")
+    )
+    declared = SubjectKind(
+        identity=ArtifactIdentity(kind="SubjectKind", name=payload.name),
+        description=payload.description,
+        identity_rule=rule,
+        lifecycle=ArtifactLifecycle(
+            state="retired" if payload.retire else "live",
+            predecessor_digest=None if previous is None else subject_kind_digest(previous).tagged,
+        ),
+    )
+    if previous_content is not None and previous is not None:
+        if _same_revision_content(declared, previous):
+            return path, previous_content, subject_kind_digest(previous).tagged
+    return path, render_subject_kind(declared), subject_kind_digest(declared).tagged
+
+
 def _contract_fields_summary(procedure: ProcedureArtifact, contract: ArtifactPin) -> dict[str, str]:
     for owned in procedure.owned_contracts:
         if (
@@ -3281,6 +3325,8 @@ def _member_primary_path(
         return line_spec_path(member.name)
     if isinstance(member, TriggerAuthoringPayload):
         return trigger_path(member.name)
+    if isinstance(member, SubjectKindAuthoringPayload):
+        return subject_kind_path(member.name)
     if isinstance(member, QueryDefinitionAuthoringPayload):
         return query_definition_path(member.query_definition.identity.name)
     path, _content, _digest = _render_non_procedure_member(member)
@@ -3636,6 +3682,11 @@ def _stage_change_set_member(
         trigger_member_path, content, digest = _render_trigger_member(member, tree=staged_tree)
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[trigger_member_path] = content
+        return candidate_tree, {"artifact_digest": digest}, set(), {}
+    if isinstance(member, SubjectKindAuthoringPayload):
+        kind_path, content, digest = _render_subject_kind_member(member, tree=staged_tree)
+        candidate_tree = fork_tree(staged_tree)
+        candidate_tree[kind_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
     _path, content, digest = _render_non_procedure_member(member, tree=staged_tree)
     candidate_tree = fork_tree(staged_tree)
@@ -4349,11 +4400,16 @@ def _lower_authoring(
             derivation_procedure=derivation_procedure,
             captures=captures,
         )
-    if isinstance(intent.payload, LineAuthoringPayload | TriggerAuthoringPayload):
+    if isinstance(
+        intent.payload,
+        LineAuthoringPayload | TriggerAuthoringPayload | SubjectKindAuthoringPayload,
+    ):
         path, content, digest = (
             _render_line_member(intent.payload, tree=base_tree)
             if isinstance(intent.payload, LineAuthoringPayload)
             else _render_trigger_member(intent.payload, tree=base_tree)
+            if isinstance(intent.payload, TriggerAuthoringPayload)
+            else _render_subject_kind_member(intent.payload, tree=base_tree)
         )
         candidate_tree = fork_tree(base_tree)
         candidate_tree[path] = content

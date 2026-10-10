@@ -213,6 +213,10 @@ GOVERNED_TRIGGERS_ARTIFACT_KINDS = ArtifactKindRegistry(
         *AUTHORITY_VERBS_ARTIFACT_KINDS.entries(),
         ArtifactPathKind("trigger", re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")),
         ArtifactPathKind("blueprint", re.compile(r"^blueprints/[a-z][a-z0-9_.-]{0,255}\.json$")),
+        ArtifactPathKind(
+            "subject-kind",
+            re.compile(r"^subject-kinds/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*\.json$"),
+        ),
     )
 )
 _REVISION_31_AND_LATER = (AUTHORITY_VERBS_ARTIFACT_KINDS, GOVERNED_TRIGGERS_ARTIFACT_KINDS)
@@ -240,6 +244,7 @@ RegisteredPathKind = Literal[
     "query-definition",
     "source-acquisition-policy",
     "subject",
+    "subject-kind",
     "trigger",
 ]
 
@@ -719,6 +724,37 @@ def parse_projection_tree(
                     )
                     for pin in blueprint.pins
                 )
+                continue
+            if kind == "subject-kind":
+                from cruxible_client.contracts.subject_kinds import (
+                    parse_subject_kind,
+                    subject_kind_digest,
+                )
+
+                subject_kind = parse_subject_kind(content, path=path, codec=artifact_codec)
+                identity = subject_kind.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                digest = subject_kind_digest(subject_kind).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity,
+                        kind,
+                        subject_kind.artifact_format,
+                        path,
+                        digest,
+                        subject_kind.lifecycle.predecessor_digest,
+                        projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=file_digest(content).tagged,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                if subject_kind.lifecycle.state == "retired":
+                    retired_identities.append(identity)
                 continue
             if kind == "trigger":
                 from cruxible_client.contracts.triggers import parse_trigger, trigger_digest

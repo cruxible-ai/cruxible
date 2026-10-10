@@ -27,6 +27,7 @@ from cruxible_client.authoring.inputs import (
     QueryDefinitionInput,
     SelfSourceInput,
     SubjectInput,
+    SubjectKindInput,
     SubjectObjectInput,
     TriggerInput,
     WorkingSelectionInput,
@@ -77,6 +78,52 @@ def subject_example() -> SubjectInput:
             subject_kind="project.work_item",
             subject_id="replace-me",
         ),
+    )
+
+
+def subject_kind_example() -> ChangeSetInput:
+    """A single-key unique kind whose key value is the readable slug.
+
+    The key ClaimType and the SubjectKind land in one change. After it, a write
+    that names a ``project.work_item/<slug>`` that does not exist yet creates it:
+    the slug is its key value and, rendered, its id.
+    """
+
+    slug = ClaimType(
+        artifact_format="playbill-claim-type-v8",
+        identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.slug"),
+        predicate="project.work_item.slug",
+        allowed_subject_kinds=("project.work_item",),
+        object_kind="literal",
+        literal_schema={"minLength": 1, "type": "string"},
+        cardinality="one",
+        permitted_roles=("normative",),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
+            cardinality="one",
+            eligible_verdicts=("supported",),
+            selector="only_contender",
+        ),
+        description="The work item's readable name; its key.",
+        default_role="normative",
+        evidence_requirement="self",
+        revision_evidence="replace",
+        canonical_form=("nfkc", "trim", "collapse_whitespace", "casefold"),
+    )
+    return ChangeSetInput(
+        kind="change_set",
+        members=(
+            ClaimTypeInput(kind="claim_type", claim_type=slug),
+            SubjectKindInput(
+                kind="subject_kind",
+                name="project.work_item",
+                description="One unit of planned work, named by its slug.",
+                keys=("project.work_item.slug",),
+                uniqueness="unique",
+            ),
+        ),
+        rationale="Declare how work items are named before creating any.",
     )
 
 
@@ -789,6 +836,7 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "query-ontology": query_ontology_example,
     "query-procedures": query_procedures_example,
     "subject": subject_example,
+    "subject-kind": subject_kind_example,
     "approval-policy": approval_policy_example,
     "procedure-runtime-policy": procedure_runtime_policy_example,
     "procedure-mandate": procedure_mandate_example,
@@ -844,6 +892,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "query-ontology",
     "query-procedures",
     "subject",
+    "subject-kind",
     "approval-policy",
     "procedure-runtime-policy",
     "procedure-mandate",

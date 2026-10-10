@@ -81,6 +81,7 @@ from cruxible_client.contracts.workspace_advertisement import (
 
 AUTHORING_INTENT_ID_RE = re.compile(r"^AIT-[0-9a-f]{32}$")
 _CANONICAL_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
+_SUBJECT_KIND_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*$")
 _GIT_OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _REPOSITORY_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
@@ -891,6 +892,44 @@ class TriggerAuthoringPayload(_StrictAuthoringModel):
         return self
 
 
+class SubjectKindAuthoringPayload(_StrictAuthoringModel):
+    """One SubjectKind decision: how core names Subjects of one kind.
+
+    Exactly one of ``keys`` (the key ClaimTypes by predicate, in key order, with
+    ``uniqueness``) or ``minted``. Lowering writes ``subject-kinds/<name>.json``
+    as the successor of the accepted one when there is one; changing the keys or
+    the uniqueness of an accepted kind is that governed successor, and no
+    existing Subject's id moves.
+    """
+
+    tag: Literal["cruxible-subject-kind-authoring-payload-v1"] = (
+        "cruxible-subject-kind-authoring-payload-v1"
+    )
+    name: str
+    description: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    keys: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    uniqueness: Literal["unique", "hint"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    minted: bool = Field(default=False, exclude_if=lambda value: value is False)
+    retire: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        if not _SUBJECT_KIND_NAME_RE.fullmatch(value):
+            raise ValueError("SubjectKind name must be a canonical Subject kind")
+        return value
+
+    @model_validator(mode="after")
+    def _one_rule(self) -> "SubjectKindAuthoringPayload":
+        if bool(self.keys) == self.minted:
+            raise ValueError("a SubjectKind names its keys or is minted: exactly one of them")
+        if bool(self.keys) != (self.uniqueness is not None):
+            raise ValueError("a keyed SubjectKind states its uniqueness (unique or hint)")
+        return self
+
+
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
     """A Procedure envelope input, plus the acquisition policy that envelope pins.
 
@@ -1221,6 +1260,7 @@ AuthoringChangeSetMember: TypeAlias = Annotated[
     | SourceAcquisitionPolicyAuthoringPayload
     | LineAuthoringPayload
     | TriggerAuthoringPayload
+    | SubjectKindAuthoringPayload
     | BlueprintAuthoringPayload
     | ProcedureAuthoringPayload,
     Field(discriminator="tag"),
@@ -1280,6 +1320,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
         return f"Line:{payload.name}"
     if isinstance(payload, TriggerAuthoringPayload):
         return f"Trigger:{payload.name}"
+    if isinstance(payload, SubjectKindAuthoringPayload):
+        return f"SubjectKind:{payload.name}"
     if isinstance(payload, BlueprintAuthoringPayload):
         return f"Blueprint:{payload.definition['name']}"
     return f"Procedure:{payload.definition['name']}"
@@ -1371,6 +1413,7 @@ AuthoringPayload = Annotated[
     | SourceAcquisitionPolicyAuthoringPayload
     | LineAuthoringPayload
     | TriggerAuthoringPayload
+    | SubjectKindAuthoringPayload
     | ChangeSetAuthoringPayload,
     Field(discriminator="tag"),
 ]
@@ -2279,6 +2322,7 @@ __all__ = [
     "MandateScopeAuthoring",
     "ProcedureMandateAuthoringPayload",
     "TriggerAuthoringPayload",
+    "SubjectKindAuthoringPayload",
     "QueryDefinitionAuthoringPayload",
     "AttestationAuthoringPayload",
     "ResolutionContractAuthoringPayload",

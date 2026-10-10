@@ -43,6 +43,7 @@ GetRefKind = Literal[
     "query",
     "capture_contract",
     "trigger",
+    "subject_kind",
     "proposal",
     "line",
     "capture",
@@ -83,6 +84,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "query": ("summary", "history", "proof"),
     "capture_contract": ("summary", "history", "proof"),
     "trigger": ("summary", "history", "proof"),
+    "subject_kind": ("summary", "history", "proof"),
     "proposal": ("summary", "proof"),
     "line": ("summary", "history", "proof"),
     "capture": ("summary", "proof"),
@@ -369,6 +371,23 @@ class GetTriggerCard(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class GetSubjectKindCard(_StrictGetModel):
+    """One SubjectKind: how core names and identifies Subjects of the kind."""
+
+    #: ``SubjectKind:<kind>``
+    subject_kind: str
+    description: str | None = Field(default=None, exclude_if=_omit_none)
+    lifecycle: str
+    #: ``keys`` (named by its key ClaimTypes) or ``minted`` (core mints ids).
+    rule: Literal["keys", "minted"]
+    #: The key ClaimTypes in key order; empty for a minted kind.
+    keys: tuple[str, ...] = ()
+    uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_omit_none)
+    #: How many Subjects of the kind are live at this coordinate.
+    live_subjects: int
+    next: tuple[str, ...] = ()
+
+
 class GetProposalChange(_StrictGetModel):
     path: str
     change: str
@@ -479,6 +498,7 @@ GetCard = (
     | GetQueryCard
     | GetCaptureContractCard
     | GetTriggerCard
+    | GetSubjectKindCard
     | GetProposalCard
     | GetLineCard
     | GetCaptureCard
@@ -630,6 +650,7 @@ __all__ = [
     "GetBody",
     "GetCaptureContractCard",
     "GetTriggerCard",
+    "GetSubjectKindCard",
     "GetCaptureEvidence",
     "GetCard",
     "GetClaimCard",

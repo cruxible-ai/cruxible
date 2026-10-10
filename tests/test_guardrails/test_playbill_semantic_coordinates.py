@@ -76,6 +76,7 @@ from cruxible_client.contracts.laws import (
     SOURCE_CHECKED_PROCEDURE_LAW,
     SOURCE_CHECKED_UPGRADE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
+    SUBJECT_KIND_ACCEPTANCE_LAW,
     TRIGGER_ACCEPTANCE_LAW,
     TRIGGER_CAPTURE_UPGRADE_LAW,
     InstalledAcceptanceLaw,
@@ -134,6 +135,13 @@ LAW_COORDINATES: tuple[
         "playbill-trigger-v1",
         1,
         "sha256:7fc3d357dbd23307f849c5750181a21035d7d9866e07db022fb3722e59fe2bce",
+    ),
+    (
+        SUBJECT_KIND_ACCEPTANCE_LAW,
+        "cruxible.subject-kind.v1",
+        "cruxible-subject-kind-v1",
+        1,
+        "sha256:5f8e0ef33e854fc3355bc02a3cac0a6c08f216c59175b0a53ee2195bdc819510",
     ),
     (
         CLAIM_TYPE_V5_ACCEPTANCE_LAW,

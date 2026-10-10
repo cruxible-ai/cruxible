@@ -133,6 +133,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "procedure-mandate",
         "line",
         "trigger",
+        "subject-kind",
         "query-definition",
         "exhaust-promotion",
     ]
@@ -169,6 +170,22 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
     """Derive metadata from exact artifact bytes, preserving parser refusals."""
 
     try:
+        if path.startswith("subject-kinds/"):
+            from cruxible_client.contracts.subject_kinds import (
+                parse_subject_kind,
+                subject_kind_digest,
+            )
+
+            subject_kind = parse_subject_kind(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="subject-kind",
+                artifact_tag=subject_kind.artifact_format,
+                identity=subject_kind.identity,
+                artifact_digest=subject_kind_digest(subject_kind).tagged,
+                pins=(),
+                lifecycle=subject_kind.lifecycle,
+            )
         if path.startswith("triggers/"):
             from cruxible_client.contracts.triggers import parse_trigger, trigger_digest
 

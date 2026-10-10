@@ -43,6 +43,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBody,
     SourceAcquisitionPolicyAuthoringPayload,
     SubjectAuthoringPayload,
+    SubjectKindAuthoringPayload,
     TriggerAuthoringPayload,
     WorkingSelectionObservation,
     authoring_member_identity,
@@ -402,6 +403,31 @@ class TriggerInput(_StrictInputModel):
     retire: bool = False
 
 
+class SubjectKindInput(_StrictInputModel):
+    """How core names Subjects of one kind: by key ClaimTypes, or by minted ids.
+
+    Every new Subject is of a kind with an accepted SubjectKind. ``keys`` names
+    the key ClaimTypes (by predicate, in key order): each a ClaimType v8 about
+    this kind only, literal and one-valued, accepted here or earlier; a Subject's
+    id is then the readable rendering of its canonical key. ``uniqueness:
+    unique`` refuses a second live Subject with the same key; ``hint`` only
+    surfaces it in the duplicates audit. ``minted: true`` has core mint opaque
+    ids instead. Change it, or retire it, through a successor.
+    """
+
+    kind: Literal["subject_kind"]
+    name: str = Field(description="The Subject kind this declares, e.g. 'dev.decision'.")
+    description: str | None = None
+    keys: tuple[str, ...] = Field(
+        default=(), description="Key ClaimTypes by predicate, in key order; omit when minted."
+    )
+    uniqueness: Literal["unique", "hint"] | None = Field(
+        default=None, description="With keys: unique refuses a duplicate key; hint does not."
+    )
+    minted: bool = Field(default=False, description="Core mints opaque ids; no keys.")
+    retire: bool = False
+
+
 AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     ClaimInput
     | ClaimTypeInput
@@ -415,6 +441,7 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     | AcquisitionPolicyInput
     | LineInput
     | TriggerInput
+    | SubjectKindInput
     | BlueprintInput
     | BlueprintInstanceInput
     | ProcedureInput,
@@ -450,6 +477,7 @@ AuthoringInput: TypeAlias = Annotated[
     | AcquisitionPolicyInput
     | LineInput
     | TriggerInput
+    | SubjectKindInput
     | ChangeSetInput,
     Field(discriminator="kind"),
 ]
@@ -805,6 +833,20 @@ def _trigger_payload(value: TriggerInput) -> TriggerAuthoringPayload:
     return TriggerAuthoringPayload.model_validate(value.model_dump(mode="python", exclude={"kind"}))
 
 
+def _subject_kind_payload(value: SubjectKindInput) -> SubjectKindAuthoringPayload:
+    try:
+        return SubjectKindAuthoringPayload.model_validate(
+            value.model_dump(mode="python", exclude={"kind"})
+        )
+    except ValueError as exc:
+        raise AuthoringInputError(
+            "cruxible.authoring.subject_kind_invalid",
+            "input",
+            str(exc),
+            "Give keys with a uniqueness (unique or hint), or minted: true -- one of them.",
+        ) from exc
+
+
 def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChangeSetMember:
     if isinstance(member, ClaimInput):
         return _claim_payload(member)
@@ -845,6 +887,8 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
         return _line_payload(member)
     if isinstance(member, TriggerInput):
         return _trigger_payload(member)
+    if isinstance(member, SubjectKindInput):
+        return _subject_kind_payload(member)
     return _mandate_payload(member)
 
 
@@ -876,6 +920,8 @@ def lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
         return _line_payload(value)
     if isinstance(value, TriggerInput):
         return _trigger_payload(value)
+    if isinstance(value, SubjectKindInput):
+        return _subject_kind_payload(value)
     members = tuple(_change_set_member(member) for member in value.members)
     identities = tuple(authoring_member_identity(member) for member in members)
     if len(set(identities)) != len(identities):
@@ -928,6 +974,7 @@ __all__ = [
     "SlotReferenceInput",
     "SubjectObjectInput",
     "SubjectInput",
+    "SubjectKindInput",
     "WorkingSelectionInput",
     "lower_bound_claim_input",
     "lower_authoring_input",

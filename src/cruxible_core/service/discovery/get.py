@@ -91,6 +91,7 @@ from cruxible_client.contracts.get_reads import (
     GetSourceAcquisitionPolicyCard,
     GetSubjectCard,
     GetSubjectClaim,
+    GetSubjectKindCard,
     GetTriggerCard,
     ReadFlag,
     ReadSurface,
@@ -103,6 +104,7 @@ from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.triggers import Trigger
@@ -178,6 +180,7 @@ _TYPED_PREFIXES: Mapping[str, GetRefKind] = {
     "query": "query",
     "CaptureContract": "capture_contract",
     "Trigger": "trigger",
+    "SubjectKind": "subject_kind",
     "Proposal": "proposal",
     "Line": "line",
     "Capture": "capture",
@@ -202,6 +205,7 @@ _PROJECTION_KIND: Mapping[GetRefKind, str] = {
     "query": "query-definition",
     "capture_contract": "capture-contract",
     "trigger": "trigger",
+    "subject_kind": "subject-kind",
     "line": "line",
     "resolution_contract": "resolution-contract",
     "mandate": "procedure-mandate",
@@ -221,6 +225,7 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
     "query": "QueryDefinition",
     "capture_contract": "CaptureContract",
     "trigger": "Trigger",
+    "subject_kind": "SubjectKind",
     "line": "Line",
     "resolution_contract": "ResolutionContract",
     "mandate": "ProcedureMandate",
@@ -236,6 +241,7 @@ _NAMED_KINDS: tuple[GetRefKind, ...] = (
     "query",
     "capture_contract",
     "trigger",
+    "subject_kind",
     "line",
     "resolution_contract",
     "mandate",
@@ -248,6 +254,7 @@ _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "query": "query",
     "capture_contract": "CaptureContract",
     "trigger": "Trigger",
+    "subject_kind": "SubjectKind",
     "proposal": "Proposal",
     "line": "Line",
     "resolution_contract": "ResolutionContract",
@@ -626,6 +633,7 @@ def _resolve_typed(
         "query": "QueryDefinition",
         "capture_contract": "CaptureContract",
         "trigger": "Trigger",
+        "subject_kind": "SubjectKind",
         "line": "Line",
         "resolution_contract": "ResolutionContract",
         "mandate": "ProcedureMandate",
@@ -1531,6 +1539,41 @@ def _trigger_card(
     )
 
 
+def _subject_kind_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetSubjectKindCard:
+    """How core names Subjects of one kind, and how many are live."""
+
+    kind = _name(resolved.identity)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        declared = cast(SubjectKind, projection.typed.source(resolved.identity))
+        (live,) = projection.typed.connection.execute(
+            "SELECT COUNT(*) FROM subjects WHERE subject_kind=? AND lifecycle='live'", (kind,)
+        ).fetchone()
+    rule = declared.identity_rule
+    return GetSubjectKindCard(
+        subject_kind=resolved.identity,
+        description=declared.description,
+        lifecycle=declared.lifecycle.state,
+        rule=rule.rule,
+        keys=declared.keys,
+        uniqueness=getattr(rule, "uniqueness", None),
+        live_subjects=int(live),
+        next=(
+            _render_get(surface, resolved.display, "history"),
+            {
+                "cli": f"cruxible query {kind}",
+                "mcp": f'cruxible_query(kind="{kind}")',
+                "sdk": f'cx.query("{kind}")',
+            }[surface],
+        ),
+    )
+
+
 def _capture_contract_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -2135,6 +2178,7 @@ def _proof(
         "blueprint",
         "capture_contract",
         "trigger",
+        "subject_kind",
         "line",
         "resolution_contract",
         "mandate",
@@ -2282,6 +2326,8 @@ def service_playbill_get(
             card = _trigger_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "blueprint":
             card = _blueprint_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "subject_kind":
+            card = _subject_kind_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "line":
             card = line_card(
                 instance,

@@ -28,6 +28,7 @@ from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.canonical import (
     ArtifactCodec,
     artifact_path_for_codec,
+    canonical_bytes,
 )
 from cruxible_client.contracts.captures import parse_capture_contract
 from cruxible_client.contracts.claim_attestations import (
@@ -66,6 +67,7 @@ from cruxible_client.contracts.provider_interfaces import parse_provider_interfa
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.contracts.query.definitions import parse_query_definition
 from cruxible_client.contracts.resolution_contracts import parse_resolution_contract
+from cruxible_client.contracts.subject_kinds import parse_subject_kind
 from cruxible_client.contracts.subjects import parse_subject
 from cruxible_client.contracts.triggers import parse_trigger
 from cruxible_client.contracts.types import PrincipalRecord
@@ -242,6 +244,18 @@ OWNER_CODECS = (
         (
             ("subject_kind", "TEXT NOT NULL"),
             ("subject_id", "TEXT NOT NULL"),
+        ),
+    ),
+    OwnerCodec(
+        "subject-kind",
+        "SubjectKind",
+        "subject_kinds",
+        parse_subject_kind,
+        (
+            ("rule", "TEXT NOT NULL CHECK(rule IN ('keys','minted'))"),
+            ("uniqueness", "TEXT CHECK(uniqueness IS NULL OR uniqueness IN ('unique','hint'))"),
+            # The key ClaimTypes' predicates in key order, as a canonical JSON array.
+            ("key_predicates", "TEXT NOT NULL"),
         ),
     ),
     OwnerCodec(
@@ -563,6 +577,13 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
         }
     if owner.kind == "claim":
         return _claim_fields(source)
+    if owner.kind == "subject-kind":
+        rule = source.identity_rule
+        return {
+            "rule": rule.rule,
+            "uniqueness": getattr(rule, "uniqueness", None),
+            "key_predicates": canonical_bytes(list(source.keys)).decode("utf-8"),
+        }
     if owner.kind == "trigger":
         return {
             "target_kind": source.target.kind,
