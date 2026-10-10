@@ -1766,45 +1766,57 @@ class ProposalTerminalEgressSink:
         adapter = ProposalTerminalAdapter(
             service=service, bind_projection=self.instance.bind_accepted_projection
         )
+        receipt: TerminalEgressReceiptV1
         if request.kind == "settle_change_set":
-            return self._deliver_settle(
+            receipt = self._deliver_settle(
                 request,
                 admission=admission,
                 prepared=prepared,
                 adapter=adapter,
                 existing=existing,
             )
-        unchanged = {child.item_key: child for child in prepared.prepared.unchanged}
-        if existing is not None:
-            return proposal_terminal_receipt(
-                request, result=existing, item_paths=prepared.item_paths, unchanged=unchanged
+        else:
+            unchanged = {child.item_key: child for child in prepared.prepared.unchanged}
+            receipt = (
+                proposal_terminal_receipt(
+                    request, result=existing, item_paths=prepared.item_paths, unchanged=unchanged
+                )
+                if existing is not None
+                else adapter.deliver(
+                    request=request,
+                    admission=admission,
+                    candidate_tree=prepared.candidate_tree,
+                    accepted_mandates=self.accepted_mandates,
+                    item_paths=prepared.item_paths,
+                    rationale=prepared.rationale,
+                    changed_paths=prepared.prepared.target_paths,
+                    delegation=self.delegation,
+                    unchanged=unchanged,
+                )
             )
-        return adapter.deliver(
-            request=request,
-            admission=admission,
-            candidate_tree=prepared.candidate_tree,
-            accepted_mandates=self.accepted_mandates,
-            item_paths=prepared.item_paths,
-            rationale=prepared.rationale,
-            changed_paths=prepared.prepared.target_paths,
-            delegation=self.delegation,
-            unchanged=unchanged,
-        )
+        # The exact admission this delivery submitted (or recovered) carries
+        # this operation's reasons; written before the run records its receipt,
+        # so a crash here is redelivered through recovery and links it then.
+        proposal_id = getattr(receipt, "proposal_id", None)
+        if prepared.item_reasons and isinstance(proposal_id, str):
+            self.instance.proposal_evidence().write_item_reason_link(
+                proposal_id, _intent_id(request)
+            )
+        return receipt
 
     def _record_item_reasons(
         self, request: TerminalEgressRequestV2, prepared: PreparedProposal
     ) -> None:
-        """Record each changed item's reason under the operation's proposal ref."""
+        """Record each changed item's reason under the immutable Procedure operation."""
 
         if not prepared.item_reasons:
             return
-        assert request.operation_key is not None  # v2 shape
-        target_ref = proposal_terminal_ref(request.actor_context.actor_id, request.operation_key)
+        operation = _intent_id(request)
         self.instance.proposal_evidence().write_item_reasons(
             tuple(
                 ProposalItemReason.bounded(
                     item.reason,
-                    target_ref=target_ref,
+                    operation=operation,
                     path=item.path,
                     item_key=item.item_key,
                     child_index=item.child_index,

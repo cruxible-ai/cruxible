@@ -557,10 +557,15 @@ def service_review_playbill_proposal(
         )
     )
     evidence_store = instance.proposal_evidence()
-    item_reasons, item_reason_count, item_reasons_next_cursor = evidence_store.item_reason_page(
-        evidence_store.item_reason_target(proposal.admission),
-        after=item_reasons_after,
-        limit=max(1, min(item_reasons_limit, PROPOSAL_REVIEW_REASONS_MAX_LIMIT)),
+    operation = evidence_store.item_reason_operation(proposal.admission)
+    item_reasons, item_reason_count, item_reasons_next_cursor = (
+        ((), 0, None)
+        if operation is None
+        else evidence_store.item_reason_page(
+            operation,
+            after=item_reasons_after,
+            limit=max(1, min(item_reasons_limit, PROPOSAL_REVIEW_REASONS_MAX_LIMIT)),
+        )
     )
     usable_workspace_observation, projection_evidence, eligible_coordinates = (
         _assess_projection_evidence(

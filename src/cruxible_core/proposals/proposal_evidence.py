@@ -38,7 +38,7 @@ from cruxible_client.contracts.errors import (
     ProposalRejectedError,
     ProposalWithdrawnError,
 )
-from cruxible_client.contracts.proposal_models import ProposalItemReason
+from cruxible_client.contracts.proposal_models import ProposalItemReason, ProposalItemReasonLink
 from cruxible_client.contracts.source_catalog import SourceCompilationManifest
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.proposals.candidate_review_summary import (
@@ -125,6 +125,7 @@ class ProposalEvidenceStore:
         self.source_compilations = self._directory("source-compilations")
         self.withdrawals = self._directory("withdrawals")
         self.item_reasons = self._directory("item-reasons")
+        self.item_reason_links = self._directory("item-reason-links")
 
     def _directory(self, name: str) -> Path:
         path = self.root / name
@@ -252,15 +253,15 @@ class ProposalEvidenceStore:
 
     # -- Procedure item reasons ---------------------------------------------------
 
-    def _item_reason_directory(self, target_ref: str) -> Path:
-        return self.item_reasons / hashlib.sha256(target_ref.encode("utf-8")).hexdigest()
+    def _item_reason_directory(self, operation: str) -> Path:
+        return self.item_reasons / hashlib.sha256(operation.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _item_reason_name(path: str) -> str:
         return hashlib.sha256(path.encode("utf-8")).hexdigest() + ".json"
 
     def write_item_reasons(self, records: tuple[ProposalItemReason, ...]) -> None:
-        """Persist each item's reason under its operation's proposal ref, one file per member.
+        """Persist each item's reason under its Procedure operation, one file per member.
 
         Immutable like every record here and idempotent: a retry of the same
         operation writes the same bytes (an existing identical file is a
@@ -270,7 +271,7 @@ class ProposalEvidenceStore:
 
         directories: set[Path] = set()
         for record in records:
-            directory = self._item_reason_directory(record.target_ref)
+            directory = self._item_reason_directory(record.operation)
             if directory not in directories:
                 directory.mkdir(mode=0o700, exist_ok=True)
                 if directory.is_symlink() or not directory.is_dir():
@@ -287,22 +288,37 @@ class ProposalEvidenceStore:
         if directories:
             _fsync_directory(self.item_reasons)
 
-    def read_item_reason(self, target_ref: str, path: str) -> ProposalItemReason | None:
-        """The reason recorded for one member of one operation's proposal: one file read."""
+    def read_item_reason(self, operation: str, path: str) -> ProposalItemReason | None:
+        """The reason recorded for one member of one Procedure operation: one file read."""
 
-        file = self._item_reason_directory(target_ref) / self._item_reason_name(path)
+        file = self._item_reason_directory(operation) / self._item_reason_name(path)
         if not file.exists():
             return None
         record = self._read_model(file, ProposalItemReason, label="proposal item reason")
-        if record.target_ref != target_ref or record.path != path:
+        if record.operation != operation or record.path != path:
             raise ProposalIntegrityError("proposal item reason names another member")
         return record
 
-    def item_reason_target(self, admission: ProposalAdmissionRecord) -> str:
-        """The proposal ref an admission's item reasons are kept under.
+    def write_item_reason_link(self, proposal_id: str, operation: str) -> None:
+        """Associate one admitted proposal with the operation whose reasons it carries.
 
-        A readmission re-admits its source under a new ref; its items' reasons
-        stay under the ref of the operation that first proposed them.
+        Immutable and idempotent: the same association again is a no-op, a
+        different operation for the same proposal refuses.
+        """
+
+        ProposalDigest.from_tagged(proposal_id)
+        record = ProposalItemReasonLink(proposal_id=proposal_id, operation=operation)
+        _exclusive_canonical_write(
+            self.item_reason_links / f"{proposal_id.removeprefix('sha256:')}.json",
+            canonical_bytes(record.model_dump(mode="json")) + b"\n",
+        )
+        _fsync_directory(self.item_reason_links)
+
+    def item_reason_operation(self, admission: ProposalAdmissionRecord) -> str | None:
+        """The operation whose item reasons this exact admission carries, if any.
+
+        Read through the admission's own link (a readmission's source
+        admission's), never through its ref: refs are reusable author slots.
         """
 
         current = admission
@@ -313,10 +329,16 @@ class ProposalEvidenceStore:
                 raise ProposalIntegrityError("proposal readmission links form a cycle")
             seen.add(source)
             current = self.read_admission(source)
-        return current.target_ref
+        path = self.item_reason_links / f"{current.proposal_id.removeprefix('sha256:')}.json"
+        if not path.exists():
+            return None
+        link = self._read_model(path, ProposalItemReasonLink, label="proposal item reason link")
+        if link.proposal_id != current.proposal_id:
+            raise ProposalIntegrityError("proposal item reason link names another proposal")
+        return link.operation
 
     def item_reason_page(
-        self, target_ref: str, *, after: str | None, limit: int
+        self, operation: str, *, after: str | None, limit: int
     ) -> tuple[tuple[ProposalItemReason, ...], int, str | None]:
         """One page of an operation's item reasons; the total; the next cursor.
 
@@ -325,7 +347,7 @@ class ProposalEvidenceStore:
         the page's records are read beyond the directory listing.
         """
 
-        directory = self._item_reason_directory(target_ref)
+        directory = self._item_reason_directory(operation)
         if not directory.is_dir():
             return (), 0, None
         names = sorted(item.name for item in directory.iterdir() if item.name.endswith(".json"))

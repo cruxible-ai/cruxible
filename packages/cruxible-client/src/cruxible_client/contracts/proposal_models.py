@@ -390,14 +390,16 @@ class ProposalItemReason(_StrictProposalModel):
 
     A ``propose_change_set`` or ``settle_change_set`` item states why in its
     ``rationale``; the change set's rationale names only the run and the item
-    count, and each item's reason is recorded here, keyed by the proposal ref
-    of the operation and the path of the Claim (or Subject) it lowered into.
-    It is provenance, not evidence: the Claim's Captures are unchanged. An
-    accepted Claim keeps the link through the proposal that accepted it.
+    count, and each item's reason is recorded here, keyed by the immutable
+    Procedure operation (``operation``: the terminal's admission binding and
+    node, the identity its core creation records use) and the path of the
+    Claim (or Subject) it lowered into. A proposal reads them only through its
+    own ``ProposalItemReasonLink``, never through its (reusable) ref. It is
+    provenance, not evidence: the Claim's Captures are unchanged.
     """
 
     tag: Literal["playbill-proposal-item-reason-v1"] = "playbill-proposal-item-reason-v1"
-    target_ref: str
+    operation: str
     path: str
     item_key: str
     child_index: int = Field(ge=0)
@@ -407,12 +409,10 @@ class ProposalItemReason(_StrictProposalModel):
     reason: str = Field(min_length=1, max_length=PROPOSAL_ITEM_REASON_MAX_LENGTH)
     truncated: bool = Field(default=False, exclude_if=lambda value: value is False)
 
-    @field_validator("target_ref")
+    @field_validator("operation")
     @classmethod
-    def _target_ref(cls, value: str) -> str:
-        if not _PROPOSAL_REF_RE.fullmatch(value):
-            raise ValueError("target_ref must be a canonical namespaced proposal ref")
-        return value
+    def _operation(cls, value: str) -> str:
+        return _procedure_operation(value)
 
     @field_validator("path")
     @classmethod
@@ -430,6 +430,40 @@ class ProposalItemReason(_StrictProposalModel):
         if truncated:
             text = text[: PROPOSAL_ITEM_REASON_MAX_LENGTH - 1].rstrip() + "\u2026"
         return cls(reason=text, truncated=truncated, **fields)  # type: ignore[arg-type]
+
+
+def _procedure_operation(value: str) -> str:
+    if not _PROCEDURE_OPERATION_RE.fullmatch(value):
+        raise ValueError("a Procedure operation is AIT- plus 32 lowercase hexadecimal digits")
+    return value
+
+
+_PROCEDURE_OPERATION_RE = re.compile(r"^AIT-[0-9a-f]{32}$")
+
+
+class ProposalItemReasonLink(_StrictProposalModel):
+    """The Procedure operation whose item reasons one admitted proposal carries.
+
+    Written by the daemon for the exact admission its terminal delivery
+    submitted or recovered, so a proposal's reasons never follow its ref: an
+    unrelated proposal later admitted under the same ref has no link and no
+    reasons. A readmission reads its source admission's link.
+    """
+
+    tag: Literal["playbill-proposal-item-reason-link-v1"] = "playbill-proposal-item-reason-link-v1"
+    proposal_id: str
+    operation: str
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("operation")
+    @classmethod
+    def _operation(cls, value: str) -> str:
+        return _procedure_operation(value)
 
 
 class ProposalSettleSubmission(_StrictProposalModel):
@@ -759,6 +793,7 @@ __all__ = [
     "SETTLE_OUTSIDE_MANDATE_SCOPE",
     "PROPOSAL_ITEM_REASON_MAX_LENGTH",
     "ProposalItemReason",
+    "ProposalItemReasonLink",
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
     "CHANGE_SET_RECORD_BYTES_PER_MEMBER",

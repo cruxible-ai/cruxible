@@ -1732,7 +1732,8 @@ def _accepting_proposal(
     found: _AcceptingProposal | None = None
     for row in evidence.index.rows(evidence, "candidate_digest=?", (candidate_digest,)):
         admission = evidence.read_admission(row["proposal_id"])
-        item = evidence.read_item_reason(evidence.item_reason_target(admission), path)
+        operation = evidence.item_reason_operation(admission)
+        item = None if operation is None else evidence.read_item_reason(operation, path)
         reason = (
             None
             if item is None
