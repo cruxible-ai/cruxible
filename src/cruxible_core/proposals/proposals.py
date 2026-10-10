@@ -293,7 +293,8 @@ from cruxible_core.claims.closure import (
 from cruxible_core.claims.key_claims import (
     carried_key_claim,
     derive_key_claim_retirements,
-    retired_with_subject,
+    retired_claim_names_subject_version,
+    subject_versions,
 )
 from cruxible_core.compiler.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
@@ -3010,6 +3011,26 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _subject_versions(
+    provider: HistoricalArtifactProvider | None,
+    at: AcceptedCoordinate,
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+) -> Callable[[str, str], bool]:
+    """Subject lineage membership within the accepted prefix ending at ``at``."""
+
+    def accepted_path_of(digest: str) -> str | None:
+        found = None if provider is None else provider(at, digest, family="subjects/")
+        return None if found is None else found[0]
+
+    return subject_versions(
+        current_tree=current_tree,
+        candidate_tree=candidate_tree,
+        accepted_path_of=accepted_path_of,
+    )
+
+
 def historical_capture_contract_resolver(
     provider: HistoricalArtifactProvider | None, at: AcceptedCoordinate
 ) -> Callable[[str], AcceptedCaptureContract | None]:
@@ -3124,8 +3145,19 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             installed.coordinate
             in {CLAIM_LAW_V2_REVISION_8, CLAIM_LAW_V3_REVISION_10, CLAIM_LAW_V3_REVISION_11}
         ),
-        # Revision 11 alone: a Claim retired with its Subject (compiler 33).
+        # Revision 11 alone: a Claim retired with its Subject, or after a
+        # successor carried it, names a version of that Subject's lineage.
         subject_lifecycle_retirement=installed.coordinate == CLAIM_LAW_V3_REVISION_11,
+        accepted_subject_version=(
+            _subject_versions(
+                context.historical_artifact_provider,
+                context.accepted_coordinate(),
+                current_tree=context.current_tree,
+                candidate_tree=context.candidate_tree,
+            )
+            if installed.coordinate == CLAIM_LAW_V3_REVISION_11
+            else None
+        ),
         # A Capture cited for the first time needs daemon proof a run produced
         # it, at admission and again at settlement: an admission recorded under
         # an earlier law is not an accepted citation. Only recovery of a
@@ -4211,12 +4243,18 @@ def _evaluate_scoped_members(
                 for item in facts.unresolved_pins
                 if not (
                     item.target_identity.kind == "Subject"
-                    and retired_with_subject(
+                    and retired_claim_names_subject_version(
                         candidate_tree=candidate_tree,
                         source_path=item.source_path,
                         target_name=item.target_identity.name,
                         pin_role=item.pin_role,
                         expected_digest=item.expected_target_digest,
+                        accepted_version=_subject_versions(
+                            historical_artifact_provider,
+                            AcceptedCoordinate.from_internal(current),
+                            current_tree=current_tree,
+                            candidate_tree=candidate_tree,
+                        ),
                     )
                 )
             ),

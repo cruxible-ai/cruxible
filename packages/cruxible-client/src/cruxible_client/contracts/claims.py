@@ -1820,6 +1820,7 @@ def evaluate_claim_law(
     claim_type_v7_semantics: bool = False,
     require_new_citation_proof: bool = True,
     subject_lifecycle_retirement: bool = False,
+    accepted_subject_version: Callable[[str, str], bool] | None = None,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
 
@@ -1945,22 +1946,34 @@ def evaluate_claim_law(
             path=path,
             field="subject",
         )
-    # A Claim retired (attributed, unchanged otherwise) in the change that retires
-    # its Subject still names the Subject version it was accepted about: a keyed
-    # Subject's key Claims are retired with it this way (maintainer ruling).
+    # Revision 11: an attributed retirement (unchanged otherwise) still names the
+    # Subject version it was accepted about -- the retired Subject's predecessor,
+    # or any earlier version of that same Subject when a successor carried it (a
+    # keyed Subject's key Claims, maintainer ruling). ``accepted_subject_version``
+    # says whether a digest is an accepted version of the Subject at a path.
     observed_subject_digest = subject.artifact_digest
+    accepted_about = claim.backing.referent_context.subject_content_digest
     held_subject = subjects.get(statement.subject.artifact_path)
     if (
         subject_lifecycle_retirement
+        and accepted_about != subject.artifact_digest
         and held_subject is not None
-        and held_subject.shell.lifecycle.state == "retired"
-        and held_subject.shell.lifecycle.predecessor_digest is not None
         and predecessor is not None
         and predecessor.path == path
         and claim.lifecycle.predecessor_digest == predecessor.artifact_digest
         and _is_attributed_retirement(claim, predecessor=predecessor.claim)
+        and (
+            (
+                held_subject.shell.lifecycle.state == "retired"
+                and held_subject.shell.lifecycle.predecessor_digest == accepted_about
+            )
+            or (
+                accepted_subject_version is not None
+                and accepted_subject_version(statement.subject.artifact_path, accepted_about)
+            )
+        )
     ):
-        observed_subject_digest = held_subject.shell.lifecycle.predecessor_digest
+        observed_subject_digest = accepted_about
     if claim.backing.referent_context.subject_content_digest != observed_subject_digest:
         return _diagnostic(
             "cruxible.claim.subject_context_mismatch",

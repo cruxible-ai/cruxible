@@ -17,7 +17,7 @@ derives nothing more.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
@@ -32,7 +32,7 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import SubjectFormatError
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import SubjectKindFormatError, live_subject_kind
-from cruxible_client.contracts.subjects import parse_subject
+from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.derived.derived_state import SnapshotTree, fork_tree
 
 _SUBJECTS = "subjects/"
@@ -199,43 +199,80 @@ def carried_key_claim(
     return _is_key_claim(parse_claim(content, path=dependent_path), subject_path, keys)
 
 
-def retired_with_subject(
+def subject_versions(
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    accepted_path_of: Callable[[str], str | None] | None,
+) -> Callable[[str, str], bool]:
+    """Whether a digest is an accepted version of the Subject at a path (its lineage).
+
+    A Subject's versions at one path form one succession chain, so a version is
+    in the chain exactly when it was accepted at that path: the parent's own
+    version, the candidate's named predecessor, or any earlier version accepted
+    history holds there (``accepted_path_of``: digest -> the path it was accepted
+    at, one indexed lookup). Nothing is rewritten; the Claim keeps the digest it
+    was accepted with.
+    """
+
+    known: dict[tuple[str, str], bool] = {}
+
+    def digest_of(tree: Mapping[str, bytes], path: str) -> tuple[str | None, str | None]:
+        content = tree.get(path)
+        if content is None:
+            return None, None
+        try:
+            shell = parse_subject(content, path=path)
+        except SubjectFormatError:
+            return None, None
+        return subject_digest(shell).tagged, shell.lifecycle.predecessor_digest
+
+    def accepted(path: str, digest: str) -> bool:
+        if (path, digest) in known:
+            return known[(path, digest)]
+        parent_digest, _ = digest_of(current_tree, path)
+        _, candidate_predecessor = digest_of(candidate_tree, path)
+        found = digest in {parent_digest, candidate_predecessor} or (
+            accepted_path_of is not None and accepted_path_of(digest) == path
+        )
+        known[(path, digest)] = found
+        return found
+
+    return accepted
+
+
+def retired_claim_names_subject_version(
     *,
     candidate_tree: Mapping[str, bytes],
     source_path: str,
     target_name: str,
     pin_role: str,
     expected_digest: str,
+    accepted_version: Callable[[str, str], bool],
 ) -> bool:
-    """Whether a pin names the Subject version a Claim retired with that Subject held.
+    """Whether a retired Claim's Subject pin names a version of that Subject's lineage.
 
-    The Claim (``source_path``) is retired in the candidate, and the Subject it
-    pins (role ``subject``) is retired there too, as the successor of exactly
-    the version the pin names: the Claim was retired in the change that retired
-    its Subject, and keeps naming what it was accepted about.
+    The Claim (``source_path``) is retired in the candidate and keeps the pin it
+    was accepted with: on the Subject version it was accepted about, which the
+    Subject has since succeeded (a carried key Claim) or which the change
+    retires (a key Claim retired with its Subject).
     """
 
     if pin_role != "subject":
         return False
     claim_content = candidate_tree.get(source_path)
     subject_file = f"{_SUBJECTS}{target_name}.json"
-    subject_content = candidate_tree.get(subject_file)
-    if claim_content is None or subject_content is None:
+    if claim_content is None or subject_file not in candidate_tree:
         return False
     if parse_claim(claim_content, path=source_path).lifecycle.state != "retired":
         return False
-    try:
-        shell = parse_subject(subject_content, path=subject_file)
-    except SubjectFormatError:
-        return False
-    return (
-        shell.lifecycle.state == "retired" and shell.lifecycle.predecessor_digest == expected_digest
-    )
+    return accepted_version(subject_file, expected_digest)
 
 
 __all__ = [
     "carried_key_claim",
     "derive_key_claim_retirements",
+    "retired_claim_names_subject_version",
     "retired_key_claim",
-    "retired_with_subject",
+    "subject_versions",
 ]

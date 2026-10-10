@@ -1763,8 +1763,11 @@ merge is an alias on the survivor plus the other Subject's retirement, and a
 later creation by the freed key creates a new Subject. A live successor of the
 Subject carries its key Claims unchanged, unless the change revises them. Its
 other Claims still close over it as before.
-A Claim retired this way keeps naming the Subject version it was accepted
-about; the Claim acceptance law that admits that is `playbill.claim.v3`
+A key Claim carried through any number of successors, then retired with its
+Subject or on its own, keeps the digest, backing and pins it was accepted with:
+it names the version of that Subject's lineage it was accepted about, which
+accepted history verifies at that Subject's path. A Claim retired this way
+keeps naming the Subject version it was accepted about; the Claim acceptance law that admits that is `playbill.claim.v3`
 revision 11, adopted with compiler revision 33. An instance on an earlier
 compiler judges new Claims by revision 10, and every accepted generation is
 verified by the exact revision it recorded.

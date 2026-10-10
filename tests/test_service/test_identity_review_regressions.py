@@ -1486,3 +1486,112 @@ def test_claim_law_revision_11_is_adopted_with_subject_identity_only(
     assert law_of((parent, only_title)) == CLAIM_LAW_V3_REVISION_11.digest
     monkeypatch.setattr(proposals_module, "admits_subject_kinds", lambda _compiler: False)
     assert law_of((parent, only_title)) == CLAIM_LAW_V3_REVISION_10.digest
+
+
+# E-b delta-4 F-002: a carried key Claim composes with later lifecycle changes.
+
+
+def _reopened(instance: PlaybillInstance) -> PlaybillInstance:
+    """The instance opened afresh: accepted history replays and verifies on open."""
+
+    instance.settled_workspace_advertisement()
+    return PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+
+
+@pytest.mark.parametrize("successions", [1, 2])
+def test_a_carried_key_claim_retires_with_its_subject_after_successions(
+    instance: PlaybillInstance, successions: int
+) -> None:
+    """create -> successor(s) carrying the key Claim -> retirement (authoring route)."""
+
+    from tests.test_service.test_subject_identity import _create
+
+    _create(instance, DECISION, "carry")
+    carry = subject_path(DECISION, "carry")
+    (key_path,) = _key_claims_of(instance, carry)
+    accepted_key = tree(instance)[key_path]
+    for _ in range(successions):
+        accept(instance, change_set(_succession(instance, carry, retire=False)))
+    assert tree(instance)[key_path] == accepted_key  # carried, never rewritten
+
+    accept(instance, change_set(_succession(instance, carry, retire=True)))
+
+    retired = parse_claim(tree(instance)[key_path], path=key_path)
+    assert retired.lifecycle.state == "retired"
+    original = parse_claim(accepted_key, path=key_path)
+    assert retired.backing == original.backing and retired.pins == original.pins
+    created = _create(instance, DECISION, "carry")  # the key is free again
+    paths = [item for item in tree(instance) if item.startswith(f"subjects/{DECISION}/carry")]
+    assert len(paths) == 2, created
+    head = instance.accepted_coordinate()
+    assert _reopened(instance).accepted_coordinate() == head
+
+
+def test_a_merge_after_a_carry_retires_the_key_claim_on_the_raw_route(
+    instance: PlaybillInstance,
+) -> None:
+    """Raw admission, readmission at a moved head, settlement and replay."""
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.subjects import subject_digest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.test_service.test_subject_identity import _create
+
+    _create(instance, DECISION, "keeper")
+    _create(instance, DECISION, "merged")
+    merged = subject_path(DECISION, "merged")
+    (key_path,) = _key_claims_of(instance, merged)
+    accept(instance, change_set(_succession(instance, merged, retire=False)))
+    base = instance.accepted_coordinate()
+    parent = tree(instance)
+    held = parse_subject(parent[merged], path=merged)
+    retired = held.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=subject_digest(held).tagged
+            )
+        }
+    )
+    # The head moves on before the raw merge arrives: it is readmitted there.
+    accept(instance, change_set(_alias_member_of("keeper", "Merged Inc")))
+    raw = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/merge-after-carry", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree={**parent, merged: render_subject(retired)},
+        timestamp="2026-10-09T12:00:00.000000Z",
+    )
+    assert raw.candidate is not None, raw.evaluation.diagnostics
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=raw.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    assert _key_claims_of(instance, merged) == {key_path: "retired"}
+    head = instance.accepted_coordinate()
+    assert _reopened(instance).accepted_coordinate() == head
+
+
+def _alias_member_of(subject_id: str, value: str) -> Any:
+    from tests.test_service.test_subject_identity import _alias_member
+
+    return _alias_member(DECISION, subject_id, value)
+
+
+def test_an_explicit_key_claim_retirement_after_a_carry_is_admitted(
+    instance: PlaybillInstance,
+) -> None:
+    from tests.test_service.test_subject_identity import _create, write
+
+    _create(instance, DECISION, "explicit")
+    explicit = subject_path(DECISION, "explicit")
+    (key_path,) = _key_claims_of(instance, explicit)
+    accept(instance, change_set(_succession(instance, explicit, retire=False)))
+    claim_id = key_path.rsplit("/", 1)[1].removesuffix(".json")
+
+    outcome = write(instance, {"op": "retire", "target": claim_id})
+
+    assert outcome.status == "accepted", outcome
+    assert _key_claims_of(instance, explicit) == {key_path: "retired"}
+    head = instance.accepted_coordinate()
+    assert _reopened(instance).accepted_coordinate() == head
