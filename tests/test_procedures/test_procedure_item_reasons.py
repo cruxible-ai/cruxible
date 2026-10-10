@@ -254,3 +254,56 @@ def test_cli_why_displays_own_reason_terminal_safe(tmp_path: Path, capsys: objec
     output = capsys.readouterr().out  # type: ignore[attr-defined]
     assert "\nError: forged" not in output
     assert "reason: first\\nError: forged  (truncated)" in output
+
+
+# --- a rationale that normalizes to nothing (F-004) ------------------------------
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("rationale", ["\x00", " \x00 \t\x00"], ids=["nul", "space-and-nul"])
+@pytest.mark.parametrize("kind", ["retirement", "claim"])
+def test_a_rationale_of_only_nuls_refuses_as_an_invalid_item(
+    tmp_path: Path, rationale: str, kind: str
+) -> None:
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+    from tests.test_procedures.test_proposal_fan_out import _element
+
+    instance, _owner, root, line, claim_id = retire._proposed_world(tmp_path)
+    item = (
+        retire._retire(claim_id, rationale=rationale)
+        if kind == "retirement"
+        else {**_element("vendor"), "rationale": rationale}
+    )
+    _write_feed(root, [item])
+
+    state = delivery.run_line(instance, root, line, at=retire.LATER)
+
+    refusal = delivery._refusal(state)
+    assert refusal.code == "proposal_item_invalid", refusal
+    assert refusal.details["child_index"] == 0
+    assert len(delivery._proposal_refs(instance)) == 1  # the first run's only
+    # Refused before the preparation was journaled: recovery has nothing to do.
+    assert service_recover_proposal_egress(instance, recorded_at=retire.LATER) == {}
+
+
+def test_a_reason_record_that_still_fails_refuses_typed_to_its_item(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.proposal_models import ProposalItemReason
+    from cruxible_core.procedures import proposal_delivery
+
+    instance, _owner, root, line, claim_id = retire._proposed_world(tmp_path)
+    _write_feed(root, [retire._retire(claim_id)])
+
+    def unrecordable(reason: str, **fields: object) -> ProposalItemReason:
+        return ProposalItemReason(reason="", **fields)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(proposal_delivery.ProposalItemReason, "bounded", unrecordable)
+    state = delivery.run_line(instance, root, line, at=retire.LATER)
+
+    refusal = delivery._refusal(state)
+    assert refusal.code == "proposal_item_invalid", refusal
+    assert refusal.details["item_key"] and refusal.details["child_index"] == 0
+    assert "repair" in refusal.details

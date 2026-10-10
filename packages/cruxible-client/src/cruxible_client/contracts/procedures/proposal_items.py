@@ -44,6 +44,19 @@ from cruxible_client.contracts.subject_kinds import (
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 
 
+def _nonempty_rationale(value: str) -> str:
+    """Refuse a rationale that is empty once NULs and surrounding space are removed.
+
+    The value itself is kept as written; the item's recorded reason is that
+    normalization of it (``ProposalItemReason.bounded``), so an item that
+    validates here always has a reason to record.
+    """
+
+    if not value.replace("\x00", "").strip():
+        raise ValueError("proposal item rationale must not be empty")
+    return value
+
+
 class _StrictProposalItemModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -61,9 +74,7 @@ class ProcedureClaimProposalItemV1(_StrictProposalItemModel):
     @field_validator("rationale")
     @classmethod
     def _rationale(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("proposal item rationale must not be empty")
-        return value
+        return _nonempty_rationale(value)
 
     @field_validator("revises")
     @classmethod
@@ -147,9 +158,7 @@ class ProcedureSubjectProposalItem(_StrictProposalItemModel):
     @field_validator("rationale")
     @classmethod
     def _rationale(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("proposal item rationale must not be empty")
-        return value
+        return _nonempty_rationale(value)
 
     @field_validator("key")
     @classmethod
@@ -195,9 +204,7 @@ class ProcedureClaimRetirementItem(_StrictProposalItemModel):
     @field_validator("rationale")
     @classmethod
     def _rationale(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("proposal item rationale must not be empty")
-        return value
+        return _nonempty_rationale(value)
 
     @field_validator("effective_until")
     @classmethod

@@ -218,17 +218,7 @@ class PreparedProposal:
     creations: tuple[RecordedCreation, ...] = ()
     #: Each changed item's own reason and the member it explains, recorded
     #: with the proposal before it is submitted (per-Claim rationale).
-    item_reasons: tuple[ItemReason, ...] = ()
-
-
-@dataclass(frozen=True)
-class ItemReason:
-    """One terminal item's rationale and the member path it lowered into."""
-
-    item_key: str
-    child_index: int
-    path: str
-    reason: str
+    item_reasons: tuple[ProposalItemReason, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1029,19 +1019,47 @@ def proposal_item_reasons(
     items: tuple[ProcedureProposalItemAny, ...],
     item_paths: Mapping[str, str],
     unchanged: Mapping[str, object],
-) -> tuple[ItemReason, ...]:
-    """Each item that changed a member, with its own rationale and that member's path."""
+) -> tuple[ProposalItemReason, ...]:
+    """Each item that changed a member: its reason record, built while preparing.
 
-    return tuple(
-        ItemReason(
-            item_key=egress_item.item_key,
-            child_index=egress_item.child_index,
-            path=item_paths[egress_item.item_key],
-            reason=item.rationale,
-        )
-        for egress_item, item in zip(request.items, items, strict=True)
-        if egress_item.item_key not in unchanged and egress_item.item_key in item_paths
-    )
+    Item validation already refused a rationale that normalizes to nothing; any
+    record that still does not validate refuses the terminal typed to its item,
+    before the preparation is journaled, never as an internal failure.
+    """
+
+    operation = _intent_id(request)
+    records: list[ProposalItemReason] = []
+    for egress_item, item in zip(request.items, items, strict=True):
+        if egress_item.item_key in unchanged or egress_item.item_key not in item_paths:
+            continue
+        try:
+            records.append(
+                ProposalItemReason.bounded(
+                    item.rationale,
+                    operation=operation,
+                    path=item_paths[egress_item.item_key],
+                    item_key=egress_item.item_key,
+                    child_index=egress_item.child_index,
+                    procedure=request.procedure_identity.qualified,
+                    run_id=request.run_id,
+                    terminal=request.node_id,
+                )
+            )
+        except ValidationError as exc:
+            raise ProposalDeliveryRefused(
+                "proposal_item_invalid",
+                "A terminal item's rationale cannot be recorded as its reason.",
+                details={
+                    "item_key": egress_item.item_key,
+                    "child_index": egress_item.child_index,
+                    "errors": [
+                        {"location": list(map(str, error["loc"])), "message": error["msg"]}
+                        for error in exc.errors()
+                    ],
+                    "repair": "Give the item a rationale with printable text.",
+                },
+            ) from exc
+    return tuple(records)
 
 
 _SlotKey = tuple[str, str, str, str, str | None]
@@ -1809,24 +1827,8 @@ class ProposalTerminalEgressSink:
     ) -> None:
         """Record each changed item's reason under the immutable Procedure operation."""
 
-        if not prepared.item_reasons:
-            return
-        operation = _intent_id(request)
-        self.instance.proposal_evidence().write_item_reasons(
-            tuple(
-                ProposalItemReason.bounded(
-                    item.reason,
-                    operation=operation,
-                    path=item.path,
-                    item_key=item.item_key,
-                    child_index=item.child_index,
-                    procedure=request.procedure_identity.qualified,
-                    run_id=request.run_id,
-                    terminal=request.node_id,
-                )
-                for item in prepared.item_reasons
-            )
-        )
+        if prepared.item_reasons:
+            self.instance.proposal_evidence().write_item_reasons(prepared.item_reasons)
 
     def _record_reobservations(
         self,
