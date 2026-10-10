@@ -1918,6 +1918,21 @@ authorized workspace root, over the CaptureContract's selection budget, or with
 no daemon-local reader refuses `workspace_file_read_refused` and names its path
 class.
 
+A `workspace.file` Source request (`playbill-workspace-file-source-request-v2`)
+says what to read, never how: `logical_source`, `relative_path`, the
+coordinate and selector it records, `replayability`, and optionally
+`workspace`, the logical name (last path component) of the authorized root to
+read under. Omitted, it is the instance's attached workspace, else its only
+authorized root; several authorized roots and none attached refuse with path
+class `workspace_unnamed`, and a name no root (or more than one) carries
+refuses `workspace_unknown` -- both list the names in `workspace_names`. The
+daemon resolves the root and records its binding digest on the executed
+request it journals (`playbill-workspace-file-executed-source-request-v2`),
+the `SourceReadReceipt` and so the Capture, so a moved instance still shows a
+different binding. An authored request carrying `workspace_binding_digest` (the
+v1 shape) refuses with path class `binding`: remove it. Run history written
+with v1 requests still reads and verifies.
+
 A Source request's values may reference the run's input or an earlier step's
 output, but only as a whole value: `{"url": "$input.url"}` resolves, while a
 reference inside a longer string (`"https://example.org/$input.id"`) is passed

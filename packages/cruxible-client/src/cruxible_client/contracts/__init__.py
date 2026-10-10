@@ -317,10 +317,16 @@ from cruxible_client.contracts.workspace_advertisement import (
     WorkspaceAdvertisement,
 )
 from cruxible_client.contracts.workspace_file import (
+    ExecutedWorkspaceFileSourceRequestV2 as ExecutedWorkspaceFileSourceRequestV2,
+)
+from cruxible_client.contracts.workspace_file import (
     SourceReadReceipt as SourceReadReceipt,
 )
 from cruxible_client.contracts.workspace_file import (
     WorkspaceFileSourceRequest as WorkspaceFileSourceRequest,
+)
+from cruxible_client.contracts.workspace_file import (
+    WorkspaceFileSourceRequestV2 as WorkspaceFileSourceRequestV2,
 )
 
 HostStatus = Literal["created", "already_exists", "would_create"]

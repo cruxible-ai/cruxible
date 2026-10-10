@@ -36,7 +36,7 @@ from cruxible_client.contracts.provider_execution import (
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_DIGESTS,
     SourceReadReceipt,
-    WorkspaceFileSourceRequest,
+    parse_executed_workspace_request,
     source_read_receipt_digest,
 )
 from cruxible_core.exhaust import LocalJournalBackend
@@ -494,7 +494,9 @@ class JournalProducerReceiptResolver:
                     resolved_derived = derived_requests.get(key)
                     if resolved_derived is None:
                         raise ValueError("Source-read receipt has no exact derived Source request")
-                    request = WorkspaceFileSourceRequest.model_validate(resolved_derived.request)
+                    # v1 history carries the authored request; v2 the daemon's
+                    # executed request. Both name the binding digest the read used.
+                    request = parse_executed_workspace_request(resolved_derived.request)
                     if (
                         receipt.derived_request_digest != resolved_derived.request_digest
                         or receipt.logical_source != request.logical_source

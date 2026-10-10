@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Workspace Sources name intent, not transport.** A `workspace.file` Source
+  request (`playbill-workspace-file-source-request-v2`) no longer carries
+  `workspace_binding_digest`: it names the workspace logically (`workspace`,
+  the root's last path component) or not at all -- the instance's attached
+  workspace, else its only authorized root. Several roots and no name refuse
+  `workspace_file_read_refused` with path class `workspace_unnamed`, an unknown
+  or shared name `workspace_unknown`, both listing `workspace_names`. The
+  daemon resolves the root and records its binding digest on the executed
+  request it journals (`playbill-workspace-file-executed-source-request-v2`),
+  the read receipt and the Capture, so provenance is unchanged. An authored
+  request still carrying the digest refuses (path class `binding`); v1 requests
+  in run history still verify. Kits and Procedures that shipped the digest
+  drop it.
 - **Cruxible names every new Subject.** A SubjectKind
   (`subject_kind` change-set member, `subject-kinds/<kind>.json`, `get
   SubjectKind:<kind>`, `identity` in `orient`) declares how a kind's Subjects
