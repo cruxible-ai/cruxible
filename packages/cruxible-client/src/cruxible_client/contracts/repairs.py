@@ -222,6 +222,12 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
         operation="cruxible.authoring.example",
         arguments={"example": "procedure-mandate"},
     ),
+    # Subjects of the kind exist, but no SubjectKind says how a new one is named,
+    # so none can be created (identity D1): author one.
+    "subject_kind_undeclared": RepairOperation(
+        operation="cruxible.authoring.example",
+        arguments={"example": "subject-kind"},
+    ),
     # Nothing renews a mandate: its successor, or its retirement, is authored.
     "mandate_expiring": RepairOperation(
         operation="cruxible.authoring.example",

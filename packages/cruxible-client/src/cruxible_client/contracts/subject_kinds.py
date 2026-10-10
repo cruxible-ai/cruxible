@@ -411,8 +411,9 @@ def subject_id_candidates(values: Sequence[SubjectKeyValue]) -> Iterator[str]:
     """The ids a key may take, in order: the rendering, then it suffixed.
 
     When two different canonical keys render to the same slug, the later one
-    takes ``<slug>-<8 hex of the key digest>``; a ``hint`` kind's second Subject
-    with the very same key takes ``<slug>-<8 hex>-2``, ``-3``, and so on.
+    takes ``<slug>-<8 hex of the key digest>``, and ``-2``, ``-3``, ... after that
+    should those be taken too. (A ``hint`` kind's further holder of the very same
+    key is named by ``distinct_holder_id`` instead.)
     """
 
     slug = render_key_slug(values)

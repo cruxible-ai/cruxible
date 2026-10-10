@@ -188,6 +188,8 @@ EXPECTED_OPERATIONS = {
     "prediction_settleable": "cruxible.prediction.settle",
     # Restoring an anchor's material is off the served verbs, like a Capture's.
     "prediction_window_unbindable": "hand_edit",
+    # A kind with Subjects and no SubjectKind: authoring one lets it create again.
+    "subject_kind_undeclared": "cruxible.authoring.example",
 }
 
 
@@ -1623,6 +1625,58 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "mandate_expiring", _request(instance))
 
 
+def _subject_kind_undeclared(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import cruxible_core.proposals.proposals as proposals_module
+    from cruxible_client.contracts.authoring.inputs import (
+        SubjectKindInput,
+        lower_authoring_input,
+    )
+    from cruxible_client.contracts.subjects import render_subject, subject_path
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.core_support._identity_support import shell
+
+    instance, _owner = initialize_local(root)
+    # A Subject accepted before its kind needed a declaration (an older compiler).
+    monkeypatch.setattr(proposals_module, "admits_subject_kinds", lambda _compiler: False)
+    base = instance.accepted_coordinate()
+    raw = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/pre-subject-kinds", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree={
+            **instance.tree_at(base.git_oid),
+            subject_path("dev.legacy", "old"): render_subject(shell("old", "dev.legacy")),
+        },
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+    assert raw.candidate is not None, raw.evaluation.diagnostics
+    service_activate_playbill_proposal(
+        instance, proposal_id=raw.admission.proposal_id, activated_by="owner"
+    )
+    monkeypatch.undo()
+
+    row = _row(instance, "subject_kind_undeclared", _request(instance))
+    assert row.subject_identity == "Subject:dev.legacy/old"
+    assert row.repair.operation == EXPECTED_OPERATIONS["subject_kind_undeclared"]
+    assert row.repair.command == "cruxible authoring example subject-kind"
+
+    submitted = AuthoringIntentCoordinator.for_instance(instance).compile_and_submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=lower_authoring_input(
+            SubjectKindInput(kind="subject_kind", name="dev.legacy", minted=True)
+        ),
+        canonical_timestamp="2026-08-24T17:00:01.000000Z",
+    )
+    assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
+    service_activate_playbill_proposal(
+        instance, proposal_id=submitted.status.proposal_id, activated_by="owner"
+    )
+    _assert_gone(instance, "subject_kind_undeclared", _request(instance))
+
+
 def _line_settled_prior_refusals(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from cruxible_client.contracts.procedures.line_specs import (
         line_spec_digest,
@@ -1998,6 +2052,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("line_work_pending", None): _line_work_pending,
     ("line_settled_prior_refusals", None): _line_settled_prior_refusals,
     ("line_inbox_unread", None): _line_inbox_unread,
+    ("subject_kind_undeclared", None): _subject_kind_undeclared,
     ("evidence_unavailable", None): _evidence_unavailable,
     ("prediction_settleable", None): _prediction_settleable,
     ("prediction_window_unbindable", None): _prediction_window_unbindable,

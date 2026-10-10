@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Cruxible names every new Subject.** A SubjectKind
+  (`subject_kind` change-set member, `subject-kinds/<kind>.json`, `get
+  SubjectKind:<kind>`, `identity` in `orient`) declares how a kind's Subjects
+  are named: by one or more key ClaimTypes, `unique` or `hint`, or minted. A
+  new Subject must be of a declared kind on every route
+  (`cruxible.subject.kind_undeclared`); existing Subjects of undeclared kinds
+  are grandfathered, and `next` names the SubjectKind to author
+  (`subject_kind_undeclared`). A creation names the kind and key values and
+  core assigns the id: the readable rendering of the canonical key, or a
+  minted `sub-<32 hex>`. Creating by key is one rule everywhere -- no holder
+  creates, one resolves to it, several refuse `key_ambiguous`; `create_new`
+  makes a further holder of a `hint` key. Unique keys are held at candidate
+  evaluation (`cruxible.subject.key_conflict`), so concurrent creations of one
+  key cannot both land. The `subject` input is now the creation shape;
+  `subject_succession` succeeds an existing Subject's shell. Procedure
+  terminals create Subjects with Subject items and name them by key in v3
+  Claim items; settle grants name the kinds they may create
+  (`subject_creation`). The builtin `semantic.distinct_from` ships (new
+  instances seed it; existing ones adopt it with `claim-type propose
+  --builtin`), and the duplicates audit lists `keys` groups for `hint` kinds.
+  Typed projection storage schema 14 (rebuilt from accepted state). See the CLI
+  reference, "Subject kinds and creation".
+
 - The documentation and agent skills describe this surface. New pages: a
   rewritten quickstart verified end to end, concepts, modeling state (when
   something is typed state and when it stays cited prose), projection blocks,

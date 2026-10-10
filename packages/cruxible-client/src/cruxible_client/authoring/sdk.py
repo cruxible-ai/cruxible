@@ -2706,12 +2706,12 @@ class Cruxible:
         pins: Sequence[ArtifactPin],
         lifecycle: ArtifactLifecycle,
     ) -> SubjectDraft:
-        """Draft one Subject definition (``kind/id``) with its pins and lifecycle.
+        """Draft a successor of an existing Subject (``kind/id``): its pins and lifecycle.
 
-        A write that names a missing Subject of a known kind adds it for you; this is for
-        defining one explicitly, or alongside other members of a change set. Next:
-        ``draft.submit()``, or ``cx.changes(rationale=...).subject(draft)`` to define it
-        with other members.
+        Use it to retire a Subject or change its pins; it never creates one -- core
+        names new Subjects, so create with ``cx.new_subject(kind, key=...)``. Next:
+        ``draft.submit()``, or ``cx.changes(rationale=...).subject(draft)`` beside
+        other members.
         """
 
         address = _address(subject, RefKind.SUBJECT)

@@ -57,6 +57,7 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace"]] = {
     "proposal_awaiting_approval": "get",
     "proposal_awaiting_activation": "get",
     "mandate_expiring": "get",
+    "subject_kind_undeclared": "get",
     "consumer_stalled": "get",
     "evidence_unavailable": "get",
     "prediction_settleable": "get",

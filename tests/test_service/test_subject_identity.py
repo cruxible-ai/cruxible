@@ -524,3 +524,58 @@ def test_the_key_index_answers_a_key_in_one_seek(instance: PlaybillInstance) -> 
         subjects_with_key(connection, DECISION, ((f"{DECISION}.slug", "d-3"),))
         connection.set_progress_handler(None, 1)
     assert len(steps) <= few + 4, (few, len(steps))
+
+
+# -- migration help: next names the SubjectKind to author ----------------------------
+
+
+def test_next_names_the_subject_kind_a_kind_with_subjects_but_no_declaration_needs(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An instance from before D6 holds Subjects of kinds nothing declares.
+
+    Its Subjects are grandfathered; `next` says what to author so new ones can be
+    created, with the runnable example. A kind declared (even retired) is not
+    reported.
+    """
+
+    import cruxible_core.proposals.proposals as proposals_module
+    from cruxible_client.contracts.subjects import render_subject
+    from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+    from cruxible_core.service.discovery.next import service_playbill_next
+    from tests.core_support._identity_support import shell
+    from tests.test_integration.test_next_closed_loop import _request
+
+    # Accepted as an instance on an older compiler would have accepted it.
+    monkeypatch.setattr(proposals_module, "admits_subject_kinds", lambda _compiler: False)
+    base = instance.accepted_coordinate()
+    raw = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/pre-d6", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree={
+            **tree(instance),
+            subject_path(LEGACY, "old"): render_subject(shell("old", LEGACY)),
+        },
+        timestamp="2026-10-09T12:00:00.000000Z",
+    )
+    assert raw.candidate is not None, raw.evaluation.diagnostics
+    service_activate_playbill_proposal(
+        instance, proposal_id=raw.admission.proposal_id, activated_by="owner"
+    )
+    monkeypatch.undo()
+
+    result = service_playbill_next(instance, request=_request(instance))
+    (item,) = [row for row in result.items if row.reason == "subject_kind_undeclared"]
+    assert item.subject_identity == f"Subject:{LEGACY}/old"
+    assert item.repair is not None and item.repair.target == f"SubjectKind:{LEGACY}"
+    assert item.detail["live_subjects"] == 1  # type: ignore[index]
+    assert item.detail["author"] == {  # type: ignore[index]
+        "kind": "subject_kind",
+        "name": LEGACY,
+        "keys": [f"{LEGACY}.slug"],
+        "uniqueness": "unique",
+    }
+    assert item.repair is not None
+    assert item.repair.command == "cruxible authoring example subject-kind"

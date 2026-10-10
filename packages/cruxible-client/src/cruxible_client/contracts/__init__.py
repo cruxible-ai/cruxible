@@ -383,6 +383,7 @@ NextReason: TypeAlias = Literal[
     "evidence_unavailable",
     "prediction_settleable",
     "prediction_window_unbindable",
+    "subject_kind_undeclared",
 ]
 NextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
 NextRepairOperation: TypeAlias = Literal[
