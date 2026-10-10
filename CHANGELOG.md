@@ -36,7 +36,9 @@
   terminals freeze key references against the base and their own Subject
   items, check them again over the final candidate, and refuse
   `cruxible.procedure.identity_reference_unstable` when the two differ.
-  AuthoringIntent events are published atomically. The SDK's pending Subject references
+  AuthoringIntent events are published atomically. Retiring a keyed Subject
+  retires its key Claims in the same change, and a successor carries them
+  unchanged. The SDK's pending Subject references
   name the creation member and core resolves them to the path it assigns. One
   resolver serves every route: exact live id, alias, canonical key, exact
   retired id; a new id never takes an existing alias. Keys compare by their

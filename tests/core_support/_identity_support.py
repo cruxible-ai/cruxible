@@ -157,12 +157,11 @@ def accept_tree(
 
 
 def retire_subject(instance: PlaybillInstance, path: str, *, name: str) -> None:
-    """Retire one Subject: first the live Claims about it (its key Claim among them)."""
+    """Retire one Subject; core retires its key Claims with it in the same change."""
 
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.subjects import parse_subject, subject_digest
 
-    retire_claims_about(instance, path)
     shell = parse_subject(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path)
     retired = shell.model_copy(
         update={
@@ -172,40 +171,6 @@ def retire_subject(instance: PlaybillInstance, path: str, *, name: str) -> None:
         }
     )
     accept_tree(instance, {path: render_subject(retired)}, name=name)
-
-
-def retire_claims_about(instance: PlaybillInstance, path: str, *, actor_id: str = "owner") -> None:
-    """Retire, in one accepted write, the live Claims about one Subject (its key Claim too).
-
-    A Subject's retirement closes over the Claims about it, so a keyed Subject's
-    retirement follows the retirement of its key Claim.
-    """
-
-    from cruxible_client.contracts.write import WriteRequest
-    from cruxible_core.service.authoring.write_verbs import WriteCaller, service_playbill_write
-
-    head = instance.accepted_coordinate()
-    with instance.bind_accepted_projection(head) as projection:
-        claims = [
-            str(row[0]).removeprefix("Claim:")
-            for row in projection.typed.connection.execute(
-                "SELECT identity FROM claims WHERE subject_path=? AND lifecycle='live' "
-                "ORDER BY identity",
-                (path,),
-            )
-        ]
-    if claims:
-        outcome = service_playbill_write(
-            instance,
-            request=WriteRequest.model_validate(
-                {
-                    "because": "Retired with its Subject.",
-                    "changes": [{"op": "retire", "target": claim} for claim in claims],
-                }
-            ),
-            caller=WriteCaller(actor=AuthenticatedActor(actor_id=actor_id), may_activate=True),
-        )
-        assert outcome.status == "accepted", outcome
 
 
 def seed_identity_vocabulary(instance: PlaybillInstance) -> None:
@@ -233,7 +198,6 @@ __all__ = [
     "STATE_FORM",
     "SUBJECTS",
     "accept_tree",
-    "retire_claims_about",
     "retire_subject",
     "identity_claim_type",
     "seed_identity_surface",

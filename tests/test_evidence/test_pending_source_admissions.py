@@ -17,7 +17,6 @@ from cruxible_core.service.authoring.documents import (
 from cruxible_core.service.discovery import curation as playbill_curation
 from cruxible_core.service.evidence import source_catalog
 from tests.core_support._candidate_support import submit_subject_candidate
-from tests.core_support._identity_support import retire_claims_about
 from tests.core_support._knowledge_loop_support import accept_proposal, subject_shell
 from tests.core_support._support import initialize_local
 from tests.test_ledger.test_activation import _sign
@@ -124,8 +123,6 @@ def test_curation_never_names_an_orphan_evaluation_as_the_resolving_proposal(
             timestamp="2026-08-26T18:00:00.000000Z",
         ),
     )
-    # The Subject's retirement closes over its key Claim, retired first.
-    retire_claims_about(instance, "subjects/project.work_item/wi-dead.json")
     retired = initial.model_copy(
         update={
             "lifecycle": ArtifactLifecycle(

@@ -1756,8 +1756,13 @@ re-keys its Subjects: it refuses `cruxible.subject_kind.rekey_unhandled` while
 any holder's key value would read differently, and `key_conflict` when two
 holders would then share a unique key, unless the change handles them.
 
-A Subject's retirement or successor closes over the Claims about it, its key
-Claim included: retire the key Claim in the same change set (or before).
+A keyed Subject's key Claims are its identity parts, not beliefs about it, so
+they follow its lifecycle: retiring the Subject retires its live key Claims in
+the same change (core adds them; nobody names them), which frees the key -- a
+merge is an alias on the survivor plus the other Subject's retirement, and a
+later creation by the freed key creates a new Subject. A live successor of the
+Subject carries its key Claims unchanged, unless the change revises them. Its
+other Claims still close over it as before.
 
 Kits carry SubjectKinds (`subject-kinds/`) like the other definitions: `kit
 add`, `kit upgrade` and `kit status` plan them, and a SubjectKind brings its key

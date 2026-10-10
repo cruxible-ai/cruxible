@@ -35,7 +35,6 @@ from cruxible_core.service.discovery.curation import (
     service_accept_fixed_playbill_curation,
 )
 from tests.core_support._candidate_support import submit_subject_candidate
-from tests.core_support._identity_support import retire_claims_about
 from tests.core_support._knowledge_loop_support import accept_proposal, subject_shell
 from tests.core_support._support import initialize_local
 from tests.support.curation import detect_and_list
@@ -341,8 +340,6 @@ def test_dead_vocabulary_stays_open_until_an_attributed_accept_fixed(
         recorded_at=NOW,
         expected_latest_event_digest=None,
     )
-    # The Subject's retirement closes over its key Claim, retired first.
-    retire_claims_about(instance, path)
     retired = initial.model_copy(
         update={
             "lifecycle": ArtifactLifecycle(

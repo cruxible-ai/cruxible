@@ -1944,7 +1944,22 @@ def evaluate_claim_law(
             path=path,
             field="subject",
         )
-    if claim.backing.referent_context.subject_content_digest != subject.artifact_digest:
+    # A Claim retired (attributed, unchanged otherwise) in the change that retires
+    # its Subject still names the Subject version it was accepted about: a keyed
+    # Subject's key Claims are retired with it this way (maintainer ruling).
+    observed_subject_digest = subject.artifact_digest
+    held_subject = subjects.get(statement.subject.artifact_path)
+    if (
+        held_subject is not None
+        and held_subject.shell.lifecycle.state == "retired"
+        and held_subject.shell.lifecycle.predecessor_digest is not None
+        and predecessor is not None
+        and predecessor.path == path
+        and claim.lifecycle.predecessor_digest == predecessor.artifact_digest
+        and _is_attributed_retirement(claim, predecessor=predecessor.claim)
+    ):
+        observed_subject_digest = held_subject.shell.lifecycle.predecessor_digest
+    if claim.backing.referent_context.subject_content_digest != observed_subject_digest:
         return _diagnostic(
             "cruxible.claim.subject_context_mismatch",
             "The proposer-observed Subject shell digest does not resolve.",
@@ -1954,7 +1969,7 @@ def evaluate_claim_law(
         claim,
         role="subject",
         identity=subject.identity,
-        digest=subject.artifact_digest,
+        digest=observed_subject_digest,
     ):
         return _diagnostic(
             "cruxible.claim.subject_pin_missing",

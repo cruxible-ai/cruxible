@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Mapping
 from contextlib import AbstractContextManager, nullcontext
@@ -287,6 +288,11 @@ from cruxible_core.claims.closure import (
     dependency_artifacts,
     judge_dependency_closure,
     update_dependency_index,
+)
+from cruxible_core.claims.key_claims import (
+    carried_key_claim,
+    derive_key_claim_retirements,
+    retired_with_subject,
 )
 from cruxible_core.compiler.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
@@ -4161,6 +4167,41 @@ def _evaluate_scoped_members(
             scope=scope,
         )
     )
+    if facts is not None and facts.verdict == "refused" and admits_subject_kinds(current.compiler):
+        # Key Claims follow their keyed Subject (maintainer ruling): a succeeded
+        # Subject carries them unchanged, so they are not dependents the change
+        # must disposition; a Claim retired with its Subject keeps the pin on the
+        # Subject version it was accepted about.
+        facts = dataclasses.replace(
+            facts,
+            missing_dependents=tuple(
+                item
+                for item in facts.missing_dependents
+                if not (
+                    item.dependency_edge_role == "subject"
+                    and carried_key_claim(
+                        current_tree=current_tree,
+                        candidate_tree=candidate_tree,
+                        dependent_path=item.path,
+                        subject_path=item.triggering_dependency_path,
+                    )
+                )
+            ),
+            unresolved_pins=tuple(
+                item
+                for item in facts.unresolved_pins
+                if not (
+                    item.target_identity.kind == "Subject"
+                    and retired_with_subject(
+                        candidate_tree=candidate_tree,
+                        source_path=item.source_path,
+                        target_name=item.target_identity.name,
+                        pin_role=item.pin_role,
+                        expected_digest=item.expected_target_digest,
+                    )
+                )
+            ),
+        )
     if facts is not None and facts.verdict == "refused":
         return CandidateEvaluation(
             candidate_tree,
@@ -4842,6 +4883,15 @@ def evaluate_proposal_tree(
                     ),
                     True,
                 )
+
+    if admits_subject_kinds(current.compiler):
+        # A keyed Subject retired here takes its live key Claims with it, in this
+        # same change (maintainer ruling): derived before scoping, like cards.
+        derived = derive_key_claim_retirements(
+            current_tree=current_tree, candidate_tree=candidate_tree
+        )
+        if derived is not candidate_tree:
+            candidate_tree = derived if isinstance(derived, SnapshotTree) else SnapshotTree(derived)
 
     selected_card_renderer = candidate_card_renderer_digest
     if selected_card_renderer is None:

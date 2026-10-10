@@ -1233,3 +1233,125 @@ def test_the_member_overlay_adds_exactly_the_aliases_accepted_extraction_indexes
         if row[2] == "alias"
     }
     assert overlay.aliases_added == expected and len(expected) == 2
+
+
+# Maintainer ruling: a keyed Subject's key Claims follow its lifecycle.
+
+
+def _key_claims_of(instance: PlaybillInstance, path: str) -> dict[str, str]:
+    """Each Claim about ``path`` whose predicate is a key: its lifecycle, by Claim path."""
+
+    found = {}
+    for claim_path, content in tree(instance).items():
+        if not claim_path.startswith("claims/"):
+            continue
+        claim = parse_claim(content, path=claim_path)
+        if claim.statement.subject.artifact_path == path and claim.statement.predicate.endswith(
+            ".slug"
+        ):
+            found[claim_path] = claim.lifecycle.state
+    return found
+
+
+def _succession(instance: PlaybillInstance, path: str, *, retire: bool) -> Any:
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.authoring.inputs import SubjectSuccessionInput
+    from cruxible_client.contracts.subjects import subject_digest
+
+    held = parse_subject(tree(instance)[path], path=path)
+    return SubjectSuccessionInput(
+        kind="subject_succession",
+        subject=held.model_copy(
+            update={
+                "lifecycle": ArtifactLifecycle(
+                    state="retired" if retire else "live",
+                    predecessor_digest=subject_digest(held).tagged,
+                )
+            }
+        ),
+    )
+
+
+def test_a_merge_retires_the_merged_subjects_key_claims_and_frees_its_key(
+    instance: PlaybillInstance,
+) -> None:
+    """Merge = alias the survivor + retire the other: core retires the other's key Claim
+    in the same change, so a later create-by-key of that key creates a new Subject."""
+
+    from tests.test_service.test_subject_identity import _alias_member, _create
+
+    _create(instance, DECISION, "alpha")
+    _create(instance, DECISION, "beta")
+    beta = subject_path(DECISION, "beta")
+    assert set(_key_claims_of(instance, beta).values()) == {"live"}
+    head = len(instance.accepted_history())
+
+    # One change: the alias and the retirement; no key Claim named by the author.
+    accept(
+        instance,
+        change_set(
+            _alias_member(DECISION, "alpha", "Beta Incorporated"),
+            _succession(instance, beta, retire=True),
+        ),
+    )
+
+    assert len(instance.accepted_history()) == head + 1
+    assert set(_key_claims_of(instance, beta).values()) == {"retired"}
+    created = _create(instance, DECISION, "beta")
+    paths = [item for item in tree(instance) if item.startswith(f"subjects/{DECISION}/beta")]
+    assert beta in paths and len(paths) == 2, created
+    (fresh,) = [item for item in paths if item != beta]
+    assert set(_key_claims_of(instance, fresh).values()) == {"live"}
+
+
+def test_a_raw_retirement_of_a_keyed_subject_retires_its_key_claims_too(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.subjects import subject_digest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.test_service.test_subject_identity import _create
+
+    _create(instance, DECISION, "gamma")
+    gamma = subject_path(DECISION, "gamma")
+    held = parse_subject(tree(instance)[gamma], path=gamma)
+    retired = held.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=subject_digest(held).tagged
+            )
+        }
+    )
+    raw = _submit_raw(instance, {gamma: render_subject(retired)}, "retire-gamma")
+    assert raw.candidate is not None, raw.evaluation.diagnostics
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=raw.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    assert set(_key_claims_of(instance, gamma).values()) == {"retired"}
+
+
+def test_a_successor_keeps_its_key_claims_and_its_key(instance: PlaybillInstance) -> None:
+    from cruxible_core.indexes.subject_identity import IdentityView, tree_key_reader
+    from tests.test_service.test_subject_identity import _create
+
+    _create(instance, DECISION, "delta")
+    delta = subject_path(DECISION, "delta")
+    before = {path: tree(instance)[path] for path in _key_claims_of(instance, delta)}
+
+    accept(instance, change_set(_succession(instance, delta, retire=False)))
+
+    assert parse_subject(tree(instance)[delta], path=delta).lifecycle.predecessor_digest
+    after = {path: tree(instance)[path] for path in _key_claims_of(instance, delta)}
+    assert after == before  # carried unchanged
+    base = instance.accepted_coordinate()
+    base_tree = instance.immutable_tree_at(base.git_oid)
+    with instance.bind_accepted_projection(base) as projection:
+        view = IdentityView(projection.typed.connection, key_reader=tree_key_reader(base_tree))
+        assert view.resolve(DECISION, "delta").path == delta
+        assert (
+            view.resolve_creation(
+                DECISION, _decision_key(instance, "delta"), single_text="delta", create_new=False
+            ).path
+            == delta
+        )

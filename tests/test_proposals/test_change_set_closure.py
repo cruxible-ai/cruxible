@@ -38,7 +38,6 @@ from cruxible_core.service.proposals.review import (
     service_review_playbill_proposal,
 )
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._identity_support import retire_claims_about
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
 from tests.test_ledger.test_activation import _sign
@@ -359,8 +358,6 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         ).status
         == "accepted"
     )
-    # The Subject's retirement closes over its key Claim, retired first.
-    retire_claims_about(instance, SUBJECT_PATH)
 
     current = instance.accepted_coordinate()
     retired_subject = subject(
@@ -404,11 +401,14 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         access=BodyAccessContext(principal_id="owner", can_read_body=False),
     )
 
+    # The Subject's key Claim is retired with it, in the same change (core derives it).
     assert tuple(item.closure_role for item in review.members) == (
         "invalidation",
         "invalidation",
+        "invalidation",
     )
+    assert any(item.path.startswith("claims/") for item in review.members)
     rendered = render_playbill_proposal_review(review)
-    assert rendered.count("Closure role: invalidation") == 2
-    assert rendered.count("Semantic delta:") == 2
+    assert rendered.count("Closure role: invalidation") == 3
+    assert rendered.count("Semantic delta:") == 3
     assert all(member.semantic_delta for member in review.members)

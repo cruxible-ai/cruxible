@@ -36,7 +36,6 @@ from cruxible_core.service.discovery.explain import (
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._candidate_support import submit_subject_candidate
-from tests.core_support._identity_support import retire_claims_about
 from tests.test_ledger.test_activation import _sign
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
 
@@ -65,7 +64,7 @@ def _accept(instance, approver, shell: SubjectShell, *, name: str = "subject"):
         timestamp=TIMESTAMP,
     )
     candidate = inspection.proposal.candidate
-    assert candidate is not None
+    assert candidate is not None, inspection.proposal.evaluation.diagnostics
     approval = _sign(
         approver,
         candidate.candidate_digest,
@@ -184,8 +183,6 @@ def test_subject_successor_uses_exact_predecessor_and_projection_revision(tmp_pa
     instance, _owner, reviewer = _instance(tmp_path)
     initial = _shell()
     _accept(instance, reviewer, initial)
-    # The Subject's retirement closes over its key Claim, retired first.
-    retire_claims_about(instance, SUBJECT_PATH)
     retired = _shell(
         lifecycle=ArtifactLifecycle(
             state="retired",
