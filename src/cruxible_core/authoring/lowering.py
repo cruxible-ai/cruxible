@@ -3408,7 +3408,7 @@ def _claim_type_in_change(
 def _assign_creations(
     instance: PlaybillInstance,
     *,
-    intent: AuthoringIntentV1,
+    operation: str,
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
     members: tuple[AuthoringChangeSetMember, ...],
@@ -3463,7 +3463,7 @@ def _assign_creations(
                     repair_kind="drop_key",
                     repair_description="Remove the key.",
                 )
-            subject_id = minted_subject_id(operation=intent.intent_id, member=identity)
+            subject_id = minted_subject_id(operation=operation, member=identity)
             creations[identity] = _Creation(
                 kind=kind,
                 subject_id=subject_id,
@@ -3567,7 +3567,7 @@ def _assign_creations(
             # create_new on a hint kind: a further holder of the key, named from
             # the operation and the member so it never reuses the key's rendering.
             subject_id = distinct_holder_id(
-                key_values(key), operation=intent.intent_id, member=member.member_identity
+                key_values(key), operation=operation, member=member.member_identity
             )
         else:
             try:
@@ -3591,6 +3591,31 @@ def _assign_creations(
             authored_path=None if authored == subject_path(kind, subject_id) else authored,
         )
     return creations
+
+
+def subject_creation_paths(
+    instance: PlaybillInstance,
+    *,
+    operation: str,
+    base: AcceptedProjectionCoordinate,
+    base_tree: Mapping[str, bytes],
+    members: tuple[AuthoringChangeSetMember, ...],
+) -> dict[str, tuple[str, bool]]:
+    """Where each Subject creation in ``members`` lands, as lowering will name it.
+
+    Member identity -> (Subject path, whether the key named an existing Subject
+    and nothing is created). ``operation`` is the intent id lowering will run
+    under; the assignment is the one ``lower_authoring`` makes, for a caller that
+    must name the created Subjects in sibling members before lowering (a
+    Procedure terminal's Claim items naming a Subject item by key).
+    """
+
+    return {
+        identity: (creation.path, creation.resolved)
+        for identity, creation in _assign_creations(
+            instance, operation=operation, base=base, base_tree=base_tree, members=members
+        ).items()
+    }
 
 
 def _named_creations(
@@ -3950,7 +3975,11 @@ def _lower_change_set(
         item.member_identity: item.claim_id for item in intent.change_set_claim_identities
     }
     creations = _assign_creations(
-        instance, intent=intent, base=base, base_tree=base_tree, members=payload.members
+        instance,
+        operation=intent.intent_id,
+        base=base,
+        base_tree=base_tree,
+        members=payload.members,
     )
     sibling_member_by_claim_id = {
         claim_identities[authoring_member_identity(member)]: index

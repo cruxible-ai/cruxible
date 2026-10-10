@@ -938,9 +938,30 @@ class TerminalEgressChildReceiptV3(TerminalEgressChildReceiptV2):
         return ensure_utc(value)
 
 
+class TerminalEgressChildReceiptV4(TerminalEgressChildReceiptV2):
+    """A Subject item whose key a live Subject already holds (identity D1).
+
+    Creation by key resolves to that Subject, so the item lowered into no
+    changed member: ``path`` is the existing Subject's path and
+    ``egress_digest`` its artifact digest at the admitted base.
+    """
+
+    tag: Literal["playbill-terminal-egress-child-receipt-v4"] = (
+        "playbill-terminal-egress-child-receipt-v4"  # type: ignore[assignment]
+    )
+    disposition: Literal["reused"] = "reused"
+
+
+#: An item that lowered into no changed member: a restated Claim or a reused Subject.
+UnchangedChildReceiptAny = Annotated[
+    TerminalEgressChildReceiptV3 | TerminalEgressChildReceiptV4, Field(discriminator="tag")
+]
+UNCHANGED_CHILD_RECEIPTS = (TerminalEgressChildReceiptV3, TerminalEgressChildReceiptV4)
+
 #: A proposal child: the candidate member it lowered into, or an unchanged item.
 ProposalChildReceiptAny = Annotated[
-    TerminalEgressChildReceiptV2 | TerminalEgressChildReceiptV3, Field(discriminator="tag")
+    TerminalEgressChildReceiptV2 | TerminalEgressChildReceiptV3 | TerminalEgressChildReceiptV4,
+    Field(discriminator="tag"),
 ]
 
 
@@ -956,7 +977,7 @@ class TerminalEgressUnchangedReceiptV1(TerminalEgressReceiptV1):
         "playbill-terminal-egress-unchanged-receipt-v1"  # type: ignore[assignment]
     )
     disposition: Literal["unchanged"] = "unchanged"  # type: ignore[assignment]
-    children: tuple[TerminalEgressChildReceiptV3, ...]
+    children: tuple[UnchangedChildReceiptAny, ...]
 
     @model_validator(mode="after")
     def _shape(self) -> "TerminalEgressUnchangedReceiptV1":
@@ -984,7 +1005,8 @@ class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
     candidate_digest: str
     target_paths: tuple[str, ...]
     #: A changed child settles into one of ``target_paths``; an unchanged one
-    #: (``TerminalEgressChildReceiptV3``) names a live Claim outside them.
+    #: names a live Claim (``TerminalEgressChildReceiptV3``) or Subject
+    #: (``TerminalEgressChildReceiptV4``) outside them.
     children: tuple[ProposalChildReceiptAny, ...]
 
     @field_validator("proposal_id")
@@ -1013,7 +1035,7 @@ class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
         if (self.kind == "settle_change_set") != isinstance(self, TerminalEgressReceiptV4):
             raise ValueError("settle egress reports a settlement receipt, and only it does")
         if any(
-            (child.path in self.target_paths) == isinstance(child, TerminalEgressChildReceiptV3)
+            (child.path in self.target_paths) == isinstance(child, UNCHANGED_CHILD_RECEIPTS)
             for child in self.children
         ):
             raise ValueError(
@@ -1087,7 +1109,7 @@ class PreparedTerminalEgressV1(_StrictEgressModel):
     #: The items that changed nothing (identity-design-1009), each the receipt
     #: child it is reported as; when every item is one, ``target_paths`` is
     #: empty and no proposal is made. Omitted when none.
-    unchanged: tuple[TerminalEgressChildReceiptV3, ...] = Field(
+    unchanged: tuple[UnchangedChildReceiptAny, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
 
@@ -1568,6 +1590,9 @@ __all__ = [
     "EFFECTFUL_TERMINAL_KINDS",
     "TerminalEgressChildReceiptV2",
     "TerminalEgressChildReceiptV3",
+    "TerminalEgressChildReceiptV4",
+    "UNCHANGED_CHILD_RECEIPTS",
+    "UnchangedChildReceiptAny",
     "TerminalEgressUnchangedReceiptV1",
     "PreparedTerminalEgressV1",
     "SettleGrantHolderProtocol",
