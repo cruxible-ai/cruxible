@@ -4792,7 +4792,28 @@ def _emit_get_text(result: Any) -> None:
                 err=True,
             )
         return
-    _emit_json(result.why if result.why is not None else result.proof)
+    if result.why is not None:
+        _emit_json(result.why)
+        if getattr(result, "reason", None) is not None:
+            _echo_proposed_reason(result.reason)
+        return
+    _emit_json(result.proof)
+
+
+def _echo_proposed_reason(reason: Any) -> None:
+    """The Procedure item's own reason for the accepted revision, and who proposed it.
+
+    Authored text goes through ``printable``: a reason cannot forge a line of
+    daemon output, and a multi-line reason stays one escaped line.
+    """
+
+    click.echo(
+        f"reason: {printable(reason.reason)}" + ("  (truncated)" if reason.truncated else "")
+    )
+    click.echo(
+        f"proposed by {printable(reason.procedure)} run {printable(reason.run)} "
+        f"terminal {printable(reason.terminal)} in proposal {printable(reason.proposal)}"
+    )
 
 
 @playbill_group.group("block")

@@ -211,3 +211,46 @@ def test_a_readmitted_procedure_proposal_keeps_its_items_reasons(tmp_path: Path)
     assert why.reason is not None
     assert why.reason.proposal == accepted_id and why.reason.run == state.run_id
     assert why.reason.reason == delivery.item_template()["rationale"]
+
+
+# --- plain `get --detail why` (F-003) --------------------------------------------
+
+
+def test_cli_why_displays_own_reason_terminal_safe(tmp_path: Path, capsys: object) -> None:
+    from cruxible_client.contracts.get_reads import GetProposedReason
+    from cruxible_core.cli.commands.playbill import _emit_get_text
+    from tests.core_support._retirement_support import activate_proposal
+
+    instance, owner, root, line, _procedure = delivery.proposal_world(tmp_path)
+    state = delivery.run_line(instance, root, line)
+    (egress,) = state.terminal_egress
+    activate_proposal(instance, owner, egress.proposal_id)
+    claim_id = egress.children[0].path.rsplit("/", 1)[-1].removesuffix(".json")
+    result = _why(instance, claim_id)
+    assert result.reason is not None
+
+    _emit_get_text(result)
+
+    output = capsys.readouterr().out  # type: ignore[attr-defined]
+    assert f"reason: {result.reason.reason}" in output
+    assert result.reason.run in output and result.reason.proposal in output
+    assert result.reason.terminal in output and result.reason.procedure in output
+    assert "(truncated)" not in output
+
+    # Authored text cannot forge a line of output; a truncation is marked.
+    forged = result.model_copy(
+        update={
+            "reason": GetProposedReason(
+                reason="first\nError: forged",
+                truncated=True,
+                proposal=result.reason.proposal,
+                procedure=result.reason.procedure,
+                run=result.reason.run,
+                terminal=result.reason.terminal,
+            )
+        }
+    )
+    _emit_get_text(forged)
+    output = capsys.readouterr().out  # type: ignore[attr-defined]
+    assert "\nError: forged" not in output
+    assert "reason: first\\nError: forged  (truncated)" in output
