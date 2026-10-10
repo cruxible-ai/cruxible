@@ -1,6 +1,7 @@
 """The production bridge from a `propose_change_set` terminal to a durable proposal.
 
-A terminal item is a typed Claim proposal, never a candidate tree. This module
+A terminal item is a typed Claim or Subject proposal, never a candidate tree (a
+Subject item names its kind and key; core assigns the id). This module
 turns the items one terminal reached into one change set, hands that set to the
 SAME lowering every authoring surface uses, evaluates the exact live
 ProcedureMandate against the paths lowering actually changed, and calls the
@@ -27,17 +28,20 @@ Three properties are load-bearing:
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
+    AuthoringChangeSetMember,
+    AuthoringClaimStatement,
     AuthoringExistingClaimDisposition,
     AuthoringIntentV1,
     CandidateStatus,
@@ -47,6 +51,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimDependencyDrafts,
     ExistingCaptureCitationSource,
     SelfSourceBody,
+    SubjectCreationAuthoringPayload,
     authoring_change_set_membership,
     authoring_create_fingerprint,
     authoring_member_identity,
@@ -56,7 +61,7 @@ from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import parse_capture_envelope
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
@@ -72,8 +77,13 @@ from cruxible_client.contracts.procedure_mandates import (
     mandate_rung,
 )
 from cruxible_client.contracts.procedures.proposal_items import (
+    PROPOSAL_ITEM_MODELS,
     ProcedureClaimProposalItem,
     ProcedureClaimProposalItemV1,
+    ProcedureKeyedClaimProposalItem,
+    ProcedureProposalItemAny,
+    ProcedureSubjectProposalItem,
+    SubjectKeyClaimObject,
 )
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
@@ -81,24 +91,49 @@ from cruxible_client.contracts.proposal_models import (
     ProposalResult,
     ProposalSettleSubmission,
 )
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subject_kinds import (
+    SubjectKeyPart,
+    SubjectKeyReference,
+    live_subject_kind,
+)
+from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.authoring import lowering as authoring_lowering
+from cruxible_core.authoring.assignment_records import (
+    PROCEDURE_OPERATION_ID_DOMAIN,
+    procedure_operation_id,
+)
 from cruxible_core.authoring.lowering import (
     AuthoringLoweringError,
     LoweredAuthoring,
     canonical_authored_claims,
     claim_aliases_resolved,
+    members_identity_overlay,
+    subject_creation_paths,
 )
 from cruxible_core.evidence.claim_reobservations import (
     ClaimReobservationRefused,
     ClaimReobservationStore,
 )
+from cruxible_core.indexes.subject_identity import (
+    IdentityView,
+    KeyTuple,
+    RecordedCreation,
+    SubjectKeyInvalid,
+    canonical_key,
+    key_ambiguous_message,
+    key_encoding,
+    tree_key_reader,
+)
 from cruxible_core.procedures.egress import (
     PreparedTerminalEgressV1,
     TerminalEgressChildReceiptV3,
+    TerminalEgressChildReceiptV4,
     TerminalEgressReceiptV1,
     TerminalEgressRequestV1,
     TerminalEgressRequestV2,
     TerminalEgressUnchangedReceiptV1,
+    UnchangedChildReceiptAny,
     settle_authority_capped_reason,
 )
 from cruxible_core.procedures.nested import ProcedureDelegation, authority_procedure
@@ -122,11 +157,12 @@ from cruxible_core.proposals.proposals import ProposalService
 
 if TYPE_CHECKING:
     from cruxible_core.derived.derived_state import ClaimPredicateKey, SnapshotTree
+    from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
     from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
     from cruxible_core.runtime.instance import PlaybillInstance
 
 PROPOSAL_CLAIM_ID_DOMAIN = "playbill-procedure-proposal-claim-id-v1"
-PROPOSAL_INTENT_ID_DOMAIN = "playbill-procedure-proposal-intent-id-v1"
+PROPOSAL_INTENT_ID_DOMAIN = PROCEDURE_OPERATION_ID_DOMAIN
 PROPOSAL_LOWERING_DOMAIN = "playbill-procedure-proposal-lowering-v1"
 
 
@@ -172,6 +208,9 @@ class PreparedProposal:
     #: A settle terminal's change carries ClaimTypes its one applicable settle
     #: grant's scope leaves out: it proposes under that grant instead, naming them.
     outside_scope_claim_types: tuple[str, ...] = ()
+    #: The Subject items' actual assignments as lowered: recorded as this
+    #: operation's core creation record before it is submitted (review F-001).
+    creations: tuple[RecordedCreation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -186,25 +225,30 @@ class SettleMandateSelection:
     outside_scope_claim_types: tuple[str, ...] = ()
 
 
+def _item_model(value: object) -> type[ProcedureProposalItemAny]:
+    """The item shape a resolved template's tag names; an untagged template is a v1 Claim."""
+
+    tag = value.get("tag") if isinstance(value, dict) else None
+    return (
+        PROPOSAL_ITEM_MODELS.get(tag, ProcedureClaimProposalItemV1)
+        if isinstance(tag, str)
+        else ProcedureClaimProposalItemV1
+    )
+
+
 def proposal_items(
     request: TerminalEgressRequestV1,
-) -> tuple[ProcedureClaimProposalItemV1, ...]:
-    """Validate every resolved template as one Claim proposal item, typed to the item."""
+) -> tuple[ProcedureProposalItemAny, ...]:
+    """Validate every resolved template as one Claim or Subject item, typed to the item."""
 
-    items: list[ProcedureClaimProposalItemV1] = []
+    items: list[ProcedureProposalItemAny] = []
     for item in request.items:
         try:
-            model = (
-                ProcedureClaimProposalItem
-                if isinstance(item.value, dict)
-                and item.value.get("tag") == "playbill-procedure-claim-proposal-item-v2"
-                else ProcedureClaimProposalItemV1
-            )
-            items.append(model.model_validate(item.value))
+            items.append(_item_model(item.value).model_validate(item.value))
         except ValidationError as exc:
             raise ProposalDeliveryRefused(
                 "proposal_item_invalid",
-                "A resolved candidate template is not one Claim proposal item.",
+                "A resolved candidate template is not one Claim or Subject proposal item.",
                 details={
                     "item_key": item.item_key,
                     "child_index": item.child_index,
@@ -232,15 +276,14 @@ def evidence_by_item(
             if manifest is None
             else (*manifest.produced_capture_digests, *manifest.admitted_capture_digests)
         )
-        parsed = None
-        if (
-            isinstance(item.value, dict)
-            and item.value.get("tag") == "playbill-procedure-claim-proposal-item-v2"
-        ):
-            parsed = ProcedureClaimProposalItem.model_validate(item.value)
-            if isinstance(parsed.source, SelfSourceBody):
+        model = _item_model(item.value)
+        explicit = None
+        if issubclass(model, ProcedureClaimProposalItem | ProcedureSubjectProposalItem):
+            explicit = model.model_validate(item.value).source
+        if explicit is not None:
+            if isinstance(explicit, SelfSourceBody):
                 continue
-            selected = parsed.source.capture_digest
+            selected = explicit.capture_digest
             # An explicitly selected Capture must be in the item's own closure,
             # produced by the run or admitted into it.
             if selected not in consumed:
@@ -270,16 +313,33 @@ def evidence_by_item(
     return evidence
 
 
+def _keyless_statement(item: ProcedureClaimProposalItemV1) -> AuthoringClaimStatement:
+    """A Claim item's statement as authored; a keyed (v3) one needs ``keyed`` instead."""
+
+    if isinstance(item, ProcedureKeyedClaimProposalItem):
+        raise ProposalDeliveryRefused(
+            "proposal_item_invalid",
+            "A Claim item naming a Subject by key needs its terminal's key resolution.",
+        )
+    return item.statement
+
+
 def _claim_members(
     request: TerminalEgressRequestV1,
     *,
-    items: tuple[ProcedureClaimProposalItemV1, ...],
+    items: tuple[ProcedureProposalItemAny, ...],
     evidence: Mapping[str, str],
     read: Callable[[str], bytes | None] = lambda _path: None,
     resolve: Callable[[ClaimAuthoringPayload], ClaimAuthoringPayload] = lambda member: member,
     restated: Callable[[ClaimAuthoringPayload], str | None] = lambda _member: None,
+    statement_of: Callable[
+        [ProcedureClaimProposalItemV1], AuthoringClaimStatement
+    ] = _keyless_statement,
 ) -> tuple[tuple[ClaimAuthoringPayload, ...], dict[str, str], dict[str, str]]:
-    """Build one Claim member per item; return members, item->claim id, identity->item.
+    """Build one Claim member per Claim item; return members, item->claim id, identity->item.
+
+    Subject items are not Claims (``_subject_members``); ``statement_of`` gives
+    each Claim item's statement with any Subject it names by key resolved.
 
     Each item's literal is put in its ClaimType's canonical form (v8), and the
     Subjects it names are resolved through their aliases (``resolve``), before
@@ -294,22 +354,26 @@ def _claim_members(
     claim_ids: dict[str, str] = {}
     identity_to_item: dict[str, str] = {}
     for egress_item, item in zip(request.items, items, strict=True):
+        if isinstance(item, ProcedureSubjectProposalItem):
+            continue
         claim_id = item.revises or proposal_claim_id(
             admission_binding_digest=request.admission_binding_digest,
             node_id=request.node_id,
             item_key=egress_item.item_key,
         )
+        # A v1 item, or a v3 one naming no source, cites its closure's Capture.
+        source: ExistingCaptureCitationSource | SelfSourceBody
+        citation_role: Literal["evidence", "copy"] | None
+        if isinstance(item, ProcedureClaimProposalItem) and item.source is not None:
+            source, citation_role = item.source, item.citation_role
+        else:
+            source = ExistingCaptureCitationSource(capture_digest=evidence[egress_item.item_key])
+            citation_role = "evidence"
         member = ClaimAuthoringPayload(
-            statement=item.statement,
+            statement=statement_of(item),
             rationale=item.rationale,
-            source=(
-                item.source
-                if isinstance(item, ProcedureClaimProposalItem)
-                else ExistingCaptureCitationSource(capture_digest=evidence[egress_item.item_key])
-            ),
-            citation_role=item.citation_role
-            if isinstance(item, ProcedureClaimProposalItem)
-            else "evidence",
+            source=source,
+            citation_role=citation_role,
             derivation=item.derivation if isinstance(item, ProcedureClaimProposalItem) else None,
             existing_claim_dispositions=(
                 item.existing_claim_dispositions
@@ -339,6 +403,359 @@ def _claim_members(
         claim_ids[egress_item.item_key] = claim_id
         members.append(member)
     return tuple(members), claim_ids, identity_to_item
+
+
+def _subject_creation(
+    item: ProcedureSubjectProposalItem, *, capture: str | None
+) -> SubjectCreationAuthoringPayload:
+    """The creation member one Subject item lowers into: its kind and key, never an id.
+
+    Key parts are named by predicate (a short name is read under the kind) and
+    sorted, so one key is one member identity however the run spelled it. The
+    key Claims cite the item's own ``source``, else the Capture its closure
+    reached, else -- none reached -- the item's rationale as its own words.
+    """
+
+    kind = item.subject_kind
+    parts = sorted(
+        (
+            SubjectKeyPart(predicate=name if "." in name else f"{kind}.{name}", value=value)
+            for name, value in item.key.items()
+        ),
+        key=lambda part: part.predicate.encode("utf-8"),
+    )
+    source = item.source
+    if source is None and capture is not None:
+        source = ExistingCaptureCitationSource(capture_digest=capture)
+    return SubjectCreationAuthoringPayload(
+        subject_kind=kind,
+        key=tuple(parts),
+        rationale=item.rationale,
+        create_new=item.create_new,
+        source=source,
+        citation_role="evidence" if isinstance(source, ExistingCaptureCitationSource) else None,
+    )
+
+
+def _subject_members(
+    request: TerminalEgressRequestV1,
+    *,
+    items: tuple[ProcedureProposalItemAny, ...],
+    evidence: Mapping[str, str],
+) -> tuple[tuple[SubjectCreationAuthoringPayload, ...], dict[str, str]]:
+    """One creation member per Subject item; return the members and identity->item."""
+
+    members: list[SubjectCreationAuthoringPayload] = []
+    identity_to_item: dict[str, str] = {}
+    for egress_item, item in zip(request.items, items, strict=True):
+        if not isinstance(item, ProcedureSubjectProposalItem):
+            continue
+        try:
+            member = _subject_creation(item, capture=evidence.get(egress_item.item_key))
+        except ValidationError as exc:
+            raise ProposalDeliveryRefused(
+                "proposal_item_invalid",
+                "A Subject item does not name a kind and its key.",
+                details={"item_key": egress_item.item_key, "errors": str(exc)},
+            ) from exc
+        identity = member.member_identity
+        if identity in identity_to_item:
+            raise ProposalDeliveryRefused(
+                "proposal_item_invalid",
+                "Two terminal items create the same Subject.",
+                details={
+                    "item_key": egress_item.item_key,
+                    "duplicate_of": identity_to_item[identity],
+                },
+            )
+        identity_to_item[identity] = egress_item.item_key
+        members.append(member)
+    return tuple(members), identity_to_item
+
+
+def _key_refusal(message: str, *, code: str, **details: object) -> ProposalDeliveryRefused:
+    return ProposalDeliveryRefused(
+        "proposal_lowering_refused",
+        f"Shared lowering refused the proposed Claims: {message}",
+        details={"code": code, **details},
+    )
+
+
+IDENTITY_REFERENCE_UNSTABLE = "cruxible.procedure.identity_reference_unstable"
+
+
+@dataclass
+class _KeyedReference:
+    """One Claim item's Subject named by key, and what it was frozen to."""
+
+    kind: str
+    key: KeyTuple
+    spelled: Mapping[str, object]
+    single_text: str | None
+    #: The terminal Subject item it names (a creation member), else None.
+    creation: str | None = None
+    #: The existing Subject it resolved to at the admitted base, else None.
+    path: str | None = None
+    #: It resolved to no Subject (``key_missing``) at the admitted base.
+    missing: bool = False
+
+    def described(self) -> dict[str, object]:
+        return {"subject_kind": self.kind, "key": dict(self.spelled)}
+
+
+class _SubjectKeys:
+    """Resolve the Subjects a terminal's Claim items name by key (v3 items).
+
+    A reference is frozen once, against the admitted base and the terminal's
+    own Subject items: a key one of those items carries names that item (a
+    creation-member reference, ``subject-creation-v1``, which shared lowering
+    resolves to the path it finally assigns or reuses); any other key resolves
+    through the one resolver (``IdentityView.resolve_key_reference``: exact
+    live id, alias, key, exact retired id) over the base. None refuses
+    (``key_missing``: create it with a Subject item), several refuse as
+    ambiguous, as every create-by-key route does.
+
+    Nothing is resolved to a fixed point. After final lowering every reference
+    is resolved again by the same resolver over the final candidate state
+    (``unstable``): a different result -- or a ``key_missing`` the terminal's
+    own changes would now resolve -- refuses the terminal
+    (``cruxible.procedure.identity_reference_unstable``, review F-002).
+    """
+
+    _SEVERAL = ""
+
+    def __init__(
+        self,
+        instance: PlaybillInstance,
+        *,
+        base: AcceptedProjectionCoordinate,
+        base_tree: SnapshotTree,
+    ) -> None:
+        self.instance = instance
+        self.base = base
+        self.base_tree = base_tree
+        self.created: dict[tuple[str, str], str] = {}
+        self.view: IdentityView | None = None
+        self.references: list[_KeyedReference] = []
+
+    def add_created(self, members: tuple[SubjectCreationAuthoringPayload, ...]) -> None:
+        """Index each Subject item of the terminal by its kind and canonical key encoding."""
+
+        for member in members:
+            try:
+                key = self.key(
+                    member.subject_kind, {part.predicate: part.value for part in member.key}
+                )
+            except SubjectKeyInvalid:
+                continue  # lowering refuses the item itself
+            if key is None:
+                continue
+            slot = (member.subject_kind, key_encoding(key))
+            held = self.created.get(slot)
+            identity = member.member_identity
+            self.created[slot] = identity if held in {None, identity} else self._SEVERAL
+
+    def bind(self, view: IdentityView) -> None:
+        """Freeze references against ``view`` (the admitted base)."""
+
+        self.view = view
+
+    def claim_type(self, predicate: str) -> ClaimType | None:
+        path = claim_type_path(predicate)
+        content = self.base_tree.get(path)
+        return None if content is None else parse_claim_type(content, path=path)
+
+    def key(self, kind: str, given: Mapping[str, object]) -> KeyTuple | None:
+        """The canonical key ``given`` names under ``kind``, or None for an unkeyed kind."""
+
+        declared = live_subject_kind(self.base_tree, kind)
+        if declared is None or declared.minted:
+            return None
+        return canonical_key(declared, given, claim_type=self.claim_type)
+
+    def address(self, reference: SubjectKeyReference) -> SemanticAddress:
+        kind = reference.subject_kind
+        try:
+            key = self.key(kind, reference.key)
+        except SubjectKeyInvalid as exc:
+            raise _key_refusal(f"{kind}: {exc}", code="cruxible.subject.key_invalid") from exc
+        if key is None:
+            raise _key_refusal(
+                f"{kind} has no declared keys, so no Subject of it is named by key.",
+                code="cruxible.subject.key_invalid",
+            )
+        values = tuple(reference.key.values())
+        single = values[0] if len(key) == 1 and len(values) == 1 else None
+        frozen = _KeyedReference(
+            kind=kind,
+            key=key,
+            spelled=dict(reference.key),
+            single_text=single if isinstance(single, str) else None,
+        )
+        self.references.append(frozen)
+        encoded = key_encoding(key)
+        member = self.created.get((kind, encoded))
+        if member == self._SEVERAL:
+            raise _key_refusal(
+                f"Several Subject items of this terminal hold this {kind} key; name one by id.",
+                code="cruxible.subject.key_ambiguous",
+            )
+        if member is not None:
+            frozen.creation = member
+            return SemanticAddress.subject_creation(kind, member.rpartition("@")[2])
+        assert self.view is not None, "references are frozen against the bound base"
+        resolution = self.view.resolve_key_reference(kind, key, single_text=frozen.single_text)
+        if resolution.ambiguous:
+            holders = [f"subjects/{item}.json" for item in resolution.candidates]
+            raise _key_refusal(
+                key_ambiguous_message(kind, holders)
+                if resolution.via == "key"
+                else f"An alias of {kind} names {len(holders)} Subjects: "
+                + ", ".join(resolution.candidates)
+                + "; name one by id.",
+                code="cruxible.subject.key_ambiguous"
+                if resolution.via == "key"
+                else "cruxible.authoring.alias_ambiguous",
+            )
+        if resolution.path is None:
+            # Refused once every member is built, unless the terminal's own changes
+            # would resolve it (then it is unstable, not missing).
+            frozen.missing = True
+            placeholder = hashlib.sha256(f"{kind}\0{encoded}".encode()).hexdigest()[:32]
+            return SemanticAddress.subject_creation(kind, placeholder)
+        frozen.path = resolution.path
+        return SemanticAddress.whole_artifact(resolution.path)
+
+    def unstable(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        members: tuple[ClaimAuthoringPayload, ...],
+        subject_members: tuple[SubjectCreationAuthoringPayload, ...],
+        creations: Mapping[str, tuple[str, KeyTuple, bool]],
+    ) -> None:
+        """Refuse when a reference resolves otherwise over the final candidate state.
+
+        ``creations`` is where each Subject item landed: member identity ->
+        (path, key, whether it created that Subject). The final state is the
+        admitted base overlaid with the terminal's members, their Subject
+        references resolved to those paths, and its created Subjects.
+        """
+
+        # A creation reference's selector value is its member identity's digest:
+        # one lookup per reference, never a scan of the creations.
+        by_digest = {
+            identity.rpartition("@")[2]: path for identity, (path, _key, _made) in creations.items()
+        }
+
+        def resolved(address: SemanticAddress) -> SemanticAddress:
+            if address.selector.scheme != "subject-creation-v1":
+                return address
+            path = by_digest.get(address.selector.value)
+            return address if path is None else SemanticAddress.whole_artifact(path)
+
+        final_members: list[AuthoringChangeSetMember] = list(subject_members)
+        for member in members:
+            statement = member.statement
+            value = statement.object
+            if isinstance(value, SubjectClaimObject):
+                value = SubjectClaimObject(address=resolved(value.address))
+            final_members.append(
+                member.model_copy(
+                    update={
+                        "statement": statement.model_copy(
+                            update={"subject": resolved(statement.subject), "object": value}
+                        )
+                    }
+                )
+            )
+        view = IdentityView(
+            connection,
+            members_identity_overlay(
+                connection, members=tuple(final_members), base_tree=self.base_tree
+            ),
+            key_reader=tree_key_reader(self.base_tree),
+        )
+        for path, key, created in creations.values():
+            if created:
+                view.add_creation(path, key)
+        changed: list[dict[str, object]] = []
+        for reference in self.references:
+            frozen = (
+                creations[reference.creation][0]
+                if reference.creation is not None and reference.creation in creations
+                else reference.path
+            )
+            final = view.resolve_key_reference(
+                reference.kind, reference.key, single_text=reference.single_text
+            )
+            now: object = final.path if not final.ambiguous else list(final.candidates)
+            if now != frozen:
+                changed.append(
+                    {
+                        "reference": reference.described(),
+                        "frozen": "key_missing" if reference.missing else frozen,
+                        "final": now,
+                    }
+                )
+        if changed:
+            first = changed[0]
+            raise _key_refusal(
+                f"The {first['reference']} reference names {first['frozen']} as this terminal "
+                f"was prepared, and {first['final']} once its own identity changes (alias or "
+                "key Claims) apply: put the identity change and the references that depend "
+                "on it in separate runs or terminals.",
+                code=IDENTITY_REFERENCE_UNSTABLE,
+                references=changed,
+                repair=(
+                    "Put the identity change (an alias or key Claim) and the references that "
+                    "depend on it in separate runs or terminals."
+                ),
+            )
+        missing = next((item for item in self.references if item.missing), None)
+        if missing is not None:
+            raise _key_refusal(
+                f"No live {missing.kind} Subject holds this key; add a Subject item creating "
+                "it to the same terminal.",
+                code="cruxible.subject.key_missing",
+                reference=missing.described(),
+            )
+
+    def statement(self, item: ProcedureClaimProposalItemV1) -> AuthoringClaimStatement:
+        if not isinstance(item, ProcedureKeyedClaimProposalItem):
+            return item.statement
+        statement = item.statement
+        subject = (
+            statement.subject
+            if isinstance(statement.subject, SemanticAddress)
+            else self.address(statement.subject)
+        )
+        value = statement.object
+        if isinstance(value, SubjectKeyClaimObject):
+            value = SubjectClaimObject(address=self.address(value.subject))
+        return AuthoringClaimStatement(
+            subject=subject,
+            predicate=statement.predicate,
+            qualifier=statement.qualifier,
+            object=value,
+            role=statement.role,
+            effective_from=statement.effective_from,
+            effective_until=statement.effective_until,
+        )
+
+
+def _lowered_subject_paths(
+    lowered: LoweredAuthoring, subject_items: Mapping[str, str]
+) -> dict[str, tuple[str, bool]]:
+    """Where final shared lowering put each Subject item: (path, whether it reused one)."""
+
+    found: dict[str, tuple[str, bool]] = {}
+    members = lowered.resolved_authoring.get("members")
+    for entry in members if isinstance(members, list) else ():
+        identity = str(entry.get("identity"))
+        if identity in subject_items:
+            found[identity] = (str(entry.get("path")), entry.get("resolved") is True)
+    return found
 
 
 def _restated_lineage(tree: SnapshotTree, member: ClaimAuthoringPayload) -> str | None:
@@ -428,14 +845,14 @@ def _unchanged_children(
 def proposal_rationale(
     request: TerminalEgressRequestV1,
     *,
-    items: tuple[ProcedureClaimProposalItemV1, ...],
+    items: tuple[ProcedureProposalItemAny, ...],
     claim_ids: Mapping[str, str],
 ) -> str:
     """The proposal's prose: which run proposed it, then why, in the items' own words.
 
     This is the rationale `proposal review` shows and an accepted Claim's
     evidence detail reads back. One item's rationale follows the header as
-    written; several are each labelled with the Claim they explain. The text is
+    written; several are each labelled with the Claim (or Subject) they explain. The text is
     bounded like any change-set rationale.
     """
 
@@ -559,6 +976,14 @@ def _with_many_valued_dispositions(
     return tuple(filled)
 
 
+def _intent_id(request: TerminalEgressRequestV1) -> str:
+    """The intent one terminal operation lowers under, from the admitted operation alone."""
+
+    return procedure_operation_id(
+        admission_binding_digest=request.admission_binding_digest, node_id=request.node_id
+    )
+
+
 def _intent(
     request: TerminalEgressRequestV1,
     *,
@@ -576,21 +1001,13 @@ def _intent(
             ]
         },
     ).tagged.removeprefix("sha256:")
-    intent_digest = typed_digest(
-        Sha256Value,
-        PROPOSAL_INTENT_ID_DOMAIN,
-        {
-            "admission_binding_digest": request.admission_binding_digest,
-            "node_id": request.node_id,
-        },
-    ).tagged.removeprefix("sha256:")
     evaluation_time = (
         request.evaluation_time
         if isinstance(request, TerminalEgressRequestV2)
         else request.prepared_at
     )
     return AuthoringIntentV1(
-        intent_id=f"AIT-{intent_digest[:32]}",
+        intent_id=_intent_id(request),
         instance_id=instance_id,
         actor_id=request.actor_context.actor_id,
         canonical_timestamp=canonical_candidate_timestamp(evaluation_time),
@@ -786,7 +1203,7 @@ class ProposalTerminalEgressSink:
                 for egress_item, item in zip(request.items, items, strict=True)
                 if egress_item.item_key not in evidence
                 and not (
-                    isinstance(item, ProcedureClaimProposalItem)
+                    isinstance(item, ProcedureClaimProposalItem | ProcedureSubjectProposalItem)
                     and isinstance(item.source, SelfSourceBody)
                 )
             ]
@@ -818,14 +1235,58 @@ class ProposalTerminalEgressSink:
                     },
                 ) from exc
 
-        members, claim_ids, identity_to_item = _claim_members(
-            request,
-            items=items,
-            evidence=evidence,
-            read=base_tree.get,
-            resolve=resolve,
-            restated=lambda member: _restated_lineage(base_tree, member),
-        )
+        subject_members, subject_items = _subject_members(request, items=items, evidence=evidence)
+        keys = _SubjectKeys(self.instance, base=base, base_tree=base_tree)
+        keys.add_created(subject_members)
+
+        def claim_members() -> tuple[
+            tuple[ClaimAuthoringPayload, ...], dict[str, str], dict[str, str]
+        ]:
+            return _claim_members(
+                request,
+                items=items,
+                evidence=evidence,
+                read=base_tree.get,
+                resolve=resolve,
+                restated=lambda member: _restated_lineage(base_tree, member),
+                statement_of=keys.statement,
+            )
+
+        # Every keyed reference is frozen against the admitted base and the
+        # terminal's own Subject items (review F-002), then checked against the
+        # final candidate state below.
+        with self.instance.bind_accepted_projection(base) as projection:
+            keys.bind(
+                IdentityView(projection.typed.connection, key_reader=tree_key_reader(base_tree))
+            )
+            members, claim_ids, identity_to_item = claim_members()
+            if any(reference.missing for reference in keys.references):
+                # Nothing to lower with a missing Subject: refuse it as missing, or as
+                # unstable when the terminal's own changes would supply it.
+                assigned = self._subject_paths(
+                    request,
+                    base=base,
+                    base_tree=base_tree,
+                    members=(*members, *subject_members),
+                )
+                keys.unstable(
+                    projection.typed.connection,
+                    members=members,
+                    subject_members=subject_members,
+                    creations={
+                        member.member_identity: (
+                            assigned[member.member_identity][0],
+                            keys.key(
+                                member.subject_kind,
+                                {part.predicate: part.value for part in member.key},
+                            )
+                            or (),
+                            not assigned[member.member_identity][1],
+                        )
+                        for member in subject_members
+                        if member.member_identity in assigned
+                    },
+                )
         ordered = _with_many_valued_dispositions(
             tuple(
                 sorted(
@@ -837,8 +1298,24 @@ class ProposalTerminalEgressSink:
             },
             base_tree=self.instance.immutable_tree_at(request.accepted_coordinate.git_oid),
         )
-        rationale = proposal_rationale(request, items=items, claim_ids=claim_ids)
-        payload = ChangeSetAuthoringPayload(members=ordered, rationale=rationale)
+        all_members: tuple[AuthoringChangeSetMember, ...] = tuple(
+            sorted(
+                (*ordered, *subject_members),
+                key=lambda member: authoring_member_identity(member).encode("utf-8"),
+            )
+        )
+        # The rationale names each Subject item by the id shared lowering assigns
+        # it over the whole terminal (every member, so every key change counts);
+        # the receipt below reads the same assignment from the lowered result.
+        subject_paths = self._subject_paths(
+            request, base=base, base_tree=base_tree, members=all_members
+        )
+        labels = dict(claim_ids)
+        for identity, item_key in subject_items.items():
+            path = subject_paths[identity][0]
+            labels[item_key] = path.removeprefix("subjects/").removesuffix(".json")
+        rationale = proposal_rationale(request, items=items, claim_ids=labels)
+        payload = ChangeSetAuthoringPayload(members=all_members, rationale=rationale)
         claim_identities = tuple(
             sorted(
                 (
@@ -880,14 +1357,52 @@ class ProposalTerminalEgressSink:
             ) from exc
         target_paths = tuple(path for path, _content in lowered.changed_members)
         item_paths = {item_key: claim_path(claim_id) for item_key, claim_id in claim_ids.items()}
-        unchanged = _unchanged_children(
-            self.instance,
-            request,
-            lowered=lowered,
-            identity_to_item=identity_to_item,
-            item_paths=item_paths,
-            base_tree=base_tree,
+        unchanged: dict[str, UnchangedChildReceiptAny] = dict(
+            _unchanged_children(
+                self.instance,
+                request,
+                lowered=lowered,
+                identity_to_item=identity_to_item,
+                item_paths=item_paths,
+                base_tree=base_tree,
+            )
         )
+        if keys.references:
+            # Each frozen reference must name the same Subject over the final
+            # candidate state, by the same resolver (review F-002).
+            with self.instance.bind_accepted_projection(base) as projection:
+                keys.unstable(
+                    projection.typed.connection,
+                    members=members,
+                    subject_members=subject_members,
+                    creations={
+                        item.record.member: (
+                            item.path,
+                            item.key,
+                            item.record.outcome == "created",
+                        )
+                        for item in lowered.subject_creations
+                    },
+                )
+        child_index = {item.item_key: item.child_index for item in request.items}
+        lowered_subjects = _lowered_subject_paths(lowered, subject_items)
+        if lowered_subjects != {identity: subject_paths[identity] for identity in subject_items}:
+            raise ProposalDeliveryRefused(
+                "proposal_lowering_refused",
+                "Shared lowering assigned the terminal's Subject items differently than "
+                "the assignment the rationale names.",
+                details={"lowered": {key: list(value) for key, value in lowered_subjects.items()}},
+            )
+        for identity, item_key in subject_items.items():
+            path, reused = lowered_subjects[identity]
+            item_paths[item_key] = path
+            if reused:
+                unchanged[item_key] = TerminalEgressChildReceiptV4(
+                    child_index=child_index[item_key],
+                    item_key=item_key,
+                    egress_digest=subject_digest(parse_subject(base_tree[path], path=path)).tagged,
+                    path=path,
+                )
         for item_key, path in item_paths.items():
             if path not in target_paths and item_key not in unchanged:
                 raise ProposalDeliveryRefused(
@@ -955,8 +1470,40 @@ class ProposalTerminalEgressSink:
             item_paths=item_paths,
             rationale=rationale,
             outside_scope_claim_types=outside_scope,
+            creations=tuple(item.record for item in lowered.subject_creations),
         )
         return prepared
+
+    def _subject_paths(
+        self,
+        request: TerminalEgressRequestV1,
+        *,
+        base: AcceptedProjectionCoordinate,
+        base_tree: SnapshotTree,
+        members: tuple[AuthoringChangeSetMember, ...],
+    ) -> dict[str, tuple[str, bool]]:
+        """Where each Subject item lands, as shared lowering names it over all ``members``."""
+
+        if not any(isinstance(member, SubjectCreationAuthoringPayload) for member in members):
+            return {}
+        try:
+            return subject_creation_paths(
+                self.instance,
+                operation=_intent_id(request),
+                base=base,
+                base_tree=base_tree,
+                members=members,
+            )
+        except AuthoringLoweringError as exc:
+            raise ProposalDeliveryRefused(
+                "proposal_lowering_refused",
+                f"Shared lowering refused the proposed Subjects: {exc.message}",
+                details={
+                    "code": exc.code,
+                    "offending_element": exc.offending_element,
+                    "repairs": [item.model_dump(mode="json") for item in exc.repairs],
+                },
+            ) from exc
 
     # -- delivery -----------------------------------------------------------
 
@@ -1015,6 +1562,12 @@ class ProposalTerminalEgressSink:
                 "Proposal delivery requires the exact admitted run.",
             )
         self._record_reobservations(request, prepared.prepared.unchanged)
+        if prepared.creations:
+            # The operation's own core record, which the candidate boundary reads
+            # back to verify each Subject's recorded assignment (review F-001).
+            self.instance.subject_assignment_authority().record_creations(
+                _intent_id(request), prepared.creations
+            )
         service = self._proposal_service()
         assert request.operation_key is not None  # v2 shape
         existing = self.recover_existing(
@@ -1053,7 +1606,7 @@ class ProposalTerminalEgressSink:
     def _record_reobservations(
         self,
         request: TerminalEgressRequestV1,
-        unchanged: tuple[TerminalEgressChildReceiptV3, ...],
+        unchanged: tuple[UnchangedChildReceiptAny, ...],
     ) -> None:
         """Record each unchanged item's re-observation of content its Claim cites.
 
@@ -1069,6 +1622,8 @@ class ProposalTerminalEgressSink:
             return
         store = ClaimReobservationStore(self.instance)
         for child in unchanged:
+            if not isinstance(child, TerminalEgressChildReceiptV3):
+                continue  # a reused Subject observes nothing
             claim_id = PurePosixPath(child.path).stem
             try:
                 store.record(

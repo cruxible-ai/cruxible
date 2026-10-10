@@ -469,10 +469,20 @@ def test_binding_includes_compiler_and_read_handle_expires(tmp_path, seeded):
 
 
 def test_real_successor_uses_only_changed_paths(tmp_path, monkeypatch):
-    from tests.core_support._claim_authoring_support import service_propose_playbill_claim
-    from tests.core_support._knowledge_loop_support import TIMESTAMP, activate, authoring
+    from tests.core_support._claim_authoring_support import (
+        create_subjects,
+        service_propose_playbill_claim,
+    )
+    from tests.core_support._knowledge_loop_support import (
+        TIMESTAMP,
+        activate,
+        authoring,
+        subject_shell,
+    )
 
     instance, owner = seed_claims(tmp_path)
+    # A Claim never creates its Subject: the work item is accepted first.
+    create_subjects(instance, (subject_shell("wi-new"),), timestamp=TIMESTAMP)
     with instance.accepted_history_reader():
         pass
     index = instance._accepted_history_index

@@ -41,6 +41,7 @@ from cruxible_core.compiler.projection_artifacts import (
     RESOURCE_BUDGET_ARTIFACT_KINDS,
     SDK_SOURCE_ARTIFACT_KINDS,
     SOURCE_CHECKED_ARTIFACT_KINDS,
+    SUBJECT_IDENTITY_ARTIFACT_KINDS,
     TRIGGER_CAPTURE_ARTIFACT_KINDS,
     UPGRADE_ARTIFACT_KINDS,
 )
@@ -195,6 +196,16 @@ GOVERNED_TRIGGERS_COMPILER = _coordinate(
     revision_name="governed-triggers-generation-v1",
 )
 
+# Revision 33: core names every new Subject (identity D1/D4/D6). SubjectKind
+# artifacts declare each kind's rule, and the candidate boundary holds every new
+# Subject to it: a declared kind, core's assignment binding, unique keys.
+SUBJECT_IDENTITY_COMPILER = _coordinate(
+    projection_content="claims-procedures-runtime-v1",
+    semantic_revision=33,
+    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
+    revision_name="subject-identity-v1",
+)
+
 # The renderer a coordinate commits to is resolved from the coordinate itself,
 # never from a second copy of its preimage. A duplicated preimage with its own
 # revision literal silently returns None the moment the revision is succeeded,
@@ -215,6 +226,7 @@ _CARD_RENDERER_BY_COMPILER: dict[str, str] = {
     TRIGGER_CAPTURE_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
     AUTHORITY_VERBS_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
     GOVERNED_TRIGGERS_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
+    SUBJECT_IDENTITY_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
 }
 
 
@@ -258,6 +270,7 @@ SUPPORTED_COMPILERS = (
     TRIGGER_CAPTURE_COMPILER,
     AUTHORITY_VERBS_COMPILER,
     GOVERNED_TRIGGERS_COMPILER,
+    SUBJECT_IDENTITY_COMPILER,
 )
 # Immutable human-facing revision labels.  The digest remains the authority;
 # these labels are display metadata and must never be inferred from the moving
@@ -294,6 +307,7 @@ COMPILER_REVISION_LABELS = {
     TRIGGER_CAPTURE_COMPILER: "line-trigger-capture-input-v1",
     AUTHORITY_VERBS_COMPILER: "authority-verbs-settle-mandates-v1",
     GOVERNED_TRIGGERS_COMPILER: "governed-triggers-v1",
+    SUBJECT_IDENTITY_COMPILER: "subject-identity-v1",
 }
 PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
     {
@@ -318,17 +332,20 @@ PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
         TRIGGER_CAPTURE_COMPILER,
         AUTHORITY_VERBS_COMPILER,
         GOVERNED_TRIGGERS_COMPILER,
+        SUBJECT_IDENTITY_COMPILER,
     }
 )
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return GOVERNED_TRIGGERS_COMPILER
+    return SUBJECT_IDENTITY_COMPILER
 
 
 def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindRegistry:
     """Return the frozen ledger path grammar selected by one compiler."""
 
+    if compiler == SUBJECT_IDENTITY_COMPILER:
+        return SUBJECT_IDENTITY_ARTIFACT_KINDS
     if compiler == GOVERNED_TRIGGERS_COMPILER:
         return GOVERNED_TRIGGERS_ARTIFACT_KINDS
     if compiler == AUTHORITY_VERBS_COMPILER:
@@ -401,6 +418,10 @@ def projection_registry_for_compiler(
         AUTHORITY_VERBS_COMPILER,
     }:
         return p2c_extension_registry().with_artifact_kinds("attestation", "resolution-contract")
+    if compiler == SUBJECT_IDENTITY_COMPILER:
+        return p2c_extension_registry().with_artifact_kinds(
+            "attestation", "resolution-contract", "trigger", "blueprint", "subject-kind"
+        )
     if compiler == GOVERNED_TRIGGERS_COMPILER:
         return p2c_extension_registry().with_artifact_kinds(
             "attestation", "resolution-contract", "trigger", "blueprint"
@@ -456,6 +477,7 @@ __all__ = [
     "TRIGGER_CAPTURE_COMPILER",
     "AUTHORITY_VERBS_COMPILER",
     "GOVERNED_TRIGGERS_COMPILER",
+    "SUBJECT_IDENTITY_COMPILER",
     "RESOLUTION_COMPILER",
     "PB_B_COMPILER",
     "PB_C_COMPILER",

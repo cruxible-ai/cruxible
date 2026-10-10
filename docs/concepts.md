@@ -26,7 +26,11 @@ floor files in your workspace, and the projection blocks in your pages.
 ## Subjects, ClaimTypes and Claims
 
 A **Subject** is a thing the instance knows about, named `kind/id`
-(`project.task/write-docs`). Kinds are dotted names you choose.
+(`project.task/write-docs`). Kinds are dotted names you choose; core chooses
+the id. A **SubjectKind** declares how a kind's Subjects are named -- by the
+values of one or more key fields (a key that names one Subject, `unique`, or
+usually one, `hint`), or by a minted id -- and a new Subject is created by
+naming its kind and key, so the same key always names the same Subject.
 
 A **ClaimType** defines one field of a kind: the predicate
 (`project.task.status`, whose field name is `status`), what the value is (a

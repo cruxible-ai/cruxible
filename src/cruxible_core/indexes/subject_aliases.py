@@ -23,13 +23,17 @@ lists all resolve through here, so a reference means the same Subject at each.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from cruxible_client.contracts.discovery import normalize_discovery_term
+
+if TYPE_CHECKING:
+    from cruxible_core.indexes.subject_identity import KeyReader
 
 _SUBJECTS = "subjects/"
 
@@ -51,7 +55,7 @@ class SubjectRefResolution:
     subject_id: str
     #: The resolved Subject's ledger path, or None when it resolved to none.
     path: str | None
-    via: Literal["identity", "alias"] | None
+    via: Literal["identity", "alias", "key"] | None
     #: Every Subject the alias names, as ``kind/id``, when it names more than one.
     candidates: tuple[str, ...] = ()
 
@@ -74,62 +78,25 @@ def _subject(connection: sqlite3.Connection, path: str, *, table: str, live: boo
     )
 
 
-def alias_targets(
-    connection: sqlite3.Connection,
-    kind: str,
-    name: str,
-    *,
-    terms_table: str = "vocabulary_terms",
-    subjects_table: str = "subjects",
-) -> tuple[str, ...]:
-    """The live Subjects of ``kind`` an alias spelled ``name`` names, by path."""
-
-    low, high = _kind_range(kind)
-    rows = connection.execute(
-        f"SELECT DISTINCT target_path FROM {terms_table} "
-        "WHERE term=? AND basis='alias' AND target_path>=? AND target_path<? "
-        "ORDER BY target_path",
-        (normalize_discovery_term(name), low, high),
-    ).fetchall()
-    return tuple(
-        str(row[0])
-        for row in rows
-        if _subject(connection, str(row[0]), table=subjects_table, live=True)
-    )
-
-
 def resolve_subject_ref(
     connection: sqlite3.Connection,
     kind: str,
     subject_id: str,
     *,
-    terms_table: str = "vocabulary_terms",
-    subjects_table: str = "subjects",
+    key_reader: KeyReader | None = None,
 ) -> SubjectRefResolution:
-    """Resolve one reference: the exact live Subject, else one alias, else the exact retired one.
+    """Resolve one reference: exact live id, else alias, else single key, else exact retired.
 
+    The one resolver every reference route shares (``subject_identity.IdentityView``).
+    ``key_reader`` reads ``kind/<text>`` as a one-key kind's canonical key (from the
+    SubjectKinds of the accepted tree); without one the key step is skipped.
     After a merge -- an alias of the surviving Subject naming the retired one --
     a reference to the retired Subject reaches the survivor.
     """
 
-    exact = f"{_SUBJECTS}{kind}/{subject_id}.json"
-    if _subject(connection, exact, table=subjects_table, live=True):
-        return SubjectRefResolution(kind=kind, subject_id=subject_id, path=exact, via="identity")
-    targets = alias_targets(
-        connection, kind, subject_id, terms_table=terms_table, subjects_table=subjects_table
-    )
-    if len(targets) == 1:
-        return SubjectRefResolution(kind=kind, subject_id=subject_id, path=targets[0], via="alias")
-    if not targets and _subject(connection, exact, table=subjects_table, live=False):
-        # A retired Subject no alias supersedes is still the one it names.
-        return SubjectRefResolution(kind=kind, subject_id=subject_id, path=exact, via="identity")
-    return SubjectRefResolution(
-        kind=kind,
-        subject_id=subject_id,
-        path=None,
-        via=None,
-        candidates=tuple(_ref_of(path) for path in targets),
-    )
+    from cruxible_core.indexes.subject_identity import IdentityView
+
+    return IdentityView(connection, key_reader=key_reader).resolve(kind, subject_id)
 
 
 def creation_collisions(
@@ -186,7 +153,7 @@ def split_reference(value: str) -> tuple[str, str, str] | None:
 
 
 def resolve_reference_text(
-    connection: sqlite3.Connection, value: str
+    connection: sqlite3.Connection, value: str, *, key_reader: KeyReader | None = None
 ) -> tuple[str, SubjectRefResolution] | None:
     """Resolve a reference given as text; ``(spelling of the result, resolution)``.
 
@@ -198,8 +165,8 @@ def resolve_reference_text(
     if parts is None:
         return None
     prefix, kind, subject_id = parts
-    resolution = resolve_subject_ref(connection, kind, subject_id)
-    if resolution.via == "alias" and resolution.ref is not None:
+    resolution = resolve_subject_ref(connection, kind, subject_id, key_reader=key_reader)
+    if resolution.via in {"alias", "key"} and resolution.ref is not None:
         if value.startswith(_SUBJECTS):
             return f"{_SUBJECTS}{resolution.ref}.json", resolution
         return prefix + resolution.ref, resolution
@@ -224,6 +191,8 @@ SubjectReferenceResolver = Callable[[str], str]
 
 def reference_resolver(
     connect: Callable[[], AbstractContextManager[sqlite3.Connection]],
+    *,
+    key_reader: KeyReader | None = None,
 ) -> SubjectReferenceResolver:
     """A resolver over one accepted alias index (``connect`` opens it).
 
@@ -240,7 +209,7 @@ def reference_resolver(
         if split_reference(value) is None:
             return value
         with connect() as connection:
-            found = resolve_reference_text(connection, value)
+            found = resolve_reference_text(connection, value, key_reader=key_reader)
         if found is None:
             known[value] = value
             return value
@@ -295,7 +264,9 @@ def tree_index_connection(
 def tree_reference_resolver(tree: Mapping[str, bytes]) -> SubjectReferenceResolver:
     """The resolver for references read from one accepted tree (``tree_index_connection``)."""
 
-    return reference_resolver(tree_index_connection(tree))
+    from cruxible_core.indexes.subject_identity import tree_key_reader
+
+    return reference_resolver(tree_index_connection(tree), key_reader=tree_key_reader(tree))
 
 
 def _owner_path(identity: str) -> str | None:
@@ -338,6 +309,19 @@ def subject_collision_message(path: str, others: tuple[str, ...]) -> str:
     )
 
 
+def _keyed(tree: Mapping[str, bytes], path: str) -> bool:
+    """Whether the Subject at ``path`` is of a keyed kind: its key index is its identity check."""
+
+    from cruxible_client.contracts.subject_kinds import SubjectKindFormatError, live_subject_kind
+
+    kind = path.removeprefix(_SUBJECTS).partition("/")[0]
+    try:
+        declared = live_subject_kind(tree, kind)
+    except SubjectKindFormatError:
+        return False
+    return declared is not None and bool(declared.keys)
+
+
 def candidate_creation_collisions(
     *,
     current_tree: Mapping[str, bytes],
@@ -347,13 +331,16 @@ def candidate_creation_collisions(
     """Each Subject a change creates that collides, with the live Subjects it meets.
 
     A Subject is created when it is live in the candidate and not live in the
-    parent. It collides with another live Subject of its kind, in the candidate
-    state, whose id, canonical token or alias equals the new id's canonical token
-    (the discovery normalizer). The candidate state is the parent's index
-    overlaid with the changed owners only: a parent row whose owner the change
-    touched is dropped, and each changed owner that is live in the candidate
-    contributes its rows afresh -- Subjects created or revived, aliases added,
-    retirements -- never a rebuild of the index. A ``semantic.distinct_from``
+    parent. A Subject of a keyed kind is left to its key index
+    (``indexes.subject_identity``): this token and alias check holds minted and
+    grandfathered kinds (identity-design-1009, D4). It collides with another
+    live Subject of its kind, in the candidate state, whose id, canonical token
+    or alias equals the new id's canonical token (the discovery normalizer).
+    The candidate state is the parent's index overlaid with the changed owners
+    only: a parent row whose owner the change touched is dropped, and each
+    changed owner that is live in the candidate contributes its rows afresh --
+    Subjects created or revived, aliases added, retirements -- never a rebuild
+    of the index. A ``semantic.distinct_from``
     Claim the same change makes live exempts exactly the pair it names.
     """
 
@@ -378,7 +365,7 @@ def candidate_creation_collisions(
         if source is None:
             continue
         if path.startswith(_SUBJECTS):
-            if _live_member(current_tree, path) is None:
+            if _live_member(current_tree, path) is None and not _keyed(candidate_tree, path):
                 created.append(path)
         else:
             statement = source.statement
@@ -439,8 +426,9 @@ def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
     """Subjects and their alias and canonical-token terms, derived from a tree's members."""
 
     from cruxible_client.contracts.claims import parse_claim
+    from cruxible_client.contracts.subject_kinds import parse_subject_kind
     from cruxible_client.contracts.subjects import parse_subject
-    from cruxible_core.indexes.typed_state import vocabulary_terms
+    from cruxible_core.indexes.typed_state import _claim_fields, vocabulary_terms
 
     connection = sqlite3.connect(":memory:")
     connection.execute("CREATE TABLE subjects (path TEXT PRIMARY KEY, lifecycle TEXT NOT NULL)")
@@ -448,19 +436,74 @@ def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
         "CREATE TABLE vocabulary_terms (source_identity TEXT, target_path TEXT, "
         "basis TEXT, term TEXT, value TEXT)"
     )
+    # The key Claims of declared keyed kinds, as the projection's claims rows hold them.
+    connection.execute(
+        "CREATE TABLE claims (identity TEXT, subject_path TEXT, predicate TEXT, qualifier TEXT, "
+        "lifecycle TEXT, object_kind TEXT, subject_selector_scheme TEXT, literal_type TEXT, "
+        "literal_text TEXT, literal_integer_text TEXT, literal_boolean INTEGER)"
+    )
+    connection.execute(
+        "CREATE TABLE subject_kinds (identity TEXT, rule TEXT, uniqueness TEXT, "
+        "key_predicates TEXT, lifecycle TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE subject_keys (subject_path TEXT PRIMARY KEY, kind TEXT, key_encoding TEXT)"
+    )
+    connection.execute("CREATE INDEX subject_keys_by_key ON subject_keys(kind,key_encoding)")
+    key_predicates: set[str] = set()
+    for path in tree:
+        if path.startswith("subject-kinds/") and path.endswith(".json"):
+            declared = parse_subject_kind(tree[path], path=path)
+            rule = declared.identity_rule
+            connection.execute(
+                "INSERT INTO subject_kinds VALUES (?,?,?,?,?)",
+                (
+                    declared.identity.qualified,
+                    rule.rule,
+                    getattr(rule, "uniqueness", None),
+                    json.dumps(list(declared.keys)),
+                    declared.lifecycle.state,
+                ),
+            )
+            if declared.lifecycle.state == "live":
+                key_predicates.update(declared.keys)
+    needles = tuple(f'"{predicate}"'.encode() for predicate in sorted(key_predicates))
     for path in tree:
         source: Any
         if path.startswith(_SUBJECTS) and path.endswith(".json"):
             source = parse_subject(tree[path], path=path)
             connection.execute("INSERT INTO subjects VALUES (?,?)", (path, source.lifecycle.state))
-        elif path.startswith("claims/") and b'"semantic.alias"' in tree[path]:
+        elif path.startswith("claims/") and (
+            b'"semantic.alias"' in tree[path] or any(needle in tree[path] for needle in needles)
+        ):
             source = parse_claim(tree[path], path=path)
+            if source.statement.predicate in key_predicates:
+                fields = _claim_fields(source)
+                connection.execute(
+                    "INSERT INTO claims VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        source.identity.qualified,
+                        fields["subject_path"],
+                        fields["predicate"],
+                        fields["qualifier"],
+                        source.lifecycle.state,
+                        fields["object_kind"],
+                        fields["subject_selector_scheme"],
+                        fields.get("literal_type"),
+                        fields.get("literal_text"),
+                        fields.get("literal_integer_text"),
+                        fields.get("literal_boolean"),
+                    ),
+                )
         else:
             continue
         connection.executemany(
             "INSERT INTO vocabulary_terms VALUES (?,?,?,?,?)",
             vocabulary_terms(source, path=path),
         )
+    from cruxible_core.indexes.subject_identity import refresh_subject_keys
+
+    refresh_subject_keys(connection)
     return connection
 
 
@@ -475,7 +518,6 @@ __all__ = [
     "tree_index_connection",
     "reference_resolver",
     "tree_reference_resolver",
-    "alias_targets",
     "creation_collisions",
     "resolve_reference_text",
     "resolve_subject_ref",

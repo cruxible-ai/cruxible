@@ -34,6 +34,7 @@ from cruxible_client.contracts.subjects import SubjectShell, render_subject, sub
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+from tests.core_support._subject_kind_support import declare_created_kinds, world_history
 from tests.core_support._support import initialize_local
 
 KIND = "inv.package"
@@ -130,13 +131,15 @@ def shell(subject_id: str, kind: str = KIND) -> SubjectShell:
     )
 
 
+@world_history
 def accept_tree(
     instance: PlaybillInstance, updates: dict[str, bytes], *, name: str, actor_id: str = "owner"
 ) -> None:
     """Accept ``updates`` over the head through one ordinary proposal and activation."""
 
     base = instance.accepted_coordinate()
-    tree = {**instance.tree_at(base.git_oid), **updates}
+    accepted = instance.tree_at(base.git_oid)
+    tree = {**accepted, **declare_created_kinds(accepted, dict(updates), instance=instance)}
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(
@@ -151,6 +154,23 @@ def accept_tree(
         instance, proposal_id=proposed.admission.proposal_id, activated_by=actor_id
     )
     assert receipt.status == "accepted"
+
+
+def retire_subject(instance: PlaybillInstance, path: str, *, name: str) -> None:
+    """Retire one Subject; core retires its key Claims with it in the same change."""
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.subjects import parse_subject, subject_digest
+
+    shell = parse_subject(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path)
+    retired = shell.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=subject_digest(shell).tagged
+            )
+        }
+    )
+    accept_tree(instance, {path: render_subject(retired)}, name=name)
 
 
 def seed_identity_vocabulary(instance: PlaybillInstance) -> None:
@@ -178,6 +198,7 @@ __all__ = [
     "STATE_FORM",
     "SUBJECTS",
     "accept_tree",
+    "retire_subject",
     "identity_claim_type",
     "seed_identity_surface",
     "seed_identity_vocabulary",

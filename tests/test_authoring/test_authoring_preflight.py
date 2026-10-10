@@ -55,6 +55,7 @@ from cruxible_core.service.claims.subjects import (
     service_get_playbill_subject,
 )
 from cruxible_core.service.floor.floor import service_export_playbill_floor
+from tests.core_support._subject_kind_support import declare_created_kinds, world_history
 from tests.core_support._support import client_material, initialize_local
 from tests.test_claims.test_claims import _claim_type, _subject
 from tests.test_ledger.test_activation import _sign
@@ -62,6 +63,7 @@ from tests.test_ledger.test_activation import _sign
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
 
 
+@world_history
 def _seed_claim_surface(
     instance: PlaybillInstance,
     _owner: object,
@@ -96,6 +98,7 @@ def _seed_claim_surface(
         )
     tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
+    declare_created_kinds(instance.tree_at(base.git_oid), tree, instance=instance)
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
         request=ProposalAdmissionRequest(
@@ -259,7 +262,7 @@ def test_subject_claim_object_requires_matching_type_and_existing_allowed_subjec
         if item.code == "cruxible.authoring.object_subject_not_found"
     )
     assert missing_diagnostic.offending_element == "statement.object.address"
-    assert missing_diagnostic.repairs[0].kind == "propose_subject"
+    assert missing_diagnostic.repairs[0].kind == "create_subject"
     assert "project.work_item/missing" in missing_diagnostic.message
 
     literal = coordinator.create(

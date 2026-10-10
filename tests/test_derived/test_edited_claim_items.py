@@ -11,6 +11,7 @@ from cruxible_core.derived.derived_state import SnapshotTree
 from cruxible_core.indexes import evaluated_state
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._adoption_fixture import AdoptionFixtureProfile, build_fixture
+from tests.core_support._subject_kind_support import fixture_claim_paths
 
 PROFILE = AdoptionFixtureProfile(
     name="edited-claims",
@@ -38,7 +39,7 @@ def test_edited_claim_items_match_the_cold_oracle(tmp_path: Path, monkeypatch) -
         for path, content in other_tree.items()
         if path.startswith("claims/") and path not in head
     }
-    claim_paths = sorted(path for path in head if path.startswith("claims/"))
+    claim_paths = fixture_claim_paths(head)
     assert claim_paths and additions
 
     overlays: list[int] = []

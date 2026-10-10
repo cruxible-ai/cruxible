@@ -1214,7 +1214,8 @@ section nothing answers "what touches this package" from the object side.
 ~~~text
 cruxible claim-type propose --template
 cruxible claim-type propose --input FILE|- --name NAME [--dry-run|--commit] [--at OID] [--json]
-cruxible claim-type propose --builtin semantic.alias [--name NAME] [--dry-run|--commit] [--json]
+cruxible claim-type propose --builtin semantic.alias|semantic.distinct_from [--name NAME]
+  [--dry-run|--commit] [--json]
 cruxible claim-type migrate REQUEST_FILE|- [--json]
 cruxible claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate]
   [--dry-run|--commit] [--at OID] [--json]
@@ -1251,7 +1252,9 @@ retirement decisions from diagnostics.
 Cruxible ships builtin ClaimTypes, and a new instance starts with every one of them.
 `semantic.alias` states another name a Subject is known by (any kind; many
 values; stored in the canonical form `nfc, casefold, collapse_whitespace,
-trim`). An instance created before a builtin shipped adopts it with
+trim`). `semantic.distinct_from` states that its object Subject is a different
+thing from its subject, whatever names or keys they share (any kinds; many
+values): the duplicates audit never groups the pair. An instance created before a builtin shipped adopts it with
 `propose --builtin NAME`, which proposes its exact envelope; MCP's
 `cruxible_claim_type_propose` takes `builtin` in place of `input`, and the SDK
 offers `Cruxible.builtin_claim_type(name).propose(...)`. Add an alias with
@@ -1271,11 +1274,16 @@ A reference `kind/id` resolves, in order, to the live Subject at exactly that
 path; else to the one live Subject of that kind whose alias, under the
 discovery normalizer, equals `id` (an alias naming several refuses
 `alias_ambiguous` with each candidate); else to the retired Subject at exactly
-that path. None leaves the entry point's own rule in force (a write adds the
-Subject, a read refuses the unknown reference). So merging Subject A into B --
+that path. A kind with a single key also reads `kind/<text>` as "the Subject whose
+key is `<text>`" (see Subject kinds below): one holder resolves, several refuse
+`cruxible.subject.key_ambiguous` naming each. None leaves the entry point's own
+rule in force (a write creates the Subject by key, a read refuses the unknown
+reference). So merging Subject A into B --
 alias B with A's id, then retire A -- sends every later reference to A to B.
 
-A change may not create a Subject that collides with a live Subject of its kind:
+For a minted kind, and a grandfathered one, a change may not create a Subject
+that collides with a live Subject of its kind (a keyed kind is held to its key
+instead; see Subject kinds below):
 one whose id, canonical token or alias equals the new id's canonical token (the
 discovery normalizer), whether accepted already or added by the same change (a
 new alias, another new Subject). Retirements in the same change count: a Subject
@@ -1538,15 +1546,15 @@ written, then counts zero use only from that point.
 
 One authoring intent is one changeset. The tagless `change_set` input carries
 any mix of members -- `claim`, `claim_type`, `claim_type_succession`,
-`claim_retirement`, `subject`, `query_definition`, `procedure`, `blueprint`,
-`blueprint_instance`, `procedure_mandate`, `acquisition_policy`, `line`,
-`trigger` -- and the whole intent
+`claim_retirement`, `subject`, `subject_kind`, `subject_succession`,
+`query_definition`, `procedure`, `blueprint`, `blueprint_instance`,
+`procedure_mandate`, `acquisition_policy`, `line`, `trigger` -- and the whole intent
 lowers once, proposes once and admits or refuses together, typed to the member
 index that offends. `approval_policy` and `procedure_runtime_policy` are the
 two exceptions: the member union parses either, but a change set carrying one
 refuses whatever else it holds, so author each as its own singleton input. A
-Claim member may define the Subject and ClaimType it needs in the same set, and
-may retire a Claim the set does not otherwise touch. Two sibling Claims contending for
+Claim member may name a Subject a `subject` member of the same set creates, define
+the ClaimType it needs, and retire a Claim the set does not otherwise touch. Two sibling Claims contending for
 one cardinality-one slot are un-authorable in a single set by construction, not
 merely unrepaired: dispositioning one needs the other's Claim ID, which the
 daemon mints only at create from the already-frozen payload, so that refusal's
@@ -1598,6 +1606,175 @@ authoring one, and it is documented under `cruxible block`. Nothing composes it
 for a caller any more: the marker must start in column zero, blocks cannot
 overlap, nest, or repeat an id, and marker-looking text inside a Markdown fence
 is not a declaration.
+
+### Subject kinds and creation
+
+Cruxible names every new Subject; an author never chooses its id. A **SubjectKind**
+(`subject-kinds/<kind>.json`, read with `cruxible get SubjectKind:<kind>`, shown
+as `identity` per kind in `orient`) declares how Subjects of one kind are named:
+
+- **keyed**: `keys` lists one or more key ClaimTypes (by predicate, in key order),
+  each a live ClaimType v8 about that kind only, literal and one-valued, accepted
+  in the same change or earlier; `uniqueness` is `unique` (a key names one
+  Subject) or `hint` (a key usually does; a further holder is made only on
+  purpose). The id is the readable rendering of the canonical key: each part
+  NFKC-normalized and lowercased, every run outside `[a-z0-9.]` turned into `-`
+  and trimmed, composite parts joined with `--`, an `x` prefix when it does not
+  begin with a letter, `x-<8 hex>` when nothing readable is left. When a
+  different key already renders to that id, or a live alias already names it,
+  the later Subject takes `<id>-<8 hex of its key digest>`: a new id never
+  shadows an existing alias.
+- **minted**: `{"minted": true}`; core mints `sub-<32 hex>` from the change and
+  the member.
+
+SubjectKinds and identity admission come with compiler revision 33
+(`subject-identity-v1`). An instance pinned to an earlier compiler creates no
+new Subject at all -- every route refuses
+`cruxible.subject.compiler_upgrade_required`; upgrade
+(`cruxible compiler upgrade --to DIGEST --name NAME`) and declare the kind.
+Its existing Subjects stay readable, claimable and retirable, and accepted
+history replays as it was accepted.
+
+Every new Subject's id is checked against how core assigns it, at admission,
+readmission and settlement. A keyed first holder's id must be the rendering of
+its key (disambiguated against the parent). A minted Subject, or a further
+holder of a `hint` key, records the operation and member that created it
+(`assignment`), and its id is a digest of the two. When core lowers a stored
+authoring intent, or a Procedure terminal delivers, it records each creation
+member's actual outcome for that operation: its kind, canonical key, rule
+(`first_holder`, `further_holder` or `minted`), whether it `created` a Subject
+or `reused` one, and the id it assigned. A minted or further-holder Subject is
+admitted only when that record holds an equal `created` entry -- the same
+member, kind, key, rule and id. A recorded hint creation authorizes only the
+id and canonical key core assigned to that member; a reused member authorizes
+no new Subject. An invented or copied binding, one moved to another key or
+kind, or one from a preview (never recorded) refuses
+`cruxible.subject.id_not_assigned`: a raw proposal creates only keyed first
+holders, and minted and further-holder Subjects are created through authoring
+or a Procedure. Rebasing or readmitting a proposal does not change its
+operation's record, so its bindings stay valid. A successor may not change its
+`assignment` (`cruxible.subject.assignment_changed`).
+
+A new Subject must be of a declared kind on every route -- authoring, writes,
+Procedure items, settle, raw proposals -- or the change refuses
+`cruxible.subject.kind_undeclared`, naming the SubjectKind to author. Subjects
+of a kind accepted before it was declared (or whose SubjectKind was retired)
+are grandfathered: readable, claimable and retirable (`subject_succession`
+member), never created again. `cruxible next` lists each kind with live
+Subjects and no SubjectKind (`subject_kind_undeclared`) with the SubjectKind to
+author.
+
+A `subject` member creates one Subject by its kind and key, and the result
+reports the id:
+
+~~~json
+{"kind": "subject", "subject_kind": "dev.decision", "key": {"slug": "Ship It"},
+ "rationale": "We decided to ship."}
+~~~
+
+`key` maps each key ClaimType (by predicate, or by its last name under the kind)
+to its value, or is the bare value for a one-key kind; a minted kind gives none.
+Each key part becomes a Claim citing `rationale` as the author's own words.
+Creating by key is one rule on every create-by-key route (a `subject` member,
+the write verbs' `kind/<text>` on a one-key kind, a Procedure Subject item, a
+settle): no live Subject holds the canonical key -- create it; exactly one does
+-- resolve to it and create nothing; two or more -- refuse
+`cruxible.subject.key_ambiguous`, naming them (name one by id). The holders are
+read with the change itself overlaid: a sibling retirement, a key Claim the
+change adds, revises or retires, counts. Keys compare by their canonical typed
+encoding (`true` is not `1`), through a whole-key index, so a composite key is
+one lookup. `create_new:
+true` makes a further holder of a `hint` key, named `<rendering>-<8 hex>` from
+the change and member; assert `semantic.distinct_from` between the two in the
+same change. It is refused on a `unique` kind
+(`cruxible.subject.create_new_refused`). A Claim member (as its subject or a
+Subject object) names a Subject the same set creates by that creation member:
+the SDK's `cx.new_subject(kind, key=...)` returns a pending reference to the
+member, and core resolves it to the path it actually assigns or reuses. No
+address is predicted from raw values; a reference to no creation in the set
+refuses `cruxible.authoring.subject_creation_unresolved`.
+
+Naming a Subject by text resolves the same way on every route (reads, writes,
+queries, creations): an exact live id, then an alias, then the canonical key
+(none, one, several), then an exact retired id. An alias sits before the key
+because an alias is an assertion naming exactly one Subject (a merge leaves
+one behind); several alias holders refuse `alias_ambiguous`, several key
+holders `key_ambiguous`. A creation skips the id steps: its text is a key, so a
+coincidental id never resolves it. For example, with `dev.decision/original`
+holding the alias `other name` and `dev.decision/other-name` holding the key
+`other name`, a reference to `other name` (a write's `dev.decision/other name`,
+a Procedure Claim item's `{"subject_kind": "dev.decision", "key": {"slug":
+"other name"}}`) names `original`, and so does a creation by that key: it
+reuses `original` and creates nothing.
+
+A Procedure terminal's Claim items name Subjects by key the same way, and are
+held to one rule. Each reference is resolved once, against the admitted base
+and the terminal's own Subject items: a key one of those items carries names
+that item, and resolves to the Subject final shared lowering assigns or reuses
+for it (its receipt reports that same Subject); any other key resolves through
+the order above, over the base. After final lowering every reference -- a
+Claim's subject or a Subject-valued object -- is resolved again by the same
+resolver over the final candidate state, its aliases read exactly as accepted
+state indexes them (a qualified alias is an alias too). If any names a
+different Subject, or
+a reference that named none (`key_missing`) would now resolve, the terminal
+refuses `cruxible.procedure.identity_reference_unstable`, naming the reference
+and both results, and proposes nothing. The repair is to put the identity
+change (the alias or key Claim) and the references that depend on it in
+separate runs or terminals. This holds for propose and settle terminals and
+for recovery.
+
+A unique key is checked where every change is judged, against the parent it
+lands on with the change's own creations overlaid: a key-Claim revision, or a
+second creation in the change, that would give another Subject an existing
+unique key refuses `cruxible.subject.key_conflict`, and of two concurrent
+changes creating one key the later is refused when it is evaluated against a
+parent that already holds it. A kind that becomes `unique`, or is re-keyed,
+refuses while two live Subjects share a key.
+
+Migrating a kind whose ids are already readable slugs: declare it keyed by a
+single unique slug, so `cruxible write` naming `dev.decision/<slug>` keeps
+working (it resolves the Subject holding the slug, or creates it):
+
+~~~json
+{"kind": "change_set", "members": [
+  {"kind": "claim_type", "claim_type": "<dev.decision.slug: v8, literal string, one-valued>"},
+  {"kind": "subject_kind", "name": "dev.decision", "keys": ["dev.decision.slug"],
+   "uniqueness": "unique"}]}
+~~~
+
+`cruxible authoring example subject-kind` prints a complete one. Existing
+Subjects keep their ids; give each its slug Claim (`cruxible set
+dev.decision/<id> slug <id> --because ...`) so its key resolves to it.
+
+A key ClaimType is part of every SubjectKind that names it. A ClaimType
+succession or retirement that would break a live kind's key contract
+(one-valued, live, literal, admitting the kind) refuses
+`cruxible.subject_kind.key_claim_type_broken` unless the same change declares a
+compatible SubjectKind successor. Changing a key ClaimType's canonical form
+re-keys its Subjects: it refuses `cruxible.subject_kind.rekey_unhandled` while
+any holder's key value would read differently, and `key_conflict` when two
+holders would then share a unique key, unless the change handles them.
+
+A keyed Subject's key Claims are its identity parts, not beliefs about it, so
+they follow its lifecycle: retiring the Subject retires its live key Claims in
+the same change (core adds them; nobody names them), which frees the key -- a
+merge is an alias on the survivor plus the other Subject's retirement, and a
+later creation by the freed key creates a new Subject. A live successor of the
+Subject carries its key Claims unchanged, unless the change revises them. Its
+other Claims still close over it as before.
+A key Claim carried through any number of successors, then retired with its
+Subject or on its own, keeps the digest, backing and pins it was accepted with:
+it names the version of that Subject's lineage it was accepted about, which
+accepted history verifies at that Subject's path. A Claim retired this way
+keeps naming the Subject version it was accepted about; the Claim acceptance law that admits that is `playbill.claim.v3`
+revision 11, adopted with compiler revision 33. An instance on an earlier
+compiler judges new Claims by revision 10, and every accepted generation is
+verified by the exact revision it recorded.
+
+Kits carry SubjectKinds (`subject-kinds/`) like the other definitions: `kit
+add`, `kit upgrade` and `kit status` plan them, and a SubjectKind brings its key
+ClaimTypes with it.
 
 ## query
 
@@ -2086,7 +2263,7 @@ proposal. Its `candidate_templates` are a fixed list of templates, or
 `{"items": "$steps.<alias>.<list>"}` to fan out over data: each element a
 provider, Source or transform produced becomes one item of the one proposal,
 with its own dependency closure and evidence. An empty list proposes nothing
-and the run succeeds; an element that is not a Claim proposal item refuses
+and the run succeeds; an element that is not a Claim or Subject proposal item refuses
 `proposal_item_invalid` naming its `child_index`, and `items` that does not
 resolve or is not a list refuses `proposal_item_invalid` with reason
 `items_unresolved` or `items_not_a_list` (an object is never unwrapped). Each
@@ -2121,6 +2298,23 @@ followed by the items' own rationales (each labelled with its Claim ID when
 there are several), shown by `proposal review --json` as `rationale` and read
 back by `get CLM-... --detail evidence` once accepted.
 
+An item may also be a Subject item
+(`playbill-procedure-subject-proposal-item-v1`: `subject_kind`, `key`,
+`rationale`, optional `create_new` and `source`), which creates a Subject by its
+declared kind and key exactly as a `subject` authoring member does (see Subject
+kinds under `authoring`): a key one live Subject holds names it and the item
+creates nothing -- the run reports that child `unchanged`, with the Subject's
+path -- and its key Claims cite `source`, else the Capture its closure reached.
+A Claim item names a Subject the run knows only by its key with a v3 item
+(`playbill-procedure-claim-proposal-item-v3`): its statement's `subject`, or a
+`{"kind": "subject_key", "subject": ...}` object, is `{"subject_kind": ...,
+"key": {...}}`, resolved to the Subject a Subject item of the same terminal
+lands on, else to the one live holder of the key; none refuses
+`proposal_lowering_refused` with `cruxible.subject.key_missing`, several with
+`key_ambiguous`. A v3 item without a `source` cites its closure's Capture as a
+v1 item does. A propose mandate reaches the created Subjects through its
+namespace (`subjects/<kind>`).
+
 The run's wall-clock budget is enforced inside the terminal, after its items
 are prepared and before anything is delivered: a run out of time ends
 `wall_clock_exhausted` with the terminal refused for that code and no
@@ -2132,7 +2326,7 @@ member bytes under the same key refuse `effectful_operation_payload_mismatch`.
 A run that dies between preparing its egress and receiving the proposal's
 receipt is resolved at daemon startup through the same path and finalized as
 `terminal_egress_recovered` with the receipt on its run state. An item that is
-not a Claim proposal item refuses `proposal_item_invalid`; one whose closure
+not a Claim or Subject proposal item refuses `proposal_item_invalid`; one whose closure
 reached no Capture, or more than one, refuses `proposal_item_evidence_missing`
 or `proposal_item_evidence_ambiguous`; a ClaimType that does not admit the
 Capture refuses `proposal_lowering_refused` naming the lowering diagnostic; a
@@ -2154,7 +2348,11 @@ Procedure emits goes to review): `settle_outcome: proposed`, `fallback_reason`
 proposal's settle submission. The grant with the fewest such ClaimTypes is
 bound, then the lowest digest; its condition is not consulted. A change no
 grant covers in any other way (namespace, change kind, Subject scope, or no
-live grant) refuses `settle_mandate_missing`.
+live grant) refuses `settle_mandate_missing`. Settle authority reaches accepted
+Claims only, and new Subjects only of the kinds a settle grant's
+`subject_creation` names: such a Subject, and the key Claims its creation
+writes, settle with the change and are not condition targets. An existing
+Subject, or a new one of another kind, is outside every settle grant.
 The mandate's pinned condition query is then evaluated at the accepted parent
 for each changed Claim's target Subject; it must return exactly that Subject,
 with every required field present, unconflicted and untruncated. A false or
@@ -2756,7 +2954,8 @@ accepted state and the queue itself are unchanged; otherwise it is refused as
 never on the write path and never by detection. For one Subject kind it lists
 what is equal under a broad comparison (NFKC, casefold, punctuation stripped,
 whitespace collapsed and trimmed, plus the alias graph) but distinct under the
-declared rules: Subjects whose ids or aliases meet (`subjects` groups), and live
+declared rules: Subjects whose ids or aliases meet (`subjects` groups), Subjects
+of a `hint` kind holding one canonical key (`keys` groups), and live
 values of one literal predicate that meet but differ under its canonical form
 (`values` groups, naming the form). Cruxible proposes no fix; each group names its
 resolutions. Merge two Subjects by adding a `semantic.alias` to the one that
@@ -2767,7 +2966,7 @@ group holding no Subject it is asserted distinct from), though each may still
 appear in a group with a third Subject. Unify values by a governed ClaimType
 succession declaring a wider `canonical_form` (dependents re-authored). The
 audit reads at most 50,000 rows in all, one budget shared by its reads --
-Subjects, aliases, `distinct_from` relations, values -- each asking SQL for no
+Subjects, aliases, `distinct_from` relations, key Claims, values -- each asking SQL for no
 more than what remains; when the budget runs out it says so
 (`budget_exhausted`) and the groups cover only what was read. `scanned` counts
 the rows each read returned. It pages like the
@@ -2826,9 +3025,12 @@ cruxible write --schema
 ~~~
 
 `set` puts VALUE in FIELD of SUBJECT (`kind/id`). On a single-value field it
-replaces the live value: the Claim it revises is found for you. A Subject of a
-known kind that does not exist yet is added in the same change set; a
-Subject-valued VALUE must already exist. FIELD is a field of the kind as
+replaces the live value: the Claim it revises is found for you. SUBJECT
+`kind/<text>` naming no Subject of a one-key kind (see Subject kinds under
+`authoring`) is created by that key in the same change set -- or resolves to the
+Subject already holding it; any other kind refuses with the creation shape to
+author. The change names the Subject written by its id. A Subject-valued VALUE
+must already exist. FIELD is a field of the kind as
 `orient` names it, or the full predicate. VALUE is text: an enum member, a
 number or `true`/`false` for such fields, a Subject as `kind/id` (`@kind/id`
 names the same Subject, in SUBJECT too), or the text itself for exact content

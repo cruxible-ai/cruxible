@@ -73,6 +73,7 @@ from tests.core_support._knowledge_loop_support import (
     accept_proposal,
     subject_address,
 )
+from tests.core_support._subject_kind_support import fixture_claim_paths
 from tests.test_claims.test_claims import _claim_type as _work_item_claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_query.test_query_execution_service import _instance_with_query
@@ -104,7 +105,7 @@ def _retained_activations(instance: PlaybillInstance) -> tuple[dict[str, object]
 def _world(tmp_path: Path):
     instance, owner = _instance_with_query(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    seed_path = next(path for path in sorted(tree) if path.startswith("claims/"))
+    seed_path = fixture_claim_paths(tree)[0]
     seed = parse_claim(tree[seed_path], path=seed_path)
     return instance, owner, seed.backing.capture_digests[0]
 
@@ -503,7 +504,7 @@ def test_attempt_without_settlement_preserves_binding_and_stays_unresolved(
 
     instance, owner, procedure = run_world(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    path = next(p for p in sorted(tree) if p.startswith("claims/"))
+    path = fixture_claim_paths(tree)[0]
     capture = parse_claim(tree[path], path=path).backing.capture_digests[0]
     contract = _predict(instance, owner, capture)
     before = instance.accepted_coordinate()
@@ -610,7 +611,7 @@ def test_retained_terminal_settles_exact_investigation_and_replays(
 
     instance, owner, procedure = run_world(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    path = next(p for p in sorted(tree) if p.startswith("claims/"))
+    path = fixture_claim_paths(tree)[0]
     capture = parse_claim(tree[path], path=path).backing.capture_digests[0]
     contract = _predict(instance, owner, capture)
     observation = _accept_payload(

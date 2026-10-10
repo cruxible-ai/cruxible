@@ -22,6 +22,7 @@ from cruxible_core.service.authoring.documents import (
     ProposalInspection,
 )
 from cruxible_core.service.proposals.proposal_names import canonical_playbill_proposal_name
+from tests.core_support._subject_kind_support import declare_created_kinds
 
 
 def submit_member_candidate(
@@ -48,7 +49,7 @@ def submit_member_candidate(
         )
     )
     candidate_tree = instance.tree_at(proposed_base.git_oid)
-    candidate_tree.update(members)
+    candidate_tree.update(declare_created_kinds(candidate_tree, dict(members), instance=instance))
     ref_name = canonical_playbill_proposal_name(proposal_name, family=proposal_family)
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id, capabilities=capabilities),
@@ -88,7 +89,7 @@ def _submit_candidate(
         )
     )
     candidate_tree = instance.tree_at(proposed_base.git_oid)
-    candidate_tree[path] = content
+    candidate_tree.update(declare_created_kinds(candidate_tree, {path: content}, instance=instance))
     ref_name = canonical_playbill_proposal_name(proposal_name, family=proposal_family)
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id, capabilities=capabilities),

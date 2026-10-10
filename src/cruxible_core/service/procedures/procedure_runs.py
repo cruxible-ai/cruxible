@@ -2088,8 +2088,9 @@ def _fold_terminal_egress(
                     "path": (
                         handles[child.item_key].get("path") if child.item_key in handles else None
                     ),
+                    # A restated Claim, or a Subject item whose key named a live Subject.
                     "unchanged": child.item_key in handles
-                    and handles[child.item_key].get("disposition") == "unchanged",
+                    and handles[child.item_key].get("disposition") in {"unchanged", "reused"},
                 }
             )
             for child in children

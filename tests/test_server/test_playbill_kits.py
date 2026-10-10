@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from cruxible_client import Cruxible
 from cruxible_client.authoring.examples import acquisition_policy_example, procedure_example
+from cruxible_client.authoring.sdk import ChangeSetDraft
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicy,
     acquisition_policy_digest,
@@ -72,7 +73,6 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjection,
     QueryProjectionField,
 )
-from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.kits import read_kit_directory, write_kit_directory
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.claims.artifact_references import REFERENCE_FIELDS
@@ -86,6 +86,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._subject_kind_support import declare_by_slug
 from tests.core_support._support import build_inputs, restamp_state_root
 from tests.core_support._world_templates import TEMPLATES, copy_template
 
@@ -429,6 +430,31 @@ def test_a_later_release_installs_fresh_on_its_own(worlds: tuple[_World, _World]
     assert consumer.tree()[_path(SEATS)] == later.contents()[_path(SEATS)]
 
 
+def _create_by_slug(world: _World, draft: ChangeSetDraft, kind: str, slug: str) -> typing.Any:
+    """Declare ``kind`` keyed by its slug and create ``kind/<slug>`` in ``draft``.
+
+    Returns the creation's pending reference, which core resolves to the path it
+    assigns (``kind/<slug>``).
+    """
+
+    declare_by_slug(draft, kind)
+    created = draft.subject(world.pb.new_subject(kind, key=slug))
+    assert created is not None and created.creation is not None
+    return created
+
+
+def _claim_paths(world: _World, predicate: str) -> list[str]:
+    """The world's Claim paths about ``predicate`` (each Subject's key Claim aside)."""
+
+    tree = world.tree()
+    return [
+        path
+        for path in tree
+        if path.startswith("claims/")
+        and parse_claim(tree[path], path=path).statement.predicate == predicate
+    ]
+
+
 def test_changing_a_claim_type_carries_its_live_claims_as_a_succession_would(
     worlds: tuple[_World, _World],
 ) -> None:
@@ -436,16 +462,9 @@ def test_changing_a_claim_type_carries_its_live_claims_as_a_succession_would(
     publisher.author(_claim_type(SEATS, {"type": "integer"}))
     consumer.add(publisher.build("1.0.0"))
     draft = consumer.pb.changes(rationale="Record Acme's seats.")
-    draft.subject(
-        SubjectShell(
-            identity=ArtifactIdentity(kind="Subject", name="acme.account/acme"),
-            subject_kind="acme.account",
-            subject_id="acme",
-            lifecycle=ArtifactLifecycle(),
-        )
-    )
+    created = _create_by_slug(consumer, draft, "acme.account", "acme")
     draft.claim(
-        subject="acme.account/acme",
+        subject=created,
         predicate=SEATS,
         value=50,
         role="observation",
@@ -466,7 +485,7 @@ def test_changing_a_claim_type_carries_its_live_claims_as_a_succession_would(
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     consumer.approve(submitted._candidate_status.proposal_id)
-    claim_paths = [path for path in consumer.tree() if path.startswith("claims/")]
+    claim_paths = _claim_paths(consumer, SEATS)
     assert len(claim_paths) == 1
 
     publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
@@ -501,16 +520,9 @@ def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
     publisher.author(ClaimType.model_validate(replacing.model_dump(mode="python")))
     consumer.add(publisher.build("1.0.0"))
     draft = consumer.pb.changes(rationale="Record Acme's seats.")
-    draft.subject(
-        SubjectShell(
-            identity=ArtifactIdentity(kind="Subject", name="acme.account/acme"),
-            subject_kind="acme.account",
-            subject_id="acme",
-            lifecycle=ArtifactLifecycle(),
-        )
-    )
+    created = _create_by_slug(consumer, draft, "acme.account", "acme")
     draft.claim(
-        subject="acme.account/acme",
+        subject=created,
         predicate=SEATS,
         value=50,
         role="observation",
@@ -531,7 +543,7 @@ def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     consumer.approve(submitted._candidate_status.proposal_id)
-    (claim_path,) = [path for path in consumer.tree() if path.startswith("claims/")]
+    (claim_path,) = _claim_paths(consumer, SEATS)
     before = parse_claim(consumer.tree()[claim_path], path=claim_path)
 
     publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
@@ -1447,16 +1459,9 @@ def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_clai
     )
     consumer.author(local)
     draft = consumer.pb.changes(rationale="Record where one order came from.")
-    draft.subject(
-        SubjectShell(
-            identity=ArtifactIdentity(kind="Subject", name="local.order/one"),
-            subject_kind="local.order",
-            subject_id="one",
-            lifecycle=ArtifactLifecycle(),
-        )
-    )
+    created = _create_by_slug(consumer, draft, "local.order", "one")
     draft.claim(
-        subject="local.order/one",
+        subject=created,
         predicate="local.order.source",
         value=held_digest,
         role="observation",
@@ -1477,7 +1482,7 @@ def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_clai
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     consumer.approve(submitted._candidate_status.proposal_id)
-    claim_path = next(path for path in consumer.tree() if path.startswith("claims/"))
+    (claim_path,) = _claim_paths(consumer, "local.order.source")
     claim_id = parse_claim(consumer.tree()[claim_path], path=claim_path).identity
 
     _author_contract(
@@ -1728,3 +1733,60 @@ def test_an_upgrade_carries_a_consumer_procedure_pinning_a_kit_policy(
     assert parse_acquisition_policy(tree[POLICY_PATH], path=POLICY_PATH).lifecycle.state == (
         "retired"
     )
+
+
+def test_a_kit_carries_its_subject_kinds_and_their_keys(
+    worlds: tuple[_World, _World],
+) -> None:
+    """Kits carry SubjectKinds like other definitions (review: kit gap).
+
+    A kit's kind arrives declared with its key ClaimType, so a consumer creates
+    its Subjects by key at once; a kit upgrade succeeds the declaration, and the
+    kit's status reads it like any other owned artifact.
+    """
+
+    from cruxible_client.contracts.subject_kinds import parse_subject_kind, subject_kind_path
+    from tests.core_support._subject_kind_support import bare_slug_claim_type
+
+    publisher, consumer = worlds
+    draft = publisher.pb.changes(rationale="Name accounts by their slug.")
+    draft.claim_type(bare_slug_claim_type("acme.account"))
+    draft.subject_kind(name="acme.account", keys=("acme.account.slug",), uniqueness="unique")
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit()
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    publisher.approve(submitted._candidate_status.proposal_id)
+    publisher.pb.refresh()
+    bundle = publisher.build("1.0.0")
+    assert subject_kind_path("acme.account") in {item.path for item in bundle.manifest.artifacts}
+
+    consumer.add(bundle)
+    path = subject_kind_path("acme.account")
+    declared = parse_subject_kind(consumer.tree()[path], path=path)
+    assert declared.keys == ("acme.account.slug",) and declared.unique
+    creating = consumer.pb.changes(rationale="Acme is an account.")
+    creating.subject(consumer.pb.new_subject("acme.account", key="Acme Corp"))
+    created = creating.prepare()
+    assert not created.refused, created.diagnostics
+    landed = created.submit()
+    assert landed._candidate_status is not None and landed._candidate_status.proposal_id
+    consumer.approve(landed._candidate_status.proposal_id)
+    assert "subjects/acme.account/acme-corp.json" in consumer.tree()
+
+    # The publisher makes the kind a hint; the upgrade carries the successor.
+    succeed = publisher.pb.changes(rationale="Two accounts may share a slug.")
+    succeed.subject_kind(name="acme.account", keys=("acme.account.slug",), uniqueness="hint")
+    succeeded = succeed.prepare()
+    assert not succeeded.refused, succeeded.diagnostics
+    sent = succeeded.submit()
+    assert sent._candidate_status is not None and sent._candidate_status.proposal_id
+    publisher.approve(sent._candidate_status.proposal_id)
+    publisher.pb.refresh()
+    upgraded = consumer.add(publisher.build("1.1.0"))
+    assert upgraded.status in {"accepted", "proposed"}, upgraded
+    declared = parse_subject_kind(consumer.tree()[path], path=path)
+    assert not declared.unique
+    (status,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
+    assert status.drifted == ()

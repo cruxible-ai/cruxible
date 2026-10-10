@@ -21,6 +21,7 @@ from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV2,
     TerminalEgressChildReceiptV3,
+    TerminalEgressChildReceiptV4,
     TerminalEgressError,
     TerminalEgressReceiptV2,
     TerminalEgressReceiptV3,
@@ -46,6 +47,10 @@ if TYPE_CHECKING:
 
 class EffectfulTerminalError(FormatError):
     """An effectful terminal cannot traverse the governed service door."""
+
+
+#: A terminal item that lowered into no changed member.
+UnchangedChildReceipt = TerminalEgressChildReceiptV3 | TerminalEgressChildReceiptV4
 
 
 class ProposalDeliveryRefused(EffectfulTerminalError, TerminalEgressError):
@@ -146,7 +151,7 @@ class ProposalTerminalAdapter:
         base_tree: Mapping[str, bytes] | None = None,
         changed_paths: tuple[str, ...] | None = None,
         delegation: ProcedureDelegation | None = None,
-        unchanged: Mapping[str, TerminalEgressChildReceiptV3] | None = None,
+        unchanged: Mapping[str, UnchangedChildReceipt] | None = None,
     ) -> TerminalEgressReceiptV2:
         result = self.submit(
             request=request,
@@ -271,7 +276,7 @@ def proposal_terminal_receipt(
     *,
     result: ProposalResult,
     item_paths: Mapping[str, str] | None,
-    unchanged: Mapping[str, TerminalEgressChildReceiptV3] | None = None,
+    unchanged: Mapping[str, UnchangedChildReceipt] | None = None,
 ) -> TerminalEgressReceiptV2:
     """Bind every terminal item to the exact candidate member it lowered into.
 
@@ -303,7 +308,7 @@ def settle_terminal_receipt(
     accepted_git_oid: str | None,
     fallback_reason: str | None = None,
     outside_scope_claim_types: tuple[str, ...] = (),
-    unchanged: Mapping[str, TerminalEgressChildReceiptV3] | None = None,
+    unchanged: Mapping[str, UnchangedChildReceipt] | None = None,
 ) -> TerminalEgressReceiptV4:
     """A settle outcome: the accepted generation, or the ordinary proposal it fell back to."""
 
@@ -336,9 +341,9 @@ def _receipt_children(
     *,
     result: ProposalResult,
     item_paths: Mapping[str, str] | None,
-    unchanged: Mapping[str, TerminalEgressChildReceiptV3] | None = None,
+    unchanged: Mapping[str, UnchangedChildReceipt] | None = None,
 ) -> tuple[
-    tuple[TerminalEgressChildReceiptV2 | TerminalEgressChildReceiptV3, ...],
+    tuple[TerminalEgressChildReceiptV2 | UnchangedChildReceipt, ...],
     CandidateRecordAnyVersion,
 ]:
 
@@ -357,7 +362,7 @@ def _receipt_children(
             },
         )
     by_path = {member.path: member for member in candidate.members}
-    children: list[TerminalEgressChildReceiptV2 | TerminalEgressChildReceiptV3] = []
+    children: list[TerminalEgressChildReceiptV2 | UnchangedChildReceipt] = []
     for item in request.items:
         kept = None if unchanged is None else unchanged.get(item.item_key)
         if kept is not None:

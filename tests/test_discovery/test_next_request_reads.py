@@ -66,6 +66,8 @@ def test_next_shares_population_and_facts_without_changing_complete_result(
 ) -> None:
     instance, _owner = _instance_with_query(tmp_path)
     request = _rich_request(instance)
+    # One fact row per live Claim: the world's two, and its Subjects' key Claims.
+    claims = len(playbill_next.service_list_playbill_claims(instance).claims)
     counts: Counter[str] = Counter()
     original_list = playbill_next.service_list_playbill_claims
     original_row = playbill_query._fact_row
@@ -84,7 +86,7 @@ def test_next_shares_population_and_facts_without_changing_complete_result(
     monkeypatch.setattr(playbill_next, "service_list_playbill_claims", listed)
     monkeypatch.setattr(playbill_query, "_fact_row", row)
     optimized = playbill_next.service_playbill_next(instance, request=request)
-    assert counts == {"population": 1, "fact_row": 2}
+    assert counts == {"population": 1, "fact_row": claims}
     # A block's findings share one row; the reasons are all still reported.
     assert {
         reason
@@ -96,7 +98,9 @@ def test_next_shares_population_and_facts_without_changing_complete_result(
     _uncached_folds(monkeypatch)
     uncached = playbill_next.service_playbill_next(instance, request=request)
     assert counts["population"] == 3
-    assert counts["fact_row"] == 6
+    # Two whole-population folds, and one scoped to the query's predicate (the two
+    # stated Claims).
+    assert counts["fact_row"] == 2 * claims + 2
     assert canonical_bytes(optimized.model_dump(mode="json")) == canonical_bytes(
         uncached.model_dump(mode="json")
     )

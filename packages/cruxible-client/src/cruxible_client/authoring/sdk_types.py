@@ -42,6 +42,7 @@ class RefKind(str, Enum):
     PROCEDURE_RUNTIME_POLICY = "procedure_runtime_policy"
     SOURCE_ACQUISITION_POLICY = "source_acquisition_policy"
     PROVIDER_INTERFACE = "provider_interface"
+    SUBJECT_KIND = "subject_kind"
 
 
 @runtime_checkable
@@ -98,14 +99,21 @@ class ClaimTypeRef(_ShortRefRepr):
 
 @dataclass(frozen=True, repr=False)
 class PendingSubjectRef(SubjectRef):
-    """A Subject the same changeset defines, referenced before acceptance.
+    """A Subject the same changeset creates or succeeds, referenced before acceptance.
 
     A `SubjectRef` asserts "this address existed at this coordinate", and
-    preflight verifies exactly that. A Subject its own set is defining did not
-    exist there, so this ref deliberately mints no reference expectation: the
-    set lowers the definition before the Claims that read it, and the daemon
-    resolves the address inside the generation instead of against the base.
+    preflight verifies exactly that. A pending ref mints no such expectation.
+
+    A creation's ref names its creation member (``creation``, the member
+    identity), never a predicted id: core resolves it, when the set is lowered,
+    to the Subject that member lands on -- the one it creates, or the existing
+    one its key names -- whether the ref is a Claim's subject or a
+    Subject-valued value. Its ``address`` is that member identity. A ref to an
+    existing Subject the set succeeds (to retire it, say) has no ``creation``
+    and that Subject's ``kind/id`` address.
     """
+
+    creation: str | None = None
 
 
 @dataclass(frozen=True, repr=False)

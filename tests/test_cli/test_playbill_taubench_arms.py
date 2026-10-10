@@ -93,7 +93,7 @@ def test_the_seed_plan_is_readable_with_no_instance_daemon_or_context(
 def test_the_seed_bundle_uses_only_surviving_governed_writers(
     arm_run: dict[str, object],
 ) -> None:
-    """Dependencies, Claims, query, and Procedure settle through nine writes."""
+    """Dependencies, Claims, query, and Procedure settle through ten writes."""
 
     manifest = arm_run["manifest"]
     assert isinstance(manifest, dict)
@@ -101,6 +101,8 @@ def test_the_seed_bundle_uses_only_surviving_governed_writers(
 
     assert [item["group_id"] for item in groups] == [
         "claim_type:project.work_item.status",
+        # Work items are declared slug-keyed before any is created (identity D6).
+        "subject_kind:project.work_item",
         "subject:project.work_item/wi-101",
         "subject:project.work_item/wi-102",
         "subject:project.work_item/wi-103",
@@ -112,6 +114,7 @@ def test_the_seed_bundle_uses_only_surviving_governed_writers(
     ]
     assert [item["operation"] for item in groups] == [
         "playbill_propose_claim_type",
+        "playbill_authoring_submit",
         "playbill_authoring_submit",
         "playbill_authoring_submit",
         "playbill_authoring_submit",

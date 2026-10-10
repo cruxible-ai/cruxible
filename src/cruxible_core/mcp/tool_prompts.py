@@ -305,8 +305,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_curation_duplicates": (
         "Use to find what may name one thing twice in one kind: Subjects whose ids or aliases, "
         "and values of one predicate, that meet under a broad comparison (casefold, no "
-        "punctuation, the alias graph) but differ under the declared rules. Resolve a Subject "
-        "group with semantic.alias plus retire, or semantic.distinct_from; a value group with "
+        "punctuation, the alias graph) but differ under the declared rules, and Subjects of a "
+        "hint kind holding one key. Resolve a Subject or key group with semantic.alias plus "
+        "retire, or semantic.distinct_from; a value group with "
         "a canonical_form succession. A pure, bounded read; pass next_cursor while truncated."
     ),
     "cruxible_curation_observe": (

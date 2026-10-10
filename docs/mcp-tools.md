@@ -243,7 +243,7 @@ The principal registry is `orient(section="principals")`; one record is
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_claim_type_propose` | Propose a governed predicate interface, or adopt a builtin (`builtin: semantic.alias`) | `GOVERNED_WRITE` |
+| `cruxible_claim_type_propose` | Propose a governed predicate interface, or adopt a builtin (`builtin: semantic.alias` or `semantic.distinct_from`) | `GOVERNED_WRITE` |
 | `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_claim_type_upgrade` | Propose moving older ClaimTypes to v7 (identity evidence rules included), stating their revision evidence | `GOVERNED_WRITE` |
 | `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
@@ -283,11 +283,17 @@ prints a template for any input kind.
 
 Every payload is one tagless input, and the
 `change_set` kind carries any mix of members -- `claim`, `claim_type`,
-`claim_type_succession`, `claim_retirement`, `subject`, `query_definition`,
-`procedure`, `blueprint`, `blueprint_instance`, `procedure_mandate`,
-`acquisition_policy`, `line`, `trigger` -- as one intent that admits
-or refuses whole, typed to the
-offending member index. `approval_policy` and `procedure_runtime_policy` parse
+`claim_type_succession`, `claim_retirement`, `subject`, `subject_kind`,
+`subject_succession`, `query_definition`, `procedure`, `blueprint`,
+`blueprint_instance`, `procedure_mandate`, `acquisition_policy`, `line`,
+`trigger` -- as one intent that admits or refuses whole, typed to the
+offending member index. A `subject` member creates a Subject by its declared
+kind and key (`{"kind": "subject", "subject_kind": ..., "key": {...}}`), never by
+id: core assigns the id and the result reports it; a key a live Subject holds
+names it instead. Every new Subject's kind needs a `subject_kind` (keyed
+`unique`/`hint`, or `minted`); `cruxible_authoring_example` with
+`subject-kind` prints one, and the CLI reference's "Subject kinds and creation"
+gives the full rule. `approval_policy` and `procedure_runtime_policy` parse
 as members but a change set refuses them; send each as its own singleton input.
 There is no second batch tool.
 A `claim_type_succession` member succeeds an accepted ClaimType and dispositions

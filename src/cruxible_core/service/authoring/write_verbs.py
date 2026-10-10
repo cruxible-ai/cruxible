@@ -31,6 +31,7 @@ import base64
 import json
 import shlex
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -55,10 +56,10 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSource,
     PreflightResult,
     SelfSourceBody,
-    SubjectAuthoringPayload,
+    SubjectCreationAuthoringPayload,
     authoring_member_identity,
 )
-from cruxible_client.contracts.builtin_claim_types import applies_to_kind
+from cruxible_client.contracts.builtin_claim_types import admits_object_subject
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
@@ -108,6 +109,13 @@ from cruxible_client.contracts.read_values import (
     whole_value_read,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subject_kinds import (
+    SubjectIdUnassignable,
+    SubjectKeyPart,
+    SubjectKind,
+    parse_subject_kind,
+    subject_kind_path,
+)
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.write import (
@@ -140,8 +148,23 @@ from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retire
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
     SubjectRefResolution,
-    creation_collisions,
-    resolve_subject_ref,
+)
+from cruxible_core.indexes.subject_identity import (
+    SUBJECT_COMPILER_UPGRADE_REQUIRED,
+    SUBJECT_KIND_UNDECLARED,
+    IdentityOverlay,
+    IdentityView,
+    KeyReader,
+    KeyTuple,
+    admits_subject_kinds,
+    assign_creation_id,
+    compiler_upgrade_repair,
+    key_ambiguous_message,
+    key_encoding,
+    subject_creation_shape,
+    subject_kind_of,
+    tree_key_reader,
+    undeclared_kind_repair,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -441,7 +464,10 @@ class _Planned:
 @dataclass
 class _Plan:
     changes: list[_Planned] = field(default_factory=list)
+    #: The Subjects this write creates, at the paths core assigned them.
     subjects: dict[str, SubjectShell] = field(default_factory=dict)
+    #: How each is created: its kind and key.
+    creations: dict[str, SubjectCreationAuthoringPayload] = field(default_factory=dict)
     retire_notes: list[str] = field(default_factory=list)
     # What planning chose for the writer and says so: see WriteWarning.
     notes: list[WriteWarning] = field(default_factory=list)
@@ -469,6 +495,9 @@ class _Planner:
         self.captures = instance.capture_verification_context()
         self._read_sequence: int | None = None
         self._refs: dict[tuple[str, str], SubjectRefResolution] = {}
+        self._kinds: dict[str, SubjectKind | None] = {}
+        self._planned_keys: dict[tuple[str, str], str] = {}
+        self._key_reader: KeyReader | None = None
 
     # -- accepted state ----------------------------------------------------------
 
@@ -700,19 +729,67 @@ class _Planner:
 
     # -- vocabulary --------------------------------------------------------------
 
+    @contextmanager
+    def identity_view(self) -> Iterator[IdentityView]:
+        """The shared resolver at the head, overlaid with what this write has planned.
+
+        Subjects the write creates hold their keys, and key or alias Claims it
+        retires hold nothing (identity D4, review F-007).
+        """
+
+        if self._key_reader is None:
+            self._key_reader = tree_key_reader(self.instance.immutable_tree_at(self.head.git_oid))
+        overlay = IdentityOverlay(
+            subjects={path: True for path in self.plan.subjects},
+            keys={
+                path: tuple((part.predicate, part.value) for part in creation.key)
+                for path, creation in self.plan.creations.items()
+            },
+        )
+        retiring = self._retiring()
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            connection = projection.typed.connection
+            for claim_id in sorted(retiring):
+                row = connection.execute(
+                    "SELECT subject_path, predicate FROM claims WHERE identity=?",
+                    (f"Claim:{claim_id}",),
+                ).fetchone()
+                if row is None:
+                    continue
+                subject, predicate = str(row[0]), str(row[1])
+                for term in connection.execute(
+                    "SELECT term FROM vocabulary_terms WHERE source_identity=? AND basis='alias'",
+                    (f"Claim:{claim_id}",),
+                ):
+                    overlay.aliases_removed.add((subject, str(term[0])))
+                declared = self.declared_kind(subject_kind_of(subject)[0])
+                if declared is not None and predicate in declared.keys:
+                    overlay.keys[subject] = None
+            yield IdentityView(connection, overlay, key_reader=self._key_reader)
+
     def resolve_ref(
         self, kind: str, subject_id: str, *, index: int, path: str
     ) -> SubjectRefResolution:
-        """One Subject reference at the head: the exact Subject, else one alias.
+        """One Subject reference at the head, as this write leaves it (the shared resolver).
 
-        An alias naming several Subjects of the kind refuses with each of them.
+        The exact live Subject, else one alias, else one holder of the kind's
+        single key, else the exact retired Subject. Several alias or key holders
+        refuse with each of them.
         """
 
-        key = (kind, subject_id)
-        if key not in self._refs:
-            with self.instance.bind_accepted_projection(self.head) as projection:
-                self._refs[key] = resolve_subject_ref(projection.typed.connection, kind, subject_id)
-        resolution = self._refs[key]
+        with self.identity_view() as view:
+            resolution = view.resolve(kind, subject_id)
+        if resolution.ambiguous and resolution.via == "key":
+            raise _refuse(
+                "cruxible.subject.key_ambiguous",
+                key_ambiguous_message(
+                    kind, [f"subjects/{item}.json" for item in resolution.candidates]
+                ),
+                change=index,
+                candidates=resolution.candidates,
+                repair="Name one of the listed Subjects as kind/id",
+                field_path=path,
+            )
         if resolution.ambiguous:
             raise _refuse(
                 "cruxible.write.alias_ambiguous",
@@ -725,54 +802,125 @@ class _Planner:
             )
         return resolution
 
-    def _asserted_distinct(self, created: str) -> frozenset[str]:
-        """Subject paths this write asserts ``semantic.distinct_from`` the created one."""
+    def declared_kind(self, kind: str) -> SubjectKind | None:
+        """The live SubjectKind declaring ``kind`` at the head, if one is accepted."""
 
-        found: set[str] = set()
-        for change in self.request.changes:
-            if not isinstance(change, SetChange | AddChange):
-                continue
-            if change.field != "semantic.distinct_from" or not isinstance(change.value, str):
-                continue
-            pair: set[str] = set()
-            for ref in (change.subject, str(subject_reference(change.value))):
-                kind, _, subject_id = (ref or "").partition("/")
-                if kind and subject_id:
-                    pair.add(f"subjects/{kind}/{subject_id}.json")
-            if created in pair:
-                found.update(pair - {created})
-        return frozenset(found)
+        if kind not in self._kinds:
+            content = self.instance.blob_at(self.head.git_oid, subject_kind_path(kind))
+            declared = (
+                None
+                if content is None
+                else parse_subject_kind(content, path=subject_kind_path(kind))
+            )
+            self._kinds[kind] = (
+                declared if declared is not None and declared.lifecycle.state == "live" else None
+            )
+        return self._kinds[kind]
 
-    def check_creation(self, kind: str, subject_id: str, *, index: int, path: str) -> None:
-        """Refuse adding a Subject that collides with an accepted Subject of its kind.
+    def _single_key(self, kind: str) -> SubjectKind | None:
+        declared = self.declared_kind(kind)
+        if declared is None or len(declared.keys) != 1:
+            return None
+        return declared
 
-        The new id's canonical token equals an accepted Subject's id, canonical
-        token or alias: the same thing would have two Subjects. A
-        ``semantic.distinct_from`` between the two in the same write exempts it.
+    def _key_value(
+        self, kind: str, declared: SubjectKind, text: str, *, index: int | None, path: str
+    ) -> tuple[str, str]:
+        predicate = declared.keys[0]
+        info = self.vocabulary.predicates.get(predicate)
+        form = () if info is None else effective_canonical_form(info.claim_type)
+        try:
+            value = canonicalize_literal(text, form)
+        except CanonicalFormDidNotConverge as exc:
+            raise _refuse(
+                "cruxible.subject.key_invalid",
+                f"{kind}/{text}: {exc}",
+                change=index,
+                field_path=path,
+            ) from exc
+        assert isinstance(value, str)
+        return predicate, value
+
+    def create_by_key(self, kind: str, subject_id: str, *, index: int, path: str) -> str:
+        """Create the Subject ``kind/<text>`` names by key, and return the path core assigns.
+
+        A reference to a Subject that does not exist, by id, alias or key, of a
+        kind with a single key is read as "create by key value <text>": the key
+        value is the text in its key ClaimType's canonical form, the id its
+        rendering, and the key part a Claim backed by the write's ``because``. A
+        write never makes a further holder of a ``hint`` kind's key; any other
+        unresolved reference refuses with the creation shape in its repair.
         """
 
-        created = f"subjects/{kind}/{subject_id}.json"
-        with self.instance.bind_accepted_projection(self.head) as projection:
-            collisions = creation_collisions(
-                projection.typed.connection,
-                kind,
-                subject_id,
-                exempt=self._asserted_distinct(created),
-            )
-        if collisions:
+        if not admits_subject_kinds(self.head.compiler):
             raise _refuse(
-                "cruxible.write.subject_collision",
-                f"adding {kind}/{subject_id} would collide with {', '.join(collisions)}: "
-                "its id, canonical token or alias is the same name",
+                SUBJECT_COMPILER_UPGRADE_REQUIRED,
+                f"this instance's compiler predates SubjectKinds, so no new {kind} Subject can "
+                "be created; existing ones stay readable, claimable and retirable",
                 change=index,
-                candidates=collisions,
+                repair=compiler_upgrade_repair(kind),
+                field_path=path,
+            )
+        declared = self.declared_kind(kind)
+        if declared is None:
+            raise _refuse(
+                SUBJECT_KIND_UNDECLARED,
+                f"no accepted SubjectKind declares {kind}, so no new {kind} Subject can be "
+                "created; existing ones stay readable, claimable and retirable",
+                change=index,
+                repair=undeclared_kind_repair(kind),
+                field_path=path,
+            )
+        if self._single_key(kind) is None:
+            shape = subject_creation_shape(kind, subject_id)
+            how = (
+                "is minted: core names its Subjects"
+                if declared.minted
+                else f"is named by its key ({', '.join(declared.keys)}, "
+                f"{getattr(declared.identity_rule, 'uniqueness', '')})"
+            )
+            raise _refuse(
+                "cruxible.write.subject_not_found",
+                f"{kind}/{subject_id} names no Subject, and {kind} {how}, so a write does not "
+                "create one from a reference",
+                change=index,
                 repair=(
-                    f"Name {collisions[0]} instead; or add a semantic.alias to it; or add "
-                    f"semantic.distinct_from {collisions[0]} to {kind}/{subject_id} in the "
-                    "same write"
+                    "Create it with cruxible authoring compile (a subject input naming its "
+                    f"kind and key: {shape}; omit key for a minted kind), then write about the "
+                    "id the result reports"
                 ),
                 field_path=path,
             )
+        predicate, value = self._key_value(kind, declared, subject_id, index=index, path=path)
+        key: KeyTuple = ((predicate, value),)
+        planned = self._planned_keys.get((kind, key_encoding(key)))
+        if planned is not None:
+            return planned
+        names = {
+            planned_path.removeprefix(f"subjects/{kind}/").removesuffix(".json")
+            for planned_path in self.plan.subjects
+            if planned_path.startswith(f"subjects/{kind}/")
+        }
+        try:
+            with self.identity_view() as view:
+                assigned = assign_creation_id(view, kind, key, names=names)
+        except SubjectIdUnassignable as exc:
+            raise _refuse(
+                "cruxible.subject.key_invalid", str(exc), change=index, field_path=path
+            ) from exc
+        created = subject_path(kind, assigned)
+        self.plan.subjects[created] = SubjectShell(
+            identity=ArtifactIdentity(kind="Subject", name=f"{kind}/{assigned}"),
+            subject_kind=kind,
+            subject_id=assigned,
+        )
+        self.plan.creations[created] = SubjectCreationAuthoringPayload(
+            subject_kind=kind,
+            key=(SubjectKeyPart(predicate=predicate, value=value),),
+            rationale=self.request.because,
+        )
+        self._planned_keys[(kind, key_encoding(key))] = created
+        return created
 
     def resolve_subject(self, subject: str, *, index: int, path: str) -> tuple[str, str, str]:
         kind, _, subject_id = subject.partition("/")
@@ -786,9 +934,8 @@ class _Planner:
                 field_path=path,
             )
         resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
-        if resolved.path is not None and resolved.via == "alias":
-            assert resolved.ref is not None
-            return kind, resolved.ref.partition("/")[2], resolved.path
+        if resolved.path is not None:
+            return kind, subject_kind_of(resolved.path)[1], resolved.path
         return kind, subject_id, subject_path(kind, subject_id)
 
     def resolve_field(self, kind: str, name: str, *, index: int, path: str) -> PredicateInfo:
@@ -957,7 +1104,7 @@ class _Planner:
                 repair=f"Pass a Subject of kind {' or '.join(allowed)} as kind/id",
                 field_path=path,
             )
-        if kind not in allowed:
+        if not admits_object_subject(info.claim_type.predicate, allowed, kind):
             raise _refuse(
                 "cruxible.write.value_kind_not_admitted",
                 f"{field_name} takes a Subject of kind {', '.join(allowed)}, not {kind!r}",
@@ -1353,7 +1500,23 @@ class _Planner:
         kind, subject_id, path = self.resolve_subject(
             subject, index=index, path=f"{prefix}.subject"
         )
+        if not self.subject_exists(path) and path not in self.plan.subjects:
+            path = self.create_by_key(kind, subject_id, index=index, path=f"{prefix}.subject")
+            subject_id = self.plan.subjects[path].subject_id
+        # The outcome names the Subject written, however the change named it (an
+        # id, an alias or a key): core reports the id.
+        subject = path.removeprefix("subjects/").removesuffix(".json")
         info = self.resolve_field(kind, change.field, index=index, path=f"{prefix}.field")
+        creation = self.plan.creations.get(path)
+        if creation is not None and info.predicate in {part.predicate for part in creation.key}:
+            raise _refuse(
+                "cruxible.write.key_set_by_creation",
+                f"{info.predicate} is the key {kind}/{subject_id} is created by; this write "
+                "already states it",
+                change=index,
+                repair="Leave this change out: creating the Subject writes its key",
+                field_path=f"{prefix}.field",
+            )
         claim_type = info.claim_type
         name = self.field_name(info, kind)
         label = f"{subject} {name}"
@@ -1405,21 +1568,6 @@ class _Planner:
         source, citation_role = self.source(
             info, change, role=role, index=index, field_name=name, exact=exact, capture=capture
         )
-        if not self.subject_exists(path) and path not in self.plan.subjects:
-            self.check_creation(kind, subject_id, index=index, path=f"{prefix}.subject")
-            if not applies_to_kind(
-                claim_type.allowed_subject_kinds, kind
-            ):  # pragma: no cover - resolve_field
-                raise _refuse(
-                    "cruxible.write.unknown_kind",
-                    f"{name} does not apply to Subjects of kind {kind!r}",
-                    change=index,
-                )
-            self.plan.subjects[path] = SubjectShell(
-                identity=ArtifactIdentity(kind="Subject", name=f"{kind}/{subject_id}"),
-                subject_kind=kind,
-                subject_id=subject_id,
-            )
         live = self.slot_claims(path, info.predicate) if self.subject_exists(path) else ()
         revises: str | None = None
         before: object = None
@@ -1828,7 +1976,7 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
     """
 
     drafts: list[tuple[int | None, AuthoringChangeSetMember]] = [
-        (None, SubjectAuthoringPayload(subject=shell)) for shell in plan.subjects.values()
+        (None, creation) for creation in plan.creations.values()
     ]
     for item in plan.changes:
         if item.member is not None:

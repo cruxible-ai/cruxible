@@ -71,7 +71,7 @@ from cruxible_client.contracts.records import RecordConstructor
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.compact_query import CompactQuery
-    from cruxible_client.authoring.sdk import ClaimView, Cruxible, SubjectDraft
+    from cruxible_client.authoring.sdk import ClaimView, Cruxible, SubjectCreationDraft
     from cruxible_client.contracts.compact_query import QueryClaimValue
     from cruxible_client.contracts.write import (
         Change,
@@ -635,21 +635,19 @@ class KindNamespace:
 
         return tuple(self._subjects())
 
-    def define(self, subject_id: str) -> SubjectDraft:
-        """Draft one new Subject of this kind for a changeset to define.
+    def define(self, key: str | int | bool | None = None) -> SubjectCreationDraft:
+        """Draft creating one Subject of this kind by its key; core assigns its id.
 
-        Next: ``draft.submit()``; a write that names a new Subject of this kind adds it too.
+        ``key`` is the value of the kind's one key (its SubjectKind names it); omit
+        it for a minted kind. The id is the readable rendering of the canonical key.
+
+        Next: ``draft.submit()``, or ``cx.changes(...).subject(draft)``; a write that
+        names a missing Subject of a single-key unique kind creates it by that key too.
         """
 
         kind = self._require_kind()
         self._world._assert_current()
-        from cruxible_client.contracts.artifacts import ArtifactLifecycle
-
-        return self._world._playbill.subject(
-            subject=f"{kind}/{subject_id}",
-            pins=(),
-            lifecycle=ArtifactLifecycle(),
-        )
+        return self._world._playbill.new_subject(kind, key=key)
 
     def where(self, /, **filters: object) -> CompactQuery:
         """Start a compact query over this kind, filtered all-of by keyword.

@@ -23,6 +23,7 @@ import shlex
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -39,6 +40,7 @@ from cruxible_client.contracts.orient import (
     ORIENT_DEFAULT_LIMIT,
     ORIENT_DEFAULT_QUERIES,
     ORIENT_SAMPLE_SUBJECTS,
+    UNDECLARED_KIND_IDENTITY,
     Head,
     OrientArtifactCounts,
     OrientAttention,
@@ -157,6 +159,8 @@ class _State:
     documents: tuple[OrientDocument, ...]
     queries: tuple[OrientQuery, ...]
     interfaces: tuple[OrientInterface, ...] = ()
+    #: Each declared kind's identity rule as orient shows it (``kind_identity``).
+    identities: dict[str, str] = dataclass_field(default_factory=dict)
 
 
 def _query_row(query: QueryDefinition) -> OrientQuery:
@@ -259,6 +263,15 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
                 "GROUP BY subject_kind"
             )
         }
+        identities = {
+            str(identity).removeprefix("SubjectKind:"): kind_identity(
+                str(rule), str(uniqueness) if uniqueness is not None else None, str(keys)
+            )
+            for identity, rule, uniqueness, keys in connection.execute(
+                "SELECT identity, rule, uniqueness, key_predicates FROM subject_kinds "
+                "WHERE lifecycle='live'"
+            )
+        }
         procedures = tuple(
             OrientProcedure(
                 name=item.identity.removeprefix("Procedure:"),
@@ -294,7 +307,17 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         interfaces=tuple(
             interface_row(item) for item in accepted_provider_interfaces(instance, coordinate)
         ),
+        identities=identities,
     )
+
+
+def kind_identity(rule: str, uniqueness: str | None, key_predicates: str) -> str:
+    """How orient states a kind's identity rule: ``keys: a, b (unique)`` or ``minted``."""
+
+    if rule == "minted":
+        return "minted"
+    keys = ", ".join(json.loads(key_predicates))
+    return f"keys: {keys} ({uniqueness})"
 
 
 # -- predicate descriptors ----------------------------------------------------
@@ -394,7 +417,7 @@ def _descriptor(
 
 
 def _kind_names(state: _State) -> tuple[str, ...]:
-    kinds = set(state.subjects_by_kind)
+    kinds = set(state.subjects_by_kind) | set(state.identities)
     for claim_type in state.claim_types:
         kinds.update(concrete_subject_kinds(claim_type.allowed_subject_kinds))
     return tuple(sorted(kinds, key=lambda item: item.encode("utf-8")))
@@ -419,6 +442,7 @@ def _kind_row(state: _State, kind: str) -> OrientKind:
     return OrientKind(
         kind=kind,
         subjects=state.subjects_by_kind.get(kind, 0),
+        identity=state.identities.get(kind, UNDECLARED_KIND_IDENTITY),
         evidence=evidence,
         predicates=hoisted,
     )
@@ -1340,6 +1364,7 @@ def _kind_detail(
     return OrientKindDetail(
         kind=kind,
         subjects=state.subjects_by_kind.get(kind, 0),
+        identity=state.identities.get(kind, UNDECLARED_KIND_IDENTITY),
         evidence=evidence,
         predicates=hoisted,
         incoming=tuple(item.predicate for item in _incoming(state, kind)),

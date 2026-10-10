@@ -27,6 +27,7 @@ from cruxible_client.authoring.inputs import (
     QueryDefinitionInput,
     SelfSourceInput,
     SubjectInput,
+    SubjectKindInput,
     SubjectObjectInput,
     TriggerInput,
     WorkingSelectionInput,
@@ -65,18 +66,66 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjectionField,
     QuerySubjectFieldRef,
 )
-from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.triggers import CronSchedule
 
 
 def subject_example() -> SubjectInput:
+    """Create one work item by its key; core assigns the id (here ``replace-me``).
+
+    The kind needs an accepted SubjectKind first: ``authoring example subject-kind``.
+    """
+
     return SubjectInput(
         kind="subject",
-        subject=SubjectShell(
-            identity=ArtifactIdentity(kind="Subject", name="project.work_item/replace-me"),
-            subject_kind="project.work_item",
-            subject_id="replace-me",
+        subject_kind="project.work_item",
+        key={"slug": "replace-me"},
+        rationale="Replace with why this work item exists.",
+    )
+
+
+def subject_kind_example() -> ChangeSetInput:
+    """A single-key unique kind whose key value is the readable slug.
+
+    The key ClaimType and the SubjectKind land in one change. After it, a write
+    that names a ``project.work_item/<slug>`` that does not exist yet creates it:
+    the slug is its key value and, rendered, its id.
+    """
+
+    slug = ClaimType(
+        artifact_format="playbill-claim-type-v8",
+        identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.slug"),
+        predicate="project.work_item.slug",
+        allowed_subject_kinds=("project.work_item",),
+        object_kind="literal",
+        literal_schema={"minLength": 1, "type": "string"},
+        cardinality="one",
+        permitted_roles=("normative",),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
+            cardinality="one",
+            eligible_verdicts=("supported",),
+            selector="only_contender",
         ),
+        description="The work item's readable name; its key.",
+        default_role="normative",
+        evidence_requirement="self",
+        revision_evidence="replace",
+        canonical_form=("nfkc", "trim", "collapse_whitespace", "casefold"),
+    )
+    return ChangeSetInput(
+        kind="change_set",
+        members=(
+            ClaimTypeInput(kind="claim_type", claim_type=slug),
+            SubjectKindInput(
+                kind="subject_kind",
+                name="project.work_item",
+                description="One unit of planned work, named by its slug.",
+                keys=("project.work_item.slug",),
+                uniqueness="unique",
+            ),
+        ),
+        rationale="Declare how work items are named before creating any.",
     )
 
 
@@ -97,14 +146,16 @@ def procedure_runtime_policy_example() -> ProcedureRuntimePolicyInput:
 def change_set_example() -> ChangeSetInput:
     """Return one changeset carrying a mix of members that admit or refuse together.
 
-    One authoring surface is one changeset: a Subject, the ClaimType that
-    admits the statement, two Claims that read both, and one retirement all
-    lower once and generate once.
+    One authoring surface is one changeset: how work items are named (a key
+    ClaimType and its SubjectKind), a Subject created by its key, the ClaimType
+    that admits the statement, two Claims that read both, and one retirement
+    all lower once and generate once.
     """
 
     return ChangeSetInput(
         kind="change_set",
         members=(
+            *subject_kind_example().members,
             subject_example(),
             ClaimTypeInput(
                 kind="claim_type",
@@ -789,6 +840,7 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "query-ontology": query_ontology_example,
     "query-procedures": query_procedures_example,
     "subject": subject_example,
+    "subject-kind": subject_kind_example,
     "approval-policy": approval_policy_example,
     "procedure-runtime-policy": procedure_runtime_policy_example,
     "procedure-mandate": procedure_mandate_example,
@@ -844,6 +896,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "query-ontology",
     "query-procedures",
     "subject",
+    "subject-kind",
     "approval-policy",
     "procedure-runtime-policy",
     "procedure-mandate",

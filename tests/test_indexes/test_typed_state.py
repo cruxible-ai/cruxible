@@ -84,7 +84,7 @@ def test_typed_reverse_and_full_address_indexes_are_present():
         )
     )
     searches = tuple(row[3] for row in branches if row[3].startswith("SEARCH "))
-    assert len(searches) == 17
+    assert len(searches) == 18
     assert all("(identity=?)" in detail for detail in searches)
     connection.close()
 
@@ -290,6 +290,8 @@ STORAGE_SCHEMA_DIGESTS = {
     11: "ced6a434e5834f00f7bbfe9430ba44df7fe63283cf967d12c143cb40ec045d33",
     12: "0c0cd9e2fc899c49246c794488751e4163ebf07027bbfc3ef3fb5250dd0ad2c2",
     13: "e494bcd4d686e8ecd837b336caeca727efda470fb0bb6a98fca96c3b187a9d9c",
+    14: "fc560f2059641b96bfcb85e00bfdf51329b24560111a1954318e9d57cdc59595",
+    15: "14e128128400d2428214aa33e39906da24b72f620e4cc9a9b012cbab82a2e036",
 }
 
 
@@ -305,3 +307,88 @@ def test_a_physical_schema_change_moves_the_storage_schema_version():
         f"the new schema here ({version}: {digest})."
     )
     assert len(set(STORAGE_SCHEMA_DIGESTS.values())) == len(STORAGE_SCHEMA_DIGESTS)
+
+
+#: The predicate-scoped Claim reads a served query makes (as the scaling probe saw them).
+_PREDICATE_READS = (
+    "SELECT path FROM claims WHERE 1 AND predicate IN (?) AND lifecycle='live' ORDER BY path",
+    "SELECT DISTINCT t.path FROM claims c JOIN claim_types t ON t.identity=c.claim_type_identity "
+    "WHERE 1 AND c.predicate IN (?) AND c.lifecycle='live'",
+    "SELECT path,envelope_digest,artifact_digest FROM attestations WHERE "
+    "(claim_identity,claim_artifact_digest) IN (SELECT identity,artifact_digest FROM claims "
+    "WHERE predicate IN (?)) ORDER BY attested_at_us,envelope_digest",
+)
+
+
+def _claim_row(number: int, predicate: str) -> tuple[object, ...]:
+    return (
+        f"Claim:CLM-{number:032d}",
+        f"claims/{number:02d}/CLM-{number:032d}.json",
+        "playbill-claim-v3",
+        f"sha256:{number:064d}",
+        1,
+        "live",
+        f"sha256:{number:064d}",
+        f"ClaimType:{predicate}",
+        f"sha256:{0:064d}",
+        f"subjects/other.kind/s-{number}.json",
+        "artifact-v1",
+        "",
+        predicate,
+        "normative",
+        "literal",
+        "string",
+        f"s-{number}",
+    )
+
+
+def _predicate_read_work(other_claims: int) -> list[int]:
+    """VM instructions per predicate-scoped read, beside ``other_claims`` other-kind key Claims."""
+
+    with sqlite3.connect(":memory:") as connection:
+        connection.executescript(schema_sql())
+        rows = [_claim_row(number, "other.kind.slug") for number in range(other_claims)]
+        rows += [_claim_row(other_claims + n, "project.work_item.status") for n in range(2)]
+        connection.executemany(
+            "INSERT INTO claims (identity,path,format_tag,artifact_digest,revision,lifecycle,"
+            "statement_digest,claim_type_identity,claim_type_digest,subject_path,"
+            "subject_selector_scheme,subject_selector_value,predicate,role,object_kind,"
+            "literal_type,literal_text) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rows,
+        )
+        # Projections are never ANALYZEd: the planner reads the schema alone.
+        work = []
+        for statement in _PREDICATE_READS:
+            steps = [0]
+
+            def tick(steps: list[int] = steps) -> int:
+                steps[0] += 1
+                return 0
+
+            connection.set_progress_handler(tick, 1)
+            connection.execute(statement, ("project.work_item.status",)).fetchall()
+            connection.set_progress_handler(None, 1)
+            work.append(steps[0])
+        return work
+
+
+def test_predicate_scoped_claim_reads_seek_and_do_not_grow_with_other_key_claims():
+    """Every keyed Subject holds a key Claim, so other kinds' Claims must never be scanned.
+
+    ``claims_by_predicate`` answers each predicate-scoped read by seeking its
+    predicate (review follow-up: counted work for this index).
+    """
+
+    with sqlite3.connect(":memory:") as connection:
+        connection.executescript(schema_sql())
+        for statement in _PREDICATE_READS:
+            plan = " ".join(
+                str(row[3]) for row in connection.execute("EXPLAIN QUERY PLAN " + statement, ("x",))
+            )
+            assert "claims_by_predicate" in plan, plan
+    small, large = _predicate_read_work(10), _predicate_read_work(2000)
+    # A deeper b-tree costs a few instructions per seek, never a row per other Claim.
+    assert all(after - before <= 16 for before, after in zip(small, large, strict=True)), (
+        small,
+        large,
+    )

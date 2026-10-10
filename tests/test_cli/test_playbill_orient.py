@@ -31,8 +31,11 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     assert mapped["tag"] == "playbill-orient-v1"
     (kind,) = mapped["kinds"]
     assert (kind["kind"], kind["subjects"]) == (KIND, 1)
-    assert [item["name"] for item in kind["predicates"]] == ["status"]
-    assert mapped["artifacts"]["claim_types"] == 1
+    assert [item["name"] for item in kind["predicates"]] == ["slug", "status"]
+    assert kind["identity"] == f"keys: {KIND}.slug (unique)"
+    # The kind's slug key and status, and the builtin semantic.alias and
+    # semantic.distinct_from.
+    assert mapped["artifacts"]["claim_types"] == 4
     assert mapped["you"]["actor"] is not None
     # Rendered for the CLI: commands, not tool calls.
     assert mapped["next"][0] == f"cruxible orient --kind {KIND}"
@@ -50,7 +53,7 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     assert detail["kind_detail"]["predicates"][0]["live_claims"] == 1
 
     page = cruxible.json("orient", "--section", "claim_types", "--limit", "1")
-    assert [row["predicate"] for row in page["claim_types"]] == [f"{KIND}.status"]
+    assert [row["predicate"] for row in page["claim_types"]] == [f"{KIND}.slug"]
     assert "(no procedures)" in cruxible.run("orient", "--section", "procedures").stdout
     # A new instance starts with workspace.file built in.
     assert mapped["artifacts"]["interfaces"] == 1

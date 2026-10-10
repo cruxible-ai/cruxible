@@ -49,6 +49,17 @@ _PROCEDURE_ARM_RE = re.compile(
 )
 
 
+_SUBJECT_CREATION_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _validate_subject_creation(value: str) -> str:
+    if not _SUBJECT_CREATION_RE.fullmatch(value):
+        raise ValueError(
+            "subject-creation-v1 selector must be the 32-hex digest of a Subject creation member"
+        )
+    return value
+
+
 def _validate_empty_selector(value: str) -> str:
     if value != "":
         raise ValueError("whole semantic-unit selector value must be empty")
@@ -75,6 +86,11 @@ _SELECTOR_SCHEMES: dict[str, Callable[[str], str]] = {
     "procedure-arm-v1": _validate_procedure_arm,
     "procedure-node-v1": _validate_procedure_node,
     "procedure-unit-v1": _validate_empty_selector,
+    # A Subject a member of the same change creates, before core names it: the
+    # artifact path is the kind's SubjectKind, the value the creation member's
+    # digest. Lowering replaces it with the Subject the member lands on; it never
+    # reaches accepted state.
+    "subject-creation-v1": _validate_subject_creation,
 }
 
 
@@ -125,6 +141,15 @@ class SemanticAddress(_StrictSemanticModel):
         return cls(
             artifact_path=artifact_path,
             selector=SemanticSelector(scheme="artifact-v1", value=""),
+        )
+
+    @classmethod
+    def subject_creation(cls, subject_kind: str, member_digest: str) -> "SemanticAddress":
+        """The Subject that one creation member of the same change lands on."""
+
+        return cls(
+            artifact_path=f"subject-kinds/{subject_kind}.json",
+            selector=SemanticSelector(scheme="subject-creation-v1", value=member_digest),
         )
 
     @classmethod

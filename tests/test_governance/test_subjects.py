@@ -64,7 +64,7 @@ def _accept(instance, approver, shell: SubjectShell, *, name: str = "subject"):
         timestamp=TIMESTAMP,
     )
     candidate = inspection.proposal.candidate
-    assert candidate is not None
+    assert candidate is not None, inspection.proposal.evaluation.diagnostics
     approval = _sign(
         approver,
         candidate.candidate_digest,

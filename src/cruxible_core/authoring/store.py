@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -470,10 +471,11 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _exclusive_write(path: Path, content: bytes) -> None:
-    descriptor: int | None = None
+def _write_temporary(path: Path, content: bytes) -> None:
+    """Write ``content`` whole to a new private file and flush it to disk."""
+
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         view = memoryview(content)
         while view:
             written = os.write(descriptor, view)
@@ -481,13 +483,42 @@ def _exclusive_write(path: Path, content: bytes) -> None:
                 raise AuthoringIntentStoreError("AuthoringIntent write made no progress")
             view = view[written:]
         os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _exclusive_write(path: Path, content: bytes) -> None:
+    """Publish ``content`` at ``path`` whole, or not at all; refuse an occupied name.
+
+    The bytes go to a private temporary name in the same directory first and
+    reach disk there; only then is the final name made, by one hard link (an
+    atomic publish that, unlike a rename, never replaces an existing event).
+    A reader therefore sees no file or the complete one, never a partial
+    event (review F-003). A temporary name never ends in ``.json``, so a stream
+    listing never includes one left behind by a crash.
+    """
+
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    try:
+        _write_temporary(temporary, content)
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            raise
+        except OSError as exc:
+            if exc.errno not in {errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EMLINK}:
+                raise
+            # No hard links here: a rename publishes atomically too, once the
+            # name is known to be free (the store lock excludes other writers).
+            if path.exists():
+                raise FileExistsError(str(path)) from exc
+            os.rename(temporary, path)
     except FileExistsError as exc:
         raise AuthoringIntentStoreError("AuthoringIntent event path is occupied") from exc
     except OSError as exc:
         raise AuthoringIntentStoreError("AuthoringIntent event could not be persisted") from exc
     finally:
-        if descriptor is not None:
-            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
     _fsync_directory(path.parent)
 
 

@@ -136,8 +136,8 @@ def test_scope_membership_versions_history_and_empty_result(tmp_path, monkeypatc
         "ClaimType:security.asset.installs",
         "ClaimType:security.asset.owner",
     ]
-    # Four authored ClaimTypes and the builtin semantic.alias every instance seeds.
-    assert len(run(instance, all_types).result.rows) == 5
+    # Four authored ClaimTypes and the two builtins every instance seeds.
+    assert len(run(instance, all_types).result.rows) == 6
     assert len(run(instance, multiple).result.rows) == 3
     assert projection_query_semantic_result_digest(
         current.result.model_dump(mode="json")
@@ -200,8 +200,8 @@ def test_limits_and_bad_parameters_are_explicit(tmp_path):
     query = definition(max_results=1)
     accept(instance, owner, query, _predicate_type("security.a"), _predicate_type("security.b"))
     result = run(instance, query).result
-    # The two authored ClaimTypes and the seeded builtin semantic.alias.
-    assert len(result.rows) == 1 and result.truncation.candidate_result_count == 3
+    # The two authored ClaimTypes and the seeded builtins.
+    assert len(result.rows) == 1 and result.truncation.candidate_result_count == 4
     assert result.truncation.clipped_budgets == ("max_results",)
     assert run(instance, query, parameters={"unknown": True}).result.verdict == "refused"
     assert (

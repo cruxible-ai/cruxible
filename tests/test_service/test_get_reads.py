@@ -135,6 +135,12 @@ def test_next_steps_are_rendered_for_the_callers_surface(world: dict[str, Any]) 
     assert sdk is not None and sdk.next[0] == f'cx.get("{claim}", detail="evidence")'
 
 
+def _stated(rows: Any) -> list[Any]:
+    """A card's rows without the work item's key Claim (its slug)."""
+
+    return [row for row in rows if row.predicate != "slug"]
+
+
 def test_a_subject_card_carries_its_claims_as_values(world: dict[str, Any]) -> None:
     instance = world["instance"]
     for form in (_SUBJECT, f"Subject:{_SUBJECT}", f"subjects/{_SUBJECT}.json"):
@@ -143,8 +149,10 @@ def test_a_subject_card_carries_its_claims_as_values(world: dict[str, Any]) -> N
         assert isinstance(card, GetSubjectCard)
         assert result.ref == _SUBJECT and result.kind == "subject"
         assert card.kind == "project.work_item" and card.lifecycle == "live"
+        # Its key Claim (the slug core created it by) and its status.
         assert [(row.predicate, row.value, row.flags) for row in card.claims] == [
-            ("status", "ready", ())
+            ("slug", "wi-42", ()),
+            ("status", "ready", ()),
         ]
         assert card.incoming_count == 0
 
@@ -541,12 +549,12 @@ def test_a_contested_slot_shows_every_live_value_with_the_contested_flag(
     # Before the contender's evidence is observed, resolution still selects one.
     resolved = _get(instance, _SUBJECT).card
     assert isinstance(resolved, GetSubjectCard)
-    assert [(row.value, row.flags) for row in resolved.claims] == [("ready", ())]
+    assert [(row.value, row.flags) for row in _stated(resolved.claims)] == [("ready", ())]
     subject = _get(instance, _SUBJECT, evaluation_time=LATER).card
     claim = _get(instance, first.identity.name, evaluation_time=LATER).card
 
     assert isinstance(subject, GetSubjectCard)
-    (row,) = subject.claims
+    (row,) = _stated(subject.claims)
     assert sorted(row.value) == ["blocked", "ready"]
     assert "contested" in row.flags
     assert isinstance(claim, GetClaimCard)
@@ -567,7 +575,7 @@ def test_a_contested_slot_shows_every_live_value_with_the_contested_flag(
     assert isinstance(claim, GetClaimCard)
     contender = claim.contenders[0].claim
     expected = f'cruxible_get(ref="{contender}", detail="evidence")'
-    assert subject.next[0] == expected
+    assert expected in subject.next
     assert claim.next[1] == expected
 
 
@@ -615,6 +623,7 @@ def test_a_new_contender_ends_the_unsure_hold_exactly_as_next_decides(tmp_path: 
         claim
         for claim in _all_claims(instance)
         if claim.statement.subject.artifact_path.endswith("wi-42.json")
+        and not claim.statement.predicate.endswith(".slug")
     ]
     for offset, claim in enumerate(contenders):
         _attest(instance, owner, claim, tmp_path, at=LATER - timedelta(minutes=2 - offset))
@@ -833,7 +842,7 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
 
     subject = _get(instance, _SUBJECT).card
     assert isinstance(subject, GetSubjectCard)
-    (row,) = subject.claims
+    (row,) = _stated(subject.claims)
     assert isinstance(row.claim, str)
     head = instance.accepted_coordinate().git_oid
     cut = TruncatedText(
@@ -849,14 +858,14 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
         "length": len(long_value),
         "read_whole": {"ref": row.claim, "detail": "evidence", "at": head},
     }
-    assert subject.next[0] == f'cruxible_get(ref="{row.claim}", detail="evidence")'
+    assert f'cruxible_get(ref="{row.claim}", detail="evidence")' in subject.next
     claim = _get(instance, row.claim).card
     assert isinstance(claim, GetClaimCard) and claim.value == cut
 
-    assert claim.next[0] == subject.next[0]
+    assert claim.next[0] in subject.next
     history = _get(instance, row.claim, detail="history").history
     assert history is not None
-    assert history.revisions[0].next[0].startswith(subject.next[0][:-1] + ", at=")
+    assert history.revisions[0].next[0].startswith(claim.next[0][:-1] + ", at=")
 
     evidence = _get(instance, row.claim, detail="evidence").evidence
     assert evidence is not None and evidence.value == long_value
@@ -924,7 +933,7 @@ def test_subject_rows_name_the_claim_behind_each_value(world: dict[str, Any]) ->
     card = _get(world["instance"], _SUBJECT).card
 
     assert isinstance(card, GetSubjectCard)
-    assert [(row.claim, row.value) for row in card.claims] == [(world["claim"], "ready")]
+    assert [(row.claim, row.value) for row in _stated(card.claims)] == [(world["claim"], "ready")]
 
 
 def test_history_pages_newest_first_with_a_bound_cursor(tmp_path: Path) -> None:
@@ -1041,8 +1050,12 @@ def test_cli_width_cuts_offer_evidence_without_changing_other_surfaces(
         assert isinstance(subject, GetSubjectCard)
         assert history is not None
         if surface == "cli":
-            assert subject.next[0] == f"cruxible get {claim_id} --detail evidence"
-            assert history.revisions[0].next[0].startswith(subject.next[0] + " --at ")
+            assert f"cruxible get {claim_id} --detail evidence" in subject.next
+            assert (
+                history.revisions[0]
+                .next[0]
+                .startswith(f"cruxible get {claim_id} --detail evidence --at ")
+            )
         else:
             assert not any("evidence" in step for step in subject.next)
             assert history.revisions[0].next == ()

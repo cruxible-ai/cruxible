@@ -25,6 +25,7 @@ from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+from tests.core_support._subject_kind_support import without_keys
 from tests.core_support._write_support import (
     CLAIM_TYPES,
     KIND,
@@ -90,13 +91,16 @@ def test_values_reads_every_field_of_a_kind_wider_than_one_select(
     title = pb.set(WI1, "title", "Tidy the CLI", because="Named in review.")
     last = pb.set(WI1, EXTRA_FIELDS[-1], "the last field", because="Named in review.")
     world = pb.world()
-    # Every instance also seeds the builtin semantic.alias ClaimType.
-    admitted = len(CLAIM_TYPES) + len(EXTRA_FIELDS) + 1
+    # Every instance also seeds the builtin semantic.alias and
+    # semantic.distinct_from ClaimTypes, and the world keys its work items by
+    # the project.work_item.slug ClaimType.
+    admitted = len(CLAIM_TYPES) + len(EXTRA_FIELDS) + 3
     assert len(world.predicates) == admitted > QUERY_MAX_SELECT
 
     values = world.values(subjects=[WI1])
 
-    assert {(item.predicate, item.value, item.claim) for item in values} == {
+    # Beside wi-1's slug key Claim.
+    assert {(item.predicate, item.value, item.claim) for item in without_keys(values)} == {
         (TITLE, "Tidy the CLI", title.changes[0].claim),
         (f"{KIND}.{EXTRA_FIELDS[-1]}", "the last field", last.changes[0].claim),
     }
@@ -126,11 +130,14 @@ def test_values_records_each_claim_it_served(
 
     values = world.values(subjects=[WI1])
 
-    assert {item.claim for item in values} == {title, status}
+    keys = {item.claim for item in values} - {item.claim for item in without_keys(values)}
+    assert len(keys) == 1  # wi-1's slug key Claim
+    assert {item.claim for item in without_keys(values)} == {title, status}
     served = [entry for entry in recorded if entry[0] == "playbill.claim.get"]
     assert {name for _op, _at, names in served for name in names} == {
         f"Claim:{title}",
         f"Claim:{status}",
+        *(f"Claim:{key}" for key in keys),
     }
     assert {str(at["git_oid"]) for _op, at, _names in served} == {world.coordinate.git_oid}
 

@@ -5008,6 +5008,69 @@ def _mandate_items(
     return tuple(items)
 
 
+def _undeclared_kind_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    access_profile: CoverageAccessProfile,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Kinds with live Subjects that no SubjectKind has ever declared (identity D1).
+
+    Such a kind's Subjects stay readable and claimable, but no new one can be
+    created until a SubjectKind says how core names it. A kind whose SubjectKind
+    was retired was closed on purpose and is not reported. One grouped read of
+    the Subject rows, as ``orient`` makes.
+    """
+
+    from cruxible_core.indexes.subject_identity import admits_subject_kinds
+
+    if not access_profile.permits("instance") or not admits_subject_kinds(coordinate.compiler):
+        return ()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        live = connection.execute(
+            "SELECT subject_kind, count(*), min(path) FROM subjects WHERE lifecycle='live' "
+            "GROUP BY subject_kind ORDER BY subject_kind"
+        ).fetchall()
+        declared = {
+            str(row[0]).removeprefix("SubjectKind:")
+            for row in connection.execute("SELECT identity FROM subject_kinds")
+        }
+    items: list[PlaybillNextItemV1] = []
+    for kind, count, first in live:
+        if str(kind) in declared:
+            continue
+        # The row is about the kind, which has no artifact yet: it names the
+        # kind's first live Subject, which `get` reads.
+        identity = "Subject:" + str(first).removeprefix("subjects/").removesuffix(".json")
+        items.append(
+            _item(
+                severity="warning",
+                reason="subject_kind_undeclared",
+                subject_identity=identity,
+                detail={
+                    "kind": str(kind),
+                    "live_subjects": int(count),
+                    # The single-key unique shape keeps `kind/<slug>` working:
+                    # author the slug ClaimType too if the kind has none.
+                    "author": {
+                        "kind": "subject_kind",
+                        "name": str(kind),
+                        "keys": [f"{kind}.slug"],
+                        "uniqueness": "unique",
+                    },
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="cruxible.authoring.example",
+                    target=f"SubjectKind:{kind}",
+                    required_change="author_a_subject_kind_declaring_how_new_subjects_are_named",
+                    arguments={"example": "subject-kind"},
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _registered_blocks(
     instance: PlaybillInstance,
 ) -> dict[tuple[str, str], ProjectionBlockRegistration] | None:
@@ -5667,6 +5730,9 @@ def _next_queue(
             instance,
             coordinate=coordinate,
             access_profile=request.access_profile,
+        ),
+        *_undeclared_kind_items(
+            instance, coordinate=coordinate, access_profile=request.access_profile
         ),
         *_prediction_items(
             instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile

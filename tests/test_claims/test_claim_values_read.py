@@ -16,6 +16,7 @@ from cruxible_core.service.claims.claim_reads import (
 from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from tests.core_support._knowledge_loop_support import seed_claims
+from tests.core_support._subject_kind_support import without_keys
 
 EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
 SUBJECTS = (
@@ -175,5 +176,6 @@ def test_claim_lists_filter_by_subject_kind(tmp_path: Path) -> None:
     all_claims = service_list_playbill_claims(instance)
 
     assert claims.claims == all_claims.claims
-    assert len(claims.claims) == 2
+    # Two stated Claims, beside the two Subjects' key Claims.
+    assert len(without_keys(claims.claims)) == 2
     assert service_list_playbill_claims(instance, subject_kind="project.milestone").claims == ()

@@ -38,6 +38,7 @@ from cruxible_core.service.proposals.review import (
     service_review_playbill_proposal,
 )
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
 from tests.test_ledger.test_activation import _sign
 
@@ -97,11 +98,14 @@ def test_multi_kind_candidate_scope_member_and_closure_paths_are_identical(
         ),
     )
     claim_type_path = "claim-types/project.work_item/status.json"
-    candidate_tree = {
-        **base_tree,
-        SUBJECT_PATH: render_subject(shell),
-        claim_type_path: render_claim_type(status),
-    }
+    candidate_tree = core_assigned(
+        instance,
+        {
+            **base_tree,
+            SUBJECT_PATH: render_subject(shell),
+            claim_type_path: render_claim_type(status),
+        },
+    )
 
     evaluation = evaluate_proposal_tree(
         base_tree=base_tree,
@@ -116,24 +120,26 @@ def test_multi_kind_candidate_scope_member_and_closure_paths_are_identical(
 
     assert evaluation.diagnostics == ()
     assert isinstance(evaluation.candidate, CandidateRecord)
-    assert evaluation.candidate.candidate.scope == (
-        claim_type_path,
-        SUBJECT_PATH,
+    # The Subject's kind is declared in the same change (identity D6).
+    # Core created the Subject by its key, so its key Claim and that Claim's
+    # ClaimType and capture contract ride in the same change.
+    kind_path = "subject-kinds/project.work_item.json"
+    changed = tuple(
+        sorted(path for path in candidate_tree if base_tree.get(path) != candidate_tree[path])
     )
-    assert tuple(item.path for item in evaluation.candidate.members) == (
-        claim_type_path,
-        SUBJECT_PATH,
-    )
+    assert {claim_type_path, kind_path, SUBJECT_PATH} <= set(changed)
+    assert evaluation.candidate.candidate.scope == changed
+    assert tuple(item.path for item in evaluation.candidate.members) == changed
     assert evaluation.candidate.closure_proof.paths == evaluation.candidate.candidate.scope
-    assert tuple(item.path for item in evaluation.candidate.law_evidence) == (
-        claim_type_path,
-        SUBJECT_PATH,
-    )
+    assert tuple(item.path for item in evaluation.candidate.law_evidence) == changed
     assert evaluation.candidate.law_evidence[0].evaluation_coordinate.git_oid == (current.git_oid)
     assert evaluation.candidate.law_evidence[0].evaluation_coordinate.generation_root == (
         current.generation_root
     )
-    assert evaluation.candidate.members[0].dependency_proof_refs[0].target_path == (SUBJECT_PATH)
+    (status_member,) = (
+        item for item in evaluation.candidate.members if item.path == claim_type_path
+    )
+    assert status_member.dependency_proof_refs[0].target_path == SUBJECT_PATH
 
 
 def test_changed_dependency_reports_exact_sorted_missing_dependents() -> None:
@@ -321,11 +327,14 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
             target_ref="refs/proposals/owner/initial-closure",
             proposed_base_oid=base.git_oid,
         ),
-        candidate_tree={
-            **instance.tree_at(base.git_oid),
-            SUBJECT_PATH: render_subject(original_subject),
-            claim_path: render_claim_type(original_claim_type),
-        },
+        candidate_tree=core_assigned(
+            instance,
+            {
+                **instance.tree_at(base.git_oid),
+                SUBJECT_PATH: render_subject(original_subject),
+                claim_path: render_claim_type(original_claim_type),
+            },
+        ),
         timestamp=TIMESTAMP,
     )
     assert isinstance(initial.candidate, CandidateRecord)
@@ -392,11 +401,14 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         access=BodyAccessContext(principal_id="owner", can_read_body=False),
     )
 
+    # The Subject's key Claim is retired with it, in the same change (core derives it).
     assert tuple(item.closure_role for item in review.members) == (
         "invalidation",
         "invalidation",
+        "invalidation",
     )
+    assert any(item.path.startswith("claims/") for item in review.members)
     rendered = render_playbill_proposal_review(review)
-    assert rendered.count("Closure role: invalidation") == 2
-    assert rendered.count("Semantic delta:") == 2
+    assert rendered.count("Closure role: invalidation") == 3
+    assert rendered.count("Semantic delta:") == 3
     assert all(member.semantic_delta for member in review.members)

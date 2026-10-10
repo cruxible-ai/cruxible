@@ -251,12 +251,16 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
                 coordinates={},
             ),
         )
+        from cruxible_core.indexes.subject_identity import refresh_subject_keys
+
+        refresh_subject_keys(expected)
         for table in (
             "members",
             "principals",
             "pins",
             "claim_type_names",
             "vocabulary_terms",
+            "subject_keys",
             *(owner.table for owner in OWNER_CODECS),
         ):
             info = expected.execute(f"PRAGMA table_info({table})").fetchall()
@@ -370,7 +374,26 @@ def replace_rows(
     bodies: Any = None,
     whole_checks: bool = True,
 ) -> None:
+    from cruxible_core.indexes.subject_identity import refresh_subject_keys
+
     changed = tuple(sorted(set(changed_paths)))
+    # The Subjects whose whole key the change may move: those it writes, the
+    # subjects of the Claims it replaces, and every Subject of a SubjectKind it
+    # replaces (``subject_keys`` is derived from all three).
+    key_subjects: set[str] = set()
+    key_kinds: set[str] = set()
+    for path in changed:
+        if path.startswith("subjects/"):
+            key_subjects.add(path)
+        elif path.startswith("subject-kinds/"):
+            key_kinds.add(path.removeprefix("subject-kinds/").removesuffix(".json"))
+        elif path.startswith("claims/"):
+            key_subjects.update(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT subject_path FROM claims WHERE path=?", (path,)
+                )
+            )
     for path in changed:
         for identity, kind in connection.execute(
             "SELECT identity,kind FROM artifact_lookup WHERE path=?", (path,)
@@ -397,6 +420,22 @@ def replace_rows(
     insert_owners(
         connection, parsed=parsed, blobs=sources, codec=codec, resolve_digest=resolve_digest
     )
+    if not changed:
+        refresh_subject_keys(connection)
+    else:
+        for row in parsed.envelopes:
+            if row.kind == "subject":
+                key_subjects.add(row.path)
+            elif row.kind == "subject-kind":
+                key_kinds.add(row.identity.removeprefix("SubjectKind:"))
+            elif row.kind == "claim":
+                key_subjects.update(
+                    str(found[0])
+                    for found in connection.execute(
+                        "SELECT subject_path FROM claims WHERE identity=?", (row.identity,)
+                    )
+                )
+        refresh_subject_keys(connection, subjects=key_subjects, kinds=key_kinds)
     if bodies is not None:
         populate_citations(
             connection,

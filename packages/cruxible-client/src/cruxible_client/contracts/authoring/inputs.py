@@ -43,6 +43,8 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBody,
     SourceAcquisitionPolicyAuthoringPayload,
     SubjectAuthoringPayload,
+    SubjectCreationAuthoringPayload,
+    SubjectKindAuthoringPayload,
     TriggerAuthoringPayload,
     WorkingSelectionObservation,
     authoring_member_identity,
@@ -66,6 +68,7 @@ from cruxible_client.contracts.proposal_models import (
 )
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
 
@@ -262,7 +265,40 @@ class BlueprintInstanceInput(_StrictInputModel):
 
 
 class SubjectInput(_StrictInputModel):
+    """Create one Subject: name its kind and its key; core assigns the id.
+
+    ``key`` maps each key ClaimType of the kind's SubjectKind (by predicate, or by
+    its last name under the kind) to its value; omit it for a minted kind. The
+    id is the readable rendering of the canonical key (or a minted id), reported
+    in the result; the key parts become Claims citing ``rationale`` as your own
+    words.
+    """
+
     kind: Literal["subject"]
+    subject_kind: str = Field(description="The kind to create, e.g. 'dev.decision'.")
+    key: dict[str, str | int | bool] | str | int | bool = Field(
+        default_factory=dict,
+        description=(
+            "Key ClaimType (predicate or short name) -> value, or just the value when the "
+            "kind has one key; omit for a minted kind."
+        ),
+    )
+    rationale: str | None = Field(
+        default=None, description="Why this Subject exists; the key Claims' self evidence."
+    )
+    create_new: bool = Field(
+        default=False,
+        description=(
+            "Hint kinds only: create another Subject even though one holds this key "
+            "(assert semantic.distinct_from between them); otherwise the key resolves to it."
+        ),
+    )
+
+
+class SubjectSuccessionInput(_StrictInputModel):
+    """A successor of an existing Subject's shell, e.g. retiring it (lifecycle retired)."""
+
+    kind: Literal["subject_succession"]
     subject: SubjectShell
 
 
@@ -329,6 +365,14 @@ class ProcedureMandateInput(_StrictInputModel):
     scope: tuple[MandateScopeAuthoring, ...] = ()
     subject_scope: tuple[SemanticAddress, ...] | None = None
     condition: MandateConditionAuthoring | None = None
+    subject_creation: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Settle grants only: Subject kinds a run may create by key; their new Subjects "
+            "and key Claims settle with the change. A propose grant names subjects/<kind> "
+            "in its namespace instead."
+        ),
+    )
     suspended: bool = False
     retire: bool = False
 
@@ -402,12 +446,38 @@ class TriggerInput(_StrictInputModel):
     retire: bool = False
 
 
+class SubjectKindInput(_StrictInputModel):
+    """How core names Subjects of one kind: by key ClaimTypes, or by minted ids.
+
+    Every new Subject is of a kind with an accepted SubjectKind. ``keys`` names
+    the key ClaimTypes (by predicate, in key order): each a ClaimType v8 about
+    this kind only, literal and one-valued, accepted here or earlier; a Subject's
+    id is then the readable rendering of its canonical key. ``uniqueness:
+    unique`` refuses a second live Subject with the same key; ``hint`` only
+    surfaces it in the duplicates audit. ``minted: true`` has core mint opaque
+    ids instead. Change it, or retire it, through a successor.
+    """
+
+    kind: Literal["subject_kind"]
+    name: str = Field(description="The Subject kind this declares, e.g. 'dev.decision'.")
+    description: str | None = None
+    keys: tuple[str, ...] = Field(
+        default=(), description="Key ClaimTypes by predicate, in key order; omit when minted."
+    )
+    uniqueness: Literal["unique", "hint"] | None = Field(
+        default=None, description="With keys: unique refuses a duplicate key; hint does not."
+    )
+    minted: bool = Field(default=False, description="Core mints opaque ids; no keys.")
+    retire: bool = False
+
+
 AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     ClaimInput
     | ClaimTypeInput
     | ClaimTypeSuccessionInput
     | ClaimRetirementInput
     | SubjectInput
+    | SubjectSuccessionInput
     | QueryDefinitionInput
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
@@ -415,6 +485,7 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     | AcquisitionPolicyInput
     | LineInput
     | TriggerInput
+    | SubjectKindInput
     | BlueprintInput
     | BlueprintInstanceInput
     | ProcedureInput,
@@ -443,6 +514,7 @@ AuthoringInput: TypeAlias = Annotated[
     | BlueprintInput
     | BlueprintInstanceInput
     | SubjectInput
+    | SubjectSuccessionInput
     | QueryDefinitionInput
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
@@ -450,6 +522,7 @@ AuthoringInput: TypeAlias = Annotated[
     | AcquisitionPolicyInput
     | LineInput
     | TriggerInput
+    | SubjectKindInput
     | ChangeSetInput,
     Field(discriminator="kind"),
 ]
@@ -805,6 +878,52 @@ def _trigger_payload(value: TriggerInput) -> TriggerAuthoringPayload:
     return TriggerAuthoringPayload.model_validate(value.model_dump(mode="python", exclude={"kind"}))
 
 
+def _subject_creation_payload(value: SubjectInput) -> SubjectCreationAuthoringPayload:
+    """The key as given; lowering resolves short names and orders it by the kind's keys."""
+
+    try:
+        if not isinstance(value.key, dict):
+            return SubjectCreationAuthoringPayload(
+                subject_kind=value.subject_kind,
+                key_value=value.key,
+                rationale=value.rationale,
+                create_new=value.create_new,
+            )
+        return SubjectCreationAuthoringPayload(
+            subject_kind=value.subject_kind,
+            key=tuple(
+                SubjectKeyPart(
+                    predicate=name if "." in name else f"{value.subject_kind}.{name}",
+                    value=item,
+                )
+                for name, item in value.key.items()
+            ),
+            rationale=value.rationale,
+            create_new=value.create_new,
+        )
+    except ValueError as exc:
+        raise AuthoringInputError(
+            "cruxible.authoring.subject_creation_invalid",
+            "input",
+            str(exc),
+            "Name the kind and give each key part once, as {key ClaimType: value}.",
+        ) from exc
+
+
+def _subject_kind_payload(value: SubjectKindInput) -> SubjectKindAuthoringPayload:
+    try:
+        return SubjectKindAuthoringPayload.model_validate(
+            value.model_dump(mode="python", exclude={"kind"})
+        )
+    except ValueError as exc:
+        raise AuthoringInputError(
+            "cruxible.authoring.subject_kind_invalid",
+            "input",
+            str(exc),
+            "Give keys with a uniqueness (unique or hint), or minted: true -- one of them.",
+        ) from exc
+
+
 def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChangeSetMember:
     if isinstance(member, ClaimInput):
         return _claim_payload(member)
@@ -830,6 +949,8 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
     if isinstance(member, BlueprintInstanceInput):
         return _blueprint_instance_payload(member)
     if isinstance(member, SubjectInput):
+        return _subject_creation_payload(member)
+    if isinstance(member, SubjectSuccessionInput):
         return SubjectAuthoringPayload(subject=member.subject)
     if isinstance(member, QueryDefinitionInput):
         return QueryDefinitionAuthoringPayload(query_definition=member.query_definition)
@@ -845,6 +966,8 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
         return _line_payload(member)
     if isinstance(member, TriggerInput):
         return _trigger_payload(member)
+    if isinstance(member, SubjectKindInput):
+        return _subject_kind_payload(member)
     return _mandate_payload(member)
 
 
@@ -859,6 +982,8 @@ def lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
     if isinstance(value, BlueprintInstanceInput):
         return _blueprint_instance_payload(value)
     if isinstance(value, SubjectInput):
+        return ChangeSetAuthoringPayload(members=(_subject_creation_payload(value),))
+    if isinstance(value, SubjectSuccessionInput):
         return SubjectAuthoringPayload(subject=value.subject)
     if isinstance(value, QueryDefinitionInput):
         return QueryDefinitionAuthoringPayload(query_definition=value.query_definition)
@@ -876,6 +1001,8 @@ def lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
         return _line_payload(value)
     if isinstance(value, TriggerInput):
         return _trigger_payload(value)
+    if isinstance(value, SubjectKindInput):
+        return _subject_kind_payload(value)
     members = tuple(_change_set_member(member) for member in value.members)
     identities = tuple(authoring_member_identity(member) for member in members)
     if len(set(identities)) != len(identities):
@@ -928,6 +1055,8 @@ __all__ = [
     "SlotReferenceInput",
     "SubjectObjectInput",
     "SubjectInput",
+    "SubjectKindInput",
+    "SubjectSuccessionInput",
     "WorkingSelectionInput",
     "lower_bound_claim_input",
     "lower_authoring_input",

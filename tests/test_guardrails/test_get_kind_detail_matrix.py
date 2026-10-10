@@ -34,6 +34,7 @@ _TABLES = {
     "query": ("query_definitions", ""),
     "capture_contract": ("capture_contracts", ""),
     "trigger": ("triggers", ""),
+    "subject_kind": ("subject_kinds", ""),
     "line": ("lines", ""),
     "resolution_contract": ("resolution_contracts", ""),
     "mandate": ("procedure_mandates", ""),
@@ -49,6 +50,7 @@ _REF_FORMS = {
     "query": lambda identity: "query:" + identity.removeprefix("QueryDefinition:"),
     "capture_contract": lambda identity: identity,
     "trigger": lambda identity: identity,
+    "subject_kind": lambda identity: identity,
     "line": lambda identity: identity,
     "resolution_contract": lambda identity: identity,
     "mandate": lambda identity: "Mandate:" + identity.removeprefix("ProcedureMandate:"),
@@ -96,7 +98,7 @@ def refs(world, credential_world, prediction_world, run_world):  # type: ignore[
 
 
 # Read over its own world below: accepting an interface needs a patched fixture.
-_OWN_WORLD = frozenset({"provider_interface", "blueprint"})
+_OWN_WORLD = frozenset({"provider_interface", "blueprint", "subject_kind"})
 
 
 def test_every_get_kind_has_a_reference_in_the_matrix(refs) -> None:  # type: ignore[no-untyped-def]
@@ -146,6 +148,32 @@ def test_every_blueprint_detail_answers_or_refuses_coded(  # type: ignore[no-unt
         except (CoreError, ClientCoreError):
             continue
         assert (result.kind, result.detail) == ("blueprint", detail)
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_every_subject_kind_detail_answers_or_refuses_coded(  # type: ignore[no-untyped-def]
+    tmp_path, historical
+) -> None:
+    from tests.core_support._support import initialize_local
+    from tests.test_service.test_subject_kinds import accept
+
+    from cruxible_client.authoring.examples import AUTHORING_EXAMPLE_FACTORIES
+    from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+
+    instance, _owner = initialize_local(tmp_path)
+    accept(instance, lower_authoring_input(AUTHORING_EXAMPLE_FACTORIES["subject-kind"]()))
+    history = instance.accepted_history()
+    at = history[-2].oid if historical else None
+    for detail in GET_DETAILS_BY_KIND["subject_kind"]:
+        try:
+            result = service_playbill_get(
+                instance,
+                request=GetRequest(ref="SubjectKind:project.work_item", detail=detail, at=at),
+                access=_ACCESS,
+            )
+        except (CoreError, ClientCoreError):
+            continue
+        assert (result.kind, result.detail) == ("subject_kind", detail)
 
 
 @pytest.mark.parametrize(

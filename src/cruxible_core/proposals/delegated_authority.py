@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from cruxible_client.contracts.claims import ClaimFormatError, SubjectClaimObject, parse_claim
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
     MandateChangeKind,
@@ -37,6 +38,7 @@ from cruxible_core.query.backends import ClaimQueryFactsV1
 
 MANDATE_PREFIX = "procedure-mandates/"
 CLAIM_PREFIX = "claims/"
+SUBJECT_PREFIX = "subjects/"
 
 
 @dataclass(frozen=True)
@@ -121,18 +123,73 @@ def _in_namespace(path: str, namespace: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in namespace)
 
 
+def _created_subjects(
+    scope: tuple[str, ...],
+    *,
+    subject_creation: tuple[str, ...],
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+) -> tuple[dict[str, tuple[str, ...]], list[tuple[str, str]]]:
+    """The new Subjects a settle grant's ``subject_creation`` covers, with their keys.
+
+    Subject path -> the key predicates of its kind. Any other Subject the change
+    writes -- an existing one, or a new one of a kind the grant does not name --
+    is an issue: settle authority creates Subjects only of the named kinds.
+    """
+
+    from cruxible_client.contracts.subject_kinds import live_subject_kind
+
+    created: dict[str, tuple[str, ...]] = {}
+    issues: list[tuple[str, str]] = []
+    for path in scope:
+        if not path.startswith(SUBJECT_PREFIX):
+            continue
+        kind = path.removeprefix(SUBJECT_PREFIX).partition("/")[0]
+        content = candidate_tree.get(path)
+        live = False
+        if content is not None:
+            try:
+                live = parse_subject(content, path=path).lifecycle.state == "live"
+            except (CruxibleError, ValueError):
+                live = False
+        if path in current_tree or kind not in subject_creation or not live:
+            issues.append(
+                _issue(
+                    "scope_uncovered",
+                    "Settle authority creates only new Subjects of the kinds its "
+                    f"subject_creation names; {path!r} is not one.",
+                )
+            )
+            continue
+        declared = live_subject_kind(candidate_tree, kind)
+        created[path] = () if declared is None else declared.keys
+    return created, issues
+
+
 def settle_targets(
     *,
     scope: tuple[str, ...],
     current_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
     binding_roles: Mapping[str, str],
+    subject_creation: tuple[str, ...] = (),
 ) -> tuple[tuple[SettleTarget, ...], tuple[tuple[str, str], ...]]:
-    """Derive each changed Claim's target from the change itself, never from a caller."""
+    """Derive each changed Claim's target from the change itself, never from a caller.
+
+    A new Subject of a kind the grant's ``subject_creation`` names, and each key
+    Claim its creation writes, are covered by the creation and bind no target.
+    """
 
     targets: list[SettleTarget] = []
-    issues: list[tuple[str, str]] = []
+    created, issues = _created_subjects(
+        scope,
+        subject_creation=subject_creation,
+        current_tree=current_tree,
+        candidate_tree=candidate_tree,
+    )
     for path in scope:
+        if path.startswith(SUBJECT_PREFIX):
+            continue  # judged above
         if not path.startswith(CLAIM_PREFIX) or path not in candidate_tree:
             issues.append(
                 _issue(
@@ -155,6 +212,12 @@ def settle_targets(
             if claim.lifecycle.state == "retired"
             else "revise"
         )
+        if (
+            change_kind == "create"
+            and statement.qualifier is None
+            and statement.predicate in created.get(statement.subject.artifact_path, ())
+        ):
+            continue  # a key Claim of a Subject the change creates
         role = binding_roles.get(claim_type, "subject")
         if role == "object":
             if not isinstance(statement.object, SubjectClaimObject):
@@ -260,9 +323,10 @@ def mandate_coverage(
         binding_roles={
             item.claim_type.target.qualified: item.binding_subject_role for item in mandate.scope
         },
+        subject_creation=mandate.subject_creation,
     )
     found = [*issues, *(issue for _gap, issue in _target_gaps(mandate, targets))]
-    if not found and not targets:
+    if not found and not targets and not any(path.startswith(SUBJECT_PREFIX) for path in scope):
         found.append(_issue("scope_uncovered", "The change set changes no Claim."))
     return targets, tuple(found)
 

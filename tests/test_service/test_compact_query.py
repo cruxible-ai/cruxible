@@ -206,8 +206,8 @@ def test_pages_continue_by_cursor_and_refuse_a_foreign_one(instance: Any) -> Non
 def test_claim_type_rows_name_capture_contracts_never_digests(instance: Any) -> None:
     result = _query(instance, kind="ClaimType", where=[{"field": "namespace", "eq": SUBJECT_KIND}])
 
-    assert [row["predicate"] for row in result.rows] == [PREDICATE]
-    row = result.rows[0]
+    assert [row["predicate"] for row in result.rows] == [f"{SUBJECT_KIND}.slug", PREDICATE]
+    row = result.rows[1]
     assert row["object"] == "enum"
     assert row["members"] == ["blocked", "done", "ready"]
     assert row["cardinality"] == "one"
@@ -433,6 +433,7 @@ def test_unsure_hold_follows_next_and_ends_when_a_new_contender_arrives(tmp_path
         claim
         for claim in _all_claims(seeded)
         if claim.statement.subject.artifact_path.endswith("wi-42.json")
+        and not claim.statement.predicate.endswith(".slug")
     ]
     for offset, claim in enumerate(contenders):
         _attest(seeded, owner, claim, tmp_path, at=LATER - timedelta(minutes=2 - offset))
@@ -727,7 +728,11 @@ def test_query_columns_use_the_shared_short_name(instance: Any) -> None:
 
     assert [column.name for column in by_full.columns] == ["status"]
     assert [row["status"] for row in by_full.rows] == ["ready", "blocked"]
-    assert _query(instance, kind=SUBJECT_KIND).columns[0].name == "status"
+    # The kind's key (slug) leads its default columns, then status.
+    assert [column.name for column in _query(instance, kind=SUBJECT_KIND).columns][:2] == [
+        "slug",
+        "status",
+    ]
 
 
 def _follow_vocabulary() -> QueryVocabulary:

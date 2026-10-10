@@ -41,6 +41,7 @@ from cruxible_core.procedures.execution import (
 from cruxible_core.procedures.terminal_services import (
     ProposalTerminalAdapter,
 )
+from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import initialize_local
 from tests.test_procedures.test_procedure_execution import (
     _actor,
@@ -381,16 +382,28 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
     # door re-establishes it against the head tree before any ref moves.
     (tmp_path / "shape").mkdir()
     shape = _admission(tmp_path / "shape", actor=_actor().model_copy(update={"actor_id": "owner"}))
-    mandate = _runtime_mandate(shape, namespace=("subjects",))
+    # Creating a keyed Subject writes its key Claim beside it.
+    mandate = _runtime_mandate(shape, namespace=("claims", "subjects"))
     mandate_digest = procedure_mandate_digest(mandate).tagged
     accepted = _procedure()
     _accept_more(
         instance,
         owner,
-        {
-            accepted.path: render_procedure(accepted.procedure),
-            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
-        },
+        core_assigned(
+            instance,
+            {
+                accepted.path: render_procedure(accepted.procedure),
+                procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+                # A first work item declares the kind the terminal creates wi-2 of.
+                subject_path("project.work_item", "wi-1"): render_subject(
+                    SubjectShell(
+                        identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-1"),
+                        subject_kind="project.work_item",
+                        subject_id="wi-1",
+                    )
+                ),
+            },
+        ),
         name="adapter-mandate",
     )
     base = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
@@ -405,12 +418,16 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
         subject_id="wi-2",
     )
     path = subject_path("project.work_item", "wi-2")
-    candidate_tree = {**instance.tree_at(base.git_oid), path: render_subject(subject)}
+    # Core creates wi-2 by its slug (declaring the work items' kind with it).
+    head = instance.tree_at(base.git_oid)
+    candidate_tree = core_assigned(instance, {**head, path: render_subject(subject)})
     request = _effectful_request(
         "propose_change_set",
         admission=admission,
         item=_item(path),
-        target_paths=(path,),
+        target_paths=tuple(
+            sorted(item for item in candidate_tree if head.get(item) != candidate_tree[item])
+        ),
         mandate_digest=mandate_digest,
     )
     if retire_at_head:

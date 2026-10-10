@@ -261,7 +261,7 @@ def test_a_decommissioned_instance_blocks_in_the_status_header(tmp_path: Path) -
 def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_core.compiler.compiler import GOVERNED_TRIGGERS_COMPILER, TRIGGER_CAPTURE_COMPILER
+    from cruxible_core.compiler.compiler import SUBJECT_IDENTITY_COMPILER, TRIGGER_CAPTURE_COMPILER
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from tests.test_ledger.test_compiler_upgrade import approve, old_instance, propose
 
@@ -270,8 +270,8 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     assert behind.compiler.state == "upgrade_available"
     assert behind.compiler.repair is not None
     assert behind.compiler.repair.command == (
-        f"cruxible compiler upgrade --to {GOVERNED_TRIGGERS_COMPILER.rule_digest} "
-        "--name upgrade-to-governed-triggers-v1"
+        f"cruxible compiler upgrade --to {SUBJECT_IDENTITY_COMPILER.rule_digest} "
+        "--name upgrade-to-subject-identity-v1"
     )
     # A compiler before Trigger artifacts schedules no internal action at all.
     assert behind.triggers.state == "unscheduled"
@@ -282,7 +282,7 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
         ("triggers", behind.triggers),
     )
 
-    proposal = propose(instance, GOVERNED_TRIGGERS_COMPILER)
+    proposal = propose(instance, SUBJECT_IDENTITY_COMPILER)
     approve(instance, proposal, reviewer)
     assert (
         service_activate_playbill_proposal(

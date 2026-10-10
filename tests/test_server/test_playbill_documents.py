@@ -198,9 +198,13 @@ def test_policy_read_is_a_real_http_behavior(
     policies = client.get(f"/api/v1/{instance_id}/orient", params={"section": "policies"})
     assert policies.status_code == 200, policies.text
     rows = policies.json()["policies"]
-    # The builtin semantic.alias ClaimType every new instance seeds embeds three.
+    # The builtin semantic.alias and semantic.distinct_from ClaimTypes every new
+    # instance seeds embed three each.
     assert [item["policy_kind"] for item in rows] == [
         "approval_policy",
+        "claim_admission_policy",
+        "claim_evidence_admission_policy",
+        "claim_resolution_policy",
         "claim_admission_policy",
         "claim_evidence_admission_policy",
         "claim_resolution_policy",
@@ -212,12 +216,15 @@ def test_policy_read_is_a_real_http_behavior(
     assert {item["declaring_artifact_identity"] for item in rows[1:4]} == {
         "ClaimType:semantic.alias"
     }
-    assert {item["declaring_artifact_identity"]: item["policy"] for item in rows[5:]} == {
+    assert {item["declaring_artifact_identity"] for item in rows[4:7]} == {
+        "ClaimType:semantic.distinct_from"
+    }
+    assert {item["declaring_artifact_identity"]: item["policy"] for item in rows[8:]} == {
         "Trigger:evidence-sweep": {"kind": "cadence", "interval_seconds": 86400},
         "Trigger:floor-refresh": {"kind": "generation_accepted"},
         "Trigger:prediction-anchor-retry": {"kind": "cadence", "interval_seconds": 3600},
     }
-    for item in rows[5:]:
+    for item in rows[8:]:
         assert item["placement"] == "embedded"
         assert item["declaring_artifact_kind"] == "Trigger"
         assert item["field_path"] == "/schedule"

@@ -12,6 +12,7 @@ from cruxible_client.contracts.claims import parse_claim, render_claim
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_core.service.discovery import query as query
 from tests.core_support._knowledge_loop_support import seed_claims
+from tests.core_support._subject_kind_support import fixture_claim_paths
 
 
 def _retired_tree(instance):
@@ -19,7 +20,7 @@ def _retired_tree(instance):
 
     coordinate = instance.accepted_coordinate()
     tree = instance.tree_at(coordinate.git_oid)
-    path = sorted(path for path in tree if path.startswith("claims/"))[0]
+    path = fixture_claim_paths(tree)[0]
     claim = parse_claim(tree[path], path=path)
     tree[path] = render_claim(
         claim.model_copy(
@@ -58,14 +59,22 @@ def test_read_assembles_each_row_and_parses_each_claim_and_type_once(
     assert not calls
     first = reader.build(include_retired=first_include_retired)
     assert first == expected[first_include_retired]
-    assert calls["_fact_row"] == (2 if first_include_retired else 1)
+    # Every Claim the world holds -- the work items' key Claims among them -- and
+    # the retired one only when asked.
+    live = sum(1 for item in tree if item.startswith("claims/")) - 1
+    assert calls["_fact_row"] == live + (1 if first_include_retired else 0)
     assert (
         reader.build(include_retired=not first_include_retired)
         == expected[not first_include_retired]
     )
     for include in (False, True, False, True):
         assert reader.build(include_retired=include) == expected[include]
-    assert calls == Counter(parse_claim=2, parse_claim_type=1, _fact_row=2, _accepted_subjects=1)
+    assert calls == Counter(
+        parse_claim=live + 1,
+        parse_claim_type=len({row.accepted.claim.statement.predicate for row in first.claims}),
+        _fact_row=live + 1,
+        _accepted_subjects=1,
+    )
 
 
 def test_live_only_read_does_not_require_retired_law_evidence(
@@ -83,10 +92,11 @@ def test_live_only_read_does_not_require_retired_law_evidence(
     )
     monkeypatch.setattr(query, "_claim_read_history_index", lambda *args, **kwargs: history)
     reader = query._AcceptedQueryFactsRead(instance, coordinate=coordinate)
-    assert len(reader.build().claims) == 1
+    live = sum(1 for item in tree if item.startswith("claims/")) - 1
+    assert len(reader.build().claims) == live
     with pytest.raises(ProposalIntegrityError, match="no reproducible Claim law evidence"):
         reader.build(include_retired=True)
-    assert len(reader.build().claims) == 1
+    assert len(reader.build().claims) == live
 
 
 @pytest.mark.parametrize("include_retired", (False, True))
@@ -96,7 +106,10 @@ def test_evidence_lookup_and_claim_parse_keep_original_refusal_order(
     instance, _owner = seed_claims(tmp_path)
     coordinate, tree, path = _retired_tree(instance)
     history = query._claim_read_history_index(instance, coordinate=coordinate)
-    history = replace(history, law_evidence={})
+    history = replace(
+        history,
+        law_evidence={item: law for item, law in history.law_evidence.items() if item != path},
+    )
     tree[path] = b"not a Claim"
     monkeypatch.setattr(
         instance, "blobs_at", lambda oid, paths: {p: tree[p] for p in paths if p in tree}
@@ -114,14 +127,14 @@ def test_evidence_lookup_and_claim_parse_keep_original_refusal_order(
     if include_retired:
         with pytest.raises(ProposalIntegrityError, match="no reproducible Claim law evidence"):
             reader.build(include_retired=True)
-        assert not calls
+        assert path not in calls
     else:
         with pytest.raises(Exception) as direct:
             original(tree[path], path=path)
         with pytest.raises(type(direct.value)) as observed:
             reader.build()
         assert str(observed.value) == str(direct.value)
-        assert calls == [path]
+        assert calls[-1] == path
 
 
 def test_new_readers_and_public_builds_observe_changed_capture_availability(tmp_path: Path) -> None:
@@ -158,7 +171,7 @@ def test_a_live_build_never_reads_retired_claims_and_a_scoped_one_selects_subjec
     instance, owner = seed_claims(tmp_path)
     coordinate = instance.accepted_coordinate()
     tree = instance.tree_at(coordinate.git_oid)
-    retired_path = sorted(path for path in tree if path.startswith("claims/"))[0]
+    retired_path = fixture_claim_paths(tree)[0]
     retired = parse_claim(tree[retired_path], path=retired_path)
     retire_claim(instance, owner, retired.identity.name)
     coordinate = instance.accepted_coordinate()

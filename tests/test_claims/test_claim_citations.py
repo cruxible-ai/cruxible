@@ -55,6 +55,7 @@ from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.service.claims.claims import service_get_playbill_claim
 from cruxible_core.service.discovery.coverage import build_accepted_evidence_index_v2
 from tests.core_support._pc_c_support import capture_contract as _capture_contract
+from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
 from tests.test_claims.test_claims import _claim, _claim_type, _subject
 from tests.test_ledger.test_activation import _sign
@@ -229,15 +230,18 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     )
     shell = _subject()
     claim_type = _claim_type()
-    initial_tree = {
-        **instance.tree_at(base.git_oid),
-        subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-        "claim-types/project.work_item/status.json": render_claim_type(claim_type),
-        capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-            render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-        ),
-        claim_path(CLAIM_ID): render_claim(legacy),
-    }
+    initial_tree = core_assigned(
+        instance,
+        {
+            **instance.tree_at(base.git_oid),
+            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+            "claim-types/project.work_item/status.json": render_claim_type(claim_type),
+            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
+                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+            ),
+            claim_path(CLAIM_ID): render_claim(legacy),
+        },
+    )
     initial = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
         request=ProposalAdmissionRequest(
@@ -451,10 +455,12 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     assert canonical_bytes(coverage_index.model_dump(mode="json")) == canonical_bytes(
         rebuilt_coverage_index.model_dump(mode="json")
     )
+    # The Claim's own associations (its Subject's key Claim cites a Capture too).
     coverage_associations = {
         association.reference.citation_id: association
         for row in coverage_index.citations
         for association in row.citation_associations
+        if association.claim_address.artifact_path == claim_path(v2.identity.name)
     }
     assert set(coverage_associations) == {
         reference.citation_id for reference in claim_citation_references(v2)
@@ -776,13 +782,16 @@ def _verdict(
     claim = _claim_citing(capture, contract=contract, claim_type=claim_type, role="copy")
     proposed = _submit(
         instance,
-        {
-            **instance.tree_at(base.git_oid),
-            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-            "claim-types/project.work_item/status.json": render_claim_type(claim_type),
-            capture_contract_path(contract.identity.name): render_capture_contract(contract),
-            claim_path(CLAIM_ID): render_claim(claim),
-        },
+        core_assigned(
+            instance,
+            {
+                **instance.tree_at(base.git_oid),
+                subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+                "claim-types/project.work_item/status.json": render_claim_type(claim_type),
+                capture_contract_path(contract.identity.name): render_capture_contract(contract),
+                claim_path(CLAIM_ID): render_claim(claim),
+            },
+        ),
         base.git_oid,
         name,
         "2026-08-20T12:00:00.000000Z",

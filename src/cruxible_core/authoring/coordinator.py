@@ -488,6 +488,13 @@ class AuthoringIntentCoordinator:
     ) -> tuple[ComputedPreflight, AuthoringIntentV1]:
         current = self.store.get(intent_id, actor_id=actor.actor_id)
         computed = compute_preflight(self.instance, intent=current, actor=actor, prepared=prepared)
+        if computed.lowered is not None and computed.lowered.subject_creations:
+            # The stored intent's actual creations: the record the candidate
+            # boundary reads back at admission and settlement (review F-001).
+            self.instance.subject_assignment_authority().record_creations(
+                current.intent_id,
+                (item.record for item in computed.lowered.subject_creations),
+            )
         operation_key = computed.result.certificate.certificate_digest
 
         def bind_preflight(intent: AuthoringIntentV1) -> AuthoringIntentV1:
@@ -796,11 +803,13 @@ class AuthoringIntentCoordinator:
                 continue
             predecessor = raw.get("predecessor_digest")
             claim_id = raw.get("claim_id")
+            created = raw.get("subject")
             amends = isinstance(predecessor, str) and isinstance(claim_id, str)
             members.append(
                 AuthoringSubmitMember(
                     identity=identity,
                     artifact_digest=artifact_digest,
+                    subject=created if isinstance(created, str) else None,
                     predecessor_digest=predecessor if isinstance(predecessor, str) else None,
                     identity_stable=amends,
                     claim_revision=(

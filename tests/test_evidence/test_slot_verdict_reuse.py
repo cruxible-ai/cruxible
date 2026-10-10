@@ -22,6 +22,7 @@ from tests.core_support._knowledge_loop_support import (
     service_propose_playbill_claim,
     work_item_query,
 )
+from tests.core_support._subject_kind_support import without_keys
 
 EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
 
@@ -140,6 +141,7 @@ def test_evidence_vanishing_while_a_slot_is_remembered_is_not_masked(tmp_path, m
         claim.backing.capture_digests[0]
         for claim in context.claims()
         if claim.statement.subject.artifact_path.endswith("wi-43.json")
+        and not claim.statement.predicate.endswith(".slug")
     )
     snapshot = ClaimVerdictReadContext.snapshot
 
@@ -193,7 +195,10 @@ def test_a_shared_capture_observed_inconsistently_is_not_remembered(tmp_path, mo
     from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
 
     instance, *_rest = shared_capture_world(tmp_path)
-    claims = ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()
+    # The world's stated Claims, beside its Subject's key Claim.
+    claims = without_keys(
+        ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()
+    )
     digests = {claim.backing.capture_digests[0] for claim in claims}
     assert len(claims) == 2 and len(digests) == 1  # one slot, one shared Capture
     (capture,) = digests

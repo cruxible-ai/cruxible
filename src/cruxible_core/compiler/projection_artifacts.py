@@ -215,7 +215,19 @@ GOVERNED_TRIGGERS_ARTIFACT_KINDS = ArtifactKindRegistry(
         ArtifactPathKind("blueprint", re.compile(r"^blueprints/[a-z][a-z0-9_.-]{0,255}\.json$")),
     )
 )
-_REVISION_31_AND_LATER = (AUTHORITY_VERBS_ARTIFACT_KINDS, GOVERNED_TRIGGERS_ARTIFACT_KINDS)
+# Revision 33: SubjectKinds declare how core names each kind's Subjects, and the
+# candidate boundary holds every new Subject to its kind's rule.
+SUBJECT_IDENTITY_ARTIFACT_KINDS = ArtifactKindRegistry(
+    (
+        *GOVERNED_TRIGGERS_ARTIFACT_KINDS.entries(),
+        ArtifactPathKind(
+            "subject-kind",
+            re.compile(r"^subject-kinds/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*\.json$"),
+        ),
+    )
+)
+_REVISION_32_AND_LATER = (GOVERNED_TRIGGERS_ARTIFACT_KINDS, SUBJECT_IDENTITY_ARTIFACT_KINDS)
+_REVISION_31_AND_LATER = (AUTHORITY_VERBS_ARTIFACT_KINDS, *_REVISION_32_AND_LATER)
 
 
 RegisteredPathKind = Literal[
@@ -240,6 +252,7 @@ RegisteredPathKind = Literal[
     "query-definition",
     "source-acquisition-policy",
     "subject",
+    "subject-kind",
     "trigger",
 ]
 
@@ -650,6 +663,7 @@ def parse_projection_tree(
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
+                    SUBJECT_IDENTITY_ARTIFACT_KINDS,
                 ) and (
                     runtime_policy.result_bytes_cap is not None
                     or runtime_policy.repeat_attempts_cap is not None
@@ -719,6 +733,37 @@ def parse_projection_tree(
                     )
                     for pin in blueprint.pins
                 )
+                continue
+            if kind == "subject-kind":
+                from cruxible_client.contracts.subject_kinds import (
+                    parse_subject_kind,
+                    subject_kind_digest,
+                )
+
+                subject_kind = parse_subject_kind(content, path=path, codec=artifact_codec)
+                identity = subject_kind.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                digest = subject_kind_digest(subject_kind).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity,
+                        kind,
+                        subject_kind.artifact_format,
+                        path,
+                        digest,
+                        subject_kind.lifecycle.predecessor_digest,
+                        projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=file_digest(content).tagged,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                if subject_kind.lifecycle.state == "retired":
+                    retired_identities.append(identity)
                 continue
             if kind == "trigger":
                 from cruxible_client.contracts.triggers import parse_trigger, trigger_digest
@@ -1079,6 +1124,8 @@ def parse_projection_tree(
                         TRIGGER_CAPTURE_ARTIFACT_KINDS,
                         AUTHORITY_VERBS_ARTIFACT_KINDS,
                         GOVERNED_TRIGGERS_ARTIFACT_KINDS,
+                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
+                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError(
@@ -1200,6 +1247,7 @@ def parse_projection_tree(
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
+                    SUBJECT_IDENTITY_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "Provider v3 requires the provider-package compiler"
@@ -1337,6 +1385,7 @@ def parse_projection_tree(
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
+                    SUBJECT_IDENTITY_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "ProviderInterface v2 requires the provider-package compiler"
@@ -1497,6 +1546,7 @@ def parse_projection_tree(
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
+                    SUBJECT_IDENTITY_ARTIFACT_KINDS,
                 ) and _requires_resource_budgets(resources.model_dump(mode="json")):
                     raise ProjectionFormatError(
                         "resource mandate budgets require compiler revision 26"
@@ -1564,6 +1614,7 @@ def parse_projection_tree(
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
+                    SUBJECT_IDENTITY_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError("graph-v6 Procedures require compiler revision 27")
                 if (
@@ -1583,6 +1634,8 @@ def parse_projection_tree(
                         TRIGGER_CAPTURE_ARTIFACT_KINDS,
                         AUTHORITY_VERBS_ARTIFACT_KINDS,
                         GOVERNED_TRIGGERS_ARTIFACT_KINDS,
+                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
+                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError("source-v2 requires compiler revision 29")
@@ -1801,7 +1854,7 @@ def parse_projection_tree(
                 )
 
                 line = parse_line_spec(content, path=path, codec=artifact_codec)
-                if artifact_kinds is not GOVERNED_TRIGGERS_ARTIFACT_KINDS:
+                if artifact_kinds not in _REVISION_32_AND_LATER:
                     raise ProjectionFormatError("Line v6 requires compiler revision 32")
                 if isinstance(line.budgets, dict):
                     result_budget = line.budgets.get("max_result_bytes")
@@ -1912,6 +1965,8 @@ def parse_projection_tree(
                         TRIGGER_CAPTURE_ARTIFACT_KINDS,
                         AUTHORITY_VERBS_ARTIFACT_KINDS,
                         GOVERNED_TRIGGERS_ARTIFACT_KINDS,
+                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
+                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError(

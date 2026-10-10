@@ -108,6 +108,7 @@ from tests.core_support._published_world import (
 from tests.core_support._published_world import (
     retire_claim as _retire_published_claim,
 )
+from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type
@@ -187,6 +188,8 @@ EXPECTED_OPERATIONS = {
     "prediction_settleable": "cruxible.prediction.settle",
     # Restoring an anchor's material is off the served verbs, like a Capture's.
     "prediction_window_unbindable": "hand_edit",
+    # A kind with Subjects and no SubjectKind: authoring one lets it create again.
+    "subject_kind_undeclared": "cruxible.authoring.example",
 }
 
 
@@ -236,10 +239,12 @@ def _row(instance, reason: str, request: NextRequestV1, **caller: Any):  # type:
 
 
 def _assert_gone(instance, reason: str, request: NextRequestV1, **caller: Any) -> None:  # type: ignore[no-untyped-def]
-    assert all(
-        item.reason != reason
+    left = [
+        item
         for item in service_playbill_next(instance, request=request, **caller).items
-    )
+        if item.reason == reason
+    ]
+    assert not left, left
 
 
 def _item_key(item: object) -> ClosedLoopKey:
@@ -289,6 +294,8 @@ def _current_claim(instance, *, subject_id: str = "wi-42"):  # type: ignore[no-u
             _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
         )
         if claim.statement.subject.artifact_path.endswith(f"/{subject_id}.json")
+        # A work item's slug is its key Claim, written when core created it.
+        and not claim.statement.predicate.endswith(".slug")
     )
 
 
@@ -322,6 +329,7 @@ def _claim_conflicted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
             _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
         )
         if claim.statement.subject.artifact_path.endswith("/wi-42.json")
+        and not claim.statement.predicate.endswith(".slug")
     )
     revised = next(
         claim for claim in contenders if claim.identity.qualified == conflicting.claim_identity
@@ -382,16 +390,19 @@ def _foreign_world(root: Path, *, bind: bool):  # type: ignore[no-untyped-def]
     )
     shell = subject_shell("wi-42")
     _Builder(instance, owner).accept(
-        {
-            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-            claim_type_path(claim_type.predicate): render_claim_type(claim_type),
-            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-            ),
-            capture_contract_path(foreign_contract.identity.name): render_capture_contract(
-                foreign_contract
-            ),
-        },
+        core_assigned(
+            instance,
+            {
+                subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+                claim_type_path(claim_type.predicate): render_claim_type(claim_type),
+                capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
+                    render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+                ),
+                capture_contract_path(foreign_contract.identity.name): render_capture_contract(
+                    foreign_contract
+                ),
+            },
+        ),
         phase="closed-loop-evidence-dependencies",
     )
     instance.refresh()
@@ -1621,6 +1632,58 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "mandate_expiring", _request(instance))
 
 
+def _subject_kind_undeclared(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import cruxible_core.proposals.proposals as proposals_module
+    from cruxible_client.contracts.authoring.inputs import (
+        SubjectKindInput,
+        lower_authoring_input,
+    )
+    from cruxible_client.contracts.subjects import render_subject, subject_path
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.core_support._identity_support import shell
+
+    instance, _owner = initialize_local(root)
+    # A Subject accepted before Subject identity existed (an older build).
+    monkeypatch.setattr(proposals_module, "boundary_identity_issues", lambda *_a, **_k: ())
+    base = instance.accepted_coordinate()
+    raw = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/pre-subject-kinds", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree={
+            **instance.tree_at(base.git_oid),
+            subject_path("dev.legacy", "old"): render_subject(shell("old", "dev.legacy")),
+        },
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+    assert raw.candidate is not None, raw.evaluation.diagnostics
+    service_activate_playbill_proposal(
+        instance, proposal_id=raw.admission.proposal_id, activated_by="owner"
+    )
+    monkeypatch.undo()
+
+    row = _row(instance, "subject_kind_undeclared", _request(instance))
+    assert row.subject_identity == "Subject:dev.legacy/old"
+    assert row.repair.operation == EXPECTED_OPERATIONS["subject_kind_undeclared"]
+    assert row.repair.command == "cruxible authoring example subject-kind"
+
+    submitted = AuthoringIntentCoordinator.for_instance(instance).compile_and_submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=lower_authoring_input(
+            SubjectKindInput(kind="subject_kind", name="dev.legacy", minted=True)
+        ),
+        canonical_timestamp="2026-08-24T17:00:01.000000Z",
+    )
+    assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
+    service_activate_playbill_proposal(
+        instance, proposal_id=submitted.status.proposal_id, activated_by="owner"
+    )
+    _assert_gone(instance, "subject_kind_undeclared", _request(instance))
+
+
 def _line_settled_prior_refusals(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from cruxible_client.contracts.procedures.line_specs import (
         line_spec_digest,
@@ -1996,6 +2059,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("line_work_pending", None): _line_work_pending,
     ("line_settled_prior_refusals", None): _line_settled_prior_refusals,
     ("line_inbox_unread", None): _line_inbox_unread,
+    ("subject_kind_undeclared", None): _subject_kind_undeclared,
     ("evidence_unavailable", None): _evidence_unavailable,
     ("prediction_settleable", None): _prediction_settleable,
     ("prediction_window_unbindable", None): _prediction_window_unbindable,

@@ -31,7 +31,8 @@ def test_floor_v5_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> 
     # No source content and no provenance mirror: the ledger clone is the audit path.
     assert not any(path.startswith(("provenance/", "documents/")) for path in files)
     changes = [json.loads(body) for path, body in files.items() if path.startswith("changes/")]
-    assert len(changes) == 2
+    # One change file per accepted generation after genesis.
+    assert len(changes) == len(instance.accepted_history()) - 1
     assert all(change["actor"] == "owner" for change in changes)
     # No boilerplate and no digests in the grep path.
     assert all(

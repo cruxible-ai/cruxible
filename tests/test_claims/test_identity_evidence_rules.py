@@ -70,6 +70,7 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.claims.claim_type_upgrade import service_upgrade_claim_types
+from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring.test_authoring_preflight import _self_source_payload
 from tests.test_claims.test_claims import _claim_type, _subject
@@ -341,6 +342,7 @@ class _World:
         tree = self.tree()
         subject = _subject()
         tree[subject_path(subject.subject_kind, subject.subject_id)] = render_subject(subject)
+        core_assigned(self.instance, tree)
         tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
         tree[CONTRACT_PATH] = render_capture_contract(ORIGINAL)
         self.accept(tree, name="seed")

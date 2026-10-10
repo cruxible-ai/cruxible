@@ -32,6 +32,7 @@ from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.main import cli
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
+from tests.core_support._subject_kind_support import declare_by_slug
 
 PACKAGE_KIND = "sec.package"
 VULNERABILITY_KIND = "sec.vulnerability"
@@ -166,7 +167,9 @@ def _accept_vocabulary(
     draft = playbill.changes(rationale="Open the vulnerability vocabulary.")
     draft.claim_type(_severity_type())
     draft.claim_type(_affects_type())
-    draft.subject(_shell(VULNERABILITY_KIND, "cve-2026-69247"))
+    # Advisories and packages are named by their slug (identity D6).
+    declare_by_slug(draft, VULNERABILITY_KIND, PACKAGE_KIND)
+    draft.subject(playbill.new_subject(VULNERABILITY_KIND, key="cve-2026-69247"))
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
     submitted = intent.submit()
@@ -241,11 +244,13 @@ def test_a_same_set_definition_lands_with_the_claim_that_reads_it_in_one_generat
     assert world.sec.vulnerability["cve-2026-69247"].severity == ()
     landed = playbill.at(receipt.accepted_coordinate).world()
     assert landed.sec.package["click"].address == "sec.package/click"
+    # The advisory's key Claim (its slug) sits beside the two this set stated.
+    slug = f"{VULNERABILITY_KIND}.slug"
     claims = landed.sec.vulnerability["cve-2026-69247"].claims
-    assert {claim.predicate for claim in claims} == {AFFECTS, SEVERITY}
+    assert {claim.predicate for claim in claims} == {AFFECTS, SEVERITY, slug}
     assert playbill.coordinate == world.coordinate
     latest = [playbill.get(claim.claim_id).value for claim in claims]
-    assert {claim.predicate for claim in latest} == {AFFECTS, SEVERITY}
+    assert {claim.predicate for claim in latest} == {AFFECTS, SEVERITY, slug}
     assert playbill.coordinate.git_oid == receipt.accepted_coordinate.git_oid
     assert landed.sec.vulnerability["cve-2026-69247"].severity[0].value == "high"
 
@@ -304,8 +309,15 @@ def test_the_world_reads_the_accepted_vocabulary_and_refuses_what_it_does_not_na
     world = playbill.world()
 
     assert world.kinds == (PACKAGE_KIND, VULNERABILITY_KIND)
-    # The builtin semantic.alias ClaimType every instance seeds is vocabulary too.
-    assert world.predicates == (AFFECTS, SEVERITY, "semantic.alias")
+    # The builtin ClaimTypes every instance seeds are vocabulary too.
+    assert world.predicates == (
+        f"{PACKAGE_KIND}.slug",
+        AFFECTS,
+        SEVERITY,
+        f"{VULNERABILITY_KIND}.slug",
+        "semantic.alias",
+        "semantic.distinct_from",
+    )
     assert world.unstructured_predicates == ()
     assert world.sec.vuln.severity.members == ("high", "low")
     with pytest.raises(LiteralSchemaError):

@@ -45,6 +45,7 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
+from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
 from tests.test_claims.test_claims import _claim, _claim_type, _subject
 from tests.test_indexes.test_resolution_contracts import _accept_tree
@@ -126,6 +127,7 @@ def _seed_vocabulary(
     from cruxible_client.contracts.subjects import render_subject, subject_path
 
     tree[subject_path(subject.subject_kind, subject.subject_id)] = render_subject(subject)
+    core_assigned(instance, tree)
     for claim_type in claim_types:
         tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     if query is not None:

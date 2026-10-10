@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+- **Cruxible names every new Subject.** A SubjectKind
+  (`subject_kind` change-set member, `subject-kinds/<kind>.json`, `get
+  SubjectKind:<kind>`, `identity` in `orient`) declares how a kind's Subjects
+  are named: by one or more key ClaimTypes, `unique` or `hint`, or minted. A
+  new Subject must be of a declared kind on every route
+  (`cruxible.subject.kind_undeclared`); existing Subjects of undeclared kinds
+  are grandfathered, and `next` names the SubjectKind to author
+  (`subject_kind_undeclared`). A creation names the kind and key values and
+  core assigns the id: the readable rendering of the canonical key, or a
+  minted `sub-<32 hex>`. Creating by key is one rule everywhere -- no holder
+  creates, one resolves to it, several refuse `key_ambiguous`; `create_new`
+  makes a further holder of a `hint` key. Unique keys are held at candidate
+  evaluation (`cruxible.subject.key_conflict`), so concurrent creations of one
+  key cannot both land. The `subject` input is now the creation shape;
+  `subject_succession` succeeds an existing Subject's shell. Procedure
+  terminals create Subjects with Subject items and name them by key in v3
+  Claim items; settle grants name the kinds they may create
+  (`subject_creation`). The builtin `semantic.distinct_from` ships (new
+  instances seed it; existing ones adopt it with `claim-type propose
+  --builtin`), and the duplicates audit lists `keys` groups for `hint` kinds.
+  Subject identity is compiler revision 33 (`subject-identity-v1`): an
+  instance on an earlier compiler creates no new Subject
+  (`cruxible.subject.compiler_upgrade_required`) until it upgrades, and its
+  existing Subjects stay readable, claimable and retirable. Every new Subject
+  carries a verifiable assignment binding that the candidate boundary
+  recomputes at admission and settlement, so a raw proposal cannot pick an id
+  (`cruxible.subject.id_not_assigned`): a minted or further-holder Subject must
+  match a `created` entry in core's record of the operation that created it
+  (each creation's kind, key, rule, outcome and id, recorded when a stored
+  intent is lowered or a Procedure terminal delivers), so raw proposals create
+  only keyed first holders and a reused member authorizes nothing. Procedure
+  terminals freeze key references against the base and their own Subject
+  items, check them again over the final candidate, and refuse
+  `cruxible.procedure.identity_reference_unstable` when the two differ.
+  AuthoringIntent events are published atomically. Retiring a keyed Subject
+  retires its key Claims in the same change, and a successor carries them
+  unchanged. The SDK's pending Subject references
+  name the creation member and core resolves them to the path it assigns. One
+  resolver serves every route: exact live id, alias, canonical key, exact
+  retired id; a new id never takes an existing alias. Keys compare by their
+  canonical typed encoding through a whole-key index, against the change's own
+  overlay. A ClaimType change that breaks a live kind's key contract refuses
+  (`cruxible.subject_kind.key_claim_type_broken`), and changing a key
+  ClaimType's canonical form is a re-keying
+  (`cruxible.subject_kind.rekey_unhandled`). Kits carry SubjectKinds.
+  Typed projection storage schema 15: every retained projection, historical
+  ones included, is rebuilt under it. See the CLI reference, "Subject kinds and
+  creation".
+
 - The documentation and agent skills describe this surface. New pages: a
   rewritten quickstart verified end to end, concepts, modeling state (when
   something is typed state and when it stays cited prose), projection blocks,

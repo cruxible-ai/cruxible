@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Mapping
 from contextlib import AbstractContextManager, nullcontext
@@ -143,6 +144,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
     CLAIM_LAW_V3_REVISION_10,
+    CLAIM_LAW_V3_REVISION_11,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     QUERY_DEFINITION_LAW,
@@ -246,6 +248,13 @@ from cruxible_client.contracts.resolution_contracts import (
     parse_resolution_contract,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subject_kinds import (
+    AcceptedSubjectKind,
+    SubjectKindFormatError,
+    evaluate_subject_kind_law,
+    parse_subject_kind,
+    subject_kind_digest,
+)
 from cruxible_client.contracts.subjects import (
     AcceptedSubject,
     evaluate_subject_law,
@@ -280,6 +289,12 @@ from cruxible_core.claims.closure import (
     dependency_artifacts,
     judge_dependency_closure,
     update_dependency_index,
+)
+from cruxible_core.claims.key_claims import (
+    carried_key_claim,
+    derive_key_claim_retirements,
+    retired_claim_names_subject_version,
+    subject_versions,
 )
 from cruxible_core.compiler.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
@@ -316,6 +331,12 @@ from cruxible_core.indexes.subject_aliases import (
     candidate_creation_collisions,
     subject_collision_message,
     tree_reference_resolver,
+)
+from cruxible_core.indexes.subject_identity import (
+    SubjectAssignmentAuthority,
+    admits_subject_kinds,
+    boundary_identity_issues,
+    key_claim_type_shape,
 )
 from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
@@ -394,6 +415,9 @@ _PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
 _TRIGGER_PATH_RE = re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")
+_SUBJECT_KIND_PATH_RE = re.compile(
+    r"^subject-kinds/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*\.json$"
+)
 _BLUEPRINT_PATH_RE = re.compile(r"^blueprints/[a-z][a-z0-9_.-]{0,255}\.json$")
 _QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.json$")
 _EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.json$")
@@ -411,6 +435,7 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _PROCEDURE_PATH_RE,
     _LINE_PATH_RE,
     _TRIGGER_PATH_RE,
+    _SUBJECT_KIND_PATH_RE,
     _BLUEPRINT_PATH_RE,
     _QUERY_DEFINITION_PATH_RE,
     _EXHAUST_PROMOTION_PATH_RE,
@@ -1687,6 +1712,15 @@ class _MemberKind:
 
 def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanceLaw:
     if context.historical_law_coordinate is None:
+        if artifact_tag == "playbill-claim-v3" and not admits_subject_kinds(
+            context.current.compiler
+        ):
+            # Claim law v3 revision 11 is adopted with Subject identity (compiler
+            # revision 33); an instance on an earlier compiler keeps revision 10.
+            return context.acceptance_laws.require_historical(
+                identifier=CLAIM_LAW_V3_REVISION_10.identifier,
+                digest=CLAIM_LAW_V3_REVISION_10.digest,
+            )
         return context.acceptance_laws.resolve_member(artifact_tag=artifact_tag)
     identifier, digest = context.historical_law_coordinate
     installed = context.acceptance_laws.require_historical(
@@ -2214,6 +2248,59 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
         activation_policy="snapshot",
         result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
         retired=trigger.lifecycle.state == "retired",
+    )
+
+
+def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one SubjectKind: its succession, and the key ClaimTypes it names.
+
+    A key ClaimType is read from the candidate, so one accepted in the same
+    change counts. SubjectKinds are admitted from compiler revision 33.
+    """
+
+    if not admits_subject_kinds(context.current.compiler):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.subject_kind.compiler_unsupported",
+                    "SubjectKind artifacts require compiler revision 33 (subject identity); "
+                    "upgrade the instance first.",
+                    context.path,
+                ),
+            )
+        )
+    subject_kind = parse_subject_kind(context.content, path=context.path)
+    predecessor: AcceptedSubjectKind | None = None
+    if context.parent_content is not None:
+        previous = parse_subject_kind(context.parent_content, path=context.path)
+        predecessor = AcceptedSubjectKind(
+            path=context.path,
+            subject_kind=previous,
+            artifact_digest=subject_kind_digest(previous).tagged,
+        )
+    law = evaluate_subject_kind_law(
+        subject_kind,
+        path=context.path,
+        predecessor=predecessor,
+        key_claim_types={
+            predicate: key_claim_type_shape(context.candidate_tree, predicate)
+            for predicate in subject_kind.keys
+        },
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted SubjectKind law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, subject_kind.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=subject_kind.lifecycle.state == "retired",
     )
 
 
@@ -2924,6 +3011,26 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _subject_versions(
+    provider: HistoricalArtifactProvider | None,
+    at: AcceptedCoordinate,
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+) -> Callable[[str, str], bool]:
+    """Subject lineage membership within the accepted prefix ending at ``at``."""
+
+    def accepted_path_of(digest: str) -> str | None:
+        found = None if provider is None else provider(at, digest, family="subjects/")
+        return None if found is None else found[0]
+
+    return subject_versions(
+        current_tree=current_tree,
+        candidate_tree=candidate_tree,
+        accepted_path_of=accepted_path_of,
+    )
+
+
 def historical_capture_contract_resolver(
     provider: HistoricalArtifactProvider | None, at: AcceptedCoordinate
 ) -> Callable[[str], AcceptedCaptureContract | None]:
@@ -3013,7 +3120,12 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
         allow_claim_type_retirement_shape_exemption=(
             installed.coordinate
-            in {CLAIM_LAW_V3_REVISION_8, CLAIM_LAW_V3_REVISION_9, CLAIM_LAW_V3_REVISION_10}
+            in {
+                CLAIM_LAW_V3_REVISION_8,
+                CLAIM_LAW_V3_REVISION_9,
+                CLAIM_LAW_V3_REVISION_10,
+                CLAIM_LAW_V3_REVISION_11,
+            }
         ),
         historical_capture_contract=(
             historical_capture_contract_resolver(
@@ -3025,11 +3137,26 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
                 CLAIM_LAW_V2_REVISION_8,
                 CLAIM_LAW_V3_REVISION_9,
                 CLAIM_LAW_V3_REVISION_10,
+                CLAIM_LAW_V3_REVISION_11,
             }
             else None
         ),
         claim_type_v7_semantics=(
-            installed.coordinate in {CLAIM_LAW_V2_REVISION_8, CLAIM_LAW_V3_REVISION_10}
+            installed.coordinate
+            in {CLAIM_LAW_V2_REVISION_8, CLAIM_LAW_V3_REVISION_10, CLAIM_LAW_V3_REVISION_11}
+        ),
+        # Revision 11 alone: a Claim retired with its Subject, or after a
+        # successor carried it, names a version of that Subject's lineage.
+        subject_lifecycle_retirement=installed.coordinate == CLAIM_LAW_V3_REVISION_11,
+        accepted_subject_version=(
+            _subject_versions(
+                context.historical_artifact_provider,
+                context.accepted_coordinate(),
+                current_tree=context.current_tree,
+                candidate_tree=context.candidate_tree,
+            )
+            if installed.coordinate == CLAIM_LAW_V3_REVISION_11
+            else None
         ),
         # A Capture cited for the first time needs daemon proof a run produced
         # it, at admission and again at settlement: an admission recorded under
@@ -3114,6 +3241,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         CLAIM_EVIDENCE_COMPILER,
         GOVERNED_TRIGGERS_COMPILER,
         SOURCE_CHECKED_COMPILER,
+        SUBJECT_IDENTITY_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
     )
 
@@ -3123,6 +3251,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         TRIGGER_CAPTURE_COMPILER,
         AUTHORITY_VERBS_COMPILER,
         GOVERNED_TRIGGERS_COMPILER,
+        SUBJECT_IDENTITY_COMPILER,
     }:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())
@@ -3607,6 +3736,14 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         evaluate=_trigger_member,
     ),
     _MemberKind(
+        name="subject-kind",
+        pattern=_SUBJECT_KIND_PATH_RE,
+        removal_code="cruxible.subject_kind.removal_unsupported",
+        removal_message="SubjectKinds are retired by successor, never removed.",
+        evaluate=_subject_kind_member,
+        format_code="cruxible.subject_kind.format_invalid",
+    ),
+    _MemberKind(
         name="blueprint",
         pattern=_BLUEPRINT_PATH_RE,
         removal_code="cruxible.change_set.delete_unsupported",
@@ -3704,6 +3841,7 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "exhaust-promotion",
     "line",
     "trigger",
+    "subject-kind",
     "blueprint",
     "query-definition",
     "provider",
@@ -3978,6 +4116,7 @@ def _evaluate_scoped_members(
     accepted_referents_provider: AcceptedReferentsProvider | None,
     delegated_mandate_digest: str | None = None,
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
+    subject_assignment_authority: SubjectAssignmentAuthority | None = None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -4031,6 +4170,7 @@ def _evaluate_scoped_members(
             LineSpecFormatError,
             QueryDefinitionFormatError,
             ExhaustPromotionError,
+            SubjectKindFormatError,
         ) as exc:
             return CandidateEvaluation(
                 candidate_tree,
@@ -4078,6 +4218,47 @@ def _evaluate_scoped_members(
             scope=scope,
         )
     )
+    if facts is not None and facts.verdict == "refused" and admits_subject_kinds(current.compiler):
+        # Key Claims follow their keyed Subject (maintainer ruling): a succeeded
+        # Subject carries them unchanged, so they are not dependents the change
+        # must disposition; a Claim retired with its Subject keeps the pin on the
+        # Subject version it was accepted about.
+        facts = dataclasses.replace(
+            facts,
+            missing_dependents=tuple(
+                item
+                for item in facts.missing_dependents
+                if not (
+                    item.dependency_edge_role == "subject"
+                    and carried_key_claim(
+                        current_tree=current_tree,
+                        candidate_tree=candidate_tree,
+                        dependent_path=item.path,
+                        subject_path=item.triggering_dependency_path,
+                    )
+                )
+            ),
+            unresolved_pins=tuple(
+                item
+                for item in facts.unresolved_pins
+                if not (
+                    item.target_identity.kind == "Subject"
+                    and retired_claim_names_subject_version(
+                        candidate_tree=candidate_tree,
+                        source_path=item.source_path,
+                        target_name=item.target_identity.name,
+                        pin_role=item.pin_role,
+                        expected_digest=item.expected_target_digest,
+                        accepted_version=_subject_versions(
+                            historical_artifact_provider,
+                            AcceptedCoordinate.from_internal(current),
+                            current_tree=current_tree,
+                            candidate_tree=candidate_tree,
+                        ),
+                    )
+                )
+            ),
+        )
     if facts is not None and facts.verdict == "refused":
         return CandidateEvaluation(
             candidate_tree,
@@ -4292,6 +4473,25 @@ def _evaluate_scoped_members(
         # kind, read from the parent overlaid with this change. Admission and
         # settlement both evaluate here, so every route is held to it. History
         # accepted before the rule is not refused again on replay.
+        identity_issues = boundary_identity_issues(
+            current.compiler,
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            scope=scope,
+            assignment_authority=subject_assignment_authority,
+        )
+        if identity_issues:
+            # Identity is decided at this boundary (identity-design-1009, D1/D4/D6):
+            # a Subject is created only of a declared kind, named by its kind's rule.
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                tuple(
+                    _diagnostic(issue.code, issue.message, issue.path) for issue in identity_issues
+                ),
+                rebased,
+                claim_admission_accounts=claim_admission_accounts,
+            )
         collisions = candidate_creation_collisions(
             current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
         )
@@ -4661,6 +4861,7 @@ def evaluate_proposal_tree(
     accepted_referents_provider: AcceptedReferentsProvider | None = None,
     delegated_mandate_digest: str | None = None,
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
+    subject_assignment_authority: SubjectAssignmentAuthority | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -4740,6 +4941,15 @@ def evaluate_proposal_tree(
                     True,
                 )
 
+    if admits_subject_kinds(current.compiler):
+        # A keyed Subject retired here takes its live key Claims with it, in this
+        # same change (maintainer ruling): derived before scoping, like cards.
+        derived = derive_key_claim_retirements(
+            current_tree=current_tree, candidate_tree=candidate_tree
+        )
+        if derived is not candidate_tree:
+            candidate_tree = derived if isinstance(derived, SnapshotTree) else SnapshotTree(derived)
+
     selected_card_renderer = candidate_card_renderer_digest
     if selected_card_renderer is None:
         selected_card_renderer = candidate_card_renderer_digest_for_compiler(current.compiler)
@@ -4798,6 +5008,7 @@ def evaluate_proposal_tree(
             historical_artifact_provider=historical_artifact_provider,
             principal_registry_provider=principal_registry_provider,
             delegated_mandate_digest=delegated_mandate_digest,
+            subject_assignment_authority=subject_assignment_authority,
         )
 
 
@@ -4891,6 +5102,7 @@ class ProposalService:
         attestation_principal_provider: AttestationPrincipalProvider | None = None,
         accepted_referents_provider: AcceptedReferentsProvider | None = None,
         historical_artifact_provider: HistoricalArtifactProvider | None = None,
+        subject_assignment_authority: SubjectAssignmentAuthority | None = None,
         prepared_evaluations: PreparedEvaluationAdapter | None = None,
         principal_registry_provider: Callable[
             [AcceptedProjectionCoordinate], PrincipalRegistrySnapshot
@@ -4922,6 +5134,7 @@ class ProposalService:
         self.attestation_principal_provider = attestation_principal_provider
         self.accepted_referents_provider = accepted_referents_provider
         self.historical_artifact_provider = historical_artifact_provider
+        self.subject_assignment_authority = subject_assignment_authority
         self.tree_state_provider = tree_state_provider
         self._accepted_tree_provider = accepted_tree_provider or self.transport.read_tree
         self._prepared_evaluations = prepared_evaluations
@@ -5055,6 +5268,7 @@ class ProposalService:
                 attestation_principal_provider=self.attestation_principal_provider,
                 accepted_referents_provider=self.accepted_referents_provider,
                 historical_artifact_provider=self.historical_artifact_provider,
+                subject_assignment_authority=self.subject_assignment_authority,
                 delegated_mandate_digest=delegated_mandate_digest,
             )
         _require_executed_derivations(

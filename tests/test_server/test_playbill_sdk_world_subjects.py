@@ -36,9 +36,9 @@ from tests.core_support._write_support import KIND, seed_write_vocabulary
 def _retire_subject(instance: PlaybillInstance, subject_id: str, *, actor_id: str) -> None:
     """Accept one change set that retires a Subject shell, through the ordinary path."""
 
+    path = subject_path(KIND, subject_id)
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
-    path = subject_path(KIND, subject_id)
     shell = parse_subject(tree[path], path=path)
     tree[path] = render_subject(
         shell.model_copy(

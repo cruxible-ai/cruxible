@@ -257,7 +257,13 @@ def test_real_client_server_path_preserves_full_proofs_at_gen2_scale(tmp_path: P
     assert len(sources) == 40
     assert client.last_result is not None
     assert sum(len(span.cards) for span in client.last_result.spans) == 680
-    assert all(len(span.commitment_scan_proofs) == 1 for span in client.last_result.spans)
+    # One proof per span per Capture commitment: the cited span's and the
+    # Subject's key Claim's own words.
+    assert all(
+        len(span.commitment_scan_proofs) == 2
+        and len({proof.commitment_digest for proof in span.commitment_scan_proofs}) == 2
+        for span in client.last_result.spans
+    )
     assert len(sources[0]["occurrences"]) == 17
     row = next(item for item in result.items if item.reason == "citation_drifted")
     assert row.detail["drift_state"] == "ambiguous"  # type: ignore[index]
@@ -281,7 +287,13 @@ def test_six_source_default_budget_keeps_every_local_proof(tmp_path: Path) -> No
     assert len(sources) == 6
     assert client.last_result is not None
     assert sum(len(span.cards) for span in client.last_result.spans) == 48
-    assert all(len(span.commitment_scan_proofs) == 1 for span in client.last_result.spans)
+    # One proof per span per Capture commitment: the cited span's and the
+    # Subject's key Claim's own words.
+    assert all(
+        len(span.commitment_scan_proofs) == 2
+        and len({proof.commitment_digest for proof in span.commitment_scan_proofs}) == 2
+        for span in client.last_result.spans
+    )
     assert len(sources[0]["occurrences"]) == 8
 
 

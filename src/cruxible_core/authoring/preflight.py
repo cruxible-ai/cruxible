@@ -75,9 +75,11 @@ from cruxible_core.authoring.lowering import (
     AuthoringLoweringError,
     LoweredAuthoring,
     lower_authoring,
+    lowered_authority,
 )
 from cruxible_core.authoring.prepared_lowering import reuse_lowering
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_identity import RecordedCreation, SubjectAssignmentAuthority
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
@@ -1011,6 +1013,9 @@ def compute_preflight(
                         attestation_principal_provider=service.attestation_principal_provider,
                         historical_artifact_provider=service.historical_artifact_provider,
                         accepted_referents_provider=service.accepted_referents_provider,
+                        subject_assignment_authority=_with_lowering_in_hand(
+                            service.subject_assignment_authority, intent, lowered
+                        ),
                     )
                     if prepared is not None:
                         prepared.retain(
@@ -1259,6 +1264,27 @@ def compute_preflight(
         evaluated_tree=evaluated_tree,
         evaluation=evaluation,
     )
+
+
+def _with_lowering_in_hand(
+    authority: SubjectAssignmentAuthority | None,
+    intent: AuthoringIntentV1,
+    lowered: LoweredAuthoring | None,
+) -> SubjectAssignmentAuthority:
+    """The recorded creations, plus those the lowering being preflighted assigned.
+
+    A preview's lowering is never recorded; a stored intent's is recorded right
+    after its preflight, with these same entries (review F-001).
+    """
+
+    own = None if lowered is None else lowered_authority(intent.intent_id, lowered)
+
+    def creates(operation: str, creation: RecordedCreation) -> bool:
+        if own is not None and own(operation, creation):
+            return True
+        return authority is not None and authority(operation, creation)
+
+    return creates
 
 
 __all__ = ["ComputedPreflight", "compute_preflight"]

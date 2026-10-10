@@ -139,6 +139,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "query-ontology",
         "query-procedures",
         "subject",
+        "subject-kind",
         "approval-policy",
         "procedure-runtime-policy",
         "procedure-mandate",

@@ -28,7 +28,8 @@ def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
         (capture,) = {
             row[0]
             for row in projection.typed.connection.execute(
-                "SELECT capture_digest FROM citation_uses WHERE owner_kind='Claim'"
+                "SELECT capture_digest FROM citation_uses WHERE owner_kind='Claim' "
+                "AND owner_key NOT IN (SELECT identity FROM claims WHERE predicate LIKE '%.slug')"
             )
         }
     return instance, capture
@@ -314,7 +315,8 @@ def test_sweep_resumes_a_fired_event_at_its_logged_time(
     fire_internal_triggers(instance, now=NOW + SWEEP_INTERVAL)
     (health,) = WORKER.health(instance, now=NOW)
     assert health.state == "lagging"
-    for _ in range(4):
+    # One Capture per batch: the world's key Claims cite Captures of their own too.
+    for _ in range(16):
         for work in WORKER.due(instance, now=NOW):
             WORKER.run(manager, "instance", work, now=NOW + timedelta(days=100))
     assert NOW in seen and NOW + SWEEP_INTERVAL in seen

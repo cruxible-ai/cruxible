@@ -88,10 +88,13 @@ def test_the_upgrade_moves_v6_to_v7_replace_and_carries_claims_byte_identical(
 
     again = _upgrade(world)
     assert again.status == "unchanged"  # type: ignore[attr-defined]
-    # The builtin semantic.alias every instance seeds is already v8.
+    # The builtins every instance seeds are already current.
+    # So is the work items' slug key ClaimType, declared when core created wi-42.
     assert again.unchanged == (  # type: ignore[attr-defined]
+        "ClaimType:project.work_item.slug",
         f"ClaimType:{PREDICATE}",
         "ClaimType:semantic.alias",
+        "ClaimType:semantic.distinct_from",
     )
 
 

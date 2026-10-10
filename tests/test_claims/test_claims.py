@@ -61,6 +61,7 @@ from cruxible_client.contracts.subjects import (
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.claims.claims import service_playbill_claim_history
+from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import initialize_local
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
@@ -347,15 +348,18 @@ def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate
     )
     shell = _subject()
     claim_type = _claim_type()
-    tree = {
-        **instance.tree_at(base.git_oid),
-        subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-        "claim-types/project.work_item/status.json": render_claim_type(claim_type),
-        capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-            render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-        ),
-        claim_path(claim_id): render_claim(claim),
-    }
+    tree = core_assigned(
+        instance,
+        {
+            **instance.tree_at(base.git_oid),
+            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+            "claim-types/project.work_item/status.json": render_claim_type(claim_type),
+            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
+                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+            ),
+            claim_path(claim_id): render_claim(claim),
+        },
+    )
     evaluated = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
         request=ProposalAdmissionRequest(
@@ -367,11 +371,19 @@ def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate
     )
     assert not evaluated.evaluation.diagnostics
     assert isinstance(evaluated.candidate, CandidateRecord)
-    assert tuple(item.artifact_kind for item in evaluated.candidate.members) == (
-        "capture-contract",
-        "claim-type",
-        "claim",
-        "subject",
+    # Core created the Subject by its slug: its key Claim, the slug ClaimType and
+    # the self-source capture contract that key Claim cites ride in the same candidate.
+    assert sorted(item.artifact_kind for item in evaluated.candidate.members) == sorted(
+        (
+            "capture-contract",
+            "capture-contract",
+            "claim-type",
+            "claim-type",
+            "claim",
+            "claim",
+            "subject-kind",
+            "subject",
+        )
     )
     claim_evidence = ClaimLawEvidenceV1.model_validate(
         next(
@@ -407,15 +419,18 @@ def test_v2_claim_successor_preserves_the_base_accepted_authority_change_shape(
         source_length=capture.envelope.commitment.byte_length,
     )
     shell = _subject()
-    tree = {
-        **instance.tree_at(base.git_oid),
-        subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-        "claim-types/project.work_item/status.json": render_claim_type(_claim_type()),
-        capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-            render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-        ),
-        claim_path(claim_id): render_claim(predecessor),
-    }
+    tree = core_assigned(
+        instance,
+        {
+            **instance.tree_at(base.git_oid),
+            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+            "claim-types/project.work_item/status.json": render_claim_type(_claim_type()),
+            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
+                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+            ),
+            claim_path(claim_id): render_claim(predecessor),
+        },
+    )
     _accept_tree(
         instance,
         owner,
@@ -472,15 +487,18 @@ def test_service_claim_history_returns_each_accepted_lineage_entry(
         source_length=capture.envelope.commitment.byte_length,
     )
     shell = _subject()
-    tree = {
-        **instance.tree_at(base.git_oid),
-        subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-        "claim-types/project.work_item/status.json": render_claim_type(_claim_type()),
-        capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-            render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-        ),
-        claim_path(claim_id): render_claim(predecessor),
-    }
+    tree = core_assigned(
+        instance,
+        {
+            **instance.tree_at(base.git_oid),
+            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+            "claim-types/project.work_item/status.json": render_claim_type(_claim_type()),
+            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
+                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+            ),
+            claim_path(claim_id): render_claim(predecessor),
+        },
+    )
     _accept_tree(
         instance,
         owner,

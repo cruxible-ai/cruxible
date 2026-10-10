@@ -10,11 +10,13 @@ from cruxible_client.contracts.claims import (
     ClaimFormatError,
     LiteralClaimObject,
     claim_path,
+    parse_claim,
     render_claim,
 )
 from cruxible_core.authoring.preflight import compute_preflight
 from cruxible_core.proposals import proposals
 from cruxible_core.proposals.proposals import AuthenticatedActor
+from tests.core_support._subject_kind_support import fixture_key_claims
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_change_set_intents import (
     _change_set,
@@ -133,6 +135,12 @@ def test_removal_refusal_does_not_read_unneeded_referent_history(
     parent = instance.tree_at(coordinate.git_oid)
     candidate = dict(parent)
     del candidate["subjects/project.work_item/wi-42.json"]
+    # The Subject's key Claim goes with it: both removals refuse, nothing else is read.
+    for path in fixture_key_claims(parent):
+        if parse_claim(parent[path], path=path).statement.subject.artifact_path == (
+            "subjects/project.work_item/wi-42.json"
+        ):
+            del candidate[path]
 
     def unexpected(*args, **kwargs):
         pytest.fail("a removal-only refusal must not read referent history")
@@ -149,4 +157,7 @@ def test_removal_refusal_does_not_read_unneeded_referent_history(
         rebased=False,
     )
     assert result.candidate is None
-    assert [item.code for item in result.diagnostics] == ["cruxible.subject.removal_unsupported"]
+    assert [item.code for item in result.diagnostics] == [
+        "cruxible.change_set.delete_unsupported",
+        "cruxible.subject.removal_unsupported",
+    ]

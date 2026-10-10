@@ -102,7 +102,13 @@ def test_published_retirement_conflicts_match_complete_source_oracle(
     _retire_claim(instance, owner, first)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     full = build_citation_relation_facts(tree, bodies=instance.body_store())
-    full_uses = [fact for fact in full if fact.schema_id == RELATION_USE_SCHEMA]
+    # The world's two stated Claims; its Subject's key Claim cites a Capture of its own.
+    stated = {f"Claim:{first}", f"Claim:{second}"}
+    full_uses = [
+        fact
+        for fact in full
+        if fact.schema_id == RELATION_USE_SCHEMA and fact.value["claim_identity"] in stated  # type: ignore[index]
+    ]
     assert len(full_uses) == 2
     assert {
         (

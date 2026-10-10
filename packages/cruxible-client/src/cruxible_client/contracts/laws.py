@@ -231,9 +231,19 @@ CLAIM_LAW_V3_REVISION_10 = _artifact_law_coordinate(
     "playbill-claim-v3",
     semantic_revision=10,
 )
+# Revision 11 (with compiler revision 33, subject identity): an attributed
+# retirement of a Claim may name the Subject version it was accepted about while
+# that Subject is retired or succeeded -- a keyed Subject's key Claims retire
+# with it, and a successor carries them unchanged. Every other check is
+# revision 10's; an instance on an earlier compiler keeps revision 10.
+CLAIM_LAW_V3_REVISION_11 = _artifact_law_coordinate(
+    CLAIM_LAW_V3_IDENTIFIER,
+    "playbill-claim-v3",
+    semantic_revision=11,
+)
 # Current is an operational alias only. Historical replay and shape-law
 # selection must name the exact revision directly.
-CLAIM_LAW_V3 = CLAIM_LAW_V3_REVISION_10
+CLAIM_LAW_V3 = CLAIM_LAW_V3_REVISION_11
 # Current revisions drop the vocabulary reuse law (see CLAIM_TYPE_LAW above).
 CLAIM_TYPE_LAW_V3_REVISION_4 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V3_IDENTIFIER,
@@ -512,9 +522,15 @@ CLAIM_V2_REVISION_6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 CLAIM_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_LAW_V3_REVISION_11,
+    artifact_kind="claim",
+    artifact_tag="playbill-claim-v3",
+)
+CLAIM_V3_REVISION_10_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V3_REVISION_10,
     artifact_kind="claim",
     artifact_tag="playbill-claim-v3",
+    current=False,
 )
 CLAIM_V3_REVISION_9_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V3_REVISION_9,
@@ -623,6 +639,16 @@ BLUEPRINT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="blueprint",
     artifact_tag="cruxible-blueprint-v1",
 )
+# A SubjectKind declares how Subjects of one kind are identified: by key
+# ClaimTypes (live, v8, literal, one-valued, about that kind only) or by minted
+# ids. A retired SubjectKind is never revived.
+SUBJECT_KIND_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.subject-kind.v1", "cruxible-subject-kind-v1", semantic_revision=1
+    ),
+    artifact_kind="subject-kind",
+    artifact_tag="cruxible-subject-kind-v1",
+)
 # A Trigger aims at a live Line that accepts its event, or at an internal
 # action on a cadence; a retired Trigger is never revived.
 TRIGGER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
@@ -637,6 +663,16 @@ TRIGGER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
 GOVERNED_TRIGGERS_UPGRADE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=10
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+    current=False,
+)
+# Revision 11 (to compiler revision 33, subject identity). Existing Subjects of
+# kinds no SubjectKind declares are grandfathered; nothing held is refused.
+SUBJECT_IDENTITY_UPGRADE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=11
     ),
     artifact_kind="compiler-upgrade",
     artifact_tag="playbill-compiler-upgrade-v1",
@@ -780,6 +816,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         TRIGGER_CAPTURE_UPGRADE_LAW,
         AUTHORITY_VERBS_UPGRADE_LAW,
         GOVERNED_TRIGGERS_UPGRADE_LAW,
+        SUBJECT_IDENTITY_UPGRADE_LAW,
         PROVIDER_CONTRACT_UPGRADE_LAW,
         COMPILER_UPGRADE_ACCEPTANCE_LAW,
         APPROVAL_POLICY_ACCEPTANCE_LAW,
@@ -792,6 +829,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CLAIM_V2_REVISION_7_ACCEPTANCE_LAW,
         CLAIM_V2_REVISION_6_ACCEPTANCE_LAW,
         CLAIM_V3_ACCEPTANCE_LAW,
+        CLAIM_V3_REVISION_10_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_9_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_8_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
@@ -814,6 +852,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         LINE_V6_ACCEPTANCE_LAW,
         BLUEPRINT_ACCEPTANCE_LAW,
         TRIGGER_ACCEPTANCE_LAW,
+        SUBJECT_KIND_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         PROVIDER_V2_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_ACCEPTANCE_LAW,

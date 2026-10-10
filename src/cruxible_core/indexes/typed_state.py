@@ -28,6 +28,7 @@ from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.canonical import (
     ArtifactCodec,
     artifact_path_for_codec,
+    canonical_bytes,
 )
 from cruxible_client.contracts.captures import parse_capture_contract
 from cruxible_client.contracts.claim_attestations import (
@@ -66,6 +67,7 @@ from cruxible_client.contracts.provider_interfaces import parse_provider_interfa
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.contracts.query.definitions import parse_query_definition
 from cruxible_client.contracts.resolution_contracts import parse_resolution_contract
+from cruxible_client.contracts.subject_kinds import parse_subject_kind
 from cruxible_client.contracts.subjects import parse_subject
 from cruxible_client.contracts.triggers import parse_trigger
 from cruxible_client.contracts.types import PrincipalRecord
@@ -242,6 +244,18 @@ OWNER_CODECS = (
         (
             ("subject_kind", "TEXT NOT NULL"),
             ("subject_id", "TEXT NOT NULL"),
+        ),
+    ),
+    OwnerCodec(
+        "subject-kind",
+        "SubjectKind",
+        "subject_kinds",
+        parse_subject_kind,
+        (
+            ("rule", "TEXT NOT NULL CHECK(rule IN ('keys','minted'))"),
+            ("uniqueness", "TEXT CHECK(uniqueness IS NULL OR uniqueness IN ('unique','hint'))"),
+            # The key ClaimTypes' predicates in key order, as a canonical JSON array.
+            ("key_predicates", "TEXT NOT NULL"),
         ),
     ),
     OwnerCodec(
@@ -459,6 +473,10 @@ def schema_sql() -> str:
             "CREATE INDEX resolution_contracts_by_hypothesis_version ON resolution_contracts(hypothesis_identity,hypothesis_artifact_digest,identity)",
             "CREATE INDEX attestations_by_claim_version ON attestations(claim_identity,claim_artifact_digest,attested_at_us,envelope_digest)",
             "CREATE INDEX claims_by_lifecycle ON claims(lifecycle,identity)",
+            # Predicate-scoped reads (a served query's referenced predicates): every
+            # keyed Subject holds a key Claim, so the claims table grows with every
+            # kind's Subjects and a scoped read must seek, not scan.
+            "CREATE INDEX claims_by_predicate ON claims(predicate,lifecycle,path)",
             "CREATE INDEX claims_by_object_subject ON claims(object_path,identity) WHERE object_kind='subject'",
             "CREATE INDEX provider_interfaces_by_interface ON provider_interfaces(interface_digest,identity)",
             "CREATE INDEX lines_by_identity_digest ON lines(identity_digest,identity)",
@@ -470,6 +488,16 @@ def schema_sql() -> str:
             PRIMARY KEY(promotion_identity,subject_identity,record_kind,result_key)
         ) STRICT""",
             "CREATE INDEX promotion_subjects_by_subject ON promotion_subjects(subject_identity,record_kind,promotion_identity,result_key)",
+            # The Subject key index (identity D4): each live Subject of a keyed
+            # kind whose key parts each hold exactly one live value, with its
+            # whole canonical key encoded (``subject_identity.key_encoding``), so
+            # a key -- single or composite -- finds its holders in one seek.
+            # Derived from the subjects, claims and subject_kinds rows and kept
+            # current with them at accept (``refresh_subject_keys``).
+            """CREATE TABLE subject_keys (
+            subject_path TEXT PRIMARY KEY, kind TEXT NOT NULL, key_encoding TEXT NOT NULL
+        ) STRICT""",
+            "CREATE INDEX subject_keys_by_key ON subject_keys(kind,key_encoding,subject_path)",
         ]
     )
     return ";\n".join(statements) + ";\n"
@@ -563,6 +591,13 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
         }
     if owner.kind == "claim":
         return _claim_fields(source)
+    if owner.kind == "subject-kind":
+        rule = source.identity_rule
+        return {
+            "rule": rule.rule,
+            "uniqueness": getattr(rule, "uniqueness", None),
+            "key_predicates": canonical_bytes(list(source.keys)).decode("utf-8"),
+        }
     if owner.kind == "trigger":
         return {
             "target_kind": source.target.kind,
@@ -635,8 +670,6 @@ def vocabulary_terms(source: Any, *, path: str) -> tuple[tuple[str, str, str, st
     from cruxible_client.contracts.claims import (
         ClaimArtifact,
         ClaimArtifactV2,
-        LiteralClaimObject,
-        SubjectClaimObject,
     )
     from cruxible_client.contracts.discovery import normalize_discovery_term as normal
     from cruxible_client.contracts.semantic import SemanticAddress
@@ -664,34 +697,54 @@ def vocabulary_terms(source: Any, *, path: str) -> tuple[tuple[str, str, str, st
         rows.add((identity, path, "structural_signature", "subject:" + signature, signature))
         rows.add((identity, path, "canonical_token", normal(source.subject_id), source.subject_id))
     elif isinstance(source, (ClaimArtifactV2, ClaimArtifact)):
-        statement = source.statement
-        if source.lifecycle.state != "live" or statement.predicate not in (
-            VOCABULARY_DESCRIPTOR_PREDICATES
-        ):
+        if source.lifecycle.state != "live":
             return ()
-        identity = source.identity.qualified
-        subject, value = statement.subject, statement.object
-        if statement.predicate in {"semantic.alias", "semantic.tag"}:
-            if isinstance(value, LiteralClaimObject) and isinstance(value.value, str):
-                if whole(subject):
-                    basis = "alias" if statement.predicate == "semantic.alias" else "tag"
-                    rows.add(
-                        (identity, subject.artifact_path, basis, normal(value.value), value.value)
-                    )
-        elif isinstance(value, SubjectClaimObject):
-            label = value.address.artifact_path
+        rows.update(statement_vocabulary_terms(source.identity.qualified, source.statement))
+    return tuple(sorted(rows))
+
+
+def statement_vocabulary_terms(
+    identity: str, statement: Any
+) -> tuple[tuple[str, str, str, str, str], ...]:
+    """The vocabulary rows one live Claim statement contributes (``vocabulary_terms``).
+
+    The one row function for descriptor Claims: accepted vocabulary extraction
+    reads it for every live Claim, and a change's own Claim members are read
+    through it too (``authoring.lowering.members_identity_overlay``), so what a
+    pending Claim adds can never differ from what its accepted version will
+    index -- whatever its qualifier (review E-b delta-3 F-001).
+    """
+
+    from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject
+    from cruxible_client.contracts.discovery import normalize_discovery_term as normal
+    from cruxible_client.contracts.semantic import SemanticAddress
+
+    def whole(address: SemanticAddress) -> bool:
+        return address == SemanticAddress.whole_artifact(address.artifact_path)
+
+    if statement.predicate not in VOCABULARY_DESCRIPTOR_PREDICATES:
+        return ()
+    rows: set[tuple[str, str, str, str, str]] = set()
+    subject, value = statement.subject, statement.object
+    if statement.predicate in {"semantic.alias", "semantic.tag"}:
+        if isinstance(value, LiteralClaimObject) and isinstance(value.value, str):
             if whole(subject):
-                rows.add((identity, subject.artifact_path, "relation", normal(label), label))
-            if whole(value.address):
-                rows.add(
-                    (
-                        identity,
-                        value.address.artifact_path,
-                        "relation",
-                        normal(subject.artifact_path),
-                        subject.artifact_path,
-                    )
+                basis = "alias" if statement.predicate == "semantic.alias" else "tag"
+                rows.add((identity, subject.artifact_path, basis, normal(value.value), value.value))
+    elif isinstance(value, SubjectClaimObject):
+        label = value.address.artifact_path
+        if whole(subject):
+            rows.add((identity, subject.artifact_path, "relation", normal(label), label))
+        if whole(value.address):
+            rows.add(
+                (
+                    identity,
+                    value.address.artifact_path,
+                    "relation",
+                    normal(subject.artifact_path),
+                    subject.artifact_path,
                 )
+            )
     return tuple(sorted(rows))
 
 

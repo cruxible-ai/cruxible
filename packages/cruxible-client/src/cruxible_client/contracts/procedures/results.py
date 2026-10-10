@@ -1060,9 +1060,10 @@ class ProcedureTerminalEgressChild(_StrictResultModel):
     manifest_digest: str
     egress_digest: str | None = None
     path: str | None = None
-    #: The item restated a live Claim on content it already cites: it changed
-    #: nothing, ``path`` and ``egress_digest`` name that Claim as it stands.
-    #: Omitted when the item changed a member.
+    #: The item changed nothing: it restated a live Claim on content it already
+    #: cites, or it is a Subject item whose key a live Subject holds. ``path``
+    #: and ``egress_digest`` name that Claim or Subject as it stands. Omitted
+    #: when the item changed a member.
     unchanged: bool = Field(default=False, exclude_if=lambda value: not value)
     # A delivered proposal item whose statement, on the same evidence, was
     # retired or rejected before: each earlier refusal, exactly as recorded.

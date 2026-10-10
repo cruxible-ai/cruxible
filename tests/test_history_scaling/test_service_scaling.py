@@ -22,6 +22,7 @@ import pytest
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import ContentAddressedBodyStore
+from tests.core_support._subject_kind_support import fixture_claim_paths
 
 
 @contextmanager
@@ -199,7 +200,7 @@ def _settle_on_a_retained_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     instance, owner, procedure = run_world(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    path = next(p for p in sorted(tree) if p.startswith("claims/"))
+    path = fixture_claim_paths(tree)[0]
     capture = parse_claim(tree[path], path=path).backing.capture_digests[0]
     contract = _predict(instance, owner, capture)
     observation = _accept_payload(
@@ -340,8 +341,7 @@ def test_a_scoped_query_does_not_grow_with_retired_claims_or_other_subject_kinds
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     subject_id = next(
         parse_claim(tree[path], path=path).statement.subject.artifact_path.rsplit("/", 1)[1]
-        for path in sorted(tree)
-        if path.startswith("claims/")
+        for path in fixture_claim_paths(tree)
     ).removesuffix(".json")
 
     def grow(retired: int, subjects: int, start: int) -> None:

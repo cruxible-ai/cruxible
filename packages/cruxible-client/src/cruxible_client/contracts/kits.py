@@ -37,8 +37,10 @@ KIT_RECEIPT_DOCUMENT_KIND = "kit_receipt"
 # attestations) are never kit content. A Procedure or Blueprint moves its pins
 # through its typed graph (they feed its definition digest); a
 # SourceAcquisitionPolicy moves only its pins, never the digests its rules hold
-# as values. A ProviderInterface is carried only as the exact bytes its
-# provider package registers, and never owned: the kit bundles that package.
+# as values. A SubjectKind (how a kind's Subjects are named) names its key
+# ClaimTypes by predicate, so it travels with them. A ProviderInterface is
+# carried only as the exact bytes its provider package registers, and never
+# owned: the kit bundles that package.
 KIT_ARTIFACT_PREFIXES: tuple[str, ...] = (
     "blueprints/",
     "capture-contracts/",
@@ -47,6 +49,7 @@ KIT_ARTIFACT_PREFIXES: tuple[str, ...] = (
     "provider-interfaces/",
     "query-definitions/",
     "source-acquisition-policies/",
+    "subject-kinds/",
 )
 
 _KIT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")

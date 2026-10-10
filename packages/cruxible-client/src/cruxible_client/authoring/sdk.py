@@ -137,6 +137,8 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBody,
     SourceAcquisitionPolicyAuthoringPayload,
     SubjectAuthoringPayload,
+    SubjectCreationAuthoringPayload,
+    SubjectKindAuthoringPayload,
     TriggerAuthoringPayload,
     authoring_member_identity,
     authoring_program_digest,
@@ -238,6 +240,7 @@ from cruxible_client.contracts.resolution_contracts import (
     ResolutionContractReference,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
@@ -303,6 +306,15 @@ def _subject_parts(value: str) -> tuple[str, str]:
 def _subject_address(value: str) -> SemanticAddress:
     kind, identifier = _subject_parts(value)
     return SemanticAddress.whole_artifact(f"subjects/{kind}/{identifier}.json")
+
+
+def _creation_address(value: object) -> SemanticAddress | None:
+    """The address of a Subject a creation member of the same set lands on, if ``value`` is one."""
+
+    if not isinstance(value, PendingSubjectRef) or value.creation is None:
+        return None
+    kind, _, digest = value.creation.removeprefix("SubjectCreation:").rpartition("@")
+    return SemanticAddress.subject_creation(kind, digest)
 
 
 def _address(value: str | TypedRef, expected: RefKind) -> str:
@@ -395,6 +407,7 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "procedure_runtime_policy": RefKind.PROCEDURE_RUNTIME_POLICY,
     "source_acquisition_policy": RefKind.SOURCE_ACQUISITION_POLICY,
     "provider_interface": RefKind.PROVIDER_INTERFACE,
+    "subject_kind": RefKind.SUBJECT_KIND,
 }
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {
@@ -991,19 +1004,36 @@ class ChangeSetDraft:
             if isinstance(member.payload, ClaimTypeAuthoringPayload)
         }
 
-    def subject(self, definition: SubjectDraft | SubjectShell) -> PendingSubjectRef:
-        """Define one Subject inside this changeset, and return a ref to it.
+    def subject(
+        self, definition: SubjectDraft | SubjectShell | SubjectCreationDraft
+    ) -> PendingSubjectRef:
+        """Create one Subject in this changeset, or change an existing one, and return a ref.
 
-        A Claim member may still carry its Subject as a dependency draft; this
-        is for the Subjects a set defines that no single Claim owns.
-
-        The ref it returns is usable as `subject=` or `value=` in the same set,
-        which is what lets one changeset define a Subject and say something
-        about it without the caller retyping the address as a string.
+        A ``SubjectCreationDraft`` (``cx.new_subject(...)``, ``w.<kind>.define(value)``)
+        creates a Subject by its kind and key; core assigns its id. The ref it
+        returns names that creation member, and is usable as ``subject=`` or
+        ``value=`` in the same set: core resolves it to the Subject the member
+        lands on -- the one it creates, or the existing one its key names -- for a
+        keyed and a minted kind alike. The submit result reports the id. A
+        ``SubjectDraft`` or shell is a successor of an existing Subject (to retire
+        it, say); it never creates one.
 
         Next: ``.claim(subject=ref, ...)`` about it, then ``.submit()``.
         """
 
+        if isinstance(definition, SubjectCreationDraft):
+            self._members.append(
+                _ChangeSetMember(
+                    payload=definition.creation,
+                    expectations=(),
+                    source_map=DiagnosticSourceMap(()),
+                    decisions={"kind": "subject", "subject_kind": definition.creation.subject_kind},
+                )
+            )
+            identity = definition.creation.member_identity
+            return PendingSubjectRef(
+                address=identity, coordinate=self._playbill.coordinate, creation=identity
+            )
         shell = definition.shell if isinstance(definition, SubjectDraft) else definition
         self._members.append(
             _ChangeSetMember(
@@ -1198,6 +1228,48 @@ class ChangeSetDraft:
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "trigger", "name": name},
+            )
+        )
+        return self
+
+    def subject_kind(
+        self,
+        *,
+        name: str,
+        keys: Sequence[str] = (),
+        uniqueness: Literal["unique", "hint"] | None = None,
+        minted: bool = False,
+        description: str | None = None,
+        retire: bool = False,
+    ) -> ChangeSetDraft:
+        """Declare how Subjects of one kind are named: by key ClaimTypes, or minted.
+
+        Every new Subject is of a kind with an accepted SubjectKind. Give ``keys``
+        (key ClaimTypes by predicate, in key order: each a ClaimType v8 about this
+        kind only, literal and one-valued, accepted or defined in this set) with
+        ``uniqueness`` -- ``unique`` refuses a second Subject with the same key,
+        ``hint`` only surfaces it in the duplicates audit -- or ``minted=True`` to
+        have core mint opaque ids. Core then names every new Subject of the kind:
+        its id is the readable rendering of its key, or a minted id.
+
+        Next: ``.submit()``; afterwards ``cx.set("<kind>/<key value>", ...)`` creates
+        a Subject of a single-key unique kind by its key.
+        """
+
+        payload = SubjectKindAuthoringPayload(
+            name=name,
+            description=description,
+            keys=tuple(keys),
+            uniqueness=uniqueness,
+            minted=minted,
+            retire=retire,
+        )
+        self._members.append(
+            _ChangeSetMember(
+                payload=payload,
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "subject_kind", "name": name},
             )
         )
         return self
@@ -1667,6 +1739,28 @@ class WriteBatch:
         )
         about = "" if self.subject is None else f", subject={self.subject!r}"
         return f"WriteBatch(because={self.because!r}{about}, changes=[{spelled}])"
+
+
+@dataclass(frozen=True)
+class SubjectCreationDraft(_IntentDraft):
+    """One Subject created by its kind and key, drafted by ``cx.new_subject(...)``.
+
+    Core assigns the id: the readable rendering of the canonical key, or a minted
+    id. Next: ``draft.submit()``, or ``cx.changes(rationale=...).subject(draft)`` with
+    other members.
+    """
+
+    creation: SubjectCreationAuthoringPayload
+
+    @property
+    def member_identity(self) -> str:
+        """The creation member's identity: what a ref to the Subject it lands on names.
+
+        No id is predicted from the key: core resolves the member to the Subject it
+        creates or reuses, and the submit result reports the id.
+        """
+
+        return self.creation.member_identity
 
 
 @dataclass(frozen=True)
@@ -2612,12 +2706,12 @@ class Cruxible:
         pins: Sequence[ArtifactPin],
         lifecycle: ArtifactLifecycle,
     ) -> SubjectDraft:
-        """Draft one Subject definition (``kind/id``) with its pins and lifecycle.
+        """Draft a successor of an existing Subject (``kind/id``): its pins and lifecycle.
 
-        A write that names a missing Subject of a known kind adds it for you; this is for
-        defining one explicitly, or alongside other members of a change set. Next:
-        ``draft.submit()``, or ``cx.changes(rationale=...).subject(draft)`` to define it
-        with other members.
+        Use it to retire a Subject or change its pins; it never creates one -- core
+        names new Subjects, so create with ``cx.new_subject(kind, key=...)``. Next:
+        ``draft.submit()``, or ``cx.changes(rationale=...).subject(draft)`` beside
+        other members.
         """
 
         address = _address(subject, RefKind.SUBJECT)
@@ -2641,6 +2735,50 @@ class Cruxible:
             ),
             DiagnosticSourceMap(()),
             shell,
+        )
+
+    def new_subject(
+        self,
+        kind: str,
+        *,
+        key: Mapping[str, str | int | bool] | str | int | bool | None = None,
+        rationale: str | None = None,
+        create_new: bool = False,
+    ) -> SubjectCreationDraft:
+        """Draft creating one Subject of ``kind`` by its key; core assigns the id.
+
+        ``key`` maps each key ClaimType of the kind's SubjectKind (by predicate, or by
+        its last name under the kind) to its value, or is just the value when the
+        kind has one key; omit it for a minted kind. A key a live Subject already
+        holds resolves to it and creates nothing (several holders refuse,
+        ``key_ambiguous``); ``create_new=True`` creates another holder of a ``hint``
+        kind's key anyway (assert ``semantic.distinct_from`` between them). The id
+        is the readable rendering of the canonical key (or a minted id); the key
+        parts become Claims backed by ``rationale``. Next: ``draft.submit()``, or
+        ``cx.changes(rationale=...).subject(draft)`` to say more about it in the same set.
+        """
+
+        if key is None or isinstance(key, Mapping):
+            creation = SubjectCreationAuthoringPayload(
+                subject_kind=kind,
+                key=tuple(
+                    SubjectKeyPart(predicate=name if "." in name else f"{kind}.{name}", value=value)
+                    for name, value in (key or {}).items()
+                ),
+                rationale=rationale,
+                create_new=create_new,
+            )
+        else:
+            creation = SubjectCreationAuthoringPayload(
+                subject_kind=kind, key_value=key, rationale=rationale, create_new=create_new
+            )
+        return SubjectCreationDraft(
+            self,
+            ChangeSetAuthoringPayload(members=(creation,)),
+            (),
+            _program_stamp("subject_creation", creation.model_dump(mode="json")),
+            DiagnosticSourceMap(()),
+            creation,
         )
 
     def claim_type(
@@ -3134,7 +3272,9 @@ class Cruxible:
             statement_object = LiteralClaimObject(value=normalize_canonical(value.value))
         elif isinstance(value, SubjectRef):
             self._assert_coordinate(value.coordinate)
-            statement_object = SubjectClaimObject(address=_subject_address(value.address))
+            statement_object = SubjectClaimObject(
+                address=_creation_address(value) or _subject_address(value.address)
+            )
         elif isinstance(value, str) and _SUBJECT_RE.fullmatch(value):
             object_kind = self._claim_type_object_kind(
                 predicate_name=predicate_name,
@@ -3212,7 +3352,7 @@ class Cruxible:
         )
         payload_values = dict(
             statement=AuthoringClaimStatement(
-                subject=_subject_address(subject_name),
+                subject=_creation_address(subject) or _subject_address(subject_name),
                 predicate=predicate_name,
                 qualifier=qualifier,
                 object=statement_object,
@@ -4170,8 +4310,9 @@ class Cruxible:
 
         Groups Subjects whose ids or aliases, and values of one predicate, that
         meet under a broad comparison (casefold, no punctuation, the alias graph)
-        but differ under the declared rules. A truncated page carries
-        ``next_cursor``; pass it back as ``cursor``.
+        but differ under the declared rules, and Subjects of a ``hint`` kind that
+        hold one key. A truncated page carries ``next_cursor``; pass it back as
+        ``cursor``.
 
         Next: add a ``semantic.alias`` and retire one Subject, or assert
         ``semantic.distinct_from``; for values, succeed the ClaimType with a wider
@@ -5088,6 +5229,7 @@ __all__ = [
     "Proposal",
     "QueryDraft",
     "SDK_CONTRACT_SNAPSHOT_DIGEST",
+    "SubjectCreationDraft",
     "SubjectDraft",
     "carry",
     "re_author",

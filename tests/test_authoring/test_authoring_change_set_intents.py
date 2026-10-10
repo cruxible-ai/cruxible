@@ -32,6 +32,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimTypeAuthoringPayload,
     SelfSourceBody,
     SubjectAuthoringPayload,
+    SubjectCreationAuthoringPayload,
     authoring_change_set_membership,
     authoring_member_identity,
     authoring_payload_digest,
@@ -53,7 +54,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalReceiveLimits,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
+from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_core.authoring import preflight as preflight_module
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import AuthoringLoweringError, lower_authoring
@@ -65,13 +66,16 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.proposals.proposal_receive import load_proposal_receive_config
+from tests.core_support._subject_kind_support import (
+    create_by_key,
+    key_by_slug,
+)
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
     _seed_claim_surface,
 )
 from tests.test_claims.test_claims import _claim_type
-from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
 
 SUBJECT_KIND = "project.work_item"
@@ -95,6 +99,19 @@ def _coordinator(instance: PlaybillInstance) -> AuthoringIntentCoordinator:
         # Inside the publication expiry window that starts at TIMESTAMP.
         clock=lambda: datetime(2026, 8, 22, 12, tzinfo=UTC),
     )
+
+
+def _seed(instance: PlaybillInstance, owner: object) -> None:
+    """The authoring world, with work items named by their slug (keyed, unique)."""
+
+    _seed_claim_surface(instance, owner)
+    key_by_slug(instance, SUBJECT_KIND, timestamp=TIMESTAMP)
+
+
+def _create(subject_id: str) -> SubjectCreationAuthoringPayload:
+    """Create ``project.work_item/<subject_id>`` by its slug; core names it ``subject_id``."""
+
+    return create_by_key(SUBJECT_KIND, subject_id)  # type: ignore[return-value]
 
 
 def _shell(subject_id: str) -> SubjectShell:
@@ -182,13 +199,13 @@ def test_a_mixed_change_set_lands_every_member_in_one_generation(tmp_path: Path)
     """Claims, a Subject, a ClaimType and a revision admit or refuse together."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     generations_before = len(instance.accepted_history())
 
     payload = _change_set(
-        SubjectAuthoringPayload(subject=_shell("wi-2")),
+        _create("wi-2"),
         ClaimTypeAuthoringPayload(claim_type=_predicate_type("project.work_item.owner")),
         _claim(subject_id="wi-42", value="ready"),
         _claim(subject_id="wi-2", value="blocked"),
@@ -208,8 +225,11 @@ def test_a_mixed_change_set_lands_every_member_in_one_generation(tmp_path: Path)
     assert {member.identity.partition(":")[0] for member in result.members} == {
         "Claim",
         "ClaimType",
-        "Subject",
+        "SubjectCreation",
     }
+    assert [member.subject for member in result.members if member.subject] == [
+        f"{SUBJECT_KIND}/wi-2"
+    ]
 
     assert result.status.candidate_digest is not None
     approval = _sign(
@@ -244,7 +264,7 @@ def test_one_malformed_member_refuses_the_whole_intent_at_its_index(tmp_path: Pa
     """Atomic by construction: no proposal, no accepted change, a typed index."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     before = instance.accepted_coordinate()
@@ -252,7 +272,7 @@ def test_one_malformed_member_refuses_the_whole_intent_at_its_index(tmp_path: Pa
     # This member's ClaimType is neither accepted at the base nor defined here.
     malformed = _claim(subject_id="wi-2", predicate="project.work_item.owner", value="done")
     payload = _change_set(
-        SubjectAuthoringPayload(subject=_shell("wi-2")),
+        _create("wi-2"),
         _claim(subject_id="wi-2", value="ready"),
         malformed,
     )
@@ -284,14 +304,14 @@ def test_a_member_reads_a_sibling_definition_only_when_the_set_carries_it(
     """A Claim sees the Subject and ClaimType its own set defines, and only those."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
 
     carried = coordinator.create(
         actor=actor,
         payload=_change_set(
-            SubjectAuthoringPayload(subject=_shell("wi-sibling")),
+            _create("wi-sibling"),
             ClaimTypeAuthoringPayload(claim_type=_predicate_type("project.work_item.owner")),
             _claim(subject_id="wi-sibling", predicate="project.work_item.owner", value="ready"),
         ),
@@ -322,7 +342,7 @@ def test_two_members_on_one_path_and_one_slot_name_their_member_indices(
     """Collisions are refused typed, and say which members collided."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
 
@@ -388,13 +408,13 @@ def test_a_retirement_member_carries_its_closure_and_lands_with_the_set(
     """Retirement is an ordinary member, and demands the same closure it always did."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     claim_id = _accept_one_claim(instance, owner, coordinator, actor)
 
     payload = _change_set(
-        SubjectAuthoringPayload(subject=_shell("wi-retire")),
+        _create("wi-retire"),
         ClaimRetirementMember(retires=claim_id, reason="was-rescinded"),
     )
     intent = coordinator.create(
@@ -412,7 +432,7 @@ def test_a_retirement_member_carries_its_closure_and_lands_with_the_set(
 
 def test_a_retirement_member_refuses_an_incomplete_closure(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     claim_id = _accept_one_claim(instance, owner, coordinator, actor)
@@ -422,7 +442,7 @@ def test_a_retirement_member_refuses_an_incomplete_closure(tmp_path: Path) -> No
     intent = coordinator.create(
         actor=actor,
         payload=_change_set(
-            SubjectAuthoringPayload(subject=_shell("wi-noise")),
+            _create("wi-noise"),
             ClaimRetirementMember(
                 retires=claim_id,
                 reason="was-wrong",
@@ -449,12 +469,12 @@ def test_the_changed_member_ceiling_is_an_operator_knob_that_ignores_cards(
     """A lowered ceiling refuses the set typed; derivative cards never count."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     payload = _change_set(
-        SubjectAuthoringPayload(subject=_shell("wi-2")),
-        SubjectAuthoringPayload(subject=_shell("wi-3")),
+        _create("wi-2"),
+        _create("wi-3"),
         _claim(subject_id="wi-2", value="ready"),
     )
     intent = coordinator.create(
@@ -465,7 +485,8 @@ def test_the_changed_member_ceiling_is_an_operator_knob_that_ignores_cards(
 
     lowered = lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
     authored = len(lowered.changed_members)
-    assert authored == 3
+    # Two created Subjects, each with its key Claim, and one Claim.
+    assert authored == 5
     # The compiler emits one derivative card per authored member; none of them
     # counts, so the ceiling that exactly fits the authored members admits.
     instance.bind_receive_limits(ProposalReceiveLimits(max_changed_members=authored))
@@ -494,7 +515,7 @@ def test_eighty_members_of_every_kind_become_exactly_one_generation(tmp_path: Pa
     """
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
 
@@ -507,7 +528,7 @@ def test_eighty_members_of_every_kind_become_exactly_one_generation(tmp_path: Pa
     seeded = sorted(item.claim_id for item in seed.change_set_claim_identities)
     generations_before = len(instance.accepted_history())
 
-    subjects = [SubjectAuthoringPayload(subject=_shell(f"wi-b{index}")) for index in range(5)]
+    subjects = [_create(f"wi-b{index}") for index in range(5)]
     predicates = ["project.work_item.owner", "project.work_item.reviewer"]
     claim_types = [
         ClaimTypeAuthoringPayload(claim_type=_predicate_type(predicate)) for predicate in predicates
@@ -555,8 +576,8 @@ def test_eighty_members_of_every_kind_become_exactly_one_generation(tmp_path: Pa
     assert len(instance.accepted_history()) == generations_before + 1
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    for subject in subjects:
-        assert subject_path(SUBJECT_KIND, subject.subject.subject_id) in tree
+    for index in range(5):
+        assert subject_path(SUBJECT_KIND, f"wi-b{index}") in tree
     for predicate in predicates:
         assert claim_type_path(predicate) in tree
     for item in coordinator.get(intent.intent_id, actor=actor).intent.change_set_claim_identities:
@@ -572,13 +593,13 @@ def test_an_indexed_member_reference_expectation_resolves_and_refuses(
     """`members[n].statement.subject` addresses exactly the member that owns it."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
     payload = _change_set(
-        SubjectAuthoringPayload(subject=_shell("wi-2")),
+        _create("wi-2"),
         _claim(qualifier="a"),
         _claim(qualifier="b"),
     )
@@ -639,7 +660,7 @@ def test_a_refused_set_rebases_and_its_generation_replays_byte_identically(
     """A set advances over an unrelated acceptance, then replays from disk unchanged."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
 
@@ -654,15 +675,10 @@ def test_a_refused_set_rebases_and_its_generation_replays_byte_identically(
     ).intent
     assert coordinator.preflight(intent.intent_id, actor=actor).verdict == "refused"
 
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[subject_path(SUBJECT_KIND, "wi-late")] = render_subject(_shell("wi-late"))
-    _accept_tree(
-        instance,
-        owner,
-        tree,
-        timestamp="2026-08-21T12:01:00.000000Z",
-        proposal_name="advance-for-change-set-rebase",
-    )
+    advance = coordinator.create(
+        actor=actor, payload=_change_set(_create("wi-late")), canonical_timestamp=TIMESTAMP
+    ).intent
+    _accept(instance, owner, coordinator, advance.intent_id, actor)
 
     rebased = coordinator.rebase(intent.intent_id, actor=actor).intent
     assert rebased.base_coordinate == AcceptedCoordinate.from_internal(
@@ -748,7 +764,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
     """
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
 
@@ -777,7 +793,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
     cases: tuple[tuple[str, tuple[object, ...], object, str, str, str], ...] = (
         (
             "claim_type_succession",
-            (claim_type_member, SubjectAuthoringPayload(subject=_shell("wi-2"))),
+            (claim_type_member, _create("wi-2")),
             claim_type_member,
             "cruxible.claim_type.stale_predecessor",
             claim_type_path("project.work_item.status"),
@@ -785,7 +801,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
         ),
         (
             "subject_succession",
-            (subject_member, SubjectAuthoringPayload(subject=_shell("wi-2"))),
+            (subject_member, _create("wi-2")),
             subject_member,
             "cruxible.subject.stale_predecessor",
             subject_path(SUBJECT_KIND, "wi-42"),
@@ -801,7 +817,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
         ),
         (
             "literal_schema",
-            (schema_claim_member, SubjectAuthoringPayload(subject=_shell("wi-2"))),
+            (schema_claim_member, _create("wi-2")),
             schema_claim_member,
             "cruxible.claim.literal_schema_invalid",
             "",
@@ -845,7 +861,7 @@ def test_a_singular_intent_is_never_re_addressed_to_a_member(
     """A singular intent owns every path it writes, so no member prefix is added."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
 
@@ -877,79 +893,43 @@ def _claim_with_subject_draft(subject_id: str, shell: SubjectShell) -> ClaimAuth
     )
 
 
-def test_a_dependency_draft_that_carries_a_succession_still_refuses_typed(
+def test_a_dependency_draft_never_creates_its_subject(
     tmp_path: Path,
 ) -> None:
-    """The successor laws for the withdrawn `dependency_not_one_claim` refusal.
+    """A Claim's Subject draft names an existing Subject; it never creates one (D1).
 
-    Before this batch a dependency draft that named a predecessor, or that was
-    born retired, was refused at authoring as
-    `cruxible.authoring.dependency_not_one_claim` on the grounds that a
-    succession meant a second change. A change set IS one change, so the staged
-    tree decides instead and the draft is installed. What refuses it now is the
-    ordinary compiler law on the artifact it wrote, and this pins both codes
-    for a succession carried inside a set:
-
-    - a draft naming a predecessor for a Subject that has none accepted refuses
-      `cruxible.subject.unexpected_predecessor`, addressed to the member that
-      installed the draft;
-    - a born-retired draft refuses `cruxible.change_set.unresolved_pin`, which
-      the compiler raises against the whole candidate rather than one artifact,
-      so it stays addressed at `payload`.
-
-    Neither draft reaches the accepted tree, and neither leaves a proposal.
+    Core assigns every new Subject's id, so a draft naming a Subject that does
+    not exist -- with a predecessor, born retired, or plain -- refuses at
+    lowering, addressed to the member that carries it, and its repair is the
+    creation member. Nothing reaches the accepted tree or leaves a proposal.
     """
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     before = instance.accepted_coordinate()
 
-    succeeding = _claim_with_subject_draft(
-        "wi-succession",
-        _shell("wi-succession").model_copy(
-            update={"lifecycle": ArtifactLifecycle(predecessor_digest="sha256:" + "0" * 64)}
-        ),
-    )
-    payload = _change_set(succeeding, SubjectAuthoringPayload(subject=_shell("wi-2")))
-    index = payload.members.index(succeeding)
-    intent = coordinator.create(
-        actor=actor,
-        payload=payload,
-        canonical_timestamp=TIMESTAMP,
-    ).intent
-    offending = _refused_diagnostics(coordinator, intent.intent_id, actor)
-    draft_path = subject_path(SUBJECT_KIND, "wi-succession")
-    diagnostic = offending["cruxible.subject.unexpected_predecessor"]
-    assert diagnostic.stage == "proposal_evaluation"
-    assert diagnostic.offending_element == f"members[{index}].{draft_path}"
-    assert _repair_replacement(diagnostic) == {
-        "artifact_path": draft_path,
-        "member": index,
-        "offending_element": f"members[{index}].{draft_path}",
-    }
-
-    retired = _claim_with_subject_draft(
-        "wi-born-retired",
-        _shell("wi-born-retired").model_copy(
-            update={"lifecycle": ArtifactLifecycle(state="retired")}
-        ),
-    )
-    born_retired = coordinator.create(
-        actor=actor,
-        payload=_change_set(retired, SubjectAuthoringPayload(subject=_shell("wi-3"))),
-        canonical_timestamp=TIMESTAMP,
-    ).intent
-    pinned = _refused_diagnostics(coordinator, born_retired.intent_id, actor)
-    unresolved = pinned["cruxible.change_set.unresolved_pin"]
-    assert unresolved.stage == "proposal_evaluation"
-    assert unresolved.offending_element == "payload"
-    assert _repair_replacement(unresolved) == {"offending_element": "payload"}
-
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    assert draft_path not in tree
-    assert subject_path(SUBJECT_KIND, "wi-born-retired") not in tree
+    for subject_id, lifecycle in (
+        ("wi-succession", ArtifactLifecycle(predecessor_digest="sha256:" + "0" * 64)),
+        ("wi-born-retired", ArtifactLifecycle(state="retired")),
+        ("wi-plain", ArtifactLifecycle()),
+    ):
+        drafted = _claim_with_subject_draft(
+            subject_id, _shell(subject_id).model_copy(update={"lifecycle": lifecycle})
+        )
+        payload = _change_set(drafted, _create("wi-2"))
+        index = payload.members.index(drafted)
+        intent = coordinator.create(
+            actor=actor, payload=payload, canonical_timestamp=TIMESTAMP
+        ).intent
+        offending = _refused_diagnostics(coordinator, intent.intent_id, actor)
+        diagnostic = offending["cruxible.authoring.subject_id_not_assigned"]
+        assert diagnostic.offending_element == f"members[{index}].dependency_drafts.subject"
+        assert '"kind": "subject"' in diagnostic.repairs[0].description
+        assert subject_path(SUBJECT_KIND, subject_id) not in instance.tree_at(
+            instance.accepted_coordinate().git_oid
+        )
     assert instance.accepted_coordinate() == before
 
 
@@ -967,7 +947,7 @@ def test_a_one_member_change_set_lands_and_keeps_its_change_set_identity(
     """
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     generations_before = len(instance.accepted_history())
@@ -1094,13 +1074,13 @@ def test_a_retirement_member_spells_what_it_retires_the_way_a_claim_does(
 
     # And the one admissible spelling still creates exactly one intent twice.
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     accepted = _accept_one_claim(instance, owner, coordinator, actor)
     payload = _change_set(
         ClaimRetirementMember(retires=accepted, reason="was-rescinded"),
-        SubjectAuthoringPayload(subject=_shell("wi-dedup")),
+        _create("wi-dedup"),
     )
     first = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
     again = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
@@ -1125,12 +1105,7 @@ def _measured_subject_set(
     actor: AuthenticatedActor,
     count: int,
 ) -> None:
-    payload = _change_set(
-        *(
-            SubjectAuthoringPayload(subject=_shell(f"wi-fresh-{index:03d}"))
-            for index in range(count)
-        )
-    )
+    payload = _change_set(*(_create(f"wi-fresh-{index:03d}") for index in range(count)))
     intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
     _accept(instance, owner, coordinator, intent.intent_id, actor)
 
@@ -1218,6 +1193,7 @@ def test_the_advertised_record_ceiling_is_the_measured_one(
         owner,
         additional_subjects=tuple(_shell(f"wi-cost-{index:03d}") for index in range(8)),
     )
+    key_by_slug(instance, SUBJECT_KIND, timestamp=TIMESTAMP)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     limits = ProposalReceiveLimits()
@@ -1225,7 +1201,8 @@ def test_the_advertised_record_ceiling_is_the_measured_one(
     kind(instance, owner, coordinator, actor, 8)  # type: ignore[operator]
 
     entries, size = accepted_change_set_record(instance)
-    assert entries == 8
+    # A created Subject writes its key Claim beside it.
+    assert entries == (16 if kind is _measured_subject_set else 8)
     # The whole point of the advertisement: a projection computed from it is
     # never smaller than the record it predicts, so a set it admits is a set the
     # ledger can write.
@@ -1260,7 +1237,7 @@ def test_a_thousand_member_change_set_refuses_before_it_is_compiled(
     """
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     # The ceiling this law was measured against. It is 64 MiB now, under which
@@ -1270,9 +1247,7 @@ def test_a_thousand_member_change_set_refuses_before_it_is_compiled(
     limits = ProposalReceiveLimits(max_change_set_record_bytes=4 * 1024 * 1024)
     instance.bind_receive_limits(limits)
     assert limits.max_change_set_members == 372
-    payload = _change_set(
-        *(SubjectAuthoringPayload(subject=_shell(f"wi-bulk-{index:04d}")) for index in range(1_000))
-    )
+    payload = _change_set(*(_create(f"wi-bulk-{index:04d}") for index in range(1_000)))
     intent = coordinator.create(
         actor=actor,
         payload=payload,
@@ -1316,15 +1291,15 @@ def test_a_set_at_the_record_ceiling_still_compiles(tmp_path: Path) -> None:
     """The bound refuses the sets that cannot activate, and only those."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     per_member = CHANGE_SET_RECORD_BYTES_PER_MEMBER
     instance.bind_receive_limits(ProposalReceiveLimits(max_change_set_record_bytes=3 * per_member))
     assert instance.proposal_service().receive_limits.max_change_set_members == 3
+    # Two members, three record entries: the Subject, its key Claim, the Claim.
     payload = _change_set(
-        SubjectAuthoringPayload(subject=_shell("wi-2")),
-        SubjectAuthoringPayload(subject=_shell("wi-3")),
+        _create("wi-2"),
         _claim(subject_id="wi-2", value="ready"),
     )
     intent = coordinator.create(
@@ -1360,7 +1335,7 @@ def test_a_set_of_retirements_at_the_old_ceiling_refuses(
     """
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     # 582 is a count taken against the 4 MiB ceiling this build first shipped,
@@ -1404,9 +1379,9 @@ def test_a_set_that_lowers_to_more_entries_than_it_authors_refuses_before_evalua
 ) -> None:
     """The record bound bounds the record, not the member list that projects it.
 
-    A dependency draft is an entry in the record and not a member of the set:
-    two `ClaimAuthoringPayloadV2` members each carrying a Subject draft author
-    two members and write four paths. The pre-lowering projection counts two and
+    A created Subject's key Claim is an entry in the record and not a member of
+    the set: two Subject creation members author two members and write four
+    paths (each Subject and its key Claim). The pre-lowering projection counts two and
     lets them through; the exact count is known once lowering has run, and the
     refusal still arrives before the evaluation that costs the ten minutes card
     110 reported. `evaluate_proposal_tree` is replaced with a function that
@@ -1414,16 +1389,13 @@ def test_a_set_that_lowers_to_more_entries_than_it_authors_refuses_before_evalua
     """
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     per_member = CHANGE_SET_RECORD_BYTES_PER_MEMBER
     instance.bind_receive_limits(ProposalReceiveLimits(max_change_set_record_bytes=3 * per_member))
     assert instance.proposal_service().receive_limits.max_change_set_members == 3
-    payload = _change_set(
-        _claim_with_subject_draft("wi-draft-a", _shell("wi-draft-a")),
-        _claim_with_subject_draft("wi-draft-b", _shell("wi-draft-b")),
-    )
+    payload = _change_set(_create("wi-draft-a"), _create("wi-draft-b"))
     intent = coordinator.create(
         actor=actor,
         payload=payload,
@@ -1443,7 +1415,7 @@ def test_a_set_that_lowers_to_more_entries_than_it_authors_refuses_before_evalua
         for item in result.frontier.diagnostics
         if item.code == "cruxible.authoring.change_set_record_too_large"
     )
-    # Four: two Claim cards and the two Subject drafts that carry them.
+    # Four: the two Subjects and the key Claim each one carries.
     assert "lowers to 4 record entries" in diagnostic.message
     assert diagnostic.repairs[0].replacement == {
         "record_entries": 4,
@@ -1464,11 +1436,11 @@ def test_a_compile_that_exhausts_memory_refuses_typed_instead_of_propagating(
     """Card 106: the allocation failure the process CAN see is never untyped."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     payload = _change_set(
-        SubjectAuthoringPayload(subject=_shell("wi-2")),
+        _create("wi-2"),
         _claim(subject_id="wi-2", value="ready"),
     )
     intent = coordinator.create(
@@ -1505,7 +1477,7 @@ def test_a_revision_that_moves_the_subject_refuses_by_name(tmp_path: Path) -> No
     """
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     accepted_claim_id = _accept_one_claim(instance, owner, coordinator, actor)
@@ -1513,7 +1485,7 @@ def test_a_revision_that_moves_the_subject_refuses_by_name(tmp_path: Path) -> No
     moved = coordinator.create(
         actor=actor,
         payload=_change_set(
-            SubjectAuthoringPayload(subject=_shell("wi-9")),
+            _create("wi-9"),
             _claim(
                 revises=accepted_claim_id,
                 subject_id="wi-9",
@@ -1540,7 +1512,7 @@ def test_a_revision_that_moves_the_predicate_refuses_by_name(tmp_path: Path) -> 
     """The other axis of the same slot, and the one the succession road never moves."""
 
     instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
+    _seed(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     accepted_claim_id = _accept_one_claim(instance, owner, coordinator, actor)

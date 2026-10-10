@@ -29,6 +29,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
     CLAIM_LAW_V3_REVISION_10,
+    CLAIM_LAW_V3_REVISION_11,
     CLAIM_TYPE_ACCEPTANCE_LAW,
     CLAIM_TYPE_REVISION_4_ACCEPTANCE_LAW,
     CLAIM_TYPE_V3_ACCEPTANCE_LAW,
@@ -48,6 +49,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
     CLAIM_V3_REVISION_8_ACCEPTANCE_LAW,
     CLAIM_V3_REVISION_9_ACCEPTANCE_LAW,
+    CLAIM_V3_REVISION_10_ACCEPTANCE_LAW,
     COMPILER_UPGRADE_ACCEPTANCE_LAW,
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
@@ -76,6 +78,8 @@ from cruxible_client.contracts.laws import (
     SOURCE_CHECKED_PROCEDURE_LAW,
     SOURCE_CHECKED_UPGRADE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
+    SUBJECT_IDENTITY_UPGRADE_LAW,
+    SUBJECT_KIND_ACCEPTANCE_LAW,
     TRIGGER_ACCEPTANCE_LAW,
     TRIGGER_CAPTURE_UPGRADE_LAW,
     InstalledAcceptanceLaw,
@@ -102,6 +106,7 @@ from cruxible_core.compiler.compiler import (
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
     SOURCE_CHECKED_COMPILER,
+    SUBJECT_IDENTITY_COMPILER,
     SUPPORTED_COMPILERS,
     TRIGGER_CAPTURE_COMPILER,
     UPGRADE_COMPILER,
@@ -134,6 +139,13 @@ LAW_COORDINATES: tuple[
         "playbill-trigger-v1",
         1,
         "sha256:7fc3d357dbd23307f849c5750181a21035d7d9866e07db022fb3722e59fe2bce",
+    ),
+    (
+        SUBJECT_KIND_ACCEPTANCE_LAW,
+        "cruxible.subject-kind.v1",
+        "cruxible-subject-kind-v1",
+        1,
+        "sha256:5f8e0ef33e854fc3355bc02a3cac0a6c08f216c59175b0a53ee2195bdc819510",
     ),
     (
         CLAIM_TYPE_V5_ACCEPTANCE_LAW,
@@ -272,8 +284,8 @@ LAW_COORDINATES: tuple[
         CLAIM_V3_ACCEPTANCE_LAW,
         "playbill.claim.v3",
         "playbill-claim-v3",
-        10,
-        "sha256:5a135ff2c700128b0af0146329d6d139065a18a7c09e57e7954deab467327a7c",
+        11,
+        "sha256:1a75706bf54bbd681ed4da2c68f4050804904e417a2dcead8691a655e0953a00",
     ),
     (
         PROVIDER_ACCEPTANCE_LAW,
@@ -357,6 +369,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
         "playbill-compiler-upgrade-v1",
         10,
         "sha256:f94df9eceb5575387c39fadf954bd7cadc9e1d7fb930cc960793972cca8abefe",
+    ),
+    (
+        SUBJECT_IDENTITY_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        11,
+        "sha256:c0d5b95667083a67243e46a14e1f12b90068ff98b32882830b2a4d9b7582a9c0",
     ),
     (
         CLAIM_TYPE_REVISION_4_ACCEPTANCE_LAW,
@@ -471,6 +490,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
         "sha256:874d7b97713a151520759d01eddff19c85b151aafc3d45373d628c3768f13cd6",
     ),
     (
+        CLAIM_V3_REVISION_10_ACCEPTANCE_LAW,
+        "playbill.claim.v3",
+        "playbill-claim-v3",
+        10,
+        "sha256:5a135ff2c700128b0af0146329d6d139065a18a7c09e57e7954deab467327a7c",
+    ),
+    (
         CLAIM_V3_REVISION_9_ACCEPTANCE_LAW,
         "playbill.claim.v3",
         "playbill-claim-v3",
@@ -521,7 +547,8 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
     )
     assert CLAIM_LAW_V3_REVISION_8 == CLAIM_V3_REVISION_8_ACCEPTANCE_LAW.coordinate
     assert CLAIM_LAW_V3_REVISION_9 == CLAIM_V3_REVISION_9_ACCEPTANCE_LAW.coordinate
-    assert CLAIM_LAW_V3_REVISION_10 == CLAIM_V3_ACCEPTANCE_LAW.coordinate
+    assert CLAIM_LAW_V3_REVISION_10 == CLAIM_V3_REVISION_10_ACCEPTANCE_LAW.coordinate
+    assert CLAIM_LAW_V3_REVISION_11 == CLAIM_V3_ACCEPTANCE_LAW.coordinate
     assert CLAIM_LAW_V2_REVISION_7 == CLAIM_V2_REVISION_7_ACCEPTANCE_LAW.coordinate
     assert CLAIM_LAW_V2_REVISION_8 == CLAIM_V2_ACCEPTANCE_LAW.coordinate
     seen_coordinates: set[tuple[str, str]] = set()
@@ -739,7 +766,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         GOVERNED_TRIGGERS_COMPILER.rule_digest
         == "sha256:8bacc463a71bc42019d973362174e6eae9b3d3c5e97fd86429a889f18e36f9e7"
     )
-    assert current_compiler_coordinate() == GOVERNED_TRIGGERS_COMPILER
+    assert (
+        SUBJECT_IDENTITY_COMPILER.rule_digest
+        == "sha256:29c8c866159d449c28320d49ad9f6f400aa40bb923c2334f34db74aec4b59f22"
+    )
+    assert current_compiler_coordinate() == SUBJECT_IDENTITY_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -782,7 +813,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 32
+    current_revision = 33
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -879,16 +910,19 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "line-trigger-capture-input-v1",
         "authority-verbs-settle-mandates-v1",
         "governed-triggers-v1",
+        "subject-identity-v1",
     )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "governed-triggers-v1"
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "subject-identity-v1"
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
     """The September 23 rung-3 ruling (R5) authorizes settle mandates and verbs in revision 31.
 
-    The September 30 ruling (one-trigger-home-0930) authorizes revision 32 alone:
+    The September 30 ruling (one-trigger-home-0930) authorizes revision 32:
     every trigger is a governed Trigger artifact and a Line no longer embeds one.
-    Historical admission bytes and compiler rules remain unchanged.
+    The October 9 identity review ruling (E-b F-005/F-006) authorizes revision 33
+    alone: SubjectKinds, and the candidate boundary holding every new Subject to
+    its kind's rule. Historical admission bytes and compiler rules remain unchanged.
     """
 
     from cruxible_core.compiler.compiler import (
@@ -896,5 +930,5 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 31
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "governed-triggers-v1"
+    assert len(COMPILER_REVISION_LABELS) == 32
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "subject-identity-v1"

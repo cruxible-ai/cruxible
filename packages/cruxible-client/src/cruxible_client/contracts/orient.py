@@ -137,6 +137,10 @@ class OrientPredicate(_StrictOrientModel):
     live_claims: int | None = Field(default=None, ge=0, exclude_if=_is_none)
 
 
+#: A kind no accepted SubjectKind declares: its Subjects are grandfathered.
+UNDECLARED_KIND_IDENTITY = "undeclared"
+
+
 class OrientKind(_StrictOrientModel):
     """One Subject kind: how many live Subjects it has and its predicates.
 
@@ -147,6 +151,10 @@ class OrientKind(_StrictOrientModel):
 
     kind: str
     subjects: int = Field(ge=0)
+    #: How core names Subjects of the kind (its SubjectKind): ``keys: <key
+    #: ClaimTypes> (unique|hint)``, ``minted``, or ``undeclared`` -- no new Subject
+    #: of an undeclared kind can be created until a SubjectKind is authored.
+    identity: str = UNDECLARED_KIND_IDENTITY
     evidence: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     predicates: tuple[OrientPredicate, ...]
 
@@ -381,6 +389,7 @@ __all__ = [
     "ORIENT_DEFAULT_QUERIES",
     "ORIENT_MAX_LIMIT",
     "ORIENT_SAMPLE_SUBJECTS",
+    "UNDECLARED_KIND_IDENTITY",
     "Head",
     "OrientEnablements",
     "OrientArtifactCounts",

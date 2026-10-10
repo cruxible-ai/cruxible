@@ -94,6 +94,7 @@ from tests.core_support._published_world import (
 from tests.core_support._published_world import (
     retire_claim as _retire,
 )
+from tests.core_support._subject_kind_support import _is_key, without_keys
 from tests.core_support._support import initialize_local
 from tests.support.procedures import accepted_procedure
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
@@ -155,7 +156,8 @@ def _registration(source_id: str, block_id: str) -> SimpleNamespace:
 
 def _claim_backing(instance: PlaybillInstance, *, stale: bool = False) -> ProjectionClaimBacking:
     facts = build_accepted_query_facts(instance, coordinate=instance.accepted_coordinate())
-    row = facts.claims[0]
+    # The world's stated Claim, not the key Claim core wrote creating its Subject.
+    row = next(item for item in facts.claims if not _is_key(item.accepted.claim))
     return ProjectionClaimBacking(
         identity=row.accepted.claim.identity,
         statement_digest=("sha256:" + "f" * 64) if stale else row.accepted.statement_digest,
@@ -993,7 +995,7 @@ def test_overturned_claim_backing_requires_depublication(
         timestamp=TIMESTAMP,
     )
     activate(instance, owner, proposed)
-    overturned = _claim_from_view(service_list_playbill_claims(instance).claims[0])
+    overturned = _claim_from_view(without_keys(service_list_playbill_claims(instance).claims)[0])
     backing = ProjectionClaimBacking(
         identity=overturned.identity,
         statement_digest=proposed.statement_digest,
@@ -1061,7 +1063,7 @@ def test_unselected_many_cardinality_backing_is_not_overturned(tmp_path: Path) -
         timestamp=TIMESTAMP,
     )
     activate(instance, owner, proposed)
-    unselected = _claim_from_view(service_list_playbill_claims(instance).claims[0])
+    unselected = _claim_from_view(without_keys(service_list_playbill_claims(instance).claims)[0])
     backing = ProjectionClaimBacking(
         identity=unselected.identity,
         statement_digest=proposed.statement_digest,
@@ -1163,7 +1165,7 @@ def test_claim_backing_statement_digest_ignores_artifact_only_revision(
     tmp_path: Path,
 ) -> None:
     instance, owner = _instance_with_query(tmp_path)
-    claim = _claim_from_view(service_list_playbill_claims(instance).claims[0])
+    claim = _claim_from_view(without_keys(service_list_playbill_claims(instance).claims)[0])
     backing = _claim_backing(instance)
     assert backing.identity == claim.identity
     original_artifact_digest = claim_artifact_digest(claim).tagged

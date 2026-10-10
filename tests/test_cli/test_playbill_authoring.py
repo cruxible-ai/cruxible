@@ -646,6 +646,8 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
         "claim_type_succession",
         "claim_retirement",
         "subject",
+        "subject_kind",
+        "subject_succession",
         "query_definition",
         "procedure_mandate",
         "acquisition_policy",

@@ -14,13 +14,17 @@ from tests.core_support._claim_authoring_support import (
     TIMESTAMP,
     _activate_direct_claim,
     _authoring,
+    create_subjects,
     service_propose_playbill_claim,
 )
 from tests.core_support._support import initialize_local
+from tests.test_claims.test_claims import _subject
 
 
 def test_provisional_and_rebuilt_canonical_claim_facts_match(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
+    # A Claim never creates its Subject: the work item is accepted first.
+    create_subjects(instance, (_subject(),), timestamp=TIMESTAMP)
     base = instance.accepted_coordinate()
     proposed = service_propose_playbill_claim(
         instance,

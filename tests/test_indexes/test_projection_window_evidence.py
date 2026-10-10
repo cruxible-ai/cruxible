@@ -47,6 +47,7 @@ from cruxible_core.authoring.registrations import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
+from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_preflight import (
     _coordinator,
@@ -444,13 +445,16 @@ def _candidate_tree(instance: Any, base: Any, contract: Any, claim_type: Any, cl
     from tests.test_claims.test_claims import _subject
 
     shell = _subject()
-    return {
-        **instance.tree_at(base.git_oid),
-        subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-        "claim-types/project.work_item/status.json": render_claim_type(claim_type),
-        capture_contract_path(contract.identity.name): render_capture_contract(contract),
-        claim_path(claim.identity.name): render_claim(claim),
-    }
+    return core_assigned(
+        instance,
+        {
+            **instance.tree_at(base.git_oid),
+            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+            "claim-types/project.work_item/status.json": render_claim_type(claim_type),
+            capture_contract_path(contract.identity.name): render_capture_contract(contract),
+            claim_path(claim.identity.name): render_claim(claim),
+        },
+    )
 
 
 def _claim_law_evidence(candidate: CandidateRecord) -> Any:

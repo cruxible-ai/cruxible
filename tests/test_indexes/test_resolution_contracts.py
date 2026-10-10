@@ -64,6 +64,7 @@ from cruxible_core.procedures.resolution import (
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.storage.cas import ContentAddressedBodyStore
+from tests.core_support._subject_kind_support import declare_created_kinds, world_history
 from tests.core_support._support import client_material, initialize_local
 from tests.support.procedures import accepted_procedure
 from tests.test_ledger.test_activation import _sign
@@ -421,8 +422,10 @@ def test_resolution_contract_reopens_only_after_latest_answer_is_overturned(tmp_
         )
 
 
+@world_history
 def _accept_tree(instance, owner, tree, *, timestamp: str, proposal_name: str) -> None:
     base = instance.accepted_coordinate()
+    declare_created_kinds(instance.tree_at(base.git_oid), tree, instance=instance)
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
         request=ProposalAdmissionRequest(
@@ -432,7 +435,7 @@ def _accept_tree(instance, owner, tree, *, timestamp: str, proposal_name: str) -
         candidate_tree=tree,
         timestamp=timestamp,
     )
-    assert proposed.candidate is not None
+    assert proposed.candidate is not None, proposed.evaluation.diagnostics
     assert proposed.evaluation.evaluated_tree_oid is not None
     bundle = instance.prepare_generation(
         base=base,

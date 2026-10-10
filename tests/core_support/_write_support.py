@@ -47,6 +47,11 @@ from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmiss
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from cruxible_core.service.authoring.write_verbs import WriteCaller
+from tests.core_support._subject_kind_support import (
+    declare_created_kinds,
+    key_by_slug,
+    world_history,
+)
 from tests.core_support._support import initialize_local
 
 KIND = "project.work_item"
@@ -133,6 +138,7 @@ def _shell(subject_id: str) -> SubjectShell:
     )
 
 
+@world_history
 def seed_write_vocabulary(instance: PlaybillInstance, *, actor_id: str = "owner") -> None:
     """Accept the write vocabulary and three work items into ``instance``.
 
@@ -148,6 +154,9 @@ def seed_write_vocabulary(instance: PlaybillInstance, *, actor_id: str = "owner"
         tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     for contract in (COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, REPORTS):
         tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
+    declare_created_kinds(
+        instance.tree_at(base.git_oid), tree, instance=instance, actor_id=actor_id
+    )
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(
@@ -162,6 +171,9 @@ def seed_write_vocabulary(instance: PlaybillInstance, *, actor_id: str = "owner"
         instance, proposal_id=proposed.admission.proposal_id, activated_by=actor_id
     )
     assert receipt.status == "accepted"
+    # Work items are named by their slug from here on: a write that names one
+    # that does not exist creates it by that key (identity D1).
+    key_by_slug(instance, KIND, timestamp="2026-09-29T11:59:10.000000Z", actor_id=actor_id)
 
 
 def seed_write_surface(
