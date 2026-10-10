@@ -3441,7 +3441,7 @@ def members_identity_overlay(
     it.
     """
 
-    from cruxible_client.contracts.discovery import normalize_discovery_term
+    from cruxible_core.indexes.typed_state import statement_vocabulary_terms
 
     overlay = IdentityOverlay()
     removed: set[str] = set()
@@ -3458,12 +3458,24 @@ def members_identity_overlay(
             if member.revises is not None:
                 removed.add(member.revises)
             statement = member.statement
+            # Alias rows come from the one row function accepted vocabulary
+            # extraction uses (any qualifier), so this overlay cannot diverge
+            # from what the accepted Claim will index (review delta-3 F-001).
+            overlay.aliases_added.update(
+                (target, term)
+                for _identity, target, basis, term, _value in statement_vocabulary_terms(
+                    "pending", statement
+                )
+                if basis == "alias" and target.startswith("subjects/")
+            )
             address = statement.subject
+            # Key values: only an unqualified literal is a key part.
             if (
                 address.selector.scheme == "artifact-v1"
                 and address.artifact_path.startswith("subjects/")
                 and statement.qualifier is None
                 and isinstance(statement.object, LiteralClaimObject)
+                and statement.predicate != "semantic.alias"
             ):
                 added.append((address.artifact_path, statement.predicate, statement.object.value))
     declared = _DeclaredInChange(members=members, base_tree=base_tree)
@@ -3486,8 +3498,6 @@ def members_identity_overlay(
     added_values: dict[tuple[str, str], list[object]] = {}
     for subject, predicate, value in added:
         added_values.setdefault((subject, predicate), []).append(value)
-        if predicate == "semantic.alias" and isinstance(value, str):
-            overlay.aliases_added.add((subject, normalize_discovery_term(value)))
         kind_rule = declared(subject_kind_of(subject)[0])
         if kind_rule is not None and predicate in kind_rule.keys:
             affected[subject] = kind_rule.keys

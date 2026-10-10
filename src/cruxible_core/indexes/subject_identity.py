@@ -887,23 +887,25 @@ def _shell(tree: Mapping[str, bytes], path: str) -> Any | None:
 
 
 def _alias_rows(content: bytes | None, path: str) -> tuple[tuple[str, str], ...]:
-    """The live alias rows one Claim version contributes: (target path, term)."""
+    """The live alias rows one Claim version contributes: (target path, term).
 
-    from cruxible_client.contracts.claims import LiteralClaimObject, parse_claim
-    from cruxible_client.contracts.discovery import normalize_discovery_term
+    Read through the row function accepted vocabulary extraction uses
+    (``typed_state.vocabulary_terms``), so the boundary's view of a change's
+    aliases is exactly what the accepted generation will index.
+    """
+
+    from cruxible_client.contracts.claims import parse_claim
+    from cruxible_core.indexes.typed_state import vocabulary_terms
 
     if content is None or b'"semantic.alias"' not in content:
         return ()
-    claim = parse_claim(content, path=path)
-    statement = claim.statement
-    if (
-        claim.lifecycle.state != "live"
-        or statement.predicate != "semantic.alias"
-        or not isinstance(statement.object, LiteralClaimObject)
-        or not isinstance(statement.object.value, str)
-    ):
-        return ()
-    return ((statement.subject.artifact_path, normalize_discovery_term(statement.object.value)),)
+    return tuple(
+        (target, term)
+        for _identity, target, basis, term, _value in vocabulary_terms(
+            parse_claim(content, path=path), path=path
+        )
+        if basis == "alias"
+    )
 
 
 @dataclass(frozen=True)

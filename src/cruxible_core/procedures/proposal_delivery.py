@@ -642,13 +642,17 @@ class _SubjectKeys:
         references resolved to those paths, and its created Subjects.
         """
 
+        # A creation reference's selector value is its member identity's digest:
+        # one lookup per reference, never a scan of the creations.
+        by_digest = {
+            identity.rpartition("@")[2]: path for identity, (path, _key, _made) in creations.items()
+        }
+
         def resolved(address: SemanticAddress) -> SemanticAddress:
             if address.selector.scheme != "subject-creation-v1":
                 return address
-            for identity, (path, _key, _created) in creations.items():
-                if identity.endswith(f"@{address.selector.value}"):
-                    return SemanticAddress.whole_artifact(path)
-            return address
+            path = by_digest.get(address.selector.value)
+            return address if path is None else SemanticAddress.whole_artifact(path)
 
         final_members: list[AuthoringChangeSetMember] = list(subject_members)
         for member in members:

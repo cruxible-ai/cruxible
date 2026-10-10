@@ -1133,3 +1133,103 @@ def test_an_appended_intent_event_is_never_visible_partially(
     assert not errors, errors
     assert len(sorted(events.glob("*.json"))) == len(before) + 1
     assert authority(intent.intent_id, record)
+
+
+# E-b delta-3 F-001: the stability overlay reads aliases as accepted extraction does.
+
+
+def test_a_qualified_alias_redirects_a_subject_valued_object_reference(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.authoring.models import ClaimAuthoringPayloadV1
+    from cruxible_client.contracts.procedures.proposal_items import ProcedureKeyedClaimProposalItem
+    from cruxible_core.indexes.subject_identity import IdentityView, tree_key_reader
+    from cruxible_core.procedures.proposal_delivery import ProposalDeliveryRefused, _SubjectKeys
+    from tests.test_service.test_subject_identity import _alias_member, _create
+
+    _create(instance, DECISION, "original")
+    _create(instance, DECISION, "other name")
+    base = instance.accepted_coordinate()
+    base_tree = instance.immutable_tree_at(base.git_oid)
+    item = ProcedureKeyedClaimProposalItem.model_validate(
+        {
+            "tag": "playbill-procedure-claim-proposal-item-v3",
+            "statement": {
+                "tag": "playbill-procedure-claim-statement-v1",
+                "subject": SemanticAddress.whole_artifact(
+                    subject_path(DECISION, "original")
+                ).model_dump(mode="json"),
+                "predicate": f"{DECISION}.related",
+                "object": {
+                    "kind": "subject_key",
+                    "subject": {"subject_kind": DECISION, "key": {"slug": "other name"}},
+                },
+                "role": "observation",
+            },
+            "rationale": "Related decisions.",
+            "revises": None,
+        }
+    )
+    (alias,) = [
+        member
+        for member in change_set(_alias_member(DECISION, "original", "other name")).members
+        if isinstance(member, ClaimAuthoringPayloadV1)
+    ]
+    qualified = alias.model_copy(
+        update={"statement": alias.statement.model_copy(update={"qualifier": "local-name"})}
+    )
+    keys = _SubjectKeys(instance, base=base, base_tree=base_tree)
+    with instance.bind_accepted_projection(base) as projection:
+        connection = projection.typed.connection
+        keys.bind(IdentityView(connection, key_reader=tree_key_reader(base_tree)))
+        keys.statement(item)
+        with pytest.raises(ProposalDeliveryRefused) as refused:
+            keys.unstable(connection, members=(qualified,), subject_members=(), creations={})
+    assert refused.value.details["code"] == "cruxible.procedure.identity_reference_unstable"
+    (changed,) = refused.value.details["references"]
+    assert changed["final"] == subject_path(DECISION, "original")
+
+
+def test_the_member_overlay_adds_exactly_the_aliases_accepted_extraction_indexes() -> None:
+    """Parity: a pending Claim's alias rows are the rows its accepted version contributes."""
+
+    import sqlite3
+
+    from cruxible_client.contracts.authoring.models import (
+        AuthoringClaimStatement,
+        ClaimAuthoringPayload,
+        ClaimDependencyDrafts,
+    )
+    from cruxible_core.authoring.lowering import members_identity_overlay
+    from cruxible_core.indexes.typed_state import schema_sql, statement_vocabulary_terms
+
+    target = SemanticAddress.whole_artifact(subject_path(DECISION, "original"))
+    statements = [
+        AuthoringClaimStatement(
+            subject=target,
+            predicate="semantic.alias",
+            object=LiteralClaimObject(value=value),
+            qualifier=qualifier,
+            role="normative",
+        )
+        for value, qualifier in (("Plain", None), ("Qualified Name", "local-name"))
+    ]
+    members = tuple(
+        ClaimAuthoringPayload(
+            statement=statement,
+            rationale="Another name.",
+            source=_SELF,
+            dependency_drafts=ClaimDependencyDrafts(),
+        )
+        for statement in statements
+    )
+    with sqlite3.connect(":memory:") as connection:
+        connection.executescript(schema_sql())
+        overlay = members_identity_overlay(connection, members=members, base_tree={})
+    expected = {
+        (row[1], row[3])
+        for statement in statements
+        for row in statement_vocabulary_terms("pending", statement)
+        if row[2] == "alias"
+    }
+    assert overlay.aliases_added == expected and len(expected) == 2

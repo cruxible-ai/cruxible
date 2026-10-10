@@ -17,6 +17,8 @@ import base64
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
@@ -448,3 +450,98 @@ def test_a_procedure_delivery_records_each_creations_actual_outcome(tmp_path: Pa
         outcome="created",
         subject_id="click",
     )
+
+
+# -- E-b delta-3 review F-001: a qualified alias is an alias in the stability check ----
+
+
+def _qualified_alias(owner_slug: str, value: str) -> dict[str, object]:
+    """A v3 item (owner named by key) giving ``owner_slug`` the qualified alias ``value``."""
+
+    return {
+        "tag": "playbill-procedure-claim-proposal-item-v3",
+        "statement": {
+            "tag": "playbill-procedure-claim-statement-v1",
+            "subject": {"subject_kind": KIND, "key": {"slug": owner_slug}},
+            "predicate": "semantic.alias",
+            "qualifier": "local-name",
+            "object": {"kind": "literal", "value": value},
+            "role": "normative",
+        },
+        "rationale": f"Another name for {owner_slug}",
+        "source": _self_source(f"also known as {value}"),
+    }
+
+
+def test_a_qualified_alias_redirecting_a_sibling_reference_refuses(tmp_path: Path) -> None:
+    """Review probe ``qualifier_delta3``: the qualified alias counts exactly as accepted state
+    indexes it, so the reference to ``other name`` is unstable and nothing is accepted."""
+
+    instance, owner, root = _packages(tmp_path, "Click", "Other Name")
+    revising = _second_terminal(
+        instance, owner, (_qualified_alias("click", "other name"), keyed_claim_item("other name"))
+    )
+
+    refusal = _unstable(instance, root, revising)
+
+    (changed,) = refusal.details["references"]
+    assert changed["frozen"] == f"subjects/{KIND}/other-name.json"
+    assert changed["final"] == f"subjects/{KIND}/click.json"
+
+
+def test_a_qualified_alias_terminal_refuses_before_its_door_so_recovery_has_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review probe ``qualifier_recovery_delta3``: no proposal exists to recover."""
+
+    from datetime import timedelta
+
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, owner, root = _packages(tmp_path, "Click", "Other Name")
+    revising = _second_terminal(
+        instance, owner, (_qualified_alias("click", "other name"), keyed_claim_item("other name"))
+    )
+    base = instance.accepted_coordinate()
+    with monkeypatch.context() as crash:
+        delivery._crash_after(crash, after_submit=False)
+        refusal = delivery._refusal(delivery.run_line(instance, root, revising))
+    assert refusal.details["code"] == "cruxible.procedure.identity_reference_unstable"
+    recovered = service_recover_proposal_egress(
+        instance, recorded_at=fixtures.NOW + timedelta(minutes=1)
+    )
+    assert not recovered
+    assert instance.accepted_coordinate() == base
+
+
+def test_settle_preparation_refuses_the_same_unstable_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Propose and settle share one preparation: the settle form of the terminal refuses too."""
+
+    from cruxible_core.procedures import proposal_delivery
+    from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
+
+    instance, owner, root = _packages(tmp_path, "Click", "Other Name")
+    revising = _second_terminal(
+        instance, owner, (_qualified_alias("click", "other name"), keyed_claim_item("other name"))
+    )
+    seen: list[dict[str, Any]] = []
+    prepare = proposal_delivery.ProposalTerminalEgressSink.prepare_terminal_egress
+
+    def recorded(self, **arguments):  # type: ignore[no-untyped-def]
+        seen.append(arguments)
+        return prepare(self, **arguments)
+
+    monkeypatch.setattr(
+        proposal_delivery.ProposalTerminalEgressSink, "prepare_terminal_egress", recorded
+    )
+    _unstable(instance, root, revising)
+    (arguments,) = seen
+    # The preparation reads the request's kind only to pick a mandate, after
+    # the stability check: the same request as a settle terminal refuses alike.
+    settle = arguments["request"].model_copy(update={"kind": "settle_change_set"})
+    sink = proposal_delivery.ProposalTerminalEgressSink(instance=instance, accepted_mandates={})
+    with pytest.raises(ProposalDeliveryRefused) as refused:
+        prepare(sink, **{**arguments, "request": settle})
+    assert refused.value.details["code"] == "cruxible.procedure.identity_reference_unstable"

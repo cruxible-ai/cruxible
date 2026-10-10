@@ -1714,7 +1714,9 @@ that item, and resolves to the Subject final shared lowering assigns or reuses
 for it (its receipt reports that same Subject); any other key resolves through
 the order above, over the base. After final lowering every reference -- a
 Claim's subject or a Subject-valued object -- is resolved again by the same
-resolver over the final candidate state. If any names a different Subject, or
+resolver over the final candidate state, its aliases read exactly as accepted
+state indexes them (a qualified alias is an alias too). If any names a
+different Subject, or
 a reference that named none (`key_missing`) would now resolve, the terminal
 refuses `cruxible.procedure.identity_reference_unstable`, naming the reference
 and both results, and proposes nothing. The repair is to put the identity
