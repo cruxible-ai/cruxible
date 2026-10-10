@@ -648,7 +648,11 @@ def test_a_same_set_definition_returns_refs_usable_in_the_same_set(
 
     package = draft.subject(world.sec.package.define("click"))
     assert isinstance(package, PendingSubjectRef)
-    assert package.address == "sec.package/click"
+    # A creation-member reference: core resolves it to the path it assigns; no
+    # address is predicted from the key (E-b review F-002).
+    assert package.creation is not None
+    assert package.creation.startswith("SubjectCreation:sec.package@")
+    assert package.address == package.creation
     assert package.coordinate == playbill.coordinate
 
     draft.claim(
@@ -688,8 +692,11 @@ def test_a_same_set_definition_returns_refs_usable_in_the_same_set(
         "kind": "subject",
         "address": {
             "tag": "playbill-semantic-address-v1",
-            "artifact_path": "subjects/sec.package/click.json",
-            "selector": {"scheme": "artifact-v1", "value": ""},
+            "artifact_path": "subject-kinds/sec.package.json",
+            "selector": {
+                "scheme": "subject-creation-v1",
+                "value": package.creation.rpartition("@")[2],
+            },
         },
     }
 
@@ -1331,7 +1338,9 @@ def test_a_kind_a_predicate_shadows_stays_reachable_as_a_kind(
     assert isinstance(package, WorldClaimType)
     assert isinstance(package.as_kind, KindNamespace)
     assert package.as_kind.subject_kind == "sec.package"
-    assert package.as_kind.define("click").address == "sec.package/click"
+    assert package.as_kind.define("click").member_identity.startswith(
+        "SubjectCreation:sec.package@"
+    )
     assert package["cryptography"].address == "sec.package/cryptography"
     assert world.kind("sec.package").subject_ids == ("cryptography",)
 

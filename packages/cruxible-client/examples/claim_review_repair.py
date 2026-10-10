@@ -124,7 +124,8 @@ def run(
     opening.claim_type(slug)
     opening.subject_kind(name="sdk.demo", keys=(SLUG,), uniqueness="unique")
     subject = opening.subject(cx.new_subject("sdk.demo", key="patch-sla"))
-    assert subject is not None and subject.address == SUBJECT
+    # A pending reference to the creation; core assigns SUBJECT when it lowers.
+    assert subject is not None and subject.creation is not None
     opening.claim_type(claim_type)
     opening.claim(
         subject=subject,
