@@ -84,8 +84,9 @@ def test_default_orient_names_each_kind_with_its_predicates_as_values(seeded) ->
     assert kind.evidence == ("playbill.foreign-source.fixture.work-items",)
     assert predicate.evidence is None
     assert result.artifacts is not None
-    # The fixture's ClaimType and the builtin semantic.alias every instance seeds.
-    assert (result.artifacts.claim_types, result.artifacts.queries) == (2, 2)
+    # The fixture's ClaimType and the builtin semantic.alias and
+    # semantic.distinct_from every instance seeds.
+    assert (result.artifacts.claim_types, result.artifacts.queries) == (3, 2)
     assert [item.name for item in result.queries or ()] == [QUERY_NAME, "project.work_items_b"]
     assert (result.queries or ())[0].description == "Every work item."
     assert result.you is not None and result.you.can_author is True
@@ -276,8 +277,9 @@ def test_a_section_pages_compact_rows_with_a_bound_cursor(seeded) -> None:  # ty
 def test_the_claim_types_section_shows_full_descriptors(seeded) -> None:  # type: ignore[no-untyped-def]
     result = service_playbill_orient(seeded, section="claim_types")
 
-    row, alias = result.claim_types or ()
+    row, alias, distinct = result.claim_types or ()
     assert alias.predicate == "semantic.alias" and alias.subject_kinds == ("semantic.subject",)
+    assert distinct.predicate == "semantic.distinct_from"
     assert row.predicate == PREDICATE and row.subject_kinds == (SUBJECT_KIND,)
     assert row.evidence == ("playbill.foreign-source.fixture.work-items",)
 

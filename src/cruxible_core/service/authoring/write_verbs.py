@@ -58,6 +58,7 @@ from cruxible_client.contracts.authoring.models import (
     SubjectCreationAuthoringPayload,
     authoring_member_identity,
 )
+from cruxible_client.contracts.builtin_claim_types import admits_object_subject
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
@@ -1067,7 +1068,7 @@ class _Planner:
                 repair=f"Pass a Subject of kind {' or '.join(allowed)} as kind/id",
                 field_path=path,
             )
-        if kind not in allowed:
+        if not admits_object_subject(info.claim_type.predicate, allowed, kind):
             raise _refuse(
                 "cruxible.write.value_kind_not_admitted",
                 f"{field_name} takes a Subject of kind {', '.join(allowed)}, not {kind!r}",

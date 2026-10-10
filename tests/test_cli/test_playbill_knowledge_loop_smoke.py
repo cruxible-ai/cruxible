@@ -624,11 +624,12 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     assert cruxible.json("get", subject_ref, "--detail", "history")["history"]["revisions"]
 
     claim_types = cruxible.json("orient", "--section", "claim_types")
-    # The work items' slug key and the builtin semantic.alias sit beside it.
+    # The work items' slug key and the builtin descriptors sit beside it.
     assert [item["predicate"] for item in claim_types["claim_types"]] == [
         f"{SUBJECT_KIND}.slug",
         PREDICATE,
         "semantic.alias",
+        "semantic.distinct_from",
     ]
     assert (
         cruxible.json("get", f"ClaimType:{PREDICATE}", "--detail", "proof")["proof"]["predicate"]

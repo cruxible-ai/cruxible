@@ -33,8 +33,9 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     assert (kind["kind"], kind["subjects"]) == (KIND, 1)
     assert [item["name"] for item in kind["predicates"]] == ["slug", "status"]
     assert kind["identity"] == f"keys: {KIND}.slug (unique)"
-    # The kind's slug key and status, and the builtin semantic.alias.
-    assert mapped["artifacts"]["claim_types"] == 3
+    # The kind's slug key and status, and the builtin semantic.alias and
+    # semantic.distinct_from.
+    assert mapped["artifacts"]["claim_types"] == 4
     assert mapped["you"]["actor"] is not None
     # Rendered for the CLI: commands, not tool calls.
     assert mapped["next"][0] == f"cruxible orient --kind {KIND}"

@@ -90,9 +90,10 @@ def test_values_reads_every_field_of_a_kind_wider_than_one_select(
     title = pb.set(WI1, "title", "Tidy the CLI", because="Named in review.")
     last = pb.set(WI1, EXTRA_FIELDS[-1], "the last field", because="Named in review.")
     world = pb.world()
-    # Every instance also seeds the builtin semantic.alias ClaimType, and the
-    # world keys its work items by the project.work_item.slug ClaimType.
-    admitted = len(CLAIM_TYPES) + len(EXTRA_FIELDS) + 2
+    # Every instance also seeds the builtin semantic.alias and
+    # semantic.distinct_from ClaimTypes, and the world keys its work items by
+    # the project.work_item.slug ClaimType.
+    admitted = len(CLAIM_TYPES) + len(EXTRA_FIELDS) + 3
     assert len(world.predicates) == admitted > QUERY_MAX_SELECT
 
     values = world.values(subjects=[WI1])

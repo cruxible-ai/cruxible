@@ -65,10 +65,11 @@ def values(instance: PlaybillInstance, subject: str, predicate: str) -> list[str
     )
 
 
-def test_a_new_instance_seeds_the_builtin_alias_claim_type(instance: PlaybillInstance) -> None:
+def test_a_new_instance_seeds_the_builtin_claim_types(instance: PlaybillInstance) -> None:
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert builtin_claim_type_files() == {
-        "claim-types/semantic/alias.json": tree["claim-types/semantic/alias.json"]
+        path: tree[path]
+        for path in ("claim-types/semantic/alias.json", "claim-types/semantic/distinct_from.json")
     }
     assert tree[claim_type_path("semantic.alias")] == render_claim_type(SEMANTIC_ALIAS_CLAIM_TYPE)
 
@@ -281,6 +282,55 @@ def test_an_instance_created_before_the_builtin_adopts_it(
     assert tree[claim_type_path("semantic.alias")] == render_claim_type(SEMANTIC_ALIAS_CLAIM_TYPE)
 
 
+def test_an_instance_seeded_with_the_alias_alone_adopts_distinct_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import cruxible_core.runtime.instance as instance_module
+    from cruxible_client.contracts.builtin_claim_types import SEMANTIC_DISTINCT_FROM_CLAIM_TYPE
+    from cruxible_core.ledger.bootstrap import genesis_seed_set
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from cruxible_core.service.claims.claim_types import service_propose_playbill_claim_type
+    from tests.core_support._support import initialize_local
+
+    older = genesis_seed_set("triggers-3-workspace-file-alias")
+    monkeypatch.setattr(instance_module, "current_genesis_seed_set", lambda _kinds: older)
+    instance, _owner = initialize_local(tmp_path)
+    monkeypatch.undo()
+    path = claim_type_path("semantic.distinct_from")
+    assert path not in instance.tree_at(instance.accepted_coordinate().git_oid)
+    inspection = service_propose_playbill_claim_type(
+        instance,
+        claim_type=SEMANTIC_DISTINCT_FROM_CLAIM_TYPE,
+        actor_id="owner",
+        proposal_name="builtin-semantic-distinct-from",
+        timestamp="2026-10-09T12:00:00.000000Z",
+    )
+    proposal_id = inspection.proposal.admission.proposal_id  # type: ignore[union-attr]
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert tree[path] == render_claim_type(SEMANTIC_DISTINCT_FROM_CLAIM_TYPE)
+
+
+def test_the_builtin_distinct_from_relates_subjects_of_any_kind(
+    instance: PlaybillInstance,
+) -> None:
+    """The descriptor relation admits semantic.subject only, and lowering agrees with the law."""
+
+    from cruxible_client.contracts.builtin_claim_types import SEMANTIC_DISTINCT_FROM_CLAIM_TYPE
+
+    assert SEMANTIC_DISTINCT_FROM_CLAIM_TYPE.allowed_object_subject_kinds == ("semantic.subject",)
+    write(
+        instance,
+        {"op": "add", "subject": ALPHA, "field": "semantic.distinct_from", "value": BETA},
+    )
+    assert values(instance, ALPHA, "semantic.distinct_from") == [BETA]
+    claim_path_value, _bytes = _lowered_claim(instance, _distinct_member("beta", "alpha"))
+    assert claim_path_value.startswith("claims/")
+
+
 # -- creation collision (item 4) -------------------------------------------------
 
 
@@ -370,23 +420,10 @@ def _exemption_world(instance: PlaybillInstance) -> tuple[dict[str, bytes], str,
 
 
 def _accept_distinct_from(instance: PlaybillInstance) -> None:
-    from tests.core_support._identity_support import accept_tree, identity_claim_type
+    """A new instance seeds the builtin semantic.distinct_from: nothing to accept."""
 
-    distinct = identity_claim_type(
-        "distinct_from",
-        canonical_form=None,
-        object_kind="subject",
-        cardinality="many",
-        # Lowering checks the object's own kind and the Claim law the descriptor
-        # pseudo-kind, so a descriptor relation names both.
-        object_kinds=(KIND, "semantic.subject"),
-        predicate="semantic.distinct_from",
-        subject_kinds=("semantic.subject",),
-    )
-    accept_tree(
-        instance,
-        {claim_type_path(distinct.predicate): render_claim_type(distinct)},
-        name="distinct-from",
+    assert claim_type_path("semantic.distinct_from") in instance.tree_at(
+        instance.accepted_coordinate().git_oid
     )
 
 

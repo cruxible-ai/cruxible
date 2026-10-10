@@ -88,10 +88,11 @@ def test_the_upgrade_moves_v6_to_v7_replace_and_carries_claims_byte_identical(
 
     again = _upgrade(world)
     assert again.status == "unchanged"  # type: ignore[attr-defined]
-    # The builtin semantic.alias every instance seeds is already v8.
+    # The builtins every instance seeds are already current.
     assert again.unchanged == (  # type: ignore[attr-defined]
         f"ClaimType:{PREDICATE}",
         "ClaimType:semantic.alias",
+        "ClaimType:semantic.distinct_from",
     )
 
 

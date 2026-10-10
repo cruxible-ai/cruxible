@@ -70,6 +70,10 @@ from cruxible_client.contracts.authoring.models import (
     authoring_member_identity,
     blueprint_instantiation,
 )
+from cruxible_client.contracts.builtin_claim_types import (
+    DESCRIPTOR_PREDICATES,
+    admits_object_subject,
+)
 from cruxible_client.contracts.canonical import (
     Sha256Value,
     canonical_bytes,
@@ -1370,12 +1374,7 @@ def _lower_claim(
             repair_description="Choose an accepted ClaimType predicate.",
         )
     claim_type = parse_claim_type(type_content, path=type_path)
-    descriptor = payload.statement.predicate in {
-        "semantic.alias",
-        "semantic.distinct_from",
-        "semantic.related_to",
-        "semantic.tag",
-    }
+    descriptor = payload.statement.predicate in DESCRIPTOR_PREDICATES
     subject_identity, subject_digest_value = _referent(
         candidate_base_tree, payload.statement.subject, descriptor=descriptor
     )
@@ -1420,7 +1419,12 @@ def _lower_claim(
                 repair_description="Choose an accepted Subject of an admitted kind.",
             )
         object_subject = parse_subject(object_content, path=object_path)
-        if object_subject.subject_kind not in claim_type.allowed_object_subject_kinds:
+        # The Claim law judges a descriptor relation's object as semantic.subject.
+        if not admits_object_subject(
+            claim_type.predicate,
+            claim_type.allowed_object_subject_kinds,
+            object_subject.subject_kind,
+        ):
             _refuse(
                 "cruxible.claim.object_subject_kind_forbidden",
                 "statement.object.address",

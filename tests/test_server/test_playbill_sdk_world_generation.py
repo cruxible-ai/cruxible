@@ -309,13 +309,14 @@ def test_the_world_reads_the_accepted_vocabulary_and_refuses_what_it_does_not_na
     world = playbill.world()
 
     assert world.kinds == (PACKAGE_KIND, VULNERABILITY_KIND)
-    # The builtin semantic.alias ClaimType every instance seeds is vocabulary too.
+    # The builtin ClaimTypes every instance seeds are vocabulary too.
     assert world.predicates == (
         f"{PACKAGE_KIND}.slug",
         AFFECTS,
         SEVERITY,
         f"{VULNERABILITY_KIND}.slug",
         "semantic.alias",
+        "semantic.distinct_from",
     )
     assert world.unstructured_predicates == ()
     assert world.sec.vuln.severity.members == ("high", "low")

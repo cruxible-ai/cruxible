@@ -313,6 +313,43 @@ GENESIS_SEED_SETS: tuple[GenesisSeedSet, ...] = (
         ),
         artifact_kinds=frozenset({"trigger", "provider-interface", "provider", "claim-type"}),
     ),
+    # 2026-10-09 (identity E-b, D1/D4): adds the builtin semantic.distinct_from
+    # ClaimType, so a hint kind's further key holder and the duplicates audit can
+    # name two Subjects as different things from generation zero on.
+    GenesisSeedSet(
+        set_id="triggers-3-workspace-file-alias-distinct",
+        files=(
+            (
+                "claim-types/semantic/alias.json",
+                "0d2449bf47e8375e2c43395099234b09c28391e4ac576ab0bd688e858dd40999",
+            ),
+            (
+                "claim-types/semantic/distinct_from.json",
+                "a66106eaf0827455c61414ccaaaeb60300bf40499a8d59f994fe2d275d70fd95",
+            ),
+            (
+                "provider-interfaces/workspace.file.json",
+                "f3afe32fd84a09b991edaba2c02110f05b5854bccf6db16c4c7379ebf1d205fe",
+            ),
+            (
+                "providers/cruxible-builtin.json",
+                "0735895428d89309e507ba0ce4f07292f17c4986a1f8b5a6a35dc548574d6236",
+            ),
+            (
+                "triggers/evidence-sweep.json",
+                "6dc35c2d7e6b4a0d028075278e798f6f44980450a169b640e696cc1b22b5218a",
+            ),
+            (
+                "triggers/floor-refresh.json",
+                "fa726264af5e81c6dfcc6dbf4ade34b8c471b2749e4027a9bb4ff3f95169d98a",
+            ),
+            (
+                "triggers/prediction-anchor-retry.json",
+                "2e3c2183b59b6f2025fd8a6351fb6721fc5210d39626527b210302016112fa72",
+            ),
+        ),
+        artifact_kinds=frozenset({"trigger", "provider-interface", "provider", "claim-type"}),
+    ),
 )
 
 
