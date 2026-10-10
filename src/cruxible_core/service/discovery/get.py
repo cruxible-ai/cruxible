@@ -1722,8 +1722,11 @@ def _accepting_proposal(
     which an unrelated admission can share. No match, or more than one, and the
     revision has no attributed proposal: nothing is picked by id order.
 
-    One history record, one candidate locator, one admission, one reason file:
-    the work never grows with the size of the change set that accepted it.
+    Work: one history member lookup, one candidate locator row per admission
+    sharing the candidate, one admission each, then one reason file. The
+    accepted generation's actor binding is read from its retained change-set
+    record, which is parsed whole, so that step grows with the size of the
+    change set that accepted the revision (the reason file read does not).
     """
 
     with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(coordinate)) as h:
