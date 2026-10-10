@@ -119,6 +119,7 @@ from cruxible_core.proposals.settlement import (
     render_generation_descriptor,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
+from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material
 
 SUBJECT_KIND = "project.work_item"
@@ -169,6 +170,8 @@ class AdoptionFixtureProfile:
             # The built-in workspace.file ProviderInterface and its Provider.
             + 2
             # The builtin semantic.alias ClaimType.
+            + 1
+            # The SubjectKind declaring the fixture's one Subject kind.
             + 1
         )
 
@@ -467,7 +470,10 @@ class _Builder:
 
         started = time.monotonic()
         sequence = self.sequence + 1
-        candidate_tree = {**self.tree, **members}
+        candidate_tree = {
+            **self.tree,
+            **declare_created_kinds(self.tree, dict(members), compiler=self.base.compiler),
+        }
         evaluation = evaluate_proposal_tree(
             base_tree=self.tree,
             current_tree=self.tree,

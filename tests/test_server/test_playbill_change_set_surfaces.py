@@ -28,7 +28,6 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimResolutionPolicy,
 )
-from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.transport.http import CruxibleClient
 
 PREDICATE = "project.work_item.parity"
@@ -45,13 +44,31 @@ def _created_intent(
     return dict(transport.get_authoring_intent(instance_id, intent_id).intent)
 
 
-def _shell() -> SubjectShell:
-    return SubjectShell(
-        identity=ArtifactIdentity(kind="Subject", name=SUBJECT_NAME),
-        subject_kind="project.work_item",
-        subject_id="parity-1",
-        lifecycle=ArtifactLifecycle(),
+def _subject_inputs() -> tuple[object, ...]:
+    """Declare work items slug-keyed and create ``parity-1`` by its slug (identity D1/D6)."""
+
+    from cruxible_client.authoring.examples import subject_kind_example
+
+    return (
+        *subject_kind_example().members,
+        SubjectInput(kind="subject", subject_kind="project.work_item", key="parity-1"),
     )
+
+
+def _add_parity_subject(draft: ChangeSetDraft) -> None:
+    """The same members as `_subject_inputs`, authored through the SDK builder."""
+
+    from cruxible_client.authoring.examples import subject_kind_example
+
+    slug, kind = subject_kind_example().members
+    draft.claim_type(slug.claim_type)  # type: ignore[union-attr]
+    draft.subject_kind(
+        name=kind.name,  # type: ignore[union-attr]
+        keys=kind.keys,  # type: ignore[union-attr]
+        uniqueness=kind.uniqueness,  # type: ignore[union-attr]
+        description=kind.description,  # type: ignore[union-attr]
+    )
+    draft.subject(draft._playbill.new_subject("project.work_item", key="parity-1"))
 
 
 def _claim_type() -> ClaimType:
@@ -170,7 +187,7 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
     tagless = ChangeSetInput(
         kind="change_set",
         members=(
-            SubjectInput(kind="subject", subject=_shell()),
+            *_subject_inputs(),
             ClaimTypeInput(kind="claim_type", claim_type=_claim_type()),
         ),
         # The author's own summary crosses all three surfaces, and the payload
@@ -195,7 +212,7 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
     )
 
     sdk_draft = pb.changes(rationale="Define the parity Subject and its ClaimType.")
-    sdk_draft.subject(_shell())
+    _add_parity_subject(sdk_draft)
     sdk_draft.claim_type(_claim_type())
     sdk_prepared = sdk_draft.prepare()
     assert not sdk_prepared.refused, sdk_prepared.diagnostics
@@ -240,7 +257,7 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
     )
 
     sdk_claim_draft = pb.changes(rationale="Open the parity slot and state its first value.")
-    sdk_claim_draft.subject(_shell())
+    _add_parity_subject(sdk_claim_draft)
     sdk_claim_draft.claim_type(_claim_type())
     _add_parity_claim(sdk_claim_draft)
     sdk_claim_prepared = sdk_claim_draft.prepare()
@@ -331,7 +348,7 @@ def test_the_sdk_builder_authors_a_mixed_changeset_that_preflights_clean(
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
 
     draft = pb.changes(rationale="Open the parity slot and state its first value.")
-    draft.subject(_shell())
+    _add_parity_subject(draft)
     draft.claim_type(_claim_type())
     draft.claim(
         subject=SUBJECT_NAME,
@@ -354,7 +371,8 @@ def test_the_sdk_builder_authors_a_mixed_changeset_that_preflights_clean(
     assert not intent.refused, intent.diagnostics
     payload = intent._raw["payload"]
     assert payload["tag"] == "playbill-change-set-authoring-payload-v1"
-    assert len(payload["members"]) == 3
+    # The key ClaimType and SubjectKind, the creation, the ClaimType, the Claim.
+    assert len(payload["members"]) == 5
     assert intent._raw["semantic_identity"].startswith("ChangeSet:")
     assert len(intent._raw["change_set_claim_identities"]) == 1
 
@@ -421,7 +439,7 @@ def test_one_claim_type_succession_has_one_identity_across_sdk_cli_and_mcp(
                     ),
                 ),
             ),
-            SubjectInput(kind="subject", subject=_shell()),
+            *_subject_inputs(),
         ),
         rationale="Narrow the parity vocabulary and settle its closure.",
     )
@@ -440,7 +458,7 @@ def test_one_claim_type_succession_has_one_identity_across_sdk_cli_and_mcp(
     )
 
     draft = pb.changes(rationale="Narrow the parity vocabulary and settle its closure.")
-    draft.subject(_shell())
+    _add_parity_subject(draft)
     draft.succeed_claim_type(successor, dependents=[rescind(claim_id)])
     sdk_intent = draft._compiled()
 

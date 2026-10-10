@@ -35,7 +35,7 @@ from typing import Annotated, Final, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
     CURRENT_ARTIFACT_CODEC,
     ArtifactCodec,
@@ -135,6 +135,12 @@ class SubjectKind(_StrictSubjectKindModel):
         if self.identity.kind != "SubjectKind" or not _KIND_RE.fullmatch(self.identity.name):
             raise ValueError("SubjectKind identity must be SubjectKind:<subject kind>")
         return self
+
+    @property
+    def pins(self) -> tuple[ArtifactPin, ...]:
+        """A SubjectKind names its key ClaimTypes by identity and pins nothing."""
+
+        return ()
 
     @property
     def subject_kind(self) -> str:
@@ -434,6 +440,33 @@ def assign_subject_id(values: Sequence[SubjectKeyValue], *, taken: Callable[[str
     )
 
 
+DISTINCT_HOLDER_DOMAIN: Final = "cruxible-distinct-key-holder-v1"
+
+
+def distinct_holder_id(values: Sequence[SubjectKeyValue], *, operation: str, member: str) -> str:
+    """The id of a further Subject holding a key another Subject of a ``hint`` kind holds.
+
+    Only an explicit "create new" makes one; it cannot reuse the key's rendering,
+    so it takes ``<rendering>-`` and the first 8 hex digits of a digest of the
+    operation creating it and the member, deterministic for that change.
+    """
+
+    digest = typed_digest(
+        ArtifactDigest, DISTINCT_HOLDER_DOMAIN, {"member": member, "operation": operation}
+    ).tagged.removeprefix("sha256:")
+    slug = render_key_slug(values)
+    base = slug if len(slug) + 1 + _SUFFIX_HEX <= _SUBJECT_ID_MAX else slug[: _SUBJECT_ID_MAX - 9]
+    return f"{base.rstrip('-')}-{digest[:_SUFFIX_HEX]}"
+
+
+def is_distinct_holder_id(subject_id: str, values: Sequence[SubjectKeyValue]) -> bool:
+    """Whether ``subject_id`` has the form of a further holder of this key."""
+
+    slug = render_key_slug(values)
+    base = slug if len(slug) + 1 + _SUFFIX_HEX <= _SUBJECT_ID_MAX else slug[: _SUBJECT_ID_MAX - 9]
+    return re.fullmatch(re.escape(base.rstrip("-")) + r"-[0-9a-f]{8}", subject_id) is not None
+
+
 MINTED_SUBJECT_ID_DOMAIN: Final = "cruxible-minted-subject-id-v1"
 
 
@@ -590,6 +623,8 @@ __all__ = [
     "SubjectKindLawResult",
     "SubjectKindMinted",
     "assign_subject_id",
+    "distinct_holder_id",
+    "is_distinct_holder_id",
     "evaluate_subject_kind_law",
     "key_claim_type_problem",
     "key_digest_hex",

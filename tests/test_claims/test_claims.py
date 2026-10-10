@@ -61,6 +61,7 @@ from cruxible_client.contracts.subjects import (
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.claims.claims import service_playbill_claim_history
+from tests.core_support._subject_kind_support import declared_kind_files
 from tests.core_support._support import initialize_local
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
@@ -350,6 +351,7 @@ def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate
     tree = {
         **instance.tree_at(base.git_oid),
         subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+        **declared_kind_files(shell.subject_kind),
         "claim-types/project.work_item/status.json": render_claim_type(claim_type),
         capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
             render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
@@ -371,6 +373,7 @@ def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate
         "capture-contract",
         "claim-type",
         "claim",
+        "subject-kind",
         "subject",
     )
     claim_evidence = ClaimLawEvidenceV1.model_validate(
@@ -410,6 +413,7 @@ def test_v2_claim_successor_preserves_the_base_accepted_authority_change_shape(
     tree = {
         **instance.tree_at(base.git_oid),
         subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+        **declared_kind_files(shell.subject_kind),
         "claim-types/project.work_item/status.json": render_claim_type(_claim_type()),
         capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
             render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
@@ -475,6 +479,7 @@ def test_service_claim_history_returns_each_accepted_lineage_entry(
     tree = {
         **instance.tree_at(base.git_oid),
         subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+        **declared_kind_files(shell.subject_kind),
         "claim-types/project.work_item/status.json": render_claim_type(_claim_type()),
         capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
             render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)

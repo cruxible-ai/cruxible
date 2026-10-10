@@ -33,6 +33,21 @@ from tests.support.curation import detect_and_list
 NOW = datetime(2026, 9, 1, 12, tzinfo=UTC)
 
 
+def _subjects(instance, *subject_ids: str) -> None:  # type: ignore[no-untyped-def]
+    """Accept the work items the proposals below talk about, before any is proposed.
+
+    A Claim never creates its Subject, so each lands first; proposing against a
+    head that then moves would make the earlier proposals stale.
+    """
+
+    from tests.core_support._claim_authoring_support import create_subjects
+    from tests.core_support._knowledge_loop_support import subject_shell
+
+    create_subjects(
+        instance, tuple(subject_shell(item) for item in subject_ids), timestamp=TIMESTAMP
+    )
+
+
 def _propose(instance, name: str, subject_id: str):  # type: ignore[no-untyped-def]
     return service_propose_playbill_claim(
         instance,
@@ -45,6 +60,7 @@ def _propose(instance, name: str, subject_id: str):  # type: ignore[no-untyped-d
 
 def test_proposal_pages_walk_the_whole_list_at_one_pinned_coordinate(tmp_path: Path) -> None:
     instance, owner = seed_claims(tmp_path)
+    _subjects(instance, "wi-50", "wi-51")
     _propose(instance, "page-a", "wi-50")
     later = _propose(instance, "page-b", "wi-51")
     whole = service_list_playbill_proposals(instance)
@@ -81,6 +97,7 @@ def test_withdrawing_an_unseen_proposal_between_pages_makes_the_cursor_stale(
     tmp_path: Path,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
+    _subjects(instance, "wi-50", "wi-51")
     _propose(instance, "open-a", "wi-50")
     _propose(instance, "open-b", "wi-51")
     first = service_list_playbill_proposals(instance, status="open", limit=1)
@@ -198,6 +215,7 @@ def _append_refused_proposals(instance) -> None:  # type: ignore[no-untyped-def]
 
 def test_a_curation_cursor_refuses_once_the_queue_changes(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
+    _subjects(instance, "wi-44")
     whole = _curation(instance, limit=200)
     cursor = _curation_cursor(whole)
     if whole.items:

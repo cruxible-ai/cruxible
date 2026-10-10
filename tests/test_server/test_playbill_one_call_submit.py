@@ -12,8 +12,9 @@ from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.authoring import coordinator as authoring_coordinator
 from tests.test_server.test_playbill_change_set_surfaces import (
     _add_parity_claim,
+    _add_parity_subject,
     _claim_type,
-    _shell,
+    _subject_inputs,
 )
 
 
@@ -54,7 +55,7 @@ def test_draft_submit_is_one_request_with_one_preflight(
     pb, requests = _playbill(http, instance_id, tmp_path / "world")
     preflights = _count_preflights(monkeypatch)
     draft = pb.changes(rationale="Open the parity slot and state its first value.")
-    draft.subject(_shell())
+    _add_parity_subject(draft)
     draft.claim_type(_claim_type())
     _add_parity_claim(draft)
     requests.clear()
@@ -87,7 +88,7 @@ def test_staged_submit_costs_two_preflights_and_a_replay_costs_none(
 
     def draft():
         changes = pb.changes(rationale="Open the parity slot and state its first value.")
-        changes.subject(_shell())
+        _add_parity_subject(changes)
         changes.claim_type(_claim_type())
         _add_parity_claim(changes)
         return changes
@@ -134,13 +135,12 @@ def _change_set_input() -> dict[str, object]:
     from cruxible_client.contracts.authoring.inputs import (
         ChangeSetInput,
         ClaimTypeInput,
-        SubjectInput,
     )
 
     return ChangeSetInput(
         kind="change_set",
         members=(
-            SubjectInput(kind="subject", subject=_shell()),
+            *_subject_inputs(),
             ClaimTypeInput(kind="claim_type", claim_type=_claim_type()),
         ),
         rationale="Define the parity Subject and its ClaimType.",

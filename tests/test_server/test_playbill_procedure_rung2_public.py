@@ -27,6 +27,7 @@ from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.authoring.models import SubjectKindAuthoringPayload
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import CanonicalDuration, capture_contract_digest
 from cruxible_client.contracts.claim_types import ClaimType
@@ -49,7 +50,7 @@ from cruxible_client.contracts.procedures.models import (
     SourceNode,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.subjects import SubjectShell, subject_path
+from cruxible_client.contracts.subjects import subject_path
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_V2_DIGEST,
     WorkspaceFileSourceRequest,
@@ -65,6 +66,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
 from tests.test_procedures.test_procedure_source_runs import _contracts
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 from tests.test_server.test_provider_installation import interface_entry
@@ -440,14 +442,15 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             "tag": "playbill-claim-type-authoring-payload-v1",
             "claim_type": _claim_type(contract_pin.artifact_digest).model_dump(mode="json"),
         },
+        # Advisories are named by their slug; core creates this one by it.
         {
-            "tag": "playbill-subject-authoring-payload-v1",
-            "subject": SubjectShell(
-                identity=ArtifactIdentity(kind="Subject", name=f"{SUBJECT_KIND}/{SUBJECT_ID}"),
-                subject_kind=SUBJECT_KIND,
-                subject_id=SUBJECT_ID,
-            ).model_dump(mode="json"),
+            "tag": "playbill-claim-type-authoring-payload-v1",
+            "claim_type": bare_slug_claim_type(SUBJECT_KIND).model_dump(mode="json"),  # type: ignore[attr-defined]
         },
+        SubjectKindAuthoringPayload(
+            name=SUBJECT_KIND, keys=(f"{SUBJECT_KIND}.slug",), uniqueness="unique"
+        ).model_dump(mode="json"),
+        create_by_key(SUBJECT_KIND, SUBJECT_ID).model_dump(mode="json"),  # type: ignore[attr-defined]
         {
             "tag": "playbill-procedure-authoring-payload-v2",
             "definition": _authored(definition, same_set_kinds={"CaptureContract"}),

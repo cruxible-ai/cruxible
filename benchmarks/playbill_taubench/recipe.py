@@ -216,6 +216,14 @@ def approve_and_activate(proposal_id: str, *, key_dir: Path) -> dict[str, Any]:
 # -- step 2: seed the world -------------------------------------------------
 
 
+def _work_item_kind_input() -> str:
+    """The authoring input declaring work items keyed by their slug (one-key, unique)."""
+
+    from cruxible_client.authoring.examples import subject_kind_example
+
+    return subject_kind_example().model_dump_json(exclude_none=True)
+
+
 def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str, Any]:
     """Build the benchmark world through the surviving sanctioned writers.
 
@@ -260,18 +268,19 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
         authoring_dir = key_dir / "seed-authoring-inputs"
         authoring_dir.mkdir(parents=True, exist_ok=True)
         authoring_path = authoring_dir / f"{kind}-{stem}.json"
-        wrapper_key = "subject" if kind == "subject" else "query_definition"
-        authoring_path.write_text(
-            json.dumps(
-                {
-                    "kind": kind,
-                    wrapper_key: dict(payload),
-                },
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
+        # A Subject is created by its kind and key; core assigns the id, which
+        # for the bundle's slug-keyed work items is the bundle's own subject_id.
+        document: dict[str, Any] = (
+            {
+                "kind": "subject",
+                "subject_kind": payload["subject_kind"],
+                "key": payload["subject_id"],
+                "rationale": f"Seed work item {payload['subject_id']}.",
+            }
+            if kind == "subject"
+            else {"kind": kind, "query_definition": dict(payload)}
         )
+        authoring_path.write_text(json.dumps(document, sort_keys=True) + "\n", encoding="utf-8")
         submitted = run_cli_json("authoring", "submit", str(authoring_path))
         return str(submitted["status"]["proposal_id"])
 
@@ -285,6 +294,17 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             f"{name}-{path.stem}",
         )
         record(f"claim_type:{path.stem}", "playbill_propose_claim_type", proposal_id(answer))
+
+    # Every new Subject is of a declared kind: work items are named by their slug.
+    kinds_path = key_dir / "seed-authoring-inputs" / "subject-kind-project.work_item.json"
+    kinds_path.parent.mkdir(parents=True, exist_ok=True)
+    kinds_path.write_text(_work_item_kind_input() + "\n", encoding="utf-8")
+    declared = run_cli_json("authoring", "submit", str(kinds_path))
+    record(
+        "subject_kind:project.work_item",
+        "playbill_authoring_submit",
+        str(declared["status"]["proposal_id"]),
+    )
 
     for path in sorted((bundle_dir / "subjects").glob("*.json")):
         record(

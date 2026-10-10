@@ -37,6 +37,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringArtifactReference,
     AuthoringCandidateReference,
     AuthoringChangeSetMember,
+    AuthoringClaimStatement,
     AuthoringExactContentObject,
     AuthoringIntentV1,
     BlueprintAuthoringPayload,
@@ -46,6 +47,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayload,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
+    ClaimDependencyDrafts,
     ClaimRetirementMember,
     ClaimTypeAuthoringPayload,
     ClaimTypeSuccessionDependent,
@@ -61,13 +63,19 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBody,
     SourceAcquisitionPolicyAuthoringPayload,
     SubjectAuthoringPayload,
+    SubjectCreationAuthoringPayload,
     SubjectKindAuthoringPayload,
     TriggerAuthoringPayload,
     WorkingSelectionObservation,
     authoring_member_identity,
     blueprint_instantiation,
 )
-from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
+from cruxible_client.contracts.canonical import (
+    Sha256Value,
+    canonical_bytes,
+    normalize_canonical,
+    typed_digest,
+)
 from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
     canonicalize_literal,
@@ -95,6 +103,7 @@ from cruxible_client.contracts.captures import (
     verify_capture,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
@@ -213,15 +222,23 @@ from cruxible_client.contracts.source_references import (
     LedgerSourceReference,
 )
 from cruxible_client.contracts.subject_kinds import (
+    SubjectIdUnassignable,
+    SubjectKeyValue,
     SubjectKind,
     SubjectKindKeys,
     SubjectKindMinted,
+    assign_subject_id,
+    distinct_holder_id,
+    live_subject_kind,
+    minted_subject_id,
     parse_subject_kind,
+    render_key_slug,
     render_subject_kind,
     subject_kind_digest,
     subject_kind_path,
 )
 from cruxible_client.contracts.subjects import (
+    SubjectShell,
     parse_subject,
     render_subject,
     subject_digest,
@@ -271,6 +288,22 @@ from cruxible_core.indexes.subject_aliases import (
     resolve_subject_ref,
     split_reference,
     subject_collision_message,
+)
+from cruxible_core.indexes.subject_identity import (
+    SUBJECT_KIND_UNDECLARED,
+    KeyTuple,
+    SubjectKeyInvalid,
+    admits_subject_kinds,
+    candidate_identity_issues,
+    canonical_key,
+    key_ambiguous_message,
+    key_order,
+    key_values,
+    single_key_holders,
+    subject_creation_shape,
+    subject_kind_of,
+    subjects_with_key,
+    undeclared_kind_repair,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -661,6 +694,27 @@ def _with_aliases_resolved(
             return address
         with instance.bind_accepted_projection(base) as projection:
             resolution = resolve_subject_ref(projection.typed.connection, kind, subject_id)
+            holders = (
+                single_key_holders(projection.typed.connection, tree, kind, subject_id)
+                if resolution.path is None and not resolution.ambiguous
+                else ()
+            )
+        if len(holders) > 1:
+            _refuse(
+                "cruxible.subject.key_ambiguous",
+                element,
+                key_ambiguous_message(kind, holders),
+                repair_kind="replace_subject",
+                repair_description="Name one of the listed Subjects as kind/id.",
+                replacement={
+                    "candidates": [
+                        path.removeprefix("subjects/").removesuffix(".json") for path in holders
+                    ]
+                },
+            )
+        if holders and holders[0] in tree:
+            # A single key names the one Subject that holds it (identity D4).
+            return SemanticAddress.whole_artifact(holders[0])
         if resolution.ambiguous:
             _refuse(
                 "cruxible.authoring.alias_ambiguous",
@@ -998,6 +1052,24 @@ def _merge_mappings(*groups: tuple[SourceMapping, ...]) -> tuple[SourceMapping, 
     return tuple(by_wire[key] for key in sorted(by_wire))
 
 
+def _refuse_unassigned_subject(kind: str, subject_id: str, *, element: str) -> NoReturn:
+    """Refuse a Subject named by an author-chosen id: core assigns every new id (D1)."""
+
+    _refuse(
+        "cruxible.authoring.subject_id_not_assigned",
+        element,
+        f"{kind}/{subject_id} does not exist, and a new Subject's id is never chosen by its "
+        "author: core assigns it from the kind's SubjectKind (the rendering of its key, or a "
+        "minted id).",
+        repair_kind="create_subject",
+        repair_description=(
+            "Create it with a subject member naming its kind and key (omit key for a minted "
+            f"kind): {subject_creation_shape(kind, subject_id)}; the result reports its id."
+        ),
+        replacement={"subject_kind": kind},
+    )
+
+
 def _install_claim_dependencies(
     payload: ClaimAuthoringPayloadV1,
     *,
@@ -1037,6 +1109,12 @@ def _install_claim_dependencies(
             )
         rendered = render_subject(subject_draft)
         accepted = base_tree.get(draft_path)
+        if accepted is None:
+            _refuse_unassigned_subject(
+                subject_draft.subject_kind,
+                subject_draft.subject_id,
+                element="dependency_drafts.subject",
+            )
         if accepted is not None and accepted != rendered:
             _refuse(
                 "cruxible.authoring.dependency_conflicts_with_accepted",
@@ -1049,12 +1127,17 @@ def _install_claim_dependencies(
             candidate_tree[draft_path] = rendered
             changed_paths.add(draft_path)
     elif subject_artifact_path not in base_tree:
+        missing_kind = subject_artifact_path.removeprefix("subjects/").partition("/")[0]
         _refuse(
             "cruxible.authoring.dependency_subject_required",
-            "dependency_drafts.subject",
-            "This Claim's Subject is absent at the intent base.",
-            repair_kind="provide_dependency_subject",
-            repair_description="Supply the exact Subject draft for statement.subject.",
+            "statement.subject",
+            "This Claim's Subject is absent at the intent base and is not created in this change.",
+            repair_kind="create_subject",
+            repair_description=(
+                "Name an accepted Subject, or create it in the same change set with a subject "
+                f"member naming its kind and key: {subject_creation_shape(missing_kind)}; core "
+                "assigns its id."
+            ),
         )
 
     type_artifact_path = claim_type_path(payload.statement.predicate)
@@ -1320,9 +1403,11 @@ def _lower_claim(
                 "cruxible.authoring.object_subject_not_found",
                 "statement.object.address",
                 f"The object Subject {object_name!r} is not accepted at the intent base.",
-                repair_kind="propose_subject",
+                repair_kind="create_subject",
                 repair_description=(
-                    f"Propose Subject {object_name!r}, accept it, and preflight again."
+                    "Name an accepted Subject, or create it in the same change set with a "
+                    "subject member naming its kind and key: "
+                    f"{subject_creation_shape(object_name.partition('/')[0])}."
                 ),
                 replacement={"subject": object_name},
             )
@@ -2659,11 +2744,10 @@ def _render_non_procedure_member(
         )
     if isinstance(payload, SubjectAuthoringPayload):
         shell = payload.subject
-        return (
-            subject_path(shell.subject_kind, shell.subject_id),
-            render_subject(shell),
-            subject_digest(shell).tagged,
-        )
+        path = subject_path(shell.subject_kind, shell.subject_id)
+        if tree is not None and path not in tree:
+            _refuse_unassigned_subject(shell.subject_kind, shell.subject_id, element="subject")
+        return (path, render_subject(shell), subject_digest(shell).tagged)
     if isinstance(payload, QueryDefinitionAuthoringPayload):
         query: QueryDefinition = payload.query_definition
         if tree is not None:
@@ -3252,10 +3336,424 @@ def _lower_non_procedure(
     )
 
 
+@dataclass(frozen=True)
+class _Creation:
+    """One Subject a change creates, named by core from its kind's rule."""
+
+    kind: str
+    subject_id: str
+    path: str
+    #: The canonical key in key order; empty for a minted kind.
+    key: KeyTuple
+    declared: SubjectKind
+    #: The readable rendering of the key as authored (before canonical forms),
+    #: when it differs from the id: another Claim member of the change that
+    #: names the Subject by it (the SDK's pending address) reaches it.
+    authored_path: str | None = None
+    #: The key already names a live Subject: the creation resolves to it and
+    #: writes nothing (create-by-key is an idempotent upsert).
+    resolved: bool = False
+
+
+SUBJECT_KEY_CLAIM_ID_DOMAIN = "cruxible-subject-key-claim-id-v1"
+
+
+def subject_key_claim_id(*, operation: str, member: str, predicate: str) -> str:
+    """The Claim ID one key part of a created Subject lowers into, from its operation."""
+
+    digest = typed_digest(
+        Sha256Value,
+        SUBJECT_KEY_CLAIM_ID_DOMAIN,
+        {"member": member, "operation": operation, "predicate": predicate},
+    ).tagged.removeprefix("sha256:")
+    return f"CLM-{digest[:32]}"
+
+
+def _declared_in_change(
+    kind: str,
+    *,
+    members: tuple[AuthoringChangeSetMember, ...],
+    base_tree: Mapping[str, bytes],
+) -> SubjectKind | None:
+    """The live SubjectKind of ``kind`` this change declares, else the accepted one."""
+
+    for member in members:
+        if isinstance(member, SubjectKindAuthoringPayload) and member.name == kind:
+            path, content, _digest = _render_subject_kind_member(member, tree=base_tree)
+            declared = parse_subject_kind(content, path=path)
+            return declared if declared.lifecycle.state == "live" else None
+    return live_subject_kind(base_tree, kind)
+
+
+def _claim_type_in_change(
+    predicate: str,
+    *,
+    members: tuple[AuthoringChangeSetMember, ...],
+    base_tree: Mapping[str, bytes],
+) -> ClaimType | None:
+    """The ClaimType of ``predicate`` this change defines or succeeds, else the accepted one."""
+
+    for member in members:
+        if (
+            isinstance(member, ClaimTypeAuthoringPayload)
+            and member.claim_type.predicate == predicate
+        ):
+            return member.claim_type
+        if isinstance(member, ClaimTypeSuccessionMember) and member.predicate == predicate:
+            return member.successor
+    content = base_tree.get(claim_type_path(predicate))
+    return None if content is None else parse_claim_type(content, path=claim_type_path(predicate))
+
+
+def _assign_creations(
+    instance: PlaybillInstance,
+    *,
+    intent: AuthoringIntentV1,
+    base: AcceptedProjectionCoordinate,
+    base_tree: Mapping[str, bytes],
+    members: tuple[AuthoringChangeSetMember, ...],
+) -> dict[str, _Creation]:
+    """Name every Subject the change creates, as core does (identity D1).
+
+    A keyed creation looks its canonical key up first, one rule for ``unique``
+    and ``hint`` kinds: no live Subject holds it (accepted, or created earlier
+    in this change in canonical-key order) -- create; exactly one -- resolve to
+    it and create nothing; several -- refuse ``key_ambiguous``. Only
+    ``create_new`` on a ``hint`` kind creates a further holder (refused on a
+    ``unique`` kind). A created keyed Subject takes the readable rendering of
+    its canonical key, suffixed with the key's digest only when a Subject of
+    another key already has that id; a further holder takes the rendering and a
+    digest of the intent and member. A minted kind's Subject takes an id minted
+    from the intent and the member.
+    """
+
+    creations: dict[str, _Creation] = {}
+    keyed: list[
+        tuple[
+            bytes,
+            int,
+            SubjectCreationAuthoringPayload,
+            SubjectKind,
+            KeyTuple,
+            dict[str, object],
+        ]
+    ] = []
+    for index, member in enumerate(members):
+        if not isinstance(member, SubjectCreationAuthoringPayload):
+            continue
+        element = f"members[{index}]"
+        kind = member.subject_kind
+        declared = _declared_in_change(kind, members=members, base_tree=base_tree)
+        if declared is None:
+            _refuse(
+                SUBJECT_KIND_UNDECLARED,
+                f"{element}.subject_kind",
+                f"No accepted SubjectKind declares {kind}, so no new Subject of it can be created.",
+                repair_kind="author_subject_kind",
+                repair_description=undeclared_kind_repair(kind),
+                replacement={"subject_kind": kind},
+            )
+        identity = member.member_identity
+        if declared.minted:
+            if member.key or member.key_value is not None:
+                _refuse(
+                    "cruxible.subject.key_invalid",
+                    f"{element}.key",
+                    f"{kind} is minted: core names its Subjects, so a creation gives no key.",
+                    repair_kind="drop_key",
+                    repair_description="Remove the key.",
+                )
+            subject_id = minted_subject_id(operation=intent.intent_id, member=identity)
+            creations[identity] = _Creation(
+                kind=kind,
+                subject_id=subject_id,
+                path=subject_path(kind, subject_id),
+                key=(),
+                declared=declared,
+            )
+            continue
+
+        def claim_type_of(predicate: str) -> ClaimType | None:
+            return _claim_type_in_change(predicate, members=members, base_tree=base_tree)
+
+        given: dict[str, object] = {part.predicate: part.value for part in member.key}
+        if member.key_value is not None:
+            if len(declared.keys) != 1:
+                _refuse(
+                    "cruxible.subject.key_invalid",
+                    f"{element}.key_value",
+                    f"{kind} is named by {len(declared.keys)} key parts "
+                    f"({', '.join(declared.keys)}); a bare key value names only a one-key kind.",
+                    repair_kind="replace_key",
+                    repair_description="Give each key part by name.",
+                    replacement={"keys": list(declared.keys)},
+                )
+            given = {declared.keys[0]: member.key_value}
+        try:
+            key = canonical_key(declared, given, claim_type=claim_type_of)
+        except SubjectKeyInvalid as exc:
+            _refuse(
+                "cruxible.subject.key_invalid",
+                f"{element}.key",
+                f"{kind}: {exc}",
+                repair_kind="replace_key",
+                repair_description=(
+                    f"Give one value for each key of {kind}: " + ", ".join(declared.keys)
+                ),
+                replacement={"keys": list(declared.keys)},
+            )
+        keyed.append((key_order(key), index, member, declared, key, given))
+    taken: dict[str, set[str]] = {}
+    # (kind, canonical key) -> the paths of the live Subjects holding it: accepted
+    # ones (read once per key), then the ones this change creates.
+    holding: dict[tuple[str, bytes], list[str]] = {}
+    for key_bytes, index, member, declared, key, given in sorted(keyed, key=lambda item: item[:2]):
+        kind = member.subject_kind
+        element = f"members[{index}]"
+        held = holding.get((kind, key_bytes))
+        if held is None:
+            with instance.bind_accepted_projection(base) as projection:
+                held = list(subjects_with_key(projection.typed.connection, kind, key))
+            holding[(kind, key_bytes)] = held
+        refs = tuple(f"{kind}/{subject_kind_of(path)[1]}" for path in held)
+        if member.create_new and declared.unique:
+            _refuse(
+                "cruxible.subject.create_new_refused",
+                f"{element}.create_new",
+                f"{kind} keys are unique: a key names one Subject, so create_new does not apply.",
+                repair_kind="drop_create_new",
+                repair_description=(
+                    "Drop create_new: the creation then resolves to the Subject holding the key."
+                ),
+            )
+        if not member.create_new and len(held) > 1:
+            _refuse(
+                "cruxible.subject.key_ambiguous",
+                f"{element}.key",
+                f"{len(held)} live {kind} Subjects hold this key: {', '.join(refs)}; "
+                "name one by id.",
+                repair_kind="replace_subject",
+                repair_description="Name one of the listed Subjects by id.",
+                replacement={"candidates": list(refs)},
+            )
+        try:
+            authored: str | None = subject_path(
+                kind,
+                render_key_slug(
+                    [cast(SubjectKeyValue, given[predicate]) for predicate in declared.keys]
+                ),
+            )
+        except (CruxibleError, ValueError):
+            authored = None
+        if not member.create_new and held:
+            # Exactly one live holder: the key names it, and nothing is created.
+            holder = held[0]
+            creations[member.member_identity] = _Creation(
+                kind=kind,
+                subject_id=subject_kind_of(holder)[1],
+                path=holder,
+                key=key,
+                declared=declared,
+                authored_path=None if authored == holder else authored,
+                resolved=True,
+            )
+            continue
+        names = taken.setdefault(kind, set())
+
+        def is_taken(candidate: str, names: set[str] = names, kind: str = kind) -> bool:
+            return candidate in names or subject_path(kind, candidate) in base_tree
+
+        if held:
+            # create_new on a hint kind: a further holder of the key, named from
+            # the operation and the member so it never reuses the key's rendering.
+            subject_id = distinct_holder_id(
+                key_values(key), operation=intent.intent_id, member=member.member_identity
+            )
+        else:
+            try:
+                subject_id = assign_subject_id(key_values(key), taken=is_taken)
+            except SubjectIdUnassignable as exc:
+                _refuse(
+                    "cruxible.subject.key_invalid",
+                    f"{element}.key",
+                    str(exc),
+                    repair_kind="replace_key",
+                    repair_description="Give a key whose rendering is free.",
+                )
+        names.add(subject_id)
+        held.append(subject_path(kind, subject_id))
+        creations[member.member_identity] = _Creation(
+            kind=kind,
+            subject_id=subject_id,
+            path=subject_path(kind, subject_id),
+            key=key,
+            declared=declared,
+            authored_path=None if authored == subject_path(kind, subject_id) else authored,
+        )
+    return creations
+
+
+def _named_creations(
+    creations: Mapping[str, _Creation], base_tree: Mapping[str, bytes]
+) -> dict[str, str]:
+    """The paths a Claim member may name a created Subject by, beside its id."""
+
+    return {
+        creation.authored_path: creation.path
+        for creation in creations.values()
+        if creation.authored_path is not None and creation.authored_path not in base_tree
+    }
+
+
+def _naming_created(
+    payload: ClaimAuthoringPayloadV1, named: Mapping[str, str]
+) -> ClaimAuthoringPayloadV1:
+    """The Claim with a Subject it names by its authored key rendering named by its id."""
+
+    if not named:
+        return payload
+    statement = payload.statement
+    subject = statement.subject
+    if subject.selector.scheme == "artifact-v1" and subject.artifact_path in named:
+        subject = SemanticAddress.whole_artifact(named[subject.artifact_path])
+    value = statement.object
+    if (
+        isinstance(value, SubjectClaimObject)
+        and value.address.selector.scheme == "artifact-v1"
+        and value.address.artifact_path in named
+    ):
+        value = SubjectClaimObject(
+            address=SemanticAddress.whole_artifact(named[value.address.artifact_path])
+        )
+    if subject == statement.subject and value is statement.object:
+        return payload
+    return payload.model_copy(
+        update={"statement": statement.model_copy(update={"subject": subject, "object": value})}
+    )
+
+
+def _key_claim_role(claim_type: ClaimType) -> ClaimRole | None:
+    """The role a key Claim takes: the ClaimType's default role, or its only authorable one."""
+
+    if claim_type.default_role is not None:
+        return claim_type.default_role
+    permitted = tuple(role for role in claim_type.permitted_roles if role != "derivation")
+    return permitted[0] if len(permitted) == 1 else None
+
+
+def _stage_subject_creation(
+    instance: PlaybillInstance,
+    *,
+    member: SubjectCreationAuthoringPayload,
+    creation: _Creation,
+    intent: AuthoringIntentV1,
+    actor_id: str,
+    base: AcceptedProjectionCoordinate,
+    staged_tree: Mapping[str, bytes],
+    claim_index: _ClaimPredicateIndex,
+    derivation_procedure: ArtifactPin | None,
+    captures: ProducerReceiptResolverProtocol,
+) -> StagedMember:
+    """Write the created Subject and one key Claim per key part.
+
+    Each key Claim cites the creation's source (its rationale as the author's own
+    words when none) and lowers like any Claim member, so its value is stored in
+    its ClaimType's canonical form and its evidence is judged by its policy.
+    """
+
+    if creation.resolved:
+        existing = parse_subject(staged_tree[creation.path], path=creation.path)
+        return (
+            fork_tree(staged_tree),
+            {
+                "artifact_digest": subject_digest(existing).tagged,
+                "subject": f"{creation.kind}/{creation.subject_id}",
+                "resolved": True,
+            },
+            set(),
+            {},
+        )
+    shell = SubjectShell(
+        identity=ArtifactIdentity(kind="Subject", name=f"{creation.kind}/{creation.subject_id}"),
+        subject_kind=creation.kind,
+        subject_id=creation.subject_id,
+    )
+    tree = fork_tree(staged_tree)
+    tree[creation.path] = render_subject(shell)
+    extra: set[str] = set()
+    key_claims: list[str] = []
+    rationale = member.rationale or (
+        f"{creation.kind}/{creation.subject_id} is named by its key: "
+        + ", ".join(f"{predicate}={value!r}" for predicate, value in creation.key)
+        + "."
+    )
+    for predicate, value in creation.key:
+        claim_type = parse_claim_type(
+            tree[claim_type_path(predicate)], path=claim_type_path(predicate)
+        )
+        role = member.role or _key_claim_role(claim_type)
+        if role is None:
+            _refuse(
+                "cruxible.subject.key_role_required",
+                "role",
+                f"Key ClaimType {predicate!r} permits several roles and declares no "
+                "default_role, so the key Claim's role is not implied.",
+                repair_kind="set_role",
+                repair_description=(
+                    "Pass role, or declare default_role on the key ClaimType: "
+                    + ", ".join(claim_type.permitted_roles)
+                ),
+            )
+        claim_id = subject_key_claim_id(
+            operation=intent.intent_id, member=member.member_identity, predicate=predicate
+        )
+        payload = ClaimAuthoringPayload(
+            statement=AuthoringClaimStatement(
+                subject=SemanticAddress.whole_artifact(creation.path),
+                predicate=predicate,
+                object=LiteralClaimObject(value=value),
+                role=role,
+            ),
+            rationale=rationale,
+            source=member.source
+            or SelfSourceBody(
+                content_base64=base64.b64encode(rationale.encode("utf-8")).decode("ascii")
+            ),
+            citation_role=member.citation_role,
+            dependency_drafts=ClaimDependencyDrafts(),
+        )
+        lowered = _lower_claim(
+            instance,
+            intent=intent,
+            actor_id=actor_id,
+            base=base,
+            base_tree=tree,
+            payload=payload,
+            claim_identity=claim_id,
+            claim_index=claim_index,
+            derivation_procedure=derivation_procedure,
+            captures=captures,
+        )
+        tree = fork_tree(lowered.proposed_tree)
+        extra.update(path for path, _content in lowered.changed_members)
+        key_claims.append(claim_id)
+    return (
+        tree,
+        {
+            "artifact_digest": subject_digest(shell).tagged,
+            "subject": f"{creation.kind}/{creation.subject_id}",
+            "key_claims": key_claims,
+        },
+        extra,
+        {},
+    )
+
+
 MEMBER_STAGING_ORDER = (
     "definition",
     "claim_type_succession",
     "query",
+    "subject_creation",
     "claim",
     "procedure",
     "procedure_mandate",
@@ -3285,6 +3783,8 @@ def _member_stage(member: AuthoringChangeSetMember) -> str:
 
     if isinstance(member, QueryDefinitionAuthoringPayload):
         return "query"
+    if isinstance(member, SubjectCreationAuthoringPayload):
+        return "subject_creation"
     if isinstance(member, ClaimAuthoringPayloadV1):
         return "claim"
     if isinstance(member, ClaimTypeSuccessionMember):
@@ -3306,9 +3806,13 @@ def _member_primary_path(
     member: AuthoringChangeSetMember,
     *,
     claim_identities: Mapping[str, str],
+    creations: Mapping[str, _Creation] | None = None,
 ) -> str:
     """Return the one artifact path this member is authoring."""
 
+    if isinstance(member, SubjectCreationAuthoringPayload):
+        assert creations is not None
+        return creations[member.member_identity].path
     if isinstance(member, ClaimAuthoringPayloadV1):
         return claim_path(claim_identities[authoring_member_identity(member)])
     if isinstance(member, ClaimTypeSuccessionMember):
@@ -3445,6 +3949,9 @@ def _lower_change_set(
     claim_identities = {
         item.member_identity: item.claim_id for item in intent.change_set_claim_identities
     }
+    creations = _assign_creations(
+        instance, intent=intent, base=base, base_tree=base_tree, members=payload.members
+    )
     sibling_member_by_claim_id = {
         claim_identities[authoring_member_identity(member)]: index
         for index, member in enumerate(payload.members)
@@ -3453,7 +3960,7 @@ def _lower_change_set(
     owner_by_path: dict[str, int] = {}
     primary_paths: list[str] = []
     for index, member in enumerate(payload.members):
-        path = _member_primary_path(member, claim_identities=claim_identities)
+        path = _member_primary_path(member, claim_identities=claim_identities, creations=creations)
         primary_paths.append(path)
         owner = owner_by_path.get(path)
         if owner is not None:
@@ -3530,6 +4037,7 @@ def _lower_change_set(
                         re_author_siblings=re_author_siblings.get(index, {}),
                         derivation_procedure=derivation_procedure,
                         captures=captures,
+                        creations=creations,
                     )
                 except AuthoringLoweringError as error:
                     raise _rescope_member_error(
@@ -3609,9 +4117,24 @@ def _stage_change_set_member(
     re_author_siblings: Mapping[str, int],
     derivation_procedure: ArtifactPin | None = None,
     captures: ProducerReceiptResolverProtocol,
+    creations: Mapping[str, _Creation] | None = None,
 ) -> StagedMember:
     """Write one member into the staged tree and report what it resolved to."""
 
+    if isinstance(member, SubjectCreationAuthoringPayload):
+        assert creations is not None
+        return _stage_subject_creation(
+            instance,
+            member=member,
+            creation=creations[member.member_identity],
+            intent=intent,
+            actor_id=actor_id,
+            base=base,
+            staged_tree=staged_tree,
+            claim_index=claim_index,
+            derivation_procedure=derivation_procedure,
+            captures=captures,
+        )
     if isinstance(member, ClaimAuthoringPayloadV1):
         claim_id = claim_identities[authoring_member_identity(member)]
         lowered = _lower_claim(
@@ -3620,7 +4143,7 @@ def _stage_change_set_member(
             actor_id=actor_id,
             base=base,
             base_tree=staged_tree,
-            payload=member,
+            payload=_naming_created(member, _named_creations(creations or {}, base_tree)),
             claim_identity=claim_id,
             claim_index=claim_index,
             derivation_procedure=derivation_procedure,
@@ -4302,17 +4825,47 @@ def _refuse_subject_collisions(
     exempts that pair.
     """
 
-    if not any(path.startswith("subjects/") for path, _content in lowered.changed_members):
+    if not any(
+        path.startswith(("subjects/", "claims/", "subject-kinds/"))
+        for path, _content in lowered.changed_members
+    ):
         return
     base = instance.resolve_accepted_coordinate(
         git_oid=intent.base_coordinate.git_oid,
         semantic_root=intent.base_coordinate.semantic_root,
         generation_root=intent.base_coordinate.generation_root,
     )
+    current_tree = instance.immutable_tree_at(base.git_oid)
+    scope = tuple(path for path, _content in lowered.changed_members)
+    if admits_subject_kinds(base.compiler):
+        for issue in candidate_identity_issues(
+            current_tree=current_tree, candidate_tree=lowered.proposed_tree, scope=scope
+        ):
+            kind, _subject_id = subject_kind_of(issue.path)
+            _refuse(
+                issue.code,
+                issue.path
+                if issue.path not in lowered.member_by_path
+                else f"members[{lowered.member_by_path[issue.path]}]",
+                issue.message,
+                repair_kind=(
+                    "author_subject_kind"
+                    if issue.code == SUBJECT_KIND_UNDECLARED
+                    else "use_existing_subject"
+                ),
+                repair_description=(
+                    undeclared_kind_repair(kind)
+                    if issue.code == SUBJECT_KIND_UNDECLARED
+                    else issue.message
+                ),
+                replacement={"subject_kind": kind, "existing": list(issue.existing)},
+            )
+    if not any(path.startswith("subjects/") for path in scope):
+        return
     collisions = candidate_creation_collisions(
-        current_tree=instance.immutable_tree_at(base.git_oid),
+        current_tree=current_tree,
         candidate_tree=lowered.proposed_tree,
-        scope=tuple(path for path, _content in lowered.changed_members),
+        scope=scope,
     )
     for path, others in collisions:
         kind, _, rest = path.removeprefix("subjects/").partition("/")

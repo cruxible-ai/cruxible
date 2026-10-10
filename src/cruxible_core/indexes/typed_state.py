@@ -470,6 +470,10 @@ def schema_sql() -> str:
             "CREATE INDEX claim_type_names_by_name ON claim_type_names(name,kind,source_identity)",
             "CREATE INDEX claim_type_names_by_leaf ON claim_type_names(leaf,kind,name,source_identity)",
             "CREATE INDEX claims_by_subject_predicate ON claims(subject_path,predicate,subject_selector_scheme,subject_selector_value,identity)",
+            # The Subject key index (identity-design-1009, D4): a live literal
+            # Claim by predicate and value, so a canonical key finds its Subject
+            # in one seek. Maintained with every Claim row at accept.
+            "CREATE INDEX claims_by_key_value ON claims(predicate,literal_type,literal_text,literal_integer_text,literal_boolean,subject_path) WHERE lifecycle='live' AND object_kind='literal'",
             "CREATE INDEX resolution_contracts_by_hypothesis_version ON resolution_contracts(hypothesis_identity,hypothesis_artifact_digest,identity)",
             "CREATE INDEX attestations_by_claim_version ON attestations(claim_identity,claim_artifact_digest,attested_at_us,envelope_digest)",
             "CREATE INDEX claims_by_lifecycle ON claims(lifecycle,identity)",

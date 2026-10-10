@@ -23,6 +23,7 @@ lists all resolve through here, so a reference means the same Subject at each.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
@@ -338,6 +339,19 @@ def subject_collision_message(path: str, others: tuple[str, ...]) -> str:
     )
 
 
+def _keyed(tree: Mapping[str, bytes], path: str) -> bool:
+    """Whether the Subject at ``path`` is of a keyed kind: its key index is its identity check."""
+
+    from cruxible_client.contracts.subject_kinds import SubjectKindFormatError, live_subject_kind
+
+    kind = path.removeprefix(_SUBJECTS).partition("/")[0]
+    try:
+        declared = live_subject_kind(tree, kind)
+    except SubjectKindFormatError:
+        return False
+    return declared is not None and bool(declared.keys)
+
+
 def candidate_creation_collisions(
     *,
     current_tree: Mapping[str, bytes],
@@ -347,13 +361,16 @@ def candidate_creation_collisions(
     """Each Subject a change creates that collides, with the live Subjects it meets.
 
     A Subject is created when it is live in the candidate and not live in the
-    parent. It collides with another live Subject of its kind, in the candidate
-    state, whose id, canonical token or alias equals the new id's canonical token
-    (the discovery normalizer). The candidate state is the parent's index
-    overlaid with the changed owners only: a parent row whose owner the change
-    touched is dropped, and each changed owner that is live in the candidate
-    contributes its rows afresh -- Subjects created or revived, aliases added,
-    retirements -- never a rebuild of the index. A ``semantic.distinct_from``
+    parent. A Subject of a keyed kind is left to its key index
+    (``indexes.subject_identity``): this token and alias check holds minted and
+    grandfathered kinds (identity-design-1009, D4). It collides with another
+    live Subject of its kind, in the candidate state, whose id, canonical token
+    or alias equals the new id's canonical token (the discovery normalizer).
+    The candidate state is the parent's index overlaid with the changed owners
+    only: a parent row whose owner the change touched is dropped, and each
+    changed owner that is live in the candidate contributes its rows afresh --
+    Subjects created or revived, aliases added, retirements -- never a rebuild
+    of the index. A ``semantic.distinct_from``
     Claim the same change makes live exempts exactly the pair it names.
     """
 
@@ -378,7 +395,7 @@ def candidate_creation_collisions(
         if source is None:
             continue
         if path.startswith(_SUBJECTS):
-            if _live_member(current_tree, path) is None:
+            if _live_member(current_tree, path) is None and not _keyed(candidate_tree, path):
                 created.append(path)
         else:
             statement = source.statement
@@ -439,8 +456,9 @@ def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
     """Subjects and their alias and canonical-token terms, derived from a tree's members."""
 
     from cruxible_client.contracts.claims import parse_claim
+    from cruxible_client.contracts.subject_kinds import parse_subject_kind
     from cruxible_client.contracts.subjects import parse_subject
-    from cruxible_core.indexes.typed_state import vocabulary_terms
+    from cruxible_core.indexes.typed_state import _claim_fields, vocabulary_terms
 
     connection = sqlite3.connect(":memory:")
     connection.execute("CREATE TABLE subjects (path TEXT PRIMARY KEY, lifecycle TEXT NOT NULL)")
@@ -448,13 +466,61 @@ def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
         "CREATE TABLE vocabulary_terms (source_identity TEXT, target_path TEXT, "
         "basis TEXT, term TEXT, value TEXT)"
     )
+    # The key Claims of declared keyed kinds, as the projection's claims rows hold them.
+    connection.execute(
+        "CREATE TABLE claims (identity TEXT, subject_path TEXT, predicate TEXT, qualifier TEXT, "
+        "lifecycle TEXT, object_kind TEXT, subject_selector_scheme TEXT, literal_type TEXT, "
+        "literal_text TEXT, literal_integer_text TEXT, literal_boolean INTEGER)"
+    )
+    connection.execute(
+        "CREATE TABLE subject_kinds (identity TEXT, rule TEXT, uniqueness TEXT, "
+        "key_predicates TEXT, lifecycle TEXT)"
+    )
+    key_predicates: set[str] = set()
+    for path in tree:
+        if path.startswith("subject-kinds/") and path.endswith(".json"):
+            declared = parse_subject_kind(tree[path], path=path)
+            rule = declared.identity_rule
+            connection.execute(
+                "INSERT INTO subject_kinds VALUES (?,?,?,?,?)",
+                (
+                    declared.identity.qualified,
+                    rule.rule,
+                    getattr(rule, "uniqueness", None),
+                    json.dumps(list(declared.keys)),
+                    declared.lifecycle.state,
+                ),
+            )
+            if declared.lifecycle.state == "live":
+                key_predicates.update(declared.keys)
+    needles = tuple(f'"{predicate}"'.encode() for predicate in sorted(key_predicates))
     for path in tree:
         source: Any
         if path.startswith(_SUBJECTS) and path.endswith(".json"):
             source = parse_subject(tree[path], path=path)
             connection.execute("INSERT INTO subjects VALUES (?,?)", (path, source.lifecycle.state))
-        elif path.startswith("claims/") and b'"semantic.alias"' in tree[path]:
+        elif path.startswith("claims/") and (
+            b'"semantic.alias"' in tree[path] or any(needle in tree[path] for needle in needles)
+        ):
             source = parse_claim(tree[path], path=path)
+            if source.statement.predicate in key_predicates:
+                fields = _claim_fields(source)
+                connection.execute(
+                    "INSERT INTO claims VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        source.identity.qualified,
+                        fields["subject_path"],
+                        fields["predicate"],
+                        fields["qualifier"],
+                        source.lifecycle.state,
+                        fields["object_kind"],
+                        fields["subject_selector_scheme"],
+                        fields.get("literal_type"),
+                        fields.get("literal_text"),
+                        fields.get("literal_integer_text"),
+                        fields.get("literal_boolean"),
+                    ),
+                )
         else:
             continue
         connection.executemany(

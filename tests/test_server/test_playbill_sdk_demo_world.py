@@ -132,6 +132,35 @@ entries:
     )
 
 
+def _land_subjects(
+    pb: Cruxible,
+    client: TestClient,
+    instance_id: str,
+    private_key_path: Path,
+    *refs: str,
+) -> None:
+    """Accept the demo's Subjects first, each kind named by its slug (identity D1, D6).
+
+    A Claim never creates the Subject it is about; core names new Subjects, so
+    the world declares each kind and creates its Subjects by key in one change.
+    """
+
+    from tests.core_support._subject_kind_support import declare_by_slug
+
+    draft = pb.changes(rationale="Name the demo's Subjects by their slugs.")
+    declare_by_slug(draft, *sorted({ref.partition("/")[0] for ref in refs}))
+    for ref in refs:
+        kind, _, slug = ref.partition("/")
+        draft.subject(pb.new_subject(kind, key=slug))
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    intent.submit()
+    proposal_id = intent.status().proposal_id
+    assert proposal_id is not None
+    _approve_and_activate(client, instance_id, private_key_path, proposal_id)
+    pb.refresh()
+
+
 def _approve_and_activate(
     client: TestClient,
     instance_id: str,
@@ -410,6 +439,7 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
+    _land_subjects(pb, http, instance_id, _private_key_path, "secops.policy/patch-sla")
     subject = pb.subject(
         subject="secops.policy/patch-sla",
         pins=(),
@@ -474,6 +504,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
+    _land_subjects(pb, http, instance_id, private_key_path, "secops.policy/patch-sla")
     subject = pb.subject(
         subject="secops.policy/patch-sla",
         pins=(),
@@ -723,21 +754,7 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
     _catalog(workspace)
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
 
-    subject = pb.subject(
-        subject="project.work_item/replace-me",
-        pins=(),
-        lifecycle=ArtifactLifecycle(),
-    ).prepare()
-    assert not subject.refused, subject.diagnostics
-    subject.submit()
-    subject_proposal_id = subject.status().proposal_id
-    assert subject_proposal_id is not None
-    _approve_and_activate(
-        http,
-        instance_id,
-        private_key_path,
-        subject_proposal_id,
-    )
+    _land_subjects(pb, http, instance_id, private_key_path, "project.work_item/replace-me")
     pb.refresh()
 
     claim_type_input = defaulted_claim_type_input_example()
@@ -793,6 +810,18 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
+    _land_subjects(
+        pb,
+        http,
+        instance_id,
+        private_key_path,
+        "secops.policy/patch-sla",
+        "secops.policy/exposure",
+        "secops.policy/response-guidance",
+        "secops.service/payments-edge",
+        "secops.service/partner-api",
+        "secops.service/batch-ingest",
+    )
 
     policy_subject = pb.subject(
         subject="secops.policy/patch-sla",

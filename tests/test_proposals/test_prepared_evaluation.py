@@ -17,6 +17,7 @@ from cruxible_core.derived.derived_state import DerivedState, SnapshotTree, card
 from cruxible_core.proposals import proposals
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationAdapter
 from cruxible_core.proposals.proposals import AuthenticatedActor
+from tests.core_support._subject_kind_support import declared_kind_files
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_change_set_intents import _change_set, _claim, _coordinator
 from tests.test_authoring.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
@@ -292,6 +293,7 @@ def test_an_unpinned_intent_publishes_at_a_head_that_moved_after_preflight(world
         )
         tree = instance.tree_at(base.git_oid)
         tree[subject_path(shell.subject_kind, shell.subject_id)] = render_subject(shell)
+        tree.update(declared_kind_files(shell.subject_kind))
         proposed = instance.proposal_service().submit(
             actor=actor,
             request=ProposalAdmissionRequest(

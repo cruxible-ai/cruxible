@@ -34,6 +34,7 @@ from cruxible_client.contracts.subjects import SubjectShell, render_subject, sub
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import initialize_local
 
 KIND = "inv.package"
@@ -136,7 +137,8 @@ def accept_tree(
     """Accept ``updates`` over the head through one ordinary proposal and activation."""
 
     base = instance.accepted_coordinate()
-    tree = {**instance.tree_at(base.git_oid), **updates}
+    accepted = instance.tree_at(base.git_oid)
+    tree = {**accepted, **declare_created_kinds(accepted, dict(updates), compiler=base.compiler)}
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(

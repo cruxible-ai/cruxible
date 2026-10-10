@@ -180,6 +180,8 @@ def seed_claims_into(
         owner,
         contract=foreign_source_capture_contract(source_id),
         claim_type_override=claim_type_override,
+        # A Claim never creates its Subject: both work items land with the surface.
+        additional_subjects=(subject_shell("wi-43"),),
     )
     first_body = instance.body_store().store(b"status: ready")
     first = service_propose_playbill_claim(

@@ -796,11 +796,13 @@ class AuthoringIntentCoordinator:
                 continue
             predecessor = raw.get("predecessor_digest")
             claim_id = raw.get("claim_id")
+            created = raw.get("subject")
             amends = isinstance(predecessor, str) and isinstance(claim_id, str)
             members.append(
                 AuthoringSubmitMember(
                     identity=identity,
                     artifact_digest=artifact_digest,
+                    subject=created if isinstance(created, str) else None,
                     predecessor_digest=predecessor if isinstance(predecessor, str) else None,
                     identity_stable=amends,
                     claim_revision=(

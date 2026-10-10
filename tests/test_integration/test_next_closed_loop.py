@@ -108,6 +108,7 @@ from tests.core_support._published_world import (
 from tests.core_support._published_world import (
     retire_claim as _retire_published_claim,
 )
+from tests.core_support._subject_kind_support import declared_kind_files
 from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type
@@ -384,6 +385,7 @@ def _foreign_world(root: Path, *, bind: bool):  # type: ignore[no-untyped-def]
     _Builder(instance, owner).accept(
         {
             subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+            **declared_kind_files(shell.subject_kind),
             claim_type_path(claim_type.predicate): render_claim_type(claim_type),
             capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
                 render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)

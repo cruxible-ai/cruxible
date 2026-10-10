@@ -43,6 +43,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBody,
     SourceAcquisitionPolicyAuthoringPayload,
     SubjectAuthoringPayload,
+    SubjectCreationAuthoringPayload,
     SubjectKindAuthoringPayload,
     TriggerAuthoringPayload,
     WorkingSelectionObservation,
@@ -67,6 +68,7 @@ from cruxible_client.contracts.proposal_models import (
 )
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
 
@@ -263,7 +265,40 @@ class BlueprintInstanceInput(_StrictInputModel):
 
 
 class SubjectInput(_StrictInputModel):
+    """Create one Subject: name its kind and its key; core assigns the id.
+
+    ``key`` maps each key ClaimType of the kind's SubjectKind (by predicate, or by
+    its last name under the kind) to its value; omit it for a minted kind. The
+    id is the readable rendering of the canonical key (or a minted id), reported
+    in the result; the key parts become Claims citing ``rationale`` as your own
+    words.
+    """
+
     kind: Literal["subject"]
+    subject_kind: str = Field(description="The kind to create, e.g. 'dev.decision'.")
+    key: dict[str, str | int | bool] | str | int | bool = Field(
+        default_factory=dict,
+        description=(
+            "Key ClaimType (predicate or short name) -> value, or just the value when the "
+            "kind has one key; omit for a minted kind."
+        ),
+    )
+    rationale: str | None = Field(
+        default=None, description="Why this Subject exists; the key Claims' self evidence."
+    )
+    create_new: bool = Field(
+        default=False,
+        description=(
+            "Hint kinds only: create another Subject even though one holds this key "
+            "(assert semantic.distinct_from between them); otherwise the key resolves to it."
+        ),
+    )
+
+
+class SubjectSuccessionInput(_StrictInputModel):
+    """A successor of an existing Subject's shell, e.g. retiring it (lifecycle retired)."""
+
+    kind: Literal["subject_succession"]
     subject: SubjectShell
 
 
@@ -434,6 +469,7 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     | ClaimTypeSuccessionInput
     | ClaimRetirementInput
     | SubjectInput
+    | SubjectSuccessionInput
     | QueryDefinitionInput
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
@@ -470,6 +506,7 @@ AuthoringInput: TypeAlias = Annotated[
     | BlueprintInput
     | BlueprintInstanceInput
     | SubjectInput
+    | SubjectSuccessionInput
     | QueryDefinitionInput
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
@@ -833,6 +870,38 @@ def _trigger_payload(value: TriggerInput) -> TriggerAuthoringPayload:
     return TriggerAuthoringPayload.model_validate(value.model_dump(mode="python", exclude={"kind"}))
 
 
+def _subject_creation_payload(value: SubjectInput) -> SubjectCreationAuthoringPayload:
+    """The key as given; lowering resolves short names and orders it by the kind's keys."""
+
+    try:
+        if not isinstance(value.key, dict):
+            return SubjectCreationAuthoringPayload(
+                subject_kind=value.subject_kind,
+                key_value=value.key,
+                rationale=value.rationale,
+                create_new=value.create_new,
+            )
+        return SubjectCreationAuthoringPayload(
+            subject_kind=value.subject_kind,
+            key=tuple(
+                SubjectKeyPart(
+                    predicate=name if "." in name else f"{value.subject_kind}.{name}",
+                    value=item,
+                )
+                for name, item in value.key.items()
+            ),
+            rationale=value.rationale,
+            create_new=value.create_new,
+        )
+    except ValueError as exc:
+        raise AuthoringInputError(
+            "cruxible.authoring.subject_creation_invalid",
+            "input",
+            str(exc),
+            "Name the kind and give each key part once, as {key ClaimType: value}.",
+        ) from exc
+
+
 def _subject_kind_payload(value: SubjectKindInput) -> SubjectKindAuthoringPayload:
     try:
         return SubjectKindAuthoringPayload.model_validate(
@@ -872,6 +941,8 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
     if isinstance(member, BlueprintInstanceInput):
         return _blueprint_instance_payload(member)
     if isinstance(member, SubjectInput):
+        return _subject_creation_payload(member)
+    if isinstance(member, SubjectSuccessionInput):
         return SubjectAuthoringPayload(subject=member.subject)
     if isinstance(member, QueryDefinitionInput):
         return QueryDefinitionAuthoringPayload(query_definition=member.query_definition)
@@ -903,6 +974,8 @@ def lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
     if isinstance(value, BlueprintInstanceInput):
         return _blueprint_instance_payload(value)
     if isinstance(value, SubjectInput):
+        return ChangeSetAuthoringPayload(members=(_subject_creation_payload(value),))
+    if isinstance(value, SubjectSuccessionInput):
         return SubjectAuthoringPayload(subject=value.subject)
     if isinstance(value, QueryDefinitionInput):
         return QueryDefinitionAuthoringPayload(query_definition=value.query_definition)
@@ -975,6 +1048,7 @@ __all__ = [
     "SubjectObjectInput",
     "SubjectInput",
     "SubjectKindInput",
+    "SubjectSuccessionInput",
     "WorkingSelectionInput",
     "lower_bound_claim_input",
     "lower_authoring_input",

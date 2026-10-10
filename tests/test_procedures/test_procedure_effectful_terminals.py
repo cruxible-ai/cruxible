@@ -41,6 +41,7 @@ from cruxible_core.procedures.execution import (
 from cruxible_core.procedures.terminal_services import (
     ProposalTerminalAdapter,
 )
+from tests.core_support._subject_kind_support import declared_kind_files
 from tests.core_support._support import initialize_local
 from tests.test_procedures.test_procedure_execution import (
     _actor,
@@ -390,6 +391,8 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
         {
             accepted.path: render_procedure(accepted.procedure),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+            # The work items' kind is declared, so the terminal may create one.
+            **declared_kind_files("project.work_item"),
         },
         name="adapter-mandate",
     )

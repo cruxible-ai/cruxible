@@ -38,6 +38,7 @@ from cruxible_core.service.proposals.review import (
     service_review_playbill_proposal,
 )
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._subject_kind_support import declared_kind_files
 from tests.core_support._support import client_material, initialize_local
 from tests.test_ledger.test_activation import _sign
 
@@ -100,6 +101,7 @@ def test_multi_kind_candidate_scope_member_and_closure_paths_are_identical(
     candidate_tree = {
         **base_tree,
         SUBJECT_PATH: render_subject(shell),
+        **declared_kind_files("project.work_item"),
         claim_type_path: render_claim_type(status),
     }
 
@@ -116,17 +118,22 @@ def test_multi_kind_candidate_scope_member_and_closure_paths_are_identical(
 
     assert evaluation.diagnostics == ()
     assert isinstance(evaluation.candidate, CandidateRecord)
+    # The Subject's kind is declared in the same change (identity D6).
+    kind_path = "subject-kinds/project.work_item.json"
     assert evaluation.candidate.candidate.scope == (
         claim_type_path,
+        kind_path,
         SUBJECT_PATH,
     )
     assert tuple(item.path for item in evaluation.candidate.members) == (
         claim_type_path,
+        kind_path,
         SUBJECT_PATH,
     )
     assert evaluation.candidate.closure_proof.paths == evaluation.candidate.candidate.scope
     assert tuple(item.path for item in evaluation.candidate.law_evidence) == (
         claim_type_path,
+        kind_path,
         SUBJECT_PATH,
     )
     assert evaluation.candidate.law_evidence[0].evaluation_coordinate.git_oid == (current.git_oid)
@@ -324,6 +331,7 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         candidate_tree={
             **instance.tree_at(base.git_oid),
             SUBJECT_PATH: render_subject(original_subject),
+            **declared_kind_files("project.work_item"),
             claim_path: render_claim_type(original_claim_type),
         },
         timestamp=TIMESTAMP,

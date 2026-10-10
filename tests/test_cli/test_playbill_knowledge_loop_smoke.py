@@ -28,7 +28,6 @@ from cruxible_client.contracts.authoring.inputs import (
     ClaimInput,
     LiteralObjectInput,
     QueryDefinitionInput,
-    SubjectInput,
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.captures import (
@@ -51,9 +50,9 @@ from tests.core_support._knowledge_loop_support import (
     PREDICATE,
     QUERY_NAME,
     SUBJECT_KIND,
-    subject_shell,
     work_item_query,
 )
+from tests.core_support._subject_kind_support import create_by_slug_input
 from tests.test_claims.test_claims import _claim_type
 
 CREATOR_ID = "operator"
@@ -534,10 +533,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     _author_and_accept(
         cruxible,
         tmp_path / "subject-input.json",
-        SubjectInput(
-            kind="subject",
-            subject=subject_shell("wi-42"),
-        ).model_dump(mode="json"),
+        create_by_slug_input(SUBJECT_KIND, "wi-42", declare=True).model_dump(mode="json"),  # type: ignore[attr-defined]
     )
 
     # 4. Two Claims through the durable AuthoringIntent coordinator. The second
@@ -561,10 +557,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
             _author_and_accept(
                 cruxible,
                 tmp_path / "subject-wi-43-input.json",
-                SubjectInput(
-                    kind="subject",
-                    subject=subject_shell("wi-43"),
-                ).model_dump(mode="json"),
+                create_by_slug_input(SUBJECT_KIND, "wi-43").model_dump(mode="json"),  # type: ignore[attr-defined]
             )
         payload_file = _write(
             tmp_path / f"claim-{subject_id}.json",
@@ -631,7 +624,12 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     assert cruxible.json("get", subject_ref, "--detail", "history")["history"]["revisions"]
 
     claim_types = cruxible.json("orient", "--section", "claim_types")
-    assert [item["predicate"] for item in claim_types["claim_types"]] == [PREDICATE]
+    # The work items' slug key and the builtin semantic.alias sit beside it.
+    assert [item["predicate"] for item in claim_types["claim_types"]] == [
+        f"{SUBJECT_KIND}.slug",
+        PREDICATE,
+        "semantic.alias",
+    ]
     assert (
         cruxible.json("get", f"ClaimType:{PREDICATE}", "--detail", "proof")["proof"]["predicate"]
         == PREDICATE
@@ -641,7 +639,8 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     assert {
         claim["claim"].removeprefix("Claim:")
         for row in claims["rows"]
-        for cell in row["claims"].values()
+        for field, cell in row["claims"].items()
+        if field != "slug"  # each work item's key Claim, from its creation
         for claim in cell
     } == {identity.removeprefix("Claim:") for identity in claim_identities}
     assert (

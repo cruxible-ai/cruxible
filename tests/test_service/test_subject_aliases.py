@@ -310,23 +310,63 @@ def _compile(instance: PlaybillInstance, *members: Any) -> Any:
     )
 
 
-def test_a_new_subject_colliding_with_an_alias_of_its_kind_refuses(
+def test_an_authored_subject_never_carries_a_chosen_id(
     instance: PlaybillInstance,
 ) -> None:
+    """Identity D1 supersedes the authoring-side collision probe: core names new Subjects.
+
+    An authored shell for a Subject that does not exist refuses before any
+    collision could be judged; the token and alias collision law still holds at
+    the boundary for minted and grandfathered kinds (raw proposals below).
+    """
+
     alias(instance, ALPHA, "a-one")
-    result = _compile(instance, _subject_member("a-one"))
-    (diagnostic,) = [
-        item
-        for item in result.frontier.diagnostics
-        if item.code == "cruxible.authoring.subject_collision"
-    ]
-    assert ALPHA in diagnostic.message
-    # A name no Subject of the kind carries is created as before.
-    assert not [
-        item
-        for item in _compile(instance, _subject_member("fresh")).frontier.diagnostics
-        if item.code == "cruxible.authoring.subject_collision"
-    ]
+    for name in ("a-one", "fresh"):
+        assert _codes(_compile(instance, _subject_member(name))) == [
+            "cruxible.authoring.subject_id_not_assigned"
+        ]
+
+
+def _lowered_claim(instance: PlaybillInstance, member: Any) -> tuple[str, bytes]:
+    """One Claim member's lowered path and bytes at the head (for a boundary probe)."""
+
+    from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayload
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.lowering import lower_authoring
+
+    intent = (
+        AuthoringIntentCoordinator.for_instance(instance)
+        .create(
+            actor=OWNER,
+            payload=ChangeSetAuthoringPayload(members=(member,)),
+            canonical_timestamp="2026-10-09T12:00:00.000000Z",
+        )
+        .intent
+    )
+    lowered = lower_authoring(instance, intent=intent, actor_id="owner")
+    (found,) = [item for item in lowered.changed_members if item[0].startswith("claims/")]
+    return found
+
+
+def _exemption_world(instance: PlaybillInstance) -> tuple[dict[str, bytes], str, str, bytes]:
+    """A parent without ``a-one``, the tree with it, and its distinct_from alpha Claim.
+
+    ``a-one`` lands first (no alias names it yet), so the Claim lowers against
+    it; aliases naming ``a-one`` follow. Removing ``a-one`` from the head gives
+    the parent a raw creation of it would meet.
+    """
+
+    from cruxible_client.contracts.subjects import render_subject
+    from tests.core_support._identity_support import accept_tree, shell
+
+    _accept_distinct_from(instance)
+    accept_tree(instance, {subject_path(KIND, "a-one"): render_subject(shell("a-one"))}, name="a1")
+    claim_path_value, claim_bytes = _lowered_claim(instance, _distinct_member("a-one", "alpha"))
+    alias(instance, ALPHA, "a-one")
+    tree = dict(instance.tree_at(instance.accepted_coordinate().git_oid))
+    created = subject_path(KIND, "a-one")
+    parent = {path: content for path, content in tree.items() if path != created}
+    return parent, created, claim_path_value, claim_bytes
 
 
 def _accept_distinct_from(instance: PlaybillInstance) -> None:
@@ -380,12 +420,24 @@ def _distinct_member(subject_id: str, other: str) -> Any:
 def test_asserting_distinct_from_in_the_same_change_exempts_the_pair(
     instance: PlaybillInstance,
 ) -> None:
-    _accept_distinct_from(instance)
-    alias(instance, ALPHA, "a-one")
-    result = _compile(instance, _subject_member("a-one"), _distinct_member("a-one", "alpha"))
-    codes = [item.code for item in result.frontier.diagnostics]
-    assert "cruxible.authoring.subject_collision" not in codes, codes
-    assert result.verdict == "passed", codes
+    from cruxible_core.indexes.subject_aliases import candidate_creation_collisions
+
+    parent, created, claim_path_value, claim_bytes = _exemption_world(instance)
+    candidate = {
+        **parent,
+        created: instance.tree_at(instance.accepted_coordinate().git_oid)[created],
+    }
+    assert candidate_creation_collisions(
+        current_tree=parent, candidate_tree=candidate, scope=(created,)
+    ) == ((created, (ALPHA,)),)
+    assert (
+        candidate_creation_collisions(
+            current_tree=parent,
+            candidate_tree={**candidate, claim_path_value: claim_bytes},
+            scope=(claim_path_value, created),
+        )
+        == ()
+    )
 
 
 # -- the authoritative creation boundary (review F-001, F-002) --------------------
@@ -437,9 +489,22 @@ def _codes(result: Any) -> list[str]:
 def test_same_change_alias_creation_collision_refuses(instance: PlaybillInstance) -> None:
     """Review F-002 probe: a new Subject and an alias naming it, in one change."""
 
-    result = _compile(instance, _subject_member("fresh"), _alias_member("alpha", "fresh"))
-    assert result.verdict == "refused", result
-    assert "cruxible.authoring.subject_collision" in _codes(result)
+    from cruxible_client.contracts.subjects import render_subject
+    from tests.core_support._identity_support import shell
+
+    claim_path_value, claim_bytes = _lowered_claim(instance, _alias_member("alpha", "fresh"))
+    result = _submit_raw(
+        instance,
+        {
+            subject_path(KIND, "fresh"): render_subject(shell("fresh")),
+            claim_path_value: claim_bytes,
+        },
+        "fresh-and-its-alias",
+    )
+    assert result.candidate is None
+    assert "cruxible.subject.creation_collision" in {
+        item.code for item in result.evaluation.diagnostics
+    }
 
 
 def test_raw_proposal_creation_collision_refuses_at_receive(instance: PlaybillInstance) -> None:
@@ -497,7 +562,8 @@ def test_a_claim_subject_draft_is_held_to_the_boundary(instance: PlaybillInstanc
         update={"dependency_drafts": ClaimDependencyDrafts(subject=shell("a-one"))}
     )
     result = _compile(instance, drafted)
-    assert "cruxible.authoring.subject_collision" in _codes(result), _codes(result)
+    # A draft never creates its Subject (D1), so it never reaches a collision.
+    assert _codes(result) == ["cruxible.authoring.subject_id_not_assigned"], _codes(result)
 
 
 def test_a_write_adding_an_alias_and_its_subject_together_refuses(
@@ -514,17 +580,18 @@ def test_a_write_adding_an_alias_and_its_subject_together_refuses(
 
 
 def test_a_distinct_from_exemption_covers_only_its_own_pair(instance: PlaybillInstance) -> None:
-    _accept_distinct_from(instance)
-    alias(instance, ALPHA, "a-one")
+    from cruxible_core.indexes.subject_aliases import candidate_creation_collisions
+
+    parent, created, claim_path_value, claim_bytes = _exemption_world(instance)
     alias(instance, BETA, "a-one")
+    tree = dict(instance.tree_at(instance.accepted_coordinate().git_oid))
+    parent = {path: content for path, content in tree.items() if path != created}
     # a-one meets alpha and beta; asserting it distinct from alpha leaves beta.
-    result = _compile(instance, _subject_member("a-one"), _distinct_member("a-one", "alpha"))
-    (diagnostic,) = [
-        item
-        for item in result.frontier.diagnostics
-        if item.code == "cruxible.authoring.subject_collision"
-    ]
-    assert BETA in diagnostic.message and ALPHA not in diagnostic.message
+    assert candidate_creation_collisions(
+        current_tree=parent,
+        candidate_tree={**tree, claim_path_value: claim_bytes},
+        scope=(claim_path_value, created),
+    ) == ((created, (BETA,)),)
 
 
 def test_a_retirement_in_the_same_change_lifts_the_collision(instance: PlaybillInstance) -> None:

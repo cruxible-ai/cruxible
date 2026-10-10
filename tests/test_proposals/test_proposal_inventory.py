@@ -754,8 +754,12 @@ def test_an_instance_scoped_credential_may_not_withdraw_a_foreign_proposal(
 def test_live_submission_and_settlement_read_indexed_principals(tmp_path, monkeypatch):
     from cruxible_core.indexes.typed_state import TypedStateReader
     from cruxible_core.proposals import proposals, settlement
+    from tests.core_support._claim_authoring_support import create_subjects
+    from tests.core_support._knowledge_loop_support import subject_shell
 
     instance, owner = seed_claims(tmp_path)
+    # A Claim never creates its Subject: the work item is accepted first.
+    create_subjects(instance, (subject_shell("indexed-principals"),), timestamp=TIMESTAMP)
     calls = []
     original_principal = TypedStateReader.principal
     original_registry = TypedStateReader.principal_registry

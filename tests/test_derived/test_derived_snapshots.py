@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.authoring.models import SubjectAuthoringPayload
+from cruxible_client.contracts.authoring.models import (
+    ChangeSetAuthoringPayload,
+    SubjectCreationAuthoringPayload,
+)
 from cruxible_client.contracts.claims import claim_path, render_claim
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.subjects import render_subject
@@ -138,18 +141,23 @@ def test_accepted_advancement_reads_only_changed_blobs_and_retains_old_snapshot(
     before = instance.accepted_coordinate()
     old = instance.immutable_tree_at(before.git_oid)
     previous = dict(old)
-    changed_path = _path("delta")
-    proposed = {**previous, changed_path: render_subject(_subject("delta"))}
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
+    # One new Subject of the work items' (minted) kind: core names it.
     intent = coordinator.create(
         actor=actor,
-        payload=SubjectAuthoringPayload(subject=_subject("delta")),
+        payload=ChangeSetAuthoringPayload(
+            members=(SubjectCreationAuthoringPayload(subject_kind="project.work_item"),)
+        ),
         canonical_timestamp=TIMESTAMP,
     ).intent
     _accept(instance, owner, coordinator, intent.intent_id, actor)
     after = instance.accepted_coordinate()
     expected = instance.tree_at(after.git_oid)
+    (changed_path,) = [
+        path for path in expected if path not in previous and path.startswith("subjects/")
+    ]
+    proposed = {**previous, changed_path: expected[changed_path]}
     changed = {
         path
         for path in previous.keys() | expected.keys()

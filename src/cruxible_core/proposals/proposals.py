@@ -326,6 +326,10 @@ from cruxible_core.indexes.subject_aliases import (
     subject_collision_message,
     tree_reference_resolver,
 )
+from cruxible_core.indexes.subject_identity import (
+    admits_subject_kinds,
+    candidate_identity_issues,
+)
 from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
     derive_candidate_cards,
@@ -4390,6 +4394,25 @@ def _evaluate_scoped_members(
         # kind, read from the parent overlaid with this change. Admission and
         # settlement both evaluate here, so every route is held to it. History
         # accepted before the rule is not refused again on replay.
+        identity_issues = (
+            candidate_identity_issues(
+                current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
+            )
+            if admits_subject_kinds(current.compiler)
+            else ()
+        )
+        if identity_issues:
+            # Identity is decided at this boundary (identity-design-1009, D1/D4/D6):
+            # a Subject is created only of a declared kind, named by its kind's rule.
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                tuple(
+                    _diagnostic(issue.code, issue.message, issue.path) for issue in identity_issues
+                ),
+                rebased,
+                claim_admission_accounts=claim_admission_accounts,
+            )
         collisions = candidate_creation_collisions(
             current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
         )

@@ -89,6 +89,7 @@ from cruxible_core.service.authoring.documents import (
 from cruxible_core.service.claims.claims import _claim_law_evidence
 from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
 from tests.core_support._adoption_fixture import _query_definition
+from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type, _subject
@@ -163,6 +164,11 @@ def _accepted_affects_package_world(tmp_path: Path):  # type: ignore[no-untyped-
     )
     tree[claim_type_path(predicate)] = render_claim_type(claim_type)
     tree[subject_path(package.subject_kind, package.subject_id)] = render_subject(package)
+    declare_created_kinds(
+        instance.tree_at(instance.accepted_coordinate().git_oid),
+        tree,
+        compiler=instance.accepted_coordinate().compiler,
+    )
     _accept_tree(
         instance,
         owner,

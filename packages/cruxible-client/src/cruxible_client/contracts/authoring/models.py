@@ -70,6 +70,11 @@ from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDe
 from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subject_kinds import (
+    SubjectKeyPart,
+    SubjectKeyValue,
+    key_value_problem,
+)
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
@@ -738,8 +743,94 @@ class AttestationAuthoringPayload(_StrictAuthoringModel):
 
 
 class SubjectAuthoringPayload(_StrictAuthoringModel):
+    """A transition of an existing Subject (its successor, e.g. retiring it).
+
+    A new Subject is never authored this way: core names it, so it is created by
+    ``SubjectCreationAuthoringPayload`` (its kind and key), and lowering refuses
+    a shell naming a Subject that does not exist (``subject_id_not_assigned``).
+    """
+
     tag: Literal["playbill-subject-authoring-payload-v1"] = "playbill-subject-authoring-payload-v1"
     subject: SubjectShell
+
+
+SUBJECT_CREATION_MEMBER_DIGEST_DOMAIN = "cruxible-subject-creation-member-v1"
+
+
+class SubjectCreationAuthoringPayload(_StrictAuthoringModel):
+    """Create one Subject by its kind and key; core assigns its id (identity D1).
+
+    ``key`` holds the key parts of a keyed kind (each key ClaimType by predicate,
+    or by its last name under the kind) and is empty for a minted kind. Lowering
+    canonicalizes each value by its key ClaimType's form and looks the key up: no
+    live Subject holds it -- create; exactly one -- resolve to it, creating
+    nothing; several -- refuse (``key_ambiguous``). A creation writes the Subject
+    under the id core assigns (the readable rendering of the canonical key, or a
+    minted id) with one key Claim per part, citing ``source`` (the rationale as
+    the author's own words when absent).
+    """
+
+    tag: Literal["cruxible-subject-creation-authoring-payload-v1"] = (
+        "cruxible-subject-creation-authoring-payload-v1"
+    )
+    subject_kind: str
+    key: tuple[SubjectKeyPart, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: The value of the kind's only key, when the creation does not name it:
+    #: ``kind`` + ``key_value`` is ``kind/<text>`` read as "create by key value".
+    key_value: SubjectKeyValue | None = Field(default=None, exclude_if=lambda value: value is None)
+    rationale: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A ``hint`` kind only: create a further Subject even though a live one
+    #: holds this key (they are different things; assert semantic.distinct_from).
+    #: Without it a creation whose key a live Subject holds resolves to it.
+    create_new: bool = Field(default=False, exclude_if=lambda value: value is False)
+    role: Literal["normative", "observation", "environment_binding", "derivation"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    source: ExistingCaptureCitationSource | SelfSourceBody | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    citation_role: Literal["evidence", "copy"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("subject_kind")
+    @classmethod
+    def _kind(cls, value: str) -> str:
+        if not _SUBJECT_KIND_NAME_RE.fullmatch(value):
+            raise ValueError("subject_kind is not a canonical Subject kind")
+        return value
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("a Subject creation rationale must not be empty")
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> "SubjectCreationAuthoringPayload":
+        predicates = [part.predicate for part in self.key]
+        if len(set(predicates)) != len(predicates):
+            raise ValueError("a Subject creation names each key part once")
+        if self.key and self.key_value is not None:
+            raise ValueError("a Subject creation gives key parts or a key_value, not both")
+        if self.key_value is not None:
+            problem = key_value_problem(self.key_value)
+            if problem is not None:
+                raise ValueError(problem)
+        cited = isinstance(self.source, ExistingCaptureCitationSource)
+        if cited != (self.citation_role is not None):
+            raise ValueError("exactly an existing Capture source states its citation_role")
+        return self
+
+    @property
+    def member_identity(self) -> str:
+        preimage = self.model_dump(mode="json")
+        preimage.pop("tag")
+        digest = typed_digest(
+            Sha256Value, SUBJECT_CREATION_MEMBER_DIGEST_DOMAIN, preimage
+        ).tagged.removeprefix("sha256:")
+        return f"SubjectCreation:{self.subject_kind}@{digest[:32]}"
 
 
 class QueryDefinitionAuthoringPayload(_StrictAuthoringModel):
@@ -1252,6 +1343,7 @@ AuthoringChangeSetMember: TypeAlias = Annotated[
     | ResolutionContractAuthoringPayload
     | AttestationAuthoringPayload
     | SubjectAuthoringPayload
+    | SubjectCreationAuthoringPayload
     | QueryDefinitionAuthoringPayload
     | ApprovalPolicyAuthoringPayload
     | ProcedureRuntimePolicyAuthoringPayload
@@ -1304,6 +1396,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
         return f"ClaimRetirement:{payload.claim_id}"
     if isinstance(payload, SubjectAuthoringPayload):
         return f"Subject:{payload.subject.subject_kind}/{payload.subject.subject_id}"
+    if isinstance(payload, SubjectCreationAuthoringPayload):
+        return payload.member_identity
     if isinstance(payload, QueryDefinitionAuthoringPayload):
         return payload.query_definition.identity.qualified
     if isinstance(payload, ApprovalPolicyAuthoringPayload):
@@ -1973,6 +2067,8 @@ class AuthoringSubmitMember(_StrictAuthoringModel):
     predecessor_digest: str | None = None
     identity_stable: bool = False
     claim_revision: int | None = None
+    #: The Subject a creation member made, as ``kind/id``: the id core assigned.
+    subject: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class AuthoringSubmitResult(_StrictAuthoringModel):
@@ -2323,6 +2419,7 @@ __all__ = [
     "ProcedureMandateAuthoringPayload",
     "TriggerAuthoringPayload",
     "SubjectKindAuthoringPayload",
+    "SubjectCreationAuthoringPayload",
     "QueryDefinitionAuthoringPayload",
     "AttestationAuthoringPayload",
     "ResolutionContractAuthoringPayload",

@@ -24,10 +24,10 @@ from cruxible_client import (
     ReviewedProposal,
 )
 from cruxible_client.authoring.signing import ApprovalSigner
-from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.policies import ClaimAdmissionPolicy, ClaimResolutionPolicy
 
 SUBJECT = "sdk.demo/patch-sla"
+SLUG = "sdk.demo.slug"
 PREDICATE = "sdk.demo.patch_sla"
 SOURCE = "corpus.sdk-demo"
 
@@ -55,7 +55,26 @@ def run(
         encoding="utf-8",
     )
     source.write_text("Patch within forty-eight hours.\n", encoding="utf-8")
-    subject = cx.subject(subject=SUBJECT, pins=(), lifecycle=ArtifactLifecycle())
+    # Core names every new Subject: demo items are named by their slug (one
+    # key, unique), so creating sdk.demo/patch-sla means creating it by that key.
+    slug = cx.claim_type(
+        predicate=SLUG,
+        subject_kinds=("sdk.demo",),
+        object_kind=ClaimObjectKind.LITERAL,
+        value_schema={"minLength": 1, "type": "string"},
+        object_subject_kinds=(),
+        cardinality=Cardinality.ONE,
+        permitted_roles=(ClaimRole.NORMATIVE,),
+        referent_sensitivity=ReferentSensitivity.IDENTITY,
+        sources=(),
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
+            cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
+        ),
+        pins=(),
+        evidence_freshness=None,
+        canonical_form=("nfkc", "trim", "collapse_whitespace", "casefold"),
+    )
     claim_type = cx.claim_type(
         predicate=PREDICATE,
         subject_kinds=("sdk.demo",),
@@ -101,18 +120,21 @@ def run(
             raise ValueError("Expected one supported demo contender after acceptance")
         return rows[0]
 
-    first = settle(
-        cx.claim(
-            subject=subject.address,
-            predicate=claim_type.predicate,
-            value=48,
-            role=ClaimRole.NORMATIVE,
-            rationale="Runbook gives the initial deadline.",
-            supported_by=cx.file("sdk-demo.md").anchor("forty-eight hours"),
-            subject_definition=subject,
-            claim_type_definition=claim_type,
-        ).prepare()
+    opening = cx.changes(rationale="Name demo items, then state the first deadline.")
+    opening.claim_type(slug)
+    opening.subject_kind(name="sdk.demo", keys=(SLUG,), uniqueness="unique")
+    subject = opening.subject(cx.new_subject("sdk.demo", key="patch-sla"))
+    assert subject is not None and subject.address == SUBJECT
+    opening.claim_type(claim_type)
+    opening.claim(
+        subject=subject,
+        predicate=claim_type.predicate,
+        value=48,
+        role=ClaimRole.NORMATIVE,
+        rationale="Runbook gives the initial deadline.",
+        supported_by=cx.file("sdk-demo.md").anchor("forty-eight hours"),
     )
+    first = settle(opening.prepare())
     cx.audit()  # Free deterministic audit worklist.
     source.write_text("Patch within forty-nine hours.\n", encoding="utf-8")
     drift = cx.next(expiring_within=Duration.days(count=7))

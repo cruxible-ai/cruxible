@@ -55,6 +55,7 @@ from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.service.claims.claims import service_get_playbill_claim
 from cruxible_core.service.discovery.coverage import build_accepted_evidence_index_v2
 from tests.core_support._pc_c_support import capture_contract as _capture_contract
+from tests.core_support._subject_kind_support import declared_kind_files
 from tests.core_support._support import client_material, initialize_local
 from tests.test_claims.test_claims import _claim, _claim_type, _subject
 from tests.test_ledger.test_activation import _sign
@@ -232,6 +233,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     initial_tree = {
         **instance.tree_at(base.git_oid),
         subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+        **declared_kind_files(shell.subject_kind),
         "claim-types/project.work_item/status.json": render_claim_type(claim_type),
         capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
             render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
@@ -779,6 +781,8 @@ def _verdict(
         {
             **instance.tree_at(base.git_oid),
             subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+            **declared_kind_files(shell.subject_kind),
+            **declared_kind_files(shell.subject_kind),
             "claim-types/project.work_item/status.json": render_claim_type(claim_type),
             capture_contract_path(contract.identity.name): render_capture_contract(contract),
             claim_path(CLAIM_ID): render_claim(claim),

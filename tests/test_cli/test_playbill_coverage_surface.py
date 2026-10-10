@@ -40,7 +40,6 @@ from cruxible_client.contracts.authoring.inputs import (
     ClaimInput,
     LiteralObjectInput,
     SelfSourceInput,
-    SubjectInput,
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.captures import (
@@ -53,9 +52,8 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_core.cli.main import cli
 from cruxible_core.coverage.render import BATCH_SUMMARY_PREFIX
-from tests.core_support._knowledge_loop_support import (
-    subject_shell,
-)
+from tests.core_support._knowledge_loop_support import SUBJECT_KIND
+from tests.core_support._subject_kind_support import create_by_slug_input
 from tests.test_claims.test_claims import _claim_type
 from tests.test_cli.test_playbill_knowledge_loop_smoke import (  # noqa: F401
     _author_and_accept,
@@ -110,10 +108,7 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
     _author_and_accept(
         cruxible,
         tmp_path / "subject-input.json",
-        SubjectInput(
-            kind="subject",
-            subject=subject_shell("wi-42"),
-        ).model_dump(mode="json"),
+        create_by_slug_input(SUBJECT_KIND, "wi-42", declare=True).model_dump(mode="json"),  # type: ignore[attr-defined]
     )
 
     authoring = ClaimInput(
@@ -188,10 +183,7 @@ def _govern_a_foreign_span(
     _author_and_accept(
         cruxible,
         tmp_path / "foreign-subject-input.json",
-        SubjectInput(
-            kind="subject",
-            subject=subject_shell("wi-77"),
-        ).model_dump(mode="json"),
+        create_by_slug_input(SUBJECT_KIND, "wi-77", declare=True).model_dump(mode="json"),  # type: ignore[attr-defined]
     )
 
     authoring = ClaimInput(

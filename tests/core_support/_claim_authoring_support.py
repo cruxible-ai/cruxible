@@ -52,10 +52,10 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.subjects import SubjectShell
+from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator, AuthoringSubmitResult
-from cruxible_core.proposals.proposals import AuthenticatedActor
+from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
@@ -64,6 +64,7 @@ from cruxible_core.service.authoring.documents import (
     service_inspect_playbill_proposal,
 )
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material
 from tests.test_claims.test_claims import _claim_type, _subject
 from tests.test_ledger.test_activation import _sign
@@ -158,6 +159,8 @@ def _dispositions(
 def _payload(
     instance: PlaybillInstance,
     authoring: DirectClaimAuthoringV1,
+    *,
+    timestamp: str,
 ) -> ClaimAuthoringPayloadV1 | ClaimAuthoringPayloadV2:
     if authoring.retire:
         raise ValueError("retirement fixtures must use cruxible.claim.retire")
@@ -271,13 +274,69 @@ def _payload(
                 )
             }
         )
+    shell = authoring.subject_shell
+    accepted = instance.tree_at(instance.accepted_coordinate().git_oid)
+    if shell is not None and subject_path(shell.subject_kind, shell.subject_id) not in accepted:
+        # A Claim draft never creates its Subject (core names new Subjects): the
+        # fixture's Subject lands first, under a minted declaration of its kind.
+        create_subjects(instance, (shell,), timestamp=timestamp)
     return ClaimAuthoringPayloadV2(
         **base,
         dependency_drafts=ClaimDependencyDrafts(
-            subject=authoring.subject_shell,
+            subject=shell,
             claim_type=claim_type,
         ),
     )
+
+
+def create_subjects(
+    instance: PlaybillInstance, shells: tuple[SubjectShell, ...], *, timestamp: str
+) -> None:
+    """Accept fixture Subjects (and a minted declaration of each new kind) as one generation.
+
+    Submitted and activated through the live service path, signed by the owner
+    when the approval policy asks for an independent approval.
+    """
+
+    from cruxible_core.service.authoring.documents import (
+        service_activate_playbill_proposal,
+        service_submit_playbill_approval,
+    )
+
+    base = instance.accepted_coordinate()
+    accepted = instance.tree_at(base.git_oid)
+    tree = dict(accepted)
+    for shell in shells:
+        tree[subject_path(shell.subject_kind, shell.subject_id)] = render_subject(shell)
+    declare_created_kinds(accepted, tree, compiler=base.compiler)
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/fixture-subjects-{len(instance.accepted_history())}",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp=timestamp,
+    )
+    candidate = proposed.candidate
+    assert candidate is not None, proposed.evaluation
+    proposal_id = proposed.admission.proposal_id
+    if candidate.approval_requirements:
+        approval = _sign(
+            client_material(instance.root.parent, instance),
+            candidate.candidate_digest,
+            base.semantic_root,
+        )
+        service_submit_playbill_approval(
+            instance,
+            proposal_id=proposal_id,
+            attestation=approval.attestation,
+            authenticated_submitter="owner",
+        )
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted", receipt
 
 
 def service_reobserve_playbill_claim(
@@ -304,7 +363,7 @@ def service_reobserve_playbill_claim(
     actor = AuthenticatedActor(actor_id=actor_id)
     created = coordinator.create(
         actor=actor,
-        payload=_payload(instance, authoring),
+        payload=_payload(instance, authoring, timestamp=timestamp),
         canonical_timestamp=timestamp,
     )
     submitted = coordinator.submit(created.intent.intent_id, actor=actor)
@@ -337,7 +396,7 @@ def service_propose_playbill_claim(
     actor = AuthenticatedActor(actor_id=actor_id)
     created = coordinator.create(
         actor=actor,
-        payload=_payload(instance, authoring),
+        payload=_payload(instance, authoring, timestamp=timestamp),
         canonical_timestamp=timestamp,
         base_coordinate=base,
     )
