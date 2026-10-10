@@ -36,6 +36,7 @@ from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.derived.derived_state import SnapshotTree, fork_tree
 
 _SUBJECTS = "subjects/"
+_CLAIMS = "claims/"
 
 
 @dataclass(frozen=True)
@@ -185,6 +186,8 @@ def carried_key_claim(
     the change left its bytes as they were.
     """
 
+    if not dependent_path.startswith(_CLAIMS):
+        return False  # only a Claim can be a key Claim; any other dependent closes as usual
     if not subject_path.startswith(_SUBJECTS) or _lifecycle(candidate_tree, subject_path) != (
         "live"
     ):
@@ -258,8 +261,8 @@ def retired_claim_names_subject_version(
     retires (a key Claim retired with its Subject).
     """
 
-    if pin_role != "subject":
-        return False
+    if pin_role != "subject" or not source_path.startswith(_CLAIMS):
+        return False  # a non-Claim source's pin closes as usual
     claim_content = candidate_tree.get(source_path)
     subject_file = f"{_SUBJECTS}{target_name}.json"
     if claim_content is None or subject_file not in candidate_tree:

@@ -1595,3 +1595,41 @@ def test_an_explicit_key_claim_retirement_after_a_carry_is_admitted(
     assert _key_claims_of(instance, explicit) == {key_path: "retired"}
     head = instance.accepted_coordinate()
     assert _reopened(instance).accepted_coordinate() == head
+
+
+# E-b delta-4 F-003: only Claim dependents are exempt; others close as usual.
+
+
+@pytest.mark.parametrize("retire", [False, True])
+def test_a_non_claim_subject_pin_still_closes_over_a_succession(
+    instance: PlaybillInstance, retire: bool
+) -> None:
+    """A v7 ClaimType pinning a keyed Subject (role ``subject``) is dispositioned by the
+    change, as before: an ordinary incomplete-closure refusal, never a parse error."""
+
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from cruxible_client.contracts.authoring.inputs import ClaimTypeInput
+    from cruxible_client.contracts.subjects import subject_digest
+    from tests.test_service.test_subject_identity import _create, _field
+
+    _create(instance, DECISION, "pinned")
+    pinned = subject_path(DECISION, "pinned")
+    held = parse_subject(tree(instance)[pinned], path=pinned)
+    notes = _field(DECISION, "notes").model_copy(
+        update={
+            "pins": (
+                ArtifactPin(
+                    role="subject",
+                    target=held.identity,
+                    artifact_digest=subject_digest(held).tagged,
+                ),
+            )
+        }
+    )
+    assert notes.artifact_format == "playbill-claim-type-v7"
+    accept(instance, change_set(ClaimTypeInput(kind="claim_type", claim_type=notes)))
+
+    refused = compile_(instance, change_set(_succession(instance, pinned, retire=retire)))
+
+    assert refused.verdict == "refused"
+    assert "cruxible.change_set.incomplete_closure" in _codes(refused)
