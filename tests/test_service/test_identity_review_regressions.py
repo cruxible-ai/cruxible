@@ -1063,3 +1063,73 @@ def test_a_subject_valued_object_reference_is_checked_like_a_subject(
     assert refused.value.details["code"] == "cruxible.procedure.identity_reference_unstable"
     (changed,) = refused.value.details["references"]
     assert changed["final"] == subject_path(DECISION, "original")
+
+
+# F-003 (delta 2): an intent event is published whole, never seen partial.
+
+
+def test_an_appended_intent_event_is_never_visible_partially(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review probe ``torn_intent_delta2b``: a reader during an append sees whole events.
+
+    The writer is paused halfway through the bytes of a new event; a lock-free
+    reader of the stream still validates every event (the new one is not under
+    its final name yet), the operation's creations stay authorized, and the
+    lowered Subject is admitted throughout.
+    """
+
+    import threading
+
+    from cruxible_core.authoring import store as store_module
+
+    intent, changed = _stored_minted(instance)
+    (creation,) = [
+        item for item in intent.payload.members if isinstance(item, SubjectCreationAuthoringPayload)
+    ]
+    authority = instance.subject_assignment_authority()
+    (record,) = authority.record(intent.intent_id).recorded()  # type: ignore[union-attr]
+    assert record.member == creation.member_identity and authority(intent.intent_id, record)
+    store = store_module.AuthoringIntentStore(instance.root / instance.descriptor.storage.exhaust)
+    events = store.root / intent.intent_id / "events"
+    before = sorted(path.name for path in events.glob("*.json"))
+    halfway, release, errors = threading.Event(), threading.Event(), []
+    write = store_module._write_temporary
+
+    def paused(path: Path, content: bytes) -> None:
+        cut = len(content) // 2
+        with path.open("xb") as handle:
+            handle.write(content[:cut])
+            handle.flush()
+            halfway.set()
+            assert release.wait(20)
+            handle.write(content[cut:])
+
+    def append() -> None:
+        try:
+            store.transition(
+                intent.intent_id,
+                actor_id="owner",
+                operation_key="sha256:" + "f" * 64,
+                transform=lambda value: value,
+            )
+        except BaseException as error:  # noqa: BLE001 - surfaced below
+            errors.append(error)
+
+    monkeypatch.setattr(store_module, "_write_temporary", paused)
+    writer = threading.Thread(target=append)
+    writer.start()
+    try:
+        assert halfway.wait(20), errors
+        assert sorted(path.name for path in events.glob("*.json")) == before
+        assert len(store._validated_events(store.root / intent.intent_id)) == len(before)
+        assert authority(intent.intent_id, record)
+        during = _submit_raw(instance, changed, "during-append")
+        assert during.candidate is not None, during.evaluation.diagnostics
+    finally:
+        release.set()
+        writer.join(20)
+        monkeypatch.setattr(store_module, "_write_temporary", write)
+    assert not errors, errors
+    assert len(sorted(events.glob("*.json"))) == len(before) + 1
+    assert authority(intent.intent_id, record)
