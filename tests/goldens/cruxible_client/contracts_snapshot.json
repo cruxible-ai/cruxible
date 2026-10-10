@@ -8095,6 +8095,39 @@
             "title": "SourceAcquisitionPolicy",
             "type": "object"
           },
+          "SubjectAssignment": {
+            "additionalProperties": false,
+            "description": "The recorded inputs of a digest-named Subject's id (identity D1).\n\nA ``minted`` Subject and a ``further_holder`` (a further holder of a ``hint``\nkind's key) are named from the ``operation`` (the intent) and ``member`` (the\ncreation member) that create them; the boundary recomputes the id from what\nis recorded here. A first holder of a key records nothing: its binding is its\nkey, and its id the key's rendering (suffixed by the key's digest when taken),\nwhich the boundary recomputes from the key Claims and the parent.",
+            "properties": {
+              "member": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Member",
+                "type": "string"
+              },
+              "operation": {
+                "maxLength": 256,
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              },
+              "rule": {
+                "enum": [
+                  "minted",
+                  "further_holder"
+                ],
+                "title": "Rule",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule",
+              "operation",
+              "member"
+            ],
+            "title": "SubjectAssignment",
+            "type": "object"
+          },
           "SubjectInput": {
             "additionalProperties": false,
             "description": "Create one Subject: name its kind and its key; core assigns the id.\n\n``key`` maps each key ClaimType of the kind's SubjectKind (by predicate, or by\nits last name under the kind) to its value; omit it for a minted kind. The\nid is the readable rendering of the canonical key (or a minted id), reported\nin the result; the key parts become Claims citing ``rationale`` as your own\nwords.",
@@ -8260,13 +8293,24 @@
           },
           "SubjectShell": {
             "additionalProperties": false,
-            "description": "A stable referent with no mutable properties or free metadata.",
+            "description": "A stable referent with no mutable properties or free metadata.\n\n``assignment`` is how core named a Subject created under a SubjectKind\n(compiler revision 33); a Subject created before carries none.",
             "properties": {
               "artifact_format": {
                 "const": "playbill-subject-v1",
                 "default": "playbill-subject-v1",
                 "title": "Artifact Format",
                 "type": "string"
+              },
+              "assignment": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/SubjectAssignment"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
