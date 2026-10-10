@@ -1728,3 +1728,60 @@ def test_an_upgrade_carries_a_consumer_procedure_pinning_a_kit_policy(
     assert parse_acquisition_policy(tree[POLICY_PATH], path=POLICY_PATH).lifecycle.state == (
         "retired"
     )
+
+
+def test_a_kit_carries_its_subject_kinds_and_their_keys(
+    worlds: tuple[_World, _World],
+) -> None:
+    """Kits carry SubjectKinds like other definitions (review: kit gap).
+
+    A kit's kind arrives declared with its key ClaimType, so a consumer creates
+    its Subjects by key at once; a kit upgrade succeeds the declaration, and the
+    kit's status reads it like any other owned artifact.
+    """
+
+    from cruxible_client.contracts.subject_kinds import parse_subject_kind, subject_kind_path
+    from tests.core_support._subject_kind_support import bare_slug_claim_type
+
+    publisher, consumer = worlds
+    draft = publisher.pb.changes(rationale="Name accounts by their slug.")
+    draft.claim_type(bare_slug_claim_type("acme.account"))
+    draft.subject_kind(name="acme.account", keys=("acme.account.slug",), uniqueness="unique")
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit()
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    publisher.approve(submitted._candidate_status.proposal_id)
+    publisher.pb.refresh()
+    bundle = publisher.build("1.0.0")
+    assert subject_kind_path("acme.account") in {item.path for item in bundle.manifest.artifacts}
+
+    consumer.add(bundle)
+    path = subject_kind_path("acme.account")
+    declared = parse_subject_kind(consumer.tree()[path], path=path)
+    assert declared.keys == ("acme.account.slug",) and declared.unique
+    creating = consumer.pb.changes(rationale="Acme is an account.")
+    creating.subject(consumer.pb.new_subject("acme.account", key="Acme Corp"))
+    created = creating.prepare()
+    assert not created.refused, created.diagnostics
+    landed = created.submit()
+    assert landed._candidate_status is not None and landed._candidate_status.proposal_id
+    consumer.approve(landed._candidate_status.proposal_id)
+    assert "subjects/acme.account/acme-corp.json" in consumer.tree()
+
+    # The publisher makes the kind a hint; the upgrade carries the successor.
+    succeed = publisher.pb.changes(rationale="Two accounts may share a slug.")
+    succeed.subject_kind(name="acme.account", keys=("acme.account.slug",), uniqueness="hint")
+    succeeded = succeed.prepare()
+    assert not succeeded.refused, succeeded.diagnostics
+    sent = succeeded.submit()
+    assert sent._candidate_status is not None and sent._candidate_status.proposal_id
+    publisher.approve(sent._candidate_status.proposal_id)
+    publisher.pb.refresh()
+    upgraded = consumer.add(publisher.build("1.1.0"))
+    assert upgraded.status in {"accepted", "proposed"}, upgraded
+    declared = parse_subject_kind(consumer.tree()[path], path=path)
+    assert not declared.unique
+    (status,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
+    assert status.drifted == ()

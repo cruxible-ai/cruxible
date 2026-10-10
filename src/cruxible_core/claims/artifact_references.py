@@ -71,6 +71,8 @@ REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("backing", "reducer_digest"),
     ),
     "documents/": (("pins", "*", "target_digest"),),
+    # A SubjectKind holds no digest: it names its key ClaimTypes by predicate.
+    "subject-kinds/": (),
 }
 
 
@@ -90,6 +92,13 @@ def referenced_identities(path: str, payload: Mapping[str, Any]) -> Iterator[tup
             continue
         for steps in fields:
             yield from _identities_at(payload, steps)
+    if path.startswith("subject-kinds/"):
+        # A keyed SubjectKind names its key ClaimTypes by predicate.
+        rule = payload.get("identity_rule")
+        keys = rule.get("keys") if isinstance(rule, dict) else None
+        for predicate in keys if isinstance(keys, list) else ():
+            if isinstance(predicate, str):
+                yield "ClaimType", predicate
 
 
 def _identities_at(value: object, steps: tuple[str, ...]) -> Iterator[tuple[str, str]]:
