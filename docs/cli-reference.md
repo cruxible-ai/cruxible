@@ -1635,15 +1635,20 @@ new Subject at all -- every route refuses
 Its existing Subjects stay readable, claimable and retirable, and accepted
 history replays as it was accepted.
 
-Every new Subject's id is checked against how core assigns it, at admission and
-again at settlement. A keyed first holder's id must be the rendering of its key
-(disambiguated against the parent). A minted Subject, or a further holder of a
-`hint` key, records the operation and member that created it (`assignment`),
-and its id is a digest of the two; that operation must be a durable core record
--- a stored authoring intent, or the record a Procedure terminal writes when it
-delivers -- whose own content creates exactly that member of that kind. The
-boundary finds the record by the operation id alone. An invented or copied
-binding, or one from a preview never stored, refuses
+Every new Subject's id is checked against how core assigns it, at admission,
+readmission and settlement. A keyed first holder's id must be the rendering of
+its key (disambiguated against the parent). A minted Subject, or a further
+holder of a `hint` key, records the operation and member that created it
+(`assignment`), and its id is a digest of the two. When core lowers a stored
+authoring intent, or a Procedure terminal delivers, it records each creation
+member's actual outcome for that operation: its kind, canonical key, rule
+(`first_holder`, `further_holder` or `minted`), whether it `created` a Subject
+or `reused` one, and the id it assigned. A minted or further-holder Subject is
+admitted only when that record holds an equal `created` entry -- the same
+member, kind, key, rule and id. A recorded hint creation authorizes only the
+id and canonical key core assigned to that member; a reused member authorizes
+no new Subject. An invented or copied binding, one moved to another key or
+kind, or one from a preview (never recorded) refuses
 `cruxible.subject.id_not_assigned`: a raw proposal creates only keyed first
 holders, and minted and further-holder Subjects are created through authoring
 or a Procedure. Rebasing or readmitting a proposal does not change its
@@ -1702,13 +1707,20 @@ a Procedure Claim item's `{"subject_kind": "dev.decision", "key": {"slug":
 "other name"}}`) names `original`, and so does a creation by that key: it
 reuses `original` and creates nothing.
 
-A Procedure terminal resolves its items the same way, over the whole terminal.
-A Claim item naming a Subject by a key one of the terminal's Subject items
-carries names that item, and resolves to the Subject final shared lowering
-assigns or reuses for it after every key change in the terminal; its receipt
-reports that same Subject. Any other key reference resolves through the order
-above, against the admitted base overlaid with the terminal's own Subject items
-and the key and alias Claims its Claim items add, revise or retire.
+A Procedure terminal's Claim items name Subjects by key the same way, and are
+held to one rule. Each reference is resolved once, against the admitted base
+and the terminal's own Subject items: a key one of those items carries names
+that item, and resolves to the Subject final shared lowering assigns or reuses
+for it (its receipt reports that same Subject); any other key resolves through
+the order above, over the base. After final lowering every reference -- a
+Claim's subject or a Subject-valued object -- is resolved again by the same
+resolver over the final candidate state. If any names a different Subject, or
+a reference that named none (`key_missing`) would now resolve, the terminal
+refuses `cruxible.procedure.identity_reference_unstable`, naming the reference
+and both results, and proposes nothing. The repair is to put the identity
+change (the alias or key Claim) and the references that depend on it in
+separate runs or terminals. This holds for propose and settle terminals and
+for recovery.
 
 A unique key is checked where every change is judged, against the parent it
 lands on with the change's own creations overlaid: a key-Claim revision, or a
