@@ -144,6 +144,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
     CLAIM_LAW_V3_REVISION_10,
+    CLAIM_LAW_V3_REVISION_11,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     QUERY_DEFINITION_LAW,
@@ -1710,6 +1711,15 @@ class _MemberKind:
 
 def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanceLaw:
     if context.historical_law_coordinate is None:
+        if artifact_tag == "playbill-claim-v3" and not admits_subject_kinds(
+            context.current.compiler
+        ):
+            # Claim law v3 revision 11 is adopted with Subject identity (compiler
+            # revision 33); an instance on an earlier compiler keeps revision 10.
+            return context.acceptance_laws.require_historical(
+                identifier=CLAIM_LAW_V3_REVISION_10.identifier,
+                digest=CLAIM_LAW_V3_REVISION_10.digest,
+            )
         return context.acceptance_laws.resolve_member(artifact_tag=artifact_tag)
     identifier, digest = context.historical_law_coordinate
     installed = context.acceptance_laws.require_historical(
@@ -3089,7 +3099,12 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
         allow_claim_type_retirement_shape_exemption=(
             installed.coordinate
-            in {CLAIM_LAW_V3_REVISION_8, CLAIM_LAW_V3_REVISION_9, CLAIM_LAW_V3_REVISION_10}
+            in {
+                CLAIM_LAW_V3_REVISION_8,
+                CLAIM_LAW_V3_REVISION_9,
+                CLAIM_LAW_V3_REVISION_10,
+                CLAIM_LAW_V3_REVISION_11,
+            }
         ),
         historical_capture_contract=(
             historical_capture_contract_resolver(
@@ -3101,12 +3116,16 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
                 CLAIM_LAW_V2_REVISION_8,
                 CLAIM_LAW_V3_REVISION_9,
                 CLAIM_LAW_V3_REVISION_10,
+                CLAIM_LAW_V3_REVISION_11,
             }
             else None
         ),
         claim_type_v7_semantics=(
-            installed.coordinate in {CLAIM_LAW_V2_REVISION_8, CLAIM_LAW_V3_REVISION_10}
+            installed.coordinate
+            in {CLAIM_LAW_V2_REVISION_8, CLAIM_LAW_V3_REVISION_10, CLAIM_LAW_V3_REVISION_11}
         ),
+        # Revision 11 alone: a Claim retired with its Subject (compiler 33).
+        subject_lifecycle_retirement=installed.coordinate == CLAIM_LAW_V3_REVISION_11,
         # A Capture cited for the first time needs daemon proof a run produced
         # it, at admission and again at settlement: an admission recorded under
         # an earlier law is not an accepted citation. Only recovery of a

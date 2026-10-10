@@ -1355,3 +1355,134 @@ def test_a_successor_keeps_its_key_claims_and_its_key(instance: PlaybillInstance
             ).path
             == delta
         )
+
+
+# E-b delta-4 F-001: the retired-with-Subject exemption is Claim law v3 revision 11.
+
+
+def _retirement_candidate(instance: PlaybillInstance, slug: str) -> tuple[Any, dict[str, Any]]:
+    """A keyed Subject with a title, and a raw change retiring it and its title.
+
+    Returns the candidate's evaluation inputs and the Claim paths by role.
+    """
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.claims import render_claim
+    from cruxible_client.contracts.subjects import subject_digest
+    from cruxible_core.claims.key_claims import retired_key_claim
+    from tests.test_service.test_subject_identity import _create, write
+
+    _create(instance, DECISION, slug)
+    path = subject_path(DECISION, slug)
+    titled = write(
+        instance, {"op": "set", "subject": f"{DECISION}/{slug}", "field": "title", "value": "T"}
+    )
+    assert titled.status == "accepted", titled
+    parent = tree(instance)
+    held = parse_subject(parent[path], path=path)
+    retired = held.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=subject_digest(held).tagged
+            )
+        }
+    )
+    claims = {
+        parse_claim(content, path=claim_file).statement.predicate.rpartition(".")[2]: claim_file
+        for claim_file, content in parent.items()
+        if claim_file.startswith("claims/")
+        and parse_claim(content, path=claim_file).statement.subject.artifact_path == path
+    }
+    title = parse_claim(parent[claims["title"]], path=claims["title"])
+    candidate = {
+        **parent,
+        path: render_subject(retired),
+        # An attributed retirement of a non-key Claim, alongside its Subject.
+        claims["title"]: render_claim(retired_key_claim(title)),
+    }
+    return (parent, candidate), claims
+
+
+def _judged(
+    instance: PlaybillInstance, trees: Any, coordinates: dict[str, tuple[str, str]] | None
+) -> Any:
+    from cruxible_core.proposals.proposals import evaluate_proposal_tree
+
+    parent, candidate = trees
+    return evaluate_proposal_tree(
+        base_tree=parent,
+        current_tree=parent,
+        proposed_tree=candidate,
+        current=instance.accepted_coordinate(),
+        bodies=instance.body_store(),
+        timestamp="2026-10-09T12:00:00.000000Z",
+        actor_id="owner",
+        rebased=False,
+        historical_law_coordinates=coordinates,
+    )
+
+
+@pytest.mark.parametrize("role", ["slug", "title"])
+def test_only_claim_law_revision_11_admits_a_claim_retired_with_its_subject(
+    instance: PlaybillInstance, role: str
+) -> None:
+    """Differential: identical inputs; revisions 9 and 10 refuse, revision 11 admits.
+
+    ``slug`` is the key Claim core retires with the Subject; ``title`` an ordinary
+    Claim the change retires itself. Earlier revisions keep their meaning exactly.
+    """
+
+    from cruxible_client.contracts.laws import (
+        CLAIM_LAW_V3_REVISION_9,
+        CLAIM_LAW_V3_REVISION_10,
+        CLAIM_LAW_V3_REVISION_11,
+    )
+
+    trees, claims = _retirement_candidate(instance, "epsilon")
+    current = _judged(instance, trees, None)
+    assert current.candidate is not None, current.diagnostics
+    # Every member judged at the law it was admitted under; one Claim's law varied.
+    recorded = {
+        member.path: (
+            member.law_identifier,
+            current.candidate.law_digests[member.law_identifier],
+        )
+        for member in current.candidate.members
+    }
+    assert recorded[claims[role]][1] == CLAIM_LAW_V3_REVISION_11.digest
+
+    def at(revision: Any) -> dict[str, tuple[str, str]]:
+        return {**recorded, claims[role]: (revision.identifier, revision.digest)}
+
+    assert _judged(instance, trees, at(CLAIM_LAW_V3_REVISION_11)).candidate is not None
+    for old in (CLAIM_LAW_V3_REVISION_9, CLAIM_LAW_V3_REVISION_10):
+        refused = _judged(instance, trees, at(old))
+        assert refused.candidate is None
+        assert {item.code for item in refused.diagnostics} == {
+            "cruxible.claim.subject_context_mismatch"
+        }
+
+
+def test_claim_law_revision_11_is_adopted_with_subject_identity_only(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Claim judged on a compiler before revision 33 is judged by revision 10."""
+
+    import cruxible_core.proposals.proposals as proposals_module
+    from cruxible_client.contracts.claims import render_claim
+    from cruxible_client.contracts.laws import CLAIM_LAW_V3_REVISION_10, CLAIM_LAW_V3_REVISION_11
+    from cruxible_core.claims.key_claims import retired_key_claim
+
+    (parent, _candidate), claims = _retirement_candidate(instance, "zeta")
+    title = parse_claim(parent[claims["title"]], path=claims["title"])
+    only_title = {**parent, claims["title"]: render_claim(retired_key_claim(title))}
+
+    def law_of(trees: Any) -> str:
+        judged = _judged(instance, trees, None)
+        assert judged.candidate is not None, judged.diagnostics
+        (member,) = [item for item in judged.candidate.members if item.path == claims["title"]]
+        return str(judged.candidate.law_digests[member.law_identifier])
+
+    assert law_of((parent, only_title)) == CLAIM_LAW_V3_REVISION_11.digest
+    monkeypatch.setattr(proposals_module, "admits_subject_kinds", lambda _compiler: False)
+    assert law_of((parent, only_title)) == CLAIM_LAW_V3_REVISION_10.digest

@@ -29,6 +29,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
     CLAIM_LAW_V3_REVISION_10,
+    CLAIM_LAW_V3_REVISION_11,
     CLAIM_TYPE_ACCEPTANCE_LAW,
     CLAIM_TYPE_REVISION_4_ACCEPTANCE_LAW,
     CLAIM_TYPE_V3_ACCEPTANCE_LAW,
@@ -48,6 +49,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
     CLAIM_V3_REVISION_8_ACCEPTANCE_LAW,
     CLAIM_V3_REVISION_9_ACCEPTANCE_LAW,
+    CLAIM_V3_REVISION_10_ACCEPTANCE_LAW,
     COMPILER_UPGRADE_ACCEPTANCE_LAW,
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
@@ -282,8 +284,8 @@ LAW_COORDINATES: tuple[
         CLAIM_V3_ACCEPTANCE_LAW,
         "playbill.claim.v3",
         "playbill-claim-v3",
-        10,
-        "sha256:5a135ff2c700128b0af0146329d6d139065a18a7c09e57e7954deab467327a7c",
+        11,
+        "sha256:1a75706bf54bbd681ed4da2c68f4050804904e417a2dcead8691a655e0953a00",
     ),
     (
         PROVIDER_ACCEPTANCE_LAW,
@@ -488,6 +490,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
         "sha256:874d7b97713a151520759d01eddff19c85b151aafc3d45373d628c3768f13cd6",
     ),
     (
+        CLAIM_V3_REVISION_10_ACCEPTANCE_LAW,
+        "playbill.claim.v3",
+        "playbill-claim-v3",
+        10,
+        "sha256:5a135ff2c700128b0af0146329d6d139065a18a7c09e57e7954deab467327a7c",
+    ),
+    (
         CLAIM_V3_REVISION_9_ACCEPTANCE_LAW,
         "playbill.claim.v3",
         "playbill-claim-v3",
@@ -538,7 +547,8 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
     )
     assert CLAIM_LAW_V3_REVISION_8 == CLAIM_V3_REVISION_8_ACCEPTANCE_LAW.coordinate
     assert CLAIM_LAW_V3_REVISION_9 == CLAIM_V3_REVISION_9_ACCEPTANCE_LAW.coordinate
-    assert CLAIM_LAW_V3_REVISION_10 == CLAIM_V3_ACCEPTANCE_LAW.coordinate
+    assert CLAIM_LAW_V3_REVISION_10 == CLAIM_V3_REVISION_10_ACCEPTANCE_LAW.coordinate
+    assert CLAIM_LAW_V3_REVISION_11 == CLAIM_V3_ACCEPTANCE_LAW.coordinate
     assert CLAIM_LAW_V2_REVISION_7 == CLAIM_V2_REVISION_7_ACCEPTANCE_LAW.coordinate
     assert CLAIM_LAW_V2_REVISION_8 == CLAIM_V2_ACCEPTANCE_LAW.coordinate
     seen_coordinates: set[tuple[str, str]] = set()

@@ -59,6 +59,7 @@ PRE_V7_LAWS = textwrap.dedent(
     new = {
         laws.CLAIM_LAW_V2_REVISION_8,
         laws.CLAIM_LAW_V3_REVISION_10,
+        laws.CLAIM_LAW_V3_REVISION_11,
         laws.CLAIM_TYPE_LAW_V7_REVISION_1,
     }
     old_current = {laws.CLAIM_LAW_V2_REVISION_7, laws.CLAIM_LAW_V3_REVISION_9}

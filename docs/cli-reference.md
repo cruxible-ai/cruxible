@@ -1763,6 +1763,11 @@ merge is an alias on the survivor plus the other Subject's retirement, and a
 later creation by the freed key creates a new Subject. A live successor of the
 Subject carries its key Claims unchanged, unless the change revises them. Its
 other Claims still close over it as before.
+A Claim retired this way keeps naming the Subject version it was accepted
+about; the Claim acceptance law that admits that is `playbill.claim.v3`
+revision 11, adopted with compiler revision 33. An instance on an earlier
+compiler judges new Claims by revision 10, and every accepted generation is
+verified by the exact revision it recorded.
 
 Kits carry SubjectKinds (`subject-kinds/`) like the other definitions: `kit
 add`, `kit upgrade` and `kit status` plan them, and a SubjectKind brings its key

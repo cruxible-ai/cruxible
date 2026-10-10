@@ -231,9 +231,19 @@ CLAIM_LAW_V3_REVISION_10 = _artifact_law_coordinate(
     "playbill-claim-v3",
     semantic_revision=10,
 )
+# Revision 11 (with compiler revision 33, subject identity): an attributed
+# retirement of a Claim may name the Subject version it was accepted about while
+# that Subject is retired or succeeded -- a keyed Subject's key Claims retire
+# with it, and a successor carries them unchanged. Every other check is
+# revision 10's; an instance on an earlier compiler keeps revision 10.
+CLAIM_LAW_V3_REVISION_11 = _artifact_law_coordinate(
+    CLAIM_LAW_V3_IDENTIFIER,
+    "playbill-claim-v3",
+    semantic_revision=11,
+)
 # Current is an operational alias only. Historical replay and shape-law
 # selection must name the exact revision directly.
-CLAIM_LAW_V3 = CLAIM_LAW_V3_REVISION_10
+CLAIM_LAW_V3 = CLAIM_LAW_V3_REVISION_11
 # Current revisions drop the vocabulary reuse law (see CLAIM_TYPE_LAW above).
 CLAIM_TYPE_LAW_V3_REVISION_4 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V3_IDENTIFIER,
@@ -512,9 +522,15 @@ CLAIM_V2_REVISION_6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 CLAIM_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_LAW_V3_REVISION_11,
+    artifact_kind="claim",
+    artifact_tag="playbill-claim-v3",
+)
+CLAIM_V3_REVISION_10_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V3_REVISION_10,
     artifact_kind="claim",
     artifact_tag="playbill-claim-v3",
+    current=False,
 )
 CLAIM_V3_REVISION_9_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V3_REVISION_9,
@@ -813,6 +829,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CLAIM_V2_REVISION_7_ACCEPTANCE_LAW,
         CLAIM_V2_REVISION_6_ACCEPTANCE_LAW,
         CLAIM_V3_ACCEPTANCE_LAW,
+        CLAIM_V3_REVISION_10_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_9_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_8_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,

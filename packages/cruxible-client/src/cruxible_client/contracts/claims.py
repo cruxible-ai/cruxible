@@ -1819,6 +1819,7 @@ def evaluate_claim_law(
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
     claim_type_v7_semantics: bool = False,
     require_new_citation_proof: bool = True,
+    subject_lifecycle_retirement: bool = False,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
 
@@ -1950,7 +1951,8 @@ def evaluate_claim_law(
     observed_subject_digest = subject.artifact_digest
     held_subject = subjects.get(statement.subject.artifact_path)
     if (
-        held_subject is not None
+        subject_lifecycle_retirement
+        and held_subject is not None
         and held_subject.shell.lifecycle.state == "retired"
         and held_subject.shell.lifecycle.predecessor_digest is not None
         and predecessor is not None
