@@ -98,6 +98,17 @@ def _is_key_claim(claim: ClaimArtifactAny, subject: str, keys: tuple[str, ...]) 
     )
 
 
+def is_key_claim(tree: Mapping[str, bytes], claim: ClaimArtifactAny) -> bool:
+    """Whether ``claim`` is a live key Claim of its Subject's keyed kind at ``tree``."""
+
+    subject = claim.statement.subject.artifact_path
+    if not subject.startswith(_SUBJECTS):
+        return False
+    kind = subject.removeprefix(_SUBJECTS).partition("/")[0]
+    keys = _key_predicates(tree, tree, kind)
+    return bool(keys) and _is_key_claim(claim, subject, keys)
+
+
 def _changed_subjects(
     current_tree: Mapping[str, bytes], candidate_tree: Mapping[str, bytes]
 ) -> tuple[str, ...]:
@@ -275,6 +286,7 @@ def retired_claim_names_subject_version(
 __all__ = [
     "carried_key_claim",
     "derive_key_claim_retirements",
+    "is_key_claim",
     "retired_claim_names_subject_version",
     "retired_key_claim",
     "subject_versions",

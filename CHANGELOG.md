@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Procedures propose Claim retirements.** A `propose_change_set` or
+  `settle_change_set` item may be a retirement
+  (`playbill-procedure-claim-retirement-item-v1`: the Claim ID it `retires`,
+  the retirement `reason`, a required `rationale`, optional
+  `effective_until`), carrying the Claim's live dependent closure and bound by
+  the run's receipt to the retired member. It is reviewed like any proposal;
+  under settle it settles only when the grant's scope lists `retire` for the
+  ClaimType, and otherwise proposes under that grant with
+  `cruxible.settle.outside_mandate_scope` naming the ClaimType. A key Claim
+  retires only with its Subject (`cruxible.procedure.key_claim_retirement`), a
+  Claim not live at the run's state refuses
+  (`cruxible.procedure.retirement_target_not_live`), and retiring a lineage the
+  same terminal revises or dispositions refuses
+  (`cruxible.procedure.retirement_lineage_conflict`).
 - **Each Procedure item keeps its own reason.** A `propose_change_set` or
   `settle_change_set` item's rationale is recorded with the Claim or Subject it
   explains (`ProposalItemReason`, up to 16,384 characters, longer ones marked

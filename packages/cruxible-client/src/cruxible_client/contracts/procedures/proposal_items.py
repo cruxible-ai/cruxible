@@ -21,9 +21,10 @@ its key -- with a ``SubjectKeyReference`` in place of an address (v3).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimObject,
@@ -33,13 +34,14 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSource,
     SelfSourceBody,
 )
-from cruxible_client.contracts.claims import claim_path
+from cruxible_client.contracts.claims import ClaimFormatError, ClaimRetirementReason, claim_path
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import (
     SubjectKeyReference,
     SubjectKeyValue,
     key_value_problem,
 )
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 
 
 class _StrictProposalItemModel(BaseModel):
@@ -159,12 +161,61 @@ class ProcedureSubjectProposalItem(_StrictProposalItemModel):
         return value
 
 
+class ProcedureClaimRetirementItem(_StrictProposalItemModel):
+    """One live Claim a Procedure proposes to retire: by Claim ID, with its reason and why.
+
+    The Claim is named by its ID, never by statement: a run that sees a record
+    disappear reads the Claim it held from accepted state (a Claim tap), and an
+    ID names exactly one lineage where a statement can match several values of
+    a many-valued slot. Core does not decide what a disappearance means; the
+    Procedure proposes, ``reason`` says which retirement it is, and review (or a
+    settle grant whose scope lists ``retire`` for the ClaimType) judges it. The
+    retirement carries the Claim's live dependent closure, as ``retire`` does.
+    A key Claim is part of its Subject's identity and retires with it, never on
+    its own (identity D4).
+    """
+
+    tag: Literal["playbill-procedure-claim-retirement-item-v1"] = (
+        "playbill-procedure-claim-retirement-item-v1"
+    )
+    retires: str
+    reason: ClaimRetirementReason
+    rationale: str
+    effective_until: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("retires")
+    @classmethod
+    def _retires(cls, value: str) -> str:
+        try:
+            claim_path(value)
+        except ClaimFormatError as exc:  # a typed item refusal, never an internal one
+            raise ValueError(str(exc)) from exc
+        return value
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("proposal item rationale must not be empty")
+        return value
+
+    @field_validator("effective_until")
+    @classmethod
+    def _time(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else ensure_utc(value)
+
+    @field_serializer("effective_until", when_used="json")
+    def _serialize_time(self, value: datetime | None) -> str | None:
+        return None if value is None else format_datetime(value)
+
+
 #: Every shape a resolved `propose_change_set` template may take, by tag.
 ProcedureProposalItemAny = (
     ProcedureClaimProposalItemV1
     | ProcedureClaimProposalItem
     | ProcedureKeyedClaimProposalItem
     | ProcedureSubjectProposalItem
+    | ProcedureClaimRetirementItem
 )
 
 PROPOSAL_ITEM_MODELS: dict[str, type[ProcedureProposalItemAny]] = {
@@ -172,6 +223,7 @@ PROPOSAL_ITEM_MODELS: dict[str, type[ProcedureProposalItemAny]] = {
     "playbill-procedure-claim-proposal-item-v2": ProcedureClaimProposalItem,
     "playbill-procedure-claim-proposal-item-v3": ProcedureKeyedClaimProposalItem,
     "playbill-procedure-subject-proposal-item-v1": ProcedureSubjectProposalItem,
+    "playbill-procedure-claim-retirement-item-v1": ProcedureClaimRetirementItem,
 }
 
 
@@ -180,6 +232,7 @@ __all__ = [
     "ProcedureClaimObject",
     "ProcedureClaimProposalItem",
     "ProcedureClaimProposalItemV1",
+    "ProcedureClaimRetirementItem",
     "ProcedureClaimStatement",
     "ProcedureKeyedClaimProposalItem",
     "ProcedureProposalItemAny",

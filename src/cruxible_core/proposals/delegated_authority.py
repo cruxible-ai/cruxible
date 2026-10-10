@@ -325,7 +325,7 @@ def mandate_coverage(
         },
         subject_creation=mandate.subject_creation,
     )
-    found = [*issues, *(issue for _gap, issue in _target_gaps(mandate, targets))]
+    found = [*issues, *(issue for _gap, issue, _target in _target_gaps(mandate, targets))]
     if not found and not targets and not any(path.startswith(SUBJECT_PREFIX) for path in scope):
         found.append(_issue("scope_uncovered", "The change set changes no Claim."))
     return targets, tuple(found)
@@ -336,11 +336,11 @@ _TargetGap = Literal["namespace", "claim_type", "change_kind", "subject"]
 
 def _target_gaps(
     mandate: ProcedureMandate, targets: tuple[SettleTarget, ...]
-) -> list[tuple[_TargetGap, tuple[str, str]]]:
+) -> list[tuple[_TargetGap, tuple[str, str], SettleTarget]]:
     """Each target a settle grant's scope does not cover, with the term that left it out."""
 
     scope_by_type = {item.claim_type.target.qualified: item for item in mandate.scope}
-    gaps: list[tuple[_TargetGap, tuple[str, str]]] = []
+    gaps: list[tuple[_TargetGap, tuple[str, str], SettleTarget]] = []
     for target in targets:
         item = scope_by_type.get(target.claim_type)
         if not _in_namespace(target.path, mandate.namespace):
@@ -348,6 +348,7 @@ def _target_gaps(
                 (
                     "namespace",
                     _issue("scope_uncovered", f"{target.path!r} is outside the namespace."),
+                    target,
                 )
             )
         elif item is None:
@@ -355,6 +356,7 @@ def _target_gaps(
                 (
                     "claim_type",
                     _issue("scope_uncovered", f"ClaimType {target.claim_type} is not in scope."),
+                    target,
                 )
             )
         elif target.change_kind not in item.change_kinds:
@@ -367,6 +369,7 @@ def _target_gaps(
                         f"A {target.change_kind} of {target.claim_type} is not covered "
                         f"(covered: {allowed}).",
                     ),
+                    target,
                 )
             )
         elif mandate.subject_scope is not None and target.subject not in mandate.subject_scope:
@@ -376,6 +379,7 @@ def _target_gaps(
                     _issue(
                         "scope_uncovered", f"Subject {target.subject_identity} is not in scope."
                     ),
+                    target,
                 )
             )
     return gaps
@@ -393,9 +397,12 @@ def claim_types_outside_scope(
 
     ``None`` unless the grant is live and every changed Claim is a settle target
     inside its namespace, change kinds and Subject scope, apart from Claims whose
-    ClaimType the scope does not name. Those ClaimTypes are returned, sorted; an
-    empty result means the grant covers the change. A settle terminal proposes
-    instead of settling a change carrying such a ClaimType (per-rule trust).
+    ClaimType the scope does not name -- or retirements of a ClaimType whose
+    scope does not list ``retire`` (a Procedure's retirement item settles only
+    under a grant that explicitly lists it). Those ClaimTypes are returned,
+    sorted; an empty result means the grant covers the change. A settle
+    terminal proposes instead of settling a change carrying such a ClaimType
+    (per-rule trust).
     """
 
     targets, issues = mandate_coverage(
@@ -412,13 +419,12 @@ def claim_types_outside_scope(
     # Every issue is one target's gap only when no changed member failed to be a
     # target at all (not a Claim, unparseable, or binding no Subject).
     gaps = _target_gaps(mandate, targets)
-    if len(issues) != len(gaps) or any(gap != "claim_type" for gap, _detail in gaps):
+    if len(issues) != len(gaps) or not all(
+        gap == "claim_type" or (gap == "change_kind" and target.change_kind == "retire")
+        for gap, _detail, target in gaps
+    ):
         return None
-    outside = {
-        target.claim_type
-        for target in targets
-        if target.claim_type not in {item.claim_type.target.qualified for item in mandate.scope}
-    }
+    outside = {target.claim_type for _gap, _detail, target in gaps}
     return tuple(sorted(outside, key=lambda item: item.encode("utf-8")))
 
 

@@ -2338,6 +2338,23 @@ lands on, else to the one live holder of the key; none refuses
 v1 item does. A propose mandate reaches the created Subjects through its
 namespace (`subjects/<kind>`).
 
+An item may also retire a live Claim
+(`playbill-procedure-claim-retirement-item-v1`: `retires`, the Claim ID;
+`reason`, `was-wrong`, `was-rescinded` or `superseded`; `rationale`; optional
+`effective_until`) -- for a record that left an export, say. The Claim is named
+by ID, read from accepted state by a Claim tap, never by statement, so one item
+ends exactly one lineage. The Procedure proposes and an agent judges what a
+disappearance means: the item is reviewed like any other, and it cites no
+evidence. The retirement
+carries the Claim's live dependent closure, each retired for the same reason,
+exactly as `retire` computes it, and the run's receipt binds the item to the
+retired member. A Claim that is not live at the run's admitted state refuses
+`proposal_item_invalid` with `cruxible.procedure.retirement_target_not_live`; a
+key Claim, which retires with its Subject and never on its own,
+`cruxible.procedure.key_claim_retirement`; and a terminal that both retires a
+lineage and revises, restates or dispositions it (or retires it twice)
+`cruxible.procedure.retirement_lineage_conflict`.
+
 The run's wall-clock budget is enforced inside the terminal, after its items
 are prepared and before anything is delivered: a run out of time ends
 `wall_clock_exhausted` with the terminal refused for that code and no
@@ -2363,9 +2380,12 @@ namespace, its ClaimType scope and change kinds (`create`, `revise`,
 `retire`), and its Subject scope. More than one covering mandate refuses
 `settle_mandate_ambiguous`. When none covers the change but a live settle
 grant for the Procedure covers all of it except Claims of ClaimTypes its scope
-does not name, the terminal proposes under that grant instead (per-rule trust:
+does not name -- or retirements of ClaimTypes whose scope does not list
+`retire` --, the terminal proposes under that grant instead (per-rule trust:
 a grant over the ClaimTypes you trust to settle, and every other ClaimType the
-Procedure emits goes to review): `settle_outcome: proposed`, `fallback_reason`
+Procedure emits goes to review; a Procedure's retirement settles only under a
+grant whose scope explicitly lists `retire` for its ClaimType):
+`settle_outcome: proposed`, `fallback_reason`
 `cruxible.settle.outside_mandate_scope`, and the typed
 `outside_scope_claim_types` naming them, on the run result and on the
 proposal's settle submission. The grant with the fewest such ClaimTypes is

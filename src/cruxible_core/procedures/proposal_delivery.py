@@ -49,6 +49,7 @@ from cruxible_client.contracts.authoring.models import (
     ChangeSetClaimIdentity,
     ClaimAuthoringPayload,
     ClaimDependencyDrafts,
+    ClaimRetirementMember,
     ExistingCaptureCitationSource,
     SelfSourceBody,
     SubjectCreationAuthoringPayload,
@@ -63,6 +64,7 @@ from cruxible_client.contracts.captures import parse_capture_envelope
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import (
+    ClaimRetireDependent,
     LiteralClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
@@ -80,6 +82,7 @@ from cruxible_client.contracts.procedures.proposal_items import (
     PROPOSAL_ITEM_MODELS,
     ProcedureClaimProposalItem,
     ProcedureClaimProposalItemV1,
+    ProcedureClaimRetirementItem,
     ProcedureKeyedClaimProposalItem,
     ProcedureProposalItemAny,
     ProcedureSubjectProposalItem,
@@ -111,6 +114,8 @@ from cruxible_core.authoring.lowering import (
     members_identity_overlay,
     subject_creation_paths,
 )
+from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
+from cruxible_core.claims.key_claims import is_key_claim
 from cruxible_core.evidence.claim_reobservations import (
     ClaimReobservationRefused,
     ClaimReobservationStore,
@@ -290,6 +295,8 @@ def evidence_by_item(
             else (*manifest.produced_capture_digests, *manifest.admitted_capture_digests)
         )
         model = _item_model(item.value)
+        if issubclass(model, ProcedureClaimRetirementItem):
+            continue  # a retirement cites nothing: it ends a Claim, it asserts none
         explicit = None
         if issubclass(model, ProcedureClaimProposalItem | ProcedureSubjectProposalItem):
             explicit = model.model_validate(item.value).source
@@ -367,7 +374,7 @@ def _claim_members(
     claim_ids: dict[str, str] = {}
     identity_to_item: dict[str, str] = {}
     for egress_item, item in zip(request.items, items, strict=True):
-        if isinstance(item, ProcedureSubjectProposalItem):
+        if isinstance(item, ProcedureSubjectProposalItem | ProcedureClaimRetirementItem):
             continue
         claim_id = item.revises or proposal_claim_id(
             admission_binding_digest=request.admission_binding_digest,
@@ -484,6 +491,149 @@ def _subject_members(
         identity_to_item[identity] = egress_item.item_key
         members.append(member)
     return tuple(members), identity_to_item
+
+
+RETIREMENT_TARGET_NOT_LIVE = "cruxible.procedure.retirement_target_not_live"
+KEY_CLAIM_RETIREMENT = "cruxible.procedure.key_claim_retirement"
+RETIREMENT_LINEAGE_CONFLICT = "cruxible.procedure.retirement_lineage_conflict"
+
+
+def _retirement_refusal(
+    message: str, *, code: str, item_key: str, claim_id: str, **details: object
+) -> ProposalDeliveryRefused:
+    return ProposalDeliveryRefused(
+        "proposal_item_invalid",
+        message,
+        details={"code": code, "item_key": item_key, "claim_id": claim_id, **details},
+    )
+
+
+def _retirement_members(
+    instance: PlaybillInstance,
+    request: TerminalEgressRequestV1,
+    *,
+    items: tuple[ProcedureProposalItemAny, ...],
+    base: AcceptedProjectionCoordinate,
+    base_tree: SnapshotTree,
+) -> tuple[tuple[ClaimRetirementMember, ...], dict[str, str]]:
+    """One retirement member per retirement item; return the members and item -> Claim ID.
+
+    The Claim must be live at the admitted base and not a key Claim (a key Claim
+    is its Subject's identity part and retires with the Subject). The member
+    carries the Claim's live dependent closure at the base, each retired for
+    the item's reason, exactly as the ``retire`` verb computes it.
+    """
+
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+
+    members: list[ClaimRetirementMember] = []
+    retired: dict[str, str] = {}
+    for egress_item, item in zip(request.items, items, strict=True):
+        if not isinstance(item, ProcedureClaimRetirementItem):
+            continue
+        claim_id, item_key = item.retires, egress_item.item_key
+        if claim_id in retired.values():
+            raise _retirement_refusal(
+                "Two terminal items retire the same Claim.",
+                code=RETIREMENT_LINEAGE_CONFLICT,
+                item_key=item_key,
+                claim_id=claim_id,
+            )
+        path = claim_path(claim_id)
+        content = base_tree.get(path)
+        claim = None if content is None else parse_claim(content, path=path)
+        if claim is None or claim.lifecycle.state != "live":
+            raise _retirement_refusal(
+                f"The retirement item names {claim_id}, which is not a live Claim at the "
+                "run's admitted state.",
+                code=RETIREMENT_TARGET_NOT_LIVE,
+                item_key=item_key,
+                claim_id=claim_id,
+            )
+        if is_key_claim(base_tree, claim):
+            raise _retirement_refusal(
+                f"{claim_id} is a key Claim: it is part of its Subject's identity and retires "
+                "with its Subject, never on its own.",
+                code=KEY_CLAIM_RETIREMENT,
+                item_key=item_key,
+                claim_id=claim_id,
+                repair=(
+                    "Retire the Subject instead (its key Claims retire with it), or revise "
+                    "the key Claim to change the key."
+                ),
+            )
+        try:
+            inventory = claim_retirement_inventory(
+                instance,
+                tree=base_tree,
+                coordinate=AcceptedCoordinate.from_internal(base),
+                claim=claim,
+            )
+        except ClaimRetireError as exc:
+            raise _retirement_refusal(
+                f"{claim_id} cannot be retired by a Procedure: {exc}",
+                code="cruxible.authoring.claim_retirement_closure_unsupported",
+                item_key=item_key,
+                claim_id=claim_id,
+            ) from exc
+        members.append(
+            ClaimRetirementMember(
+                retires=claim_id,
+                reason=item.reason,
+                effective_until=item.effective_until,
+                dependents=tuple(
+                    sorted(
+                        (
+                            ClaimRetireDependent(
+                                artifact_identity=dependent.artifact_identity,
+                                predecessor_digest=dependent.predecessor_digest,
+                                reason=item.reason,
+                            )
+                            for dependent in inventory
+                        ),
+                        key=lambda dependent: dependent.artifact_identity.qualified.encode("utf-8"),
+                    )
+                ),
+            )
+        )
+        retired[item_key] = claim_id
+    return tuple(members), retired
+
+
+def _refuse_retired_lineage_conflicts(
+    retired: Mapping[str, str],
+    *,
+    claim_ids: Mapping[str, str],
+    members: tuple[ClaimAuthoringPayload, ...],
+    identity_to_item: Mapping[str, str],
+) -> None:
+    """Refuse a terminal that both retires a Claim's lineage and revises or dispositions it.
+
+    A Claim item revising (or restating, so targeting) a lineage another item
+    retires, or dispositioning it, asks for two different ends of one lineage
+    in one change: the terminal refuses rather than pick one.
+    """
+
+    retiring = {claim_id: item_key for item_key, claim_id in retired.items()}
+    for item_key, claim_id in claim_ids.items():
+        if claim_id in retiring:
+            raise _retirement_refusal(
+                f"One terminal both retires {claim_id} and revises its lineage.",
+                code=RETIREMENT_LINEAGE_CONFLICT,
+                item_key=item_key,
+                claim_id=claim_id,
+                retired_by=retiring[claim_id],
+            )
+    for member in members:
+        for disposition in member.existing_claim_dispositions:
+            if disposition.claim_id in retiring:
+                raise _retirement_refusal(
+                    f"One terminal both retires {disposition.claim_id} and dispositions it.",
+                    code=RETIREMENT_LINEAGE_CONFLICT,
+                    item_key=identity_to_item[authoring_member_identity(member)],
+                    claim_id=disposition.claim_id,
+                    retired_by=retiring[disposition.claim_id],
+                )
 
 
 def _key_refusal(message: str, *, code: str, **details: object) -> ProposalDeliveryRefused:
@@ -913,6 +1063,7 @@ def _with_many_valued_dispositions(
     *,
     claim_ids: Mapping[str, str],
     base_tree: SnapshotTree,
+    retiring: frozenset[str] = frozenset(),
 ) -> tuple[ClaimAuthoringPayload, ...]:
     """Let an item add a value to a many-valued slot, as the ``add`` write verb does.
 
@@ -970,7 +1121,10 @@ def _with_many_valued_dispositions(
             continue
         explicit = {item.claim_id for item in member.existing_claim_dispositions}
         added = sorted(
-            {claim_id for claim_id, held in location.items() if held == slot} - explicit - {own},
+            {claim_id for claim_id, held in location.items() if held == slot}
+            - explicit
+            - {own}
+            - retiring,
             key=lambda item: item.encode("ascii"),
         )
         location[own] = slot
@@ -1222,6 +1376,7 @@ class ProposalTerminalEgressSink:
                 egress_item.item_key
                 for egress_item, item in zip(request.items, items, strict=True)
                 if egress_item.item_key not in evidence
+                and not isinstance(item, ProcedureClaimRetirementItem)
                 and not (
                     isinstance(item, ProcedureClaimProposalItem | ProcedureSubjectProposalItem)
                     and isinstance(item.source, SelfSourceBody)
@@ -1307,6 +1462,12 @@ class ProposalTerminalEgressSink:
                         if member.member_identity in assigned
                     },
                 )
+        retirement_members, retired = _retirement_members(
+            self.instance, request, items=items, base=base, base_tree=base_tree
+        )
+        _refuse_retired_lineage_conflicts(
+            retired, claim_ids=claim_ids, members=members, identity_to_item=identity_to_item
+        )
         ordered = _with_many_valued_dispositions(
             tuple(
                 sorted(
@@ -1317,10 +1478,11 @@ class ProposalTerminalEgressSink:
                 identity: claim_ids[item_key] for identity, item_key in identity_to_item.items()
             },
             base_tree=self.instance.immutable_tree_at(request.accepted_coordinate.git_oid),
+            retiring=frozenset(retired.values()),
         )
         all_members: tuple[AuthoringChangeSetMember, ...] = tuple(
             sorted(
-                (*ordered, *subject_members),
+                (*ordered, *subject_members, *retirement_members),
                 key=lambda member: authoring_member_identity(member).encode("utf-8"),
             )
         )
@@ -1373,6 +1535,10 @@ class ProposalTerminalEgressSink:
             ) from exc
         target_paths = tuple(path for path, _content in lowered.changed_members)
         item_paths = {item_key: claim_path(claim_id) for item_key, claim_id in claim_ids.items()}
+        # A retirement item binds to the retired Claim's member (the receipt's child).
+        item_paths.update(
+            (item_key, claim_path(claim_id)) for item_key, claim_id in retired.items()
+        )
         unchanged: dict[str, UnchangedChildReceiptAny] = dict(
             _unchanged_children(
                 self.instance,

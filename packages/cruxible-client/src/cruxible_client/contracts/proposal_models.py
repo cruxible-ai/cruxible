@@ -441,7 +441,9 @@ class ProposalSettleSubmission(_StrictProposalModel):
     inferring it from whatever later happened to the proposal.
 
     A fallback for `cruxible.settle.outside_mandate_scope` names, in
-    `outside_scope_claim_types`, the ClaimTypes the grant's scope left out.
+    `outside_scope_claim_types`, the ClaimTypes the grant's scope left out --
+    a ClaimType a retirement touches counts as left out when the scope does
+    not list `retire` for it.
     """
 
     tag: Literal["playbill-proposal-settle-submission-v1"] = (
