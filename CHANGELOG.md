@@ -22,6 +22,21 @@
   (`subject_creation`). The builtin `semantic.distinct_from` ships (new
   instances seed it; existing ones adopt it with `claim-type propose
   --builtin`), and the duplicates audit lists `keys` groups for `hint` kinds.
+  Subject identity is compiler revision 33 (`subject-identity-v1`): an
+  instance on an earlier compiler creates no new Subject
+  (`cruxible.subject.compiler_upgrade_required`) until it upgrades, and its
+  existing Subjects stay readable, claimable and retirable. Every new Subject
+  carries a verifiable assignment binding that the candidate boundary
+  recomputes at admission and settlement, so a raw proposal cannot pick an id
+  (`cruxible.subject.id_not_assigned`). The SDK's pending Subject references
+  name the creation member and core resolves them to the path it assigns. One
+  resolver serves every route: exact live id, alias, canonical key, exact
+  retired id; a new id never takes an existing alias. Keys compare by their
+  canonical typed encoding through a whole-key index, against the change's own
+  overlay. A ClaimType change that breaks a live kind's key contract refuses
+  (`cruxible.subject_kind.key_claim_type_broken`), and changing a key
+  ClaimType's canonical form is a re-keying
+  (`cruxible.subject_kind.rekey_unhandled`). Kits carry SubjectKinds.
   Typed projection storage schema 14 (rebuilt from accepted state). See the CLI
   reference, "Subject kinds and creation".
 

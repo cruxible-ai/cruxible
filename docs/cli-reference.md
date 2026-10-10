@@ -1602,7 +1602,10 @@ Use `authoring example claim-subject-relation` for a subject-valued Claim such a
 `sec.vulnerability/<cve> → sec.vuln.affects_package → sec.package/<package>`.
 Both endpoint Subjects must already be accepted and admitted by the ClaimType.
 A projection block's marker grammar is a page-level shape rather than an
-authoring one, and it is documented under `cruxible block`.
+authoring one, and it is documented under `cruxible block`. Nothing composes it
+for a caller any more: the marker must start in column zero, blocks cannot
+overlap, nest, or repeat an id, and marker-looking text inside a Markdown fence
+is not a declaration.
 
 ### Subject kinds and creation
 
@@ -1618,10 +1621,27 @@ as `identity` per kind in `orient`) declares how Subjects of one kind are named:
   NFKC-normalized and lowercased, every run outside `[a-z0-9.]` turned into `-`
   and trimmed, composite parts joined with `--`, an `x` prefix when it does not
   begin with a letter, `x-<8 hex>` when nothing readable is left. When a
-  different key already renders to that id, the later Subject takes
-  `<id>-<8 hex of its key digest>`.
+  different key already renders to that id, or a live alias already names it,
+  the later Subject takes `<id>-<8 hex of its key digest>`: a new id never
+  shadows an existing alias.
 - **minted**: `{"minted": true}`; core mints `sub-<32 hex>` from the change and
   the member.
+
+SubjectKinds and identity admission come with compiler revision 33
+(`subject-identity-v1`). An instance pinned to an earlier compiler creates no
+new Subject at all -- every route refuses
+`cruxible.subject.compiler_upgrade_required`; upgrade
+(`cruxible compiler upgrade --to DIGEST --name NAME`) and declare the kind.
+Its existing Subjects stay readable, claimable and retirable, and accepted
+history replays as it was accepted.
+
+Every new Subject carries a binding to how core assigned its id, and the
+candidate boundary recomputes it at admission and again at settlement: a keyed
+first holder's id must be the rendering of its key (disambiguated against the
+parent), a minted id or a further holder's id must be the digest of the
+operation and member recorded in its `assignment`. A raw creation whose id does
+not match refuses `cruxible.subject.id_not_assigned`, and a successor may not
+change its `assignment` (`cruxible.subject.assignment_changed`).
 
 A new Subject must be of a declared kind on every route -- authoring, writes,
 Procedure items, settle, raw proposals -- or the change refuses
@@ -1647,13 +1667,28 @@ Creating by key is one rule on every create-by-key route (a `subject` member,
 the write verbs' `kind/<text>` on a one-key kind, a Procedure Subject item, a
 settle): no live Subject holds the canonical key -- create it; exactly one does
 -- resolve to it and create nothing; two or more -- refuse
-`cruxible.subject.key_ambiguous`, naming them (name one by id). `create_new:
+`cruxible.subject.key_ambiguous`, naming them (name one by id). The holders are
+read with the change itself overlaid: a sibling retirement, a key Claim the
+change adds, revises or retires, counts. Keys compare by their canonical typed
+encoding (`true` is not `1`), through a whole-key index, so a composite key is
+one lookup. `create_new:
 true` makes a further holder of a `hint` key, named `<rendering>-<8 hex>` from
 the change and member; assert `semantic.distinct_from` between the two in the
 same change. It is refused on a `unique` kind
-(`cruxible.subject.create_new_refused`). A Claim member names a Subject the same
-set creates by its id or by the rendering of its key as written; the SDK's
-`cx.new_subject(kind, key=...)` returns that reference.
+(`cruxible.subject.create_new_refused`). A Claim member (as its subject or a
+Subject object) names a Subject the same set creates by that creation member:
+the SDK's `cx.new_subject(kind, key=...)` returns a pending reference to the
+member, and core resolves it to the path it actually assigns or reuses. No
+address is predicted from raw values; a reference to no creation in the set
+refuses `cruxible.authoring.subject_creation_unresolved`.
+
+Naming a Subject by text resolves the same way on every route (reads, writes,
+queries, creations): an exact live id, then an alias, then the canonical key
+(none, one, several), then an exact retired id. An alias sits before the key
+because an alias is an assertion naming exactly one Subject (a merge leaves
+one behind); several alias holders refuse `alias_ambiguous`, several key
+holders `key_ambiguous`. A creation skips the id steps: its text is a key, so a
+coincidental id never resolves it.
 
 A unique key is checked where every change is judged, against the parent it
 lands on with the change's own creations overlaid: a key-Claim revision, or a
@@ -1676,10 +1711,23 @@ working (it resolves the Subject holding the slug, or creates it):
 
 `cruxible authoring example subject-kind` prints a complete one. Existing
 Subjects keep their ids; give each its slug Claim (`cruxible set
-dev.decision/<id> slug <id> --because ...`) so its key resolves to it. Nothing composes it
-for a caller any more: the marker must start in column zero, blocks cannot
-overlap, nest, or repeat an id, and marker-looking text inside a Markdown fence
-is not a declaration.
+dev.decision/<id> slug <id> --because ...`) so its key resolves to it.
+
+A key ClaimType is part of every SubjectKind that names it. A ClaimType
+succession or retirement that would break a live kind's key contract
+(one-valued, live, literal, admitting the kind) refuses
+`cruxible.subject_kind.key_claim_type_broken` unless the same change declares a
+compatible SubjectKind successor. Changing a key ClaimType's canonical form
+re-keys its Subjects: it refuses `cruxible.subject_kind.rekey_unhandled` while
+any holder's key value would read differently, and `key_conflict` when two
+holders would then share a unique key, unless the change handles them.
+
+A Subject's retirement or successor closes over the Claims about it, its key
+Claim included: retire the key Claim in the same change set (or before).
+
+Kits carry SubjectKinds (`subject-kinds/`) like the other definitions: `kit
+add`, `kit upgrade` and `kit status` plan them, and a SubjectKind brings its key
+ClaimTypes with it.
 
 ## query
 
