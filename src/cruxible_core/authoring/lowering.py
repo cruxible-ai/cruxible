@@ -9,7 +9,7 @@ import sqlite3
 from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import NoReturn, TypeAlias, TypeVar, cast
+from typing import Literal, NoReturn, TypeAlias, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -262,7 +262,6 @@ from cruxible_client.contracts.triggers import (
     trigger_path,
     trigger_schedule_pins,
 )
-from cruxible_core.authoring.assignment_records import intent_creates
 from cruxible_core.authoring.registrations import registered_projection_blocks
 from cruxible_core.claims.claim_retirement import (
     ClaimRetireError,
@@ -301,6 +300,8 @@ from cruxible_core.indexes.subject_identity import (
     IdentityOverlay,
     IdentityView,
     KeyTuple,
+    RecordedCreation,
+    SubjectAssignmentAuthority,
     SubjectKeyInvalid,
     admits_subject_kinds,
     assign_creation_id,
@@ -332,12 +333,24 @@ class AuthoringLoweringError(ValueError):
 
 
 @dataclass(frozen=True)
+class AssignedCreation:
+    """One creation member as lowering assigned it: its record, path and key tuple."""
+
+    record: RecordedCreation
+    path: str
+    key: KeyTuple
+
+
+@dataclass(frozen=True)
 class LoweredAuthoring:
     proposed_tree: Mapping[str, bytes]
     resolved_authoring: dict[str, object]
     changed_members: tuple[tuple[str, bytes], ...]
     idempotent: bool = False
     member_by_path: Mapping[str, int] = field(default_factory=dict)
+    subject_creations: tuple[AssignedCreation, ...] = ()
+    """Every Subject creation member's actual assignment (empty unless a change
+    set creates Subjects): what core records for the operation (review F-001)."""
     """Which change-set member authored each path this lowering wrote.
 
     A change set admits or refuses whole, typed to the offending member, and
@@ -4299,6 +4312,7 @@ def _lower_change_set(
         changed_members=changed,
         member_by_path=member_by_path,
         idempotent=not changed and base.git_oid == instance.accepted_coordinate().git_oid,
+        subject_creations=assigned_creations(creations),
     )
 
 
@@ -5020,6 +5034,41 @@ def lower_authoring(
 _DISTINCT_FROM = "semantic.distinct_from"
 
 
+def lowered_authority(operation: str, lowered: LoweredAuthoring) -> SubjectAssignmentAuthority:
+    """The creations one lowering assigned, as the boundary's authority for its own intent."""
+
+    recorded = {item.record for item in lowered.subject_creations}
+    return lambda named, creation: named == operation and creation in recorded
+
+
+def assigned_creations(
+    creations: Mapping[str, _Creation],
+) -> tuple[AssignedCreation, ...]:
+    """Each creation member's actual assignment: rule, outcome, key and id (review F-001)."""
+
+    found: list[AssignedCreation] = []
+    for member, creation in sorted(creations.items()):
+        assignment = creation.assignment
+        rule: Literal["first_holder", "further_holder", "minted"] = (
+            "first_holder" if assignment is None else assignment.rule
+        )
+        found.append(
+            AssignedCreation(
+                record=RecordedCreation(
+                    member=member,
+                    kind=creation.kind,
+                    key=key_encoding(creation.key) if creation.key else None,
+                    rule=rule,
+                    outcome="reused" if creation.resolved else "created",
+                    subject_id=creation.subject_id,
+                ),
+                path=creation.path,
+                key=creation.key,
+            )
+        )
+    return tuple(found)
+
+
 def _refuse_subject_collisions(
     instance: PlaybillInstance, *, intent: AuthoringIntentV1, lowered: LoweredAuthoring
 ) -> None:
@@ -5056,9 +5105,7 @@ def _refuse_subject_collisions(
         candidate_tree=lowered.proposed_tree,
         scope=scope,
         # The creations this lowering made are its own intent's (review F-001).
-        assignment_authority=lambda operation, member, kind: (
-            operation == intent.intent_id and intent_creates(intent, member, kind)
-        ),
+        assignment_authority=lowered_authority(intent.intent_id, lowered),
     ):
         kind, _subject_id = subject_kind_of(issue.path)
         _refuse(

@@ -71,15 +71,15 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_path,
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
-from cruxible_core.authoring.assignment_records import intent_creates
 from cruxible_core.authoring.lowering import (
     AuthoringLoweringError,
     LoweredAuthoring,
     lower_authoring,
+    lowered_authority,
 )
 from cruxible_core.authoring.prepared_lowering import reuse_lowering
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.indexes.subject_identity import SubjectAssignmentAuthority
+from cruxible_core.indexes.subject_identity import RecordedCreation, SubjectAssignmentAuthority
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
@@ -1013,8 +1013,8 @@ def compute_preflight(
                         attestation_principal_provider=service.attestation_principal_provider,
                         historical_artifact_provider=service.historical_artifact_provider,
                         accepted_referents_provider=service.accepted_referents_provider,
-                        subject_assignment_authority=_with_intent_in_hand(
-                            service.subject_assignment_authority, intent
+                        subject_assignment_authority=_with_lowering_in_hand(
+                            service.subject_assignment_authority, intent, lowered
                         ),
                     )
                     if prepared is not None:
@@ -1266,19 +1266,23 @@ def compute_preflight(
     )
 
 
-def _with_intent_in_hand(
-    authority: SubjectAssignmentAuthority | None, intent: AuthoringIntentV1
+def _with_lowering_in_hand(
+    authority: SubjectAssignmentAuthority | None,
+    intent: AuthoringIntentV1,
+    lowered: LoweredAuthoring | None,
 ) -> SubjectAssignmentAuthority:
-    """The boundary's assignment records, plus the intent core is preflighting now.
+    """The recorded creations, plus those the lowering being preflighted assigned.
 
-    A preview's intent is never stored, and a stored one is the same record: the
-    creations it lowers are core's own (review F-001).
+    A preview's lowering is never recorded; a stored intent's is recorded right
+    after its preflight, with these same entries (review F-001).
     """
 
-    def creates(operation: str, member: str, kind: str) -> bool:
-        if operation == intent.intent_id:
-            return intent_creates(intent, member, kind)
-        return authority is not None and authority(operation, member, kind)
+    own = None if lowered is None else lowered_authority(intent.intent_id, lowered)
+
+    def creates(operation: str, creation: RecordedCreation) -> bool:
+        if own is not None and own(operation, creation):
+            return True
+        return authority is not None and authority(operation, creation)
 
     return creates
 

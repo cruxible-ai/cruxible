@@ -19,7 +19,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
@@ -906,27 +906,46 @@ def _alias_rows(content: bytes | None, path: str) -> tuple[tuple[str, str], ...]
     return ((statement.subject.artifact_path, normalize_discovery_term(statement.object.value)),)
 
 
-SubjectAssignmentAuthority: TypeAlias = Callable[[str, str, str], bool]
-"""Whether an authoritative core record creates one member of one kind.
+@dataclass(frozen=True)
+class RecordedCreation:
+    """One creation member's actual assignment, as core recorded it when lowering it.
 
-Called as ``(operation, member, kind)``: the operation is a durable core record
--- a stored authoring intent, or the record a Procedure terminal writes for its
-operation -- found by its id (one lookup), whose content creates exactly the
-member ``member`` of ``kind``. The candidate boundary asks it for every minted
-or further-holder Subject a change creates, at admission and at settlement; the
-record does not change when the proposal is rebased or readmitted, so neither
-does the answer.
+    ``key`` is the canonical key encoding (``key_encoding``; None for a minted
+    kind), ``rule`` how the id was derived, ``outcome`` whether the member
+    created a Subject or reused one, and ``subject_id`` the id it assigned or
+    reused.
+    """
+
+    member: str
+    kind: str
+    key: str | None
+    rule: Literal["first_holder", "further_holder", "minted"]
+    outcome: Literal["created", "reused"]
+    subject_id: str
+
+
+SubjectAssignmentAuthority: TypeAlias = Callable[[str, RecordedCreation], bool]
+"""Whether core recorded exactly this creation for one operation.
+
+Called as ``(operation, creation)``, where ``creation`` is what the candidate
+claims: its member, kind, canonical key, rule, ``created`` and id. It answers
+True only when the durable record of that operation -- written by core when it
+lowered an authoring intent, or when a Procedure terminal delivers -- holds an
+equal ``created`` entry; a ``reused`` entry authorizes nothing. The candidate
+boundary asks it for every minted or further-holder Subject a change creates, at
+admission, readmission and settlement; the record does not change when a
+proposal is rebased or readmitted, so neither does the answer.
 """
 
 
 def _authoritative(
     authority: SubjectAssignmentAuthority | None,
     assignment: Any,
-    kind: str,
+    creation: RecordedCreation,
 ) -> bool:
     if authority is None or assignment is None:
         return False
-    return bool(authority(assignment.operation, assignment.member, kind))
+    return bool(authority(assignment.operation, creation))
 
 
 def _unrecorded_assignment(path: str, kind: str, assignment: Any) -> SubjectIdentityIssue:
@@ -934,9 +953,9 @@ def _unrecorded_assignment(path: str, kind: str, assignment: Any) -> SubjectIden
         SUBJECT_ID_NOT_ASSIGNED,
         path,
         f"{_ref(path)} records that operation {assignment.operation!r} (member "
-        f"{assignment.member!r}) created it, and no core record of that operation creates "
-        f"that member of {kind}: a {assignment.rule.replace('_', ' ')} Subject is named only "
-        "by core, for an authoring intent or a Procedure operation it holds. Create it "
+        f"{assignment.member!r}) created it, and core recorded no such creation of that "
+        f"member: a {assignment.rule.replace('_', ' ')} {kind} is named only by core, with "
+        "exactly the key and id it assigned when it lowered that operation. Create it "
         "through authoring (a subject member naming its kind) and let core name it.",
     )
 
@@ -1006,8 +1025,21 @@ def candidate_identity_issues(
                 if assignment is None or assignment.rule != "minted"
                 else minted_subject_id(operation=assignment.operation, member=assignment.member)
             )
-            if expected == subject_id and not _authoritative(
-                assignment_authority, assignment, kind
+            if (
+                expected == subject_id
+                and assignment is not None
+                and not _authoritative(
+                    assignment_authority,
+                    assignment,
+                    RecordedCreation(
+                        member=assignment.member,
+                        kind=kind,
+                        key=None,
+                        rule="minted",
+                        outcome="created",
+                        subject_id=subject_id,
+                    ),
+                )
             ):
                 issues.append(_unrecorded_assignment(path, kind, assignment))
             elif expected != subject_id:
@@ -1230,7 +1262,16 @@ def candidate_identity_issues(
                         key_values(key), operation=assignment.operation, member=assignment.member
                     )
                 if expected == subject_id and not _authoritative(
-                    assignment_authority, assignment, kind
+                    assignment_authority,
+                    assignment,
+                    RecordedCreation(
+                        member=assignment.member,
+                        kind=kind,
+                        key=key_encoding(key),
+                        rule="further_holder",
+                        outcome="created",
+                        subject_id=subject_id,
+                    ),
                 ):
                     assigned.add(subject_id)
                     issues.append(_unrecorded_assignment(subject, kind, assignment))
@@ -1510,6 +1551,7 @@ def _kind_wide_conflicts(
 __all__ = [
     "SUBJECT_COMPILER_UPGRADE_REQUIRED",
     "SUBJECT_ID_NOT_ASSIGNED",
+    "RecordedCreation",
     "SubjectAssignmentAuthority",
     "SUBJECT_KIND_KEY_BROKEN",
     "SUBJECT_KIND_REKEY_UNHANDLED",

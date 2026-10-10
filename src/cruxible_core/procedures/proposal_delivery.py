@@ -117,6 +117,7 @@ from cruxible_core.evidence.claim_reobservations import (
 from cruxible_core.indexes.subject_identity import (
     IdentityView,
     KeyTuple,
+    RecordedCreation,
     SubjectKeyInvalid,
     canonical_key,
     key_ambiguous_message,
@@ -206,9 +207,9 @@ class PreparedProposal:
     #: A settle terminal's change carries ClaimTypes its one applicable settle
     #: grant's scope leaves out: it proposes under that grant instead, naming them.
     outside_scope_claim_types: tuple[str, ...] = ()
-    #: The Subject items' creation members, (kind, member identity): recorded as
-    #: this operation's core record before it is submitted (review F-001).
-    creations: tuple[tuple[str, str], ...] = ()
+    #: The Subject items' actual assignments as lowered: recorded as this
+    #: operation's core creation record before it is submitted (review F-001).
+    creations: tuple[RecordedCreation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1307,9 +1308,7 @@ class ProposalTerminalEgressSink:
             item_paths=item_paths,
             rationale=rationale,
             outside_scope_claim_types=outside_scope,
-            creations=tuple(
-                sorted((member.subject_kind, member.member_identity) for member in subject_members)
-            ),
+            creations=tuple(item.record for item in lowered.subject_creations),
         )
         return prepared
 
@@ -1404,10 +1403,8 @@ class ProposalTerminalEgressSink:
         if prepared.creations:
             # The operation's own core record, which the candidate boundary reads
             # back to verify each Subject's recorded assignment (review F-001).
-            self.instance.subject_assignment_authority().record_procedure_operation(
-                admission_binding_digest=request.admission_binding_digest,
-                node_id=request.node_id,
-                creations=prepared.creations,
+            self.instance.subject_assignment_authority().record_creations(
+                _intent_id(request), prepared.creations
             )
         service = self._proposal_service()
         assert request.operation_key is not None  # v2 shape
