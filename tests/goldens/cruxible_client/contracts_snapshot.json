@@ -24,6 +24,7 @@
         "query-ontology",
         "query-procedures",
         "subject",
+        "subject-kind",
         "approval-policy",
         "procedure-runtime-policy",
         "procedure-mandate",
@@ -144,7 +145,8 @@
         "line_inbox_unread",
         "evidence_unavailable",
         "prediction_settleable",
-        "prediction_window_unbindable"
+        "prediction_window_unbindable",
+        "subject_kind_undeclared"
       ]
     },
     "NextRefusalCode": {
@@ -3422,6 +3424,7 @@
               "query-ontology",
               "query-procedures",
               "subject",
+              "subject-kind",
               "approval-policy",
               "procedure-runtime-policy",
               "procedure-mandate",
@@ -3475,6 +3478,8 @@
                 "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                 "query_definition": "#/$defs/QueryDefinitionInput",
                 "subject": "#/$defs/SubjectInput",
+                "subject_kind": "#/$defs/SubjectKindInput",
+                "subject_succession": "#/$defs/SubjectSuccessionInput",
                 "trigger": "#/$defs/TriggerInput"
               },
               "propertyName": "kind"
@@ -3496,6 +3501,9 @@
                 "$ref": "#/$defs/SubjectInput"
               },
               {
+                "$ref": "#/$defs/SubjectSuccessionInput"
+              },
+              {
                 "$ref": "#/$defs/QueryDefinitionInput"
               },
               {
@@ -3515,6 +3523,9 @@
               },
               {
                 "$ref": "#/$defs/TriggerInput"
+              },
+              {
+                "$ref": "#/$defs/SubjectKindInput"
               },
               {
                 "$ref": "#/$defs/ChangeSetInput"
@@ -4001,6 +4012,8 @@
                       "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                       "query_definition": "#/$defs/QueryDefinitionInput",
                       "subject": "#/$defs/SubjectInput",
+                      "subject_kind": "#/$defs/SubjectKindInput",
+                      "subject_succession": "#/$defs/SubjectSuccessionInput",
                       "trigger": "#/$defs/TriggerInput"
                     },
                     "propertyName": "kind"
@@ -4022,6 +4035,9 @@
                       "$ref": "#/$defs/SubjectInput"
                     },
                     {
+                      "$ref": "#/$defs/SubjectSuccessionInput"
+                    },
+                    {
                       "$ref": "#/$defs/QueryDefinitionInput"
                     },
                     {
@@ -4041,6 +4057,9 @@
                     },
                     {
                       "$ref": "#/$defs/TriggerInput"
+                    },
+                    {
+                      "$ref": "#/$defs/SubjectKindInput"
                     },
                     {
                       "$ref": "#/$defs/BlueprintInput"
@@ -6101,6 +6120,15 @@
                 "title": "Scope",
                 "type": "array"
               },
+              "subject_creation": {
+                "default": [],
+                "description": "Settle grants only: Subject kinds a run may create by key; their new Subjects and key Claims settle with the change. A propose grant names subjects/<kind> in its namespace instead.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Subject Creation",
+                "type": "array"
+              },
               "subject_scope": {
                 "anyOf": [
                   {
@@ -8069,21 +8097,145 @@
           },
           "SubjectInput": {
             "additionalProperties": false,
+            "description": "Create one Subject: name its kind and its key; core assigns the id.\n\n``key`` maps each key ClaimType of the kind's SubjectKind (by predicate, or by\nits last name under the kind) to its value; omit it for a minted kind. The\nid is the readable rendering of the canonical key (or a minted id), reported\nin the result; the key parts become Claims citing ``rationale`` as your own\nwords.",
             "properties": {
+              "create_new": {
+                "default": false,
+                "description": "Hint kinds only: create another Subject even though one holds this key (assert semantic.distinct_from between them); otherwise the key resolves to it.",
+                "title": "Create New",
+                "type": "boolean"
+              },
+              "key": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "description": "Key ClaimType (predicate or short name) -> value, or just the value when the kind has one key; omit for a minted kind.",
+                "title": "Key"
+              },
               "kind": {
                 "const": "subject",
                 "title": "Kind",
                 "type": "string"
               },
-              "subject": {
-                "$ref": "#/$defs/SubjectShell"
+              "rationale": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Why this Subject exists; the key Claims' self evidence.",
+                "title": "Rationale"
+              },
+              "subject_kind": {
+                "description": "The kind to create, e.g. 'dev.decision'.",
+                "title": "Subject Kind",
+                "type": "string"
               }
             },
             "required": [
               "kind",
-              "subject"
+              "subject_kind"
             ],
             "title": "SubjectInput",
+            "type": "object"
+          },
+          "SubjectKindInput": {
+            "additionalProperties": false,
+            "description": "How core names Subjects of one kind: by key ClaimTypes, or by minted ids.\n\nEvery new Subject is of a kind with an accepted SubjectKind. ``keys`` names\nthe key ClaimTypes (by predicate, in key order): each a ClaimType v8 about\nthis kind only, literal and one-valued, accepted here or earlier; a Subject's\nid is then the readable rendering of its canonical key. ``uniqueness:\nunique`` refuses a second live Subject with the same key; ``hint`` only\nsurfaces it in the duplicates audit. ``minted: true`` has core mint opaque\nids instead. Change it, or retire it, through a successor.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "keys": {
+                "default": [],
+                "description": "Key ClaimTypes by predicate, in key order; omit when minted.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Keys",
+                "type": "array"
+              },
+              "kind": {
+                "const": "subject_kind",
+                "title": "Kind",
+                "type": "string"
+              },
+              "minted": {
+                "default": false,
+                "description": "Core mints opaque ids; no keys.",
+                "title": "Minted",
+                "type": "boolean"
+              },
+              "name": {
+                "description": "The Subject kind this declares, e.g. 'dev.decision'.",
+                "title": "Name",
+                "type": "string"
+              },
+              "retire": {
+                "default": false,
+                "title": "Retire",
+                "type": "boolean"
+              },
+              "uniqueness": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "unique",
+                      "hint"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "With keys: unique refuses a duplicate key; hint does not.",
+                "title": "Uniqueness"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "SubjectKindInput",
             "type": "object"
           },
           "SubjectObjectInput": {
@@ -8149,6 +8301,26 @@
               "subject_id"
             ],
             "title": "SubjectShell",
+            "type": "object"
+          },
+          "SubjectSuccessionInput": {
+            "additionalProperties": false,
+            "description": "A successor of an existing Subject's shell, e.g. retiring it (lifecycle retired).",
+            "properties": {
+              "kind": {
+                "const": "subject_succession",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject": {
+                "$ref": "#/$defs/SubjectShell"
+              }
+            },
+            "required": [
+              "kind",
+              "subject"
+            ],
+            "title": "SubjectSuccessionInput",
             "type": "object"
           },
           "TriggerInput": {
@@ -8320,6 +8492,7 @@
               "query-ontology",
               "query-procedures",
               "subject",
+              "subject-kind",
               "approval-policy",
               "procedure-runtime-policy",
               "procedure-mandate",
@@ -8359,6 +8532,8 @@
                 "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                 "query_definition": "#/$defs/QueryDefinitionInput",
                 "subject": "#/$defs/SubjectInput",
+                "subject_kind": "#/$defs/SubjectKindInput",
+                "subject_succession": "#/$defs/SubjectSuccessionInput",
                 "trigger": "#/$defs/TriggerInput"
               },
               "propertyName": "kind"
@@ -8380,6 +8555,9 @@
                 "$ref": "#/$defs/SubjectInput"
               },
               {
+                "$ref": "#/$defs/SubjectSuccessionInput"
+              },
+              {
                 "$ref": "#/$defs/QueryDefinitionInput"
               },
               {
@@ -8399,6 +8577,9 @@
               },
               {
                 "$ref": "#/$defs/TriggerInput"
+              },
+              {
+                "$ref": "#/$defs/SubjectKindInput"
               },
               {
                 "$ref": "#/$defs/ChangeSetInput"
@@ -29351,7 +29532,8 @@
               "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
-              "prediction_window_unbindable"
+              "prediction_window_unbindable",
+              "subject_kind_undeclared"
             ],
             "title": "Reason",
             "type": "string"
@@ -29738,7 +29920,8 @@
               "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
-              "prediction_window_unbindable"
+              "prediction_window_unbindable",
+              "subject_kind_undeclared"
             ],
             "title": "Reason",
             "type": "string"
@@ -30274,7 +30457,8 @@
               "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
-              "prediction_window_unbindable"
+              "prediction_window_unbindable",
+              "subject_kind_undeclared"
             ],
             "title": "Reason",
             "type": "string"
@@ -30482,7 +30666,8 @@
                   "line_inbox_unread",
                   "evidence_unavailable",
                   "prediction_settleable",
-                  "prediction_window_unbindable"
+                  "prediction_window_unbindable",
+                  "subject_kind_undeclared"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -30771,7 +30956,8 @@
               "line_inbox_unread",
               "evidence_unavailable",
               "prediction_settleable",
-              "prediction_window_unbindable"
+              "prediction_window_unbindable",
+              "subject_kind_undeclared"
             ],
             "title": "Reason",
             "type": "string"
@@ -31672,7 +31858,8 @@
                   "line_inbox_unread",
                   "evidence_unavailable",
                   "prediction_settleable",
-                  "prediction_window_unbindable"
+                  "prediction_window_unbindable",
+                  "subject_kind_undeclared"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -31833,7 +32020,8 @@
                   "line_inbox_unread",
                   "evidence_unavailable",
                   "prediction_settleable",
-                  "prediction_window_unbindable"
+                  "prediction_window_unbindable",
+                  "subject_kind_undeclared"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -34373,6 +34561,11 @@
                 "title": "Evidence",
                 "type": "array"
               },
+              "identity": {
+                "default": "undeclared",
+                "title": "Identity",
+                "type": "string"
+              },
               "kind": {
                 "title": "Kind",
                 "type": "string"
@@ -34409,6 +34602,11 @@
                 },
                 "title": "Evidence",
                 "type": "array"
+              },
+              "identity": {
+                "default": "undeclared",
+                "title": "Identity",
+                "type": "string"
               },
               "incoming": {
                 "default": [],
