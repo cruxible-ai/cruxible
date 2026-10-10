@@ -17,6 +17,7 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
 from cruxible_client.contracts.proposal_models import ProposalSettleSubmission
+from cruxible_core.authoring.assignment_records import procedure_operation_id
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV2,
@@ -255,6 +256,12 @@ class ProposalTerminalAdapter:
                     timestamp=canonical_candidate_timestamp(request.evaluation_time),
                     authorize=_authorize_at_head,
                     settle_submission=settle_submission,
+                    # The Procedure terminal door is the only one that binds an
+                    # admission to its operation; item reasons require it.
+                    procedure_operation=procedure_operation_id(
+                        admission_binding_digest=request.admission_binding_digest,
+                        node_id=request.node_id,
+                    ),
                 )
                 break
             except ProposalHeadMovedError:

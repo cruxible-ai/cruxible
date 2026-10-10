@@ -9,6 +9,7 @@ author slot (batch F review F-002).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.documents import DocumentAuthority, DocumentLifecycle, DocumentShell
@@ -330,3 +331,93 @@ def test_a_malformed_revises_refuses_as_an_invalid_item(tmp_path: Path) -> None:
     assert refusal.code == "proposal_item_invalid", refusal
     assert refusal.details["child_index"] == 0
     assert delivery._proposal_refs(instance) == []
+
+
+# --- recovery never lends a crashed operation's reasons (delta review F-002) -----
+
+
+def test_recovery_does_not_attach_reasons_to_an_independent_equivalent_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Crash before submit; an equivalent proposal lands under the ref; recovery lends nothing."""
+
+    from datetime import timedelta
+
+    from cruxible_core.procedures import terminal_services
+    from cruxible_core.service.procedures.procedure_runs import (
+        service_get_playbill_procedure_run,
+    )
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+    from tests.core_support._retirement_support import activate_proposal
+    from tests.test_procedures.test_procedure_settlement_delivery import _egress_records
+
+    instance, owner, root, line, claim_id = retire._proposed_world(tmp_path)
+    _write_feed(root, [retire._retire(claim_id)])
+    delivery._crash_after(monkeypatch, after_submit=False)
+    crashed_deliver = terminal_services.ProposalTerminalAdapter.deliver
+    captured: dict[str, object] = {}
+
+    def capture(self, **kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return crashed_deliver(self, **kwargs)
+
+    monkeypatch.setattr(terminal_services.ProposalTerminalAdapter, "deliver", capture)
+    with pytest.raises(delivery._Crash):
+        delivery.run_line(instance, root, line, at=retire.LATER)
+    monkeypatch.undo()
+    request: Any = captured["request"]
+    manual = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id=request.actor_context.actor_id),
+        request=ProposalAdmissionRequest(
+            target_ref=terminal_services.proposal_terminal_ref(
+                request.actor_context.actor_id, request.operation_key
+            ),
+            proposed_base_oid=request.accepted_coordinate.git_oid,
+            source_compilation_digest=terminal_services.proposal_terminal_payload_digest(
+                captured["candidate_tree"],  # type: ignore[arg-type]
+                captured["changed_paths"],  # type: ignore[arg-type]
+            ),
+            rationale="Manual equivalent retirement, independently submitted after the crash.",
+        ),
+        candidate_tree=captured["candidate_tree"],  # type: ignore[arg-type]
+        timestamp=canonical_candidate_timestamp(request.evaluation_time),
+    )
+    assert manual.candidate is not None
+    # A public submission names no Procedure operation.
+    assert manual.admission.procedure_operation is None
+    assert _review(instance, manual.admission.proposal_id).item_reason_count == 0
+
+    recovered = service_recover_proposal_egress(
+        instance, recorded_at=retire.LATER + timedelta(minutes=1)
+    )
+
+    # Recovery still adopts the admission for delivery, exactly as before ...
+    ((run_id, disposition),) = recovered.items()
+    assert disposition == "delivered"
+    state = service_get_playbill_procedure_run(instance, run_id=run_id)
+    (egress,) = state.terminal_egress
+    assert egress.proposal_id == manual.admission.proposal_id
+    # ... but links no reason to it, and its receipt says the reasons are unattributed.
+    (delivered,) = [item for item in _egress_records(instance, state) if "receipt" in item]
+    assert delivered["receipt"]["item_reasons_unattributed"] is True
+    assert _review(instance, manual.admission.proposal_id).item_reason_count == 0
+
+    activate_proposal(instance, owner, manual.admission.proposal_id)
+
+    assert _why(instance, claim_id).reason is None
+    assert _evidence_rationale(instance, claim_id) == (
+        "Manual equivalent retirement, independently submitted after the crash."
+    )
+
+
+def test_the_terminal_door_binds_its_admission_and_no_public_request_can() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ProposalAdmissionRequest.model_validate(
+            {
+                "target_ref": "refs/proposals/owner/procedure-x",
+                "proposed_base_oid": "a" * 40,
+                "procedure_operation": "AIT-" + "0" * 32,
+            }
+        )

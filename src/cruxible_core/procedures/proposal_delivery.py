@@ -135,6 +135,7 @@ from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV3,
     TerminalEgressChildReceiptV4,
     TerminalEgressReceiptV1,
+    TerminalEgressReceiptV3,
     TerminalEgressRequestV1,
     TerminalEgressRequestV2,
     TerminalEgressUnchangedReceiptV1,
@@ -1812,14 +1813,20 @@ class ProposalTerminalEgressSink:
                     unchanged=unchanged,
                 )
             )
-        # The exact admission this delivery submitted (or recovered) carries
-        # this operation's reasons; written before the run records its receipt,
-        # so a crash here is redelivered through recovery and links it then.
+        # The exact admission this delivery submitted carries this operation's
+        # reasons: linked before the run records its receipt, so a crash here
+        # is redelivered through recovery and linked then. An admission
+        # recovery adopted by its ref that does not name this exact operation
+        # (an independent equivalent submission) is delivered as before but
+        # never linked: its reasons are reported unattributed on the receipt.
         proposal_id = getattr(receipt, "proposal_id", None)
         if prepared.item_reasons and isinstance(proposal_id, str):
-            self.instance.proposal_evidence().write_item_reason_link(
-                proposal_id, _intent_id(request)
-            )
+            evidence = self.instance.proposal_evidence()
+            operation = _intent_id(request)
+            if evidence.read_admission(proposal_id).procedure_operation == operation:
+                evidence.write_item_reason_link(proposal_id, operation)
+            elif isinstance(receipt, TerminalEgressReceiptV3):
+                receipt = receipt.model_copy(update={"item_reasons_unattributed": True})
         return receipt
 
     def _record_item_reasons(

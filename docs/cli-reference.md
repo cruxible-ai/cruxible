@@ -2322,7 +2322,12 @@ accepted -- the one the accepted change-set record binds by actor, source
 compilation and candidate, never withdrawn or rejected; when no single
 admission matches, the revision carries no attributed `reason` or `rationale`.
 A proposal reads its items' reasons only through its own link to the Procedure
-operation that wrote them, never through its (reusable) proposal ref. Reading
+operation that wrote them, never through its (reusable) proposal ref, and only
+an admission the operation's own terminal submitted (it records that
+`procedure_operation`; no public request can) is linked. When recovery
+delivers to an equivalent admission someone else submitted under the
+operation's ref, the reasons stay unattached and the run's receipt says
+`item_reasons_unattributed`. Reading
 one Claim's reason is one record read however many items its proposal carried. The reasons are provenance, not
 evidence: the Claim's Captures are unchanged.
 

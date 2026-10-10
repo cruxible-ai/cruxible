@@ -335,6 +335,9 @@ class ProposalEvidenceStore:
         link = self._read_model(path, ProposalItemReasonLink, label="proposal item reason link")
         if link.proposal_id != current.proposal_id:
             raise ProposalIntegrityError("proposal item reason link names another proposal")
+        # Only an admission the operation's own terminal submitted carries it.
+        if current.procedure_operation != link.operation:
+            return None
         return link.operation
 
     def item_reason_page(

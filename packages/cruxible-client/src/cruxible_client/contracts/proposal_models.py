@@ -578,11 +578,23 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     readmits: ProposalReadmissionLink | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # The Procedure operation (AIT-...: its terminal's admission binding and
+    # node) whose terminal submitted this admission. Set only by the Procedure
+    # terminal door -- no public request carries it -- and absent, like
+    # `readmits`, for every other proposal, so admissions already on disk keep
+    # their bytes. A terminal's item reasons attach only to an admission that
+    # names its exact operation here.
+    procedure_operation: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("rationale")
     @classmethod
     def _rationale(cls, value: str | None) -> str | None:
         return validate_change_set_rationale(value)
+
+    @field_validator("procedure_operation")
+    @classmethod
+    def _procedure_operation(cls, value: str | None) -> str | None:
+        return None if value is None else _procedure_operation(value)
 
     @field_validator("proposal_id")
     @classmethod
