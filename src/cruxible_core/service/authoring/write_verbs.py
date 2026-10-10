@@ -31,6 +31,7 @@ import base64
 import json
 import shlex
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -112,7 +113,6 @@ from cruxible_client.contracts.subject_kinds import (
     SubjectIdUnassignable,
     SubjectKeyPart,
     SubjectKind,
-    assign_subject_id,
     parse_subject_kind,
     subject_kind_path,
 )
@@ -148,13 +148,22 @@ from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retire
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
     SubjectRefResolution,
-    resolve_subject_ref,
 )
 from cruxible_core.indexes.subject_identity import (
+    SUBJECT_COMPILER_UPGRADE_REQUIRED,
     SUBJECT_KIND_UNDECLARED,
+    IdentityOverlay,
+    IdentityView,
+    KeyReader,
+    KeyTuple,
+    admits_subject_kinds,
+    assign_creation_id,
+    compiler_upgrade_repair,
     key_ambiguous_message,
+    key_encoding,
     subject_creation_shape,
-    subjects_with_key,
+    subject_kind_of,
+    tree_key_reader,
     undeclared_kind_repair,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -488,6 +497,7 @@ class _Planner:
         self._refs: dict[tuple[str, str], SubjectRefResolution] = {}
         self._kinds: dict[str, SubjectKind | None] = {}
         self._planned_keys: dict[tuple[str, str], str] = {}
+        self._key_reader: KeyReader | None = None
 
     # -- accepted state ----------------------------------------------------------
 
@@ -719,19 +729,67 @@ class _Planner:
 
     # -- vocabulary --------------------------------------------------------------
 
+    @contextmanager
+    def identity_view(self) -> Iterator[IdentityView]:
+        """The shared resolver at the head, overlaid with what this write has planned.
+
+        Subjects the write creates hold their keys, and key or alias Claims it
+        retires hold nothing (identity D4, review F-007).
+        """
+
+        if self._key_reader is None:
+            self._key_reader = tree_key_reader(self.instance.immutable_tree_at(self.head.git_oid))
+        overlay = IdentityOverlay(
+            subjects={path: True for path in self.plan.subjects},
+            keys={
+                path: tuple((part.predicate, part.value) for part in creation.key)
+                for path, creation in self.plan.creations.items()
+            },
+        )
+        retiring = self._retiring()
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            connection = projection.typed.connection
+            for claim_id in sorted(retiring):
+                row = connection.execute(
+                    "SELECT subject_path, predicate FROM claims WHERE identity=?",
+                    (f"Claim:{claim_id}",),
+                ).fetchone()
+                if row is None:
+                    continue
+                subject, predicate = str(row[0]), str(row[1])
+                for term in connection.execute(
+                    "SELECT term FROM vocabulary_terms WHERE source_identity=? AND basis='alias'",
+                    (f"Claim:{claim_id}",),
+                ):
+                    overlay.aliases_removed.add((subject, str(term[0])))
+                declared = self.declared_kind(subject_kind_of(subject)[0])
+                if declared is not None and predicate in declared.keys:
+                    overlay.keys[subject] = None
+            yield IdentityView(connection, overlay, key_reader=self._key_reader)
+
     def resolve_ref(
         self, kind: str, subject_id: str, *, index: int, path: str
     ) -> SubjectRefResolution:
-        """One Subject reference at the head: the exact Subject, else one alias.
+        """One Subject reference at the head, as this write leaves it (the shared resolver).
 
-        An alias naming several Subjects of the kind refuses with each of them.
+        The exact live Subject, else one alias, else one holder of the kind's
+        single key, else the exact retired Subject. Several alias or key holders
+        refuse with each of them.
         """
 
-        key = (kind, subject_id)
-        if key not in self._refs:
-            with self.instance.bind_accepted_projection(self.head) as projection:
-                self._refs[key] = resolve_subject_ref(projection.typed.connection, kind, subject_id)
-        resolution = self._refs[key]
+        with self.identity_view() as view:
+            resolution = view.resolve(kind, subject_id)
+        if resolution.ambiguous and resolution.via == "key":
+            raise _refuse(
+                "cruxible.subject.key_ambiguous",
+                key_ambiguous_message(
+                    kind, [f"subjects/{item}.json" for item in resolution.candidates]
+                ),
+                change=index,
+                candidates=resolution.candidates,
+                repair="Name one of the listed Subjects as kind/id",
+                field_path=path,
+            )
         if resolution.ambiguous:
             raise _refuse(
                 "cruxible.write.alias_ambiguous",
@@ -758,21 +816,6 @@ class _Planner:
                 declared if declared is not None and declared.lifecycle.state == "live" else None
             )
         return self._kinds[kind]
-
-    def key_holders(self, kind: str, subject_id: str) -> tuple[str, ...]:
-        """The live Subjects of a single-key kind whose key ``subject_id`` spells.
-
-        ``kind/<text>`` names no Subject by id or alias; read as a key value
-        (canonicalized by the key ClaimType's form) it may name one by its key --
-        one rule for ``unique`` and ``hint`` kinds: none, one, or several holders.
-        """
-
-        found = self._single_key(kind)
-        if found is None:
-            return ()
-        predicate, value = self._key_value(kind, found, subject_id, index=None, path="")
-        with self.instance.bind_accepted_projection(self.head) as projection:
-            return subjects_with_key(projection.typed.connection, kind, ((predicate, value),))
 
     def _single_key(self, kind: str) -> SubjectKind | None:
         declared = self.declared_kind(kind)
@@ -809,6 +852,15 @@ class _Planner:
         unresolved reference refuses with the creation shape in its repair.
         """
 
+        if not admits_subject_kinds(self.head.compiler):
+            raise _refuse(
+                SUBJECT_COMPILER_UPGRADE_REQUIRED,
+                f"this instance's compiler predates SubjectKinds, so no new {kind} Subject can "
+                "be created; existing ones stay readable, claimable and retirable",
+                change=index,
+                repair=compiler_upgrade_repair(kind),
+                field_path=path,
+            )
         declared = self.declared_kind(kind)
         if declared is None:
             raise _refuse(
@@ -840,16 +892,18 @@ class _Planner:
                 field_path=path,
             )
         predicate, value = self._key_value(kind, declared, subject_id, index=index, path=path)
-        planned = self._planned_keys.get((kind, value))
+        key: KeyTuple = ((predicate, value),)
+        planned = self._planned_keys.get((kind, key_encoding(key)))
         if planned is not None:
             return planned
-
-        def taken(candidate: str) -> bool:
-            candidate_path = subject_path(kind, candidate)
-            return self.subject_exists(candidate_path) or candidate_path in self.plan.subjects
-
+        names = {
+            planned_path.removeprefix(f"subjects/{kind}/").removesuffix(".json")
+            for planned_path in self.plan.subjects
+            if planned_path.startswith(f"subjects/{kind}/")
+        }
         try:
-            assigned = assign_subject_id((value,), taken=taken)
+            with self.identity_view() as view:
+                assigned = assign_creation_id(view, kind, key, names=names)
         except SubjectIdUnassignable as exc:
             raise _refuse(
                 "cruxible.subject.key_invalid", str(exc), change=index, field_path=path
@@ -865,7 +919,7 @@ class _Planner:
             key=(SubjectKeyPart(predicate=predicate, value=value),),
             rationale=self.request.because,
         )
-        self._planned_keys[(kind, value)] = created
+        self._planned_keys[(kind, key_encoding(key))] = created
         return created
 
     def resolve_subject(self, subject: str, *, index: int, path: str) -> tuple[str, str, str]:
@@ -880,27 +934,9 @@ class _Planner:
                 field_path=path,
             )
         resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
-        if resolved.path is not None and resolved.via == "alias":
-            assert resolved.ref is not None
-            return kind, resolved.ref.partition("/")[2], resolved.path
-        target = subject_path(kind, subject_id)
-        if resolved.path is None and target not in self.plan.subjects:
-            holders = self.key_holders(kind, subject_id)
-            if len(holders) > 1:
-                raise _refuse(
-                    "cruxible.subject.key_ambiguous",
-                    key_ambiguous_message(kind, holders),
-                    change=index,
-                    candidates=tuple(
-                        holder.removeprefix("subjects/").removesuffix(".json") for holder in holders
-                    ),
-                    repair="Name one of the listed Subjects as kind/id",
-                    field_path=path,
-                )
-            if holders:
-                holder = holders[0]
-                return kind, holder.removeprefix(f"subjects/{kind}/").removesuffix(".json"), holder
-        return kind, subject_id, target
+        if resolved.path is not None:
+            return kind, subject_kind_of(resolved.path)[1], resolved.path
+        return kind, subject_id, subject_path(kind, subject_id)
 
     def resolve_field(self, kind: str, name: str, *, index: int, path: str) -> PredicateInfo:
         descriptor = self.vocabulary.descriptor(name)

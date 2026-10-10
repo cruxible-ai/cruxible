@@ -8,7 +8,14 @@ import unicodedata
 from collections.abc import Callable
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -47,8 +54,28 @@ def _canonical(value: str, *, pattern: re.Pattern[str], label: str) -> str:
     return value
 
 
+class SubjectAssignment(_StrictSubjectModel):
+    """The recorded inputs of a digest-named Subject's id (identity D1).
+
+    A ``minted`` Subject and a ``further_holder`` (a further holder of a ``hint``
+    kind's key) are named from the ``operation`` (the intent) and ``member`` (the
+    creation member) that create them; the boundary recomputes the id from what
+    is recorded here. A first holder of a key records nothing: its binding is its
+    key, and its id the key's rendering (suffixed by the key's digest when taken),
+    which the boundary recomputes from the key Claims and the parent.
+    """
+
+    rule: Literal["minted", "further_holder"]
+    operation: str = Field(min_length=1, max_length=256)
+    member: str = Field(min_length=1, max_length=512)
+
+
 class SubjectShell(_StrictSubjectModel):
-    """A stable referent with no mutable properties or free metadata."""
+    """A stable referent with no mutable properties or free metadata.
+
+    ``assignment`` is how core named a Subject created under a SubjectKind
+    (compiler revision 33); a Subject created before carries none.
+    """
 
     artifact_format: Literal["playbill-subject-v1"] = "playbill-subject-v1"
     identity: ArtifactIdentity
@@ -56,6 +83,9 @@ class SubjectShell(_StrictSubjectModel):
     subject_id: str
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
+    assignment: SubjectAssignment | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("subject_kind")
     @classmethod
@@ -300,6 +330,7 @@ def evaluate_subject_law(
 __all__ = [
     "AcceptedSubject",
     "SUBJECT_DIGEST_FUNCTIONS",
+    "SubjectAssignment",
     "SubjectLawResult",
     "SubjectShell",
     "evaluate_subject_law",

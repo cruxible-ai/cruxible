@@ -66,6 +66,7 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.proposals.proposal_receive import load_proposal_receive_config
+from tests.core_support._identity_support import retire_claims_about
 from tests.core_support._subject_kind_support import (
     create_by_key,
     key_by_slug,
@@ -765,6 +766,9 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
 
     instance, owner = initialize_local(tmp_path)
     _seed(instance, owner)
+    # A Subject's successor closes over the Claims about it; with none left live,
+    # the succession case below meets the succession law itself.
+    retire_claims_about(instance, subject_path(SUBJECT_KIND, "wi-42"))
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
 

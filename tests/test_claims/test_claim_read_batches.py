@@ -17,6 +17,9 @@ from tests.core_support._knowledge_loop_support import seed_claims
 
 TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
 PATHS = ("subjects/project.work_item/wi-42.json", "subjects/project.work_item/wi-43.json")
+# What the world states about its work items; each also holds its slug, the key
+# Claim core wrote when it created it.
+STATED = ("project.work_item.status",)
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +44,7 @@ def test_selected_pages_equal_single_views_and_bind_once(seeded, monkeypatch):
         raise AssertionError("batch must not materialize the Claim population")
 
     monkeypatch.setattr(ProjectionHandle, "list_claims", forbidden)
-    req = request(seeded, subject_paths=PATHS, limit=1)
+    req = request(seeded, subject_paths=PATHS, predicates=STATED, limit=1)
     first = service_read_claim_batch(seeded, request=req)
     assert first.truncated and first.cursor
     second = service_read_claim_batch(
@@ -76,7 +79,7 @@ def test_selected_pages_equal_single_views_and_bind_once(seeded, monkeypatch):
 
 
 def test_cursor_cannot_be_reused_for_other_selection(seeded):
-    req = request(seeded, subject_paths=PATHS, limit=1)
+    req = request(seeded, subject_paths=PATHS, predicates=STATED, limit=1)
     first = service_read_claim_batch(seeded, request=req)
     changed = req.model_copy(update={"cursor": first.cursor, "predicates": ("other.status",)})
     with pytest.raises(FormatError, match="cursor"):
@@ -103,7 +106,7 @@ def test_latest_batch_resolves_once_and_returns_the_resolved_coordinate(seeded, 
         return next(coordinates)
 
     monkeypatch.setattr(playbill_claim_reads, "_resolve_coordinate", resolve)
-    req = ClaimReadBatchRequest(subject_paths=PATHS, evaluation_time=TIME)
+    req = ClaimReadBatchRequest(subject_paths=PATHS, predicates=STATED, evaluation_time=TIME)
     first = service_read_claim_batch(seeded, request=req)
     second = service_read_claim_batch(seeded, request=req)
     assert calls == [None, None]
@@ -119,7 +122,9 @@ def test_latest_batch_resolves_once_and_returns_the_resolved_coordinate(seeded, 
 def test_latest_page_continuation_is_bound_to_returned_coordinate(seeded, monkeypatch):
     from cruxible_core.service.claims import claim_reads as playbill_claim_reads
 
-    req = ClaimReadBatchRequest(subject_paths=PATHS, evaluation_time=TIME, limit=1)
+    req = ClaimReadBatchRequest(
+        subject_paths=PATHS, predicates=STATED, evaluation_time=TIME, limit=1
+    )
     first = service_read_claim_batch(seeded, request=req)
     assert first.truncated and first.cursor
     original = playbill_claim_reads._resolve_coordinate
@@ -154,20 +159,24 @@ def test_cursor_without_coordinate_is_rejected_before_source_work(seeded, monkey
     from cruxible_core.service.claims import claim_reads as playbill_claim_reads
 
     with pytest.raises(ValidationError, match="continuation requires"):
-        ClaimReadBatchRequest(subject_paths=PATHS, cursor="cursor")
+        ClaimReadBatchRequest(subject_paths=PATHS, predicates=STATED, cursor="cursor")
 
     def forbidden(*args, **kwargs):
         raise AssertionError("invalid continuation must fail before resolving accepted state")
 
     monkeypatch.setattr(playbill_claim_reads, "_resolve_coordinate", forbidden)
     # Internal callers using model_copy/model_construct receive the same guard.
-    req = ClaimReadBatchRequest(subject_paths=PATHS).model_copy(update={"cursor": "cursor"})
+    req = ClaimReadBatchRequest(subject_paths=PATHS, predicates=STATED).model_copy(
+        update={"cursor": "cursor"}
+    )
     with pytest.raises(FormatError, match="explicit accepted coordinate"):
         service_read_claim_batch(seeded, request=req)
 
 
 def test_latest_identity_read_matches_explicit_snapshot(seeded):
-    selected = service_read_claim_batch(seeded, request=request(seeded, subject_paths=PATHS))
+    selected = service_read_claim_batch(
+        seeded, request=request(seeded, subject_paths=PATHS, predicates=STATED)
+    )
     ids = tuple(view.envelope["identity"] for view in selected.claims)
     latest = service_read_claim_batch(
         seeded, request=ClaimReadBatchRequest(claim_ids=ids, evaluation_time=TIME)
@@ -179,7 +188,9 @@ def test_latest_empty_generation_returns_its_full_coordinate(tmp_path):
     from tests.core_support._support import initialize_local
 
     instance, _ = initialize_local(tmp_path)
-    result = service_read_claim_batch(instance, request=ClaimReadBatchRequest(subject_paths=PATHS))
+    result = service_read_claim_batch(
+        instance, request=ClaimReadBatchRequest(subject_paths=PATHS, predicates=STATED)
+    )
     assert result.claims == () and not result.truncated and result.cursor is None
     assert (
         result.coordinate.model_dump()
@@ -188,7 +199,9 @@ def test_latest_empty_generation_returns_its_full_coordinate(tmp_path):
 
 
 def test_backing_reads_use_one_blob_batch_without_admission_or_projection(seeded, monkeypatch):
-    selected = service_read_claim_batch(seeded, request=request(seeded, subject_paths=PATHS))
+    selected = service_read_claim_batch(
+        seeded, request=request(seeded, subject_paths=PATHS, predicates=STATED)
+    )
     ids = tuple(view.envelope["identity"] for view in selected.claims)
 
     def forbidden(*args, **kwargs):
@@ -233,7 +246,7 @@ def test_backing_reads_use_one_blob_batch_without_admission_or_projection(seeded
 def test_bounds_and_ambiguous_selection_are_refused(seeded, updates):
     with pytest.raises(ValidationError):
         ClaimReadBatchRequest.model_validate(
-            {"at": request(seeded, subject_paths=PATHS).at, **updates}
+            {"at": request(seeded, subject_paths=PATHS, predicates=STATED).at, **updates}
         )
 
 
@@ -255,7 +268,7 @@ def test_runtime_checks_read_permission_before_instance_lookup(monkeypatch):
 
 def test_explicit_older_coordinate_does_not_read_current_head(seeded):
     earlier = seeded.coordinate_for_oid(seeded.accepted_history()[-2].oid)
-    req = request(seeded, subject_paths=PATHS)
+    req = request(seeded, subject_paths=PATHS, predicates=STATED)
     req = ClaimReadBatchRequest.model_validate(
         {
             **req.model_dump(mode="json"),
@@ -272,7 +285,9 @@ def test_retired_claim_cannot_be_pinned_as_live_backing(seeded, monkeypatch):
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.claims import parse_claim, render_claim
 
-    selected = service_read_claim_batch(seeded, request=request(seeded, subject_paths=PATHS))
+    selected = service_read_claim_batch(
+        seeded, request=request(seeded, subject_paths=PATHS, predicates=STATED)
+    )
     identity = selected.claims[0].envelope["identity"]
     path = selected.claims[0].envelope["path"]
     claim = parse_claim(seeded.blob_at(selected.coordinate.git_oid, path), path=path)

@@ -12,6 +12,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.write_verbs import service_playbill_write
 from cruxible_core.service.discovery.orient import service_playbill_head
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._subject_kind_support import fixture_key_claims
 from tests.core_support._write_support import KIND, caller, seed_write_surface
 
 _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
@@ -119,7 +120,9 @@ def test_orient_counts_claims_by_status_including_retired(tmp_path: Path) -> Non
     assert result.artifacts is not None and result.artifacts.claims is not None
     counts = result.artifacts.claims
     assert counts.retired == 1
-    assert counts.accepted + counts.conflicted + counts.overturned + counts.refused == 1
+    # The live status Claim, and each work item's key Claim (its slug).
+    keys = len(fixture_key_claims(instance.tree_at(instance.accepted_coordinate().git_oid)))
+    assert counts.accepted + counts.conflicted + counts.overturned + counts.refused == 1 + keys
     # The section and kind views carry no counts; only the default map does.
     assert service_playbill_orient(instance, section="documents").artifacts is None
 

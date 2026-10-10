@@ -14,6 +14,7 @@ from cruxible_core.indexes.sqlite import (
     projection_logical_digest,
 )
 from tests.core_support._retirement_support import retire_claim
+from tests.core_support._subject_kind_support import fixture_key_claims
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
 
@@ -83,12 +84,14 @@ def test_retirement_misses_old_bytes_and_rebuilds_lifecycle_revision_and_proofs(
     with monkeypatch.context() as guarded:
         guarded.setattr(claims, "parse_claim", parse)
         changed = _parse(instance)
-    assert calls == [claim_path(claim_id)]
+    # The Subject's key Claim (unchanged bytes) parses beside the retired one.
+    keys = fixture_key_claims(instance.tree_at(instance.accepted_coordinate().git_oid))
+    assert [path for path in calls if path not in keys] == [claim_path(claim_id)]
     cold = _parse(instance)
     _assert_same_rows_and_digest(tmp_path, cold, changed)
     assert f"Claim:{claim_id}" in changed[0].retired_identities
-    before = next(e for e in old.envelopes if e.kind == "claim")
-    after = next(e for e in changed[0].envelopes if e.kind == "claim")
+    before = next(e for e in old.envelopes if e.identity == f"Claim:{claim_id}")
+    after = next(e for e in changed[0].envelopes if e.identity == f"Claim:{claim_id}")
     assert after.revision == before.revision + 1
     assert after.artifact_digest != before.artifact_digest
     assert _parse(instance)[0] == changed[0]

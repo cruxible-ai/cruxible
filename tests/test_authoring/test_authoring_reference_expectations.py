@@ -20,6 +20,7 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
+from tests.core_support._identity_support import retire_claims_about
 from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
@@ -70,7 +71,7 @@ def _accept_subject_successor(
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=2,
+        sequence=len(instance.accepted_history()),
     )
     projection = instance.activation_publisher().prebuild(bundle, base=base)
     assert (
@@ -93,6 +94,8 @@ def _expectation(coordinate: AcceptedCoordinate) -> tuple[AuthoringReferenceExpe
 def test_stale_ref_names_the_successor_coordinate_and_retry_converges(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
+    # A Subject's successor closes over the Claims about it: its key Claim goes first.
+    retire_claims_about(instance, "subjects/project.work_item/wi-42.json")
     minted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     _accept_subject_successor(instance, owner)
     current = AcceptedCoordinate.from_internal(instance.accepted_coordinate())

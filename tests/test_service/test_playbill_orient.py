@@ -76,17 +76,18 @@ def test_default_orient_names_each_kind_with_its_predicates_as_values(seeded) ->
     assert result.generation == len(seeded.accepted_history()) - 1
     (kind,) = result.kinds or ()
     assert kind.kind == SUBJECT_KIND and kind.subjects == 2
-    (predicate,) = kind.predicates
+    # The kind's key (its slug, which core created each work item by) and status.
+    slug, predicate = kind.predicates
+    assert slug.name == "slug" and slug.predicate == f"{SUBJECT_KIND}.slug"
     assert predicate.name == "status" and predicate.predicate == PREDICATE
     assert (predicate.cardinality, predicate.type) == ("one", "enum")
     assert predicate.members == ("blocked", "done", "ready")
     # Evidence is named by contract identity; the digest the v5 rule carries is not shown.
-    assert kind.evidence == ("playbill.foreign-source.fixture.work-items",)
-    assert predicate.evidence is None
+    assert predicate.evidence == ("playbill.foreign-source.fixture.work-items",)
     assert result.artifacts is not None
     # The fixture's ClaimType and the builtin semantic.alias and
     # semantic.distinct_from every instance seeds.
-    assert (result.artifacts.claim_types, result.artifacts.queries) == (3, 2)
+    assert (result.artifacts.claim_types, result.artifacts.queries) == (4, 2)
     assert [item.name for item in result.queries or ()] == [QUERY_NAME, "project.work_items_b"]
     assert (result.queries or ())[0].description == "Every work item."
     assert result.you is not None and result.you.can_author is True
@@ -188,15 +189,15 @@ def test_next_suggestions_are_rendered_for_each_surface(seeded) -> None:  # type
 
     assert rendered["mcp"][:2] == (
         f'cruxible_orient(kind="{SUBJECT_KIND}")',
-        f'cruxible_query(kind="{SUBJECT_KIND}", select=["status"], limit=10)',
+        f'cruxible_query(kind="{SUBJECT_KIND}", select=["slug", "status"], limit=10)',
     )
     assert rendered["cli"][:2] == (
         f"cruxible orient --kind {SUBJECT_KIND}",
-        f"cruxible query {SUBJECT_KIND} --select status --limit 10",
+        f"cruxible query {SUBJECT_KIND} --select slug,status --limit 10",
     )
     assert rendered["sdk"][:2] == (
         f'cx.orient(kind="{SUBJECT_KIND}")',
-        f'cx.query(kind="{SUBJECT_KIND}", select=["status"], limit=10)',
+        f'cx.query(kind="{SUBJECT_KIND}", select=["slug", "status"], limit=10)',
     )
 
 
@@ -206,12 +207,12 @@ def test_orient_kind_reads_every_predicate_in_full_with_sample_subjects(seeded) 
     detail = result.kind_detail
     assert detail is not None and result.kinds is None and result.you is None
     assert detail.sample_subject_ids == ("wi-42", "wi-43")
-    (predicate,) = detail.predicates
+    _slug, predicate = detail.predicates
     assert predicate.subject_kinds == (SUBJECT_KIND,)
     assert predicate.roles == ("normative", "observation")
     assert predicate.live_claims == 2
     assert result.next == (
-        f'cruxible_query(kind="{SUBJECT_KIND}", select=["status"], limit=10)',
+        f'cruxible_query(kind="{SUBJECT_KIND}", select=["slug", "status"], limit=10)',
         f'cruxible_query(kind="{SUBJECT_KIND}", where=[{{"field": "status", "eq": "blocked"}}])',
         f'cruxible_get(ref="{SUBJECT_KIND}/wi-42")',
     )
@@ -277,7 +278,7 @@ def test_a_section_pages_compact_rows_with_a_bound_cursor(seeded) -> None:  # ty
 def test_the_claim_types_section_shows_full_descriptors(seeded) -> None:  # type: ignore[no-untyped-def]
     result = service_playbill_orient(seeded, section="claim_types")
 
-    row, alias, distinct = result.claim_types or ()
+    _slug, row, alias, distinct = result.claim_types or ()
     assert alias.predicate == "semantic.alias" and alias.subject_kinds == ("semantic.subject",)
     assert distinct.predicate == "semantic.distinct_from"
     assert row.predicate == PREDICATE and row.subject_kinds == (SUBJECT_KIND,)

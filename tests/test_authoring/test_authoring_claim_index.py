@@ -26,6 +26,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.proposals.proposals import AuthenticatedActor
+from tests.core_support._subject_kind_support import fixture_claim_paths
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_change_set_intents import (
     _accept,
@@ -288,7 +289,7 @@ def test_revised_sibling_dispositions_use_its_new_statement_and_retirement_updat
         (
             parse_claim(content, path=path)
             for path, content in base.items()
-            if path.startswith("claims/")
+            if path in fixture_claim_paths(base)
         ),
         key=lambda claim: claim.identity.name,
     )

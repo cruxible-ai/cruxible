@@ -184,10 +184,19 @@ def _existing_target(instance: PlaybillInstance, target: InboxLinkTarget) -> Inb
 
         resolved = service_resolve_playbill_proposal_selector(instance, selector=target.proposal_id)
         return InboxLinkProposal(proposal_id=resolved.proposal_id)
-    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        # The exact live Subject, else the aliases of its kind, else a retired one.
+    from cruxible_core.indexes.subject_identity import tree_key_reader
+
+    head = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(head) as projection:
+        # The exact live Subject, else an alias of its kind, else its single key,
+        # else a retired one.
         kind, _, subject_id = target.subject.partition("/")
-        resolution = resolve_subject_ref(projection.typed.connection, kind, subject_id)
+        resolution = resolve_subject_ref(
+            projection.typed.connection,
+            kind,
+            subject_id,
+            key_reader=tree_key_reader(instance.immutable_tree_at(head.git_oid)),
+        )
     if resolution.ambiguous:
         raise ReadRefusalError(
             "cruxible.subject.alias_ambiguous",

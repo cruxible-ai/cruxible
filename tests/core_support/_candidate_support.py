@@ -49,9 +49,7 @@ def submit_member_candidate(
         )
     )
     candidate_tree = instance.tree_at(proposed_base.git_oid)
-    candidate_tree.update(
-        declare_created_kinds(candidate_tree, dict(members), compiler=proposed_base.compiler)
-    )
+    candidate_tree.update(declare_created_kinds(candidate_tree, dict(members), instance=instance))
     ref_name = canonical_playbill_proposal_name(proposal_name, family=proposal_family)
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id, capabilities=capabilities),
@@ -91,9 +89,7 @@ def _submit_candidate(
         )
     )
     candidate_tree = instance.tree_at(proposed_base.git_oid)
-    candidate_tree.update(
-        declare_created_kinds(candidate_tree, {path: content}, compiler=proposed_base.compiler)
-    )
+    candidate_tree.update(declare_created_kinds(candidate_tree, {path: content}, instance=instance))
     ref_name = canonical_playbill_proposal_name(proposal_name, family=proposal_family)
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id, capabilities=capabilities),

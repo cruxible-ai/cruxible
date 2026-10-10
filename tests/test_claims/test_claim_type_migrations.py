@@ -165,9 +165,7 @@ def _accepted_affects_package_world(tmp_path: Path):  # type: ignore[no-untyped-
     tree[claim_type_path(predicate)] = render_claim_type(claim_type)
     tree[subject_path(package.subject_kind, package.subject_id)] = render_subject(package)
     declare_created_kinds(
-        instance.tree_at(instance.accepted_coordinate().git_oid),
-        tree,
-        compiler=instance.accepted_coordinate().compiler,
+        instance.tree_at(instance.accepted_coordinate().git_oid), tree, instance=instance
     )
     _accept_tree(
         instance,

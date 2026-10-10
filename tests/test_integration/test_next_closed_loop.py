@@ -108,7 +108,7 @@ from tests.core_support._published_world import (
 from tests.core_support._published_world import (
     retire_claim as _retire_published_claim,
 )
-from tests.core_support._subject_kind_support import declared_kind_files
+from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type
@@ -239,10 +239,12 @@ def _row(instance, reason: str, request: NextRequestV1, **caller: Any):  # type:
 
 
 def _assert_gone(instance, reason: str, request: NextRequestV1, **caller: Any) -> None:  # type: ignore[no-untyped-def]
-    assert all(
-        item.reason != reason
+    left = [
+        item
         for item in service_playbill_next(instance, request=request, **caller).items
-    )
+        if item.reason == reason
+    ]
+    assert not left, left
 
 
 def _item_key(item: object) -> ClosedLoopKey:
@@ -292,6 +294,8 @@ def _current_claim(instance, *, subject_id: str = "wi-42"):  # type: ignore[no-u
             _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
         )
         if claim.statement.subject.artifact_path.endswith(f"/{subject_id}.json")
+        # A work item's slug is its key Claim, written when core created it.
+        and not claim.statement.predicate.endswith(".slug")
     )
 
 
@@ -325,6 +329,7 @@ def _claim_conflicted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
             _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
         )
         if claim.statement.subject.artifact_path.endswith("/wi-42.json")
+        and not claim.statement.predicate.endswith(".slug")
     )
     revised = next(
         claim for claim in contenders if claim.identity.qualified == conflicting.claim_identity
@@ -385,17 +390,19 @@ def _foreign_world(root: Path, *, bind: bool):  # type: ignore[no-untyped-def]
     )
     shell = subject_shell("wi-42")
     _Builder(instance, owner).accept(
-        {
-            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-            **declared_kind_files(shell.subject_kind),
-            claim_type_path(claim_type.predicate): render_claim_type(claim_type),
-            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-            ),
-            capture_contract_path(foreign_contract.identity.name): render_capture_contract(
-                foreign_contract
-            ),
-        },
+        core_assigned(
+            instance,
+            {
+                subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+                claim_type_path(claim_type.predicate): render_claim_type(claim_type),
+                capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
+                    render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+                ),
+                capture_contract_path(foreign_contract.identity.name): render_capture_contract(
+                    foreign_contract
+                ),
+            },
+        ),
         phase="closed-loop-evidence-dependencies",
     )
     instance.refresh()
@@ -1638,8 +1645,8 @@ def _subject_kind_undeclared(root: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     from tests.core_support._identity_support import shell
 
     instance, _owner = initialize_local(root)
-    # A Subject accepted before its kind needed a declaration (an older compiler).
-    monkeypatch.setattr(proposals_module, "admits_subject_kinds", lambda _compiler: False)
+    # A Subject accepted before Subject identity existed (an older build).
+    monkeypatch.setattr(proposals_module, "boundary_identity_issues", lambda *_a, **_k: ())
     base = instance.accepted_coordinate()
     raw = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),

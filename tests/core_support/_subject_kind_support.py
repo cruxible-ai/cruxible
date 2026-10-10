@@ -1,22 +1,24 @@
-"""Declare the Subject kinds a test world creates Subjects of (identity D6).
+"""How a test world gets Subjects: core creates them (identity D1/D6).
 
-Every new Subject must be of a kind an accepted SubjectKind declares. A world
-that writes Subjects straight into a candidate tree declares each such kind as
-``minted`` in the same change: core never re-derives an existing id, and a
-minted kind's ids are not read for a rule at candidate evaluation, so the
-world's own Subject ids stand.
+Every new Subject must be of a kind an accepted SubjectKind declares, and must
+carry core's assignment: its id is never chosen. A world that writes Subjects
+straight into a candidate tree runs them through core first (``core_assigned``):
+each is created by its id as its kind's slug key, so the world keeps readable
+ids that core assigned.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableMapping
+import functools
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from contextlib import contextmanager
+from typing import Any, TypeVar
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.subject_kinds import (
     SubjectKind,
     SubjectKindKeys,
     SubjectKindMinted,
-    render_subject_kind,
     subject_kind_path,
 )
 
@@ -37,40 +39,179 @@ def keyed_subject_kind(
     )
 
 
+def core_assigned(
+    instance: Any,
+    updates: MutableMapping[str, bytes],
+    *,
+    base_tree: Mapping[str, bytes] | None = None,
+    base: Any = None,
+    timestamp: str = "2026-01-01T00:00:00.000000Z",
+    actor_id: str = "owner",
+) -> MutableMapping[str, bytes]:
+    """Have core create each new Subject ``updates`` writes raw, by its slug (identity D1).
+
+    A world that writes Subjects straight into a candidate tree gets them the
+    way every route must: each kind is declared keyed by ``<kind>.slug``
+    (unique) unless already declared with one key, and each Subject is created
+    by its id as that key through the shared lowering, whose output -- the same
+    Subject shell bytes, its key Claim, the declaration -- is merged into
+    ``updates``. An id must be its own slug's rendering. A kind ``updates``
+    declares itself, a minted or composite-keyed kind, a grandfathered kind and
+    an instance on a compiler before SubjectKinds are left as written.
+    """
+
+    from cruxible_client.contracts.authoring.models import (
+        ChangeSetAuthoringPayload,
+        ClaimTypeAuthoringPayload,
+        SubjectCreationAuthoringPayload,
+        SubjectKindAuthoringPayload,
+        authoring_member_identity,
+    )
+    from cruxible_client.contracts.claim_types import claim_type_path
+    from cruxible_client.contracts.subject_kinds import SubjectKeyPart, live_subject_kind
+    from cruxible_client.contracts.subjects import parse_subject
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.indexes.subject_identity import admits_subject_kinds
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+
+    head = base if base is not None else instance.accepted_coordinate()
+    if not admits_subject_kinds(head.compiler):
+        return updates
+    tree = base_tree if base_tree is not None else instance.tree_at(head.git_oid)
+    new: dict[str, Any] = {}
+    for path, content in updates.items():
+        if (
+            path.startswith("subjects/")
+            and path.endswith(".json")
+            and path not in tree
+            and content is not None
+        ):
+            shell = parse_subject(content, path=path)
+            if shell.lifecycle.state == "live" and shell.assignment is None:
+                new[path] = shell
+    held: set[tuple[str, str]] = set()
+    if new:
+        # A Subject core already created into ``updates`` holds its key Claim there.
+        from cruxible_client.contracts.claims import parse_claim
+
+        for path, content in updates.items():
+            if path.startswith("claims/") and content is not None and path not in tree:
+                statement = parse_claim(content, path=path).statement
+                held.add((statement.subject.artifact_path, statement.predicate))
+    members: list[Any] = []
+    for kind in sorted({shell.subject_kind for shell in new.values()}):
+        if subject_kind_path(kind) in updates and updates[subject_kind_path(kind)] != tree.get(
+            subject_kind_path(kind)
+        ):
+            continue  # the world declares the kind itself
+        declared = live_subject_kind(tree, kind)
+        if declared is None:
+            if subject_kind_path(kind) in tree:
+                continue
+            predicate = f"{kind}.slug"
+            if claim_type_path(predicate) not in tree and claim_type_path(predicate) not in updates:
+                members.append(ClaimTypeAuthoringPayload(claim_type=slug_claim_type(kind)))
+            members.append(
+                SubjectKindAuthoringPayload(name=kind, keys=(predicate,), uniqueness="unique")
+            )
+        elif declared.minted or len(declared.keys) != 1:
+            continue
+        else:
+            predicate = declared.keys[0]
+        for path, shell in new.items():
+            if shell.subject_kind == kind and (path, predicate) not in held:
+                members.append(
+                    SubjectCreationAuthoringPayload(
+                        subject_kind=kind,
+                        key=(SubjectKeyPart(predicate=predicate, value=shell.subject_id),),
+                        rationale=f"{kind}/{shell.subject_id} is named by its slug.",
+                    )
+                )
+    if not members:
+        return updates
+    payload = ChangeSetAuthoringPayload(
+        members=tuple(
+            sorted(members, key=lambda item: authoring_member_identity(item).encode("utf-8"))
+        )
+    )
+    # Lowered as a submit lowers it, from a stored intent: the key Claims cite the
+    # author's own words, whose Capture names that intent as its producer.
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id=actor_id)
+    created = coordinator.create(actor=actor, payload=payload, canonical_timestamp=timestamp)
+    with instance.capture_verification_request():
+        computed, _bound = coordinator._compute_and_bind_preflight(  # noqa: SLF001
+            created.intent.intent_id, actor=actor
+        )
+    assert computed.lowered is not None, computed.result.frontier
+    for path, content in computed.lowered.changed_members:
+        if path.startswith("subjects/"):
+            assert path in new, f"core names this Subject {path}, not as the world wrote it"
+        updates[path] = content
+    return updates
+
+
+@contextmanager
+def history_before_identity(compiler: object | None) -> Iterator[None]:
+    """Build history an older build accepted, on a compiler before Subject identity.
+
+    An instance pinned to a compiler before SubjectKinds creates no new Subject
+    (the boundary refuses it, review F-005); a world modelling such an instance
+    holds Subjects only because a build before the rule accepted them. Inside
+    this context the candidate boundary's identity check is that older build's:
+    none. On a compiler that admits SubjectKinds it changes nothing, unless
+    ``compiler`` is None: a ledger builder that writes history as earlier builds
+    wrote it, whatever compiler it is pinned to.
+    """
+
+    import cruxible_core.proposals.proposals as proposals_module
+    from cruxible_core.indexes.subject_identity import admits_subject_kinds
+
+    if compiler is not None and admits_subject_kinds(compiler):  # type: ignore[arg-type]
+        yield
+        return
+    original = proposals_module.boundary_identity_issues
+    proposals_module.boundary_identity_issues = lambda *_a, **_k: ()  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        proposals_module.boundary_identity_issues = original
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def world_history(function: _F) -> _F:
+    """Run a world-building helper as history on an instance before Subject identity.
+
+    On an instance pinned to a compiler before SubjectKinds, the world's Subjects
+    are history an older build accepted (``history_before_identity``); on any
+    other, nothing changes and they go through core (``core_assigned``).
+    """
+
+    @functools.wraps(function)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        instance = kwargs.get("instance", args[0] if args else None)
+        compiler = instance.accepted_coordinate().compiler  # type: ignore[union-attr]
+        with history_before_identity(compiler):
+            return function(*args, **kwargs)
+
+    return wrapped  # type: ignore[return-value]
+
+
 def declare_created_kinds(
     base_tree: Mapping[str, bytes],
     updates: MutableMapping[str, bytes],
     *,
+    instance: Any,
+    base: Any = None,
     compiler: object | None = None,
+    actor_id: str = "owner",
 ) -> MutableMapping[str, bytes]:
-    """Add a minted SubjectKind for each kind ``updates`` creates a Subject of, if undeclared.
+    """``core_assigned`` over ``base_tree`` (the tree the change is proposed against)."""
 
-    ``updates`` may be a whole candidate tree or only the changed members; a
-    kind already declared in ``base_tree`` or ``updates`` is left as it is. A
-    world on a compiler that admits no SubjectKind (``compiler``) declares none:
-    it creates Subjects as it always did.
-    """
-
-    from cruxible_core.indexes.subject_identity import admits_subject_kinds
-
-    if compiler is not None and not admits_subject_kinds(compiler):  # type: ignore[arg-type]
-        return updates
-    for path in list(updates):
-        if not path.startswith("subjects/") or path in base_tree:
-            continue
-        kind = path.removeprefix("subjects/").partition("/")[0]
-        declared = subject_kind_path(kind)
-        if declared not in updates and declared not in base_tree:
-            updates[declared] = render_subject_kind(minted_subject_kind(kind))
-    return updates
-
-
-def declared_kind_files(*kinds: str) -> dict[str, bytes]:
-    """Minted SubjectKind files for ``kinds``, at their ledger paths."""
-
-    return {
-        subject_kind_path(kind): render_subject_kind(minted_subject_kind(kind)) for kind in kinds
-    }
+    del compiler  # the base's compiler decides
+    return core_assigned(instance, updates, base_tree=base_tree, base=base, actor_id=actor_id)
 
 
 __all__ = [
@@ -81,7 +222,9 @@ __all__ = [
     "key_by_slug",
     "slug_claim_type",
     "declare_created_kinds",
-    "declared_kind_files",
+    "core_assigned",
+    "history_before_identity",
+    "world_history",
     "keyed_subject_kind",
     "minted_subject_kind",
 ]
@@ -118,6 +261,7 @@ def key_by_slug(instance: object, kind: str, *, timestamp: str, actor_id: str = 
         SubjectKindInput,
         lower_authoring_input,
     )
+    from cruxible_client.contracts.subject_kinds import live_subject_kind
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.proposals.proposals import AuthenticatedActor
     from cruxible_core.service.authoring.documents import (
@@ -127,6 +271,10 @@ def key_by_slug(instance: object, kind: str, *, timestamp: str, actor_id: str = 
     from tests.core_support._support import client_material
     from tests.test_ledger.test_activation import _sign
 
+    head = instance.accepted_coordinate()  # type: ignore[attr-defined]
+    held = live_subject_kind(instance.tree_at(head.git_oid), kind)  # type: ignore[attr-defined]
+    if held is not None and held.keys == (f"{kind}.slug",) and held.unique:
+        return  # core already keyed the kind by its slug when it created its Subjects
     payload = lower_authoring_input(
         ChangeSetInput(
             kind="change_set",
@@ -239,3 +387,61 @@ def create_by_slug_input(kind: str, slug: str, *, declare: bool = False) -> obje
             creation,
         ),
     )
+
+
+def fixture_claim_paths(tree: Mapping[str, bytes]) -> list[str]:
+    """The tree's Claim paths in path order, without the key Claims core writes on creation.
+
+    A world's Subjects are created by their slug (``core_assigned``), so each holds
+    a key Claim beside whatever the world states about it; a test reading "the
+    world's Claims" means those it stated.
+    """
+
+    from cruxible_client.contracts.claims import parse_claim
+
+    keys = {
+        predicate
+        for path, content in tree.items()
+        if path.startswith("subject-kinds/") and path.endswith(".json")
+        for predicate in _declared_keys(content, path)
+    }
+    return sorted(
+        path
+        for path, content in tree.items()
+        if path.startswith("claims/")
+        and parse_claim(content, path=path).statement.predicate not in keys
+    )
+
+
+def _declared_keys(content: bytes, path: str) -> tuple[str, ...]:
+    from cruxible_client.contracts.subject_kinds import parse_subject_kind
+
+    return parse_subject_kind(content, path=path).keys
+
+
+def fixture_key_claims(tree: Mapping[str, bytes]) -> list[str]:
+    """The key Claim paths core wrote when it created the world's Subjects."""
+
+    stated = set(fixture_claim_paths(tree))
+    return sorted(path for path in tree if path.startswith("claims/") and path not in stated)
+
+
+def _is_key(item: Any) -> bool:
+    predicate = getattr(item, "predicate", None)
+    statement = getattr(item, "statement", None)
+    if predicate is None and statement is not None:
+        predicate = getattr(statement, "predicate", None)
+    facts = getattr(item, "facts", None)
+    if predicate is None and isinstance(facts, tuple):
+        return any(_is_key(fact.get("value")) for fact in facts if isinstance(fact, Mapping))
+    if predicate is None and isinstance(item, Mapping):
+        predicate = item.get("predicate")
+        if predicate is None and isinstance(item.get("statement"), Mapping):
+            predicate = item["statement"].get("predicate")
+    return isinstance(predicate, str) and (predicate == "slug" or predicate.endswith(".slug"))
+
+
+def without_keys(items: Any) -> list[Any]:
+    """Rows, cards or Claims without the slug key Claims core writes on creation."""
+
+    return [item for item in items if not _is_key(item)]

@@ -62,7 +62,11 @@ def test_get_resolves_strings_and_typed_refs_directly(
     subject = pb.get("project.work_item/wi-42")
     assert subject.kind is RefKind.SUBJECT and subject.identity == "project.work_item/wi-42"
     assert isinstance(subject.value, GetSubjectCard)
-    assert [(row.predicate, row.value) for row in subject.value.claims] == [("status", "ready")]
+    # Its slug key Claim (core created it by its slug) and its status.
+    assert [(row.predicate, row.value) for row in subject.value.claims] == [
+        ("slug", "wi-42"),
+        ("status", "ready"),
+    ]
     assert isinstance(subject.ref, SubjectRef)
     # Summaries answer a compact coordinate; the SDK asks for the full one to pin.
     assert subject.coordinate == pb.coordinate
@@ -75,7 +79,8 @@ def test_get_resolves_strings_and_typed_refs_directly(
     # A Claim summary keeps the SDK's typed ClaimView, from a prefix or a ref.
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         (row,) = projection.typed.connection.execute(
-            "SELECT identity FROM claims WHERE subject_path LIKE '%wi-42%'"
+            "SELECT identity FROM claims WHERE subject_path LIKE '%wi-42%' "
+            "AND predicate NOT LIKE '%.slug'"
         ).fetchall()
     claim_id = str(row[0]).removeprefix("Claim:")
     card = pb.get(claim_id[:12])

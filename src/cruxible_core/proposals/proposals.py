@@ -88,7 +88,6 @@ from cruxible_client.contracts.claim_types import (
     ClaimTypeFreshnessHorizonInvalid,
     claim_type_accepts_subject,
     claim_type_digest,
-    claim_type_path,
     evaluate_claim_type_law,
     parse_claim_type,
 )
@@ -249,7 +248,6 @@ from cruxible_client.contracts.resolution_contracts import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import (
     AcceptedSubjectKind,
-    KeyClaimTypeShape,
     SubjectKindFormatError,
     evaluate_subject_kind_law,
     parse_subject_kind,
@@ -328,7 +326,8 @@ from cruxible_core.indexes.subject_aliases import (
 )
 from cruxible_core.indexes.subject_identity import (
     admits_subject_kinds,
-    candidate_identity_issues,
+    boundary_identity_issues,
+    key_claim_type_shape,
 )
 from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
@@ -2234,27 +2233,6 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
-def _key_claim_type_shape(tree: Mapping[str, bytes], predicate: str) -> KeyClaimTypeShape | None:
-    """What the SubjectKind law reads of one key ClaimType in the candidate tree."""
-
-    try:
-        path = claim_type_path(predicate)
-    except ClaimTypeFormatError:
-        return None
-    content = tree.get(path)
-    if content is None:
-        return None
-    claim_type = parse_claim_type(content, path=path)
-    return KeyClaimTypeShape(
-        predicate=predicate,
-        live=claim_type.lifecycle.state == "live",
-        artifact_format=claim_type.artifact_format,
-        object_kind=claim_type.object_kind,
-        cardinality=claim_type.cardinality,
-        allowed_subject_kinds=tuple(claim_type.allowed_subject_kinds),
-    )
-
-
 def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one SubjectKind: its succession, and the key ClaimTypes it names.
 
@@ -2287,7 +2265,7 @@ def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
         path=context.path,
         predecessor=predecessor,
         key_claim_types={
-            predicate: _key_claim_type_shape(context.candidate_tree, predicate)
+            predicate: key_claim_type_shape(context.candidate_tree, predicate)
             for predicate in subject_kind.keys
         },
     )
@@ -4395,12 +4373,11 @@ def _evaluate_scoped_members(
         # kind, read from the parent overlaid with this change. Admission and
         # settlement both evaluate here, so every route is held to it. History
         # accepted before the rule is not refused again on replay.
-        identity_issues = (
-            candidate_identity_issues(
-                current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
-            )
-            if admits_subject_kinds(current.compiler)
-            else ()
+        identity_issues = boundary_identity_issues(
+            current.compiler,
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            scope=scope,
         )
         if identity_issues:
             # Identity is decided at this boundary (identity-design-1009, D1/D4/D6):

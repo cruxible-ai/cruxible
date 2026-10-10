@@ -35,6 +35,7 @@ from cruxible_core.service.discovery.curation import (
     service_accept_fixed_playbill_curation,
 )
 from tests.core_support._candidate_support import submit_subject_candidate
+from tests.core_support._identity_support import retire_claims_about
 from tests.core_support._knowledge_loop_support import accept_proposal, subject_shell
 from tests.core_support._support import initialize_local
 from tests.support.curation import detect_and_list
@@ -340,6 +341,8 @@ def test_dead_vocabulary_stays_open_until_an_attributed_accept_fixed(
         recorded_at=NOW,
         expected_latest_event_digest=None,
     )
+    # The Subject's retirement closes over its key Claim, retired first.
+    retire_claims_about(instance, path)
     retired = initial.model_copy(
         update={
             "lifecycle": ArtifactLifecycle(
@@ -356,6 +359,7 @@ def test_dead_vocabulary_stays_open_until_an_attributed_accept_fixed(
         timestamp="2026-08-26T18:01:00.000000Z",
     )
     accept_proposal(instance, owner, retirement)
+    retired_at = len(instance.accepted_history()) - 1
     record = instance.accepted_history()[-1].record
     assert record is not None
 
@@ -383,12 +387,12 @@ def test_dead_vocabulary_stays_open_until_an_attributed_accept_fixed(
             item_id=observation.item_id,
             expected_latest_event_digest=open_item.latest_event_digest,
             reason="the retirement fixed it",
-            accepted_generation=2,
+            accepted_generation=retired_at,
         ),
         actor_context=_actor(),
     )
     assert result.item.status == "accepted_fixed"
-    assert result.item.resolved_at_generation == 2
+    assert result.item.resolved_at_generation == retired_at
     assert result.item.accepted_proposal_id == retirement.proposal.admission.proposal_id
     assert result.item.accepted_changeset_digest == record.changeset_digest
     accepted_event = CurationAcceptedFixedV1.model_validate(

@@ -12,6 +12,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.claims import claim_path, render_claim
 from cruxible_client.contracts.persistent import PersistentMap
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart
 from cruxible_client.contracts.subjects import render_subject
 from cruxible_core.authoring.lowering import _same_predicate_claims
 from cruxible_core.derived.derived_state import SnapshotTree
@@ -143,11 +144,16 @@ def test_accepted_advancement_reads_only_changed_blobs_and_retains_old_snapshot(
     previous = dict(old)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
-    # One new Subject of the work items' (minted) kind: core names it.
+    # One new Subject of the work items' kind, created by its slug: core names it.
     intent = coordinator.create(
         actor=actor,
         payload=ChangeSetAuthoringPayload(
-            members=(SubjectCreationAuthoringPayload(subject_kind="project.work_item"),)
+            members=(
+                SubjectCreationAuthoringPayload(
+                    subject_kind="project.work_item",
+                    key=(SubjectKeyPart(predicate="project.work_item.slug", value="wi-new"),),
+                ),
+            )
         ),
         canonical_timestamp=TIMESTAMP,
     ).intent

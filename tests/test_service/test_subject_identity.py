@@ -77,7 +77,7 @@ def compile_(instance: PlaybillInstance, payload: Any) -> Any:
 
 def accept(instance: PlaybillInstance, payload: Any) -> Any:
     submitted = submit(instance, payload)
-    assert submitted.status.proposal_id is not None, submitted
+    assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
     receipt = service_activate_playbill_proposal(
         instance, proposal_id=submitted.status.proposal_id, activated_by="owner"
     )
@@ -198,27 +198,32 @@ def test_a_subject_of_a_kind_declared_later_is_grandfathered(tmp_path: Path) -> 
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.subjects import render_subject, subject_digest
     from tests.core_support._identity_support import shell
-    from tests.core_support._subject_kind_support import declared_kind_files
 
     instance, _owner = initialize_local(tmp_path)
     accept(
         instance, change_set(ClaimTypeInput(kind="claim_type", claim_type=_field(LEGACY, "label")))
     )
-    # Declared minted when it was created, then the declaration retired: its
-    # Subjects stay, readable, claimable and retirable, and none is created again.
+    # Created by core under a declaration (keyed by slug), then the declaration
+    # retired: its Subjects stay, readable, claimable and retirable, and none is
+    # created again.
     accept_tree(
         instance,
         {
             subject_path(LEGACY, "old"): render_subject(shell("old", LEGACY)),
             subject_path(LEGACY, "older"): render_subject(shell("older", LEGACY)),
-            **declared_kind_files(LEGACY),
         },
         name="legacy",
     )
     accept(
         instance,
         lower_authoring_input(
-            SubjectKindInput(kind="subject_kind", name=LEGACY, minted=True, retire=True)
+            SubjectKindInput(
+                kind="subject_kind",
+                name=LEGACY,
+                keys=(f"{LEGACY}.slug",),
+                uniqueness="unique",
+                retire=True,
+            )
         ),
     )
     claimed = write(
@@ -232,6 +237,22 @@ def test_a_subject_of_a_kind_declared_later_is_grandfathered(tmp_path: Path) -> 
                 state="retired", predecessor_digest=subject_digest(old).tagged
             )
         }
+    )
+    from cruxible_client.contracts.authoring.inputs import ClaimRetirementInput
+
+    # Its key Claim depends on it: retire that Claim first, then the Subject.
+    (key_claim,) = [
+        path.rsplit("/", 1)[1].removesuffix(".json")
+        for path, content in tree(instance).items()
+        if path.startswith("claims/")
+        and parse_claim(content, path=path).statement.subject.artifact_path
+        == subject_path(LEGACY, "older")
+    ]
+    accept(
+        instance,
+        change_set(
+            ClaimRetirementInput(kind="claim_retirement", retires=key_claim, reason="superseded")
+        ),
     )
     accept(
         instance,
@@ -486,44 +507,81 @@ def test_making_a_hint_kind_unique_refuses_while_two_subjects_share_a_key(
     assert {item.code for item in result.frontier.diagnostics} == {"cruxible.subject.key_conflict"}
 
 
-def test_the_key_index_answers_a_key_in_one_seek(instance: PlaybillInstance) -> None:
-    """Counted work: a key lookup is an index seek, never a scan of the kind's Claims."""
+def _pairs(instance: PlaybillInstance, rights: range) -> None:
+    accept(
+        instance,
+        change_set(
+            *(
+                SubjectInput(
+                    kind="subject",
+                    subject_kind=PAIR,
+                    key={"left": "common", "right": f"r{index}"},
+                )
+                for index in rights
+            )
+        ),
+    )
 
+
+def _counted_lookup(instance: PlaybillInstance, key: Any) -> tuple[tuple[str, ...], int]:
     from cruxible_core.indexes.subject_identity import subjects_with_key
 
-    for index in range(5):
-        write(
-            instance,
-            {"op": "set", "subject": f"{DECISION}/d-{index}", "field": "title", "value": "t"},
-        )
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         connection = projection.typed.connection
-        plan = connection.execute(
-            "EXPLAIN QUERY PLAN SELECT DISTINCT subject_path FROM claims WHERE predicate=? AND "
-            "literal_type='string' AND literal_text=? AND lifecycle='live' AND "
-            "object_kind='literal' AND qualifier IS NULL AND subject_selector_scheme='artifact-v1' "
-            "AND subject_path>=? AND subject_path<?",
-            (f"{DECISION}.slug", "d-3", "subjects/dev.decision/", "subjects/dev.decision0"),
-        ).fetchall()
-        assert any("claims_by_key_value" in str(row[-1]) for row in plan), plan
         steps: list[int] = []
         connection.set_progress_handler(lambda: steps.append(1) or 0, 1)
-        found = subjects_with_key(connection, DECISION, ((f"{DECISION}.slug", "d-3"),))
+        found = subjects_with_key(connection, PAIR, key)
         connection.set_progress_handler(None, 1)
-    assert found == (subject_path(DECISION, "d-3"),)
-    few = len(steps)
-    for index in range(5, 25):
-        write(
-            instance,
-            {"op": "set", "subject": f"{DECISION}/d-{index}", "field": "title", "value": "t"},
-        )
+    return found, len(steps)
+
+
+def test_the_key_index_answers_a_composite_key_in_one_seek(instance: PlaybillInstance) -> None:
+    """Counted work: a whole key -- composite parts sharing a first part -- is one probe.
+
+    The index holds each Subject's whole canonical key (``subject_keys``), so a
+    lookup never walks the Subjects that share the first part.
+    """
+
+    from cruxible_core.indexes.subject_identity import key_encoding
+
+    key = ((f"{PAIR}.left", "common"), (f"{PAIR}.right", "r3"))
+    _pairs(instance, range(5))
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        connection = projection.typed.connection
-        steps.clear()
-        connection.set_progress_handler(lambda: steps.append(1) or 0, 1)
-        subjects_with_key(connection, DECISION, ((f"{DECISION}.slug", "d-3"),))
-        connection.set_progress_handler(None, 1)
-    assert len(steps) <= few + 4, (few, len(steps))
+        plan = projection.typed.connection.execute(
+            "EXPLAIN QUERY PLAN SELECT subject_path FROM subject_keys WHERE kind=? "
+            "AND key_encoding=? ORDER BY subject_path",
+            (PAIR, key_encoding(key)),
+        ).fetchall()
+    assert any("subject_keys_by_key" in str(row[-1]) for row in plan), plan
+    found, few = _counted_lookup(instance, key)
+    assert found == (subject_path(PAIR, "common--r3"),)
+    _pairs(instance, range(5, 45))
+    again, many = _counted_lookup(instance, key)
+    assert again == found
+    assert many <= few + 2, (few, many)
+
+
+def test_a_boolean_key_and_an_integer_key_never_meet(tmp_path: Path) -> None:
+    """Typed keys compare by canonical encoding (``true`` is not ``1``), in one change or two."""
+
+    instance, _owner = initialize_local(tmp_path)
+    typed = _key("dev.typed", "flag", literal_schema={"enum": [True, 1]})
+    accept(
+        instance,
+        change_set(
+            ClaimTypeInput(kind="claim_type", claim_type=typed),
+            SubjectKindInput(
+                kind="subject_kind",
+                name="dev.typed",
+                keys=("dev.typed.flag",),
+                uniqueness="unique",
+            ),
+            SubjectInput(kind="subject", subject_kind="dev.typed", key={"flag": True}),
+            SubjectInput(kind="subject", subject_kind="dev.typed", key={"flag": 1}),
+        ),
+    )
+    ids = sorted(path for path in tree(instance) if path.startswith("subjects/dev.typed/"))
+    assert ids == ["subjects/dev.typed/true.json", "subjects/dev.typed/x1.json"]
 
 
 # -- migration help: next names the SubjectKind to author ----------------------------
@@ -546,8 +604,9 @@ def test_next_names_the_subject_kind_a_kind_with_subjects_but_no_declaration_nee
     from tests.core_support._identity_support import shell
     from tests.test_integration.test_next_closed_loop import _request
 
-    # Accepted as an instance on an older compiler would have accepted it.
-    monkeypatch.setattr(proposals_module, "admits_subject_kinds", lambda _compiler: False)
+    # History accepted before Subject identity existed (an older build): no rule
+    # judged its Subjects.
+    monkeypatch.setattr(proposals_module, "boundary_identity_issues", lambda *_a, **_k: ())
     base = instance.accepted_coordinate()
     raw = instance.proposal_service().submit(
         actor=OWNER,

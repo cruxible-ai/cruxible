@@ -86,10 +86,12 @@ def test_cold_claim_dependency_closure_is_one_candidate(tmp_path: Path) -> None:
     assert computed.result.verdict == "passed"
     assert computed.lowered is not None
     changed = {path for path, _content in computed.lowered.changed_members}
+    # The self-source capture contract came in with the work item's key Claim.
+    accepted = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name) in accepted
     assert {
         claim_type_path(_dependency_claim_type().predicate),
         claim_path(intent.semantic_identity),
-        capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name),
     } == changed
     submitted = coordinator.submit(intent.intent_id, actor=actor)
     assert submitted.status.proposal_id is not None

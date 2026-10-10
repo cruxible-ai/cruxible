@@ -712,6 +712,9 @@ def parameters_through_aliases(
             field_path=f"params.{name}",
         )
 
+    from cruxible_core.indexes.subject_identity import tree_key_reader
+
+    key_reader = tree_key_reader(instance.immutable_tree_at(coordinate.git_oid))
     resolved = dict(parameters)
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
@@ -720,7 +723,7 @@ def parameters_through_aliases(
             if name == entry_parameter and not isinstance(entry, QueryArtifactsEntry):
                 matches: set[str] = set()
                 for kind in entry.subject_kinds:
-                    resolution = resolve_subject_ref(connection, kind, value)
+                    resolution = resolve_subject_ref(connection, kind, value, key_reader=key_reader)
                     if resolution.ambiguous:
                         raise ambiguous(name, kind, resolution.candidates)
                     if resolution.via == "identity":

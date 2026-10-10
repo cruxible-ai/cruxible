@@ -34,6 +34,7 @@ from tests.core_support._citation_index_oracle import (
     CaptureCitationInputV2,
     build_evidence_citation_index_v2,
 )
+from tests.core_support._subject_kind_support import fixture_key_claims
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
 from tests.test_evidence.test_citation_retirement_relations import _retire_claim
 from tests.test_indexes.test_projection_scanner_integration import _foreign_world
@@ -97,8 +98,10 @@ def test_tree_inputs_equal_projection_inputs_before_and_after_retirement(tmp_pat
     assert coverage.build_accepted_evidence_index_v2(instance, at=previous) == before
     after = coverage.build_accepted_evidence_index_v2(instance, at=current)
     assert after == _projected_index(instance, at=current)
-    assert sum(len(row.citation_associations) for row in before.citations) == 2
-    assert sum(len(row.citation_associations) for row in after.citations) == 1
+    # The two stated Claims' associations, beside the Subject's key Claim's one.
+    keys = len(fixture_key_claims(instance.tree_at(instance.accepted_coordinate().git_oid)))
+    assert sum(len(row.citation_associations) for row in before.citations) == 2 + keys
+    assert sum(len(row.citation_associations) for row in after.citations) == 1 + keys
     assert {d for row in after.citations for d in row.capture_digests} == {
         d for row in before.citations for d in row.capture_digests
     }
@@ -163,7 +166,8 @@ def test_subsequent_reads_recheck_source_bytes_and_capture_cas(tmp_path: Path) -
     assert before != after
     at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     index, first = coverage._accepted_evidence_inputs_v2(instance, at=at)
-    digest = next(iter(first))
+    # The runbook's Capture (the Subject's key Claim cites one of its own).
+    digest = next(d for d, envelope in first.items() if envelope.source.kind == "external")
     first[digest].source.selector["test_mutation"] = True
     _, second = coverage._accepted_evidence_inputs_v2(instance, at=at)
     assert "test_mutation" not in second[digest].source.selector
@@ -187,7 +191,7 @@ def test_many_citation_windows_decode_each_source_once(
     index, envelopes = coverage._accepted_evidence_inputs_v2(instance, at=at)
     logical = LogicalSourceIdentity(plane="external", identity="corpus.runbook")
     observation = observe_working_source(logical, source.read_bytes())
-    digest = next(iter(envelopes))
+    digest = next(d for d, envelope in envelopes.items() if envelope.source.kind == "external")
     retired = tuple(
         (logical, "sha256:" + hashlib.sha256(str(n).encode()).hexdigest(), digest)
         for n in range(20)

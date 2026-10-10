@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
@@ -27,6 +27,7 @@ from cruxible_client.contracts.canonical_forms import (
 )
 from cruxible_client.contracts.claim_types import ClaimType, effective_canonical_form
 from cruxible_client.contracts.subject_kinds import (
+    KeyClaimTypeShape,
     SubjectKeyValue,
     SubjectKind,
     SubjectKindFormatError,
@@ -37,6 +38,7 @@ from cruxible_client.contracts.subject_kinds import (
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.types import CompilerCoordinate
+    from cruxible_core.indexes.subject_aliases import SubjectRefResolution
 
 _SUBJECTS = "subjects/"
 
@@ -55,11 +57,15 @@ class SubjectIdentityIssue:
     existing: tuple[str, ...] = ()
 
 
-def admits_subject_kinds(compiler: CompilerCoordinate) -> bool:
-    """Whether a compiler admits SubjectKinds, and so holds creation to them.
+SUBJECT_COMPILER_UPGRADE_REQUIRED = "cruxible.subject.compiler_upgrade_required"
 
-    An instance on an earlier compiler cannot declare a kind; it keeps creating
-    Subjects as it did until it upgrades.
+
+def admits_subject_kinds(compiler: CompilerCoordinate) -> bool:
+    """Whether a compiler admits SubjectKinds (revision 33, subject identity).
+
+    An instance on an earlier compiler cannot declare a kind, so it creates no
+    new Subject at all until it upgrades; its existing Subjects stay readable,
+    claimable and retirable.
     """
 
     from cruxible_core.compiler.compiler import artifact_kinds_for_compiler
@@ -121,6 +127,20 @@ def key_values(key: KeyTuple) -> tuple[SubjectKeyValue, ...]:
     return tuple(value for _predicate, value in key)
 
 
+def key_encoding(key: KeyTuple) -> str:
+    """A canonical key's one comparable spelling: typed, with its predicates, in key order.
+
+    Canonical JSON keeps literal types apart (``true`` is not ``1``), so two keys
+    are equal exactly when their encodings are. Every comparison of keys -- the
+    index, the change overlay, holder grouping -- compares these, never Python
+    values (where ``True == 1``).
+    """
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+
+    return canonical_bytes([[predicate, value] for predicate, value in key]).decode("utf-8")
+
+
 def key_order(key: KeyTuple) -> bytes:
     """The order core assigns ids in when one change creates several Subjects of a kind."""
 
@@ -130,8 +150,7 @@ def key_order(key: KeyTuple) -> bytes:
 
 
 def _value_clause(value: SubjectKeyValue) -> tuple[str, tuple[object, ...]]:
-    # Every column of the key index up to the value is constrained, so each form
-    # is one seek on ``claims_by_key_value``.
+    # Every column up to the value is constrained, so each form is one seek.
     if isinstance(value, bool):
         return (
             "literal_type='boolean' AND literal_text IS NULL AND literal_integer_text IS NULL "
@@ -160,46 +179,108 @@ def _kind_range(kind: str) -> tuple[str, str]:
 def subjects_with_key(connection: sqlite3.Connection, kind: str, key: KeyTuple) -> tuple[str, ...]:
     """The live Subjects of ``kind`` whose live key Claims hold exactly ``key``, by path.
 
-    One index seek on the first part (``claims_by_key_value``), then one probe per
-    remaining part of each Subject it found: the key index of D4 is the live key
-    Claims themselves, maintained at accept like every other Claim row.
+    One seek on the whole-key index (``subject_keys``): a composite key costs what
+    a single one does, however many Subjects share its first part.
     """
 
     if not key:
         return ()
-    (first_predicate, first_value), rest = key[0], key[1:]
-    low, high = _kind_range(kind)
-    clause, values = _value_clause(first_value)
-    found = [
+    return tuple(
         str(row[0])
         for row in connection.execute(
-            "SELECT DISTINCT subject_path FROM claims "
-            f"WHERE predicate=? AND {clause} AND {_KEY_CLAIM} "
-            "AND subject_path>=? AND subject_path<? ORDER BY subject_path",
-            (first_predicate, *values, low, high),
+            "SELECT subject_path FROM subject_keys WHERE kind=? AND key_encoding=? "
+            "ORDER BY subject_path",
+            (kind, key_encoding(key)),
         )
-    ]
-    found = [
-        path
-        for path in found
-        if connection.execute(
-            "SELECT 1 FROM subjects WHERE path=? AND lifecycle='live'", (path,)
-        ).fetchone()
-        is not None
-    ]
-    matched: list[str] = []
-    for path in found:
-        if all(
+    )
+
+
+def subject_key_of(
+    connection: sqlite3.Connection, path: str, keys: Sequence[str]
+) -> KeyTuple | None:
+    """The whole canonical key one Subject holds in ``connection``, or None.
+
+    None when a key part has no live value, several, or one that is not a
+    string, an integer or a boolean.
+    """
+
+    parts: list[tuple[str, SubjectKeyValue]] = []
+    for predicate in keys:
+        found = [value for _identity, value in live_key_claims(connection, path, predicate)]
+        if len(found) != 1 or found[0] is None:
+            return None
+        parts.append((predicate, found[0]))
+    return tuple(parts)
+
+
+def refresh_subject_keys(
+    connection: sqlite3.Connection,
+    *,
+    subjects: Iterable[str] | None = None,
+    kinds: Iterable[str] = (),
+) -> None:
+    """Bring ``subject_keys`` up to date with the subjects, claims and subject_kinds rows.
+
+    ``subjects=None`` rebuilds the table (a fresh projection or tree index).
+    Otherwise only the named Subjects, and every Subject of the named kinds (a
+    SubjectKind the change declares, re-keys or retires), are recomputed: an
+    accept costs the Subjects and key Claims it touched.
+    """
+
+    keyed = {
+        str(identity).removeprefix("SubjectKind:"): tuple(json.loads(str(keys)))
+        for identity, keys in connection.execute(
+            "SELECT identity, key_predicates FROM subject_kinds "
+            "WHERE rule='keys' AND lifecycle='live'"
+        )
+    }
+    targets: set[str] = set()
+    if subjects is None:
+        connection.execute("DELETE FROM subject_keys")
+        for kind in keyed:
+            low, high = _kind_range(kind)
+            targets.update(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT path FROM subjects WHERE path>=? AND path<?", (low, high)
+                )
+            )
+    else:
+        targets.update(path for path in subjects if path.startswith(_SUBJECTS))
+        for kind in set(kinds):
+            low, high = _kind_range(kind)
+            targets.update(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT path FROM subjects WHERE path>=? AND path<?", (low, high)
+                )
+            )
+            targets.update(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT subject_path FROM subject_keys WHERE kind=?", (kind,)
+                )
+            )
+        connection.executemany(
+            "DELETE FROM subject_keys WHERE subject_path=?", ((path,) for path in targets)
+        )
+    rows: list[tuple[str, str, str]] = []
+    for path in sorted(targets):
+        kind = subject_kind_of(path)[0]
+        keys = keyed.get(kind)
+        if not keys:
+            continue
+        if (
             connection.execute(
-                f"SELECT 1 FROM claims WHERE subject_path=? AND predicate=? AND "
-                f"{_value_clause(value)[0]} AND {_KEY_CLAIM}",
-                (path, predicate, *_value_clause(value)[1]),
+                "SELECT 1 FROM subjects WHERE path=? AND lifecycle='live'", (path,)
             ).fetchone()
-            is not None
-            for predicate, value in rest
+            is None
         ):
-            matched.append(path)
-    return tuple(matched)
+            continue
+        key = subject_key_of(connection, path, keys)
+        if key is not None:
+            rows.append((path, kind, key_encoding(key)))
+    connection.executemany("INSERT INTO subject_keys VALUES (?,?,?)", rows)
 
 
 def live_key_claims(
@@ -257,6 +338,262 @@ def single_key_value(claim_type: ClaimType, text: str) -> SubjectKeyValue | None
     except CanonicalFormDidNotConverge:
         return None
     return value if isinstance(value, str) and value else None
+
+
+KeyReader = Callable[[str, str], "KeyTuple | None"]
+"""Read ``kind/<text>`` as a canonical single key of ``kind``: None when it cannot be one."""
+
+
+def tree_key_reader(tree: Mapping[str, bytes]) -> KeyReader:
+    """The single-key reading of ``kind/<text>`` under the SubjectKinds of ``tree``."""
+
+    known: dict[str, tuple[str, ClaimType] | None] = {}
+
+    def read(kind: str, text: str) -> KeyTuple | None:
+        if kind not in known:
+            known[kind] = single_key(tree, kind)
+        found = known[kind]
+        if found is None:
+            return None
+        predicate, claim_type = found
+        value = single_key_value(claim_type, text)
+        return None if value is None else ((predicate, value),)
+
+    return read
+
+
+@dataclass
+class IdentityOverlay:
+    """What one change does to Subject identity, laid over its parent's index.
+
+    Built from the change once -- by the candidate boundary from the candidate
+    tree, by lowering and the write verbs from the members they are lowering --
+    and read by the one resolver (``IdentityView``), so a creation resolves
+    against the state the change itself leaves: Subjects it retires hold
+    nothing, keys it frees or takes are freed or taken, aliases it adds or
+    retires count or do not.
+    """
+
+    #: Subject path -> live after the change, for every Subject the change writes.
+    subjects: dict[str, bool] = field(default_factory=dict)
+    #: Subject path -> its whole canonical key after the change (None: none), for
+    #: every Subject whose key the change may move.
+    keys: dict[str, KeyTuple | None] = field(default_factory=dict)
+    #: Alias rows the change ends and adds: (target path, discovery-normalized term).
+    aliases_removed: set[tuple[str, str]] = field(default_factory=set)
+    aliases_added: set[tuple[str, str]] = field(default_factory=set)
+
+
+class IdentityView:
+    """Subject identity at one parent, overlaid with one change: the shared resolver.
+
+    Every creation and reference route resolves through here (identity
+    D1/D4/D6, review F-003): a reference ``kind/<text>`` names the exact live
+    Subject, else the one live Subject an alias of the kind names, else the one
+    live Subject a single key of the kind names (``text`` read in its key
+    ClaimType's canonical form), else the exact retired Subject. Aliases come
+    before keys because an alias is a name an author asserted for exactly that
+    Subject (a merge leaves one), while ``kind/<text>`` read as a key is a
+    convenience reading of text; and E-a's alias resolution keeps every meaning
+    it had. Several matches at the alias or key step are ambiguous.
+    """
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        overlay: IdentityOverlay | None = None,
+        *,
+        key_reader: KeyReader | None = None,
+    ) -> None:
+        self.connection = connection
+        self.overlay = overlay or IdentityOverlay()
+        self.key_reader = key_reader
+        self._overlay_holders: dict[tuple[str, str], set[str]] | None = None
+
+    # -- the parent, overlaid ------------------------------------------------
+
+    def exists(self, path: str) -> bool:
+        if path in self.overlay.subjects:
+            return True
+        return (
+            self.connection.execute("SELECT 1 FROM subjects WHERE path=?", (path,)).fetchone()
+            is not None
+        )
+
+    def live(self, path: str) -> bool:
+        if path in self.overlay.subjects:
+            return self.overlay.subjects[path]
+        return (
+            self.connection.execute(
+                "SELECT 1 FROM subjects WHERE path=? AND lifecycle='live'", (path,)
+            ).fetchone()
+            is not None
+        )
+
+    def alias_targets(self, kind: str, name: str) -> tuple[str, ...]:
+        """The live Subjects of ``kind`` an alias spelled ``name`` names, by path."""
+
+        from cruxible_client.contracts.discovery import normalize_discovery_term
+
+        term = normalize_discovery_term(name)
+        low, high = _kind_range(kind)
+        found = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT target_path, value FROM vocabulary_terms "
+                "WHERE term=? AND basis='alias' AND target_path>=? AND target_path<?",
+                (term, low, high),
+            )
+            if (str(row[0]), term) not in self.overlay.aliases_removed
+        }
+        found.update(
+            target
+            for target, added in self.overlay.aliases_added
+            if added == term and low <= target < high
+        )
+        return tuple(sorted(path for path in found if self.live(path)))
+
+    def holders(self, kind: str, key: KeyTuple) -> tuple[str, ...]:
+        """The live Subjects of ``kind`` holding exactly the canonical ``key``.
+
+        One seek on the parent's whole-key index, less the Subjects the change
+        moves, plus those the change leaves holding it (one dict, by encoding).
+        """
+
+        if self._overlay_holders is None:
+            self._overlay_holders = {}
+            for path, held in self.overlay.keys.items():
+                if held is not None:
+                    self._overlay_holders.setdefault(
+                        (subject_kind_of(path)[0], key_encoding(held)), set()
+                    ).add(path)
+        found = {
+            path
+            for path in subjects_with_key(self.connection, kind, key)
+            if path not in self.overlay.keys
+        }
+        found.update(self._overlay_holders.get((kind, key_encoding(key)), ()))
+        return tuple(sorted(path for path in found if self.live(path)))
+
+    def add_creation(self, path: str, key: KeyTuple | None) -> None:
+        """Lay one Subject the change creates over the view (it holds ``key``)."""
+
+        self.overlay.subjects[path] = True
+        self.overlay.keys[path] = key
+        self._overlay_holders = None
+
+    def taken(self, kind: str, subject_id: str) -> bool:
+        """Whether a new ``kind/<id>`` would reuse a name: a Subject's id, or a live alias."""
+
+        path = f"{_SUBJECTS}{kind}/{subject_id}.json"
+        return self.exists(path) or bool(self.alias_targets(kind, subject_id))
+
+    # -- resolution ----------------------------------------------------------
+
+    def resolve(self, kind: str, text: str) -> SubjectRefResolution:
+        """``kind/<text>``: exact live id, else alias, else single key, else exact retired."""
+
+        from cruxible_core.indexes.subject_aliases import SubjectRefResolution
+
+        exact = f"{_SUBJECTS}{kind}/{text}.json"
+        if self.live(exact):
+            return SubjectRefResolution(kind=kind, subject_id=text, path=exact, via="identity")
+        aliased = self.alias_targets(kind, text)
+        if len(aliased) == 1:
+            return SubjectRefResolution(kind=kind, subject_id=text, path=aliased[0], via="alias")
+        if len(aliased) > 1:
+            return SubjectRefResolution(
+                kind=kind,
+                subject_id=text,
+                path=None,
+                via="alias",
+                candidates=tuple(_ref(path) for path in aliased),
+            )
+        key = None if self.key_reader is None else self.key_reader(kind, text)
+        if key is not None:
+            held = self.holders(kind, key)
+            if len(held) == 1:
+                return SubjectRefResolution(kind=kind, subject_id=text, path=held[0], via="key")
+            if len(held) > 1:
+                return SubjectRefResolution(
+                    kind=kind,
+                    subject_id=text,
+                    path=None,
+                    via="key",
+                    candidates=tuple(_ref(path) for path in held),
+                )
+        if self.exists(exact):
+            # A retired Subject no alias or key supersedes is still the one it names.
+            return SubjectRefResolution(kind=kind, subject_id=text, path=exact, via="identity")
+        return SubjectRefResolution(kind=kind, subject_id=text, path=None, via=None)
+
+    def resolve_creation(
+        self, kind: str, key: KeyTuple, *, single_text: str | None, create_new: bool
+    ) -> CreationResolution:
+        """Where a creation by ``key`` lands: an existing Subject, several, or a new one.
+
+        A one-key creation's text is first read as an alias of the kind (an alias
+        is a name asserted for exactly one Subject); then the canonical key's
+        live holders: none creates, one is reused, several refuse. ``create_new``
+        (a ``hint`` kind's deliberate further holder) creates whatever holds the
+        key. The exact-id and retired steps of ``resolve`` do not apply: a Subject
+        whose id merely equals the key's rendering but holds another key (or none)
+        is another thing, and a retired one's id stays reserved -- the new Subject
+        takes a free id.
+        """
+
+        if create_new:
+            return CreationResolution(path=None, holders=self.holders(kind, key))
+        if single_text is not None:
+            aliased = self.alias_targets(kind, single_text)
+            if aliased:
+                return CreationResolution(
+                    path=aliased[0] if len(aliased) == 1 else None, holders=aliased, via="alias"
+                )
+        held = self.holders(kind, key)
+        return CreationResolution(
+            path=held[0] if len(held) == 1 else None, holders=held, via="key" if held else None
+        )
+
+
+@dataclass(frozen=True)
+class CreationResolution:
+    """What a creation by key resolved to: one existing Subject, several, or none."""
+
+    path: str | None
+    holders: tuple[str, ...] = ()
+    via: str | None = None
+
+    @property
+    def ambiguous(self) -> bool:
+        return self.path is None and len(self.holders) > 1 and self.via is not None
+
+    @property
+    def creates(self) -> bool:
+        return self.path is None and not self.ambiguous
+
+
+def assign_creation_id(
+    view: IdentityView,
+    kind: str,
+    key: KeyTuple,
+    *,
+    names: set[str],
+) -> str:
+    """The id core assigns a first holder of ``key``: its rendering, disambiguated.
+
+    The rendering is taken when it is an existing Subject's id (live or
+    retired), a live alias of the kind (an alias is never shadowed by a new id),
+    or an id this change already assigned (``names``); then the key digest
+    suffix, and so on. Raises ``SubjectIdUnassignable``.
+    """
+
+    from cruxible_client.contracts.subject_kinds import assign_subject_id
+
+    return assign_subject_id(
+        key_values(key),
+        taken=lambda candidate: candidate in names or view.taken(kind, candidate),
+    )
 
 
 def single_key_holders(
@@ -321,6 +658,55 @@ def undeclared_kind_repair(kind: str) -> str:
     )
 
 
+def compiler_upgrade_repair(kind: str) -> str:
+    """What an instance on a compiler before SubjectKinds does to create a ``kind``."""
+
+    return (
+        "Upgrade the instance's compiler (`cruxible compiler upgrade`; `cruxible next` names "
+        f"the exact command), then declare {kind} with a SubjectKind and create by its key. "
+        + undeclared_kind_repair(kind)
+    )
+
+
+def compiler_upgrade_message(kind: str) -> str:
+    return (
+        f"This instance's compiler predates SubjectKinds, so no new Subject can be created; "
+        f"existing {kind} Subjects stay readable, claimable and retirable. "
+        + compiler_upgrade_repair(kind)
+    )
+
+
+def boundary_identity_issues(
+    compiler: CompilerCoordinate,
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    scope: tuple[str, ...],
+) -> tuple[SubjectIdentityIssue, ...]:
+    """The identity issues of a change on its instance's compiler (live admission only).
+
+    Under a compiler that admits SubjectKinds, every rule of
+    ``candidate_identity_issues``; under an earlier one, every new Subject
+    refuses (``compiler_upgrade_required``). Recovery replay of accepted history
+    does not come here.
+    """
+
+    if admits_subject_kinds(compiler):
+        return candidate_identity_issues(
+            current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
+        )
+    return tuple(
+        SubjectIdentityIssue(
+            SUBJECT_COMPILER_UPGRADE_REQUIRED,
+            path,
+            compiler_upgrade_message(subject_kind_of(path)[0]),
+        )
+        for path in created_subjects(
+            current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
+        )
+    )
+
+
 def undeclared_kind_message(kind: str) -> str:
     return (
         f"No accepted SubjectKind declares {kind}, so no new Subject of it can be created; "
@@ -368,6 +754,7 @@ SUBJECT_KEY_CONTENDED = "cruxible.subject.key_contended"
 SUBJECT_KEY_INVALID = "cruxible.subject.key_invalid"
 SUBJECT_KEY_CONFLICT = "cruxible.subject.key_conflict"
 SUBJECT_ID_NOT_ASSIGNED = "cruxible.subject.id_not_assigned"
+SUBJECT_ASSIGNMENT_CHANGED = "cruxible.subject.assignment_changed"
 
 
 def _ref(path: str) -> str:
@@ -426,6 +813,38 @@ def _key_claim_row(
     )
 
 
+def _shell(tree: Mapping[str, bytes], path: str) -> Any | None:
+    from cruxible_client.contracts.subjects import parse_subject
+
+    content = tree.get(path)
+    if content is None:
+        return None
+    try:
+        return parse_subject(content, path=path)
+    except ValueError:
+        return None
+
+
+def _alias_rows(content: bytes | None, path: str) -> tuple[tuple[str, str], ...]:
+    """The live alias rows one Claim version contributes: (target path, term)."""
+
+    from cruxible_client.contracts.claims import LiteralClaimObject, parse_claim
+    from cruxible_client.contracts.discovery import normalize_discovery_term
+
+    if content is None or b'"semantic.alias"' not in content:
+        return ()
+    claim = parse_claim(content, path=path)
+    statement = claim.statement
+    if (
+        claim.lifecycle.state != "live"
+        or statement.predicate != "semantic.alias"
+        or not isinstance(statement.object, LiteralClaimObject)
+        or not isinstance(statement.object.value, str)
+    ):
+        return ()
+    return ((statement.subject.artifact_path, normalize_discovery_term(statement.object.value)),)
+
+
 def candidate_identity_issues(
     *,
     current_tree: Mapping[str, bytes],
@@ -434,25 +853,30 @@ def candidate_identity_issues(
 ) -> tuple[SubjectIdentityIssue, ...]:
     """Every Subject identity rule a change breaks, judged against its parent.
 
-    The parent is read through its key index (``subjects_with_key``) overlaid with
-    the owners the change touches -- Subjects it creates or retires, key Claims it
-    adds, revises or retires, SubjectKinds it declares or succeeds -- never a
-    rebuild of the index:
+    The parent is read through its indexes (the whole-key index, the alias
+    terms) overlaid with the owners the change touches -- Subjects it creates or
+    retires, key and alias Claims it adds, revises or retires, SubjectKinds it
+    declares or succeeds -- never a rebuild:
 
     - every created Subject is of a declared kind (``kind_undeclared``);
+    - every created Subject carries core's assignment binding and has exactly
+      the id it derives (``id_not_assigned``): a minted id from its recorded
+      operation and member; a first holder of a key, the key's rendering,
+      suffixed when the rendering is a Subject's id, a live alias of the kind,
+      or an id this change assigned first; a further holder of a ``hint`` key,
+      the rendering and a digest of its recorded operation and member. A
+      successor keeps its Subject's binding (``assignment_changed``);
     - a created Subject of a keyed kind states each key part as one live Claim
-      (``key_missing``, ``key_contended``, ``key_invalid``) and has exactly the id
-      core assigns its canonical key (``id_not_assigned``);
+      (``key_missing``, ``key_contended``, ``key_invalid``);
     - under a ``unique`` kind no two live Subjects hold the same canonical key,
       whether a Subject is created, a key Claim revised, or the kind newly made
       unique (``key_conflict``, naming the Subject that holds it).
     """
 
     from cruxible_client.contracts.subject_kinds import (
-        assign_subject_id,
-        is_distinct_holder_id,
+        distinct_holder_id,
+        minted_subject_id,
     )
-    from cruxible_client.contracts.subjects import subject_path
     from cruxible_core.indexes.subject_aliases import tree_index_connection
 
     declared = _DeclaredKinds(candidate_tree)
@@ -460,23 +884,65 @@ def candidate_identity_issues(
     created = created_subjects(
         current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
     )
+    created_set = set(created)
     affected: dict[str, str] = {}
+    shells: dict[str, Any] = {}
     for path in created:
-        kind, _subject_id = subject_kind_of(path)
+        kind, subject_id = subject_kind_of(path)
         declared_kind = declared(kind)
+        shell = _shell(candidate_tree, path)
+        shells[path] = shell
         if declared_kind is None:
             issues.append(
                 SubjectIdentityIssue(SUBJECT_KIND_UNDECLARED, path, undeclared_kind_message(kind))
             )
+            continue
+        assignment = None if shell is None else shell.assignment
+        if declared_kind.minted:
+            expected: str | None = (
+                None
+                if assignment is None or assignment.rule != "minted"
+                else minted_subject_id(operation=assignment.operation, member=assignment.member)
+            )
+            if expected != subject_id:
+                issues.append(
+                    SubjectIdentityIssue(
+                        SUBJECT_ID_NOT_ASSIGNED,
+                        path,
+                        f"{_ref(path)} is a new minted {kind}, whose id core mints from the "
+                        "operation and member that create it (recorded as its assignment); "
+                        "this one carries no such binding. Create it with a subject member "
+                        "naming its kind and let core name it.",
+                    )
+                )
         elif declared_kind.keys:
             affected[path] = kind
+    # A successor keeps the binding core gave its Subject.
+    for path in scope:
+        if (
+            path.startswith(_SUBJECTS)
+            and path not in created_set
+            and path in current_tree
+            and path in candidate_tree
+        ):
+            before, after = _shell(current_tree, path), _shell(candidate_tree, path)
+            if before is not None and after is not None and before.assignment != after.assignment:
+                issues.append(
+                    SubjectIdentityIssue(
+                        SUBJECT_ASSIGNMENT_CHANGED,
+                        path,
+                        f"{_ref(path)} changes how core named it; a Subject's assignment never "
+                        "changes after creation.",
+                    )
+                )
     changed_kinds = {
         path.removeprefix("subject-kinds/").removesuffix(".json")
         for path in scope
         if path.startswith("subject-kinds/")
     }
     scope_claims = tuple(path for path in scope if path.startswith("claims/"))
-    if not affected and not changed_kinds and not scope_claims:
+    scope_types = any(path.startswith("claim-types/") for path in scope)
+    if not affected and not changed_kinds and not scope_claims and not scope_types:
         return tuple(issues)
 
     with tree_index_connection(current_tree)() as connection:
@@ -496,9 +962,13 @@ def candidate_identity_issues(
         needles = tuple(f'"{predicate}"'.encode() for predicate in sorted(key_kinds))
         # The key Claim versions the change touches, and the Subjects whose key they move.
         touched: dict[str, tuple[_KeyClaimRow | None, _KeyClaimRow | None]] = {}
-        for path in scope_claims if needles else ():
+        aliases_removed: set[tuple[str, str]] = set()
+        aliases_added: set[tuple[str, str]] = set()
+        for path in scope_claims:
             before_bytes, after_bytes = current_tree.get(path), candidate_tree.get(path)
-            if not any(
+            aliases_removed.update(_alias_rows(before_bytes, path))
+            aliases_added.update(_alias_rows(after_bytes, path))
+            if not needles or not any(
                 needle in content
                 for content in (before_bytes, after_bytes)
                 if content is not None
@@ -559,7 +1029,7 @@ def candidate_identity_issues(
                     )
                     break
                 if not found:
-                    if subject in created:
+                    if subject in created_set:
                         issues.append(
                             SubjectIdentityIssue(
                                 SUBJECT_KEY_MISSING,
@@ -585,70 +1055,88 @@ def candidate_identity_issues(
             else:
                 keys_now[subject] = tuple(parts)
 
-        # A unique kind's key names one live Subject.
-        def holders(kind: str, key: KeyTuple) -> set[str]:
-            found = {
-                path
-                for path in subjects_with_key(connection, kind, key)
-                if path not in affected and (path not in scope or _live(candidate_tree, path))
-            }
-            found.update(
-                other
-                for other, other_key in keys_now.items()
-                if affected.get(other) == kind and other_key == key
+        issues.extend(
+            _key_definition_issues(
+                connection,
+                current_tree=current_tree,
+                candidate_tree=candidate_tree,
+                scope=scope,
+                declared=declared,
+                changed_kinds=changed_kinds,
+                values=values,
             )
-            return found
+        )
 
-        # Created keyed Subjects take exactly the id core assigns, in canonical-key
-        # order: the key's rendering (suffixed when another key's Subject has it),
-        # or -- a further holder of a hint kind's key -- that rendering and an
-        # 8-hex digest of the operation that created it.
-        assigned: dict[str, set[str]] = {}
-        seen: dict[tuple[str, bytes], bool] = {}
+        # The parent as this change leaves it: Subjects it retires or revives, keys
+        # it moves, aliases it adds or ends. ``holders`` reads keys through it;
+        # ``taken`` reads names through it without the Subjects the change
+        # creates, which take their ids in canonical-key order below.
+        lifecycle = {
+            path: _live(candidate_tree, path)
+            for path in scope
+            if path.startswith(_SUBJECTS) and path.endswith(".json")
+        }
+        view = IdentityView(
+            connection,
+            IdentityOverlay(
+                subjects=dict(lifecycle),
+                keys={subject: keys_now.get(subject) for subject in affected},
+                aliases_removed=aliases_removed - aliases_added,
+                aliases_added=aliases_added - aliases_removed,
+            ),
+        )
+        naming = IdentityView(
+            connection,
+            IdentityOverlay(
+                subjects={
+                    path: live for path, live in lifecycle.items() if path not in created_set
+                },
+                aliases_removed=aliases_removed - aliases_added,
+                aliases_added=aliases_added - aliases_removed,
+            ),
+        )
+
+        def holders(kind: str, key: KeyTuple) -> set[str]:
+            return set(view.holders(kind, key))
+
+        # Created keyed Subjects carry core's binding and take exactly the id it
+        # derives, in canonical-key order.
+        names: dict[str, set[str]] = {}
+        first_taken: set[tuple[str, str]] = set()
         for subject in sorted(
             (item for item in created if item in keys_now),
             key=lambda item: (subject_kind_of(item)[0], key_order(keys_now[item]), item),
         ):
             kind, subject_id = subject_kind_of(subject)
             key = keys_now[subject]
-            names = assigned.setdefault(kind, set())
-            marker = (kind, key_order(key))
-            if marker not in seen:
-                seen[marker] = any(other not in created for other in holders(kind, key) - {subject})
-            if seen[marker]:
-                # Another Subject holds the key: a unique kind is refused below; a
-                # hint kind's further holder has the distinct-holder form.
-                names.add(subject_id)
-                if not is_distinct_holder_id(subject_id, key_values(key)):
-                    issues.append(
-                        SubjectIdentityIssue(
-                            SUBJECT_ID_NOT_ASSIGNED,
-                            subject,
-                            f"{_ref(subject)} is a further {kind} holding a key another live "
-                            f"Subject holds; core names it {kind}/<rendering>-<8 hex>. Create "
-                            "it with a subject member (create_new) and let core name it.",
-                        )
+            assigned = names.setdefault(kind, set())
+            shell = shells.get(subject)
+            assignment = None if shell is None else shell.assignment
+            others = holders(kind, key) - {subject}
+            outside = {other for other in others if other not in created_set}
+            marker = (kind, key_encoding(key))
+            expected = None
+            if assignment is not None and assignment.rule == "further_holder":
+                if outside or others:
+                    expected = distinct_holder_id(
+                        key_values(key), operation=assignment.operation, member=assignment.member
                     )
-                continue
-            seen[marker] = True
-
-            def taken(candidate: str, names: set[str] = names, kind: str = kind) -> bool:
-                return candidate in names or subject_path(kind, candidate) in current_tree
-
-            try:
-                expected = assign_subject_id(key_values(key), taken=taken)
-            except ValueError:
-                expected = ""
-            names.add(expected)
-            if subject_id != expected:
+            elif assignment is None and not outside and marker not in first_taken:
+                first_taken.add(marker)
+                try:
+                    expected = assign_creation_id(naming, kind, key, names=assigned)
+                except ValueError:
+                    expected = None
+            assigned.add(subject_id)
+            if expected != subject_id:
                 issues.append(
                     SubjectIdentityIssue(
                         SUBJECT_ID_NOT_ASSIGNED,
                         subject,
-                        f"{_ref(subject)} is a new {kind}, whose id core assigns from its key: "
-                        f"it is {kind}/{expected}. Create it with a subject member naming its "
-                        "kind and key and let core name it.",
-                        (f"{kind}/{expected}",),
+                        f"{_ref(subject)} is a new {kind}, whose id core assigns from its key "
+                        "and records how; this one's id or binding is not the one core "
+                        "assigns. Create it with a subject member naming its kind and key and "
+                        "let core name it.",
                     )
                 )
 
@@ -657,16 +1145,16 @@ def candidate_identity_issues(
             declared_kind = declared(kind)
             if declared_kind is None or not declared_kind.unique:
                 continue
-            others = tuple(
+            others_unique = tuple(
                 sorted(_ref(other) for other in holders(kind, keys_now[subject]) - {subject})
             )
-            if others:
+            if others_unique:
                 issues.append(
                     SubjectIdentityIssue(
                         SUBJECT_KEY_CONFLICT,
                         subject,
-                        subject_key_message(_ref(subject), kind, keys_now[subject], others),
-                        others,
+                        subject_key_message(_ref(subject), kind, keys_now[subject], others_unique),
+                        others_unique,
                     )
                 )
         # A kind newly unique, or re-keyed while unique, holds every key once.
@@ -685,6 +1173,179 @@ def candidate_identity_issues(
     return tuple(issues)
 
 
+SUBJECT_KIND_KEY_BROKEN = "cruxible.subject_kind.key_claim_type_broken"
+SUBJECT_KIND_REKEY_UNHANDLED = "cruxible.subject_kind.rekey_unhandled"
+
+
+def key_claim_type_shape(tree: Mapping[str, bytes], predicate: str) -> KeyClaimTypeShape | None:
+    """What the SubjectKind law reads of one key ClaimType in ``tree`` (None when absent)."""
+
+    from cruxible_client.contracts.claim_types import (
+        ClaimTypeFormatError,
+        claim_type_path,
+        parse_claim_type,
+    )
+    from cruxible_client.contracts.subject_kinds import KeyClaimTypeShape
+
+    try:
+        path = claim_type_path(predicate)
+    except ClaimTypeFormatError:
+        return None
+    content = tree.get(path)
+    if content is None:
+        return None
+    claim_type = parse_claim_type(content, path=path)
+    return KeyClaimTypeShape(
+        predicate=predicate,
+        live=claim_type.lifecycle.state == "live",
+        artifact_format=claim_type.artifact_format,
+        object_kind=claim_type.object_kind,
+        cardinality=claim_type.cardinality,
+        allowed_subject_kinds=tuple(claim_type.allowed_subject_kinds),
+    )
+
+
+def _key_definition_issues(
+    connection: sqlite3.Connection,
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    scope: tuple[str, ...],
+    declared: Callable[[str], SubjectKind | None],
+    changed_kinds: set[str],
+    values: Callable[[str, str], list[SubjectKeyValue | None]],
+) -> list[SubjectIdentityIssue]:
+    """A key ClaimType's succession or retirement that breaks a live SubjectKind (review F-004).
+
+    Each live SubjectKind depends on its key ClaimTypes. A change that succeeds or
+    retires one is judged against every kind it keys: the kind's key contract
+    (live, v8, literal, one-valued, about the kind only) must still hold -- unless
+    the change also succeeds that SubjectKind, whose own law then judges it
+    (``key_claim_type_broken``). A changed canonical form re-keys the kind: every
+    live key value must already be in the new form in the candidate, its
+    holders re-authored in the same change (``rekey_unhandled``), and a unique
+    kind must hold each new key once (``key_conflict``).
+    """
+
+    from cruxible_client.contracts.claim_types import (
+        effective_canonical_form,
+        parse_claim_type,
+    )
+    from cruxible_client.contracts.subject_kinds import key_claim_type_problem, subject_kind_path
+
+    changed: dict[str, tuple[ClaimType, ClaimType | None]] = {}
+    for path in scope:
+        if not path.startswith("claim-types/"):
+            continue
+        before, after = current_tree.get(path), candidate_tree.get(path)
+        if before is None:
+            continue
+        old = parse_claim_type(before, path=path)
+        new = None if after is None else parse_claim_type(after, path=path)
+        changed[old.predicate] = (old, new)
+    if not changed:
+        return []
+    keyed: dict[str, tuple[str, ...]] = {}
+    for identity, keys in connection.execute(
+        "SELECT identity, key_predicates FROM subject_kinds WHERE rule='keys' AND lifecycle='live'"
+    ):
+        keyed[str(identity).removeprefix("SubjectKind:")] = tuple(json.loads(str(keys)))
+    for kind in changed_kinds:
+        declared_kind = declared(kind)
+        if declared_kind is None or not declared_kind.keys:
+            keyed.pop(kind, None)
+        else:
+            keyed[kind] = declared_kind.keys
+    issues: list[SubjectIdentityIssue] = []
+    for kind, keys in sorted(keyed.items()):
+        kind_path = subject_kind_path(kind)
+        for predicate in keys:
+            if predicate not in changed:
+                continue
+            old, new = changed[predicate]
+            if kind not in changed_kinds:
+                problem = key_claim_type_problem(
+                    kind, key_claim_type_shape(candidate_tree, predicate), predicate
+                )
+                if problem is not None:
+                    issues.append(
+                        SubjectIdentityIssue(
+                            SUBJECT_KIND_KEY_BROKEN,
+                            kind_path,
+                            f"SubjectKind {kind} is keyed by {predicate}, and this change "
+                            f"breaks that key: {problem}. Succeed the SubjectKind in the same "
+                            "change (other keys, or minted), or keep the key ClaimType's shape.",
+                        )
+                    )
+                    continue
+            if new is None or effective_canonical_form(old) == effective_canonical_form(new):
+                continue
+            form = effective_canonical_form(new)
+            declared_kind = declared(kind)
+            low, high = _kind_range(kind)
+            subjects = [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT path FROM subjects WHERE path>=? AND path<? AND lifecycle='live'",
+                    (low, high),
+                )
+                if _live(candidate_tree, str(row[0]))
+            ]
+            stale: list[str] = []
+            for subject in subjects:
+                for value in values(subject, predicate):
+                    if value is None:
+                        continue
+                    try:
+                        fixed = canonicalize_literal(value, form)
+                    except CanonicalFormDidNotConverge:
+                        fixed = None
+                    if fixed != value:
+                        stale.append(subject)
+                        break
+            if stale:
+                issues.append(
+                    SubjectIdentityIssue(
+                        SUBJECT_KIND_REKEY_UNHANDLED,
+                        kind_path,
+                        f"{predicate} keys {kind}, and this change gives it a new canonical "
+                        f"form: a re-keying. {len(stale)} live {kind} Subject(s) still hold "
+                        f"a key value outside it ({', '.join(_ref(item) for item in stale[:5])}"
+                        f"{', ...' if len(stale) > 5 else ''}); re-author their key Claims in "
+                        "the same change (re_author), or keep the form.",
+                        tuple(_ref(item) for item in stale),
+                    )
+                )
+                continue
+            if declared_kind is None or not declared_kind.unique:
+                continue
+            groups: dict[str, list[str]] = {}
+            for subject in subjects:
+                parts: list[tuple[str, SubjectKeyValue]] = []
+                for key_predicate in declared_kind.keys:
+                    found = values(subject, key_predicate)
+                    if len(found) != 1 or found[0] is None:
+                        break
+                    parts.append((key_predicate, found[0]))
+                else:
+                    groups.setdefault(key_encoding(tuple(parts)), []).append(subject)
+            for holders in groups.values():
+                if len(holders) > 1:
+                    ordered = sorted(holders)
+                    issues.append(
+                        SubjectIdentityIssue(
+                            SUBJECT_KEY_CONFLICT,
+                            ordered[1],
+                            f"Re-keying {kind} by {predicate}'s new canonical form gives "
+                            f"{', '.join(_ref(item) for item in ordered)} one key; {kind} keys "
+                            "are unique. Alias and retire all but one in the same change, or "
+                            "keep the form.",
+                            tuple(_ref(item) for item in ordered),
+                        )
+                    )
+    return issues
+
+
 def _kind_wide_conflicts(
     connection: sqlite3.Connection,
     kind: str,
@@ -694,39 +1355,26 @@ def _kind_wide_conflicts(
 ) -> list[SubjectIdentityIssue]:
     """Every pair of live Subjects of ``kind`` that hold one key, once the kind is unique.
 
-    One pass over the kind's live first-key Claims (a governance event's cost: it
-    runs only when a SubjectKind becomes unique or changes its keys), overlaid
-    with the Subjects the change itself moves.
+    One pass over the kind's live Subjects under the new keys (a governance
+    event's cost: it runs only when a SubjectKind becomes unique or changes its
+    keys), overlaid with the Subjects the change itself moves.
     """
 
     low, high = _kind_range(kind)
-    first = declared_kind.keys[0]
     tuples: dict[str, KeyTuple] = {}
     for (subject,) in connection.execute(
-        f"SELECT DISTINCT subject_path FROM claims WHERE predicate=? AND {_KEY_CLAIM} "
-        "AND subject_path>=? AND subject_path<?",
-        (first, low, high),
+        "SELECT path FROM subjects WHERE path>=? AND path<? AND lifecycle='live'", (low, high)
     ):
         path = str(subject)
         if path in affected:
             continue
-        live = connection.execute(
-            "SELECT 1 FROM subjects WHERE path=? AND lifecycle='live'", (path,)
-        ).fetchone()
-        if live is None:
-            continue
-        parts: list[tuple[str, SubjectKeyValue]] = []
-        for predicate in declared_kind.keys:
-            found = [value for _identity, value in live_key_claims(connection, path, predicate)]
-            if len(found) != 1 or found[0] is None:
-                break
-            parts.append((predicate, found[0]))
-        else:
-            tuples[path] = tuple(parts)
+        key = subject_key_of(connection, path, declared_kind.keys)
+        if key is not None:
+            tuples[path] = key
     tuples.update((path, key) for path, key in keys_now.items() if affected.get(path) == kind)
     groups: dict[str, list[str]] = {}
     for path, key in tuples.items():
-        groups.setdefault(json.dumps(key_values(key), sort_keys=True), []).append(path)
+        groups.setdefault(key_encoding(key), []).append(path)
     issues: list[SubjectIdentityIssue] = []
     for paths in groups.values():
         if len(paths) < 2:
@@ -746,7 +1394,13 @@ def _kind_wide_conflicts(
 
 
 __all__ = [
+    "SUBJECT_COMPILER_UPGRADE_REQUIRED",
     "SUBJECT_ID_NOT_ASSIGNED",
+    "SUBJECT_KIND_KEY_BROKEN",
+    "SUBJECT_KIND_REKEY_UNHANDLED",
+    "key_claim_type_shape",
+    "boundary_identity_issues",
+    "compiler_upgrade_repair",
     "SUBJECT_KEY_CONFLICT",
     "SUBJECT_KEY_CONTENDED",
     "SUBJECT_KEY_INVALID",
@@ -754,7 +1408,10 @@ __all__ = [
     "KeyTuple",
     "SubjectKeyInvalid",
     "canonical_key",
+    "key_encoding",
     "key_order",
+    "refresh_subject_keys",
+    "subject_key_of",
     "key_values",
     "live_key_claims",
     "single_key",

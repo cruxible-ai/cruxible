@@ -357,7 +357,12 @@ def test_old_verdict_and_receipt_bytes_are_unchanged(tmp_path: Path) -> None:
 
 def _fact_row(instance):  # type: ignore[no-untyped-def]
     facts = build_accepted_query_facts(instance, coordinate=instance.accepted_coordinate())
-    (row,) = facts.claims
+    # The work item's key Claim (its slug) is not the Claim under test.
+    (row,) = [
+        item
+        for item in facts.claims
+        if not item.accepted.claim.statement.predicate.endswith(".slug")
+    ]
     return row
 
 

@@ -34,7 +34,7 @@ from cruxible_client.contracts.subjects import SubjectShell, render_subject, sub
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
-from tests.core_support._subject_kind_support import declare_created_kinds
+from tests.core_support._subject_kind_support import declare_created_kinds, world_history
 from tests.core_support._support import initialize_local
 
 KIND = "inv.package"
@@ -131,6 +131,7 @@ def shell(subject_id: str, kind: str = KIND) -> SubjectShell:
     )
 
 
+@world_history
 def accept_tree(
     instance: PlaybillInstance, updates: dict[str, bytes], *, name: str, actor_id: str = "owner"
 ) -> None:
@@ -138,7 +139,7 @@ def accept_tree(
 
     base = instance.accepted_coordinate()
     accepted = instance.tree_at(base.git_oid)
-    tree = {**accepted, **declare_created_kinds(accepted, dict(updates), compiler=base.compiler)}
+    tree = {**accepted, **declare_created_kinds(accepted, dict(updates), instance=instance)}
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(
@@ -153,6 +154,58 @@ def accept_tree(
         instance, proposal_id=proposed.admission.proposal_id, activated_by=actor_id
     )
     assert receipt.status == "accepted"
+
+
+def retire_subject(instance: PlaybillInstance, path: str, *, name: str) -> None:
+    """Retire one Subject: first the live Claims about it (its key Claim among them)."""
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.subjects import parse_subject, subject_digest
+
+    retire_claims_about(instance, path)
+    shell = parse_subject(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path)
+    retired = shell.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=subject_digest(shell).tagged
+            )
+        }
+    )
+    accept_tree(instance, {path: render_subject(retired)}, name=name)
+
+
+def retire_claims_about(instance: PlaybillInstance, path: str, *, actor_id: str = "owner") -> None:
+    """Retire, in one accepted write, the live Claims about one Subject (its key Claim too).
+
+    A Subject's retirement closes over the Claims about it, so a keyed Subject's
+    retirement follows the retirement of its key Claim.
+    """
+
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.service.authoring.write_verbs import WriteCaller, service_playbill_write
+
+    head = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(head) as projection:
+        claims = [
+            str(row[0]).removeprefix("Claim:")
+            for row in projection.typed.connection.execute(
+                "SELECT identity FROM claims WHERE subject_path=? AND lifecycle='live' "
+                "ORDER BY identity",
+                (path,),
+            )
+        ]
+    if claims:
+        outcome = service_playbill_write(
+            instance,
+            request=WriteRequest.model_validate(
+                {
+                    "because": "Retired with its Subject.",
+                    "changes": [{"op": "retire", "target": claim} for claim in claims],
+                }
+            ),
+            caller=WriteCaller(actor=AuthenticatedActor(actor_id=actor_id), may_activate=True),
+        )
+        assert outcome.status == "accepted", outcome
 
 
 def seed_identity_vocabulary(instance: PlaybillInstance) -> None:
@@ -180,6 +233,8 @@ __all__ = [
     "STATE_FORM",
     "SUBJECTS",
     "accept_tree",
+    "retire_claims_about",
+    "retire_subject",
     "identity_claim_type",
     "seed_identity_surface",
     "seed_identity_vocabulary",

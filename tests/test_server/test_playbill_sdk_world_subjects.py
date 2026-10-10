@@ -30,15 +30,18 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from cruxible_core.service.discovery import compact_query as compact_module
+from tests.core_support._identity_support import retire_claims_about
 from tests.core_support._write_support import KIND, seed_write_vocabulary
 
 
 def _retire_subject(instance: PlaybillInstance, subject_id: str, *, actor_id: str) -> None:
     """Accept one change set that retires a Subject shell, through the ordinary path."""
 
+    path = subject_path(KIND, subject_id)
+    # Its retirement closes over its key Claim, retired first.
+    retire_claims_about(instance, path, actor_id=actor_id)
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
-    path = subject_path(KIND, subject_id)
     shell = parse_subject(tree[path], path=path)
     tree[path] = render_subject(
         shell.model_copy(

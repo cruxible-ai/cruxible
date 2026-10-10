@@ -318,5 +318,6 @@ def test_a_query_without_a_projection_records_the_claims_its_cells_served(
     assert all("claims" not in row for row in page.rows)
 
     claims = [names for operation, names in recorded if operation == "playbill.claim.get"]
-    assert len(claims) == 1 and len(claims[0]) == 2
+    # Each row's own cells: its status and its slug key (core created it by its slug).
+    assert len(claims) == 1 and len(claims[0]) == 4
     assert all(name.startswith("Claim:CLM-") for name in claims[0])

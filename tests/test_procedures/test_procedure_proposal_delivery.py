@@ -60,7 +60,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._pc_c_support import capture_contract
-from tests.core_support._subject_kind_support import declared_kind_files
+from tests.core_support._subject_kind_support import core_assigned
 from tests.test_procedures import test_procedure_source_runs as fixtures
 
 SUBJECT_KIND = "security.advisory"
@@ -184,13 +184,15 @@ def proposal_world(  # type: ignore[no-untyped-def]
     )
     contract = capture_contract()
     accepted_claim_type = claim_type or _claim_type(capture_contract_digest(contract).tagged)
-    members = {
-        procedure_path(fixtures.PROCEDURE_NAME): render_procedure(with_terminal),
-        line_spec_path(line.identity.name): render_line_spec(line),
-        claim_type_path(accepted_claim_type.predicate): render_claim_type(accepted_claim_type),
-        subject_path(SUBJECT_KIND, SUBJECT_ID): render_subject(_subject()),
-        **declared_kind_files(SUBJECT_KIND),
-    }
+    members = core_assigned(
+        instance,
+        {
+            procedure_path(fixtures.PROCEDURE_NAME): render_procedure(with_terminal),
+            line_spec_path(line.identity.name): render_line_spec(line),
+            claim_type_path(accepted_claim_type.predicate): render_claim_type(accepted_claim_type),
+            subject_path(SUBJECT_KIND, SUBJECT_ID): render_subject(_subject()),
+        },
+    )
     accepted_mandate: ProcedureMandateV1 | None
     if mandate is True:
         accepted_mandate = fixtures._line_mandate(with_terminal)

@@ -14,7 +14,7 @@ from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring import preflight as preflight_module
 from cruxible_core.authoring import prepared_lowering
 from cruxible_core.proposals.proposals import AuthenticatedActor
-from tests.core_support._subject_kind_support import declared_kind_files
+from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_change_set_intents import (
     _change_set,
@@ -147,14 +147,15 @@ def test_working_selections_never_reuse_lowering(tmp_path: Path) -> None:
 
 def test_changed_accepted_coordinate_recomputes_lowering(tmp_path: Path) -> None:
     instance, coordinator, actor, intent = _setup(tmp_path)
+    # Core creates the concurrent Subject (a lowering of its own) before counting.
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    subject = _shell("concurrent")
+    tree[subject_path(subject.subject_kind, subject.subject_id)] = render_subject(subject)
+    core_assigned(instance, tree)
     with patch.object(
         preflight_module, "lower_authoring", wraps=preflight_module.lower_authoring
     ) as lowering:
         first = coordinator.preflight(intent.intent_id, actor=actor)
-        tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-        subject = _shell("concurrent")
-        tree[subject_path(subject.subject_kind, subject.subject_id)] = render_subject(subject)
-        tree.update(declared_kind_files(subject.subject_kind))
         _accept_tree(
             instance,
             None,

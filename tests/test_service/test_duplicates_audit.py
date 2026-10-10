@@ -73,7 +73,8 @@ def test_subjects_whose_names_meet_and_values_that_meet_are_listed(
     )
     assert sorted(item.value for item in tags.values) == ["web.app", "webapp"]
     assert (result.scanned.subjects, result.scanned.aliases) == (2, 2)
-    assert result.scanned.values == 2 and not result.budget_exhausted
+    # The tags, and each package's slug (the key core created it by).
+    assert result.scanned.values == 4 and not result.budget_exhausted
 
 
 def test_asserting_distinct_from_suppresses_the_pair(instance: PlaybillInstance) -> None:
@@ -189,7 +190,7 @@ def test_the_budget_is_applied_in_each_read_with_one_overflow_sentinel(
     for tag in ("a.x", "ax", "b.y", "by"):
         write(instance, {"op": "add", "subject": ALPHA, "field": "tags", "value": tag})
     full = audit(instance)
-    assert full.scanned.values == 4 and not full.budget_exhausted
+    assert full.scanned.values == 6 and not full.budget_exhausted
     reads: list[int] = []
     original = duplicates._Budget.read
 
@@ -204,7 +205,9 @@ def test_the_budget_is_applied_in_each_read_with_one_overflow_sentinel(
     assert bounded.budget_exhausted
     scanned = bounded.scanned
     # Every row the audit read is counted, and together they never pass the bound.
-    assert sum(reads) == scanned.subjects + scanned.aliases + scanned.relations + scanned.values
+    assert sum(reads) == (
+        scanned.subjects + scanned.aliases + scanned.relations + scanned.values + scanned.keys
+    )
     assert sum(reads) <= 3
 
 

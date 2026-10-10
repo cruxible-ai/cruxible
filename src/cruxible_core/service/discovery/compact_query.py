@@ -686,6 +686,9 @@ def _require_refs(
             )
     if not wanted:
         return list(checked)
+    from cruxible_core.indexes.subject_identity import tree_key_reader
+
+    key_reader = tree_key_reader(instance.immutable_tree_at(coordinate.git_oid))
     rewritten: dict[tuple[int, str], str] = {}
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
@@ -693,7 +696,9 @@ def _require_refs(
             subject_id = value.split("/", 1)[1] if form == "ref" else value
             found: list[str] = []
             for kind in kinds:
-                resolution = resolve_subject_ref(connection, kind, subject_id)
+                resolution = resolve_subject_ref(
+                    connection, kind, subject_id, key_reader=key_reader
+                )
                 if resolution.ambiguous:
                     raise query_refusal(
                         "cruxible.query.alias_ambiguous",

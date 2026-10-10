@@ -169,6 +169,7 @@ def test_subject_statuses_evaluate_only_that_subjects_claims(tmp_path, monkeypat
         c.statement.subject
         for c in everything
         if c.statement.subject.artifact_path.endswith("wi-42.json")
+        and not c.statement.predicate.endswith(".slug")
     )
     evaluated: list[str] = []
     resolve = playbill_search.resolve_playbill_claim_group

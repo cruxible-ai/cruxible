@@ -33,6 +33,7 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.core_support._subject_kind_support import without_keys
 from tests.support.oid_prefixes import too_short_prefix
 
 _WHEN = datetime.fromisoformat(EVALUATION_TIME)
@@ -51,12 +52,15 @@ def test_every_verb_names_the_same_capture_contracts(instance: Any) -> None:
         request=QueryRequest.model_validate(
             {"kind": "ClaimType", "where": [{"field": "namespace", "eq": SUBJECT_KIND}]}
         ),
-    ).rows[0]
+    ).rows
+    # The kind's key ClaimType (its slug) sits beside the one under test.
+    (query_row,) = [row for row in query_row if not str(row.get("predicate", "")).endswith(".slug")]
     orient_kind = next(
         item for item in service_playbill_orient(instance).kinds if item.kind == SUBJECT_KIND
     )
-    orient_evidence = orient_kind.evidence or next(
-        item.evidence for item in orient_kind.predicates if item.predicate == PREDICATE
+    orient_evidence = (
+        next(item.evidence for item in orient_kind.predicates if item.predicate == PREDICATE)
+        or orient_kind.evidence
     )
     card = service_playbill_get(
         instance,
@@ -112,6 +116,7 @@ def test_query_rows_and_get_cards_carry_the_same_flags_for_a_held_conflict(
         claim
         for claim in _all_claims(instance)
         if claim.statement.subject.artifact_path.endswith("wi-42.json")
+        and not claim.statement.predicate.endswith(".slug")
     ]
     for offset, claim in enumerate(contenders):
         _attest(instance, owner, claim, tmp_path, at=LATER - timedelta(minutes=2 - offset))
@@ -140,7 +145,7 @@ def test_query_rows_and_get_cards_carry_the_same_flags_for_a_held_conflict(
 
     compact = query_row(kind=SUBJECT_KIND, select=["status"])
     named = query_row(name=QUERY_NAME)
-    (subject_row,) = subject_card.claims
+    (subject_row,) = without_keys(subject_card.claims)
 
     assert tuple(compact["flags"]) == subject_row.flags
     assert tuple(named["flags"]) == subject_row.flags
@@ -162,8 +167,9 @@ def test_governed_query_flags_are_derived_over_the_whole_slot(
     _contend(instance, owner, first, "blocked", "slot-contender")
     slot = {
         claim.identity.qualified
-        for claim in _all_claims(instance)
+        for claim in without_keys(_all_claims(instance))
         if claim.statement.subject.artifact_path.endswith("wi-42.json")
+        and not claim.statement.predicate.endswith(".slug")
     }
     assert len(slot) == 2
     seen: list[set[str]] = []
@@ -312,6 +318,7 @@ def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
         "third.status": "third.status",
         f"{SUBJECT_KIND}.other.status": f"{SUBJECT_KIND}.other.status",
         f"{SUBJECT_KIND}.subject_id": f"{SUBJECT_KIND}.subject_id",
+        f"{SUBJECT_KIND}.slug": "slug",
     }
     assert sorted(row.predicate for row in subject.claims) == sorted(advertised.values())
     for predicate, name in advertised.items():
@@ -397,7 +404,7 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
     assert (claim.value, claim.content_digest) == (text, ruling.digest)
     subject = _exact_get(instance, ruling.subject).card
     assert isinstance(subject, GetSubjectCard)
-    ((row),) = subject.claims
+    ((row),) = without_keys(subject.claims)
     assert (row.claim, row.value, row.content_digest) == (ruling.claim_id, text, ruling.digest)
 
     # A long value is cut on the card by the card rule; evidence reads it whole.
@@ -448,9 +455,10 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
             assert not any("digest" in key for key in row_of)
         card = _exact_get(instance, seeded_claim.subject).card
         assert isinstance(card, GetSubjectCard)
-        assert card.claims[0].content_digest == seeded_claim.digest
-        assert _bare(card.claims[0].value) == compact[seeded_claim.subject]["status"]
-        assert card.claims[0].flags == tuple(compact[seeded_claim.subject]["flags"])
+        (stated_row,) = without_keys(card.claims)
+        assert stated_row.content_digest == seeded_claim.digest
+        assert _bare(stated_row.value) == compact[seeded_claim.subject]["status"]
+        assert stated_row.flags == tuple(compact[seeded_claim.subject]["flags"])
 
 
 def test_contains_matches_exact_content_text_never_its_digest(
@@ -542,11 +550,12 @@ def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
 
     # get agrees: the card is cut the same way, evidence reads it whole.
     card = _exact_get(instance, f"{SUBJECT_KIND}/wi-44").card
-    assert isinstance(card, GetSubjectCard) and _bare(card.claims[0].value) == cut
-    assert isinstance(card.claims[0].claim, str)
-    evidence = _exact_get(instance, card.claims[0].claim, detail="evidence").evidence
+    stated = without_keys(card.claims)
+    assert isinstance(card, GetSubjectCard) and _bare(stated[0].value) == cut
+    assert isinstance(stated[0].claim, str)
+    evidence = _exact_get(instance, stated[0].claim, detail="evidence").evidence
     assert evidence is not None and evidence.value == long_note
-    history = _exact_get(instance, card.claims[0].claim, detail="history").history
+    history = _exact_get(instance, stated[0].claim, detail="history").history
     assert history is not None and [_bare(item.value) for item in history.revisions] == [cut]
 
 
@@ -613,6 +622,8 @@ def test_two_spans_of_one_body_are_two_values_on_query_and_get(
         rows = []
         for path in sorted(wanted) if subject_path == home else [subject_path]:
             for row in real_slot(instance, coordinate, subject_path=path, **kw):
+                if row.claim_id not in spans:
+                    continue  # a key Claim, not one of the spans under test
                 start, end = spans[row.claim_id]
                 rows.append(
                     row.model_copy(

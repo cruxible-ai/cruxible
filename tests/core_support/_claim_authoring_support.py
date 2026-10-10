@@ -64,7 +64,7 @@ from cruxible_core.service.authoring.documents import (
     service_inspect_playbill_proposal,
 )
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._subject_kind_support import declare_created_kinds
+from tests.core_support._subject_kind_support import declare_created_kinds, world_history
 from tests.core_support._support import client_material
 from tests.test_claims.test_claims import _claim_type, _subject
 from tests.test_ledger.test_activation import _sign
@@ -289,6 +289,7 @@ def _payload(
     )
 
 
+@world_history
 def create_subjects(
     instance: PlaybillInstance, shells: tuple[SubjectShell, ...], *, timestamp: str
 ) -> None:
@@ -308,7 +309,7 @@ def create_subjects(
     tree = dict(accepted)
     for shell in shells:
         tree[subject_path(shell.subject_kind, shell.subject_id)] = render_subject(shell)
-    declare_created_kinds(accepted, tree, compiler=base.compiler)
+    declare_created_kinds(accepted, tree, instance=instance)
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
         request=ProposalAdmissionRequest(

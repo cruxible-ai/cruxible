@@ -52,6 +52,7 @@ from cruxible_core.service.discovery.next import (
 from cruxible_core.service.discovery.query import build_accepted_query_facts
 from cruxible_core.service.evidence import evidence as playbill_evidence
 from tests.core_support._knowledge_loop_support import seed_claims
+from tests.core_support._subject_kind_support import fixture_claim_paths
 from tests.test_claims.test_claims import _claim as _test_claim
 from tests.test_claims.test_claims import _claim_type as _test_claim_type
 
@@ -121,7 +122,7 @@ def test_blob_and_path_reads_agree_with_the_whole_tree(tmp_path: Path) -> None:
     tree = instance.tree_at(oid)
 
     assert set(instance.paths_at(oid)) == set(tree)
-    sample = sorted(path for path in tree if path.startswith("claims/"))[:2]
+    sample = fixture_claim_paths(tree)[:2]
     assert instance.blobs_at(oid, sample) == {path: tree[path] for path in sample}
     assert instance.blob_at(oid, sample[0]) == tree[sample[0]]
     assert instance.blob_at(oid, "claims/absent-from-this-generation.json") is None

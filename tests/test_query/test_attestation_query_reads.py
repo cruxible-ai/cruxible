@@ -31,7 +31,9 @@ def test_query_predicate_selection_preserves_results_and_skips_unrelated_attesta
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    claim_type_path = next(p for p in tree if p.startswith("claim-types/"))
+    claim_type_path = next(
+        p for p in tree if p.startswith("claim-types/") and not p.endswith("/slug.json")
+    )
     claim_type = parse_claim_type(tree[claim_type_path], path=claim_type_path)
     query = work_item_query(claim_type=claim_type)
     subject_query = query.model_copy(

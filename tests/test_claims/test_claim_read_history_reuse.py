@@ -17,6 +17,7 @@ from cruxible_core.service.claims.claims import (
 from cruxible_core.service.evidence import evidence as playbill_evidence
 from cruxible_core.service.evidence.evidence import _claim_read_history_index
 from tests.core_support._knowledge_loop_support import seed_claims
+from tests.core_support._subject_kind_support import fixture_key_claims
 
 
 def test_repeated_claim_reads_select_only_their_evidence_and_rebuild_admission_accounts(
@@ -73,8 +74,10 @@ def test_claim_history_mapping_is_bounded_to_its_coordinate(
     previous = instance.coordinate_for_oid(instance.accepted_history()[-2].oid)
     current_index = dict(_claim_read_history_index(instance, coordinate=current).law_evidence)
     previous_index = dict(_claim_read_history_index(instance, coordinate=previous).law_evidence)
-    assert len(previous_index) == 1
-    assert len(current_index) == 2
+    # One and two stated Claims, beside the Subjects' key Claims.
+    keys = set(fixture_key_claims(instance.tree_at(current.git_oid)))
+    assert len(previous_index.keys() - keys) == 1
+    assert len(current_index.keys() - keys) == 2
     assert previous_index.items() <= current_index.items()
 
 

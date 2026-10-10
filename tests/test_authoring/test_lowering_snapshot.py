@@ -12,6 +12,7 @@ import cruxible_core.derived.derived_state as derived_state
 from cruxible_client.contracts.claims import claim_path, parse_claim, render_claim
 from cruxible_core.derived.derived_state import SnapshotTree, fork_tree
 from cruxible_core.proposals.proposals import AuthenticatedActor
+from tests.core_support._subject_kind_support import without_keys
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_change_set_intents import (
     _accept,
@@ -85,8 +86,9 @@ def test_fresh_singleton_lowerings_share_warm_accepted_contenders(
         for path, content in base.items()
         if path.startswith("claims/")
     }
-    assert len(accepted_claims) == 8
-    statement = next(iter(accepted_claims.values())).statement
+    # The eight seeded Claims, beside the two Subjects' key Claims.
+    assert len(without_keys(accepted_claims.values())) == 8
+    statement = without_keys(accepted_claims.values())[0].statement
     # Cold discovery is allowed once; a fresh draft must reuse that accepted root.
     base.claims_for(statement)
     calls: Counter[str] = Counter()

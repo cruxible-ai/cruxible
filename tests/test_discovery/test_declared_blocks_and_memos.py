@@ -87,6 +87,7 @@ from tests.core_support._knowledge_loop_support import (
     authoring,
     seed_claims,
 )
+from tests.core_support._subject_kind_support import _is_key
 from tests.core_support._support import initialize_local
 from tests.test_discovery.test_read_latency_memos import _declared_projection_observation
 from tests.test_indexes.test_projection_next import (
@@ -176,7 +177,7 @@ def _cold_memos() -> Iterator[None]:
 
 
 def _claim_backings(instance: PlaybillInstance) -> tuple[ProjectionClaimBacking, ...]:
-    """A held-list entry for every accepted Claim, in the stamp's own order."""
+    """A held-list entry for every stated accepted Claim, in the stamp's own order."""
 
     facts = build_accepted_query_facts(instance, coordinate=instance.accepted_coordinate())
     return tuple(
@@ -187,6 +188,8 @@ def _claim_backings(instance: PlaybillInstance) -> tuple[ProjectionClaimBacking,
                     statement_digest=row.accepted.statement_digest,
                 )
                 for row in facts.claims
+                # Not the key Claims core wrote when it created the Subjects.
+                if not _is_key(row.accepted.claim)
             ),
             key=lambda item: item.identity.qualified.encode("utf-8"),
         )

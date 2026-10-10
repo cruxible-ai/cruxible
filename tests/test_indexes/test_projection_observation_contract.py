@@ -130,6 +130,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "line_settled_prior_refusals",
         # A Line's unread inbox items, one row per Line with its volume.
         "line_inbox_unread",
+        # Live Subjects of a kind no SubjectKind declares (identity D6).
+        "subject_kind_undeclared",
     }
     assert set(get_args(NextRepairOperation)) == {
         "cruxible.authoring.example",

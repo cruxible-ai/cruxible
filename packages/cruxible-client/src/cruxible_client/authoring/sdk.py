@@ -240,7 +240,7 @@ from cruxible_client.contracts.resolution_contracts import (
     ResolutionContractReference,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.subject_kinds import SubjectKeyPart, render_key_slug
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
@@ -306,6 +306,15 @@ def _subject_parts(value: str) -> tuple[str, str]:
 def _subject_address(value: str) -> SemanticAddress:
     kind, identifier = _subject_parts(value)
     return SemanticAddress.whole_artifact(f"subjects/{kind}/{identifier}.json")
+
+
+def _creation_address(value: object) -> SemanticAddress | None:
+    """The address of a Subject a creation member of the same set lands on, if ``value`` is one."""
+
+    if not isinstance(value, PendingSubjectRef) or value.creation is None:
+        return None
+    kind, _, digest = value.creation.removeprefix("SubjectCreation:").rpartition("@")
+    return SemanticAddress.subject_creation(kind, digest)
 
 
 def _address(value: str | TypedRef, expected: RefKind) -> str:
@@ -997,15 +1006,17 @@ class ChangeSetDraft:
 
     def subject(
         self, definition: SubjectDraft | SubjectShell | SubjectCreationDraft
-    ) -> PendingSubjectRef | None:
+    ) -> PendingSubjectRef:
         """Create one Subject in this changeset, or change an existing one, and return a ref.
 
         A ``SubjectCreationDraft`` (``cx.new_subject(...)``, ``w.<kind>.define(value)``)
         creates a Subject by its kind and key; core assigns its id. The ref it
-        returns -- the readable rendering of the key -- is usable as ``subject=`` or
-        ``value=`` in the same set; a minted kind's id is known only once the set
-        lands, so its creation returns ``None``. A ``SubjectDraft`` or shell is a
-        successor of an existing Subject (to retire it, say); it never creates one.
+        returns names that creation member, and is usable as ``subject=`` or
+        ``value=`` in the same set: core resolves it to the Subject the member
+        lands on -- the one it creates, or the existing one its key names -- for a
+        keyed and a minted kind alike. The submit result reports the id. A
+        ``SubjectDraft`` or shell is a successor of an existing Subject (to retire
+        it, say); it never creates one.
 
         Next: ``.claim(subject=ref, ...)`` about it, then ``.submit()``.
         """
@@ -1019,11 +1030,9 @@ class ChangeSetDraft:
                     decisions={"kind": "subject", "subject_kind": definition.creation.subject_kind},
                 )
             )
-            address = definition.address
-            return (
-                None
-                if address is None
-                else PendingSubjectRef(address=address, coordinate=self._playbill.coordinate)
+            identity = definition.creation.member_identity
+            return PendingSubjectRef(
+                address=identity, coordinate=self._playbill.coordinate, creation=identity
             )
         shell = definition.shell if isinstance(definition, SubjectDraft) else definition
         self._members.append(
@@ -1744,23 +1753,14 @@ class SubjectCreationDraft(_IntentDraft):
     creation: SubjectCreationAuthoringPayload
 
     @property
-    def address(self) -> str | None:
-        """``kind/<rendering of the key as given>``; None for a minted kind.
+    def member_identity(self) -> str:
+        """The creation member's identity: what a ref to the Subject it lands on names.
 
-        Core canonicalizes the key by each key ClaimType's form before rendering
-        it, so a form that removes characters (``strip_punctuation``) can name the
-        Subject differently: the submit result reports the id assigned.
+        No id is predicted from the key: core resolves the member to the Subject it
+        creates or reuses, and the submit result reports the id.
         """
 
-        creation = self.creation
-        values = (
-            [creation.key_value]
-            if creation.key_value is not None
-            else [part.value for part in creation.key]
-        )
-        if not values:
-            return None
-        return f"{creation.subject_kind}/{render_key_slug(values)}"
+        return self.creation.member_identity
 
 
 @dataclass(frozen=True)
@@ -3272,7 +3272,9 @@ class Cruxible:
             statement_object = LiteralClaimObject(value=normalize_canonical(value.value))
         elif isinstance(value, SubjectRef):
             self._assert_coordinate(value.coordinate)
-            statement_object = SubjectClaimObject(address=_subject_address(value.address))
+            statement_object = SubjectClaimObject(
+                address=_creation_address(value) or _subject_address(value.address)
+            )
         elif isinstance(value, str) and _SUBJECT_RE.fullmatch(value):
             object_kind = self._claim_type_object_kind(
                 predicate_name=predicate_name,
@@ -3350,7 +3352,7 @@ class Cruxible:
         )
         payload_values = dict(
             statement=AuthoringClaimStatement(
-                subject=_subject_address(subject_name),
+                subject=_creation_address(subject) or _subject_address(subject_name),
                 predicate=predicate_name,
                 qualifier=qualifier,
                 object=statement_object,

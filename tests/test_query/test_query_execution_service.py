@@ -98,8 +98,9 @@ def test_accepted_facts_carry_every_live_claim_with_its_adjudication_rule(
 
     assert facts.coordinate == instance.accepted_coordinate()
     assert len(facts.subjects) == 2
-    assert len(facts.claims) == 2
-    assert {row.accepted.claim.statement.predicate for row in facts.claims} == {PREDICATE}
+    stated = [row for row in facts.claims if not _key_row(row)]
+    assert len(stated) == 2
+    assert {row.accepted.claim.statement.predicate for row in stated} == {PREDICATE}
     assert all(row.rule.claim_type_digest for row in facts.claims)
     assert all(row.referent_current for row in facts.claims)
 
@@ -269,5 +270,11 @@ def test_query_fact_projection_uses_history_locator_without_enumeration(
         coordinate=instance.accepted_coordinate(),
     )
 
-    assert len(facts.claims) == 2
+    assert len([row for row in facts.claims if not _key_row(row)]) == 2
     assert calls == 0
+
+
+def _key_row(row: object) -> bool:
+    """A work item's key Claim (its slug), written when core created it."""
+
+    return row.accepted.claim.statement.predicate.endswith(".slug")  # type: ignore[attr-defined]

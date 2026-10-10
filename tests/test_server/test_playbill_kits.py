@@ -430,12 +430,17 @@ def test_a_later_release_installs_fresh_on_its_own(worlds: tuple[_World, _World]
     assert consumer.tree()[_path(SEATS)] == later.contents()[_path(SEATS)]
 
 
-def _create_by_slug(world: _World, draft: ChangeSetDraft, kind: str, slug: str) -> None:
-    """Declare ``kind`` keyed by its slug and create ``kind/<slug>`` in ``draft``."""
+def _create_by_slug(world: _World, draft: ChangeSetDraft, kind: str, slug: str) -> typing.Any:
+    """Declare ``kind`` keyed by its slug and create ``kind/<slug>`` in ``draft``.
+
+    Returns the creation's pending reference, which core resolves to the path it
+    assigns (``kind/<slug>``).
+    """
 
     declare_by_slug(draft, kind)
     created = draft.subject(world.pb.new_subject(kind, key=slug))
-    assert created is not None and created.address == f"{kind}/{slug}"
+    assert created is not None and created.creation is not None
+    return created
 
 
 def _claim_paths(world: _World, predicate: str) -> list[str]:
@@ -457,9 +462,9 @@ def test_changing_a_claim_type_carries_its_live_claims_as_a_succession_would(
     publisher.author(_claim_type(SEATS, {"type": "integer"}))
     consumer.add(publisher.build("1.0.0"))
     draft = consumer.pb.changes(rationale="Record Acme's seats.")
-    _create_by_slug(consumer, draft, "acme.account", "acme")
+    created = _create_by_slug(consumer, draft, "acme.account", "acme")
     draft.claim(
-        subject="acme.account/acme",
+        subject=created,
         predicate=SEATS,
         value=50,
         role="observation",
@@ -515,9 +520,9 @@ def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
     publisher.author(ClaimType.model_validate(replacing.model_dump(mode="python")))
     consumer.add(publisher.build("1.0.0"))
     draft = consumer.pb.changes(rationale="Record Acme's seats.")
-    _create_by_slug(consumer, draft, "acme.account", "acme")
+    created = _create_by_slug(consumer, draft, "acme.account", "acme")
     draft.claim(
-        subject="acme.account/acme",
+        subject=created,
         predicate=SEATS,
         value=50,
         role="observation",
@@ -1454,9 +1459,9 @@ def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_clai
     )
     consumer.author(local)
     draft = consumer.pb.changes(rationale="Record where one order came from.")
-    _create_by_slug(consumer, draft, "local.order", "one")
+    created = _create_by_slug(consumer, draft, "local.order", "one")
     draft.claim(
-        subject="local.order/one",
+        subject=created,
         predicate="local.order.source",
         value=held_digest,
         role="observation",

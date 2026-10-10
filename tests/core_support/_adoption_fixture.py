@@ -119,7 +119,7 @@ from cruxible_core.proposals.settlement import (
     render_generation_descriptor,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
-from tests.core_support._subject_kind_support import declare_created_kinds
+from tests.core_support._subject_kind_support import history_before_identity
 from tests.core_support._support import client_material
 
 SUBJECT_KIND = "project.work_item"
@@ -470,38 +470,40 @@ class _Builder:
 
         started = time.monotonic()
         sequence = self.sequence + 1
-        candidate_tree = {
-            **self.tree,
-            **declare_created_kinds(self.tree, dict(members), compiler=self.base.compiler),
-        }
-        evaluation = evaluate_proposal_tree(
-            base_tree=self.tree,
-            current_tree=self.tree,
-            proposed_tree=candidate_tree,
-            current=self.base,
-            bodies=self.instance.body_store(),
-            timestamp=_timestamp(sequence),
-            rebased=False,
-            actor_id="owner",
-            wire_version=wire_version,
-        )
+        # This builder writes ledger history directly, as the builds before Subject
+        # identity wrote it (``wire_version`` reaches back further still): its
+        # Subjects are history an older build accepted, not new creations.
+        candidate_tree = {**self.tree, **members}
+        with history_before_identity(None):
+            evaluation = evaluate_proposal_tree(
+                base_tree=self.tree,
+                current_tree=self.tree,
+                proposed_tree=candidate_tree,
+                current=self.base,
+                bodies=self.instance.body_store(),
+                timestamp=_timestamp(sequence),
+                rebased=False,
+                actor_id="owner",
+                wire_version=wire_version,
+            )
         if evaluation.candidate is None or evaluation.diagnostics:
             raise AssertionError(f"fixture candidate refused: {evaluation.diagnostics}")
         # The daemon re-commits the evaluated tree (proposals.ProposalService.propose)
         # and settles that OID, so the fixture must settle the same bytes: the
         # evaluated tree carries the derivative cards the settlement re-derives.
         candidate_tree = dict(evaluation.tree)
-        bundle = prepare_generation(
-            self.instance._ledger,
-            base=self.base,
-            candidate_tree=candidate_tree,
-            candidate=evaluation.candidate,
-            approval_submissions=(self._sign(evaluation.candidate.candidate_digest),),
-            bodies=self.instance.body_store(),
-            actor_binding=ChangeActorBinding(actor_id="owner"),
-            proposal_actor_id="owner",
-            sequence=sequence,
-        )
+        with history_before_identity(None):
+            bundle = prepare_generation(
+                self.instance._ledger,
+                base=self.base,
+                candidate_tree=candidate_tree,
+                candidate=evaluation.candidate,
+                approval_submissions=(self._sign(evaluation.candidate.candidate_digest),),
+                bodies=self.instance.body_store(),
+                actor_binding=ChangeActorBinding(actor_id="owner"),
+                proposal_actor_id="owner",
+                sequence=sequence,
+            )
         parent_generation_root = self.base.generation_root
         ledger = self.instance._ledger
         if not ledger.compare_and_set_main(bundle.oid, expected_oid=bundle.settlement.base_oid):
