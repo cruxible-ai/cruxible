@@ -863,3 +863,45 @@ def test_a_sibling_subject_item_keeps_the_reference_a_creation_member(
     address = _procedure_address(instance, {"slug": "other name"}, created=(item,))
     assert address.selector.scheme == "subject-creation-v1"
     assert item.member_identity.endswith(address.selector.value)
+
+
+# Complexity (delta follow-up): a batch overlay encodes each key once.
+
+
+def test_a_batch_of_composite_creations_encodes_each_key_a_constant_number_of_times(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review probe ``count_overlay.py``: was N(N-1)/2 + 2N encodings for N creations."""
+
+    import cruxible_core.indexes.subject_identity as identity
+    from cruxible_core.authoring.lowering import subject_creation_paths
+
+    base = instance.accepted_coordinate()
+    base_tree = instance.immutable_tree_at(base.git_oid)
+    original = identity.key_encoding
+    counts: dict[int, int] = {}
+    for size in (10, 100):
+        seen = [0]
+
+        def counted(key: Any, seen: list[int] = seen) -> str:
+            seen[0] += 1
+            return original(key)
+
+        monkeypatch.setattr(identity, "key_encoding", counted)
+        members = tuple(
+            SubjectCreationAuthoringPayload(
+                subject_kind=PAIR,
+                key=(
+                    SubjectKeyPart(predicate=f"{PAIR}.left", value="common"),
+                    SubjectKeyPart(predicate=f"{PAIR}.right", value=f"r{number}"),
+                ),
+            )
+            for number in range(size)
+        )
+        paths = subject_creation_paths(
+            instance, operation="AIT-counted", base=base, base_tree=base_tree, members=members
+        )
+        monkeypatch.setattr(identity, "key_encoding", original)
+        assert len(paths) == size
+        counts[size] = seen[0]
+    assert counts[100] <= 10 * counts[10]

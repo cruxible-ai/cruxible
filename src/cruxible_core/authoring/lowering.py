@@ -3470,12 +3470,17 @@ def members_identity_overlay(
         kind_rule = declared(subject_kind_of(subject)[0])
         if kind_rule is not None and predicate in kind_rule.keys:
             affected[subject] = kind_rule.keys
+    added_values: dict[tuple[str, str], list[object]] = {}
     for subject, predicate, value in added:
+        added_values.setdefault((subject, predicate), []).append(value)
         if predicate == "semantic.alias" and isinstance(value, str):
             overlay.aliases_added.add((subject, normalize_discovery_term(value)))
         kind_rule = declared(subject_kind_of(subject)[0])
         if kind_rule is not None and predicate in kind_rule.keys:
             affected[subject] = kind_rule.keys
+    # Each key ClaimType is read once, and each owner's added values were grouped
+    # above: the overlay is linear in the change, not owners times members.
+    claim_types: dict[str, ClaimType | None] = {}
     for subject, keys in affected.items():
         parts: list[tuple[str, SubjectKeyValue]] = []
         for predicate in keys:
@@ -3484,14 +3489,18 @@ def members_identity_overlay(
                 for identity, value in live_key_claims(connection, subject, predicate)
                 if identity.removeprefix("Claim:") not in removed
             ]
-            claim_type = _claim_type_in_change(predicate, members=members, base_tree=base_tree)
-            for other, other_predicate, value in added:
-                if other != subject or other_predicate != predicate or claim_type is None:
-                    continue
-                try:
-                    values.append(canonicalize_literal(value, effective_canonical_form(claim_type)))
-                except CanonicalFormDidNotConverge:
-                    values.append(None)
+            if predicate not in claim_types:
+                claim_types[predicate] = _claim_type_in_change(
+                    predicate, members=members, base_tree=base_tree
+                )
+            claim_type = claim_types[predicate]
+            if claim_type is not None:
+                form = effective_canonical_form(claim_type)
+                for value in added_values.get((subject, predicate), ()):
+                    try:
+                        values.append(canonicalize_literal(value, form))
+                    except CanonicalFormDidNotConverge:
+                        values.append(None)
             if len(values) != 1 or key_value_problem(values[0]) is not None:
                 break
             parts.append((predicate, cast(SubjectKeyValue, values[0])))

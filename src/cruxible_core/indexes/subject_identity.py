@@ -476,11 +476,22 @@ class IdentityView:
         return tuple(sorted(path for path in found if self.live(path)))
 
     def add_creation(self, path: str, key: KeyTuple | None) -> None:
-        """Lay one Subject the change creates over the view (it holds ``key``)."""
+        """Lay one Subject the change creates over the view (it holds ``key``).
 
+        The holder map already built is extended in place, so a batch of N
+        creations encodes each key once, never N(N-1)/2 times.
+        """
+
+        held = self.overlay.keys.get(path)
         self.overlay.subjects[path] = True
         self.overlay.keys[path] = key
-        self._overlay_holders = None
+        if self._overlay_holders is None:
+            return
+        kind = subject_kind_of(path)[0]
+        if held is not None:
+            self._overlay_holders.get((kind, key_encoding(held)), set()).discard(path)
+        if key is not None:
+            self._overlay_holders.setdefault((kind, key_encoding(key)), set()).add(path)
 
     def taken(self, kind: str, subject_id: str) -> bool:
         """Whether a new ``kind/<id>`` would reuse a name: a Subject's id, or a live alias."""
@@ -1084,20 +1095,22 @@ def candidate_identity_issues(
             f"Claim:{path.rsplit('/', 1)[-1].removesuffix('.json')}" for path in touched
         }
 
+        # The change's live key-Claim values, grouped once by owner and predicate:
+        # reading one owner's key part costs its own rows, not every touched Claim.
+        touched_values: dict[tuple[str, str], list[SubjectKeyValue | None]] = {}
+        for _before, after in touched.values():
+            if after is not None and after.live:
+                touched_values.setdefault((after.subject_path, after.predicate), []).append(
+                    after.value
+                )
+
         def values(subject: str, predicate: str) -> list[SubjectKeyValue | None]:
-            found = [
+            found: list[SubjectKeyValue | None] = [
                 value
                 for identity, value in live_key_claims(connection, subject, predicate)
                 if identity not in touched_identities
             ]
-            found.extend(
-                after.value
-                for _before, after in touched.values()
-                if after is not None
-                and after.live
-                and after.subject_path == subject
-                and after.predicate == predicate
-            )
+            found.extend(touched_values.get((subject, predicate), ()))
             return found
 
         keys_now: dict[str, KeyTuple] = {}
