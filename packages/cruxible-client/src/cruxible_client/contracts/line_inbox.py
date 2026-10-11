@@ -67,7 +67,7 @@ INBOX_ITEM_SELECTOR_PATTERN = r"^INB-[0-9a-f]{12,64}$"
 #: A Subject reference (``kind/id``); the same grammar as ``contracts.write.SUBJECT_REF_PATTERN``,
 #: restated so this module stays importable from the contracts package root.
 INBOX_SUBJECT_REF_PATTERN = (
-    r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$"
+    r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/[^\x00-\x1f\x7f]{1,1024}$"
 )
 _ITEM_ID = re.compile(INBOX_ITEM_ID_PATTERN)
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -105,7 +105,10 @@ class InboxLinkProposal(_StrictInboxModel):
 
 
 class InboxLinkSubject(_StrictInboxModel):
-    """Link an item to a Subject (``kind/id``), such as a note about it."""
+    """Link an item to a Subject (``kind/id``, or ``kind/<alias or key value>``).
+
+    The daemon records the Subject it resolves to, as ``kind/id``.
+    """
 
     kind: Literal["subject"] = "subject"
     subject: str = Field(pattern=INBOX_SUBJECT_REF_PATTERN)

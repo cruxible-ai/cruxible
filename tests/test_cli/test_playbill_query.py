@@ -54,6 +54,7 @@ class _StubClient:
             ),
             truncated=True,
             next_cursor="CURSOR",
+            remaining=7,
             notes=("showing 12 of 13 predicates; left out: x",),
             receipt=contracts.QueryReceipt(
                 mode="inline",
@@ -120,7 +121,7 @@ def test_compact_query_prints_a_table_of_values_flags_and_the_next_command(
     assert "dev.roadmap_item/perf, dev.roadmap_item/ops" in lines[1]
     assert lines[1].rstrip().endswith("stale")
     assert "note: showing 12 of 13 predicates" in result.output
-    assert lines[-1].startswith("next: cruxible query dev.roadmap_item --where")
+    assert lines[-1].startswith("truncated: 7 more rows; next: cruxible query dev.roadmap_item")
     assert lines[-1].endswith("--cursor CURSOR")
 
 
@@ -275,3 +276,99 @@ def test_status_claims_budgets_and_receipt_reach_the_request(stub: _StubClient) 
     request = stub.requests[-1]
     assert request.budgets is not None and request.budgets.max_results == 7
     assert request.receipt == "full"
+
+
+class _PagingClient:
+    """An answer of ``total`` rows served page by page, as the daemon pages it."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.requests: list[QueryRequest] = []
+
+    def query(self, instance_id: str, *, request: QueryRequest) -> contracts.QueryResultRecord:
+        self.requests.append(request)
+        start = 0 if request.cursor is None else int(request.cursor)
+        end = min(start + request.limit, self.total)
+        rows = tuple(
+            {"subject": f"dev.item/i{index}", "subject_id": f"i{index}", "flags": []}
+            for index in range(start, end)
+        )
+        return contracts.QueryResultRecord(
+            kind=request.kind,
+            columns=(),
+            rows=rows,
+            truncated=end < self.total,
+            next_cursor=str(end) if end < self.total else None,
+            remaining=self.total - end,
+            receipt=contracts.QueryReceipt(
+                mode="inline",
+                spec_digest="sha256:" + "5" * 64,
+                coordinate=COORDINATE,  # type: ignore[arg-type]
+                evaluation_time=datetime(2026, 9, 28, tzinfo=UTC),
+            ),
+        )
+
+
+def _paging(monkeypatch: pytest.MonkeyPatch, total: int) -> _PagingClient:
+    client = _PagingClient(total)
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    return client
+
+
+def test_a_limit_past_one_page_follows_the_cursor_into_one_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A QueryDefinition may answer 2000 rows: --limit reads them, 500 per page."""
+
+    client = _paging(monkeypatch, 2600)
+
+    result = _run("dev.item", "--limit", "2000")
+
+    assert result.exit_code == 0, result.output
+    assert [request.limit for request in client.requests] == [500, 500, 500, 500]
+    assert [request.cursor for request in client.requests] == [None, "500", "1000", "1500"]
+    lines = result.output.splitlines()
+    assert sum(1 for line in lines if line.startswith("dev.item/")) == 2000
+    assert lines[-1].startswith("truncated: 600 more rows; next: cruxible query dev.item")
+    assert lines[-1].endswith("--limit 2000 --cursor 2000")
+
+    as_json = json.loads(_run("dev.item", "--limit", "1200", "--json").output)
+    assert len(as_json["rows"]) == 1200
+    assert as_json["remaining"] == 1400 and as_json["next_cursor"] == "1200"
+
+
+def test_all_reads_the_whole_answer_and_says_nothing_is_left(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _paging(monkeypatch, 1234)
+
+    result = _run("dev.item", "--all")
+
+    assert result.exit_code == 0, result.output
+    assert [request.limit for request in client.requests] == [500, 500, 500]
+    lines = result.output.splitlines()
+    assert sum(1 for line in lines if line.startswith("dev.item/")) == 1234
+    assert not any(line.startswith(("truncated", "next")) for line in lines)
+
+    both = _run("dev.item", "--all", "--limit", "10")
+    assert both.exit_code != 0 and "--limit or --all" in both.output
+    too_many = _run("dev.item", "--limit", "5001")
+    assert too_many.exit_code != 0
+
+
+def test_a_capped_answer_says_so_without_a_next_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _paging(monkeypatch, 3)
+    original = client.query
+
+    def capped(instance_id: str, *, request: QueryRequest) -> contracts.QueryResultRecord:
+        return original(instance_id, request=request).model_copy(
+            update={"truncated": True, "capped": ("max_results=5000",)}
+        )
+
+    client.query = capped  # type: ignore[method-assign]
+    result = _run("dev.item")
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[-1] == (
+        "truncated: capped at max_results=5000; narrow the query with --where"
+    )

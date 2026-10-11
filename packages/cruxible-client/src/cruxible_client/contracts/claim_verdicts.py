@@ -128,17 +128,21 @@ def claim_adjudication_rule(
     claim_type: ClaimType,
     *,
     claim_type_digest: str,
+    origin_supports: bool = False,
 ) -> ClaimAdjudicationRuleAny:
     """Compile the conservative rule from the exact accepted ClaimType.
 
     Every ClaimType compiles the v1 rule except a v7 one whose evidence
-    requirement is ``none``, which compiles the v2 rule.
+    requirement is ``none``, which compiles the v2 rule. ``origin_supports``
+    compiles the v2 rule whatever the requirement: Claim law v2 revision 9
+    asks it for a key Claim written with its Subject's creation, which the
+    creation itself covers.
     """
 
     ArtifactDigest.from_tagged(claim_type_digest)
     rule_type: type[ClaimAdjudicationRuleV1] | type[ClaimAdjudicationRule] = (
         ClaimAdjudicationRule
-        if effective_evidence_requirement(claim_type) == "none"
+        if origin_supports or effective_evidence_requirement(claim_type) == "none"
         else ClaimAdjudicationRuleV1
     )
     return rule_type(

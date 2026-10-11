@@ -110,7 +110,9 @@ from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.triggers import Trigger
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.write import SUBJECT_KIND_PATTERN, SUBJECT_REF_TEXT_PATTERN
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.discovery import (
@@ -161,9 +163,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 
 _CLAIM_ID = re.compile(r"^CLM-[0-9a-f]{32}$")
 _CLAIM_PREFIX = re.compile(r"^CLM-[0-9a-f]{4,31}$")
-_SUBJECT = re.compile(
-    r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/(?P<id>[a-z][a-z0-9_.-]{0,255})$"
-)
+_SUBJECT = re.compile(rf"^(?P<kind>{SUBJECT_KIND_PATTERN})/(?P<id>{SUBJECT_REF_TEXT_PATTERN})$")
 _SERVICE_ACCESS = BodyAccessContext(principal_id="playbill-service", can_read_body=True)
 _MAX_CANDIDATES = 10
 _MAX_CHANGES = 25
@@ -425,7 +425,14 @@ def resolve_get_ref(
         if kind == "principal":
             return _resolve_principal(instance, coordinate, rest, ref=value, surface=surface)
         with instance.bind_accepted_projection(coordinate) as projection:
-            return _resolve_typed(projection, kind, rest, ref=value, surface=surface)
+            return _resolve_typed(
+                projection,
+                kind,
+                rest,
+                ref=value,
+                surface=surface,
+                key_reader=_tree_key_reader(instance, coordinate),
+            )
     with instance.bind_accepted_projection(coordinate) as projection:
         if value.endswith(".json") and "/" in value:
             rows = projection.typed.envelopes(paths=(value,))
@@ -436,8 +443,32 @@ def resolve_get_ref(
         if value.startswith("CLM-"):
             return _resolve_typed(projection, "claim", value, ref=value, surface=surface)
         if "/" in value:
-            return _resolve_typed(projection, "subject", value, ref=value, surface=surface)
+            return _resolve_typed(
+                projection,
+                "subject",
+                value,
+                ref=value,
+                surface=surface,
+                key_reader=_tree_key_reader(instance, coordinate),
+            )
         return _resolve_bare(projection, value, surface=surface)
+
+
+def _tree_key_reader(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> Callable[[], KeyReader]:
+    """The accepted tree's single-key reader, read only when a reference needs it."""
+
+    cached: list[KeyReader] = []
+
+    def read() -> KeyReader:
+        from cruxible_core.indexes.subject_identity import tree_key_reader
+
+        if not cached:
+            cached.append(tree_key_reader(instance.immutable_tree_at(coordinate.git_oid)))
+        return cached[0]
+
+    return read
 
 
 def _resolve_proposal(instance: PlaybillInstance, selector: str) -> ResolvedRef:
@@ -601,6 +632,7 @@ def _resolve_typed(
     *,
     ref: str,
     surface: ReadSurface,
+    key_reader: Callable[[], KeyReader] | None = None,
 ) -> ResolvedRef:
     if kind == "claim":
         return _resolve_claim(projection, name.removeprefix("Claim:"), ref=ref, surface=surface)
@@ -608,6 +640,12 @@ def _resolve_typed(
         return _resolve_claim_type(projection, name, ref=ref, surface=surface)
     if kind == "subject":
         name = name.removeprefix("Subject:")
+        # A Subject reference resolves in the common order -- exact live id,
+        # alias, key, exact retired id -- so an exact retired id never shadows
+        # the live Subject an alias or key names (review H F-002).
+        found = _resolve_subject_text(projection, name, ref=ref, key_reader=key_reader)
+        if found is not None:
+            return found
     identity = f"{_QUALIFIER[kind]}:{name}"
     row = _envelope(projection, identity)
     if row is not None:
@@ -648,6 +686,43 @@ def _resolve_typed(
         for item in nearest(name, names)
     )
     raise _not_found(what, ref, candidates, surface=surface, section=_ORIENT_SECTION.get(kind))
+
+
+def _resolve_subject_text(
+    projection: Any, name: str, *, ref: str, key_reader: Callable[[], KeyReader] | None
+) -> ResolvedRef | None:
+    """``kind/<text>``: the Subject the shared resolver names, or None when none.
+
+    Its order is exact live id, alias, single key, exact retired id, as every
+    write, query and inbox link reads a reference; several alias or key holders
+    are ambiguous and refuse, even in front of an exact retired id. Only an
+    artifact path (``subjects/<kind>/<id>.json``) reads an exact envelope as is.
+    """
+
+    from cruxible_core.indexes.subject_aliases import resolve_subject_ref
+
+    match = _SUBJECT.fullmatch(name)
+    if match is None:
+        return None
+    lazy: KeyReader | None = None
+    if key_reader is not None:
+        reader = key_reader
+
+        # The tree is read only when the key step is reached (not for a live id).
+        def lazy(kind: str, text: str) -> KeyTuple | None:
+            return reader()(kind, text)
+
+    resolution = resolve_subject_ref(
+        projection.typed.connection, match["kind"], match["id"], key_reader=lazy
+    )
+    if resolution.ambiguous:
+        raise _ambiguous(ref, list(resolution.candidates))
+    if resolution.ref is None:
+        return None
+    row = _envelope(projection, f"Subject:{resolution.ref}")
+    if row is None:
+        return None
+    return ResolvedRef("subject", row.identity, _display("subject", row.identity), row.path)
 
 
 def _names_of(projection: Any, kind: GetRefKind) -> tuple[str, ...]:

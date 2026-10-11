@@ -253,3 +253,36 @@ def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb
         TriggerAuthoringPayload(
             name="both", schedule=landing, line_name="consume-feed", action="evidence.sweep"
         )
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_a_claim_names_its_subject_and_value_by_kind_and_key(pb, batch):
+    """No predicted id: the key reference rides to lowering as a subject-key-v1 address."""
+
+    from cruxible_client.contracts.subject_kinds import SubjectKeyReference
+
+    target = pb.changes(rationale="Assessed") if batch else pb
+    draft = target.claim(
+        **{
+            **claim_args(),
+            "subject": SubjectKeyReference(
+                subject_kind="sec.assessment", key={"release": "R1", "cve": "CVE-2026-0001"}
+            ),
+            "value": SubjectKeyReference(subject_kind="sec.package", key={"slug": "Demo"}),
+        },
+        self_source="assessed",
+    )
+    compiled = draft._compiled() if batch else draft
+    payload = compiled.payload.members[0] if batch else compiled.payload
+    statement = payload.statement
+    assert statement.subject.subject_key_reference == (
+        "sec.assessment",
+        {"cve": "CVE-2026-0001", "release": "R1"},
+    )
+    assert statement.object.address.subject_key_reference == ("sec.package", {"slug": "Demo"})
+    # A key reference asserts no accepted address at the read coordinate.
+    assert not [
+        item
+        for item in compiled.reference_expectations
+        if item.payload_path in {"statement.subject", "statement.object.address"}
+    ]

@@ -345,7 +345,7 @@ producing graph-format-6 definitions:
 - `ProcedureInput`, the raw definition;
 - `Sequence` from `cruxible_client.authoring.procedures`, a typed step list
   (StateTap, Source, Call, Transform, Project, Guard, EmitCapture,
-  ProposeChangeSet, SettleChangeSet, Halt) with `.preview()` before
+  PostInbox, ProposeChangeSet, SettleChangeSet, Halt) with `.preview()` before
   submitting;
 - `ProcedureSource`: a function decorated with `@procedure` from
   `cruxible_client.authoring.source`, compiled into the same graph; see the

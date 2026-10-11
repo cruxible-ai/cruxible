@@ -89,7 +89,15 @@ def _severity_type() -> ClaimType:
     )
 
 
-def subject_world(tmp_path: Path, templates: tuple[object, ...]):  # type: ignore[no-untyped-def]
+SELF_SOURCE_NAMESPACE = "capture-contracts/playbill.coordinator-self-source-v1.json"
+
+
+def subject_world(  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+    templates: tuple[object, ...],
+    *,
+    namespace: tuple[str, ...] = (SELF_SOURCE_NAMESPACE, "claims", f"subjects/{KIND}"),
+):
     """The proposal world, with packages keyed by slug and a mandate reaching them."""
 
     instance, owner, root, line, procedure = delivery.proposal_world(
@@ -97,17 +105,9 @@ def subject_world(tmp_path: Path, templates: tuple[object, ...]):  # type: ignor
     )
     slug = bare_slug_claim_type(KIND)
     severity = _severity_type()
-    # The key Claims cite the item's own words: the first such Claim installs the
-    # coordinator self-source CaptureContract, so the mandate reaches it too.
-    mandate = fixtures._line_mandate(procedure).model_copy(
-        update={
-            "namespace": (
-                "capture-contracts/playbill.coordinator-self-source-v1.json",
-                "claims",
-                f"subjects/{KIND}",
-            )
-        }
-    )
+    # Key Claims citing the item's own words install the coordinator self-source
+    # CaptureContract with the first such Claim, so the default mandate reaches it.
+    mandate = fixtures._line_mandate(procedure).model_copy(update={"namespace": namespace})
     fixtures._accept_more(
         instance,
         owner,
@@ -558,3 +558,37 @@ def test_settle_preparation_refuses_the_same_unstable_terminal(
     with pytest.raises(ProposalDeliveryRefused) as refused:
         prepare(sink, **{**arguments, "request": settle})
     assert refused.value.details["code"] == "cruxible.procedure.identity_reference_unstable"
+
+
+def test_a_subject_item_citing_the_runs_capture_writes_a_supported_key_claim(
+    tmp_path: Path,
+) -> None:
+    """The key ClaimType has no evidence rule and the mandate no self-source entry.
+
+    The key Claim cites the run's own Capture (no ``source``), which no rule of the
+    example-shaped key ClaimType admits: its Subject's creation covers it (Claim
+    law v2 revision 9), so the proposal lands and the key Claim is supported.
+    """
+
+    from cruxible_client.contracts.claim_reads import ClaimValuesRequest
+    from cruxible_core.service.claims.claim_reads import service_read_claim_values
+    from tests.core_support._retirement_support import activate_proposal
+
+    # Keyed by what the run read, so the item's closure reaches the Source Capture.
+    item = subject_item("$steps.result.severity")
+    del item["source"]
+    instance, owner, root, line = subject_world(
+        tmp_path, (item,), namespace=("claims", f"subjects/{KIND}")
+    )
+
+    egress = _delivered(instance, delivery.run_line(instance, root, line))
+    assert not any(path.startswith("capture-contracts/") for path in egress.target_paths)
+    activate_proposal(instance, owner, egress.proposal_id)
+
+    (row,) = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequest(
+            subject_paths=(f"subjects/{KIND}/high.json",), predicates=(SLUG,)
+        ),
+    ).values
+    assert row.verdict == "supported"

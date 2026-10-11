@@ -42,6 +42,9 @@ from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claims import ClaimStatementCard as ClaimStatementCard
 from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.compact_query import (
+    QUERY_ANSWER_MAX_RESULTS as QUERY_ANSWER_MAX_RESULTS,
+)
+from cruxible_client.contracts.compact_query import (
     QUERY_DEFAULT_LIMIT as QUERY_DEFAULT_LIMIT,
 )
 from cruxible_client.contracts.compact_query import (

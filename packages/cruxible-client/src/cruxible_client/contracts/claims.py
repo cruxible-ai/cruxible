@@ -65,6 +65,7 @@ from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
     AcceptedClaimType,
     ClaimType,
+    EvidenceRequirement,
     claim_type_accepts_subject,
     effective_evidence_requirement,
     effective_revision_evidence,
@@ -1821,6 +1822,7 @@ def evaluate_claim_law(
     require_new_citation_proof: bool = True,
     subject_lifecycle_retirement: bool = False,
     accepted_subject_version: Callable[[str, str], bool] | None = None,
+    subject_creation_key: bool = False,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
 
@@ -1843,11 +1845,12 @@ def evaluate_claim_law(
     - `captured` refuses a new Claim or revision with no admitted Capture under a
       declared contract; `none` records the Claim's own origin as support.
 
-    With `require_new_citation_proof`, a Capture cited for the first time (not
-    inherited unchanged from the accepted predecessor) must carry daemon proof
-    that a run produced it: a journal record naming its exact digest, and no
-    version-1 envelope under a contract that is not self-asserted. A replay of
-    an already-accepted acceptance passes False, so accepted state stays valid.
+    With `subject_creation_key` (Claim law v2 revision 9 alone, and only for a key
+    Claim core writes as part of creating its Subject: new in the change, about a
+    Subject the change creates, its predicate a key of that Subject's kind) the
+    creation covers the Claim: it is judged as requirement `none` whatever its
+    ClaimType states, so its origin supports it and no evidence rule needs to
+    admit it.
     """
 
     try:
@@ -1867,8 +1870,14 @@ def evaluate_claim_law(
     revision_evidence = (
         effective_revision_evidence(contract) if claim_type_v7_semantics else "accumulate"
     )
-    evidence_requirement = (
-        effective_evidence_requirement(contract) if claim_type_v7_semantics else "self"
+    # Only a new Claim: a revision of a key Claim is judged by its ClaimType.
+    creation_covered = subject_creation_key and predecessor is None
+    evidence_requirement: EvidenceRequirement = (
+        "none"
+        if creation_covered
+        else effective_evidence_requirement(contract)
+        if claim_type_v7_semantics
+        else "self"
     )
     carry = predecessor is not None and claim.backing == predecessor.claim.backing
     replacing = bool(
@@ -2705,6 +2714,7 @@ def evaluate_claim_law(
     rule = claim_adjudication_rule(
         contract,
         claim_type_digest=claim_type.artifact_digest,
+        origin_supports=creation_covered,
     )
     adjudication_rule_digest = claim_adjudication_rule_digest(rule)
     basis = tuple(sorted(evidence_basis, key=lambda item: item.encode("utf-8")))

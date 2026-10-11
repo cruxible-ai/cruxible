@@ -4810,8 +4810,16 @@
                 "title": "Source"
               },
               "subject": {
-                "title": "Subject",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectKeyReference"
+                  }
+                ],
+                "description": "kind/<id, alias or single key value>, or {subject_kind, key} naming the Subject by its kind's key: the one live holder, else the one a subject member of the same change set creates (no id is predicted).",
+                "title": "Subject"
               }
             },
             "required": [
@@ -8288,6 +8296,41 @@
             "title": "SubjectInput",
             "type": "object"
           },
+          "SubjectKeyReference": {
+            "additionalProperties": false,
+            "description": "A Subject named by its kind's key: the one holding it, or the one a change creates.\n\nA Procedure item names a Subject this way when the run has a key value but no\nid: it resolves through the key index (and the aliases) to the existing\nSubject, or to the Subject an item of the same terminal creates with that\nkey. ``key`` maps each key ClaimType (by predicate, or by its last name\nunder the kind) to its value; it is canonicalized by each key's form.",
+            "properties": {
+              "key": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "maxProperties": 8,
+                "minProperties": 1,
+                "title": "Key",
+                "type": "object"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind",
+              "key"
+            ],
+            "title": "SubjectKeyReference",
+            "type": "object"
+          },
           "SubjectKindInput": {
             "additionalProperties": false,
             "description": "How core names Subjects of one kind: by key ClaimTypes, or by minted ids.\n\nEvery new Subject is of a kind with an accepted SubjectKind. ``keys`` names\nthe key ClaimTypes (by predicate, in key order): each a ClaimType v8 about\nthis kind only, literal and one-valued, accepted here or earlier; a Subject's\nid is then the readable rendering of its canonical key. ``uniqueness:\nunique`` refuses a second live Subject with the same key; ``hint`` only\nsurfaces it in the duplicates audit. ``minted: true`` has core mint opaque\nids instead. Change it, or retire it, through a successor.",
@@ -8368,8 +8411,16 @@
                 "type": "string"
               },
               "subject": {
-                "title": "Subject",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectKeyReference"
+                  }
+                ],
+                "description": "kind/<id, alias or single key value>, or {subject_kind, key} naming the Subject by its kind's key (any number of key parts).",
+                "title": "Subject"
               }
             },
             "required": [
@@ -22182,7 +22233,7 @@
           },
           "InboxLinkSubject": {
             "additionalProperties": false,
-            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "description": "Link an item to a Subject (``kind/id``, or ``kind/<alias or key value>``).\n\nThe daemon records the Subject it resolves to, as ``kind/id``.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -22191,7 +22242,7 @@
                 "type": "string"
               },
               "subject": {
-                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[^\\x00-\\x1f\\x7f]{1,1024}$",
                 "title": "Subject",
                 "type": "string"
               }
@@ -22620,7 +22671,7 @@
           },
           "InboxLinkSubject": {
             "additionalProperties": false,
-            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "description": "Link an item to a Subject (``kind/id``, or ``kind/<alias or key value>``).\n\nThe daemon records the Subject it resolves to, as ``kind/id``.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -22629,7 +22680,7 @@
                 "type": "string"
               },
               "subject": {
-                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[^\\x00-\\x1f\\x7f]{1,1024}$",
                 "title": "Subject",
                 "type": "string"
               }
@@ -23099,7 +23150,7 @@
           },
           "InboxLinkSubject": {
             "additionalProperties": false,
-            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "description": "Link an item to a Subject (``kind/id``, or ``kind/<alias or key value>``).\n\nThe daemon records the Subject it resolves to, as ``kind/id``.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -23108,7 +23159,7 @@
                 "type": "string"
               },
               "subject": {
-                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[^\\x00-\\x1f\\x7f]{1,1024}$",
                 "title": "Subject",
                 "type": "string"
               }
@@ -23476,7 +23527,7 @@
           },
           "InboxLinkSubject": {
             "additionalProperties": false,
-            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "description": "Link an item to a Subject (``kind/id``, or ``kind/<alias or key value>``).\n\nThe daemon records the Subject it resolves to, as ``kind/id``.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -23485,7 +23536,7 @@
                 "type": "string"
               },
               "subject": {
-                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[^\\x00-\\x1f\\x7f]{1,1024}$",
                 "title": "Subject",
                 "type": "string"
               }
@@ -23556,7 +23607,7 @@
           "json_name": "subject",
           "required": true,
           "schema": {
-            "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+            "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[^\\x00-\\x1f\\x7f]{1,1024}$",
             "title": "Subject",
             "type": "string"
           }
@@ -23564,7 +23615,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+        "description": "Link an item to a Subject (``kind/id``, or ``kind/<alias or key value>``).\n\nThe daemon records the Subject it resolves to, as ``kind/id``.",
         "properties": {
           "kind": {
             "const": "subject",
@@ -23573,7 +23624,7 @@
             "type": "string"
           },
           "subject": {
-            "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+            "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[^\\x00-\\x1f\\x7f]{1,1024}$",
             "title": "Subject",
             "type": "string"
           }
@@ -23691,7 +23742,7 @@
           },
           "InboxLinkSubject": {
             "additionalProperties": false,
-            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "description": "Link an item to a Subject (``kind/id``, or ``kind/<alias or key value>``).\n\nThe daemon records the Subject it resolves to, as ``kind/id``.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -23700,7 +23751,7 @@
                 "type": "string"
               },
               "subject": {
-                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[^\\x00-\\x1f\\x7f]{1,1024}$",
                 "title": "Subject",
                 "type": "string"
               }
@@ -24146,7 +24197,7 @@
           },
           "InboxLinkSubject": {
             "additionalProperties": false,
-            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "description": "Link an item to a Subject (``kind/id``, or ``kind/<alias or key value>``).\n\nThe daemon records the Subject it resolves to, as ``kind/id``.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -24155,7 +24206,7 @@
                 "type": "string"
               },
               "subject": {
-                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[^\\x00-\\x1f\\x7f]{1,1024}$",
                 "title": "Subject",
                 "type": "string"
               }
@@ -24770,7 +24821,7 @@
           },
           "InboxLinkSubject": {
             "additionalProperties": false,
-            "description": "Link an item to a Subject (``kind/id``), such as a note about it.",
+            "description": "Link an item to a Subject (``kind/id``, or ``kind/<alias or key value>``).\n\nThe daemon records the Subject it resolves to, as ``kind/id``.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -24779,7 +24830,7 @@
                 "type": "string"
               },
               "subject": {
-                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$",
+                "pattern": "^[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*/[^\\x00-\\x1f\\x7f]{1,1024}$",
                 "title": "Subject",
                 "type": "string"
               }
@@ -81332,6 +81383,21 @@
             "$ref": "#/$defs/QueryReceipt"
           }
         },
+        "remaining": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "remaining",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "description": "Rows of the answer past this page; next_cursor continues it.",
+            "minimum": 0,
+            "title": "Remaining",
+            "type": "integer"
+          }
+        },
         "rows": {
           "has_default": false,
           "has_default_factory": false,
@@ -88486,6 +88552,13 @@
           },
           "receipt": {
             "$ref": "#/$defs/QueryReceipt"
+          },
+          "remaining": {
+            "default": 0,
+            "description": "Rows of the answer past this page; next_cursor continues it.",
+            "minimum": 0,
+            "title": "Remaining",
+            "type": "integer"
           },
           "rows": {
             "items": {

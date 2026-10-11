@@ -88,7 +88,12 @@ def subject_kind_example() -> ChangeSetInput:
 
     The key ClaimType and the SubjectKind land in one change. After it, a write
     that names a ``project.work_item/<slug>`` that does not exist yet creates it:
-    the slug is its key value and, rendered, its id.
+    the slug is its key value and, rendered, its id. The key ClaimType declares
+    no evidence rule: a key Claim core writes when it creates the Subject is
+    covered by the creation itself, so it is supported whatever it cites (the
+    author's words, a write's ``because``, a run's Capture). A later revision of
+    the slug is judged by these (absent) rules, so it lands ``uncovered``; add a
+    rule if slugs are revised.
     """
 
     slug = ClaimType(
