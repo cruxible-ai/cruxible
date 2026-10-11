@@ -9,17 +9,18 @@ import socket
 import sqlite3
 import stat
 import sys
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import IO, Any
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.utils import generate_unique_id
+from starlette.routing import BaseRoute
 from starlette.types import ASGIApp
 
 from cruxible_client.contracts.authoring.models import (
@@ -278,24 +279,58 @@ def create_app() -> FastAPI:
             "boot_id": PROCESS_BOOT_ID,
         }
 
-    app.include_router(instances_router)
-    app.include_router(hosted_instances_router)
-    app.include_router(runtime_credentials_router)
-    app.include_router(playbill_router)
-    _public_route_names(app)
+    for router in (
+        instances_router,
+        hosted_instances_router,
+        runtime_credentials_router,
+        playbill_router,
+    ):
+        _public_route_names(router.routes)
+        app.include_router(router)
+    _public_route_names(app.routes)
     return app
 
 
-def _public_route_names(app: FastAPI) -> None:
+def iter_api_routes(routes: Iterable[BaseRoute]) -> Iterator[APIRoute]:
+    """Yield every ``APIRoute`` under ``routes``, original objects, depth first.
+
+    Before FastAPI 0.137 an included router's routes are copied into the
+    including router, so ``routes`` is flat. From 0.137 an included router is a
+    tree node carrying ``original_router``; this follows it into the original
+    routes without building FastAPI's derived per-inclusion copies. The yielded
+    path is the route's own path, so it equals the served path only where
+    includes add no prefix, as every include in ``create_app`` does.
+    """
+
+    for route in routes:
+        included = getattr(route, "original_router", None)
+        if isinstance(included, APIRouter):
+            yield from iter_api_routes(included.routes)
+        elif isinstance(route, APIRoute):
+            yield route
+
+
+def _public_route_names(routes: Iterable[BaseRoute]) -> None:
     """Name each route for the public API, not for the module that serves it.
 
     OpenAPI summaries and operation ids come from the handler's name, and some
     handlers keep internal names (``query_playbill``); the served name drops
     the internal qualifier.
+
+    Routers are renamed before they are included. FastAPI before 0.137 copies
+    each route into the including router, so the copies must inherit the public
+    names; from 0.137 an included router stays a node of a route tree
+    (``original_router``), and FastAPI derives each served route from the
+    original lazily, copying name, summary and operation id when it first
+    builds it. Walking that tree through ``fastapi.routing.iter_route_contexts``
+    would build (and cache) those copies before the rename, so the walk
+    (``iter_api_routes``) follows ``original_router`` and renames the originals
+    instead. Renaming is idempotent, so a router shared by several apps is
+    renamed once.
     """
 
-    for route in app.routes:
-        if not isinstance(route, APIRoute) or "playbill" not in route.name:
+    for route in iter_api_routes(routes):
+        if "playbill" not in route.name:
             continue
         route.name = route.name.replace("playbill_", "").replace("_playbill", "")
         route.summary = route.summary or route.name.replace("_", " ").title()

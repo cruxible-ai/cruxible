@@ -224,17 +224,13 @@ def _called_attributes(function: Callable[..., object], owner: str) -> list[str]
 
 
 def _http_surface() -> list[dict[str, object]]:
-    from fastapi.routing import APIRoute
-
-    from cruxible_core.server.app import create_app
+    from cruxible_core.server.app import create_app, iter_api_routes
 
     app = create_app()
     openapi = app.openapi()
     components = openapi.get("components", {}).get("schemas", {})
     result: list[dict[str, object]] = []
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
+    for route in iter_api_routes(app.routes):
         endpoint = inspect.unwrap(route.endpoint)
         if endpoint.__module__ != "cruxible_core.server.routes.playbill":
             continue
