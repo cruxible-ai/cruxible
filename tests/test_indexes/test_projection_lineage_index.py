@@ -12,6 +12,76 @@ from tests.test_claims.test_claims import _claim
 from tests.test_client.test_playbill_block_sync import OLD_COORDINATE
 
 
+def _generation(i):
+    return SimpleNamespace(
+        oid=str(i) * 64,
+        semantic_root=SimpleNamespace(tagged="sha256:" + str(i) * 64),
+        generation_root=SimpleNamespace(tagged="sha256:" + str(i) * 64),
+        sequence=i,
+    )
+
+
+def _member_digest(raw):
+    from cruxible_client.contracts.canonical import file_digest
+    from cruxible_client.contracts.claims import parse_claim
+
+    try:
+        return claim_artifact_digest(parse_claim(raw, path="claims/x.json")).tagged
+    except CruxibleError:
+        return file_digest(raw).tagged
+
+
+class _History:
+    """The history index the fixture's trees imply: a member wherever bytes moved."""
+
+    def __init__(self, instance, trees):
+        self.instance = instance
+        self.trees = trees
+        self.member_reads = 0
+
+    def _prefix(self, at):
+        generations = self.instance.accepted_history.return_value
+        sequence = next(g.sequence for g in generations if g.oid == at.git_oid)
+        return generations[: sequence + 1]
+
+    def reader(self, at):
+        from contextlib import nullcontext
+
+        prefix = self._prefix(at)
+        history = self
+
+        def member_versions(paths):
+            history.member_reads += 1
+            found = {}
+            for path in paths:
+                rows = []
+                for before, generation in zip(prefix, prefix[1:], strict=False):
+                    old = self.trees[before.oid].get(path)
+                    new = self.trees[generation.oid].get(path)
+                    if old != new:
+                        rows.append(
+                            (generation.sequence, None if new is None else _member_digest(new))
+                        )
+                found[path] = tuple(rows)
+            return found
+
+        def versions_at(sequence):
+            assert sequence == 0
+            return tuple(SimpleNamespace(path=path) for path in self.trees[prefix[0].oid])
+
+        def generation(sequence):
+            return SimpleNamespace(git_oid=prefix[sequence].oid)
+
+        return nullcontext(
+            SimpleNamespace(
+                member_versions=member_versions,
+                versions_at=versions_at,
+                generation=generation,
+                generation_for_oid=lambda oid: next(g for g in prefix if g.oid == oid),
+            )
+        )
+
+
 def _fixture():
     claims = [
         _claim(
@@ -23,15 +93,8 @@ def _fixture():
         for letter in ("a", "b")
     ]
     paths = tuple(claim_path(c.identity.name) for c in claims)
-    generations = [
-        SimpleNamespace(
-            oid=str(i) * 64,
-            semantic_root=SimpleNamespace(tagged="sha256:" + str(i) * 64),
-            generation_root=SimpleNamespace(tagged="sha256:" + str(i) * 64),
-            sequence=i,
-        )
-        for i in range(1, 4)
-    ]
+    genesis = _generation(0)
+    generations = [genesis, *(_generation(i) for i in range(1, 4))]
 
     def coordinate(oid):
         return SimpleNamespace(
@@ -41,7 +104,10 @@ def _fixture():
             compiler=SimpleNamespace(rule_digest=OLD_COORDINATE.compiler_digest),
         )
 
-    trees = {g.oid: dict(zip(paths, map(render_claim, claims))) for g in generations}
+    # Genesis holds no Claims; both are accepted at generation one and never move.
+    trees = {genesis.oid: {}} | {
+        g.oid: dict(zip(paths, map(render_claim, claims), strict=True)) for g in generations[1:]
+    }
     instance = Mock()
     instance.resolve_accepted_coordinate.side_effect = lambda **kw: coordinate(kw["git_oid"])
     instance.coordinate_for_oid.side_effect = coordinate
@@ -49,6 +115,8 @@ def _fixture():
     instance.blobs_at.side_effect = lambda oid, wanted: {
         p: trees[oid][p] for p in wanted if p in trees[oid]
     }
+    history = _History(instance, trees)
+    instance.accepted_history_reader.side_effect = lambda at=None: history.reader(at)
     at = OLD_COORDINATE.model_copy(update={"git_oid": generations[-1].oid})
     return instance, claims, paths, generations, trees, at
 
@@ -56,7 +124,8 @@ def _fixture():
 def test_batch_rebuild_warm_reuse_extension_and_historical_rollback():
     instance, claims, paths, generations, trees, at = _fixture()
     cold = lineage.read_claim_lineages(instance, paths=paths, at=at)
-    assert instance.blobs_at.call_count == 3  # generations, not Claims times generations
+    # Only the generation that accepted them: revisions, not generations times Claims.
+    assert instance.blobs_at.call_count == 1
     assert all(len(nodes) == 1 for nodes in cold.values())
     instance.blobs_at.reset_mock()
     assert lineage.read_claim_lineages(instance, paths=paths, at=at) == cold
@@ -97,11 +166,12 @@ def test_batch_rebuild_warm_reuse_extension_and_historical_rollback():
 
 def test_eviction_is_only_a_rebuild_and_missing_path_can_appear(monkeypatch):
     instance, claims, paths, generations, trees, at = _fixture()
-    monkeypatch.setattr(lineage, "_MAX_PATHS", 1)
+    # Room for one Claim's source bytes: the second path evicts the first.
+    monkeypatch.setattr(lineage, "_MAX_SOURCE_BYTES", len(render_claim(claims[0])) + 1)
     expected = lineage.read_claim_lineages(instance, paths=paths, at=at)
     instance.blobs_at.reset_mock()
     assert lineage.read_claim_lineages(instance, paths=paths, at=at) == expected
-    assert instance.blobs_at.call_count == 3  # evicted path only
+    assert instance.blobs_at.call_count == 1  # evicted path only, at its one revision
     assert all(call.args[1] == (paths[0],) for call in instance.blobs_at.call_args_list)
     missing = claim_path("CLM-" + "c" * 32)
     assert lineage.read_claim_lineages(instance, paths=(missing,), at=at) == {missing: {}}
@@ -118,20 +188,20 @@ def test_request_history_prefix_stays_fixed_during_concurrent_acceptance():
     instance.blobs_at.side_effect = read
     result = lineage.read_claim_lineages(instance, paths=paths, at=at)
     assert len(result[paths[0]]) == 1
-    assert [call.args[0] for call in instance.blobs_at.call_args_list] == [
-        g.oid for g in generations
-    ]
+    # The one revision generation within the fixed prefix, never the new one.
+    assert [call.args[0] for call in instance.blobs_at.call_args_list] == [generations[1].oid]
 
 
 def test_failed_parse_does_not_publish_partial_index():
     instance, claims, paths, generations, trees, at = _fixture()
-    trees[generations[1].oid][paths[1]] = b"not a claim"
+    trees[generations[2].oid][paths[1]] = b"not a claim"
     with pytest.raises(CruxibleError):
         lineage.read_claim_lineages(instance, paths=paths, at=at)
     instance.blobs_at.reset_mock()
-    trees[generations[1].oid][paths[1]] = render_claim(claims[1])
+    trees[generations[2].oid][paths[1]] = render_claim(claims[1])
     assert len(lineage.read_claim_lineages(instance, paths=paths, at=at)[paths[1]]) == 1
-    assert instance.blobs_at.call_count == 3
+    # Nothing was published, so both paths are read again at their one revision.
+    assert instance.blobs_at.call_count == 1
 
 
 @pytest.mark.parametrize("read_failure", [False, True])
@@ -149,9 +219,6 @@ def test_batch_errors_preserve_all_marker_findings(read_failure, monkeypatch):
     instance, claims, paths, generations, trees, at = _fixture()
     from contextlib import nullcontext
 
-    instance.accepted_history_reader.return_value = nullcontext(
-        SimpleNamespace(generation_for_oid=lambda oid: next(g for g in generations if g.oid == oid))
-    )
     # Both Claims are still owned at the checked coordinate; only the second
     # one's historical lineage is unreadable.
     present = {c.identity.qualified for c in claims}
@@ -173,18 +240,18 @@ def test_batch_errors_preserve_all_marker_findings(read_failure, monkeypatch):
     instance.accepted_coordinate.return_value = instance.coordinate_for_oid(at.git_oid)
     instance.tree_at.side_effect = lambda oid: trees[oid]
     instance.blob_at.side_effect = lambda oid, path: trees[oid].get(path)
-    trees[generations[1].oid][paths[1]] = b"corrupt historical claim"
+    trees[generations[2].oid][paths[1]] = b"corrupt historical claim"
     if read_failure:
         batch = instance.blobs_at.side_effect
         single = instance.blob_at.side_effect
 
         def read_batch(oid, wanted):
-            if oid == generations[1].oid:
+            if oid == generations[2].oid:
                 raise FormatError("historical blob unavailable")
             return batch(oid, wanted)
 
         def read_one(oid, path):
-            if oid == generations[1].oid and path == paths[1]:
+            if oid == generations[2].oid and path == paths[1]:
                 raise FormatError("historical blob unavailable")
             return single(oid, path)
 

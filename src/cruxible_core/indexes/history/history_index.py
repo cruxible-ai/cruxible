@@ -489,6 +489,29 @@ class HistoryReader:
             )
         )
 
+    def member_versions(
+        self, paths: Sequence[str]
+    ) -> dict[str, tuple[tuple[int, str | None], ...]]:
+        """Each path's member occurrences to this cutoff, as (sequence, digest), in one read.
+
+        A path's accepted bytes change only in a generation whose change record
+        names it, so these are the only generations a path's history can differ
+        in. Genesis carries no change record and so no occurrence here.
+        """
+
+        found: dict[str, list[tuple[int, str | None]]] = {path: [] for path in paths}
+        ordered = tuple(dict.fromkeys(paths))
+        for start in range(0, len(ordered), 500):
+            chunk = ordered[start : start + 500]
+            for path, sequence, digest in self._connection.execute(
+                "SELECT member_path,sequence,artifact_digest FROM accepted_member_locations "
+                f"WHERE member_path IN ({','.join('?' for _ in chunk)}) AND sequence<=? "
+                "ORDER BY member_path,sequence,member_ordinal",
+                (*chunk, self.sequence),
+            ):
+                found[path].append((int(sequence), None if digest is None else str(digest)))
+        return {path: tuple(items) for path, items in found.items()}
+
     def member_paths_after(self, sequence: int) -> frozenset[str]:
         """Every member path the change records after ``sequence`` touched, to this cutoff."""
         if sequence < 0 or sequence > self.sequence:

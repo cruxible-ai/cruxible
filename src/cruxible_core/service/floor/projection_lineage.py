@@ -5,6 +5,11 @@ contain only immutable accepted Claim artifacts. Like the instance's tree memo,
 reuse is conditional on the exact replay-verified generation coordinates. A
 request fixes its history prefix before loading; concurrent acceptance cannot
 silently add a successor halfway through that request.
+
+A path's bytes change only in a generation whose verified change record names
+it (replay reproduces each record's scope from the trees themselves), so a
+lineage reads its path only at those generations, found through the history
+index: the work is the path's revisions, not generations times paths.
 """
 
 from __future__ import annotations
@@ -38,10 +43,9 @@ class _Entry:
     compiler: str
 
 
-# These bounds describe retained source-byte weight and node/path counts, not
-# Python heap bytes. Oversize requests still work, but do not retain their index.
-_MAX_PATHS = 512
-_MAX_NODES = 4096
+# Retained source-byte weight, not Python heap bytes, bounds the index; it has
+# no path or node count cap, so a page's few thousand backings stay resident.
+# An oversize request still works, but does not retain its index.
 _MAX_SOURCE_BYTES = 64 * 1024 * 1024
 _LOCK = RLock()
 _CACHE: WeakKeyDictionary[PlaybillInstance, OrderedDict[str, _Entry]] = WeakKeyDictionary()
@@ -53,6 +57,22 @@ def clear_lineage_index(instance: PlaybillInstance) -> None:
         _CACHE.pop(instance, None)
 
 
+def path_revisions(
+    instance: PlaybillInstance, *, paths: tuple[str, ...], at: AcceptedCoordinate
+) -> dict[str, tuple[tuple[int, str | None], ...]]:
+    """Every generation, to ``at``, whose accepted bytes at each path may differ.
+
+    One (sequence, member digest) per change-record occurrence, plus genesis as
+    ``(0, None)`` where generation zero holds the path. Between two of these a
+    path's bytes are the same accepted object.
+    """
+    with instance.accepted_history_reader(at=at) as history:
+        found = history.member_versions(paths)
+        wanted = set(paths)
+        genesis = {row.path for row in history.versions_at(0) if row.path in wanted}
+    return {path: (((0, None),) if path in genesis else ()) + found[path] for path in found}
+
+
 def read_claim_lineages(
     instance: PlaybillInstance,
     *,
@@ -60,7 +80,7 @@ def read_claim_lineages(
     at: AcceptedCoordinate,
     defer_errors: bool = False,
 ) -> dict[str, dict[str, ClaimLineageNode] | CruxibleError]:
-    """Batch cold history reads, then extend cached paths only over new generations."""
+    """Read each path at its own revisions only, extending cached paths over new ones."""
     coordinate = instance.resolve_accepted_coordinate(
         git_oid=at.git_oid,
         semantic_root=at.semantic_root,
@@ -72,6 +92,8 @@ def read_claim_lineages(
     if len(matches) != 1:
         raise FormatError("lineage coordinate is outside accepted history")
     generations = recovered[: matches[0] + 1]
+    if any(generation.sequence != i for i, generation in enumerate(generations)):
+        raise FormatError("lineage history is not one contiguous accepted prefix")
     history = tuple(
         (g.oid, g.semantic_root.tagged, g.generation_root.tagged, g.sequence) for g in generations
     )
@@ -108,11 +130,19 @@ def read_claim_lineages(
                 len(history), history[-1] if history else None, {}, None, 0, compiler
             )
             starts[path] = 0
-    # One bounded multi-blob read per generation, rather than one subprocess
-    # traversal per (backing, generation). An untouched Claim is parsed once.
-    for i in range(min(starts.values(), default=len(generations)), len(generations)):
+    # Only the generations whose change records name a path can change its
+    # bytes, so each path is read at those alone: one bounded multi-blob read
+    # per such generation, never one per (backing, generation).
+    pending = tuple(path for path in unique_paths if starts[path] < len(history))
+    revisions = path_revisions(instance, paths=pending, at=at) if pending else {}
+    by_generation: dict[int, list[str]] = {}
+    for path in pending:
+        for sequence in dict.fromkeys(sequence for sequence, _digest in revisions[path]):
+            if sequence >= starts[path]:
+                by_generation.setdefault(sequence, []).append(path)
+    for i in sorted(by_generation):
         generation = generations[i]
-        wanted = tuple(path for path in unique_paths if starts[path] <= i and path not in failures)
+        wanted = tuple(path for path in by_generation[i] if path not in failures)
         if not wanted:
             continue
         try:
@@ -162,17 +192,12 @@ def read_claim_lineages(
         with _LOCK:
             cache = _CACHE.setdefault(instance, OrderedDict())
             for path, entry in entries.items():
-                if entry.weight > _MAX_SOURCE_BYTES or len(entry.nodes) > _MAX_NODES:
-                    cache.pop(path, None)
-                    continue
-                cache[path] = entry
-                cache.move_to_end(path)
-            while cache and (
-                len(cache) > _MAX_PATHS
-                or sum(e.weight for e in cache.values()) > _MAX_SOURCE_BYTES
-                or sum(len(e.nodes) for e in cache.values()) > _MAX_NODES
-            ):
-                cache.popitem(last=False)
+                cache.pop(path, None)
+                if entry.weight <= _MAX_SOURCE_BYTES:
+                    cache[path] = entry
+            retained = sum(e.weight for e in cache.values())
+            while cache and retained > _MAX_SOURCE_BYTES:
+                retained -= cache.popitem(last=False)[1].weight
     # Do not expose cache-owned mutable Pydantic models to callers.
     return {
         path: failures[path]
