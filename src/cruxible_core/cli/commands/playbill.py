@@ -5258,7 +5258,24 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     ),
 )
 @click.option("--order-by", "order_fields", multiple=True, help="Order: f or -f (repeatable).")
-@click.option("--limit", type=click.IntRange(1, contracts.QUERY_MAX_LIMIT), default=None)
+@click.option(
+    "--limit",
+    type=click.IntRange(1, contracts.QUERY_ANSWER_MAX_RESULTS),
+    default=None,
+    help=(
+        f"Rows to show (default {contracts.QUERY_DEFAULT_LIMIT}); past "
+        f"{contracts.QUERY_MAX_LIMIT} the CLI follows the cursor page by page."
+    ),
+)
+@click.option(
+    "--all",
+    "all_rows",
+    is_flag=True,
+    help=(
+        "Follow the cursor to the end of the answer "
+        f"(at most {contracts.QUERY_ANSWER_MAX_RESULTS} rows)."
+    ),
+)
 @click.option("--cursor", default=None, help="Continue a truncated page.")
 @click.option(
     "--spec",
@@ -5311,6 +5328,7 @@ def query_group(
     follow_in_specs: tuple[str, ...],
     order_fields: tuple[str, ...],
     limit: int | None,
+    all_rows: bool,
     cursor: str | None,
     spec_path: str | None,
     statuses: tuple[str, ...],
@@ -5331,9 +5349,12 @@ def query_group(
     schedule, target_kind, target and lifecycle; Lines by enabled; --select
     adds a Trigger's cron, cadence, capture_contract or version); --name runs
     an accepted named query (orient --section queries lists them), --spec a
-    full definition.
+    full definition. A page holds at most 500 rows: --limit above that, or
+    --all, follows the cursor and prints the pages as one table.
     """
 
+    if all_rows and limit is not None:
+        raise click.UsageError("pass --limit or --all, not both", ctx=ctx)
     if ctx.args:
         raise click.UsageError(
             f"{ctx.args[0]!r} is not an option; put KIND first: cruxible query KIND [--where ...]",
@@ -5383,8 +5404,9 @@ def query_group(
         "at": at_oid,
         "evaluation_time": None if evaluation_time is None else parse_datetime(evaluation_time),
     }
-    if limit is not None:
-        fields["limit"] = limit
+    wanted = contracts.QUERY_ANSWER_MAX_RESULTS if all_rows else limit
+    if wanted is not None:
+        fields["limit"] = min(wanted, contracts.QUERY_MAX_LIMIT)
     if statuses:
         fields["status"] = list(dict.fromkeys(statuses))
     if budgets_json is not None:
@@ -5397,7 +5419,7 @@ def query_group(
     except ValidationError as exc:
         raise click.ClickException(f"invalid query: {_validation_problems(exc)}") from exc
     result = _server_call(
-        lambda client, instance_id: client.query(instance_id, request=request),
+        lambda client, instance_id: _query_rows(client, instance_id, request, wanted=wanted),
         command_name="cruxible query",
     )
     if output_json:
@@ -5416,10 +5438,51 @@ def query_group(
     if result.truncated and result.next_cursor is not None:
         again = _without_cursor(ctx.meta.get("playbill_query_args", []))
         click.echo(
+            f"truncated: {result.remaining} more row{'' if result.remaining == 1 else 's'}; "
             "next: cruxible query "
             + " ".join(shlex.quote(item) for item in again)
             + f" --cursor {result.next_cursor}"
         )
+    elif result.truncated:
+        click.echo(
+            f"truncated: capped at {', '.join(result.capped) or 'the server cap'}; "
+            "narrow the query with --where"
+        )
+
+
+def _query_rows(
+    client: CruxibleClient,
+    instance_id: str,
+    request: contracts.QueryRequest,
+    *,
+    wanted: int | None,
+) -> contracts.QueryResultRecord:
+    """Up to ``wanted`` rows of one answer: its pages, following the cursor, as one page.
+
+    ``None`` reads the one page the request names.
+
+    Every page is read at the coordinate and evaluation time the first page
+    served (the cursor pins both), so the rows are one answer. The result is the
+    last page with every row read before it; its cursor continues after them.
+    """
+
+    page = client.query(instance_id, request=request)
+    rows = list(page.rows)
+    while (
+        wanted is not None
+        and page.truncated
+        and page.next_cursor is not None
+        and len(rows) < wanted
+    ):
+        step = min(wanted - len(rows), contracts.QUERY_MAX_LIMIT)
+        page = client.query(
+            instance_id,
+            request=request.model_copy(update={"cursor": page.next_cursor, "limit": step}),
+        )
+        rows.extend(page.rows)
+    if len(rows) == len(page.rows):
+        return page
+    return page.model_copy(update={"rows": tuple(rows)})
 
 
 @playbill_group.group("procedure")

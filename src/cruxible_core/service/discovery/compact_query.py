@@ -44,6 +44,7 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.compact_query import (
+    QUERY_ANSWER_MAX_RESULTS,
     QueryClaim,
     QueryClaimStatus,
     QueryColumn,
@@ -152,7 +153,7 @@ from cruxible_core.service.read_refusals import (
 )
 
 LIST_NAME = "query"
-COMPACT_QUERY_MAX_RESULTS = 5000
+COMPACT_QUERY_MAX_RESULTS = QUERY_ANSWER_MAX_RESULTS
 ARTIFACT_QUERY_MAX_RESULTS = 2000
 DEFAULT_COLUMN_CAP = 12
 INLINE_DEFINITION_NAME = "inline"
@@ -2597,6 +2598,7 @@ def service_playbill_query(
         rows=tuple(rows),
         truncated=truncated or bool(answer.capped),
         next_cursor=next_cursor,
+        remaining=len(answer.candidates) - start - len(page),
         capped=answer.capped,
         notes=answer.notes,
         receipt=QueryReceipt(

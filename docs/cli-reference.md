@@ -1784,7 +1784,7 @@ ClaimTypes with it.
 cruxible query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'|'f exists'|'f !exists'|'f~text']...
     [--contains TEXT] [--select a,b] [--follow field:alias]... [--follow-in field:alias]...
     [--order-by f|-f] [--status live|overturned|refused|retired]... [--claims]
-    [--limit N] [--cursor C]
+    [--limit N | --all] [--cursor C]
     [--spec FILE | --name N --param k=v ... [--budgets JSON] [--receipt compact|full]]
     [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
@@ -1818,9 +1818,15 @@ way there is one row per (Subject, followed Subject) pair, and without
 Names and values are checked first: a wrong kind, field or enum member, or an
 operator that does not apply, refuses with its code, the nearest valid names and
 a repair. Text output is an aligned table of values and flags (`stale`,
-`contested`, `contradicted`, `uncovered`, `unsure_hold`) followed by the next
-command when the page is truncated; `--json` gives the full answer with its
-receipt. Cells show each slot's answer as `get` shows it; `--status` adds Claims
+`contested`, `contradicted`, `uncovered`, `unsure_hold`); when the page is
+truncated it ends with `truncated: N more rows; next: cruxible query ... --cursor C`
+(an answer past the server cap of 5000 rows instead says `truncated: capped at
+max_results=5000`). A page holds at most 500 rows (`--limit`, default 50, the same
+cap as MCP and HTTP); `--limit` up to 5000, or `--all` (the whole answer, at most
+5000 rows), follows the cursor page by page and prints the pages as one table,
+the answer read once at the coordinate and evaluation time of its first page.
+`--json` gives the full answer with its receipt, and `remaining` counts the rows
+past the page. Cells show each slot's answer as `get` shows it; `--status` adds Claims
 resolution overturned or refused, or retired ones, and `--claims` names each
 cell's Claims (ID, status, verdict, role) beneath the table. `--spec` runs a
 `QueryDefinitionSpec` file inline; `--name` with `--param` runs an accepted
