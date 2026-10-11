@@ -684,3 +684,82 @@ def test_key_text_as_written_names_the_subject_on_every_reference_route(
     assert _existing_target(
         instance, InboxLinkSubject(subject=f"{DECISION}/SHIP it now")
     ) == InboxLinkSubject(subject=f"{DECISION}/ship-it-now")
+
+
+# Review H F-002: every route reads a reference in the common order -- exact live
+# id, alias, key, exact retired id -- so a retired id never shadows a live holder.
+
+
+def _retire(instance: PlaybillInstance, kind: str, subject_id: str) -> None:
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.subjects import subject_digest
+
+    path = subject_path(kind, subject_id)
+    shell = parse_subject(tree(instance)[path], path=path)
+    retired = shell.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=subject_digest(shell).tagged
+            )
+        }
+    )
+    accept(instance, change_set(SubjectSuccessionInput(kind="subject_succession", subject=retired)))
+
+
+def _get(instance: PlaybillInstance, ref: str) -> Any:
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    return service_playbill_get(
+        instance,
+        request=GetRequest(ref=ref),
+        access=BodyAccessContext(principal_id="test", can_read_body=True),
+    )
+
+
+def test_a_reused_key_names_its_live_holder_on_every_route_not_the_retired_id(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.line_inbox import InboxLinkSubject
+    from cruxible_core.service.procedures.line_inbox import _existing_target
+
+    _create(instance, DECISION, "foo")
+    _retire(instance, DECISION, "foo")
+    (live,) = _subjects_of(_create(instance, DECISION, "foo"))
+    assert live.startswith(f"{DECISION}/foo-") and live != f"{DECISION}/foo"
+
+    written = write(
+        instance, {"op": "set", "subject": f"{DECISION}/foo", "field": "title", "value": "Live"}
+    )
+    assert written.status == "accepted", written
+    assert written.changes[0].subject == live
+    assert _get(instance, f"{DECISION}/foo").ref == live
+    assert _get(instance, f"Subject:{DECISION}/foo").ref == live
+    assert _existing_target(
+        instance, InboxLinkSubject(subject=f"{DECISION}/foo")
+    ) == InboxLinkSubject(subject=live)
+    accept(instance, change_set(_alias_member(DECISION, "foo", "the survivor")))
+    assert _get(instance, f"{DECISION}/the survivor").ref == live
+    # The retired Subject stays readable by its artifact path.
+    assert _get(instance, subject_path(DECISION, "foo")).ref == f"{DECISION}/foo"
+
+
+def test_an_ambiguous_key_in_front_of_a_retired_id_refuses_on_get(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_core.service.read_refusals import ReadRefusalError
+
+    _create(instance, NOTE, "foo")
+    _retire(instance, NOTE, "foo")
+    _create(instance, NOTE, "foo")
+    _create(instance, NOTE, "foo", create_new=True)
+
+    with pytest.raises(ReadRefusalError) as refused:
+        _get(instance, f"{NOTE}/foo")
+    assert len(refused.value.candidates) == 2
+    ambiguous = write(
+        instance, {"op": "add", "subject": f"{NOTE}/foo", "field": "semantic.alias", "value": "x"}
+    )
+    assert ambiguous.refusal is not None
+    assert ambiguous.refusal.code == "cruxible.subject.key_ambiguous"

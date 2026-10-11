@@ -112,7 +112,7 @@ from cruxible_client.contracts.triggers import Trigger
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import SUBJECT_KIND_PATTERN, SUBJECT_REF_TEXT_PATTERN
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.indexes.subject_identity import KeyReader
+from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.discovery import (
@@ -459,10 +459,14 @@ def _tree_key_reader(
 ) -> Callable[[], KeyReader]:
     """The accepted tree's single-key reader, read only when a reference needs it."""
 
+    cached: list[KeyReader] = []
+
     def read() -> KeyReader:
         from cruxible_core.indexes.subject_identity import tree_key_reader
 
-        return tree_key_reader(instance.immutable_tree_at(coordinate.git_oid))
+        if not cached:
+            cached.append(tree_key_reader(instance.immutable_tree_at(coordinate.git_oid)))
+        return cached[0]
 
     return read
 
@@ -636,14 +640,16 @@ def _resolve_typed(
         return _resolve_claim_type(projection, name, ref=ref, surface=surface)
     if kind == "subject":
         name = name.removeprefix("Subject:")
+        # A Subject reference resolves in the common order -- exact live id,
+        # alias, key, exact retired id -- so an exact retired id never shadows
+        # the live Subject an alias or key names (review H F-002).
+        found = _resolve_subject_text(projection, name, ref=ref, key_reader=key_reader)
+        if found is not None:
+            return found
     identity = f"{_QUALIFIER[kind]}:{name}"
     row = _envelope(projection, identity)
     if row is not None:
         return ResolvedRef(kind, row.identity, _display(kind, row.identity), row.path)
-    if kind == "subject" and key_reader is not None:
-        found = _resolve_subject_text(projection, name, ref=ref, key_reader=key_reader)
-        if found is not None:
-            return found
     names = _names_of(projection, kind)
     if kind == "subject":
         match = _SUBJECT.fullmatch(name)
@@ -683,12 +689,14 @@ def _resolve_typed(
 
 
 def _resolve_subject_text(
-    projection: Any, name: str, *, ref: str, key_reader: Callable[[], KeyReader]
+    projection: Any, name: str, *, ref: str, key_reader: Callable[[], KeyReader] | None
 ) -> ResolvedRef | None:
-    """``kind/<text>`` that is no Subject id: the one Subject an alias or single key names.
+    """``kind/<text>``: the Subject the shared resolver names, or None when none.
 
-    The shared resolver's order (exact live id, alias, key, exact retired id),
-    as every write and query reads a reference; several holders are ambiguous.
+    Its order is exact live id, alias, single key, exact retired id, as every
+    write, query and inbox link reads a reference; several alias or key holders
+    are ambiguous and refuse, even in front of an exact retired id. Only an
+    artifact path (``subjects/<kind>/<id>.json``) reads an exact envelope as is.
     """
 
     from cruxible_core.indexes.subject_aliases import resolve_subject_ref
@@ -696,8 +704,16 @@ def _resolve_subject_text(
     match = _SUBJECT.fullmatch(name)
     if match is None:
         return None
+    lazy: KeyReader | None = None
+    if key_reader is not None:
+        reader = key_reader
+
+        # The tree is read only when the key step is reached (not for a live id).
+        def lazy(kind: str, text: str) -> KeyTuple | None:
+            return reader()(kind, text)
+
     resolution = resolve_subject_ref(
-        projection.typed.connection, match["kind"], match["id"], key_reader=key_reader()
+        projection.typed.connection, match["kind"], match["id"], key_reader=lazy
     )
     if resolution.ambiguous:
         raise _ambiguous(ref, list(resolution.candidates))
