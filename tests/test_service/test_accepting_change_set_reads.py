@@ -11,7 +11,6 @@ a few costs, on a warm instance and on the Claim's first read.
 from __future__ import annotations
 
 from collections import Counter
-from pathlib import Path
 from typing import Any
 
 import pytest

@@ -361,6 +361,8 @@ class ClaimView:
 
         The form ``QueryClaimValue.claim``, query Claim cells and the keys of
         ``read_whole_many`` use, so views and values join on it directly.
+
+        Next: Cruxible.get(view.claim) to read it, or Cruxible.read_whole_many().
         """
         return self.claim_id.removeprefix("Claim:")
 
