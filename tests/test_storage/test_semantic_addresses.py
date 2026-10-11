@@ -52,6 +52,8 @@ def test_unknown_line_number_and_malformed_selectors_refuse() -> None:
         "procedure-arm-v1",
         "procedure-node-v1",
         "procedure-unit-v1",
+        "subject-creation-v1",
+        "subject-key-v1",
     )
     with pytest.raises(ValidationError, match="unknown semantic selector"):
         SemanticSelector(scheme="line-number-v1", value="12")
@@ -85,3 +87,20 @@ def test_invalid_ranges_and_unsorted_duplicate_source_mappings_refuse() -> None:
         SourceMapping(subject=subject, spans=(second, first))
     with pytest.raises(ValidationError, match="sorted and unique"):
         SourceMapping(subject=subject, spans=(first, first))
+
+
+def test_a_subject_key_selector_carries_the_keys_one_canonical_spelling() -> None:
+    address = SemanticAddress.subject_key("sec.assessment", {"release": "R1", "cve": "CVE-1"})
+    assert address.artifact_path == "subject-kinds/sec.assessment.json"
+    assert address.selector.value == '{"cve":"CVE-1","release":"R1"}'
+    assert address.subject_key_reference == ("sec.assessment", {"cve": "CVE-1", "release": "R1"})
+    assert SemanticAddress.whole_artifact("subjects/a/b.json").subject_key_reference is None
+    for value, match in (
+        ('{"release": "R1"}', "canonical JSON"),
+        ("[]", "1 to 8"),
+        ("{}", "1 to 8"),
+        ('{"n":1.5}', "1 to 8"),
+        ("not json", "JSON object"),
+    ):
+        with pytest.raises(ValidationError, match=match):
+            SemanticSelector(scheme="subject-key-v1", value=value)

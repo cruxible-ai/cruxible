@@ -404,3 +404,30 @@ def test_a_settle_step_ends_its_path_and_derives_settle_authority():
     last = preview.nodes[-1]
     assert (last["kind"] if isinstance(last, dict) else last.kind) == "settle_change_set"
     assert plan.build().definition["terminal_capability"] == 3
+
+
+def test_a_post_inbox_step_ends_its_path_and_is_checked_like_any_step():
+    from cruxible_client.authoring.procedures import PostInbox
+    from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
+
+    plan = sequence(
+        Project("result", fields={"count": 1}, contract_out=NUMBER),
+        PostInbox("inbox", input={"items": Output("result", "items")}, max_items=5),
+    )
+    preview = plan.preview()
+    assert preview.ready_for_prepare, preview.errors
+    assert preview.terminals == ("inbox",)
+    assert preview.authority == "observe"
+    node = plan.build().definition["nodes"][-1]
+    assert node == {
+        "kind": "post_inbox",
+        "node_id": "inbox",
+        "input": {"items": "$steps.result.items"},
+        "max_items": 5,
+    }
+    assert "max_items" not in sequence(PostInbox("inbox")).build().definition["nodes"][0]
+
+    successor = sequence(PostInbox("inbox", next="after"), Halt("after"))
+    assert "invalid_next" in [d.code for d in successor.preview().errors]
+    over = sequence(PostInbox("inbox", max_items=INBOX_RUN_ITEM_CAP_MAX + 1))
+    assert [d.code for d in over.preview().errors] == ["graph_invalid"]

@@ -109,6 +109,38 @@ def is_key_claim(tree: Mapping[str, bytes], claim: ClaimArtifactAny) -> bool:
     return bool(keys) and _is_key_claim(claim, subject, keys)
 
 
+def is_subject_creation_key_claim(
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    claim: ClaimArtifactAny,
+    *,
+    new_claim: bool,
+) -> bool:
+    """Whether ``claim`` is a key Claim core writes as part of creating its Subject.
+
+    It is new in the change (``new_claim``: no accepted Claim at its path), its
+    Subject is absent from the parent and live in the candidate (the change
+    creates it), and its predicate is one of the keys that Subject's keyed kind
+    declares. Claim law v2 revision 9 covers such a Claim by the creation
+    itself; a later revision of it, a Claim about an existing Subject and any
+    non-key Claim are never one. Read from the parent and candidate trees only,
+    so admission, settlement and replay decide it alike.
+    """
+
+    subject = claim.statement.subject.artifact_path
+    if (
+        not new_claim
+        or claim.statement.subject.selector.scheme != "artifact-v1"
+        or not subject.startswith(_SUBJECTS)
+        or subject in current_tree
+        or _lifecycle(candidate_tree, subject) != "live"
+    ):
+        return False
+    kind = subject.removeprefix(_SUBJECTS).partition("/")[0]
+    keys = _key_predicates(current_tree, candidate_tree, kind)
+    return bool(keys) and _is_key_claim(claim, subject, keys)
+
+
 def _changed_subjects(
     current_tree: Mapping[str, bytes], candidate_tree: Mapping[str, bytes]
 ) -> tuple[str, ...]:
@@ -287,6 +319,7 @@ __all__ = [
     "carried_key_claim",
     "derive_key_claim_retirements",
     "is_key_claim",
+    "is_subject_creation_key_claim",
     "retired_claim_names_subject_version",
     "retired_key_claim",
     "subject_versions",

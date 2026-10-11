@@ -1677,6 +1677,16 @@ reports the id:
 `key` maps each key ClaimType (by predicate, or by its last name under the kind)
 to its value, or is the bare value for a one-key kind; a minted kind gives none.
 Each key part becomes a Claim citing `rationale` as the author's own words.
+A key Claim core writes as part of creating its Subject -- on every route
+below -- is covered by the creation itself: it is supported on its own origin
+whatever it cites, so a key ClaimType needs no evidence rule (the example below
+declares none) and a Procedure mandate needs no namespace entry for it. Only
+those key Claims, only at creation: a later revision of a key Claim is judged by
+its ClaimType's evidence rules like any Claim. The creation itself stays
+governed as before (a declared kind, core's id, unique keys). The acceptance law
+is `playbill.claim.v2` revision 9, adopted with compiler revision 33; an
+instance on an earlier compiler judges new Claims by revision 8, and every
+accepted generation is verified by the revision it recorded.
 Creating by key is one rule on every create-by-key route (a `subject` member,
 the write verbs' `kind/<text>` on a one-key kind, a Procedure Subject item, a
 settle): no live Subject holds the canonical key -- create it; exactly one does
@@ -1695,6 +1705,30 @@ the SDK's `cx.new_subject(kind, key=...)` returns a pending reference to the
 member, and core resolves it to the path it actually assigns or reuses. No
 address is predicted from raw values; a reference to no creation in the set
 refuses `cruxible.authoring.subject_creation_unresolved`.
+
+A Claim's `subject`, or a Subject-valued `object`'s `subject`, may also name the
+Subject by its kind and key, one part or several, as a Procedure v3 item does:
+
+~~~json
+{"kind": "claim", "subject": {"subject_kind": "security.assessment",
+  "key": {"release": "R1", "cve": "CVE-2021-44228"}},
+ "predicate": "security.assessment.status", "object": {"kind": "literal", "value": "open"},
+ "role": "observation", "rationale": "Triaged.", "source": {"kind": "self_source", "body": "open"}}
+~~~
+
+Each key part is read in its key ClaimType's canonical form. It resolves when
+the set is lowered: to the Subject a `subject` member of the same set lands on
+when that member carries the same key, else through the common resolver over
+the base (exact live id, alias, key, exact retired id for a one-key text). No
+holder refuses `cruxible.subject.key_missing` (add a `subject` member creating
+it), several `cruxible.subject.key_ambiguous`, and a reference the same set's
+own identity changes (a key or alias Claim it adds, revises or retires) would
+resolve differently refuses `cruxible.authoring.identity_reference_unstable`
+(put the identity change and the reference in separate sets). Authors never
+predict a rendered id, composite keys included. The SDK takes the same
+reference as `subject=` or `value=`:
+`SubjectKeyReference(subject_kind=..., key={...})` from
+`cruxible_client.contracts.subject_kinds`.
 
 Naming a Subject by text resolves the same way on every route (reads, writes,
 queries, creations): an exact live id, then an alias, then the canonical key
@@ -1784,7 +1818,7 @@ ClaimTypes with it.
 cruxible query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'|'f exists'|'f !exists'|'f~text']...
     [--contains TEXT] [--select a,b] [--follow field:alias]... [--follow-in field:alias]...
     [--order-by f|-f] [--status live|overturned|refused|retired]... [--claims]
-    [--limit N] [--cursor C]
+    [--limit N | --all] [--cursor C]
     [--spec FILE | --name N --param k=v ... [--budgets JSON] [--receipt compact|full]]
     [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
@@ -1818,9 +1852,15 @@ way there is one row per (Subject, followed Subject) pair, and without
 Names and values are checked first: a wrong kind, field or enum member, or an
 operator that does not apply, refuses with its code, the nearest valid names and
 a repair. Text output is an aligned table of values and flags (`stale`,
-`contested`, `contradicted`, `uncovered`, `unsure_hold`) followed by the next
-command when the page is truncated; `--json` gives the full answer with its
-receipt. Cells show each slot's answer as `get` shows it; `--status` adds Claims
+`contested`, `contradicted`, `uncovered`, `unsure_hold`); when the page is
+truncated it ends with `truncated: N more rows; next: cruxible query ... --cursor C`
+(an answer past the server cap of 5000 rows instead says `truncated: capped at
+max_results=5000`). A page holds at most 500 rows (`--limit`, default 50, the same
+cap as MCP and HTTP); `--limit` up to 5000, or `--all` (the whole answer, at most
+5000 rows), follows the cursor page by page and prints the pages as one table,
+the answer read once at the coordinate and evaluation time of its first page.
+`--json` gives the full answer with its receipt, and `remaining` counts the rows
+past the page. Cells show each slot's answer as `get` shows it; `--status` adds Claims
 resolution overturned or refused, or retired ones, and `--claims` names each
 cell's Claims (ID, status, verdict, role) beneath the table. `--spec` runs a
 `QueryDefinitionSpec` file inline; `--name` with `--param` runs an accepted
@@ -2337,7 +2377,9 @@ An item may also be a Subject item
 declared kind and key exactly as a `subject` authoring member does (see Subject
 kinds under `authoring`): a key one live Subject holds names it and the item
 creates nothing -- the run reports that child `unchanged`, with the Subject's
-path -- and its key Claims cite `source`, else the Capture its closure reached.
+path -- and its key Claims cite `source`, else the Capture its closure reached;
+either way the creation covers them (no evidence rule on the key ClaimType and
+no mandate namespace entry is needed for the run's own Capture).
 A Claim item names a Subject the run knows only by its key with a v3 item
 (`playbill-procedure-claim-proposal-item-v3`): its statement's `subject`, or a
 `{"kind": "subject_key", "subject": ...}` object, is `{"subject_kind": ...,
@@ -3082,7 +3124,11 @@ replaces the live value: the Claim it revises is found for you. SUBJECT
 `kind/<text>` naming no Subject of a one-key kind (see Subject kinds under
 `authoring`) is created by that key in the same change set -- or resolves to the
 Subject already holding it; any other kind refuses with the creation shape to
-author. The change names the Subject written by its id. A Subject-valued VALUE
+author. `<text>` is the key value as written, in any case or spelling its key
+ClaimType's canonical form reads (`set security.vulnerability/CVE-2021-44228
+...`): no reference parser on the CLI, MCP, HTTP or the SDK holds it to the id
+grammar, and `get`, `query --where`, `inbox link --subject` and authoring Claim
+subjects resolve it the same way. The change names the Subject written by its id. A Subject-valued VALUE
 must already exist. FIELD is a field of the kind as
 `orient` names it, or the full predicate. VALUE is text: an enum member, a
 number or `true`/`false` for such fields, a Subject as `kind/id` (`@kind/id`

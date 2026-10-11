@@ -26,6 +26,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_EVIDENCE_UPGRADE_LAW,
     CLAIM_LAW_V2_REVISION_7,
     CLAIM_LAW_V2_REVISION_8,
+    CLAIM_LAW_V2_REVISION_9,
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
     CLAIM_LAW_V3_REVISION_10,
@@ -45,6 +46,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_V2_ACCEPTANCE_LAW,
     CLAIM_V2_REVISION_6_ACCEPTANCE_LAW,
     CLAIM_V2_REVISION_7_ACCEPTANCE_LAW,
+    CLAIM_V2_REVISION_8_ACCEPTANCE_LAW,
     CLAIM_V3_ACCEPTANCE_LAW,
     CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
     CLAIM_V3_REVISION_8_ACCEPTANCE_LAW,
@@ -277,8 +279,8 @@ LAW_COORDINATES: tuple[
         CLAIM_V2_ACCEPTANCE_LAW,
         "playbill.claim.v2",
         "playbill-claim-v2",
-        8,
-        "sha256:2053d1a4b61b0be8a010610ed340603e634b0eff9dd80174e8c72078badf517e",
+        9,
+        "sha256:eb9f5569f0cb6e444b75740cd57ed8b0c537c9ec2d7ae9a28e05311e32f72d0e",
     ),
     (
         CLAIM_V3_ACCEPTANCE_LAW,
@@ -483,6 +485,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
         "sha256:77b041b26612382c05b35c2eacdc48dad90d1e3de4783398f2ca268fb36768df",
     ),
     (
+        CLAIM_V2_REVISION_8_ACCEPTANCE_LAW,
+        "playbill.claim.v2",
+        "playbill-claim-v2",
+        8,
+        "sha256:2053d1a4b61b0be8a010610ed340603e634b0eff9dd80174e8c72078badf517e",
+    ),
+    (
         CLAIM_V2_REVISION_7_ACCEPTANCE_LAW,
         "playbill.claim.v2",
         "playbill-claim-v2",
@@ -550,7 +559,8 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
     assert CLAIM_LAW_V3_REVISION_10 == CLAIM_V3_REVISION_10_ACCEPTANCE_LAW.coordinate
     assert CLAIM_LAW_V3_REVISION_11 == CLAIM_V3_ACCEPTANCE_LAW.coordinate
     assert CLAIM_LAW_V2_REVISION_7 == CLAIM_V2_REVISION_7_ACCEPTANCE_LAW.coordinate
-    assert CLAIM_LAW_V2_REVISION_8 == CLAIM_V2_ACCEPTANCE_LAW.coordinate
+    assert CLAIM_LAW_V2_REVISION_8 == CLAIM_V2_REVISION_8_ACCEPTANCE_LAW.coordinate
+    assert CLAIM_LAW_V2_REVISION_9 == CLAIM_V2_ACCEPTANCE_LAW.coordinate
     seen_coordinates: set[tuple[str, str]] = set()
     seen_tags: set[str] = set()
     for law, identifier, artifact_tag, revision, expected_digest in (

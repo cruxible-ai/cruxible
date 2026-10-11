@@ -44,7 +44,11 @@ from cruxible_client.contracts.read_values import (
 )
 
 QUERY_DEFAULT_LIMIT = 50
+#: The most rows one page answers; ``next_cursor`` continues the answer.
 QUERY_MAX_LIMIT = 500
+#: The most rows one compact query answer holds across all of its pages (the
+#: server cap); past it the answer is ``capped`` and names the cap in a note.
+QUERY_ANSWER_MAX_RESULTS = 5000
 QUERY_MAX_FILTERS = 32
 QUERY_MAX_FOLLOWS = 4
 QUERY_MAX_SELECT = 64
@@ -440,12 +444,18 @@ class QueryResultRecord(BaseModel):
     rows: tuple[dict[str, QueryCell], ...]
     truncated: bool = False
     next_cursor: str | None = None
+    remaining: int = Field(
+        default=0,
+        ge=0,
+        description="Rows of the answer past this page; next_cursor continues it.",
+    )
     capped: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
     receipt: QueryReceipt
 
 
 __all__ = [
+    "QUERY_ANSWER_MAX_RESULTS",
     "QUERY_DEFAULT_LIMIT",
     "QUERY_MAX_FILTERS",
     "QUERY_MAX_FOLLOWS",

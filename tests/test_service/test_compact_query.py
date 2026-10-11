@@ -187,10 +187,12 @@ def test_pages_continue_by_cursor_and_refuse_a_foreign_one(instance: Any) -> Non
     first = _query(instance, kind=SUBJECT_KIND, limit=1)
     assert _ids(first) == ["wi-42"]
     assert first.truncated is True and first.next_cursor is not None
+    assert first.remaining == 1
 
     second = _query(instance, kind=SUBJECT_KIND, limit=1, cursor=first.next_cursor)
     assert _ids(second) == ["wi-43"]
     assert second.truncated is False and second.next_cursor is None
+    assert second.remaining == 0
     assert second.receipt.coordinate == first.receipt.coordinate
 
     with pytest.raises(ListCursorMismatch):

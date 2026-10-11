@@ -38,6 +38,7 @@ from cruxible_client.contracts.claims import claim_path, parse_claim
 from cruxible_client.contracts.laws import (
     CLAIM_LAW_V2_REVISION_7,
     CLAIM_LAW_V2_REVISION_8,
+    CLAIM_LAW_V2_REVISION_9,
     CLAIM_TYPE_LAW_V7_REVISION_1,
 )
 from cruxible_client.contracts.types import TrustRoot
@@ -58,6 +59,7 @@ PRE_V7_LAWS = textwrap.dedent(
 
     new = {
         laws.CLAIM_LAW_V2_REVISION_8,
+        laws.CLAIM_LAW_V2_REVISION_9,
         laws.CLAIM_LAW_V3_REVISION_10,
         laws.CLAIM_LAW_V3_REVISION_11,
         laws.CLAIM_TYPE_LAW_V7_REVISION_1,
@@ -332,7 +334,9 @@ def test_pre_v7_history_replays_settles_and_extends_under_the_new_laws(tmp_path:
     world.accept(tree, name="own-words")
     assert world.verdict(status) == "supported"
     assert CLAIM_TYPE_LAW_V7_REVISION_1.digest in _law_digests(instance, "claim-types/")
-    assert CLAIM_LAW_V2_REVISION_8.digest in _law_digests(instance, "claims/")
+    # Extended on compiler revision 33, a new Claim is judged by revision 9
+    # (revision 8 plus key Claims covered by their Subject's creation).
+    assert CLAIM_LAW_V2_REVISION_9.digest in _law_digests(instance, "claims/")
 
     head = instance.accepted_coordinate()
     _drop_checkpoints(managed)

@@ -38,7 +38,14 @@ from cruxible_client.contracts.codes import CurrentCode, code_told_union
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
 from cruxible_client.contracts.read_values import ShownValue
 
-SUBJECT_REF_PATTERN = r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$"
+#: The kind part of a Subject reference: a canonical Subject kind.
+SUBJECT_KIND_PATTERN = r"[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*"
+#: What follows ``kind/``: a Subject id, an alias of the kind, or a value of the
+#: kind's single key, as written. The daemon resolves it (exact live id, alias,
+#: key in its ClaimType's canonical form, exact retired id), so key text keeps
+#: its case and spelling: ``security.vulnerability/CVE-2021-44228``.
+SUBJECT_REF_TEXT_PATTERN = r"[^\x00-\x1f\x7f]{1,1024}"
+SUBJECT_REF_PATTERN = rf"^{SUBJECT_KIND_PATTERN}/{SUBJECT_REF_TEXT_PATTERN}$"
 CLAIM_ID_PATTERN = r"^(?:Claim:)?CLM-[0-9a-f]{32}$"
 CAPTURE_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
 CAPTURE_HANDLE_PATTERN = r"^CAP-[0-9a-f]{12,64}$"
@@ -68,8 +75,9 @@ SubjectRef = Annotated[
     Field(
         pattern=SUBJECT_REF_PATTERN,
         description=(
-            "A Subject as kind/id, for example 'dev.roadmap_item/tidy-cli'; "
-            "'@kind/id' names the same Subject."
+            "A Subject as kind/id, for example 'dev.roadmap_item/tidy-cli', or as "
+            "kind/<alias or single key value>, for example "
+            "'security.vulnerability/CVE-2021-44228'; '@kind/id' names the same Subject."
         ),
     ),
 ]

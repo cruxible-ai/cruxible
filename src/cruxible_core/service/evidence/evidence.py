@@ -58,6 +58,7 @@ from cruxible_client.contracts.claims import (
     parse_claim_law_evidence,
 )
 from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
+from cruxible_client.contracts.laws import CLAIM_LAW_V2_REVISION_9
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.providers import ProviderV1, parse_provider
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -1062,6 +1063,7 @@ def _reproduced_claim_adjudication_rule(
     claim_type: ClaimType,
     evidence_digest: str,
     history: ClaimReadHistoryIndex,
+    law_digest: str | None = None,
 ) -> ClaimAdjudicationRuleAny:
     """Return the current rule when accepted evidence proves the same verdict contract.
 
@@ -1070,7 +1072,33 @@ def _reproduced_claim_adjudication_rule(
     compares every historical predecessor's verdict-bearing projection directly
     with the current rule, so a verdict-semantic change cannot be hidden by a
     later revert.
+
+    Evidence recorded under Claim law v2 revision 9 (``law_digest``) may carry
+    the origin-supports rule of a ClaimType whose own rule does not: a key
+    Claim covered by its Subject's creation. That rule reproduces from the same
+    ClaimType chain; no other law's evidence can select it.
     """
+
+    creation_covered = law_digest == CLAIM_LAW_V2_REVISION_9.digest
+
+    def reproduces(item: ClaimType, digest: str) -> ClaimAdjudicationRuleAny | None:
+        """The current rule this ClaimType version's recorded rule stands for, if any."""
+
+        if (
+            claim_adjudication_rule_digest(claim_adjudication_rule(item, claim_type_digest=digest))
+            == evidence_digest
+        ):
+            return current_rule
+        if creation_covered and (
+            claim_adjudication_rule_digest(
+                claim_adjudication_rule(item, claim_type_digest=digest, origin_supports=True)
+            )
+            == evidence_digest
+        ):
+            return claim_adjudication_rule(
+                claim_type, claim_type_digest=current_digest, origin_supports=True
+            )
+        return None
 
     def verdict_projection(item: ClaimType) -> dict[str, object]:
         payload = item.model_dump(mode="json")
@@ -1130,8 +1158,9 @@ def _reproduced_claim_adjudication_rule(
         claim_type,
         claim_type_digest=current_digest,
     )
-    if claim_adjudication_rule_digest(current_rule) == evidence_digest:
-        return current_rule
+    found = reproduces(claim_type, current_digest)
+    if found is not None:
+        return found
     current_projection = verdict_projection(claim_type)
     claim_type_versions = history.claim_types()
     path = claim_type_path(claim_type.predicate)
@@ -1147,15 +1176,12 @@ def _reproduced_claim_adjudication_rule(
             raise ProposalIntegrityError(
                 "accepted ClaimType predecessor is absent from accepted history"
             )
-        predecessor_rule = claim_adjudication_rule(
-            predecessor,
-            claim_type_digest=predecessor_digest,
-        )
         predecessor_projection = verdict_projection(predecessor)
         if predecessor_projection != current_projection:
             raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
-        if claim_adjudication_rule_digest(predecessor_rule) == evidence_digest:
-            return current_rule
+        found = reproduces(predecessor, predecessor_digest)
+        if found is not None:
+            return found
         current = predecessor
     raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
 
@@ -1252,6 +1278,7 @@ def service_evaluate_playbill_claim_verdict(
         claim_type=claim_type,
         evidence_digest=evidence.adjudication_rule_digest,
         history=history,
+        law_digest=evidence.law_digest,
     )
     readers = external_readers or {}
     used: dict[str, dict[str, CasFileIdentity | None]] = {}

@@ -141,6 +141,7 @@ from cruxible_client.contracts.laws import (
     CAPTURE_CONTRACT_LAW_REVISION_4,
     CLAIM_LAW_V2_REVISION_7,
     CLAIM_LAW_V2_REVISION_8,
+    CLAIM_LAW_V2_REVISION_9,
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
     CLAIM_LAW_V3_REVISION_10,
@@ -293,6 +294,7 @@ from cruxible_core.claims.closure import (
 from cruxible_core.claims.key_claims import (
     carried_key_claim,
     derive_key_claim_retirements,
+    is_subject_creation_key_claim,
     retired_claim_names_subject_version,
     subject_versions,
 )
@@ -1721,6 +1723,16 @@ def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanc
                 identifier=CLAIM_LAW_V3_REVISION_10.identifier,
                 digest=CLAIM_LAW_V3_REVISION_10.digest,
             )
+        if artifact_tag == "playbill-claim-v2" and not admits_subject_kinds(
+            context.current.compiler
+        ):
+            # Claim law v2 revision 9 (key Claims covered by their Subject's
+            # creation) is adopted with Subject identity too; an earlier compiler
+            # keeps revision 8.
+            return context.acceptance_laws.require_historical(
+                identifier=CLAIM_LAW_V2_REVISION_8.identifier,
+                digest=CLAIM_LAW_V2_REVISION_8.digest,
+            )
         return context.acceptance_laws.resolve_member(artifact_tag=artifact_tag)
     identifier, digest = context.historical_law_coordinate
     installed = context.acceptance_laws.require_historical(
@@ -3135,6 +3147,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             in {
                 CLAIM_LAW_V2_REVISION_7,
                 CLAIM_LAW_V2_REVISION_8,
+                CLAIM_LAW_V2_REVISION_9,
                 CLAIM_LAW_V3_REVISION_9,
                 CLAIM_LAW_V3_REVISION_10,
                 CLAIM_LAW_V3_REVISION_11,
@@ -3143,7 +3156,12 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         ),
         claim_type_v7_semantics=(
             installed.coordinate
-            in {CLAIM_LAW_V2_REVISION_8, CLAIM_LAW_V3_REVISION_10, CLAIM_LAW_V3_REVISION_11}
+            in {
+                CLAIM_LAW_V2_REVISION_8,
+                CLAIM_LAW_V2_REVISION_9,
+                CLAIM_LAW_V3_REVISION_10,
+                CLAIM_LAW_V3_REVISION_11,
+            }
         ),
         # Revision 11 alone: a Claim retired with its Subject, or after a
         # successor carried it, names a version of that Subject's lineage.
@@ -3157,6 +3175,17 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             )
             if installed.coordinate == CLAIM_LAW_V3_REVISION_11
             else None
+        ),
+        # Claim law v2 revision 9 alone: a key Claim written with its Subject's
+        # creation is covered by the creation (no evidence rule must admit it).
+        subject_creation_key=(
+            installed.coordinate == CLAIM_LAW_V2_REVISION_9
+            and is_subject_creation_key_claim(
+                context.current_tree,
+                context.candidate_tree,
+                claim,
+                new_claim=context.parent_content is None,
+            )
         ),
         # A Capture cited for the first time needs daemon proof a run produced
         # it, at admission and again at settlement: an admission recorded under

@@ -437,3 +437,19 @@ def test_write_reads_its_changes_from_stdin(served: _ServiceClient) -> None:
     refused = CliRunner().invoke(cli, [*PREFIX, "write", "-"], input="because: x\nchanges: 3\n")
     assert refused.exit_code != 0
     assert "stdin is not a valid write file" in refused.output
+
+
+def test_a_subject_named_by_key_text_reaches_core_as_written(served: _ServiceClient) -> None:
+    """`set kind/<KEY TEXT>`: no CLI id pattern; core resolves the key in its canonical form."""
+
+    result = _run("set", f"{KIND}/WI-1", "status", "ready", "--because", "Checked.")
+
+    assert result.exit_code == 0, result.output
+    assert served.requests[0].subject == f"{KIND}/WI-1"
+    assert "set project.work_item/wi-1 status: ready" in result.output
+    assert "+ subject" not in result.output
+
+    # A Subject-valued VALUE by key text names the Subject holding that key.
+    linked = _run("add", WI1, "governs", f"{KIND}/WI-2", "--because", "Linked.", "--json")
+    assert linked.exit_code == 0, linked.output
+    assert json.loads(linked.stdout)["changes"][0]["after"] == f"{KIND}/wi-2"
