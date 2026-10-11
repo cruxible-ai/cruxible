@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-10-10:kit-gaps-review",
-    "surface_digest": "sha256:82037ec07400d2fd0c5905272d65a021d606379364e882eba4c300fd89a52f71"
+    "register_entry": "2026-10-10:perf-batch-g",
+    "surface_digest": "sha256:09073bf0a060de1f39ddc4472a4f4ecd74ab2d0f13eef0e1db9deefd022593b8"
   },
   "surface": {
     "cli_leaves": [
@@ -1079,7 +1079,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/claims/read-batch",
         "request_model": "cruxible_client.contracts.claim_reads.ClaimReadBatchRequest",
-        "request_schema_digest": "sha256:f3979e3a1c3a6bb00770b39603f848fe75df9e05e135dfc55301c5c45adfdb90",
+        "request_schema_digest": "sha256:753a3f67b39fe322537a3d7314168bcd774db0546bbfbea868479b85647ef1ab",
         "response_model": "cruxible_client.contracts.claim_reads.ClaimReadBatchResult",
         "response_schema_digest": "sha256:546562981b1e2d3969e511f5e7d41a231577080cb3bb07c8ae0eec3fba42cd8c"
       },

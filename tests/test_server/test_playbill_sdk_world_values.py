@@ -343,3 +343,73 @@ def test_a_marker_shaped_object_without_its_discriminator_is_never_a_marker() ->
             status="accepted",
             role="observation",
         )
+
+
+def test_many_long_values_read_whole_in_one_batched_read_per_generation(
+    served: tuple[TestClient, str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``read_whole_many`` answers exactly what ``read_whole`` answers, preview by preview."""
+
+    from cruxible_client.contracts.claim_reads import ClaimReadBatchRequest
+    from cruxible_client.contracts.get_reads import GetHistory
+    from cruxible_client.contracts.read_values import TruncatedText
+
+    client, instance_id, _actor = served
+    cx = _sdk(client, instance_id, tmp_path)
+    titles = {
+        subject: f"The {subject} title, long enough to cut. " * 20
+        for subject in ("wi-1", "wi-2", "wi-3")
+    }
+    batch = cx.changes(because="Named in review.")
+    for subject, title in titles.items():
+        batch.set(f"{KIND}/{subject}", "title", title)
+    batch.write()
+    cx.set(WI1, "title", "Renamed, and long as well. " * 30, because="Renamed.")
+
+    current = [
+        item.value
+        for item in cx.world().values(subjects=[f"{KIND}/wi-2", f"{KIND}/wi-3"])
+        if item.predicate == TITLE
+    ]
+    first = next(item for item in cx.world().values(subjects=[WI1]) if item.predicate == TITLE)
+    history = cx.get(first.claim, detail="history").value
+    assert isinstance(history, GetHistory)
+    earlier = next(revision.value for revision in history.revisions if revision.revision == 1)
+    previews = [*current, earlier]
+    assert all(isinstance(preview, TruncatedText) for preview in previews)
+
+    requests: list[ClaimReadBatchRequest] = []
+    transport = cx._client  # noqa: SLF001
+    original = transport.read_claim_batch
+
+    def counted(instance: str, *, request: ClaimReadBatchRequest) -> Any:
+        requests.append(request)
+        return original(instance, request=request)
+
+    monkeypatch.setattr(transport, "read_claim_batch", counted)
+    whole = cx.read_whole_many(previews)  # type: ignore[arg-type]
+
+    assert len(requests) == 2  # the head's two titles, and wi-1's first revision
+    assert whole == {
+        preview.read_whole.ref: cx.read_whole(preview)  # type: ignore[union-attr]
+        for preview in previews
+    }
+    assert whole[first.claim] == titles["wi-1"]
+    # World.values(whole=True) answers the same values in place of the previews.
+    requests.clear()
+    shown = cx.world().values(subjects=[f"{KIND}/wi-2", f"{KIND}/wi-3"], whole=True)
+    assert {item.value for item in shown if item.predicate == TITLE} == {
+        titles["wi-2"],
+        titles["wi-3"],
+    }
+    assert len(requests) == 1
+    # The git oid names the generation exactly as its full coordinate does.
+    head = cx.world().coordinate
+    by_oid, by_coordinate = (
+        original(
+            instance_id,
+            request=ClaimReadBatchRequest(at=at, claim_ids=(first.claim,)),
+        )
+        for at in (head.git_oid, head.model_dump(mode="json"))
+    )
+    assert by_oid == by_coordinate

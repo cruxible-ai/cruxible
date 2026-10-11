@@ -111,12 +111,15 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("AcceptedGenerationLocation", "parent_sequence"): "SETTLEMENT ORDER",
     ("ArtifactVersionLocation", "occurrence_sequence"): "SETTLEMENT ORDER",
     ("AcceptedMemberLocation", "sequence"): "SETTLEMENT ORDER",
+    ("GenerationRecordFacts", "sequence"): "SETTLEMENT ORDER",
     # Canonical candidate timestamps are the author's assertion of when the
     # candidate was made; nothing checks them against a daemon clock.
     ("AuthoringIntentV1", "canonical_timestamp"): "ASSERTION TIME",
     ("PreflightCertificate", "canonical_timestamp"): "ASSERTION TIME",
     ("SemanticCandidateV1", "timestamp"): "ASSERTION TIME",
     ("SemanticCandidate", "timestamp"): "ASSERTION TIME",
+    # The accepted record's own C_s instant, carried as a verified fact.
+    ("GenerationRecordFacts", "timestamp"): "ASSERTION TIME",
     ("_MemberContext", "timestamp"): "ASSERTION TIME",
     ("AuditClaimFactorsV1", "first_accepted_generation"): "SETTLEMENT ORDER",
     ("AuditClaimFactorsV1", "last_independent_verification_generation"): "SETTLEMENT ORDER",

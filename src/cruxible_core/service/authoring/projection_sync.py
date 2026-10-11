@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Literal
@@ -16,7 +16,7 @@ from cruxible_client.contracts.authoring.models import (
     ProjectionCheckResult,
     ProjectionDependencyIssue,
 )
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import canonical_bytes, file_digest
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
@@ -24,6 +24,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultAny
 from cruxible_client.contracts.claims import (
+    ClaimArtifactAny,
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
@@ -55,6 +56,7 @@ from cruxible_core.service.floor.projection_lineage import (
     ClaimLineageNode as _ClaimNode,
 )
 from cruxible_core.service.floor.projection_lineage import (
+    path_revisions,
     read_claim_lineages,
 )
 
@@ -67,6 +69,11 @@ PROJECTION_VISIBILITY_POLICY = QueryEvaluationPolicy(
 _LINEAGES: ContextVar[
     tuple[PlaybillInstance, dict[str, dict[str, _ClaimNode] | CruxibleError]] | None
 ] = ContextVar("block_sync_lineages", default=None)
+# A request's lineage resolver: (path, marker Claim, its digest, its bytes) -> nodes.
+_NODES: ContextVar[
+    tuple[PlaybillInstance, Callable[[str, ClaimArtifactAny, str, bytes], dict[str, _ClaimNode]]]
+    | None
+] = ContextVar("block_sync_nodes", default=None)
 
 
 def _refusal(
@@ -274,7 +281,12 @@ def _claim_backing_state(
             detail="the marker backing does not reproduce at its declared coordinate",
         )
     original_digest = claim_artifact_digest(original).tagged
-    nodes = _claim_nodes(instance, path=path)
+    resolver = _NODES.get()
+    nodes = (
+        resolver[1](path, original, original_digest, raw)
+        if resolver is not None and resolver[0] is instance
+        else _claim_nodes(instance, path=path)
+    )
     if original_digest not in nodes:
         raise ProposalIntegrityError("accepted Claim block-sync origin disappeared from history")
     terminal = _terminal_node(
@@ -366,11 +378,38 @@ class ProjectionCheckContext:
                 }
             )
         )
+        # A path with one accepted version ever is, in every generation that
+        # holds it, the bytes a marker already pins: its lineage is that one
+        # node and needs no history read. Others read only their revisions.
+        revisions = path_revisions(instance, paths=paths, at=self.accepted) if paths else {}
+        self.single_versions: dict[str, tuple[str, int]] = {}
+        for path in paths:
+            rows = revisions[path]
+            digests = {digest for _sequence, digest in rows if digest is not None}
+            if len(digests) == 1 and all(sequence > 0 for sequence, _digest in rows):
+                (digest,) = digests
+                first = next(sequence for sequence, found in rows if found == digest)
+                self.single_versions[path] = (digest, first)
         self.lineages = (
-            read_claim_lineages(instance, paths=paths, at=self.accepted, defer_errors=True)
-            if paths
+            read_claim_lineages(
+                instance,
+                paths=tuple(path for path in paths if path not in self.single_versions),
+                at=self.accepted,
+                defer_errors=True,
+            )
+            if len(self.single_versions) < len(paths)
             else {}
         )
+        self._generation_coordinates: dict[int, AcceptedCoordinate] = {}
+        # One answer per (marker coordinate, backing, preferred successor): every
+        # block and stamp that repeats a backing shares it.
+        self._backing_states: dict[
+            tuple[str, str, str, str | None],
+            tuple[ProjectionClaimBacking | None, _ClaimNode, str]
+            | BlockSyncReadResult
+            | CruxibleError
+            | ValueError,
+        ] = {}
         # One batched read per marker coordinate instead of one per Claim backing.
         paths_by_oid: dict[str, set[str]] = {}
         for stamp in stamps:
@@ -388,6 +427,67 @@ class ProjectionCheckContext:
             except CruxibleError:
                 # An unaccepted marker coordinate is refused per block by `_read`.
                 continue
+
+    def _generation_coordinate(self, sequence: int) -> AcceptedCoordinate:
+        found = self._generation_coordinates.get(sequence)
+        if found is None:
+            with self.instance.accepted_history_reader(at=self.accepted) as reader:
+                oid = reader.generation(sequence).git_oid
+            found = AcceptedCoordinate.from_internal(self.instance.coordinate_for_oid(oid))
+            self._generation_coordinates[sequence] = found
+        return found
+
+    def _nodes(
+        self, path: str, original: ClaimArtifactAny, original_digest: str, raw: bytes
+    ) -> dict[str, _ClaimNode]:
+        """The marker Claim's lineage at this request's coordinate."""
+
+        single = self.single_versions.get(path)
+        if single is not None:
+            digest, first = single
+            # Early retained formats index a member by its input bytes' digest.
+            if digest in (original_digest, file_digest(raw).tagged):
+                return {
+                    original_digest: _ClaimNode(
+                        original, original_digest, self._generation_coordinate(first), first
+                    )
+                }
+        if path not in self.lineages:
+            self.lineages.update(
+                read_claim_lineages(
+                    self.instance, paths=(path,), at=self.accepted, defer_errors=True
+                )
+            )
+        return _claim_nodes(self.instance, path=path)
+
+    def _backing_state(
+        self,
+        *,
+        declared: AcceptedCoordinate,
+        backing: ProjectionClaimBacking,
+        preferred_successor_digest: str | None,
+    ) -> tuple[ProjectionClaimBacking | None, _ClaimNode, str] | BlockSyncReadResult:
+        key = (
+            declared.git_oid,
+            backing.identity.qualified,
+            backing.statement_digest,
+            preferred_successor_digest,
+        )
+        if key not in self._backing_states:
+            try:
+                self._backing_states[key] = _claim_backing_state(
+                    self.instance,
+                    stamp_coordinate=declared,
+                    backing=backing,
+                    preferred_successor_digest=preferred_successor_digest,
+                    sources=self.backing_sources.get(declared.git_oid),
+                )
+            except (CruxibleError, ValueError) as exc:
+                self._backing_states[key] = exc
+        found = self._backing_states[key]
+        if isinstance(found, (CruxibleError, ValueError)):
+            raise found
+        return found
 
     def _claim_status(self, identity: ArtifactIdentity) -> str:
         if self.visible_claim_ids is None:
@@ -517,9 +617,11 @@ class ProjectionCheckContext:
 
     def read(self, request: BlockSyncReadRequest) -> BlockSyncReadResult:
         token = _LINEAGES.set((self.instance, self.lineages))
+        nodes = _NODES.set((self.instance, self._nodes))
         try:
             return self._read(request)
         finally:
+            _NODES.reset(nodes)
             _LINEAGES.reset(token)
 
     def _read(self, request: BlockSyncReadRequest) -> BlockSyncReadResult:
@@ -588,12 +690,10 @@ class ProjectionCheckContext:
                         if state is not None:
                             moved.append(state)
                 else:
-                    state_claim = _claim_backing_state(
-                        self.instance,
-                        stamp_coordinate=declared,
+                    state_claim = self._backing_state(
+                        declared=declared,
                         backing=backing,
                         preferred_successor_digest=request.preferred_successor_digest,
-                        sources=self.backing_sources.get(declared.git_oid),
                     )
                     if isinstance(state_claim, BlockSyncReadResult):
                         failure = state_claim

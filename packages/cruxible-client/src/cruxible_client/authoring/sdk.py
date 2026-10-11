@@ -7,7 +7,7 @@ import json
 import os
 import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -354,6 +354,17 @@ class ClaimView:
     captures: tuple[CaptureRef, ...]
     # An exact-content Claim's digest, the proof its text is ``value``.
     content_digest: str | None = None
+
+    @property
+    def claim(self) -> str:
+        """The bare Claim id (``CLM-...``): ``claim_id`` without its ``Claim:`` kind.
+
+        The form ``QueryClaimValue.claim``, query Claim cells and the keys of
+        ``read_whole_many`` use, so views and values join on it directly.
+
+        Next: Cruxible.get(view.claim) to read it, or Cruxible.read_whole_many().
+        """
+        return self.claim_id.removeprefix("Claim:")
 
 
 def _address_path(value: object) -> str:
@@ -2101,6 +2112,10 @@ def _wait_for_status(call: Any, *, timeout: Duration, poll_interval: Duration) -
         if time.monotonic_ns() >= deadline:
             return status
         time.sleep(poll_interval.value / 1_000_000)
+
+
+#: About how much previewed text one batched whole read carries (characters).
+WHOLE_READ_BATCH_TEXT = 4 * 1024 * 1024
 
 
 class Cruxible:
@@ -4019,6 +4034,94 @@ class Cruxible:
         if isinstance(value, Mapping) and "exact_content" in value:
             value = ExactContentRef.model_validate(value)
         return value
+
+    def read_whole_many(self, previews: Iterable[TruncatedText]) -> dict[str, object]:
+        """Many previews' whole values in few reads: ``{claim: value}``.
+
+        Each value is exactly what ``read_whole(preview)`` returns, read where it
+        was previewed. Previews are grouped by the generation they name
+        (``read_whole.at``) and each group is read through the batched Claim
+        read pinned to that generation: at most 256 Claims and about 4 MiB of
+        previewed text per read, so 400 long titles take two reads, not 400. An
+        exact-content value is read as ``read_whole`` reads it, one by one. The
+        key is each preview's ``read_whole.ref``.
+
+        Raises ``WholeValueUnavailable`` for a preview that names no read, for one
+        Claim previewed at two generations (read each with ``read_whole``; one is
+        never re-pinned to the other), and when the daemon predates git-oid
+        pinned batch reads.
+
+        Next: compare them, or write one back with ``expect=``.
+        """
+
+        from cruxible_client.contracts.claim_reads import (
+            MAX_CLAIM_READ_BATCH,
+            ClaimReadBatchRequest,
+        )
+        from cruxible_client.errors import DataValidationError
+
+        groups: dict[str, dict[str, TruncatedText]] = {}
+        named_at: dict[str, str] = {}
+        for preview in previews:
+            read = preview.read_whole
+            if read is None:
+                raise WholeValueUnavailable(
+                    "this preview names no exact whole read; query with claims=True and pass "
+                    "a Claim cell's preview"
+                )
+            if named_at.setdefault(read.ref, read.at) != read.at:
+                raise WholeValueUnavailable(
+                    f"{read.ref} was previewed at two generations ({named_at[read.ref][:12]} "
+                    f"and {read.at[:12]}); read each with read_whole"
+                )
+            groups.setdefault(read.at, {})[read.ref] = preview
+        values: dict[str, object] = {}
+        for at, group in groups.items():
+            batch: list[tuple[str, TruncatedText]] = []
+            budget = 0
+            batches: list[list[tuple[str, TruncatedText]]] = []
+            for item in group.items():
+                if batch and (
+                    len(batch) >= MAX_CLAIM_READ_BATCH
+                    or budget + item[1].length > WHOLE_READ_BATCH_TEXT
+                ):
+                    batches.append(batch)
+                    batch, budget = [], 0
+                batch.append(item)
+                budget += item[1].length
+            batches.append(batch)
+            for selected in batches:
+                request = ClaimReadBatchRequest(
+                    at=at, claim_ids=tuple(claim for claim, _preview in selected)
+                )
+                try:
+                    result = self._client.read_claim_batch(self._instance_id, request=request)
+                except DataValidationError as exc:
+                    if any(error.startswith("body.at") for error in exc.errors):
+                        raise WholeValueUnavailable(
+                            "this daemon reads Claim batches only at a full coordinate, not "
+                            "at a preview's git oid; upgrade it, or read each preview with "
+                            "read_whole"
+                        ) from exc
+                    raise
+                if result.coordinate.git_oid != at or len(result.claims) != len(selected):
+                    raise WholeValueUnavailable(
+                        f"the batched read at {at[:12]} answered a different selection"
+                    )
+                for (claim, preview), raw in zip(selected, result.claims, strict=True):
+                    view = self._typed_claim_view(raw, claim)
+                    if not view.claim_id.removeprefix("Claim:").startswith(
+                        claim.removeprefix("Claim:")
+                    ):
+                        raise WholeValueUnavailable(
+                            f"the batched read at {at[:12]} answered a different Claim"
+                        )
+                    # A literal's whole value is in the Claim; exact content is
+                    # read through the daemon's exact-content reader, as get does.
+                    values[claim] = (
+                        view.value if view.object_kind == "literal" else self.read_whole(preview)
+                    )
+        return values
 
     def _get(
         self,

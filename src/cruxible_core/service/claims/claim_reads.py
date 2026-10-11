@@ -33,7 +33,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.compiler.compiler import artifact_codec_for_compiler
-from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import (
     _accepted_generation_time,
@@ -52,6 +52,25 @@ def _cursor_selection(request: ClaimReadBatchRequest) -> str:
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 
+_OID_LENGTHS = {"sha1": 40, "sha256": 64}
+
+
+def _exact_oid_coordinate(instance: PlaybillInstance, oid: str) -> AcceptedProjectionCoordinate:
+    """The accepted generation whose git oid is exactly ``oid``, as a preview pins it.
+
+    Never a prefix: the oid must have this instance's full object-format length
+    and equal one accepted generation's oid, or the read is refused.
+    """
+
+    expected = _OID_LENGTHS[instance.descriptor.git_object_format]
+    if len(oid) != expected:
+        raise FormatError(
+            f"at must be a whole {expected}-character git oid of this instance's "
+            f"{instance.descriptor.git_object_format} history, not a prefix"
+        )
+    return instance.coordinate_for_oid(oid)
+
+
 def service_read_claim_batch(
     instance: PlaybillInstance,
     *,
@@ -59,11 +78,15 @@ def service_read_claim_batch(
 ) -> ClaimReadBatchResult:
     if request.cursor is not None and request.at is None:
         raise FormatError("Claim batch cursor requires an explicit accepted coordinate")
-    coordinate = _resolve_coordinate(
-        instance,
-        AcceptedCoordinate.model_validate(request.at.model_dump())
-        if request.at is not None
-        else None,
+    coordinate = (
+        _exact_oid_coordinate(instance, request.at)
+        if isinstance(request.at, str)
+        else _resolve_coordinate(
+            instance,
+            AcceptedCoordinate.model_validate(request.at.model_dump())
+            if request.at is not None
+            else None,
+        )
     )
     resolved_at = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(coordinate).model_dump()

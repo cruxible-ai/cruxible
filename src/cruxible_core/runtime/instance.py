@@ -113,9 +113,11 @@ from cruxible_core.indexes.evaluated_state import derive_indexed_state
 from cruxible_core.indexes.history.history_index import (
     AcceptedGenerationLocation,
     AcceptedHistoryIndex,
+    GenerationRecordFacts,
     HistoryReader,
     PriorMemberSequences,
     RetainedRecordReader,
+    VerifiedRecord,
 )
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
@@ -373,7 +375,12 @@ class PlaybillInstance:
         # Verified retained change-set records, keyed by their full accepted
         # location. Their bytes are immutable, so they survive head movement.
         self.verified_change_set_records: OrderedDict[
-            AcceptedGenerationLocation, ChangeSetRecordAnyVersion
+            AcceptedGenerationLocation, VerifiedRecord
+        ] = OrderedDict()
+        # Their small derived facts (actor binding, instant, approvals), shared
+        # without copies so a hit never copies a whole change-set record.
+        self.verified_record_facts: OrderedDict[
+            AcceptedGenerationLocation, GenerationRecordFacts
         ] = OrderedDict()
 
     @staticmethod
@@ -1344,7 +1351,10 @@ class PlaybillInstance:
         path = claim_path(identity.removeprefix("Claim:"))
         with self.accepted_history_reader(at=coordinate) as history:
             evidence = history.read_claim_law_evidence(
-                identity, artifact_digest=artifact_digest, path=path, load_record=self.blob_at
+                identity,
+                artifact_digest=artifact_digest,
+                path=path,
+                load_record=self.retained_record_reader(),
             )
         if evidence is None:
             return None
@@ -2063,7 +2073,11 @@ class PlaybillInstance:
     def retained_record_reader(self) -> RetainedRecordReader:
         """A record reader sharing this instance's verified change-set records."""
 
-        return RetainedRecordReader(self.blob_at, verified=self.verified_change_set_records)
+        return RetainedRecordReader(
+            self.blob_at,
+            verified=self.verified_change_set_records,
+            facts=self.verified_record_facts,
+        )
 
     def blob_at(self, oid: str, path: str) -> bytes | None:
         """Read one accepted path without materializing its whole generation."""
@@ -2159,7 +2173,9 @@ class PlaybillInstance:
             bodies=self.body_store(),
             history=lambda: self.accepted_history_reader(at=at),
             records=RetainedRecordReader(
-                self._ledger.blob_at, verified=self.verified_change_set_records
+                self._ledger.blob_at,
+                verified=self.verified_change_set_records,
+                facts=self.verified_record_facts,
             ),
             fact_memo=self._owner_facts,
         )

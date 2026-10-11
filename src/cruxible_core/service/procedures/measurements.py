@@ -335,21 +335,21 @@ def _accepting_generation(
     (artifact digest, observation OID).
     """
 
+    records = instance.retained_record_reader()
     with instance.accepted_history_reader(
         at=AcceptedCoordinate.from_internal(observation)
     ) as history:
         for location in reversed(history.member_history(accepted.path)):
             if location.artifact_digest != accepted.artifact_digest:
                 continue
-            record = history.read_member_record(location, load_record=instance.blob_at)
+            member = history.read_member(location, records)
             # Legacy member input digests are not accepted candidate versions.
-            if (
-                getattr(record.members[location.member_ordinal], "candidate_artifact_digest", None)
-                != accepted.artifact_digest
-            ):
+            if getattr(member, "candidate_artifact_digest", None) != accepted.artifact_digest:
                 continue
             generation = history.generation(location.sequence)
-            activated_at = parse_datetime(record.candidate.timestamp)
+            activated_at = parse_datetime(
+                history.read_generation_facts(location.sequence, records).timestamp
+            )
             if activated_at is None:
                 raise FormatError("accepted candidate timestamp is missing")
             return (

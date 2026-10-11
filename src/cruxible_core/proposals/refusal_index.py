@@ -83,9 +83,12 @@ from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodySto
 from cruxible_core.storage.preview_fence import is_previewing
 
 if TYPE_CHECKING:
-    from cruxible_core.indexes.history.history_index import HistoryReader
+    from cruxible_core.indexes.history.history_index import (
+        GenerationRecordFacts,
+        HistoryReader,
+        RetainedRecordReader,
+    )
     from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
-    from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
     from cruxible_core.runtime.instance import PlaybillInstance
 
 _SCHEMA = """
@@ -671,13 +674,14 @@ class RefusalIndex:
         if not paths:
             return
         tree = instance.blobs_at(head.git_oid, paths)
+        records = instance.retained_record_reader()
         for path in paths:
             claim = parse_claim(tree[path], path=path)
-            sequence = _retiring_sequence(instance, history, path)
+            sequence = _retiring_sequence(instance, history, path, records)
             if sequence is None:
                 continue
-            record = history.read_generation_record(sequence, instance.blob_at)
-            self._put_retirements(connection, instance, evidence, record, (claim,))
+            facts = history.read_generation_facts(sequence, records)
+            self._put_retirements(connection, instance, evidence, facts, (claim,))
 
     def _index_generation(
         self,
@@ -691,7 +695,8 @@ class RefusalIndex:
         if location.candidate_digest is None:
             return
         self.generations_indexed += 1
-        record = history.read_generation_record(sequence, instance.blob_at)
+        records = instance.retained_record_reader()
+        record = history.read_generation_record(sequence, records)
         paths = tuple(
             member.path
             for member in record.members
@@ -714,18 +719,19 @@ class RefusalIndex:
             if claim.lifecycle.state == "retired":
                 retired.append(claim)
         if retired:
-            self._put_retirements(connection, instance, evidence, record, tuple(retired))
+            facts = history.read_generation_facts(sequence, records)
+            self._put_retirements(connection, instance, evidence, facts, tuple(retired))
 
     @staticmethod
     def _put_retirements(
         connection: sqlite3.Connection,
         instance: PlaybillInstance,
         evidence: ProposalEvidenceStore,
-        record: ChangeSetRecordAnyVersion,
+        facts: GenerationRecordFacts,
         claims: tuple[ClaimArtifactAny, ...],
     ) -> None:
-        proposal_id, rationale = _retiring_proposal(evidence, record.candidate_digest)
-        decided_at = record.candidate.timestamp
+        proposal_id, rationale = _retiring_proposal(evidence, facts.candidate_digest)
+        decided_at = facts.timestamp
         connection.executemany(
             "INSERT OR IGNORE INTO refusals VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             [
@@ -735,7 +741,7 @@ class RefusalIndex:
                     claim.identity.name,
                     claim.identity.name,
                     proposal_id,
-                    record.actor_binding.actor_id,
+                    facts.actor_id,
                     decided_at,
                     _micros(decided_at),
                     claim.retirement.reason if isinstance(claim, ClaimArtifact) else None,
@@ -1188,16 +1194,20 @@ class RefusalIndex:
         return found
 
 
-def _retiring_sequence(instance: PlaybillInstance, history: HistoryReader, path: str) -> int | None:
+def _retiring_sequence(
+    instance: PlaybillInstance,
+    history: HistoryReader,
+    path: str,
+    records: RetainedRecordReader,
+) -> int | None:
     """The accepted generation that first retired the Claim at ``path``.
 
     Read from the path's own member locations (a Claim's few versions), never
-    from a walk of history.
+    from a walk of history; each is the one member, not a copy of its record.
     """
 
     for location in history.member_history(path):
-        record = history.read_generation_record(location.sequence, instance.blob_at)
-        member = record.members[location.member_ordinal]
+        member = history.read_member(location, records)
         if isinstance(member, CandidateMemberLawEvidence):
             if member.disposition == "retire":
                 return location.sequence

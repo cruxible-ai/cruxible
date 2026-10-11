@@ -1247,13 +1247,21 @@ class TypedStateReader:
         self.prefetch_members(paths)
         if self.history is not None:
             assert self.records is not None
+            selected = frozenset(paths)
             with self.history() as history:
                 for path in paths:
                     for location in history.member_history(path):
+                        if location.sequence in records:
+                            # Already selected; still verify this path's own member.
+                            history.read_member(location, self.records)
+                            continue
                         generation = history.generation(location.sequence)
-                        record_path = generation.source_record_path
-                        record = history.read_member_record(location, load_record=self.records)
-                        records[location.sequence] = (record_path, record)
+                        # Only the selected paths' members bear on their facts,
+                        # so the record is copied for those members alone.
+                        records[location.sequence] = (
+                            generation.source_record_path,
+                            history.read_member_selection(location, self.records, selected),
+                        )
                         coordinates[location.sequence] = AcceptedCoordinate(
                             git_oid=generation.git_oid,
                             semantic_root=generation.semantic_root,

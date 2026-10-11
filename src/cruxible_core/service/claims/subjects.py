@@ -224,11 +224,12 @@ def service_playbill_subject_history(
     except ValueError as exc:
         raise SubjectNotFoundError(identity) from exc
     entries: list[PlaybillSubjectHistoryEntry] = []
+    records = instance.retained_record_reader()
     with instance.accepted_history_reader() as history:
         for location in history.member_history(path):
             generation = history.generation(location.sequence)
-            record = history.read_member_record(location, instance.blob_at)
-            member = record.members[location.member_ordinal]
+            # The member alone, verified against its record's accepted binding.
+            member = history.read_member(location, records)
             content = instance.blob_at(generation.git_oid, path)
             if member.disposition == "delete" and content is None:
                 continue
@@ -255,9 +256,9 @@ def service_playbill_subject_history(
                     artifact_digest=digest,
                     predecessor_digest=shell.lifecycle.predecessor_digest,
                     lifecycle_state=shell.lifecycle.state,
-                    change_set_path=f"changesets/cs-{record.sequence:020d}.json",
-                    changeset_digest=record.changeset_digest,
-                    candidate_digest=record.candidate_digest,
+                    change_set_path=f"changesets/cs-{generation.sequence:020d}.json",
+                    changeset_digest=str(generation.source_record_digest),
+                    candidate_digest=str(generation.candidate_digest),
                 )
             )
     if not entries:

@@ -702,6 +702,18 @@ read_whole(preview: TruncatedText) -> object
 
 The whole value a `TruncatedText` previews, read exactly where it was previewed: the preview's `read_whole` read, `get(ref, detail="evidence", at=...)` at the generation it came from, so an older revision or a value since replaced returns the value that was previewed, never the head's. A preview with no `read_whole` (a plain query row cell, a write's `after`) raises `WholeValueUnavailable` (`cruxible.sdk.whole_value_unavailable`).
 
+<a id="api-cruxible-read-whole-many"></a>
+
+### `Cruxible.read_whole_many`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+read_whole_many(previews: Iterable[TruncatedText]) -> dict[str, object]
+```
+
+Many previews' whole values in few reads, keyed by each preview's `read_whole.ref`. Each value is exactly what `read_whole(preview)` returns, read where it was previewed: previews are grouped by the generation they name (`read_whole.at`) and each group is read through `claims/read-batch` pinned to that generation's git oid, at most 256 Claims and about 4 MiB of previewed text per read (400 long titles are two reads, not 400). An exact-content value is read as `read_whole` reads it, one by one. Raises `WholeValueUnavailable` for a preview that names no read, for one Claim previewed at two generations (read each with `read_whole`; one is never re-pinned to the other), and when the daemon predates git-oid pinned batch reads.
+
 <a id="api-cruxible-orient"></a>
 
 ### `Cruxible.orient`
@@ -2141,6 +2153,10 @@ Import: `cruxible_client.authoring.sdk.ClaimView`. [Source](src/cruxible_client/
 | `captures` | `tuple[CaptureRef, ...]` | `Required` |
 | `content_digest` | `str \| None` | `None` |
 
+`claim_id` is the qualified `Claim:CLM-...`; the `claim` property is the bare
+`CLM-...` that `QueryClaimValue.claim`, query Claim cells and the keys of
+`read_whole_many` use, so a view and a value join on `view.claim == item.claim`.
+
 <a id="api-knowledgecard"></a>
 
 ## `KnowledgeCard`
@@ -2474,9 +2490,11 @@ prefetch(
 Fill selected attribute caches in bounded, coordinate-pinned pages.
 
 Strings are subject kind/id addresses or paths and fully qualified predicates.
-Every live contender is retained. If the explicit budget is exceeded,
-no partial attribute cache is installed and the caller can narrow the
-selection or increase `max_claims`.
+Every live contender is retained. A selection wider than one batched read
+admits (256 Subjects or predicates) is read in as many batches as it
+needs, all at this World's coordinate. If the explicit budget is
+exceeded, no partial attribute cache is installed and the caller can
+narrow the selection or increase `max_claims`.
 
 <a id="api-world-values"></a>
 
@@ -2487,6 +2505,7 @@ values(
     *,
     subjects: Sequence[str | SubjectRef],
     predicates: Sequence[str | ClaimTypeRef] = (),
+    whole: bool = False,
 ) -> tuple[api.QueryClaimValue, ...]
 ```
 
@@ -2501,7 +2520,9 @@ returned, including Claims resolution overturned or refused. Each
 `overturned`, `refused` or `retired`), `role` and, when present, `qualifier`.
 `value` is a `ShownValue`: a string over 500 characters is a `TruncatedText`
 (`preview`, `length`, `read_whole`), never the value itself;
-`cx.read_whole(item.value)` reads it whole at this World's coordinate. An
+`cx.read_whole(item.value)` reads it whole at this World's coordinate;
+`whole=True` reads every such value whole in a few batched reads
+(`Cruxible.read_whole_many`) and returns it in place of its preview. An
 object value is a `ShownObject` whose `object` is the value, whole.
 Strings are Subject `kind/id` addresses or paths and fully qualified
 predicates; with no `predicates`, every predicate of each kind is read. Pages
@@ -5992,7 +6013,7 @@ read_claim_batch(
 ) -> ClaimReadBatchResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/claims/read-batch'`. SDK-internal: World reads (`World.prefetch` and `WorldSubject.claims`) use it.
+HTTP: `POST f'/api/v1/{instance_id}/claims/read-batch'`. SDK-internal: World reads (`World.prefetch` and `WorldSubject.claims`) and `Cruxible.read_whole_many` use it. `at` is the full accepted coordinate or one accepted generation's whole git oid (as a preview's `read_whole.at` names it: exactly, at the instance's SHA-1 or SHA-256 length, never a prefix); the result always names the full coordinate read.
 
 <a id="api-cruxibleclient-get-batch"></a>
 
@@ -6651,7 +6672,7 @@ HTTP: `POST f'/api/v1/{instance_id}/claim-types/upgrade'`.
 | SdkError | Local SDK refusal, also a ValueError/CoreError; inspect code and error-specific fields. |
 | QueryNameError | A query named a kind, field or query that does not exist; `nearest` lists the closest valid names. |
 | ClaimRoleNotPermittedError | A write or Claim named a role its ClaimType does not permit. |
-| WholeValueUnavailable | `read_whole` was given a `TruncatedText` that names no whole read (a plain query row cell, a write's `after`). |
+| WholeValueUnavailable | `read_whole` or `read_whole_many` was given a `TruncatedText` that names no whole read (a plain query row cell, a write's `after`); or `read_whole_many` was given one Claim previewed at two generations, or a daemon that cannot pin a batched read to a git oid. |
 | WriteRefusalError, ReadRefusalError | A served write or read refused; the outcome or refusal carries its code, nearest names and repair. |
 | ReferenceKindError, LiteralValueTypeError, ExactContentTypeError | Wrong reference/object relationship; repair the typed authoring input. |
 | AbsentSubject, LiteralSchemaError, SourceSelectionError | Missing vocabulary/Subject, invalid constrained value, or invalid source selection. |
