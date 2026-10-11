@@ -117,6 +117,7 @@ from cruxible_core.indexes.history.history_index import (
     HistoryReader,
     PriorMemberSequences,
     RetainedRecordReader,
+    VerifiedRecord,
 )
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
@@ -374,7 +375,7 @@ class PlaybillInstance:
         # Verified retained change-set records, keyed by their full accepted
         # location. Their bytes are immutable, so they survive head movement.
         self.verified_change_set_records: OrderedDict[
-            AcceptedGenerationLocation, ChangeSetRecordAnyVersion
+            AcceptedGenerationLocation, VerifiedRecord
         ] = OrderedDict()
         # Their small derived facts (actor binding, instant, approvals), shared
         # without copies so a hit never copies a whole change-set record.
