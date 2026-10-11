@@ -24,8 +24,9 @@ GitOid = Annotated[str, Field(pattern=r"^[0-9a-f]{40}([0-9a-f]{24})?$")]
 
 class ClaimReadBatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    # The exact coordinate, or one accepted generation's whole git oid; the
-    # result always names the full coordinate read.
+    # The exact coordinate, or one accepted generation's whole git oid (exactly,
+    # at the instance's object-format length; never a prefix); the result always
+    # names the full coordinate read.
     at: AcceptedCoordinate | GitOid | None = None
     claim_ids: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)
     subject_paths: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)

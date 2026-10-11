@@ -6013,7 +6013,7 @@ read_claim_batch(
 ) -> ClaimReadBatchResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/claims/read-batch'`. SDK-internal: World reads (`World.prefetch` and `WorldSubject.claims`) and `Cruxible.read_whole_many` use it. `at` is the full accepted coordinate or one accepted generation's whole git oid (as a preview's `read_whole.at` names it); the result always names the full coordinate read.
+HTTP: `POST f'/api/v1/{instance_id}/claims/read-batch'`. SDK-internal: World reads (`World.prefetch` and `WorldSubject.claims`) and `Cruxible.read_whole_many` use it. `at` is the full accepted coordinate or one accepted generation's whole git oid (as a preview's `read_whole.at` names it: exactly, at the instance's SHA-1 or SHA-256 length, never a prefix); the result always names the full coordinate read.
 
 <a id="api-cruxibleclient-get-batch"></a>
 
