@@ -177,6 +177,24 @@ def test_eviction_is_only_a_rebuild_and_missing_path_can_appear(monkeypatch):
     assert lineage.read_claim_lineages(instance, paths=(missing,), at=at) == {missing: {}}
 
 
+def test_absent_paths_are_answered_but_never_retained():
+    instance, claims, paths, generations, trees, at = _fixture()
+    lineage.read_claim_lineages(instance, paths=paths, at=at)
+    for batch in range(20):
+        missing = tuple(
+            claim_path("CLM-" + f"{batch:02x}{index:02x}".ljust(32, "c")) for index in range(50)
+        )
+        assert lineage.read_claim_lineages(instance, paths=missing, at=at) == {
+            path: {} for path in missing
+        }
+    # A thousand distinct absent paths later, only the two real lineages are held.
+    assert set(lineage._CACHE[instance]) == set(paths)  # noqa: SLF001
+    instance.blobs_at.reset_mock()
+    # Asking again re-reads only the history index: no blob read.
+    assert lineage.read_claim_lineages(instance, paths=missing[:1], at=at) == {missing[0]: {}}
+    instance.blobs_at.assert_not_called()
+
+
 def test_request_history_prefix_stays_fixed_during_concurrent_acceptance():
     instance, claims, paths, generations, trees, at = _fixture()
     original = instance.blobs_at.side_effect

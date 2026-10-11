@@ -45,6 +45,7 @@ class _Entry:
 
 # Retained source-byte weight, not Python heap bytes, bounds the index; it has
 # no path or node count cap, so a page's few thousand backings stay resident.
+# Every retained entry holds at least one version's bytes, so the bound is real.
 # An oversize request still works, but does not retain its index.
 _MAX_SOURCE_BYTES = 64 * 1024 * 1024
 _LOCK = RLock()
@@ -193,7 +194,10 @@ def read_claim_lineages(
             cache = _CACHE.setdefault(instance, OrderedDict())
             for path, entry in entries.items():
                 cache.pop(path, None)
-                if entry.weight <= _MAX_SOURCE_BYTES:
+                # A path with no accepted version is never retained: it holds no
+                # source bytes to charge, so retaining it would escape the bound,
+                # and re-reading it costs one history-index query and no blobs.
+                if entry.nodes and entry.weight <= _MAX_SOURCE_BYTES:
                     cache[path] = entry
             retained = sum(e.weight for e in cache.values())
             while cache and retained > _MAX_SOURCE_BYTES:
