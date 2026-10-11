@@ -7,6 +7,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -273,6 +274,12 @@ _SUBJECT_RE = re.compile(
     r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
     r"(?P<identifier>[a-z][a-z0-9_.-]{0,255})$"
 )
+#: A Claim's Subject or Subject value: ``kind/<id, alias or single key value>``,
+#: which core resolves at lowering; the text is one ledger path segment.
+_SUBJECT_REF_RE = re.compile(
+    r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
+    r"(?P<identifier>[^/\\\x00-\x1f\x7f]{1,1024})$"
+)
 # Object kinds this client understands from an accepted ClaimType envelope.
 # Anything outside the set is skew, not caller error; see _claim_type_object_kind.
 _CLAIM_TYPE_OBJECT_KINDS = frozenset({"literal", "subject", "exact_content"})
@@ -304,8 +311,16 @@ def _subject_parts(value: str) -> tuple[str, str]:
 
 
 def _subject_address(value: str) -> SemanticAddress:
-    kind, identifier = _subject_parts(value)
-    return SemanticAddress.whole_artifact(f"subjects/{kind}/{identifier}.json")
+    """A Subject a Claim names: its id, or an alias or single key value core resolves."""
+
+    match = _SUBJECT_REF_RE.fullmatch(value)
+    if match is None:
+        raise ValueError(
+            "subject must use canonical <subject-kind>/<id, alias or single key value> "
+            "shorthand, with no '/' in the text"
+        )
+    text = unicodedata.normalize("NFC", match["identifier"])
+    return SemanticAddress.whole_artifact(f"subjects/{match['kind']}/{text}.json")
 
 
 def _creation_address(value: object) -> SemanticAddress | None:
@@ -3290,7 +3305,7 @@ class Cruxible:
             statement_object = SubjectClaimObject(
                 address=_creation_address(value) or _subject_address(value.address)
             )
-        elif isinstance(value, str) and _SUBJECT_RE.fullmatch(value):
+        elif isinstance(value, str) and _SUBJECT_REF_RE.fullmatch(value):
             object_kind = self._claim_type_object_kind(
                 predicate_name=predicate_name,
                 predicate=predicate,

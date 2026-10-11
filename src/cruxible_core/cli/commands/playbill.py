@@ -4294,8 +4294,9 @@ def set_value(
 ) -> None:
     """Set FIELD of SUBJECT (kind/id) to VALUE, replacing the live value.
 
-    The Claim it replaces is found for you. A Subject of a known kind that does
-    not exist yet is added. VALUE is text: an enum member, a number or true/false
+    The Claim it replaces is found for you. SUBJECT may also be kind/<key
+    value> as written (kind/CVE-2021-44228): a one-key kind's Subject that does
+    not exist yet is added by that key. VALUE is text: an enum member, a number or true/false
     for such fields, a Subject as kind/id, or the text itself for exact content.
     """
 

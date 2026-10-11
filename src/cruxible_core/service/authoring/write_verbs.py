@@ -936,7 +936,9 @@ class _Planner:
         resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
         if resolved.path is not None:
             return kind, subject_kind_of(resolved.path)[1], resolved.path
-        return kind, subject_id, subject_path(kind, subject_id)
+        # Names no Subject: key text as written (any case or spacing) is no id, and
+        # its path names nothing; create_by_key reads the text as the key.
+        return kind, subject_id, f"subjects/{kind}/{subject_id}.json"
 
     def resolve_field(self, kind: str, name: str, *, index: int, path: str) -> PredicateInfo:
         descriptor = self.vocabulary.descriptor(name)
@@ -1114,7 +1116,7 @@ class _Planner:
                 field_path=path,
             )
         resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
-        if resolved.via == "alias" and resolved.path is not None:
+        if resolved.via in {"alias", "key"} and resolved.path is not None:
             assert resolved.ref is not None
             value, subject_id = resolved.ref, resolved.ref.partition("/")[2]
         try:

@@ -3088,7 +3088,11 @@ replaces the live value: the Claim it revises is found for you. SUBJECT
 `kind/<text>` naming no Subject of a one-key kind (see Subject kinds under
 `authoring`) is created by that key in the same change set -- or resolves to the
 Subject already holding it; any other kind refuses with the creation shape to
-author. The change names the Subject written by its id. A Subject-valued VALUE
+author. `<text>` is the key value as written, in any case or spelling its key
+ClaimType's canonical form reads (`set security.vulnerability/CVE-2021-44228
+...`): no reference parser on the CLI, MCP, HTTP or the SDK holds it to the id
+grammar, and `get`, `query --where`, `inbox link --subject` and authoring Claim
+subjects resolve it the same way. The change names the Subject written by its id. A Subject-valued VALUE
 must already exist. FIELD is a field of the kind as
 `orient` names it, or the full predicate. VALUE is text: an enum member, a
 number or `true`/`false` for such fields, a Subject as `kind/id` (`@kind/id`

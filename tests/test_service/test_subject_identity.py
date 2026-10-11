@@ -638,3 +638,49 @@ def test_next_names_the_subject_kind_a_kind_with_subjects_but_no_declaration_nee
     }
     assert item.repair is not None
     assert item.repair.command == "cruxible authoring example subject-kind"
+
+
+def test_key_text_as_written_names_the_subject_on_every_reference_route(
+    instance: PlaybillInstance,
+) -> None:
+    """`kind/<key text>` in any case or spacing: write, get, authoring and inbox resolve it."""
+
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_client.contracts.line_inbox import InboxLinkSubject
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.service.procedures.line_inbox import _existing_target
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    created = write(
+        instance,
+        {"op": "set", "subject": f"{DECISION}/Ship It  Now", "field": "title", "value": "A"},
+    )
+    assert created.status == "accepted", created
+    assert created.subjects_added == (f"{DECISION}/ship-it-now",)
+
+    again = write(
+        instance,
+        {"op": "set", "subject": f"{DECISION}/SHIP IT NOW", "field": "title", "value": "B"},
+    )
+    assert again.status == "accepted", again
+    assert again.subjects_added == ()
+    assert key_claims(instance, DECISION, "ship-it-now")[f"{DECISION}.title"] == "B"
+
+    read = service_playbill_get(
+        instance,
+        request=GetRequest(ref=f"{DECISION}/Ship it now"),
+        access=BodyAccessContext(principal_id="test", can_read_body=True),
+    )
+    assert read.ref == f"{DECISION}/ship-it-now"
+
+    # An authoring Claim names it by key text too: an alias stated on it lands there.
+    accept(instance, change_set(_alias_member(DECISION, "Ship It Now", "launch")))
+    by_alias = write(
+        instance, {"op": "set", "subject": f"{DECISION}/launch", "field": "title", "value": "C"}
+    )
+    assert by_alias.status == "accepted", by_alias
+    assert by_alias.changes[0].subject == f"{DECISION}/ship-it-now"
+
+    assert _existing_target(
+        instance, InboxLinkSubject(subject=f"{DECISION}/SHIP it now")
+    ) == InboxLinkSubject(subject=f"{DECISION}/ship-it-now")

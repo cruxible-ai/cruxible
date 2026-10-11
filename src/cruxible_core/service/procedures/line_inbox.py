@@ -199,9 +199,12 @@ def _existing_target(instance: PlaybillInstance, target: InboxLinkTarget) -> Inb
         )
     if resolution.ambiguous:
         raise ReadRefusalError(
-            "cruxible.subject.alias_ambiguous",
-            f"{target.subject} names no Subject, and an alias of {kind} names "
-            f"{len(resolution.candidates)} of them",
+            "cruxible.subject.key_ambiguous"
+            if resolution.via == "key"
+            else "cruxible.subject.alias_ambiguous",
+            f"{target.subject} names no Subject, and "
+            + ("a key" if resolution.via == "key" else "an alias")
+            + f" of {kind} names {len(resolution.candidates)} of them",
             http_status=409,
             candidates=resolution.candidates,
             repair_line="Link the item to one of the listed Subjects",
@@ -209,7 +212,7 @@ def _existing_target(instance: PlaybillInstance, target: InboxLinkTarget) -> Inb
         )
     if resolution.via == "identity":
         return target
-    if resolution.via == "alias" and resolution.ref is not None:
+    if resolution.via in {"alias", "key"} and resolution.ref is not None:
         return InboxLinkSubject(subject=resolution.ref)
     raise SubjectNotFoundError(
         f"cruxible.subject_not_found: Subject {target.subject!r} is not accepted; "

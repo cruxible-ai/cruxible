@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias, cast
@@ -69,15 +70,18 @@ from cruxible_client.contracts.proposal_models import (
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart
-from cruxible_client.contracts.subjects import SubjectShell, subject_path
+from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.records import RecordConstructor
 
+#: ``kind/<text>``: a Subject id, an alias of the kind, or a value of its single
+#: key, resolved at lowering (exact live id, alias, key, exact retired id). The
+#: text is one ledger path segment, so it holds no ``/``.
 _SUBJECT_SHORTHAND_RE = re.compile(
     r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
-    r"(?P<id>[a-z][a-z0-9_.-]{0,255})$"
+    r"(?P<id>[^/\\\x00-\x1f\x7f]{1,1024})$"
 )
 
 
@@ -552,10 +556,14 @@ def _subject_address(shorthand: str, *, field_path: str) -> SemanticAddress:
         raise AuthoringInputError(
             "cruxible.authoring.input_subject_invalid",
             field_path,
-            "Subject must use canonical <subject-kind>/<subject-id> shorthand.",
+            "Subject must be <subject-kind>/<id, alias or single key value> with no '/' "
+            "in the text.",
             "Replace it with a subject shown by cruxible query KIND.",
         )
-    return SemanticAddress.whole_artifact(subject_path(match["kind"], match["id"]))
+    # An id is its own path; other text (an alias or key value as written) is
+    # carried in NFC for lowering to resolve, and names nothing until it does.
+    text = unicodedata.normalize("NFC", match["id"])
+    return SemanticAddress.whole_artifact(f"subjects/{match['kind']}/{text}.json")
 
 
 def _claim_object(
