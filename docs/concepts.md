@@ -102,6 +102,39 @@ example bytes a remote agent supplies) goes through `body store` and
 occur in given file bytes: a whole file, a line range, or `grep -n` output on
 standard input.
 
+## Observations over time
+
+Repeated observation never overwrites evidence. Each fetch or read a run makes
+is its own Capture with its own time and provenance; Captures of identical
+bytes share storage and match each other (their observed content is the same)
+without collapsing into one observation.
+
+What a new observation does to accepted state depends on what it shows:
+
+- **The same value again** changes no Claim. Restating a statement on content a
+  Claim already cites is a no-op; the re-observation is recorded beside the
+  Claim instead, and keeps it fresh: a ClaimType's evidence age counts from the
+  latest re-observation, not the first Capture.
+- **A different value** is a new statement, proposed as a revision like any
+  other change. Claims that depend on the old value are not revised for you:
+  `next` resurfaces them, and an agent decides what the change means for each.
+- **A failed observation** is a failure to observe, recorded in the run's
+  journal. It is not evidence that the value changed, vanished or stayed the
+  same.
+
+Keep the boundary by what information supports, not by how often it changes.
+Run bookkeeping (started, timed out, retried) stays in the journal. Observations
+that conclusions rest on are retained as Captures, including negative results
+when a conclusion relies on absence. Accepted Claims hold the assertions and
+interpretations you govern. A rapidly changing measurement can be captured on
+every poll without a Claim for every fluctuation; propose a Claim when a value
+crosses something that matters.
+
+What counts as a meaningful change is the consumer's rule, not core's: a
+Procedure compares what it observed with accepted state (its state tap) and
+proposes only the differences it is written to care about. When a Line notices
+something worth attention but not a proposal, it posts to its inbox.
+
 ## Writing: two lanes
 
 Every change is a change set proposed against an accepted base. Two lanes lead
