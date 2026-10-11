@@ -306,3 +306,142 @@ def test_an_item_just_under_the_byte_bound_posts(tmp_path: Path) -> None:
     assert state.status == "succeeded", state.terminal
     (entry,) = _entries(instance)
     assert entry.envelope.payload_bytes == INBOX_ITEM_MAX_BYTES
+
+
+def _accept_sdk_input(instance: PlaybillInstance, owner: Any, payload: Any) -> None:
+    """Accept one SDK-built authoring payload through the coordinator, as any surface does."""
+
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from cruxible_core.service.authoring.documents import (
+        service_activate_playbill_proposal,
+        service_submit_playbill_approval,
+    )
+    from tests.test_ledger.test_activation import _sign
+
+    actor = AuthenticatedActor(actor_id="owner")
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    compiled = coordinator.compile(
+        actor=actor, payload=payload, canonical_timestamp="2026-09-12T11:40:00.000000Z"
+    )
+    assert compiled.verdict == "passed", compiled.frontier
+    intent = coordinator.list_pending(actor=actor).intents[0]
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    approval = _sign(
+        owner, submitted.status.candidate_digest, instance.accepted_coordinate().semantic_root
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    service_activate_playbill_proposal(
+        instance, proposal_id=submitted.status.proposal_id, activated_by="owner"
+    )
+
+
+def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Path) -> None:
+    """Sequence(..., PostInbox(...)) lowers to the same post_inbox terminal a Line posts from."""
+
+    from cruxible_client.authoring.inputs import CarriedContractInput
+    from cruxible_client.authoring.procedures import (
+        Output,
+        PostInbox,
+        Project,
+        ProviderBinding,
+        Sequence,
+        Source,
+    )
+    from cruxible_client.authoring.sdk import Cruxible
+    from cruxible_client.contracts.captures import CanonicalDuration
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure
+    from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+    from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
+    from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_V2_DIGEST
+    from cruxible_core.governance.seed_artifacts.workspace_file import (
+        WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
+        WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
+        WORKSPACE_FILE_INTERFACE_ID,
+    )
+    from tests.core_support._pc_c_support import capture_contract
+    from tests.test_procedures.test_procedure_source_runs import _source_request
+
+    instance, owner, _procedure, root, policy = _world(
+        tmp_path,
+        accept_procedure=False,
+        contents=canonical_bytes({**ADVISORY, "rows": ROWS}),
+    )
+    severity = CarriedContractInput(
+        name="sdk-inbox-output", fields={"severity": PropertySchema(type="string")}
+    )
+    plan = Sequence(
+        (
+            Source(
+                SOURCE_ALIAS,
+                capture_contract=capture_contract().identity.name,
+                request=_source_request(instance, root).model_dump(mode="json"),
+            ),
+            Project(
+                "result",
+                fields={"severity": Output(SOURCE_ALIAS, "content.json.severity")},
+                contract_out=severity,
+            ),
+            PostInbox("inbox", input={"items": Output(SOURCE_ALIAS, "content.json.rows")}),
+        ),
+        name="sdk-inbox",
+        contract_in=CarriedContractInput(name="sdk-inbox-input", fields={}),
+        contract_out=severity,
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=5_000_000),
+            max_provider_calls=2,
+            max_capture_bytes=65_536,
+        ),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=10_000_000),
+            max_provider_calls=4,
+            max_capture_bytes=131_072,
+            max_items=200,
+            max_repeat_attempts=1,
+        ),
+        acquisition_policy=policy.identity.name,
+    ).bind(
+        **{
+            SOURCE_ALIAS: ProviderBinding(
+                provider=WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
+                interface=WORKSPACE_FILE_INTERFACE_ID,
+                interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
+                implementation_digest=WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
+            )
+        }
+    )
+    preview = plan.preview()
+    assert preview.ready_for_prepare, preview.errors
+    assert preview.terminals == ("inbox",)
+    assert preview.authority == "observe"
+    built = plan.build()
+    assert built.definition["nodes"][-1] == {
+        "kind": "post_inbox",
+        "node_id": "inbox",
+        "input": {"items": f"$steps.{SOURCE_ALIAS}.content.json.rows"},
+    }
+
+    _accept_sdk_input(instance, owner, Cruxible.procedure(object(), definition=plan).payload)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    accepted = parse_procedure(tree[procedure_path("sdk-inbox")], path=procedure_path("sdk-inbox"))
+    line = _served_line(accepted, policy)
+    _accept_more(
+        instance,
+        owner,
+        {line_spec_path(line.identity.name): render_line_spec(line)},
+        name="sdk-inbox-line",
+    )
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert (egress.kind, egress.verdict) == ("post_inbox", "delivered")
+    assert sorted(item.payload["cve"] for item in _entries(instance)) == [
+        row["cve"] for row in ROWS
+    ]

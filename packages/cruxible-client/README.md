@@ -3391,6 +3391,7 @@ successor. Every consumed alias must exist on every path reaching its consumer.
 | Project | Explicit output construction | Fields satisfy output contract |
 | Guard | Forward routing or refusal | on_false defaults to `$abort`; on_true defaults to continuation |
 | EmitCapture | Register output evidence, end path | Served through accepted Lines |
+| PostInbox | Post items, as they are, to the Line inbox; end path | Served through accepted Lines; observe authority; `max_items` caps one run |
 | ProposeChangeSet | Submit governed candidate templates, end path | Served through Lines with mandate/authority; does not accept |
 | SettleChangeSet | Settle candidate templates under the one covering settle mandate, end path | Served through Lines; falls back as that mandate declares |
 | Halt | End path without successful return value | No successor |
@@ -3589,6 +3590,20 @@ Import: `cruxible_client.authoring.procedures.EmitCapture`. [Source](src/cruxibl
 | `capture_contract` | `str` | `''` |
 | `input` | `object` | `Previous(path='')` |
 | `result` | `object` | `Previous(path='')` |
+
+<a id="api-postinbox"></a>
+
+## `PostInbox`
+
+Import: `cruxible_client.authoring.procedures.PostInbox`. [Source](src/cruxible_client/authoring/procedures.py)
+
+| Field | Type | Default / construction |
+|---|---|---|
+| `name` | `str` | `Required` |
+| `next` | `str \| None` | `None` |
+| `node_id` | `str \| None` | `None` |
+| `input` | `object` | `Previous(path='')` |
+| `max_items` | `int \| None` | `None` |
 
 <a id="api-proposechangeset"></a>
 

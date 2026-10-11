@@ -215,6 +215,21 @@ class EmitCapture(Step):
     result: object = Previous()
 
 
+@dataclass(frozen=True)
+class PostInbox(Step):
+    """Post items to the Line inbox, as they are, for intelligence to decide.
+
+    ``input`` is one item, or ``{"items": Output("rows", "items")}`` to post one
+    item per element of a list the run produced. Posting is inert (it never
+    touches accepted state) and needs observe authority; a Procedure posts only
+    when a Line runs it. ``max_items`` caps what one run posts (the core default
+    when absent); items past it are not posted and the run reports the cut.
+    """
+
+    input: object = Previous()
+    max_items: int | None = None
+
+
 @dataclass(frozen=True, kw_only=True)
 class ProposeChangeSet(Step):
     """Propose the candidate Claims; ``result`` is the Procedure's typed return value.
@@ -248,6 +263,7 @@ _KINDS = {
     Project: "project",
     Guard: "guard",
     EmitCapture: "emit_capture",
+    PostInbox: "post_inbox",
     ProposeChangeSet: "propose_change_set",
     SettleChangeSet: "settle_change_set",
     Halt: "halt",
@@ -473,6 +489,8 @@ class Sequence:
                     node[field.name] = _template(value, previous)
             if isinstance(step, StateTap) and step.parameters is None:
                 node["parameters"] = {}
+            if isinstance(step, PostInbox) and step.max_items is None:
+                del node["max_items"]  # absent takes the core default cap
             if isinstance(step, (Source, Call)):
                 binding = step.provider
                 if binding is None:
@@ -496,7 +514,9 @@ class Sequence:
                     interface_digest=binding.interface_digest,
                     implementation_digest=binding.implementation_digest,
                 )
-            if isinstance(step, (Guard, EmitCapture, ProposeChangeSet, SettleChangeSet, Halt)):
+            if isinstance(
+                step, (Guard, EmitCapture, PostInbox, ProposeChangeSet, SettleChangeSet, Halt)
+            ):
                 if step.next is not None:
                     error(
                         step.name,
@@ -658,6 +678,7 @@ __all__ = [
     "Guard",
     "Halt",
     "Output",
+    "PostInbox",
     "Previous",
     "ProcedureCompositionError",
     "ProcedurePreview",
