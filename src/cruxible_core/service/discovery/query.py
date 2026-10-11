@@ -169,6 +169,7 @@ def _fact_row(
         claim_type=claim_type,
         evidence_digest=evidence.adjudication_rule_digest,
         history=history,
+        law_digest=evidence.law_digest,
     )
     captures = tuple(
         item.model_copy(
@@ -251,7 +252,7 @@ def verify_retired_claim_adjudication(
     if isinstance(law_evidence, _IndexedClaimLawEvidence):
         law_evidence.prefetch(tuple(path for path, _ in retired))
     claim_types: dict[str, ClaimType] = {}
-    reproduced: set[tuple[str, str]] = set()
+    reproduced: set[tuple[str, str, str]] = set()
     for path, predicate in sorted(retired, key=lambda item: item[0].encode("utf-8")):
         evidence = law_evidence.get(path)
         if evidence is None:
@@ -264,12 +265,13 @@ def verify_retired_claim_adjudication(
                 raise ClaimNotFoundError(type_path)
             claim_type = parse_claim_type(content, path=type_path)
             claim_types[type_path] = claim_type
-        key = (type_path, evidence.adjudication_rule_digest)
+        key = (type_path, evidence.adjudication_rule_digest, evidence.law_digest)
         if key not in reproduced:
             _reproduced_claim_adjudication_rule(
                 claim_type=claim_type,
                 evidence_digest=evidence.adjudication_rule_digest,
                 history=history,
+                law_digest=evidence.law_digest,
             )
             reproduced.add(key)
 

@@ -1677,6 +1677,16 @@ reports the id:
 `key` maps each key ClaimType (by predicate, or by its last name under the kind)
 to its value, or is the bare value for a one-key kind; a minted kind gives none.
 Each key part becomes a Claim citing `rationale` as the author's own words.
+A key Claim core writes as part of creating its Subject -- on every route
+below -- is covered by the creation itself: it is supported on its own origin
+whatever it cites, so a key ClaimType needs no evidence rule (the example below
+declares none) and a Procedure mandate needs no namespace entry for it. Only
+those key Claims, only at creation: a later revision of a key Claim is judged by
+its ClaimType's evidence rules like any Claim. The creation itself stays
+governed as before (a declared kind, core's id, unique keys). The acceptance law
+is `playbill.claim.v2` revision 9, adopted with compiler revision 33; an
+instance on an earlier compiler judges new Claims by revision 8, and every
+accepted generation is verified by the revision it recorded.
 Creating by key is one rule on every create-by-key route (a `subject` member,
 the write verbs' `kind/<text>` on a one-key kind, a Procedure Subject item, a
 settle): no live Subject holds the canonical key -- create it; exactly one does
@@ -2343,7 +2353,9 @@ An item may also be a Subject item
 declared kind and key exactly as a `subject` authoring member does (see Subject
 kinds under `authoring`): a key one live Subject holds names it and the item
 creates nothing -- the run reports that child `unchanged`, with the Subject's
-path -- and its key Claims cite `source`, else the Capture its closure reached.
+path -- and its key Claims cite `source`, else the Capture its closure reached;
+either way the creation covers them (no evidence rule on the key ClaimType and
+no mandate namespace entry is needed for the run's own Capture).
 A Claim item names a Subject the run knows only by its key with a v3 item
 (`playbill-procedure-claim-proposal-item-v3`): its statement's `subject`, or a
 `{"kind": "subject_key", "subject": ...}` object, is `{"subject_kind": ...,

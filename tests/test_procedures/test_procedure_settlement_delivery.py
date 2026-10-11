@@ -168,8 +168,12 @@ def _predicate_item(predicate: str) -> dict[str, object]:
 LEVEL_KIND = "security.severity_level"
 
 
-def _level_kind_members() -> dict[str, bytes]:
-    """Severity levels keyed by a slug whose key Claims cite the run's own Capture."""
+def _level_kind_members(*, rules: bool = True) -> dict[str, bytes]:
+    """Severity levels keyed by a slug whose key Claims cite the run's own Capture.
+
+    ``rules=False`` gives the slug no evidence rule at all, as the shipped example
+    spells a key ClaimType: the creation alone covers its key Claims.
+    """
 
     from cruxible_client.contracts.artifacts import ArtifactRef
     from cruxible_client.contracts.policies import (
@@ -201,6 +205,8 @@ def _level_kind_members() -> dict[str, bytes]:
             )
         }
     )
+    if not rules:
+        slug = slug.model_copy(update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicy()})
     return {
         claim_type_path(slug.predicate): render_claim_type(slug),
         subject_kind_path(LEVEL_KIND): render_subject_kind(
@@ -244,6 +250,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     subject_creation: tuple[str, ...] = (),
     candidate_templates: Any = None,
     change_kinds: tuple[str, ...] = ("create", "revise"),
+    level_rules: bool = True,
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
@@ -318,7 +325,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         },
         subject_path(SUBJECT_KIND, SUBJECT_ID): render_subject(_subject()),
         query_definition_path(query.identity.name): render_query_definition(query),
-        **(_level_kind_members() if subject_items else {}),
+        **(_level_kind_members(rules=level_rules) if subject_items else {}),
     }
     for index in range(mandates):
         mandate = ProcedureMandate(
@@ -1881,6 +1888,32 @@ def test_a_settle_grant_naming_a_kind_settles_its_new_subjects(tmp_path: Path) -
         if path.startswith("claims/")
     )
     assert predicates == sorted((PREDICATE, f"{LEVEL_KIND}.slug"))
+
+
+def test_a_settled_creation_covers_its_key_claim_with_no_evidence_rule(tmp_path: Path) -> None:
+    """A settle creation's key Claim is supported though its key ClaimType has no rule."""
+
+    from cruxible_client.contracts.claim_reads import ClaimValuesRequest
+    from cruxible_core.service.claims.claim_reads import service_read_claim_values
+
+    instance, root, line = settle_world(
+        tmp_path,
+        subject_items=(_level_item(),),
+        subject_creation=(LEVEL_KIND,),
+        level_rules=False,
+    )
+    egress = _egress(run_settle(instance, root, line))
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "settled"), egress
+
+    (row,) = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequest(
+            subject_paths=(f"subjects/{LEVEL_KIND}/high.json",),
+            predicates=(f"{LEVEL_KIND}.slug",),
+            evaluation_time=fixtures.NOW,
+        ),
+    ).values
+    assert row.verdict == "supported"
 
 
 def test_a_settle_grant_naming_no_kind_never_creates_a_subject(tmp_path: Path) -> None:

@@ -206,7 +206,20 @@ CLAIM_LAW_V2_REVISION_8 = _artifact_law_coordinate(
     "playbill-claim-v2",
     semantic_revision=8,
 )
-CLAIM_LAW_V2 = CLAIM_LAW_V2_REVISION_8
+# Revision 9 (with compiler revision 33, subject identity): a key Claim core
+# writes as part of creating its Subject -- new in the change, about a Subject
+# the change creates, its predicate a key of that Subject's keyed kind -- is
+# covered by the creation itself: judged as evidence requirement ``none`` (its
+# origin supports it), so its key ClaimType needs no evidence rule admitting
+# what it cites. A later revision of it, and every other Claim, is judged
+# exactly as under revision 8; an instance on an earlier compiler keeps
+# revision 8.
+CLAIM_LAW_V2_REVISION_9 = _artifact_law_coordinate(
+    CLAIM_LAW_V2_IDENTIFIER,
+    "playbill-claim-v2",
+    semantic_revision=9,
+)
+CLAIM_LAW_V2 = CLAIM_LAW_V2_REVISION_9
 CLAIM_LAW_V3_REVISION_7 = _artifact_law_coordinate(
     CLAIM_LAW_V3_IDENTIFIER,
     "playbill-claim-v3",
@@ -505,9 +518,15 @@ CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 CLAIM_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_LAW_V2_REVISION_9,
+    artifact_kind="claim",
+    artifact_tag="playbill-claim-v2",
+)
+CLAIM_V2_REVISION_8_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V2_REVISION_8,
     artifact_kind="claim",
     artifact_tag="playbill-claim-v2",
+    current=False,
 )
 CLAIM_V2_REVISION_7_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V2_REVISION_7,
@@ -826,6 +845,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         ATTESTATION_ACCEPTANCE_LAW,
         RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_V2_ACCEPTANCE_LAW,
+        CLAIM_V2_REVISION_8_ACCEPTANCE_LAW,
         CLAIM_V2_REVISION_7_ACCEPTANCE_LAW,
         CLAIM_V2_REVISION_6_ACCEPTANCE_LAW,
         CLAIM_V3_ACCEPTANCE_LAW,

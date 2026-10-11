@@ -1344,6 +1344,7 @@ def _lower_claim(
     claim_index: _ClaimPredicateIndex | None = None,
     derivation_procedure: ArtifactPin | None = None,
     captures: ProducerReceiptResolverProtocol,
+    subject_creation_key: bool = False,
 ) -> LoweredAuthoring:
     """Lower one authored Claim against the tree it is being written onto.
 
@@ -1352,6 +1353,10 @@ def _lower_claim(
     its own minted Claim ID, and `base_tree` is the staged tree its siblings have
     already written into, so dependency installs, the slot law and predecessor
     lookup all see the rest of the same change.
+
+    `subject_creation_key` marks a key Claim a Subject creation writes: the
+    creation covers it (Claim law v2 revision 9), so an existing Capture it
+    cites as evidence need not satisfy one of the key ClaimType's rules.
     """
 
     authored = intent.payload if payload is None else payload
@@ -1862,7 +1867,11 @@ def _lower_claim(
             )
         ),
     )
-    if isinstance(payload.source, ExistingCaptureCitationSource) and citation_role == "evidence":
+    if (
+        isinstance(payload.source, ExistingCaptureCitationSource)
+        and citation_role == "evidence"
+        and not subject_creation_key
+    ):
         assert accepted_contract is not None
         admissions = evaluate_capture_evidence_admissions(
             claim,
@@ -3867,7 +3876,9 @@ def _stage_subject_creation(
 
     Each key Claim cites the creation's source (its rationale as the author's own
     words when none) and lowers like any Claim member, so its value is stored in
-    its ClaimType's canonical form and its evidence is judged by its policy.
+    its ClaimType's canonical form. The creation covers it (Claim law v2
+    revision 9): its origin supports it, so the key ClaimType needs no evidence
+    rule admitting what it cites. A later revision is judged by its policy.
     """
 
     if creation.resolved:
@@ -3965,6 +3976,7 @@ def _stage_subject_creation(
             claim_index=claim_index,
             derivation_procedure=derivation_procedure,
             captures=captures,
+            subject_creation_key=True,
         )
         tree = fork_tree(lowered.proposed_tree)
         extra.update(path for path, _content in lowered.changed_members)
