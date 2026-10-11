@@ -53,7 +53,10 @@ dependencies = [
     # so `uvx cruxible mcp` works without an extra. <2: mcp 2.0.0 removed the
     # bundled mcp.server.fastmcp the tools are built on; the SDK-2.0 migration
     # is tracked separately (wi-mcp-sdk-2-migration).
-    "mcp>=1.0,<2",
+    # >=1.28.1: 1.27.2 fixes CVE-2026-52869 (session/principal binding) and
+    # -52870 (experimental task scoping); 1.28.1 fixes CVE-2026-59950 (WebSocket
+    # Host/Origin validation).
+    "mcp>=1.28.1,<2",
     # Provider installs materialize environments with the provider runtime toolchain
     # (providers/package_materialization.py imports it); core never runs provider code.
     "cruxible-provider-runtime>=0.2.0",
@@ -63,7 +66,7 @@ dependencies = [
 # There are deliberately no `server` or `mcp` extras: the daemon and the MCP
 # server are base dependencies and ship in the default install.
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",  # CVE-2025-71176 (tmpdir handling)
     "pytest-xdist>=3.5",
     "ruff==0.15.0",
     "mypy>=1.10",
