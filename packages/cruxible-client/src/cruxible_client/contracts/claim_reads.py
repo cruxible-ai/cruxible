@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -17,10 +17,16 @@ MAX_CLAIM_VALUE_SUBJECTS = 1024
 MAX_CLAIM_VALUE_PREDICATES = 64
 MAX_CLAIM_VALUE_ROWS = 8192
 
+#: One accepted generation named by its whole git oid, as a preview's
+#: ``read_whole.at`` names it.
+GitOid = Annotated[str, Field(pattern=r"^[0-9a-f]{40}([0-9a-f]{24})?$")]
+
 
 class ClaimReadBatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    at: AcceptedCoordinate | None = None
+    # The exact coordinate, or one accepted generation's whole git oid; the
+    # result always names the full coordinate read.
+    at: AcceptedCoordinate | GitOid | None = None
     claim_ids: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)
     subject_paths: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)
     predicates: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)

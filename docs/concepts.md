@@ -219,7 +219,8 @@ In a summary read, a text value over 500 characters is shown as a truncated
 preview that says how long the value is and names the exact read of the whole
 value (`get REF --detail evidence` at the generation it came from), so a long
 value never passes for a short one. `cx.read_whole(preview)` makes that read in
-the SDK.
+the SDK; `cx.read_whole_many(previews)` reads many of them in a few batched
+reads, each pinned where its preview was read.
 
 `since GENERATION` lists exactly what changed after a generation.
 

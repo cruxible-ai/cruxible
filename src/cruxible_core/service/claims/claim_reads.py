@@ -45,6 +45,7 @@ from cruxible_core.service.evidence.evidence import (
     _claim_read_history_index,
     _IndexedClaimLawEvidence,
 )
+from cruxible_core.service.read_refusals import resolve_read_coordinate
 
 
 def _cursor_selection(request: ClaimReadBatchRequest) -> str:
@@ -59,11 +60,16 @@ def service_read_claim_batch(
 ) -> ClaimReadBatchResult:
     if request.cursor is not None and request.at is None:
         raise FormatError("Claim batch cursor requires an explicit accepted coordinate")
-    coordinate = _resolve_coordinate(
-        instance,
-        AcceptedCoordinate.model_validate(request.at.model_dump())
-        if request.at is not None
-        else None,
+    coordinate = (
+        # A git oid names one accepted generation exactly, as a preview pins it.
+        resolve_read_coordinate(instance, request.at)
+        if isinstance(request.at, str)
+        else _resolve_coordinate(
+            instance,
+            AcceptedCoordinate.model_validate(request.at.model_dump())
+            if request.at is not None
+            else None,
+        )
     )
     resolved_at = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(coordinate).model_dump()

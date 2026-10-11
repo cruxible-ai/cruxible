@@ -453,7 +453,9 @@ class WholeValueUnavailable(SdkError):
     """A preview names no exact whole read: a plain query row cell, or a write's ``after``.
 
     Query with ``claims=True`` and pass a Claim cell's preview instead; a write's
-    ``after`` is the value the write sent.
+    ``after`` is the value the write sent. ``read_whole_many`` also raises it
+    when a batched read cannot stay where the previews were read: one Claim
+    previewed at two generations, or a daemon that cannot pin a batch to a git oid.
     """
 
     code = "cruxible.sdk.whole_value_unavailable"

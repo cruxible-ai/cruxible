@@ -1203,15 +1203,20 @@ class World:
         """Fill selected attribute caches in bounded, coordinate-pinned pages.
 
         Strings are subject kind/id addresses or paths and fully qualified predicates.
-        Every live contender is retained. If the explicit budget is exceeded,
-        no partial attribute cache is installed and the caller can narrow the
-        selection or increase ``max_claims``.
+        Every live contender is retained. A selection wider than one batched read
+        admits (256 Subjects or predicates) is read in as many batches as it
+        needs, all at this World's coordinate. If the explicit budget is
+        exceeded, no partial attribute cache is installed and the caller can
+        narrow the selection or increase ``max_claims``.
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
         from datetime import datetime
 
-        from cruxible_client.contracts.claim_reads import ClaimReadBatchRequest
+        from cruxible_client.contracts.claim_reads import (
+            MAX_CLAIM_READ_BATCH,
+            ClaimReadBatchRequest,
+        )
 
         self._assert_current()
         if max_claims < 1:
@@ -1228,53 +1233,78 @@ class World:
         )
         paths = tuple(f"subjects/{address}.json" for address in addresses)
         names = tuple(ref.address if isinstance(ref, ClaimTypeRef) else ref for ref in predicates)
-        request = ClaimReadBatchRequest.model_validate(
-            {
-                "at": self._coordinate.model_dump(mode="json"),
-                "subject_paths": paths,
-                "predicates": names,
-                "limit": page_size,
-                "evaluation_time": datetime.fromisoformat(self._playbill._evaluation_time()),
-            }
-        )
-        cursor: str | None = None
+        for values in (paths, names):
+            if len(set(values)) != len(values) or any(not value for value in values):
+                raise ValueError("selectors must be nonempty and unique")
+        evaluation_time = datetime.fromisoformat(self._playbill._evaluation_time())
+        wanted_paths = set(paths)
+        wanted_names = set(names)
         seen: set[str] = set()
         views: list[ClaimView] = []
-        while True:
-            result = self._playbill._client.read_claim_batch(
-                self._playbill._instance_id,
-                request=request.model_copy(update={"cursor": cursor}),
-            )
-            self._assert_current()
-            if result.coordinate.model_dump(mode="json") != self._coordinate.model_dump(
-                mode="json"
-            ):
-                raise WorldStructureError("prefetch returned a different accepted coordinate")
-            for raw in result.claims:
-                if raw.coordinate != result.coordinate:
-                    raise WorldStructureError("prefetch Claim returned a different coordinate")
-                view = self._playbill._with_exact_text(
-                    self._playbill._typed_claim_view(raw),
-                    AcceptedCoordinate.model_validate(raw.coordinate.model_dump(mode="json")),
+        # Disjoint Subject and predicate batches: each Claim falls in exactly one.
+        # An empty selection still builds its one request, which refuses it.
+        batch = MAX_CLAIM_READ_BATCH
+        for subject_start in range(0, max(len(paths), 1), batch):
+            for name_start in range(0, max(len(names), 1), batch):
+                request = ClaimReadBatchRequest.model_validate(
+                    {
+                        "at": self._coordinate.model_dump(mode="json"),
+                        "subject_paths": paths[subject_start : subject_start + batch],
+                        "predicates": names[name_start : name_start + batch],
+                        "limit": page_size,
+                        "evaluation_time": evaluation_time,
+                    }
                 )
-                if (
-                    view.claim_id in seen
-                    or view.subject not in paths
-                    or (names and view.predicate not in names)
-                    or view.lifecycle_state != "live"
-                ):
-                    raise WorldStructureError("prefetch returned an invalid or duplicate selection")
-                seen.add(view.claim_id)
-                views.append(view)
-            if len(views) > max_claims:
-                raise WorldStructureError("prefetch exceeds max_claims; narrow the selection")
-            if not result.truncated:
-                if result.cursor is not None:
-                    raise WorldStructureError("complete prefetch page unexpectedly has a cursor")
-                break
-            if not result.claims or result.cursor is None or result.cursor == cursor:
-                raise WorldStructureError("prefetch pagination does not advance")
-            cursor = result.cursor
+                cursor: str | None = None
+                while True:
+                    result = self._playbill._client.read_claim_batch(
+                        self._playbill._instance_id,
+                        request=request.model_copy(update={"cursor": cursor}),
+                    )
+                    self._assert_current()
+                    if result.coordinate.model_dump(mode="json") != self._coordinate.model_dump(
+                        mode="json"
+                    ):
+                        raise WorldStructureError(
+                            "prefetch returned a different accepted coordinate"
+                        )
+                    for raw in result.claims:
+                        if raw.coordinate != result.coordinate:
+                            raise WorldStructureError(
+                                "prefetch Claim returned a different coordinate"
+                            )
+                        view = self._playbill._with_exact_text(
+                            self._playbill._typed_claim_view(raw),
+                            AcceptedCoordinate.model_validate(
+                                raw.coordinate.model_dump(mode="json")
+                            ),
+                        )
+                        if (
+                            view.claim_id in seen
+                            or view.subject not in request.subject_paths
+                            or view.subject not in wanted_paths
+                            or (names and view.predicate not in request.predicates)
+                            or (names and view.predicate not in wanted_names)
+                            or view.lifecycle_state != "live"
+                        ):
+                            raise WorldStructureError(
+                                "prefetch returned an invalid or duplicate selection"
+                            )
+                        seen.add(view.claim_id)
+                        views.append(view)
+                    if len(views) > max_claims:
+                        raise WorldStructureError(
+                            "prefetch exceeds max_claims; narrow the selection"
+                        )
+                    if not result.truncated:
+                        if result.cursor is not None:
+                            raise WorldStructureError(
+                                "complete prefetch page unexpectedly has a cursor"
+                            )
+                        break
+                    if not result.claims or result.cursor is None or result.cursor == cursor:
+                        raise WorldStructureError("prefetch pagination does not advance")
+                    cursor = result.cursor
         # Commit only complete selections, including genuinely empty attributes.
         for address, path in zip(addresses, paths, strict=True):
             selected = tuple(view for view in views if view.subject == path)
@@ -1296,6 +1326,7 @@ class World:
         *,
         subjects: Sequence[str | SubjectRef],
         predicates: Sequence[str | ClaimTypeRef] = (),
+        whole: bool = False,
     ) -> tuple[QueryClaimValue, ...]:
         """Each live Claim's value, verdict and status for these Subjects, through ``query``.
 
@@ -1305,6 +1336,8 @@ class World:
         or paths and fully qualified predicates. A string value over 500
         characters is a ``TruncatedText`` (``preview``, ``length``), never the
         value: ``cx.read_whole(item.value)`` reads it whole at this World's coordinate.
+        ``whole=True`` reads every such value whole, in a few batched reads
+        (``Cruxible.read_whole_many``), and returns it in place of its preview.
         An object value is a ``ShownObject`` whose ``object`` is the value, whole.
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
@@ -1342,7 +1375,18 @@ class World:
                             evaluation_time=evaluation_time,
                         )
                     )
-        return tuple(values)
+        if not whole:
+            return tuple(values)
+        from cruxible_client.contracts.read_values import TruncatedText
+
+        previews = [item.value for item in values if isinstance(item.value, TruncatedText)]
+        read = cx.read_whole_many(previews) if previews else {}
+        return tuple(
+            item.model_copy(update={"value": read[item.value.read_whole.ref]})
+            if isinstance(item.value, TruncatedText) and item.value.read_whole is not None
+            else item
+            for item in values
+        )
 
     def _value_page(
         self,
