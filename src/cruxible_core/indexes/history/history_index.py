@@ -9,6 +9,7 @@ one SQLite snapshot with an explicit accepted-history cutoff.
 
 from __future__ import annotations
 
+import copy
 import functools
 import hashlib
 import json
@@ -190,6 +191,40 @@ class AcceptedMemberLocation:
 
 
 VERIFIED_RECORD_CAPACITY = 256
+# Facts are a few short strings per generation, so far more of them stay resident.
+RECORD_FACTS_CAPACITY = 65536
+
+
+@dataclass(frozen=True)
+class GenerationRecordFacts:
+    """The small immutable facts of one verified retained change-set record.
+
+    They are derived once from the verified record and shared without copies:
+    every field is a string, a tuple of strings, or None. A read that needs only
+    these never copies or re-parses the whole record, so its cost does not grow
+    with the size of the change set that accepted a revision.
+    """
+
+    sequence: int
+    candidate_digest: str
+    timestamp: str
+    actor_id: str
+    source_compilation_digest: str | None
+    # Approval signers in record order, repeats included.
+    approval_signers: tuple[str, ...]
+    mandate_digest: str | None
+
+
+def _record_facts(record: ChangeSetRecordAnyVersion) -> GenerationRecordFacts:
+    return GenerationRecordFacts(
+        sequence=record.sequence,
+        candidate_digest=record.candidate_digest,
+        timestamp=str(record.candidate.timestamp),
+        actor_id=record.actor_binding.actor_id,
+        source_compilation_digest=record.actor_binding.source_compilation_digest,
+        approval_signers=tuple(item.attestation.signer_id for item in record.approvals),
+        mandate_digest=record.mandate_digest,
+    )
 
 
 class RetainedRecordReader:
@@ -200,7 +235,9 @@ class RetainedRecordReader:
     the bytes it verifies cannot change under it. Verified records are reused
     while resident in the bounded instance cache. The cached models are private:
     each request receives its own detached copy, because frozen models still
-    carry mutable nested containers.
+    carry mutable nested containers. ``facts``, ``member`` and ``law_evidence``
+    read a resident record in place and hand out only immutable facts or a copy
+    of the one selected part, never a copy of the whole record.
     """
 
     def __init__(
@@ -208,24 +245,21 @@ class RetainedRecordReader:
         load_record: Callable[[str, str], bytes | None],
         *,
         verified: OrderedDict[AcceptedGenerationLocation, ChangeSetRecordAnyVersion] | None = None,
+        facts: OrderedDict[AcceptedGenerationLocation, GenerationRecordFacts] | None = None,
     ) -> None:
         self._load = load_record
         self._records: dict[AcceptedGenerationLocation, ChangeSetRecordAnyVersion] = {}
         self._verified = verified
+        self._facts = facts
+        self._local_facts: dict[AcceptedGenerationLocation, GenerationRecordFacts] = {}
+        # Records this request verified but never handed out; read in place only.
+        self._private: dict[AcceptedGenerationLocation, ChangeSetRecordAnyVersion] = {}
 
-    def read(
+    def _load_verified(
         self,
         generation: AcceptedGenerationLocation,
-        canonical_cache: BoundedCache[bool] | None = None,
+        canonical_cache: BoundedCache[bool] | None,
     ) -> ChangeSetRecordAnyVersion:
-        if generation in self._records:
-            return self._records[generation]
-        if self._verified is not None:
-            retained = memo_get(self._verified, generation)
-            if retained is not None:
-                detached = retained.model_copy(deep=True)
-                self._records[generation] = detached
-                return detached
         if generation.source_record_path is None:
             raise ProjectionIntegrityError("genesis has no member evidence record")
         raw = self._load(generation.git_oid, generation.source_record_path)
@@ -241,6 +275,25 @@ class RetainedRecordReader:
             or compiler_after_record(record).rule_digest != generation.compiler_digest
         ):
             raise ProjectionIntegrityError("accepted member source record binding differs")
+        return record
+
+    def read(
+        self,
+        generation: AcceptedGenerationLocation,
+        canonical_cache: BoundedCache[bool] | None = None,
+    ) -> ChangeSetRecordAnyVersion:
+        if generation in self._records:
+            return self._records[generation]
+        if self._verified is not None:
+            retained = memo_get(self._verified, generation)
+            if retained is not None:
+                detached = retained.model_copy(deep=True)
+                self._records[generation] = detached
+                return detached
+        private = self._private.pop(generation, None)
+        record = (
+            private if private is not None else self._load_verified(generation, canonical_cache)
+        )
         self._records[generation] = record
         if self._verified is not None:
             memo_put(
@@ -250,6 +303,103 @@ class RetainedRecordReader:
                 capacity=VERIFIED_RECORD_CAPACITY,
             )
         return record
+
+    def _in_place(
+        self,
+        generation: AcceptedGenerationLocation,
+        canonical_cache: BoundedCache[bool] | None,
+    ) -> ChangeSetRecordAnyVersion:
+        """The verified record, read in place; callers copy what they hand out."""
+
+        if generation in self._records:
+            return self._records[generation]
+        if generation in self._private:
+            return self._private[generation]
+        if self._verified is not None:
+            retained = memo_get(self._verified, generation)
+            if retained is not None:
+                return retained
+        record = self._load_verified(generation, canonical_cache)
+        if self._verified is not None:
+            # Never handed out by this path, so the shared copy is the record itself.
+            memo_put(self._verified, generation, record, capacity=VERIFIED_RECORD_CAPACITY)
+        else:
+            self._private[generation] = record
+        return record
+
+    def facts(
+        self,
+        generation: AcceptedGenerationLocation,
+        canonical_cache: BoundedCache[bool] | None = None,
+    ) -> GenerationRecordFacts:
+        """The generation record's small facts, verified exactly as ``read`` verifies."""
+
+        found = self._local_facts.get(generation)
+        if found is not None:
+            return found
+        if self._facts is not None:
+            found = memo_get(self._facts, generation)
+        if found is None:
+            found = _record_facts(self._in_place(generation, canonical_cache))
+            if self._facts is not None:
+                memo_put(self._facts, generation, found, capacity=RECORD_FACTS_CAPACITY)
+        self._local_facts[generation] = found
+        return found
+
+    def member(
+        self,
+        generation: AcceptedGenerationLocation,
+        ordinal: int,
+        canonical_cache: BoundedCache[bool] | None = None,
+    ) -> CandidateMemberEvidence | CandidateMemberLawEvidence:
+        """A detached copy of one member, without copying its whole record."""
+
+        record = self._in_place(generation, canonical_cache)
+        if not 0 <= ordinal < len(record.members):
+            raise ProjectionIntegrityError("accepted member source record binding differs")
+        return record.members[ordinal].model_copy(deep=True)
+
+    def selection(
+        self,
+        generation: AcceptedGenerationLocation,
+        paths: frozenset[str],
+        canonical_cache: BoundedCache[bool] | None = None,
+    ) -> ChangeSetRecordAnyVersion:
+        """A detached copy of the verified record restricted to the members at ``paths``.
+
+        Its ``members`` and ``law_evidence`` keep only entries at ``paths``; every
+        other field is a detached copy of the record's own. It answers exactly
+        what the whole record answers about those paths, without copying the
+        rest of the change set, so it is a selection to read, never a record to
+        re-serialize or re-verify.
+        """
+
+        record = self._in_place(generation, canonical_cache)
+        fields: dict[str, object] = {}
+        for name in type(record).model_fields:
+            value = getattr(record, name)
+            if name in ("members", "law_evidence"):
+                fields[name] = tuple(
+                    item.model_copy(deep=True) for item in value if item.path in paths
+                )
+            else:
+                fields[name] = copy.deepcopy(value)
+        return type(record).model_construct(_fields_set=record.model_fields_set, **fields)
+
+    def law_evidence(
+        self,
+        generation: AcceptedGenerationLocation,
+        path: str,
+        canonical_cache: BoundedCache[bool] | None = None,
+    ) -> tuple[MemberLawEvaluation, ...] | None:
+        """Detached copies of one path's member law evidence; None for a v1 record."""
+
+        record = self._in_place(generation, canonical_cache)
+        if isinstance(record, ChangeSetRecord):
+            return None
+        return tuple(
+            item.model_copy(deep=True) for item in record.law_evidence if item.path == path
+        )
 
 
 class HistoryReader:
@@ -514,19 +664,28 @@ class HistoryReader:
             )
         return location
 
+    def _reader(
+        self, load_record: Callable[[str, str], bytes | None] | RetainedRecordReader
+    ) -> RetainedRecordReader:
+        if isinstance(load_record, RetainedRecordReader):
+            return load_record
+        reader = self._record_readers.get(load_record)
+        if reader is None:
+            reader = RetainedRecordReader(load_record)
+            self._record_readers[load_record] = reader
+        return reader
+
     def read_generation_record(
         self, sequence: int, load_record: Callable[[str, str], bytes | None] | RetainedRecordReader
     ) -> ChangeSetRecordAnyVersion:
         """Verify one retained generation record against its accepted locator."""
-        reader: RetainedRecordReader | None
-        if isinstance(load_record, RetainedRecordReader):
-            reader = load_record
-        else:
-            reader = self._record_readers.get(load_record)
-            if reader is None:
-                reader = RetainedRecordReader(load_record)
-                self._record_readers[load_record] = reader
-        return reader.read(self.generation(sequence), self._canonical_cache)
+        return self._reader(load_record).read(self.generation(sequence), self._canonical_cache)
+
+    def read_generation_facts(
+        self, sequence: int, load_record: Callable[[str, str], bytes | None] | RetainedRecordReader
+    ) -> GenerationRecordFacts:
+        """The verified generation record's small facts, without copying the record."""
+        return self._reader(load_record).facts(self.generation(sequence), self._canonical_cache)
 
     def read_member_record(
         self,
@@ -537,14 +696,34 @@ class HistoryReader:
         record = self.read_generation_record(location.sequence, load_record)
         if not 0 <= location.member_ordinal < len(record.members):
             raise ProjectionIntegrityError("accepted member source record binding differs")
-        member = record.members[location.member_ordinal]
-        if (
-            member.path != location.member_path
-            or member.artifact_kind != location.artifact_kind
-            or _member_digest(member) != location.artifact_digest
-        ):
-            raise ProjectionIntegrityError("accepted member locator differs from retained member")
+        _verify_member(record.members[location.member_ordinal], location)
         return record
+
+    def read_member(
+        self,
+        location: AcceptedMemberLocation,
+        load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
+    ) -> CandidateMemberEvidence | CandidateMemberLawEvidence:
+        """One exact retained member, verified as ``read_member_record`` verifies it."""
+        member = self._reader(load_record).member(
+            self.generation(location.sequence), location.member_ordinal, self._canonical_cache
+        )
+        _verify_member(member, location)
+        return member
+
+    def read_member_selection(
+        self,
+        location: AcceptedMemberLocation,
+        load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
+        paths: frozenset[str],
+    ) -> ChangeSetRecordAnyVersion:
+        """The located member's record restricted to ``paths``, verified like the whole."""
+        if location.member_path not in paths:
+            raise ProjectionIntegrityError("a member selection must include its located member")
+        self.read_member(location, load_record)
+        return self._reader(load_record).selection(
+            self.generation(location.sequence), paths, self._canonical_cache
+        )
 
     def read_claim_law_evidence(
         self,
@@ -557,11 +736,21 @@ class HistoryReader:
         location = self.claim_law_evidence(identity, artifact_digest=artifact_digest, path=path)
         if location is None:
             return None
-        record = self.read_member_record(location, load_record)
-        matches = [e for e in _law_evidence(record) if e.path == path]
-        if len(matches) != 1:
+        return self.read_member_law_evidence(location, load_record)
+
+    def read_member_law_evidence(
+        self,
+        location: AcceptedMemberLocation,
+        load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
+    ) -> MemberLawEvaluation:
+        """The one law evaluation of a located Claim member, without copying its record."""
+        self.read_member(location, load_record)
+        evidence = self._reader(load_record).law_evidence(
+            self.generation(location.sequence), location.member_path, self._canonical_cache
+        )
+        if evidence is None or len(evidence) != 1:
             raise ProjectionIntegrityError("accepted Claim law evidence is missing or ambiguous")
-        return matches[0]
+        return evidence[0]
 
     def identities_for_digest(self, artifact_digest: str) -> tuple[str, ...]:
         """Locate all identities for an exact version within this reader's prefix."""
@@ -732,6 +921,15 @@ def _record_members(
 
 def _law_evidence(record: ChangeSetRecordAnyVersion) -> tuple[MemberLawEvaluation, ...]:
     return () if isinstance(record, ChangeSetRecord) else record.law_evidence
+
+
+def _verify_member(member: object, location: AcceptedMemberLocation) -> None:
+    if (
+        getattr(member, "path", None) != location.member_path
+        or getattr(member, "artifact_kind", None) != location.artifact_kind
+        or _member_digest(member) != location.artifact_digest
+    ):
+        raise ProjectionIntegrityError("accepted member locator differs from retained member")
 
 
 def _member_digest(member: object) -> str | None:

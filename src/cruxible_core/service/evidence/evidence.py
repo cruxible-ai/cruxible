@@ -18,7 +18,6 @@ from cruxible_client.contracts.accepted_attestations import (
     AcceptedClaimAttestationEvidence,
     ClaimAttestationEvidence,
 )
-from cruxible_client.contracts.candidates import MemberLawEvaluation
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     parse_capture_contract,
@@ -911,7 +910,6 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
         self.instance = instance
         self.at = AcceptedCoordinate.from_internal(coordinate)
         self._records = records if records is not None else instance.retained_record_reader()
-        self._evidence_by_sequence: dict[int, dict[str, MemberLawEvaluation]] = {}
         # Prefetched answers: parsed evidence, or None for a path with no law record.
         self._prefetched: dict[str, ClaimLawEvidenceAny | None] = {}
 
@@ -943,15 +941,12 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
     def _read_record(
         self, history: HistoryReader, path: str, location: Any
     ) -> ClaimLawEvidenceAny | None:
-        record = history.read_member_record(location, self._records)
-        if isinstance(record, ChangeSetRecord):
+        history.read_member(location, self._records)
+        # The one member's evaluation, read in place: never a copy of the record.
+        law = self._records.law_evidence(history.generation(location.sequence), path)
+        if law is None:
             return None
-        if record.sequence not in self._evidence_by_sequence:
-            self._evidence_by_sequence[record.sequence] = {
-                item.path: item for item in record.law_evidence
-            }
-        evidence = self._evidence_by_sequence[record.sequence].get(path)
-        raw = None if evidence is None else evidence.result.get("claim_evidence")
+        raw = law[-1].result.get("claim_evidence") if law else None
         if raw is None:
             raise ProposalIntegrityError("accepted Claim law locator has no retained evidence")
         return parse_claim_law_evidence(raw)

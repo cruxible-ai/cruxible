@@ -133,11 +133,13 @@ def test_selected_history_preserves_receipts_and_ignores_unrelated_generations(
     assert [entry.lifecycle_state for entry in subjects.entries] == ["live", "retired"]
     assert documents.entries[1].predecessor_digest == documents.entries[0].envelope_digest
     assert subjects.entries[1].predecessor_digest == subjects.entries[0].artifact_digest
+    # Each change-set record is verified once: the second history reuses the
+    # instance's verified record and reads only that revision's member.
     assert Counter(path for _oid, path in reads) == {
         "documents/design.json": 2,
         SUBJECT_PATH: 2,
-        "changesets/cs-00000000000000000001.json": 2,
-        "changesets/cs-00000000000000000002.json": 2,
+        "changesets/cs-00000000000000000001.json": 1,
+        "changesets/cs-00000000000000000002.json": 1,
     }
     reads.clear()
     with pytest.raises(DocumentNotFoundError):

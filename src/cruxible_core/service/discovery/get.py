@@ -919,8 +919,7 @@ def _slot_values(
 
 
 def _generation_timestamp(instance: PlaybillInstance, history: Any, sequence: int) -> str:
-    record = history.read_generation_record(sequence, instance.blob_at)
-    return str(record.candidate.timestamp)
+    return str(history.read_generation_facts(sequence, instance.retained_record_reader()).timestamp)
 
 
 def _claim_card(
@@ -1725,8 +1724,9 @@ def _accepting_proposal(
     Work: one history member lookup, one candidate locator row per admission
     sharing the candidate, one admission each, then one reason file. The
     accepted generation's actor binding is read from its retained change-set
-    record, which is parsed whole, so that step grows with the size of the
-    change set that accepted the revision (the reason file read does not).
+    record's verified facts: the record is parsed whole once per instance, and
+    a later read of any revision it accepted reuses its small facts without
+    copying or re-parsing it.
     """
 
     with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(coordinate)) as h:
@@ -1736,19 +1736,18 @@ def _accepting_proposal(
         generation = h.generation(latest.sequence)
         if generation.source_record_path is None or generation.candidate_digest is None:
             return None
-        record = h.read_generation_record(latest.sequence, instance.blob_at)
-    binding = record.actor_binding
+        facts = h.read_generation_facts(latest.sequence, instance.retained_record_reader())
     evidence = instance.proposal_evidence()
     if evidence.index is None:
         return None
     matches = []
-    for row in evidence.index.rows(evidence, "candidate_digest=?", (record.candidate_digest,)):
+    for row in evidence.index.rows(evidence, "candidate_digest=?", (facts.candidate_digest,)):
         if row["withdrawal_path"] is not None:
             continue  # withdrawn or rejected: never the admission that was accepted
         admission = evidence.read_admission(row["proposal_id"])
         if (
-            admission.actor_id == binding.actor_id
-            and admission.source_compilation_digest == binding.source_compilation_digest
+            admission.actor_id == facts.actor_id
+            and admission.source_compilation_digest == facts.source_compilation_digest
         ):
             matches.append(admission)
     if len(matches) != 1:
@@ -1873,10 +1872,10 @@ def _revision(
     generation = history.generation(entry.sequence)
     # Genesis carries no change-set record: its instant is the bootstrap's and
     # nobody approved it.
-    record = (
+    facts = (
         None
         if generation.source_record_path is None
-        else history.read_generation_record(entry.sequence, instance.blob_at)
+        else history.read_generation_facts(entry.sequence, instance.retained_record_reader())
     )
     value, content_digest = (None, None) if entry.value is None else entry.value()
     # The revision's own generation, so the whole read returns this revision's value.
@@ -1887,15 +1886,11 @@ def _revision(
         git_oid=generation.git_oid[:12],
         accepted=(
             instance.accepted_evaluation_time(generation.git_oid).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            if record is None
-            else str(record.candidate.timestamp)
+            if facts is None
+            else facts.timestamp
         ),
-        actor=generation.actor_id or (None if record is None else record.actor_binding.actor_id),
-        approved_by=(
-            ()
-            if record is None
-            else tuple(dict.fromkeys(item.attestation.signer_id for item in record.approvals))
-        ),
+        actor=generation.actor_id or (None if facts is None else facts.actor_id),
+        approved_by=(() if facts is None else tuple(dict.fromkeys(facts.approval_signers))),
         lifecycle=entry.lifecycle,
         value=cut_value,
         next=(

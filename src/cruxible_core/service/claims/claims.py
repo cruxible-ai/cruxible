@@ -74,7 +74,6 @@ from cruxible_client.contracts.subjects import (
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.indexes.claims.projection_claims import ClaimProjectionView
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.proposals.settlement import ChangeSetRecord, ChangeSetRecordAnyVersion
 from cruxible_core.query.dereference import (
     ExternalSelectionReaderProtocol,
     dereference_source_handle,
@@ -524,18 +523,18 @@ def _claim_law_evidence_by_artifact_index(
     """Index every accepted Claim law account in one bounded history pass."""
 
     found: dict[tuple[str, str], ClaimLawEvidenceAny] = {}
+    records = instance.retained_record_reader()
     with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(at)) as history:
-        records: dict[int, ChangeSetRecordAnyVersion] = {}
         for location in history.claim_law_locations():
-            record = records.get(location.sequence)
-            if record is None:
-                record = history.read_member_record(location, instance.blob_at)
-                records[location.sequence] = record
-            if isinstance(record, ChangeSetRecord):
+            history.read_member(location, records)
+            law = records.law_evidence(history.generation(location.sequence), location.member_path)
+            if law is None:
                 continue
-            evidence = next(
-                item for item in record.law_evidence if item.path == location.member_path
-            )
+            if len(law) != 1:
+                raise ProjectionIntegrityError(
+                    "accepted Claim law evidence is missing or ambiguous"
+                )
+            (evidence,) = law
             raw = evidence.result.get("claim_evidence")
             if raw is not None:
                 parsed = parse_claim_law_evidence(raw)
@@ -550,8 +549,8 @@ def _accepted_generation_time(
     with instance.accepted_history_reader(
         at=AcceptedCoordinate.from_internal(coordinate)
     ) as history:
-        record = history.read_generation_record(history.sequence, instance.blob_at)
-    return datetime.fromisoformat(record.candidate.timestamp.replace("Z", "+00:00"))
+        facts = history.read_generation_facts(history.sequence, instance.retained_record_reader())
+    return datetime.fromisoformat(facts.timestamp.replace("Z", "+00:00"))
 
 
 def _claim_admission_tree(
@@ -788,11 +787,12 @@ def service_playbill_claim_history(
     )
     path = claim_path(parsed_identity.name)
     entries: list[PlaybillClaimHistoryEntry] = []
+    records = instance.retained_record_reader()
     with instance.accepted_history_reader() as history:
         for location in history.member_history(path):
             generation = history.generation(location.sequence)
-            record = history.read_member_record(location, load_record=instance._ledger.blob_at)
-            member = record.members[location.member_ordinal]
+            # The member alone, verified against its record's accepted binding.
+            member = history.read_member(location, records)
             content = instance.blob_at(generation.git_oid, path)
             if member.disposition == "delete" and content is None:
                 continue
@@ -820,9 +820,9 @@ def service_playbill_claim_history(
                     artifact_digest=digest,
                     predecessor_digest=claim.lifecycle.predecessor_digest,
                     lifecycle_state=claim.lifecycle.state,
-                    change_set_path=f"changesets/cs-{record.sequence:020d}.json",
-                    changeset_digest=record.changeset_digest,
-                    candidate_digest=record.candidate_digest,
+                    change_set_path=f"changesets/cs-{generation.sequence:020d}.json",
+                    changeset_digest=str(generation.source_record_digest),
+                    candidate_digest=str(generation.candidate_digest),
                 )
             )
     if not entries:

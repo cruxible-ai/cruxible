@@ -2092,8 +2092,10 @@ class ProposalTerminalEgressSink:
             location = history.generation_for_candidate(candidate_digest)
             if location is None:
                 return None
-            record = history.read_generation_record(location.sequence, self.instance.blob_at)
-        if record.mandate_digest != digest:
+            facts = history.read_generation_facts(
+                location.sequence, self.instance.retained_record_reader()
+            )
+        if facts.mandate_digest != digest:
             raise ProposalDeliveryRefused(
                 "effectful_operation_payload_mismatch",
                 "The delegated candidate was accepted, but not under this settle mandate.",

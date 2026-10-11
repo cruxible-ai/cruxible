@@ -994,6 +994,10 @@ def test_activation_reads_exact_history_without_a_private_memo(tmp_path: Path, m
         )
         == basis
     )
+    # The only reuse is the instance's verified record cache, keyed by the exact
+    # accepted location: without it the record is read, and refused, again.
+    instance.verified_change_set_records.clear()
+    instance.verified_record_facts.clear()
     monkeypatch.setattr(instance, "blob_at", lambda *args: None)
     with pytest.raises(ProjectionIntegrityError, match="source record is unavailable"):
         measurements.measurement_activation_basis(
