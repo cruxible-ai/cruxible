@@ -2153,6 +2153,10 @@ Import: `cruxible_client.authoring.sdk.ClaimView`. [Source](src/cruxible_client/
 | `captures` | `tuple[CaptureRef, ...]` | `Required` |
 | `content_digest` | `str \| None` | `None` |
 
+`claim_id` is the qualified `Claim:CLM-...`; the `claim` property is the bare
+`CLM-...` that `QueryClaimValue.claim`, query Claim cells and the keys of
+`read_whole_many` use, so a view and a value join on `view.claim == item.claim`.
+
 <a id="api-knowledgecard"></a>
 
 ## `KnowledgeCard`

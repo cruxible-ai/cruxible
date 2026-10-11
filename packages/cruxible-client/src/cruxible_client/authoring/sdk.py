@@ -355,6 +355,15 @@ class ClaimView:
     # An exact-content Claim's digest, the proof its text is ``value``.
     content_digest: str | None = None
 
+    @property
+    def claim(self) -> str:
+        """The bare Claim id (``CLM-...``): ``claim_id`` without its ``Claim:`` kind.
+
+        The form ``QueryClaimValue.claim``, query Claim cells and the keys of
+        ``read_whole_many`` use, so views and values join on it directly.
+        """
+        return self.claim_id.removeprefix("Claim:")
+
 
 def _address_path(value: object) -> str:
     if isinstance(value, Mapping):

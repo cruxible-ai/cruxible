@@ -232,3 +232,12 @@ def test_prefetch_reads_a_wide_selection_in_batches_at_one_coordinate(
     assert len({request.evaluation_time for request in requests}) == 1
     with pytest.raises(ValueError, match="nonempty and unique"):
         pb.world().prefetch(subjects=[subjects[0], subjects[0]])
+
+
+def test_a_claim_view_joins_a_value_on_its_bare_claim_id(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    pb, _client = connection
+    view = pb._typed_claim_view(_view(_claim(5), "v" * 600))  # noqa: SLF001
+    assert view.claim_id == f"Claim:{_claim(5)}"
+    assert view.claim == _claim(5)
