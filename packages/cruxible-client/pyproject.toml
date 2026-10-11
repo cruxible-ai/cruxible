@@ -13,7 +13,12 @@ authors = [
     {name = "Cruxible LLC"},
 ]
 dependencies = [
-    "cryptography>=46.0",
+    # Security floor: 48.0.1 fixes CVE-2026-34073, -39892 and the bundled-OpenSSL
+    # GHSA-537c-gmf6-5ccf. 49/50 fix only PKCS#7 and X.509-verification issues
+    # (CVE-2026-69247/-69248/-69249) that Cruxible never reaches (it uses Ed25519
+    # and key serialization), and 49 dropped x86_64 macOS wheels; the floor stays
+    # at 48.0.1 so Intel Macs install a wheel. uv.lock pins 50.0.0.
+    "cryptography>=48.0.1",
     "httpx>=0.24",
     "pydantic>=2.12",
     "pyyaml>=6.0",

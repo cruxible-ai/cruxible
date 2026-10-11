@@ -30,15 +30,33 @@ dependencies = [
     "pyyaml>=6.0",
     "structlog>=24.0",
     "click>=8.0",
-    "cryptography>=46.0",
+    # Security floor: 48.0.1 fixes CVE-2026-34073, -39892 and the bundled-OpenSSL
+    # GHSA-537c-gmf6-5ccf. 49/50 fix only PKCS#7 and X.509-verification issues
+    # (CVE-2026-69247/-69248/-69249) that Cruxible never reaches (it uses Ed25519
+    # and key serialization), and 49 dropped x86_64 macOS wheels; the floor stays
+    # at 48.0.1 so Intel Macs install a wheel. uv.lock pins 50.0.0.
+    "cryptography>=48.0.1",
     "httpx>=0.24",
-    "fastapi>=0.100",
+    # 0.133.0 is the first FastAPI release that supports Starlette 1.x.
+    "fastapi>=0.133.0",
+    # Transitive (fastapi, mcp) floors so a PyPI install cannot resolve a
+    # vulnerable release. starlette 1.3.1 fixes CVE-2026-48710 (KEV-listed),
+    # -54282, -54283, -48817, -48818.
+    "starlette>=1.3.1",
+    # python-multipart 0.0.31 fixes CVE-2026-40347, -42561, -53537..-53540.
+    "python-multipart>=0.0.31",
+    # PyJWT (via mcp) 2.15.0 fixes CVE-2026-32597, -48522..-48526, -101917,
+    # -101918, -102267..-102275, -103001.
+    "pyjwt>=2.15.0",
     "uvicorn[standard]>=0.20",
     # The MCP server (`cruxible mcp`, `cruxible-mcp`) ships in the base install,
     # so `uvx cruxible mcp` works without an extra. <2: mcp 2.0.0 removed the
     # bundled mcp.server.fastmcp the tools are built on; the SDK-2.0 migration
     # is tracked separately (wi-mcp-sdk-2-migration).
-    "mcp>=1.0,<2",
+    # >=1.28.1: 1.27.2 fixes CVE-2026-52869 (session/principal binding) and
+    # -52870 (experimental task scoping); 1.28.1 fixes CVE-2026-59950 (WebSocket
+    # Host/Origin validation).
+    "mcp>=1.28.1,<2",
     # Provider installs materialize environments with the provider runtime toolchain
     # (providers/package_materialization.py imports it); core never runs provider code.
     "cruxible-provider-runtime>=0.2.0",
@@ -48,7 +66,7 @@ dependencies = [
 # There are deliberately no `server` or `mcp` extras: the daemon and the MCP
 # server are base dependencies and ship in the default install.
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",  # CVE-2025-71176 (tmpdir handling)
     "pytest-xdist>=3.5",
     "ruff==0.15.0",
     "mypy>=1.10",
