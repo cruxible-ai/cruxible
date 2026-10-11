@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -60,6 +61,42 @@ def _validate_subject_creation(value: str) -> str:
     return value
 
 
+#: The most key parts a ``subject-key-v1`` reference names (a SubjectKind's limit).
+_SUBJECT_KEY_MAX_PARTS = 8
+_SUBJECT_KEY_MAX_BYTES = 8192
+
+
+def subject_key_selector_value(key: Mapping[str, object]) -> str:
+    """The one spelling of a key a ``subject-key-v1`` selector carries: canonical JSON."""
+
+    return canonical_bytes(dict(key)).decode("utf-8")
+
+
+def _validate_subject_key(value: str) -> str:
+    try:
+        key = json.loads(value)
+    except ValueError as exc:
+        raise ValueError("subject-key-v1 selector must be a JSON object of key parts") from exc
+    if (
+        not isinstance(key, dict)
+        or not 1 <= len(key) <= _SUBJECT_KEY_MAX_PARTS
+        or any(not name for name in key)
+        or any(
+            isinstance(part, float) or not isinstance(part, str | int | bool)
+            for part in key.values()
+        )
+    ):
+        raise ValueError(
+            "subject-key-v1 selector must map 1 to 8 key ClaimTypes to a string, an "
+            "integer or a boolean"
+        )
+    if len(value.encode("utf-8")) > _SUBJECT_KEY_MAX_BYTES or (
+        subject_key_selector_value(key) != value
+    ):
+        raise ValueError("subject-key-v1 selector must be the key's canonical JSON")
+    return value
+
+
 def _validate_empty_selector(value: str) -> str:
     if value != "":
         raise ValueError("whole semantic-unit selector value must be empty")
@@ -91,6 +128,12 @@ _SELECTOR_SCHEMES: dict[str, Callable[[str], str]] = {
     # digest. Lowering replaces it with the Subject the member lands on; it never
     # reaches accepted state.
     "subject-creation-v1": _validate_subject_creation,
+    # A Subject a change names by its kind's key, before core resolves it: the
+    # artifact path is the kind's SubjectKind, the value the key's canonical JSON
+    # ({key ClaimType: value}). Lowering resolves it to the Subject holding the
+    # key, or the one a creation member of the same change lands on; it never
+    # reaches accepted state.
+    "subject-key-v1": _validate_subject_key,
 }
 
 
@@ -151,6 +194,26 @@ class SemanticAddress(_StrictSemanticModel):
             artifact_path=f"subject-kinds/{subject_kind}.json",
             selector=SemanticSelector(scheme="subject-creation-v1", value=member_digest),
         )
+
+    @classmethod
+    def subject_key(cls, subject_kind: str, key: Mapping[str, object]) -> "SemanticAddress":
+        """The Subject of ``subject_kind`` that ``key`` names, resolved when lowered."""
+
+        return cls(
+            artifact_path=f"subject-kinds/{subject_kind}.json",
+            selector=SemanticSelector(
+                scheme="subject-key-v1", value=subject_key_selector_value(key)
+            ),
+        )
+
+    @property
+    def subject_key_reference(self) -> tuple[str, dict[str, object]] | None:
+        """``(kind, key)`` of a ``subject-key-v1`` address; None for any other."""
+
+        if self.selector.scheme != "subject-key-v1":
+            return None
+        kind = self.artifact_path.removeprefix("subject-kinds/").removesuffix(".json")
+        return kind, dict(json.loads(self.selector.value))
 
     @classmethod
     def claim_statement(cls, artifact_path: str) -> "SemanticAddress":
@@ -277,5 +340,6 @@ __all__ = [
     "SemanticSelector",
     "SourceMapping",
     "registered_selector_schemes",
+    "subject_key_selector_value",
     "whole_body_mapping",
 ]

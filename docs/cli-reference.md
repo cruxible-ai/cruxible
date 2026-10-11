@@ -1706,6 +1706,30 @@ member, and core resolves it to the path it actually assigns or reuses. No
 address is predicted from raw values; a reference to no creation in the set
 refuses `cruxible.authoring.subject_creation_unresolved`.
 
+A Claim's `subject`, or a Subject-valued `object`'s `subject`, may also name the
+Subject by its kind and key, one part or several, as a Procedure v3 item does:
+
+~~~json
+{"kind": "claim", "subject": {"subject_kind": "security.assessment",
+  "key": {"release": "R1", "cve": "CVE-2021-44228"}},
+ "predicate": "security.assessment.status", "object": {"kind": "literal", "value": "open"},
+ "role": "observation", "rationale": "Triaged.", "source": {"kind": "self_source", "body": "open"}}
+~~~
+
+Each key part is read in its key ClaimType's canonical form. It resolves when
+the set is lowered: to the Subject a `subject` member of the same set lands on
+when that member carries the same key, else through the common resolver over
+the base (exact live id, alias, key, exact retired id for a one-key text). No
+holder refuses `cruxible.subject.key_missing` (add a `subject` member creating
+it), several `cruxible.subject.key_ambiguous`, and a reference the same set's
+own identity changes (a key or alias Claim it adds, revises or retires) would
+resolve differently refuses `cruxible.authoring.identity_reference_unstable`
+(put the identity change and the reference in separate sets). Authors never
+predict a rendered id, composite keys included. The SDK takes the same
+reference as `subject=` or `value=`:
+`SubjectKeyReference(subject_kind=..., key={...})` from
+`cruxible_client.contracts.subject_kinds`.
+
 Naming a Subject by text resolves the same way on every route (reads, writes,
 queries, creations): an exact live id, then an alias, then the canonical key
 (none, one, several), then an exact retired id. An alias sits before the key

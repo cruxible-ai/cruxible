@@ -296,6 +296,7 @@ from cruxible_core.indexes.subject_aliases import (
 )
 from cruxible_core.indexes.subject_identity import (
     SUBJECT_COMPILER_UPGRADE_REQUIRED,
+    SUBJECT_KEY_MISSING,
     SUBJECT_KIND_UNDECLARED,
     IdentityOverlay,
     IdentityView,
@@ -1345,6 +1346,7 @@ def _lower_claim(
     derivation_procedure: ArtifactPin | None = None,
     captures: ProducerReceiptResolverProtocol,
     subject_creation_key: bool = False,
+    key_paths: Mapping[tuple[str, str], str] | None = None,
 ) -> LoweredAuthoring:
     """Lower one authored Claim against the tree it is being written onto.
 
@@ -1353,6 +1355,10 @@ def _lower_claim(
     its own minted Claim ID, and `base_tree` is the staged tree its siblings have
     already written into, so dependency installs, the slot law and predecessor
     lookup all see the rest of the same change.
+
+    `key_paths` lands each Subject the Claim names by key (``subject-key-v1``)
+    on the path ``_key_reference_paths`` resolved for its change; a singular
+    Claim intent resolves its own.
 
     `subject_creation_key` marks a key Claim a Subject creation writes: the
     creation covers it (Claim law v2 revision 9), so an existing Capture it
@@ -1380,6 +1386,12 @@ def _lower_claim(
             )
     claim_id = intent.semantic_identity if claim_identity is None else claim_identity
     type_path = claim_type_path(payload.statement.predicate)
+    if _subject_key_addresses(payload):
+        if key_paths is None:
+            key_paths = _key_reference_paths(
+                instance, base=base, base_tree=base_tree, members=(payload,), creations={}
+            )
+        payload = _with_keys_landed(payload, key_paths)
     payload = _with_aliases_resolved(instance, base, base_tree, payload)
     candidate_base_tree, dependency_paths = _install_claim_dependencies(
         payload,
@@ -3801,6 +3813,220 @@ def subject_creation_paths(
 
 
 SUBJECT_CREATION_REFERENCE_UNRESOLVED = "cruxible.authoring.subject_creation_unresolved"
+#: A key reference that names one Subject over the base and another once the
+#: change's own identity changes (key or alias Claims, creations) apply.
+IDENTITY_REFERENCE_UNSTABLE = "cruxible.authoring.identity_reference_unstable"
+
+
+def _key_slot(address: SemanticAddress) -> tuple[str, str]:
+    return address.artifact_path, address.selector.value
+
+
+def _subject_key_addresses(
+    member: AuthoringChangeSetMember,
+) -> tuple[tuple[str, SemanticAddress], ...]:
+    """The Subjects a Claim member names by key (``subject-key-v1``), by field."""
+
+    if not isinstance(member, ClaimAuthoringPayloadV1):
+        return ()
+    statement = member.statement
+    found: list[tuple[str, SemanticAddress]] = []
+    if statement.subject.selector.scheme == "subject-key-v1":
+        found.append(("statement.subject", statement.subject))
+    value = statement.object
+    if isinstance(value, SubjectClaimObject) and value.address.selector.scheme == "subject-key-v1":
+        found.append(("statement.object.address", value.address))
+    return tuple(found)
+
+
+def _with_keys_landed(
+    payload: _PayloadV1T, key_paths: Mapping[tuple[str, str], str]
+) -> _PayloadV1T:
+    """The Claim with each Subject it names by key named by the path that key resolved to."""
+
+    def landed(address: SemanticAddress) -> SemanticAddress:
+        if address.selector.scheme != "subject-key-v1":
+            return address
+        return SemanticAddress.whole_artifact(key_paths[_key_slot(address)])
+
+    statement = payload.statement
+    subject = landed(statement.subject)
+    value = statement.object
+    if isinstance(value, SubjectClaimObject):
+        target = landed(value.address)
+        if target != value.address:
+            value = SubjectClaimObject(address=target)
+    if subject == statement.subject and value is statement.object:
+        return payload
+    return payload.model_copy(
+        update={"statement": statement.model_copy(update={"subject": subject, "object": value})}
+    )
+
+
+def _key_reference_paths(
+    instance: PlaybillInstance,
+    *,
+    base: AcceptedProjectionCoordinate,
+    base_tree: Mapping[str, bytes],
+    members: tuple[AuthoringChangeSetMember, ...],
+    creations: Mapping[str, _Creation],
+) -> dict[tuple[str, str], str]:
+    """Resolve every Subject the change's Claims name by kind and key, once.
+
+    Mirrors a Procedure v3 ``SubjectKeyReference``: a key a creation member of the
+    same change carries names the Subject that member lands on; any other
+    resolves through the one resolver over the base (exact live id, alias, key,
+    exact retired id for a one-key text). None refuses ``key_missing`` (create it
+    with a subject member in the same set), several ``key_ambiguous``. Each is
+    then resolved again over the final state (the base with the change's own
+    identity changes and creations); a different answer refuses
+    ``identity_reference_unstable``.
+    """
+
+    references = [
+        (index, field, address)
+        for index, member in enumerate(members)
+        for field, address in _subject_key_addresses(member)
+    ]
+    if not references:
+        return {}
+    created: dict[tuple[str, str], str] = {}
+    for creation in creations.values():
+        if creation.key:
+            created.setdefault((creation.kind, key_encoding(creation.key)), creation.path)
+
+    def claim_type_of(predicate: str) -> ClaimType | None:
+        return _claim_type_in_change(predicate, members=members, base_tree=base_tree)
+
+    frozen: dict[tuple[str, str], tuple[str, KeyTuple, str | None, str]] = {}
+    with instance.bind_accepted_projection(base) as projection:
+        connection = projection.typed.connection
+        view = IdentityView(connection, key_reader=tree_key_reader(base_tree))
+        for index, field, address in references:
+            slot = _key_slot(address)
+            if slot in frozen:
+                continue
+            element = f"members[{index}].{field}" if len(members) > 1 else field
+            reference = address.subject_key_reference
+            assert reference is not None
+            kind, given = reference
+            declared = _declared_in_change(kind, members=members, base_tree=base_tree)
+            if declared is None or declared.minted:
+                _refuse(
+                    "cruxible.subject.key_invalid",
+                    element,
+                    f"{kind} has no declared keys, so no Subject of it is named by key.",
+                    repair_kind="replace_subject",
+                    repair_description="Name the Subject as kind/id.",
+                )
+            try:
+                key = canonical_key(declared, given, claim_type=claim_type_of)
+            except SubjectKeyInvalid as exc:
+                _refuse(
+                    "cruxible.subject.key_invalid",
+                    element,
+                    f"{kind}: {exc}",
+                    repair_kind="replace_key",
+                    repair_description=(
+                        f"Give one value for each key of {kind}: " + ", ".join(declared.keys)
+                    ),
+                    replacement={"keys": list(declared.keys)},
+                )
+            values = tuple(given.values())
+            single = (
+                values[0]
+                if len(key) == 1 and len(values) == 1 and isinstance(values[0], str)
+                else None
+            )
+            path = created.get((kind, key_encoding(key)))
+            if path is None:
+                resolution = view.resolve_key_reference(kind, key, single_text=single)
+                if resolution.ambiguous:
+                    holders = [f"subjects/{item}.json" for item in resolution.candidates]
+                    _refuse(
+                        "cruxible.subject.key_ambiguous"
+                        if resolution.via == "key"
+                        else "cruxible.authoring.alias_ambiguous",
+                        element,
+                        key_ambiguous_message(kind, holders)
+                        if resolution.via == "key"
+                        else f"An alias of {kind} names {len(holders)} Subjects: "
+                        + ", ".join(resolution.candidates)
+                        + "; name one by id.",
+                        repair_kind="replace_subject",
+                        repair_description="Name one of the listed Subjects by id.",
+                        replacement={"candidates": list(resolution.candidates)},
+                    )
+                if resolution.path is None:
+                    _refuse(
+                        SUBJECT_KEY_MISSING,
+                        element,
+                        f"No live {kind} Subject holds the key {dict(given)!r}.",
+                        repair_kind="create_subject",
+                        repair_description=(
+                            "Add a subject member creating it to the same change set: "
+                            + subject_creation_shape(kind)
+                        ),
+                    )
+                path = resolution.path
+            frozen[slot] = (kind, key, single, path)
+
+        by_digest = {
+            identity.rpartition("@")[2]: creation.path for identity, creation in creations.items()
+        }
+
+        def landed(address: SemanticAddress) -> SemanticAddress:
+            if address.selector.scheme == "subject-key-v1":
+                return SemanticAddress.whole_artifact(frozen[_key_slot(address)][3])
+            if address.selector.scheme == "subject-creation-v1":
+                path = by_digest.get(address.selector.value)
+                return address if path is None else SemanticAddress.whole_artifact(path)
+            return address
+
+        final: list[AuthoringChangeSetMember] = []
+        for member in members:
+            if isinstance(member, ClaimAuthoringPayloadV1):
+                statement = member.statement
+                value = statement.object
+                if isinstance(value, SubjectClaimObject):
+                    value = SubjectClaimObject(address=landed(value.address))
+                member = member.model_copy(
+                    update={
+                        "statement": statement.model_copy(
+                            update={"subject": landed(statement.subject), "object": value}
+                        )
+                    }
+                )
+            final.append(member)
+        after = IdentityView(
+            connection,
+            members_identity_overlay(connection, members=tuple(final), base_tree=base_tree),
+            key_reader=tree_key_reader(base_tree),
+        )
+        for creation in creations.values():
+            if creation.key and not creation.resolved:
+                after.add_creation(creation.path, creation.key)
+        for (kind, key, single, path), (index, field, address) in (
+            (frozen[_key_slot(address)], (index, field, address))
+            for index, field, address in references
+        ):
+            now = after.resolve_key_reference(kind, key, single_text=single)
+            if now.path != path or now.ambiguous:
+                reference = address.subject_key_reference
+                assert reference is not None
+                _refuse(
+                    IDENTITY_REFERENCE_UNSTABLE,
+                    f"members[{index}].{field}" if len(members) > 1 else field,
+                    f"The {kind} key {reference[1]!r} names {path} at the base, and "
+                    f"{now.path or list(now.candidates) or 'no Subject'} once this change's "
+                    "own identity changes (key or alias Claims) apply.",
+                    repair_kind="split_change_set",
+                    repair_description=(
+                        "Put the identity change (an alias or key Claim) and the references "
+                        "that depend on it in separate change sets."
+                    ),
+                )
+    return {slot: item[3] for slot, item in frozen.items()}
 
 
 def _naming_creations(
@@ -4200,6 +4426,9 @@ def _lower_change_set(
         base_tree=base_tree,
         members=payload.members,
     )
+    key_paths = _key_reference_paths(
+        instance, base=base, base_tree=base_tree, members=payload.members, creations=creations
+    )
     sibling_member_by_claim_id = {
         claim_identities[authoring_member_identity(member)]: index
         for index, member in enumerate(payload.members)
@@ -4286,6 +4515,7 @@ def _lower_change_set(
                         derivation_procedure=derivation_procedure,
                         captures=captures,
                         creations=creations,
+                        key_paths=key_paths,
                     )
                 except AuthoringLoweringError as error:
                     raise _rescope_member_error(
@@ -4367,6 +4597,7 @@ def _stage_change_set_member(
     derivation_procedure: ArtifactPin | None = None,
     captures: ProducerReceiptResolverProtocol,
     creations: Mapping[str, _Creation] | None = None,
+    key_paths: Mapping[tuple[str, str], str] | None = None,
 ) -> StagedMember:
     """Write one member into the staged tree and report what it resolved to."""
 
@@ -4397,6 +4628,7 @@ def _stage_change_set_member(
             claim_index=claim_index,
             derivation_procedure=derivation_procedure,
             captures=captures,
+            key_paths=key_paths or {},
         )
         member_resolved = dict(lowered.resolved_authoring)
         member_resolved["claim_id"] = claim_id
@@ -4415,6 +4647,7 @@ def _stage_change_set_member(
             claim_identities=claim_identities,
             re_author_siblings=re_author_siblings,
             captures=captures,
+            key_paths=key_paths or {},
         )
     if isinstance(member, ClaimRetirementMember):
         tree, resolved, extra = _stage_claim_retirement(
@@ -4657,6 +4890,7 @@ def _stage_claim_type_succession(
     claim_identities: Mapping[str, str],
     re_author_siblings: Mapping[str, int],
     captures: ProducerReceiptResolverProtocol,
+    key_paths: Mapping[tuple[str, str], str] | None = None,
 ) -> StagedMember:
     """Succeed one ClaimType and settle its whole closure inside this change set.
 
@@ -4823,6 +5057,7 @@ def _stage_claim_type_succession(
                 payload=sibling,
                 claim_identity=claim_id,
                 captures=captures,
+                key_paths=key_paths or {},
             )
         except AuthoringLoweringError as error:
             _refuse(

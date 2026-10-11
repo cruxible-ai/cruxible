@@ -69,7 +69,7 @@ from cruxible_client.contracts.proposal_models import (
 )
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.subject_kinds import SubjectKeyPart
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
 
@@ -96,7 +96,12 @@ class LiteralObjectInput(_StrictInputModel):
 
 class SubjectObjectInput(_StrictInputModel):
     kind: Literal["subject"]
-    subject: str
+    subject: str | SubjectKeyReference = Field(
+        description=(
+            "kind/<id, alias or single key value>, or {subject_kind, key} naming the "
+            "Subject by its kind's key (any number of key parts)."
+        )
+    )
 
 
 class ExactContentObjectInput(_StrictInputModel):
@@ -192,7 +197,13 @@ class ClaimDispositionInput(_StrictInputModel):
 
 class ClaimInput(_StrictInputModel):
     kind: Literal["claim"]
-    subject: str
+    subject: str | SubjectKeyReference = Field(
+        description=(
+            "kind/<id, alias or single key value>, or {subject_kind, key} naming the "
+            "Subject by its kind's key: the one live holder, else the one a subject "
+            "member of the same change set creates (no id is predicted)."
+        )
+    )
     predicate: str
     qualifier: str | None = None
     object: AuthoringObjectInput
@@ -550,7 +561,10 @@ class AuthoringInputError(FormatError, ValueError):
         return self.code
 
 
-def _subject_address(shorthand: str, *, field_path: str) -> SemanticAddress:
+def _subject_address(shorthand: str | SubjectKeyReference, *, field_path: str) -> SemanticAddress:
+    if isinstance(shorthand, SubjectKeyReference):
+        # Resolved when the change set is lowered (key, alias, creation member).
+        return SemanticAddress.subject_key(shorthand.subject_kind, shorthand.key)
     match = _SUBJECT_SHORTHAND_RE.fullmatch(shorthand)
     if match is None:
         raise AuthoringInputError(

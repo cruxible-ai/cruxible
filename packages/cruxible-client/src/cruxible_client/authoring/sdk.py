@@ -241,7 +241,7 @@ from cruxible_client.contracts.resolution_contracts import (
     ResolutionContractReference,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.subject_kinds import SubjectKeyPart
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
@@ -330,6 +330,13 @@ def _creation_address(value: object) -> SemanticAddress | None:
         return None
     kind, _, digest = value.creation.removeprefix("SubjectCreation:").rpartition("@")
     return SemanticAddress.subject_creation(kind, digest)
+
+
+def _key_reference_text(value: SubjectKeyReference) -> str:
+    """How a key reference reads in a program stamp: ``kind{key part=value, ...}``."""
+
+    parts = ", ".join(f"{name}={part!r}" for name, part in sorted(value.key.items()))
+    return f"{value.subject_kind}{{{parts}}}"
 
 
 def _address(value: str | TypedRef, expected: RefKind) -> str:
@@ -909,9 +916,9 @@ class ChangeSetDraft:
     def claim(
         self,
         *,
-        subject: str | SubjectRef,
+        subject: str | SubjectRef | SubjectKeyReference,
         predicate: str | ClaimTypeRef,
-        value: CanonicalValue | SubjectRef | LiteralValue | ExactContent,
+        value: CanonicalValue | SubjectRef | SubjectKeyReference | LiteralValue | ExactContent,
         role: ClaimRole | str,
         rationale: str,
         supported_by: EvidenceSelection | CaptureRef | None = None,
@@ -3175,9 +3182,9 @@ class Cruxible:
     def claim(
         self,
         *,
-        subject: str | SubjectRef,
+        subject: str | SubjectRef | SubjectKeyReference,
         predicate: str | ClaimTypeRef,
-        value: CanonicalValue | SubjectRef | LiteralValue | ExactContent,
+        value: CanonicalValue | SubjectRef | SubjectKeyReference | LiteralValue | ExactContent,
         role: ClaimRole | str,
         rationale: str,
         supported_by: EvidenceSelection | CaptureRef | None = None,
@@ -3223,9 +3230,9 @@ class Cruxible:
         self,
         *,
         sites: dict[str, CallSite],
-        subject: str | SubjectRef,
+        subject: str | SubjectRef | SubjectKeyReference,
         predicate: str | ClaimTypeRef,
-        value: CanonicalValue | SubjectRef | LiteralValue | ExactContent,
+        value: CanonicalValue | SubjectRef | SubjectKeyReference | LiteralValue | ExactContent,
         role: ClaimRole | str,
         rationale: str,
         supported_by: EvidenceSelection | CaptureRef | None,
@@ -3260,7 +3267,18 @@ class Cruxible:
         branches = tuple(item is not None for item in (supported_by, copied_from, self_source))
         if sum(branches) != 1:
             raise ValueError("exactly one of supported_by, copied_from, or self_source is required")
-        subject_name = _address(subject, RefKind.SUBJECT)
+        # A Subject named by its kind's key resolves when the set is lowered: to
+        # the Subject holding it, or the one a creation member of the set lands on.
+        keyed_subject = (
+            SemanticAddress.subject_key(subject.subject_kind, subject.key)
+            if isinstance(subject, SubjectKeyReference)
+            else None
+        )
+        subject_name = (
+            _key_reference_text(subject)
+            if isinstance(subject, SubjectKeyReference)
+            else _address(subject, RefKind.SUBJECT)
+        )
         if isinstance(subject, str):
             # PC-HR moved accepted artifacts to .json without retiring the
             # pre-PC-HR .yaml authoring shorthand.
@@ -3304,6 +3322,10 @@ class Cruxible:
             self._assert_coordinate(value.coordinate)
             statement_object = SubjectClaimObject(
                 address=_creation_address(value) or _subject_address(value.address)
+            )
+        elif isinstance(value, SubjectKeyReference):
+            statement_object = SubjectClaimObject(
+                address=SemanticAddress.subject_key(value.subject_kind, value.key)
             )
         elif isinstance(value, str) and _SUBJECT_REF_RE.fullmatch(value):
             object_kind = self._claim_type_object_kind(
@@ -3382,7 +3404,9 @@ class Cruxible:
         )
         payload_values = dict(
             statement=AuthoringClaimStatement(
-                subject=_creation_address(subject) or _subject_address(subject_name),
+                subject=keyed_subject
+                or _creation_address(subject)
+                or _subject_address(subject_name),
                 predicate=predicate_name,
                 qualifier=qualifier,
                 object=statement_object,
@@ -3411,7 +3435,9 @@ class Cruxible:
             else ClaimAuthoringPayloadV2(**payload_values)
         )
         expectations: list[AuthoringReferenceExpectation | None] = [
-            _expectation(
+            None
+            if isinstance(subject, SubjectKeyReference)
+            else _expectation(
                 subject,
                 expected=RefKind.SUBJECT,
                 payload_path="statement.subject",
