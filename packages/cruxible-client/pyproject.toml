@@ -13,7 +13,9 @@ authors = [
     {name = "Cruxible LLC"},
 ]
 dependencies = [
-    "cryptography>=46.0",
+    # Security floor (OSV, 2026-10-11): 50.0.0 fixes CVE-2026-69247/-69248/
+    # -69249, -34073, -39892 and the bundled-OpenSSL GHSA-537c-gmf6-5ccf.
+    "cryptography>=50.0.0",
     "httpx>=0.24",
     "pydantic>=2.12",
     "pyyaml>=6.0",
