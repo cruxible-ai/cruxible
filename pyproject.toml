@@ -30,9 +30,12 @@ dependencies = [
     "pyyaml>=6.0",
     "structlog>=24.0",
     "click>=8.0",
-    # Security floors (OSV, 2026-10-11): cryptography 50.0.0 fixes CVE-2026-69247/
-    # -69248/-69249, -34073, -39892 and the bundled-OpenSSL GHSA-537c-gmf6-5ccf.
-    "cryptography>=50.0.0",
+    # Security floor: 48.0.1 fixes CVE-2026-34073, -39892 and the bundled-OpenSSL
+    # GHSA-537c-gmf6-5ccf. 49/50 fix only PKCS#7 and X.509-verification issues
+    # (CVE-2026-69247/-69248/-69249) that Cruxible never reaches (it uses Ed25519
+    # and key serialization), and 49 dropped x86_64 macOS wheels; the floor stays
+    # at 48.0.1 so Intel Macs install a wheel. uv.lock pins 50.0.0.
+    "cryptography>=48.0.1",
     "httpx>=0.24",
     # 0.133.0 is the first FastAPI release that supports Starlette 1.x.
     "fastapi>=0.133.0",
