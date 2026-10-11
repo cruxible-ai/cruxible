@@ -31,8 +31,8 @@ _SMALL = 2
 _LARGE = 12
 
 
-def _accept(instance: PlaybillInstance, prefix: str, count: int) -> list[str]:
-    """Accept ``count`` long titles in one change set; return their Claim ids."""
+def _accept(instance: PlaybillInstance, prefix: str, count: int) -> dict[str, list[str]]:
+    """Accept ``count`` long titles and exact-content rulings in one change set."""
 
     request = WriteRequest.model_validate(
         {
@@ -41,16 +41,18 @@ def _accept(instance: PlaybillInstance, prefix: str, count: int) -> list[str]:
                 {
                     "op": "set",
                     "subject": f"{KIND}/{prefix}-{index}",
-                    "field": "title",
-                    "value": f"{prefix} {index} " + "long text " * 80,
+                    "field": field,
+                    "value": f"{prefix} {index} " + "long text " * 80 + "\n",
                 }
+                for field in ("title", "ruling")
                 for index in range(count)
             ],
         }
     )
     outcome = service_playbill_write(instance, request=request, caller=caller())
     assert outcome.status == "accepted", outcome
-    return [str(change.claim) for change in outcome.changes]
+    claims = [str(change.claim) for change in outcome.changes]
+    return {"title": claims[:count], "ruling": claims[count:]}
 
 
 @pytest.fixture(scope="module")
@@ -126,15 +128,21 @@ def test_a_claims_first_read_costs_the_same_whatever_its_change_set_size(
     instance = world["instance"]
     work = _Work(monkeypatch)
     by_size = {}
-    for label in ("small", "large"):
-        first, second = world[label][0], world[label][1]
+    for label, field in (
+        ("small", "title"),
+        ("large", "title"),
+        ("small ruling", "ruling"),
+        ("large ruling", "ruling"),
+    ):
+        size = label.split()[0]
+        first, second = world[size][field][0], world[size][field][1]
         # The instance's first sight of the change set parses its record once.
         _cold(instance)
-        assert str(_evidence(instance, first)).startswith(label)
+        assert str(_evidence(instance, first)).startswith(size)
         cold = work.take()
         # Another Claim the same change set accepted is that Claim's first read:
         # its facts are compiled, but the record is neither parsed nor copied.
-        assert str(_evidence(instance, second)).startswith(label)
+        assert str(_evidence(instance, second)).startswith(size)
         first_read = work.take()
         # And a repeated read does no record work at all.
         _evidence(instance, second)
@@ -144,9 +152,29 @@ def test_a_claims_first_read_costs_the_same_whatever_its_change_set_size(
     for cold, first_read, warm in by_size.values():
         assert cold.get("whole records copied", 0) == 0
         assert first_read == {} and warm == {}
-    small_cold, large_cold = by_size["small"][0], by_size["large"][0]
     # Each record a read needs is parsed once; the count does not depend on its size.
-    assert small_cold["records parsed"] == large_cold["records parsed"]
+    for small, large in (("small", "large"), ("small ruling", "large ruling")):
+        assert by_size[small][0]["records parsed"] == by_size[large][0]["records parsed"]
+
+
+def test_a_batched_claim_read_does_no_record_work_once_its_records_are_verified(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``claims/read-batch`` (prefetch, ``read_whole_many``) over a large accepting set."""
+
+    from cruxible_client.contracts.claim_reads import ClaimReadBatchRequest
+    from cruxible_core.service.claims.claim_reads import service_read_claim_batch
+
+    instance = world["instance"]
+    claims = world["large"]["title"] + world["large"]["ruling"]
+    request = ClaimReadBatchRequest(at=instance.accepted_coordinate().git_oid, claim_ids=claims)
+    work = _Work(monkeypatch)
+    _cold(instance)
+    first = service_read_claim_batch(instance, request=request)
+    cold = work.take()
+    assert cold.get("whole records copied", 0) == 0
+    assert service_read_claim_batch(instance, request=request) == first
+    assert work.take() == {}
 
 
 def test_history_listings_read_each_revisions_member_not_its_whole_record(
@@ -156,7 +184,7 @@ def test_history_listings_read_each_revisions_member_not_its_whole_record(
 
     instance = world["instance"]
     work = _Work(monkeypatch)
-    claim = world["large"][0]
+    claim = world["large"]["title"][0]
     expected = service_playbill_claim_history(instance, identity=claim)
     work.take()
     assert service_playbill_claim_history(instance, identity=claim) == expected
