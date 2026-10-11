@@ -6,7 +6,7 @@ import base64
 import hashlib
 import json
 import sqlite3
-from collections.abc import Callable, Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, NoReturn, TypeAlias, TypeVar, cast
@@ -1390,7 +1390,7 @@ def _lower_claim(
         if key_paths is None:
             key_paths = _key_reference_paths(
                 instance, base=base, base_tree=base_tree, members=(payload,), creations={}
-            )
+            ).paths
         payload = _with_keys_landed(payload, key_paths)
     payload = _with_aliases_resolved(instance, base, base_tree, payload)
     candidate_base_tree, dependency_paths = _install_claim_dependencies(
@@ -3870,7 +3870,7 @@ def _key_reference_paths(
     base_tree: Mapping[str, bytes],
     members: tuple[AuthoringChangeSetMember, ...],
     creations: Mapping[str, _Creation],
-) -> dict[tuple[str, str], str]:
+) -> KeyReferences:
     """Resolve every Subject the change's Claims name by kind and key, once.
 
     Mirrors a Procedure v3 ``SubjectKeyReference``: a key a creation member of the
@@ -3889,7 +3889,7 @@ def _key_reference_paths(
         for field, address in _subject_key_addresses(member)
     ]
     if not references:
-        return {}
+        return KeyReferences(paths={})
     created: dict[tuple[str, str], str] = {}
     for creation in creations.values():
         if creation.key:
@@ -3981,52 +3981,183 @@ def _key_reference_paths(
             if address.selector.scheme == "subject-creation-v1":
                 path = by_digest.get(address.selector.value)
                 return address if path is None else SemanticAddress.whole_artifact(path)
-            return address
+            # Ordinary kind/<text> shorthand lands where lowering will land it
+            # (_with_aliases_resolved: an alias or a single key over the base), so
+            # an identity Claim stated through it is overlaid on that Subject.
+            return _shorthand_landed(view, base_tree, address)
 
-        final: list[AuthoringChangeSetMember] = []
-        for member in members:
-            if isinstance(member, ClaimAuthoringPayloadV1):
-                statement = member.statement
-                value = statement.object
-                if isinstance(value, SubjectClaimObject):
-                    value = SubjectClaimObject(address=landed(value.address))
+        final = tuple(_with_landed_addresses(member, landed) for member in members)
+        _refuse_unstable_key_references(
+            connection,
+            base_tree=base_tree,
+            references=[
+                (index, field, address, *frozen[_key_slot(address)])
+                for index, field, address in references
+            ],
+            final_members=final,
+            creations=creations,
+            single_member=len(members) == 1,
+        )
+    return KeyReferences(
+        paths={slot: item[3] for slot, item in frozen.items()},
+        frozen=tuple(
+            (index, field, address, *frozen[_key_slot(address)])
+            for index, field, address in references
+        ),
+    )
+
+
+FrozenKeyReference: TypeAlias = tuple[int, str, SemanticAddress, str, KeyTuple, str | None, str]
+"""(member index, field, address, kind, canonical key, one-key text, frozen path)."""
+
+
+@dataclass(frozen=True)
+class KeyReferences:
+    """Each key reference of a change, by selector, and what it was frozen to."""
+
+    paths: Mapping[tuple[str, str], str]
+    frozen: tuple[FrozenKeyReference, ...] = ()
+
+
+def _shorthand_landed(
+    view: IdentityView, tree: Mapping[str, bytes], address: SemanticAddress
+) -> SemanticAddress:
+    """Where lowering lands an ordinary ``kind/<text>`` address (``_with_aliases_resolved``)."""
+
+    path = address.artifact_path
+    if (
+        address.selector.scheme != "artifact-v1"
+        or not path.startswith("subjects/")
+        or _live_subject_in(tree, path)
+    ):
+        return address
+    kind, _, rest = path.removeprefix("subjects/").partition("/")
+    text = rest.removesuffix(".json")
+    if not kind or not text:
+        return address
+    resolution = view.resolve(kind, text)
+    if (
+        resolution.ambiguous
+        or resolution.via not in {"alias", "key"}
+        or resolution.path is None
+        or resolution.path not in tree
+    ):
+        return address
+    return SemanticAddress.whole_artifact(resolution.path)
+
+
+def _with_landed_addresses(
+    member: AuthoringChangeSetMember,
+    landed: Callable[[SemanticAddress], SemanticAddress],
+) -> AuthoringChangeSetMember:
+    if not isinstance(member, ClaimAuthoringPayloadV1):
+        return member
+    statement = member.statement
+    value = statement.object
+    if isinstance(value, SubjectClaimObject):
+        value = SubjectClaimObject(address=landed(value.address))
+    return member.model_copy(
+        update={
+            "statement": statement.model_copy(
+                update={"subject": landed(statement.subject), "object": value}
+            )
+        }
+    )
+
+
+def _refuse_unstable_key_references(
+    connection: sqlite3.Connection,
+    *,
+    base_tree: Mapping[str, bytes],
+    references: Sequence[FrozenKeyReference],
+    final_members: tuple[AuthoringChangeSetMember, ...],
+    creations: Mapping[str, _Creation],
+    single_member: bool,
+) -> None:
+    """Refuse a key reference the change's own identity changes resolve elsewhere.
+
+    ``final_members`` name every Subject concretely, as the change lands them;
+    the final state is the base with their key and alias Claims, retirements and
+    the change's creations overlaid.
+    """
+
+    if not references:
+        return
+    after = IdentityView(
+        connection,
+        members_identity_overlay(connection, members=final_members, base_tree=base_tree),
+        key_reader=tree_key_reader(base_tree),
+    )
+    for creation in creations.values():
+        if creation.key and not creation.resolved:
+            after.add_creation(creation.path, creation.key)
+    for index, element, address, kind, key, single, path in references:
+        now = after.resolve_key_reference(kind, key, single_text=single)
+        if now.path == path and not now.ambiguous:
+            continue
+        reference = address.subject_key_reference
+        assert reference is not None
+        _refuse(
+            IDENTITY_REFERENCE_UNSTABLE,
+            element if single_member else f"members[{index}].{element}",
+            f"The {kind} key {reference[1]!r} names {path} at the base, and "
+            f"{now.path or list(now.candidates) or 'no Subject'} once this change's "
+            "own identity changes (key or alias Claims) apply.",
+            repair_kind="split_change_set",
+            repair_description=(
+                "Put the identity change (an alias or key Claim) and the references "
+                "that depend on it in separate change sets."
+            ),
+        )
+
+
+def _recheck_key_references_lowered(
+    instance: PlaybillInstance,
+    *,
+    base: AcceptedProjectionCoordinate,
+    base_tree: Mapping[str, bytes],
+    staged_tree: Mapping[str, bytes],
+    members: tuple[AuthoringChangeSetMember, ...],
+    claim_identities: Mapping[str, str],
+    creations: Mapping[str, _Creation],
+    references: KeyReferences,
+) -> None:
+    """Check every frozen key reference again against what lowering actually wrote.
+
+    Each Claim member is read back from the lowered tree, so its Subject and
+    Subject value are the ones lowering resolved (alias, key, creation): the
+    final identity state is built from the change as it lands, not as predicted.
+    """
+
+    if not references.frozen:
+        return
+    lowered: list[AuthoringChangeSetMember] = []
+    for member in members:
+        if isinstance(member, ClaimAuthoringPayloadV1):
+            path = claim_path(claim_identities[authoring_member_identity(member)])
+            content = staged_tree.get(path)
+            if content is not None:
+                written = parse_claim(content, path=path).statement
+                value = member.statement.object
+                if isinstance(written.object, SubjectClaimObject):
+                    value = SubjectClaimObject(address=written.object.address)
                 member = member.model_copy(
                     update={
-                        "statement": statement.model_copy(
-                            update={"subject": landed(statement.subject), "object": value}
+                        "statement": member.statement.model_copy(
+                            update={"subject": written.subject, "object": value}
                         )
                     }
                 )
-            final.append(member)
-        after = IdentityView(
-            connection,
-            members_identity_overlay(connection, members=tuple(final), base_tree=base_tree),
-            key_reader=tree_key_reader(base_tree),
+        lowered.append(member)
+    with instance.bind_accepted_projection(base) as projection:
+        _refuse_unstable_key_references(
+            projection.typed.connection,
+            base_tree=base_tree,
+            references=references.frozen,
+            final_members=tuple(lowered),
+            creations=creations,
+            single_member=len(members) == 1,
         )
-        for creation in creations.values():
-            if creation.key and not creation.resolved:
-                after.add_creation(creation.path, creation.key)
-        for (kind, key, single, path), (index, field, address) in (
-            (frozen[_key_slot(address)], (index, field, address))
-            for index, field, address in references
-        ):
-            now = after.resolve_key_reference(kind, key, single_text=single)
-            if now.path != path or now.ambiguous:
-                reference = address.subject_key_reference
-                assert reference is not None
-                _refuse(
-                    IDENTITY_REFERENCE_UNSTABLE,
-                    f"members[{index}].{field}" if len(members) > 1 else field,
-                    f"The {kind} key {reference[1]!r} names {path} at the base, and "
-                    f"{now.path or list(now.candidates) or 'no Subject'} once this change's "
-                    "own identity changes (key or alias Claims) apply.",
-                    repair_kind="split_change_set",
-                    repair_description=(
-                        "Put the identity change (an alias or key Claim) and the references "
-                        "that depend on it in separate change sets."
-                    ),
-                )
-    return {slot: item[3] for slot, item in frozen.items()}
 
 
 def _naming_creations(
@@ -4426,9 +4557,10 @@ def _lower_change_set(
         base_tree=base_tree,
         members=payload.members,
     )
-    key_paths = _key_reference_paths(
+    key_references = _key_reference_paths(
         instance, base=base, base_tree=base_tree, members=payload.members, creations=creations
     )
+    key_paths = key_references.paths
     sibling_member_by_claim_id = {
         claim_identities[authoring_member_identity(member)]: index
         for index, member in enumerate(payload.members)
@@ -4540,6 +4672,16 @@ def _lower_change_set(
             member_resolved["member"] = index
             member_resolved["path"] = path
             resolved.append(member_resolved)
+    _recheck_key_references_lowered(
+        instance,
+        base=base,
+        base_tree=base_tree,
+        staged_tree=staged_tree,
+        members=payload.members,
+        claim_identities=claim_identities,
+        creations=creations,
+        references=key_references,
+    )
     changed = tuple(
         (path, staged_tree[path])
         for path in sorted(member_paths, key=lambda item: item.encode("utf-8"))

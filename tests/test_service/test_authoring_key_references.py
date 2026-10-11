@@ -35,6 +35,7 @@ from tests.test_service.test_subject_identity import accept, change_set, compile
 
 ASSESSMENT = "sec.assessment"
 FINDING = "sec.finding"
+PACKAGE = "sec.package"
 FORM = ("nfkc", "trim", "collapse_whitespace", "casefold")
 
 
@@ -84,6 +85,31 @@ def instance(tmp_path: Path) -> PlaybillInstance:
                 object_kind="subject",
                 object_kinds=(ASSESSMENT,),
                 predicate=f"{ASSESSMENT}.supersedes",
+                subject_kinds=(ASSESSMENT,),
+            ),
+        ),
+        ClaimTypeInput(kind="claim_type", claim_type=_key(PACKAGE, "slug")),
+        SubjectKindInput(
+            kind="subject_kind", name=PACKAGE, keys=(f"{PACKAGE}.slug",), uniqueness="unique"
+        ),
+        ClaimTypeInput(
+            kind="claim_type",
+            claim_type=identity_claim_type(
+                "title",
+                canonical_form=None,
+                literal_schema={"type": "string"},
+                predicate=f"{PACKAGE}.title",
+                subject_kinds=(PACKAGE,),
+            ),
+        ),
+        ClaimTypeInput(
+            kind="claim_type",
+            claim_type=identity_claim_type(
+                "affects",
+                canonical_form=None,
+                object_kind="subject",
+                object_kinds=(PACKAGE,),
+                predicate=f"{ASSESSMENT}.affects",
                 subject_kinds=(ASSESSMENT,),
             ),
         ),
@@ -311,3 +337,73 @@ def test_a_single_claim_input_names_its_subject_by_key(instance: PlaybillInstanc
     )
     assert missing.verdict == "refused"
     assert missing.frontier.diagnostics[0].code == "cruxible.subject.key_missing"
+
+
+# Review H F-001: an alias authored through kind/<text> shorthand is overlaid on
+# the Subject lowering lands it on, so it cannot redirect a sibling key reference.
+
+
+def _packages_alpha_and_bar(instance: PlaybillInstance) -> None:
+    accept(
+        instance,
+        change_set(
+            SubjectInput(kind="subject", subject_kind=PACKAGE, key="Alpha Key"),
+            SubjectInput(kind="subject", subject_kind=PACKAGE, key="Bar Key"),
+        ),
+    )
+
+
+def _alias_through_shorthand(text: str, value: str) -> ClaimInput:
+    """``semantic.alias`` stated on ``sec.package/<text>``: lowering resolves the text by key."""
+
+    return ClaimInput(
+        kind="claim",
+        subject=f"{PACKAGE}/{text}",
+        predicate="semantic.alias",
+        object=LiteralObjectInput(kind="literal", value=value),
+        role="normative",
+        rationale="Another name for it.",
+        source=SelfSourceInput(kind="self_source", body=f"also known as {value}"),
+    )
+
+
+def test_an_alias_on_shorthand_cannot_redirect_a_sibling_key_subject(
+    instance: PlaybillInstance,
+) -> None:
+    _packages_alpha_and_bar(instance)
+    base = instance.accepted_coordinate()
+
+    diagnostic = refusal(
+        instance,
+        _alias_through_shorthand("Alpha KEY", "Bar Key"),
+        claim(
+            SubjectKeyReference(subject_kind=PACKAGE, key={"slug": "Bar Key"}),
+            f"{PACKAGE}.title",
+            "B only",
+        ),
+    )
+
+    assert diagnostic.code == "cruxible.authoring.identity_reference_unstable"
+    assert instance.accepted_coordinate() == base
+
+
+def test_an_alias_on_shorthand_cannot_redirect_a_sibling_key_value(
+    instance: PlaybillInstance,
+) -> None:
+    _packages_alpha_and_bar(instance)
+    accept(instance, change_set(create(ASSESSMENT, "r1", "cve-1")))
+
+    diagnostic = refusal(
+        instance,
+        _alias_through_shorthand("alpha key", "Bar Key"),
+        claim(
+            f"{ASSESSMENT}/r1--cve-1",
+            f"{ASSESSMENT}.affects",
+            SubjectObjectInput(
+                kind="subject",
+                subject=SubjectKeyReference(subject_kind=PACKAGE, key={"slug": "bar key"}),
+            ),
+        ),
+    )
+
+    assert diagnostic.code == "cruxible.authoring.identity_reference_unstable"
