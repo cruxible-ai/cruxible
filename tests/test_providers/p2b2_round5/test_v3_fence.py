@@ -32,6 +32,7 @@ MARKER = "@MARKER@"
 MODE = "@MODE@"
 WHEN = "@WHEN@"
 LINGER = float("@LINGER@")
+GATE = "@GATE@"
 
 invocation_id, control_path = sys.argv[2:4]
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -88,6 +89,8 @@ def spawn():
     open(MARKER + ".spawned", "w").write("1")
 
 if WHEN == "before":
+    while GATE and not os.path.exists(GATE):
+        time.sleep(0.01)
     spawn()
 document = json.loads(sys.stdin.buffer.read())
 envelope = {
@@ -107,12 +110,23 @@ time.sleep(LINGER)
 """
 
 
-def _child(path: Path, *, marker: Path, mode: str, when: str, linger: float = 0.0) -> Path:
+def _child(
+    path: Path,
+    *,
+    marker: Path,
+    mode: str,
+    when: str,
+    linger: float = 0.0,
+    gate: Path | None = None,
+) -> Path:
+    """A Provider child; with ``gate``, a ``before`` spawn waits for that file."""
+
     path.write_text(
         CHILD.replace("@MARKER@", str(marker))
         .replace("@MODE@", mode)
         .replace("@WHEN@", when)
-        .replace("@LINGER@", str(linger)),
+        .replace("@LINGER@", str(linger))
+        .replace("@GATE@", "" if gate is None else str(gate)),
         encoding="utf-8",
     )
     path.chmod(0o755)
@@ -370,6 +384,57 @@ def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
         leftovers = [item for item in store.root.iterdir() if item.name != "c"]
         assert leftovers == [], leftovers
         assert not _grew(marker, seconds=0.3)
+    finally:
+        _reap(str(marker))
+
+
+def test_a_group_escapee_spawned_after_the_last_snapshot_is_swept_after_the_kill(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window between the pre-kill snapshot and the group kill is closed.
+
+    The child spawns its ``setpgid`` descendant only once that snapshot is
+    taken and before the kill lands, so the kill misses it and, the leader
+    reaped, no parent chain leads to it. The session sweep after reaping must
+    still kill it. Linux CI hit this window on every publish failure.
+    """
+
+    marker = short_root / "m-late"
+    gate = short_root / "g-late"
+    spawned = marker.parent / (marker.name + ".spawned")
+    interpreter = _child(
+        short_root / "c-late.py",
+        marker=marker,
+        mode="setpgid",
+        when="before",
+        linger=6.0,
+        gate=gate,
+    )
+    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
+    import cruxible_core.providers.provider_process_leases as lease_module
+
+    monkeypatch.setattr(
+        lease_module.tempfile,
+        "mkstemp",
+        lambda **_k: (_ for _ in ()).throw(OSError(28, "ENOSPC")),
+    )
+    real_killpg = os.killpg
+
+    def kill_after_the_escape(process_group: int, signal_number: int) -> None:
+        if signal_number == signal.SIGKILL and not gate.exists():
+            gate.write_text("go", encoding="utf-8")
+            deadline = time.monotonic() + 5.0
+            while not spawned.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+        real_killpg(process_group, signal_number)
+
+    monkeypatch.setattr(runtime_module.os, "killpg", kill_after_the_escape)
+    try:
+        with pytest.raises(ProviderLocalRuntimeRefused) as excinfo:
+            _invoke(store, interpreter, "sha256:" + "8" * 64)
+        assert excinfo.value.code == "provider_process_lease_invalid"
+        assert spawned.exists(), "the descendant never spawned inside the window"
+        assert not _grew(marker, seconds=0.3), "the late group escapee survived the kill"
     finally:
         _reap(str(marker))
 
