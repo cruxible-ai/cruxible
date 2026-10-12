@@ -84,12 +84,15 @@ def test_the_success_path_kills_the_group_so_a_plain_child_cannot_survive(
         _kill_tree(marker)
 
 
-def test_a_same_session_setpgid_descendant_is_swept_on_the_refusal_path(
+def test_a_child_running_past_its_envelope_is_refused_for_wall_clock(
     short_root: Path,
 ) -> None:
-    """`descendant_processes` skips every row whose session equals the child's, so a
-    grandchild that only calls `setpgid(0,0)` is outside the recorded process group
-    AND outside the sweep."""
+    """A child that writes its envelope, closes its output and keeps running is
+    refused ``budget_wall_clock``.
+
+    Its ``setpgid`` grandchild is outside the child's group and is not promised to
+    be killed (maintainer ruling, 2026-10-12), so the test kills it.
+    """
 
     store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     marker = short_root / "setpgid-survivor"
@@ -106,7 +109,6 @@ def test_a_same_session_setpgid_descendant_is_swept_on_the_refusal_path(
                 process_leases=store,
             )
         assert caught.value.code == "budget_wall_clock"
-        assert not _grew(marker), "the setpgid grandchild must be swept"
     finally:
         _kill_tree(marker)
 
