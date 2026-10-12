@@ -5,16 +5,19 @@ from __future__ import annotations
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, typed_digest
 from cruxible_client.contracts.procedures.models import (
     ExhaustTapNode,
     ProcedurePinSlotRef,
     SourceNode,
     StateTapNode,
 )
+from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.input_planes import (
+    AcceptedClaimRunInputV1,
     AcceptedStateRunInputV1,
+    AcceptedStateRunInputV2,
     ExhaustRunInputV1,
     LandedCaptureRunInputV1,
     validate_node_input_plane,
@@ -122,3 +125,41 @@ def test_run_input_vector_refuses_duplicate_or_insertion_order_names() -> None:
     )
     with pytest.raises(ValueError, match="sorted and unique"):
         validate_run_input_vector((first, second), expected_accepted=local)
+
+
+@pytest.mark.parametrize("model", [AcceptedStateRunInputV2, AcceptedClaimRunInputV1])
+def test_every_accepted_plane_validates_its_name_and_material_on_every_interpreter(
+    model: type[AcceptedStateRunInputV2] | type[AcceptedClaimRunInputV1],
+) -> None:
+    """The shared validators take the value, never ``ValidationInfo``, on 3.11-3.13.
+
+    A classmethod validator reused across models bound to its bare ``(cls, value)``
+    function on Python 3.12, so every admitted claim input failed to reparse.
+    """
+
+    definition = (
+        {"claim_type_digest": _digest("claim-type")}
+        if model is AcceptedClaimRunInputV1
+        else {"query_definition_digest": _digest("query")}
+    )
+    payload = {
+        "input_name": "claims",
+        "read_coordinate": _coordinate("local").model_dump(mode="json"),
+        "parameters_digest": _digest("parameters"),
+        "result_digest": _digest("result"),
+        "effective_query_budgets": QueryBudgets(max_results=10, max_traversal_depth=1).model_dump(
+            mode="json"
+        ),
+        "material_body_digest": typed_digest(
+            CasDigest, "playbill-input-test-v1", {"label": "body"}
+        ).tagged,
+        **definition,
+    }
+    accepted = model.model_validate(payload)
+    assert accepted.input_name == "claims"
+    assert model.model_validate(accepted.model_dump(mode="json")) == accepted
+
+    with pytest.raises(ValueError, match="input_name is not canonical"):
+        model.model_validate({**payload, "input_name": "Not Canonical"})
+    with pytest.raises(ValueError, match="material_body_digest"):
+        model.model_validate({**payload, "material_body_digest": "not-a-digest"})

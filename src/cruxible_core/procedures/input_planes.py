@@ -39,6 +39,22 @@ def _sha256(value: str) -> str:
     return value
 
 
+def _cas_digest(value: str) -> str:
+    CasDigest.from_tagged(value)
+    return value
+
+
+# Every plane model shares these as plain functions. Reusing one model's
+# classmethod validator on another model (``field_validator(...)(Model._v)``)
+# binds per interpreter: on Python 3.11 and 3.12 pydantic resolves the bound
+# method to its bare ``(cls, value)`` function and calls it as an info-taking
+# validator, passing the value as ``cls`` and ``ValidationInfo`` as ``value``.
+def _input_name(value: str) -> str:
+    if not _INPUT_NAME_RE.fullmatch(value):
+        raise ValueError("Procedure input_name is not canonical")
+    return value
+
+
 class AcceptedStateRunInputV1(_StrictInputModel):
     tag: Literal["playbill-accepted-state-run-input-v1"] = "playbill-accepted-state-run-input-v1"
     kind: Literal["accepted_state"] = "accepted_state"
@@ -50,13 +66,7 @@ class AcceptedStateRunInputV1(_StrictInputModel):
 
     _query = field_validator("query_definition_digest")(_artifact_digest)
     _payloads = field_validator("parameters_digest", "result_digest")(_sha256)
-
-    @field_validator("input_name")
-    @classmethod
-    def _input_name(cls, value: str) -> str:
-        if not _INPUT_NAME_RE.fullmatch(value):
-            raise ValueError("Procedure input_name is not canonical")
-        return value
+    _name = field_validator("input_name")(_input_name)
 
 
 class AcceptedStateRunInputV2(_StrictInputModel):
@@ -72,19 +82,8 @@ class AcceptedStateRunInputV2(_StrictInputModel):
 
     _query = field_validator("query_definition_digest")(_artifact_digest)
     _payloads = field_validator("parameters_digest", "result_digest")(_sha256)
-
-    @field_validator("material_body_digest")
-    @classmethod
-    def _material(cls, value: str) -> str:
-        CasDigest.from_tagged(value)
-        return value
-
-    @field_validator("input_name")
-    @classmethod
-    def _input_name(cls, value: str) -> str:
-        if not _INPUT_NAME_RE.fullmatch(value):
-            raise ValueError("Procedure input_name is not canonical")
-        return value
+    _material = field_validator("material_body_digest")(_cas_digest)
+    _name = field_validator("input_name")(_input_name)
 
 
 class AcceptedClaimRunInputV1(_StrictInputModel):
@@ -100,8 +99,8 @@ class AcceptedClaimRunInputV1(_StrictInputModel):
 
     _claim_type = field_validator("claim_type_digest")(_artifact_digest)
     _payloads = field_validator("parameters_digest", "result_digest")(_sha256)
-    _material = field_validator("material_body_digest")(AcceptedStateRunInputV2._material)
-    _name = field_validator("input_name")(AcceptedStateRunInputV2._input_name)
+    _material = field_validator("material_body_digest")(_cas_digest)
+    _name = field_validator("input_name")(_input_name)
 
 
 def accepted_read_definition_digest(
@@ -123,13 +122,7 @@ class LandedCaptureRunInputV1(_StrictInputModel):
     landing_cursor: str
 
     _digests = field_validator("capture_digest", "capture_contract_digest")(_artifact_digest)
-
-    @field_validator("input_name")
-    @classmethod
-    def _input_name(cls, value: str) -> str:
-        if not _INPUT_NAME_RE.fullmatch(value):
-            raise ValueError("Procedure input_name is not canonical")
-        return value
+    _name = field_validator("input_name")(_input_name)
 
 
 class ExhaustRunInputV1(_StrictInputModel):
@@ -144,13 +137,7 @@ class ExhaustRunInputV1(_StrictInputModel):
 
     _digests = field_validator("reducer_or_query_digest")(_artifact_digest)
     _result = field_validator("result_digest")(_sha256)
-
-    @field_validator("input_name")
-    @classmethod
-    def _input_name(cls, value: str) -> str:
-        if not _INPUT_NAME_RE.fullmatch(value):
-            raise ValueError("Procedure input_name is not canonical")
-        return value
+    _name = field_validator("input_name")(_input_name)
 
 
 ProcedureRunInputV1 = Annotated[
