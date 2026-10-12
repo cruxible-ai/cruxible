@@ -20,7 +20,8 @@ dependencies = [
     # at 48.0.1 so Intel Macs install a wheel. uv.lock pins 50.0.0.
     "cryptography>=48.0.1",
     "httpx>=0.24",
-    "pydantic>=2.12",
+    # pydantic 2.14 changes the served OpenAPI (input/output component splitting); v1 serves one ratified surface.
+    "pydantic>=2.12,<2.14",
     "pyyaml>=6.0",
 ]
 

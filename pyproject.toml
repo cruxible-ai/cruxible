@@ -25,7 +25,8 @@ classifiers = [
 
 dependencies = [
     "cruxible-client==0.5.1",
-    "pydantic>=2.12",
+    # pydantic 2.14 changes the served OpenAPI (input/output component splitting); v1 serves one ratified surface.
+    "pydantic>=2.12,<2.14",
     "packaging>=23.0",
     "pyyaml>=6.0",
     "structlog>=24.0",
