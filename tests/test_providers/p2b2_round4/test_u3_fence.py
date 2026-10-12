@@ -63,10 +63,12 @@ LOOP = (
     "    open(path,'a').write('x')\n"
     "    time.sleep(0.02)\n"
 )
+if GATE:
+    open(MARKER + ".ready", "w").write(str(os.getpid()))
 while GATE and not os.path.exists(GATE):
     time.sleep(0.01)
 preexec = (lambda: os.setpgid(0, 0)) if MODE == "setpgid" else (lambda: os.setsid())
-subprocess.Popen(
+escapee = subprocess.Popen(
     [sys.executable, "-c", LOOP, MARKER],
     preexec_fn=preexec,
     close_fds=True,
@@ -74,7 +76,7 @@ subprocess.Popen(
     stdout=subprocess.DEVNULL,
     stderr=subprocess.DEVNULL,
 )
-open(MARKER + ".spawned", "w").write("1")
+open(MARKER + ".spawned", "w").write(str(escapee.pid))
 document = json.loads(sys.stdin.buffer.read())
 import time as _t
 _t.sleep(float("@LINGER@"))
@@ -100,7 +102,11 @@ def _write_fast_child(
     linger: float = 0.0,
     gate: Path | None = None,
 ) -> Path:
-    """A Provider child spawning one escapee; with ``gate``, only once that file exists."""
+    """A Provider child spawning one escapee; with ``gate``, only once that file exists.
+
+    A gated child writes ``<marker>.ready`` (its pid) before it waits, and every
+    child writes the escapee's pid to ``<marker>.spawned`` once it is spawned.
+    """
 
     path.write_text(
         FAST_CHILD.replace("@MARKER@", str(marker))
@@ -303,22 +309,19 @@ def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
     assert tuple(store.control_root.glob("*.sock")) == ()
 
 
-@pytest.mark.parametrize("mode", ["setsid", "setpgid"])
-def test_a_child_released_after_the_last_snapshot_leaves_no_escapee(
-    short_root: Path, monkeypatch: pytest.MonkeyPatch, mode: str
-) -> None:
-    """No descendant spawned between the pre-kill snapshot and the kill survives.
+def _late_release_world(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch, *, mode: str
+) -> tuple[ProviderProcessLeaseStore, Path, Path, Path, list[int]]:
+    """A gated child whose publish fails once it is ready, released after the snapshot.
 
-    The child spawns its escapee only once the termination snapshot has been
-    taken, as Linux CI's scheduling did after a publish write failure. A
-    ``setsid`` escapee made then is in no observed session and, its parent
-    killed, on no parent chain, so no later sweep can find it: the group must be
-    stopped before that snapshot, so it cannot spawn or leave the group until
-    the kill.
+    The lease publication waits for the child's readiness file and then fails
+    (the lease root is read-only). The termination snapshot is followed by the
+    gate opening and a bounded wait for the escapee; ``escapes`` records each
+    escapee seen spawned there, verified in its own group, before the kill.
+    No background poll lands in the window: only the termination path observes.
     """
 
-    lease_root = short_root / "l-late"
-    # No background poll lands inside the window: only the termination path observes.
+    lease_root = short_root / f"l-late-{mode}"
     store = ProviderProcessLeaseStore(
         lease_root,
         control_root=short_root / "c",
@@ -326,10 +329,21 @@ def test_a_child_released_after_the_last_snapshot_leaves_no_escapee(
     )
     marker = short_root / f"m-late-{mode}"
     gate = short_root / f"g-late-{mode}"
+    ready = marker.parent / (marker.name + ".ready")
     spawned = marker.parent / (marker.name + ".spawned")
     interpreter = _write_fast_child(
         short_root / f"c-late-{mode}.py", marker=marker, mode=mode, gate=gate
     )
+    escapes: list[int] = []
+    real_publish = store.publish
+
+    def publish_once_ready(*args, **kwargs):  # type: ignore[no-untyped-def]
+        deadline = time.monotonic() + 10.0
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists(), "the child never reached its gate"
+        return real_publish(*args, **kwargs)
+
     real_snapshot = runtime_module._DescendantTracker.snapshot
 
     def snapshot_then_release(self):  # type: ignore[no-untyped-def]
@@ -340,25 +354,84 @@ def test_a_child_released_after_the_last_snapshot_leaves_no_escapee(
             deadline = time.monotonic() + 1.5
             while not spawned.exists() and time.monotonic() < deadline:
                 time.sleep(0.01)
-            time.sleep(0.1)
+            if spawned.exists():
+                time.sleep(0.05)  # the pid is written after the spawn returns
+                escapee = int(spawned.read_text(encoding="utf-8"))
+                child = int(ready.read_text(encoding="utf-8"))
+                assert os.getpgid(escapee) == escapee != os.getpgid(child)
+                escapes.append(escapee)
         return observed
 
+    monkeypatch.setattr(store, "publish", publish_once_ready)
     monkeypatch.setattr(runtime_module._DescendantTracker, "snapshot", snapshot_then_release)
     os.chmod(lease_root, 0o500)  # mkstemp(dir=root) now fails with EACCES
+    return store, interpreter, marker, lease_root, escapes
+
+
+def _run_late_release(store: ProviderProcessLeaseStore, interpreter: Path) -> None:
+    with pytest.raises(ProviderLocalRuntimeRefused) as excinfo:
+        _run_child(
+            interpreter,
+            entrypoint="demo:Provider",
+            context=CONTEXT,
+            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
+            secret_fd=None,
+            invocation_id="sha256:" + "d" * 64,
+            process_leases=store,
+        )
+    assert excinfo.value.code == "provider_process_lease_invalid"
+
+
+def test_a_stopped_group_cannot_spawn_a_setsid_escapee_after_the_last_snapshot(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stop before the termination snapshot prevents the spawn altogether.
+
+    The child is ready at its gate when its lease publication fails, and the
+    gate opens once the termination snapshot is taken, as Linux CI's scheduling
+    did after a publish write failure. A ``setsid`` escapee made then would be in
+    no observed session and, its parent killed, on no parent chain, so no later
+    sweep could find it. The group is stopped first, so nothing spawns until the
+    kill. Under the old sequence (snapshot, then kill) the escapee survives.
+    """
+
+    store, interpreter, marker, lease_root, escapes = _late_release_world(
+        short_root, monkeypatch, mode="setsid"
+    )
     try:
-        with pytest.raises(ProviderLocalRuntimeRefused) as excinfo:
-            _run_child(
-                interpreter,
-                entrypoint="demo:Provider",
-                context=CONTEXT,
-                budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
-                secret_fd=None,
-                invocation_id="sha256:" + "d" * 64,
-                process_leases=store,
-            )
-        assert excinfo.value.code == "provider_process_lease_invalid"
-        assert gate.exists()
-        assert not _grew(marker, 0.3), f"a {mode} escapee survived the failed publish"
+        _run_late_release(store, interpreter)
+        assert escapes == [], "the stopped child spawned after the snapshot"
+        assert not _grew(marker, 0.3), "a setsid escapee survived the failed publish"
+    finally:
+        os.chmod(lease_root, 0o700)
+        _kill_tree(marker)
+
+
+def test_a_setpgid_escapee_spawned_after_the_last_snapshot_is_swept_after_the_reap(
+    short_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no stop available, the post-reap session sweep still kills a late escapee.
+
+    SIGSTOP is a no-op here, so the released child really spawns a ``setpgid``
+    escapee (asserted, in its own group) after the snapshot and before the kill.
+    The group kill misses it and its parent is gone; only the observation after
+    the leader is reaped finds it, by session, and kills it.
+    """
+
+    real_killpg = os.killpg
+
+    def killpg_without_stop(process_group: int, signal_number: int) -> None:
+        if signal_number != signal.SIGSTOP:
+            real_killpg(process_group, signal_number)
+
+    monkeypatch.setattr(runtime_module.os, "killpg", killpg_without_stop)
+    store, interpreter, marker, lease_root, escapes = _late_release_world(
+        short_root, monkeypatch, mode="setpgid"
+    )
+    try:
+        _run_late_release(store, interpreter)
+        assert len(escapes) == 1, "the child did not spawn inside the window"
+        assert not _grew(marker, 0.3), "the late setpgid escapee survived the reap"
     finally:
         os.chmod(lease_root, 0o700)
         _kill_tree(marker)
