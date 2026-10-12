@@ -22,6 +22,11 @@ def _git(repository: Path, *arguments: str, input_bytes: bytes | None = None) ->
                 "GIT_CONFIG_NOSYSTEM": "1",
                 "GIT_CONFIG_GLOBAL": "/dev/null",
                 "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+                # Notes are commits; a CI host cannot auto-detect an identity.
+                "GIT_AUTHOR_NAME": "test",
+                "GIT_AUTHOR_EMAIL": "test@example.invalid",
+                "GIT_COMMITTER_NAME": "test",
+                "GIT_COMMITTER_EMAIL": "test@example.invalid",
             },
         )
         .stdout.decode()

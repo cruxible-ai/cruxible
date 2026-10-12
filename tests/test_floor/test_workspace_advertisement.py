@@ -17,12 +17,22 @@ from cruxible_core.floor.workspace_advertisement import (
 PROPOSAL_KEY = "a" * 64
 
 
+# Notes and commits need an identity, which a CI host cannot auto-detect.
+_GIT_IDENTITY = {
+    "GIT_AUTHOR_NAME": "test",
+    "GIT_AUTHOR_EMAIL": "test@example.invalid",
+    "GIT_COMMITTER_NAME": "test",
+    "GIT_COMMITTER_EMAIL": "test@example.invalid",
+}
+
+
 def _git(path: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", "-C", str(path), *args],
         check=True,
         capture_output=True,
         text=True,
+        env={**os.environ, **_GIT_IDENTITY},
     )
     return result.stdout.strip()
 
@@ -36,7 +46,9 @@ def _repositories(tmp_path: Path, object_format: str) -> tuple[Path, Path]:
         capture_output=True,
     )
     subprocess.run(
-        ["git", "init", "--bare", f"--object-format={object_format}", str(ledger)],
+        # Name the branch: git's default (master on a host without
+        # init.defaultBranch) would leave a clone of the ledger without main.
+        ["git", "init", "--bare", "-b", "main", f"--object-format={object_format}", str(ledger)],
         check=True,
         capture_output=True,
     )
