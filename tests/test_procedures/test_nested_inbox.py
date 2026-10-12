@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_artifact_digest,
@@ -37,6 +38,26 @@ def _redigest(artifact: ProcedureArtifact) -> ProcedureArtifact:
             "definition_digest": compute_procedure_definition_digest(artifact.definition).tagged
         }
     )
+
+
+def _roomy(artifact: ProcedureArtifact, *, seconds: int = 60) -> ProcedureArtifact:
+    """The artifact with a wall-clock budget and hard cap that fit a slow host.
+
+    The blueprints' 1 s budget and 2 s cap fit three nested runs on a fast
+    workstation (about 0.9 s) but not on a loaded CI runner; this test is about
+    where the note lands, not about time.
+    """
+
+    wall_clock = CanonicalDuration(microseconds=seconds * 1_000_000)
+    definition = artifact.definition.model_copy(
+        update={
+            "budget": artifact.definition.budget.model_copy(update={"wall_clock": wall_clock}),
+            "hard_caps": artifact.definition.hard_caps.model_copy(
+                update={"max_wall_clock": wall_clock}
+            ),
+        }
+    )
+    return _redigest(artifact.model_copy(update={"definition": definition}))
 
 
 def _rewritten(
@@ -115,15 +136,17 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
 
     # New identities, so nothing is a successor: `grand` (run by the Line) invokes
     # `relay`, which invokes the posting `inbox_child` -- two invocation levels.
-    child = _rewritten(_inbox_child(old_child), {}, name="inbox_child")
+    child = _roomy(_rewritten(_inbox_child(old_child), {}, name="inbox_child"))
     child_digest = procedure_artifact_digest(child).tagged
-    relay = _rewritten(
-        old_parent,
-        {
-            procedure_artifact_digest(old_child).tagged: child_digest,
-            '"name": "child"': '"name": "inbox_child"',
-        },
-        name="relay",
+    relay = _roomy(
+        _rewritten(
+            old_parent,
+            {
+                procedure_artifact_digest(old_child).tagged: child_digest,
+                '"name": "child"': '"name": "inbox_child"',
+            },
+            name="relay",
+        )
     )
     relay_digest = procedure_artifact_digest(relay).tagged
     grand = _rewritten(
