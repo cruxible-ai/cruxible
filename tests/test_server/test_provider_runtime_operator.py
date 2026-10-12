@@ -562,7 +562,10 @@ def test_overlong_state_root_degrades_provider_at_operator_construction(
 
     runtime_root = Path(tempfile.mkdtemp(prefix=".u8-operator-"))
     request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
+    # The fallback reads the host's per-user runtime directory: XDG_RUNTIME_DIR on
+    # Linux, TMPDIR on macOS. Point both here, never at the host's real one.
     monkeypatch.setenv("TMPDIR", str(runtime_root))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_root))
     state_root = tmp_path / ("overlong-" + "x" * 110)
     real_fsencode = os.fsencode
     monkeypatch.setattr(
