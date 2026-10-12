@@ -32,8 +32,13 @@ from cruxible_client.contracts.procedures.models import ProcedureBudget, Procedu
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.provider_wheels import install_provider_wheel
 from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._subject_kind_support import declare_by_slug
 from tests.support.provider_checkout import checkout_predates_web_fetch_material
-from tests.test_procedures.test_procedure_proposal_delivery import _claim_type, _subject
+from tests.test_procedures.test_procedure_proposal_delivery import (
+    SUBJECT_ID,
+    SUBJECT_KIND,
+    _claim_type,
+)
 from tests.test_procedures.test_procedure_source_runs import _policy
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 from tests.test_server.test_provider_installation import installer_http  # noqa: F401
@@ -184,7 +189,9 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     accept(pb.procedure(definition=observer))
 
     knowledge = pb.changes(rationale="Describe the advisory observation.")
-    knowledge.subject(_subject())
+    # Core assigns a new Subject's id from its declared kind's key (identity D1).
+    declare_by_slug(knowledge, SUBJECT_KIND)
+    knowledge.subject(pb.new_subject(SUBJECT_KIND, key=SUBJECT_ID))
     definition = _claim_type(capture_contract_digest(contract).tagged)
     observed_rule = ClaimEvidenceAdmissionRuleV2.model_validate(
         definition.evidence_admission_policy.rules[0].model_dump(
@@ -369,10 +376,16 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     assert fresh.invocation_receipt_digest != observation.invocation_receipt_digest
     (derived,) = verified.outcome.terminal_egress
     assert derived.verdict == "delivered" and derived.proposal_id
-    assert len(pb.world().security.advisory["osv-2026-0001"].claims) == 1
+
+    def severity_claims() -> list[Any]:
+        # The advisory also holds its key Claim (security.advisory.slug).
+        subject = pb.world().security.advisory[SUBJECT_ID]
+        return [view for view in subject.claims if view.predicate == definition.predicate]
+
+    assert len(severity_claims()) == 1
     _approve_and_activate(http, instance_id, reviewer, derived.proposal_id)
     pb.refresh()
-    claims = pb.world().security.advisory["osv-2026-0001"].claims
+    claims = severity_claims()
     assert len(claims) == 2
     original = _proof(
         client, instance_id, next(v.claim_id for v in claims if v.role == "observation")
