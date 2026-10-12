@@ -360,6 +360,35 @@ def snapshot_provider_descendants(
     return tuple(sorted(found.values(), key=lambda item: item.pid))
 
 
+def group_has_live_member(process_group: int) -> bool:
+    """Whether any process other than a zombie is in the group.
+
+    Darwin refuses ``killpg`` with EPERM when every member is a zombie (an
+    exited, unreaped leader alone), which is no refusal of anything alive.
+    An unreadable process table is answered conservatively: live.
+    """
+
+    try:
+        completed = subprocess.run(
+            ["ps", "-Ao", "pid=,pgid=,stat="], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return True
+    if completed.returncode != 0:
+        return True
+    for line in completed.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 3:
+            continue
+        try:
+            group = int(fields[1])
+        except ValueError:
+            continue
+        if group == process_group and not fields[2].startswith("Z"):
+            return True
+    return False
+
+
 def descendant_is_live(identity: ProviderDescendantProcessV1) -> bool:
     """Return true only while this exact descendant identity remains live."""
 
@@ -992,6 +1021,7 @@ __all__ = [
     "ProviderProcessFenceCodeV1",
     "descendant_is_live",
     "descendant_processes",
+    "group_has_live_member",
     "kill_descendants",
     "processes_naming_invocation",
     "snapshot_provider_descendants",

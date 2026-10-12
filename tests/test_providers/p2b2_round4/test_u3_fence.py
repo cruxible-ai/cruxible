@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import signal
@@ -361,6 +362,127 @@ def test_a_child_released_after_the_last_snapshot_leaves_no_escapee(
     finally:
         os.chmod(lease_root, 0o700)
         _kill_tree(marker)
+
+
+def _sleeping_group() -> subprocess.Popen[bytes]:
+    return subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _state(pid: int) -> str:
+    """The process's ps state letters, or '' once it is gone."""
+
+    return subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False
+    ).stdout.strip()
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_an_interruption_right_after_the_stop_still_kills_the_group(
+    monkeypatch: pytest.MonkeyPatch, interruption: type[BaseException]
+) -> None:
+    """An exception raised by a signal handler just after SIGSTOP never strands the group.
+
+    The kill runs on the way out and the interruption propagates; the group
+    ends killed (a zombie awaiting its reap), never stopped.
+    """
+
+    process = _sleeping_group()
+    real_killpg = os.killpg
+    sent: list[int] = []
+
+    def interrupted_after_stop(process_group: int, signal_number: int) -> None:
+        real_killpg(process_group, signal_number)
+        sent.append(signal_number)
+        if signal_number == signal.SIGSTOP:
+            raise interruption()
+
+    try:
+        time.sleep(0.2)
+        monkeypatch.setattr(runtime_module.os, "killpg", interrupted_after_stop)
+        with pytest.raises(interruption):
+            runtime_module._terminate_process_group(process, 2.0, descendants=None)
+        monkeypatch.undo()
+        state = _state(process.pid)
+        assert not state.startswith("T"), f"the group was left stopped ({state})"
+        assert sent == [signal.SIGSTOP, signal.SIGKILL]
+        assert process.wait(timeout=5) == -signal.SIGKILL
+    finally:
+        monkeypatch.undo()
+        with contextlib.suppress(OSError):
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [PermissionError(errno.EPERM, "Operation not permitted"), OSError(errno.EIO, "I/O error")],
+    ids=["EPERM", "EIO"],
+)
+def test_a_refused_kill_after_the_stop_resumes_the_group_and_fails_typed(
+    monkeypatch: pytest.MonkeyPatch, refusal: OSError
+) -> None:
+    """A stopped group whose SIGKILL is refused is resumed, never left stopped."""
+
+    process = _sleeping_group()
+    real_killpg = os.killpg
+    sent: list[int] = []
+
+    def refuse_kill(process_group: int, signal_number: int) -> None:
+        sent.append(signal_number)
+        if signal_number == signal.SIGKILL:
+            raise refusal
+        real_killpg(process_group, signal_number)
+
+    try:
+        time.sleep(0.2)
+        monkeypatch.setattr(runtime_module.os, "killpg", refuse_kill)
+        with pytest.raises(ProviderLocalRuntimeRefused) as excinfo:
+            runtime_module._terminate_process_group(process, 2.0, descendants=None)
+        monkeypatch.undo()
+        state = _state(process.pid)
+        assert state and not state.startswith("T"), f"the group was left stopped ({state})"
+        assert excinfo.value.code == "provider_process_group_survived_recovery"
+        assert excinfo.value.details["kill_errno"] == refusal.errno
+        assert excinfo.value.details["resumed"] is True
+        # Bounded retries, then one resume of the same unreaped group.
+        assert sent == [signal.SIGSTOP] + [signal.SIGKILL] * 3 + [signal.SIGCONT]
+        assert process.poll() is None
+    finally:
+        monkeypatch.undo()
+        with contextlib.suppress(OSError):
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+
+
+def test_a_group_already_gone_is_no_termination_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ESRCH on the stop and the kill means the group is gone: termination succeeds."""
+
+    process = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    deadline = time.monotonic() + 10.0
+    while not _state(process.pid).startswith("Z") and time.monotonic() < deadline:
+        time.sleep(0.02)
+    real_killpg = os.killpg
+
+    def group_gone(process_group: int, signal_number: int) -> None:
+        if signal_number in (signal.SIGSTOP, signal.SIGKILL):
+            raise ProcessLookupError(errno.ESRCH, "No such process")
+        real_killpg(process_group, signal_number)
+
+    try:
+        monkeypatch.setattr(runtime_module.os, "killpg", group_gone)
+        runtime_module._terminate_process_group(process, 2.0, descendants=None)
+        assert process.returncode == 0
+    finally:
+        monkeypatch.undo()
+        process.wait(timeout=5)
 
 
 def test_tracker_start_failure_kills_and_reaps_the_spawned_child(
