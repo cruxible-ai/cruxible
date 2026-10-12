@@ -377,7 +377,12 @@ def test_a_400_item_terminal_keeps_every_reason_and_reads_one_in_constant_work(
         )
         for index in range(count)
     )
-    instance, owner, root, line, _procedure = proposal_world(tmp_path, templates=templates)
+    # Lowering 400 items takes about 4.5 s on a fast workstation and passed the
+    # Line run's default 10 s budget on a loaded CI runner; this test is about
+    # reasons, not time.
+    instance, owner, root, line, _procedure = proposal_world(
+        tmp_path, templates=templates, wall_clock_seconds=300
+    )
 
     state = run_line(instance, root, line)
 

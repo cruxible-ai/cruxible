@@ -18,7 +18,11 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.captures import capture_contract_digest, parse_capture_envelope
+from cruxible_client.contracts.captures import (
+    CanonicalDuration,
+    capture_contract_digest,
+    parse_capture_envelope,
+)
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.claims import claim_artifact_digest, parse_claim
 from cruxible_client.contracts.policies import (
@@ -136,23 +140,34 @@ def terminal_procedure(
     procedure: ProcedureArtifact,
     *,
     templates: tuple[object, ...] | None = None,
+    wall_clock_seconds: int | None = None,
 ) -> ProcedureArtifact:
-    """The Source Procedure with its shaped row flowing into a rung-2 terminal."""
+    """The Source Procedure with its shaped row flowing into a rung-2 terminal.
+
+    ``wall_clock_seconds`` replaces both the wall-clock budget and the hard cap
+    (which the served Line's run budget follows), for a world whose terminal does
+    more work than the defaults cover on a slow host.
+    """
 
     source, shape = procedure.definition.nodes
-    definition = procedure.definition.model_copy(
-        update={
-            "nodes": (
-                source,
-                shape.model_copy(update={"next": "propose"}),
-                ProposeChangeSetNode(
-                    node_id="propose",
-                    candidate_templates=templates or (item_template(),),
-                    result="$steps.result",
-                ),
+    update: dict[str, object] = {
+        "nodes": (
+            source,
+            shape.model_copy(update={"next": "propose"}),
+            ProposeChangeSetNode(
+                node_id="propose",
+                candidate_templates=templates or (item_template(),),
+                result="$steps.result",
             ),
-        }
-    )
+        ),
+    }
+    if wall_clock_seconds is not None:
+        wall_clock = CanonicalDuration(microseconds=wall_clock_seconds * 1_000_000)
+        update["budget"] = procedure.definition.budget.model_copy(update={"wall_clock": wall_clock})
+        update["hard_caps"] = procedure.definition.hard_caps.model_copy(
+            update={"max_wall_clock": wall_clock}
+        )
+    definition = procedure.definition.model_copy(update=update)
     return procedure.model_copy(
         update={
             "definition": definition,
@@ -174,11 +189,14 @@ def proposal_world(  # type: ignore[no-untyped-def]
     mandate: ProcedureMandateV1 | None | bool = True,
     claim_type: ClaimType | None = None,
     requested_terminal_rung: int = 2,
+    wall_clock_seconds: int | None = None,
 ):
     """Accept everything the loop needs; return the instance, owner, root, Line."""
 
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
-    with_terminal = terminal_procedure(procedure, templates=templates)
+    with_terminal = terminal_procedure(
+        procedure, templates=templates, wall_clock_seconds=wall_clock_seconds
+    )
     line = _line(with_terminal, policy).model_copy(
         update={"max_authority": RUNG_AUTHORITY[requested_terminal_rung]}
     )
