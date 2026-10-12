@@ -73,16 +73,10 @@ SPAWN_NAMES = frozenset(
 NON_SPAWN_ATTRIBUTES = frozenset({("platform", "system")})
 
 # Lease probes spawn fixed, core-owned argv (`sysctl -n kern.boottime`,
-# `ps -o lstart=`, `ps -Ao ...`, `ps -Ao pid=,pgid=,stat=`) that read the host
-# process table and execute nothing from a checkout or a Provider. They are
-# declared exempt by name so a NEW spawn in this module cannot inherit the
-# exemption silently.
-EXEMPT_LEASE_SPAWNS = {
-    "_current_boot_id",
-    "_process_start_time",
-    "_process_rows",
-    "group_has_live_member",
-}
+# `ps -o lstart=`, `ps -Ao ...`) that read the host process table and execute
+# nothing from a checkout or a Provider. They are declared exempt by name so a
+# NEW spawn in this module cannot inherit the exemption silently.
+EXEMPT_LEASE_SPAWNS = {"_current_boot_id", "_process_start_time", "_process_rows"}
 # `_git` runs constant Git argv against the adapter checkout; `rev-parse` and
 # `status` execute no repository hooks and no checkout code.
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import errno
 import json
 import os
 import signal
@@ -32,11 +31,10 @@ from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBud
 CONTEXT = b'{"run_id":"RUN-r4","input":{"value":"r4"}}'
 
 FAST_CHILD = r"""#!/usr/bin/env python3
-import json, os, socket, subprocess, sys, threading, time
+import json, os, socket, subprocess, sys, threading
 
 MARKER = "@MARKER@"
 MODE = "@MODE@"
-GATE = "@GATE@"
 
 invocation_id, control_path = sys.argv[2:4]
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -63,12 +61,8 @@ LOOP = (
     "    open(path,'a').write('x')\n"
     "    time.sleep(0.02)\n"
 )
-if GATE:
-    open(MARKER + ".ready", "w").write(str(os.getpid()))
-while GATE and not os.path.exists(GATE):
-    time.sleep(0.01)
 preexec = (lambda: os.setpgid(0, 0)) if MODE == "setpgid" else (lambda: os.setsid())
-escapee = subprocess.Popen(
+subprocess.Popen(
     [sys.executable, "-c", LOOP, MARKER],
     preexec_fn=preexec,
     close_fds=True,
@@ -76,7 +70,7 @@ escapee = subprocess.Popen(
     stdout=subprocess.DEVNULL,
     stderr=subprocess.DEVNULL,
 )
-open(MARKER + ".spawned", "w").write(str(escapee.pid))
+open(MARKER + ".spawned", "w").write("1")
 document = json.loads(sys.stdin.buffer.read())
 import time as _t
 _t.sleep(float("@LINGER@"))
@@ -94,25 +88,11 @@ sys.stdout.flush()
 """
 
 
-def _write_fast_child(
-    path: Path,
-    *,
-    marker: Path,
-    mode: str,
-    linger: float = 0.0,
-    gate: Path | None = None,
-) -> Path:
-    """A Provider child spawning one escapee; with ``gate``, only once that file exists.
-
-    A gated child writes ``<marker>.ready`` (its pid) before it waits, and every
-    child writes the escapee's pid to ``<marker>.spawned`` once it is spawned.
-    """
-
+def _write_fast_child(path: Path, *, marker: Path, mode: str, linger: float = 0.0) -> Path:
     path.write_text(
         FAST_CHILD.replace("@MARKER@", str(marker))
         .replace("@MODE@", mode)
-        .replace("@LINGER@", str(linger))
-        .replace("@GATE@", "" if gate is None else str(gate)),
+        .replace("@LINGER@", str(linger)),
         encoding="utf-8",
     )
     path.chmod(0o755)
@@ -307,255 +287,6 @@ def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
     assert not descendant_alive
     assert tuple(lease_root.glob("*.json")) == ()
     assert tuple(store.control_root.glob("*.sock")) == ()
-
-
-def _late_release_world(
-    short_root: Path, monkeypatch: pytest.MonkeyPatch, *, mode: str
-) -> tuple[ProviderProcessLeaseStore, Path, Path, Path, list[int]]:
-    """A gated child whose publish fails once it is ready, released after the snapshot.
-
-    The lease publication waits for the child's readiness file and then fails
-    (the lease root is read-only). The termination snapshot is followed by the
-    gate opening and a bounded wait for the escapee; ``escapes`` records each
-    escapee seen spawned there, verified in its own group, before the kill.
-    No background poll lands in the window: only the termination path observes.
-    """
-
-    lease_root = short_root / f"l-late-{mode}"
-    store = ProviderProcessLeaseStore(
-        lease_root,
-        control_root=short_root / "c",
-        descendant_tracker_poll_interval_seconds=60.0,
-    )
-    marker = short_root / f"m-late-{mode}"
-    gate = short_root / f"g-late-{mode}"
-    ready = marker.parent / (marker.name + ".ready")
-    spawned = marker.parent / (marker.name + ".spawned")
-    interpreter = _write_fast_child(
-        short_root / f"c-late-{mode}.py", marker=marker, mode=mode, gate=gate
-    )
-    escapes: list[int] = []
-    real_publish = store.publish
-
-    def publish_once_ready(*args, **kwargs):  # type: ignore[no-untyped-def]
-        deadline = time.monotonic() + 10.0
-        while not ready.exists() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert ready.exists(), "the child never reached its gate"
-        return real_publish(*args, **kwargs)
-
-    real_snapshot = runtime_module._DescendantTracker.snapshot
-
-    def snapshot_then_release(self):  # type: ignore[no-untyped-def]
-        observed = real_snapshot(self)
-        if not gate.exists():
-            gate.write_text("go", encoding="utf-8")
-            # A running child spawns within milliseconds; a stopped one never does.
-            deadline = time.monotonic() + 1.5
-            while not spawned.exists() and time.monotonic() < deadline:
-                time.sleep(0.01)
-            if spawned.exists():
-                time.sleep(0.05)  # the pid is written after the spawn returns
-                escapee = int(spawned.read_text(encoding="utf-8"))
-                child = int(ready.read_text(encoding="utf-8"))
-                assert os.getpgid(escapee) == escapee != os.getpgid(child)
-                escapes.append(escapee)
-        return observed
-
-    monkeypatch.setattr(store, "publish", publish_once_ready)
-    monkeypatch.setattr(runtime_module._DescendantTracker, "snapshot", snapshot_then_release)
-    os.chmod(lease_root, 0o500)  # mkstemp(dir=root) now fails with EACCES
-    return store, interpreter, marker, lease_root, escapes
-
-
-def _run_late_release(store: ProviderProcessLeaseStore, interpreter: Path) -> None:
-    with pytest.raises(ProviderLocalRuntimeRefused) as excinfo:
-        _run_child(
-            interpreter,
-            entrypoint="demo:Provider",
-            context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
-            secret_fd=None,
-            invocation_id="sha256:" + "d" * 64,
-            process_leases=store,
-        )
-    assert excinfo.value.code == "provider_process_lease_invalid"
-
-
-def test_a_stopped_group_cannot_spawn_a_setsid_escapee_after_the_last_snapshot(
-    short_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The stop before the termination snapshot prevents the spawn altogether.
-
-    The child is ready at its gate when its lease publication fails, and the
-    gate opens once the termination snapshot is taken, as Linux CI's scheduling
-    did after a publish write failure. A ``setsid`` escapee made then would be in
-    no observed session and, its parent killed, on no parent chain, so no later
-    sweep could find it. The group is stopped first, so nothing spawns until the
-    kill. Under the old sequence (snapshot, then kill) the escapee survives.
-    """
-
-    store, interpreter, marker, lease_root, escapes = _late_release_world(
-        short_root, monkeypatch, mode="setsid"
-    )
-    try:
-        _run_late_release(store, interpreter)
-        assert escapes == [], "the stopped child spawned after the snapshot"
-        assert not _grew(marker, 0.3), "a setsid escapee survived the failed publish"
-    finally:
-        os.chmod(lease_root, 0o700)
-        _kill_tree(marker)
-
-
-def test_a_setpgid_escapee_spawned_after_the_last_snapshot_is_swept_after_the_reap(
-    short_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """With no stop available, the post-reap session sweep still kills a late escapee.
-
-    SIGSTOP is a no-op here, so the released child really spawns a ``setpgid``
-    escapee (asserted, in its own group) after the snapshot and before the kill.
-    The group kill misses it and its parent is gone; only the observation after
-    the leader is reaped finds it, by session, and kills it.
-    """
-
-    real_killpg = os.killpg
-
-    def killpg_without_stop(process_group: int, signal_number: int) -> None:
-        if signal_number != signal.SIGSTOP:
-            real_killpg(process_group, signal_number)
-
-    monkeypatch.setattr(runtime_module.os, "killpg", killpg_without_stop)
-    store, interpreter, marker, lease_root, escapes = _late_release_world(
-        short_root, monkeypatch, mode="setpgid"
-    )
-    try:
-        _run_late_release(store, interpreter)
-        assert len(escapes) == 1, "the child did not spawn inside the window"
-        assert not _grew(marker, 0.3), "the late setpgid escapee survived the reap"
-    finally:
-        os.chmod(lease_root, 0o700)
-        _kill_tree(marker)
-
-
-def _sleeping_group() -> subprocess.Popen[bytes]:
-    return subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"],
-        start_new_session=True,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-
-def _state(pid: int) -> str:
-    """The process's ps state letters, or '' once it is gone."""
-
-    return subprocess.run(
-        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False
-    ).stdout.strip()
-
-
-@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
-def test_an_interruption_right_after_the_stop_still_kills_the_group(
-    monkeypatch: pytest.MonkeyPatch, interruption: type[BaseException]
-) -> None:
-    """An exception raised by a signal handler just after SIGSTOP never strands the group.
-
-    The kill runs on the way out and the interruption propagates; the group
-    ends killed (a zombie awaiting its reap), never stopped.
-    """
-
-    process = _sleeping_group()
-    real_killpg = os.killpg
-    sent: list[int] = []
-
-    def interrupted_after_stop(process_group: int, signal_number: int) -> None:
-        real_killpg(process_group, signal_number)
-        sent.append(signal_number)
-        if signal_number == signal.SIGSTOP:
-            raise interruption()
-
-    try:
-        time.sleep(0.2)
-        monkeypatch.setattr(runtime_module.os, "killpg", interrupted_after_stop)
-        with pytest.raises(interruption):
-            runtime_module._terminate_process_group(process, 2.0, descendants=None)
-        monkeypatch.undo()
-        state = _state(process.pid)
-        assert not state.startswith("T"), f"the group was left stopped ({state})"
-        assert sent == [signal.SIGSTOP, signal.SIGKILL]
-        assert process.wait(timeout=5) == -signal.SIGKILL
-    finally:
-        monkeypatch.undo()
-        with contextlib.suppress(OSError):
-            os.killpg(process.pid, signal.SIGKILL)
-        process.wait(timeout=5)
-
-
-@pytest.mark.parametrize(
-    "refusal",
-    [PermissionError(errno.EPERM, "Operation not permitted"), OSError(errno.EIO, "I/O error")],
-    ids=["EPERM", "EIO"],
-)
-def test_a_refused_kill_after_the_stop_resumes_the_group_and_fails_typed(
-    monkeypatch: pytest.MonkeyPatch, refusal: OSError
-) -> None:
-    """A stopped group whose SIGKILL is refused is resumed, never left stopped."""
-
-    process = _sleeping_group()
-    real_killpg = os.killpg
-    sent: list[int] = []
-
-    def refuse_kill(process_group: int, signal_number: int) -> None:
-        sent.append(signal_number)
-        if signal_number == signal.SIGKILL:
-            raise refusal
-        real_killpg(process_group, signal_number)
-
-    try:
-        time.sleep(0.2)
-        monkeypatch.setattr(runtime_module.os, "killpg", refuse_kill)
-        with pytest.raises(ProviderLocalRuntimeRefused) as excinfo:
-            runtime_module._terminate_process_group(process, 2.0, descendants=None)
-        monkeypatch.undo()
-        state = _state(process.pid)
-        assert state and not state.startswith("T"), f"the group was left stopped ({state})"
-        assert excinfo.value.code == "provider_process_group_survived_recovery"
-        assert excinfo.value.details["kill_errno"] == refusal.errno
-        assert excinfo.value.details["resumed"] is True
-        # Bounded retries, then one resume of the same unreaped group.
-        assert sent == [signal.SIGSTOP] + [signal.SIGKILL] * 3 + [signal.SIGCONT]
-        assert process.poll() is None
-    finally:
-        monkeypatch.undo()
-        with contextlib.suppress(OSError):
-            os.killpg(process.pid, signal.SIGKILL)
-        process.wait(timeout=5)
-
-
-def test_a_group_already_gone_is_no_termination_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """ESRCH on the stop and the kill means the group is gone: termination succeeds."""
-
-    process = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
-    deadline = time.monotonic() + 10.0
-    while not _state(process.pid).startswith("Z") and time.monotonic() < deadline:
-        time.sleep(0.02)
-    real_killpg = os.killpg
-
-    def group_gone(process_group: int, signal_number: int) -> None:
-        if signal_number in (signal.SIGSTOP, signal.SIGKILL):
-            raise ProcessLookupError(errno.ESRCH, "No such process")
-        real_killpg(process_group, signal_number)
-
-    try:
-        monkeypatch.setattr(runtime_module.os, "killpg", group_gone)
-        runtime_module._terminate_process_group(process, 2.0, descendants=None)
-        assert process.returncode == 0
-    finally:
-        monkeypatch.undo()
-        process.wait(timeout=5)
 
 
 def test_tracker_start_failure_kills_and_reaps_the_spawned_child(

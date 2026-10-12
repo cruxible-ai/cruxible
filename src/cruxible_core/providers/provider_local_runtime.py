@@ -54,7 +54,6 @@ from cruxible_core.providers.provider_process_leases import (
     ProviderLocalRuntimeRefused,
     ProviderProcessLeaseStore,
     descendant_is_live,
-    group_has_live_member,
     kill_descendants,
     snapshot_provider_descendants,
 )
@@ -1630,60 +1629,6 @@ def _process_exited_without_reaping(pid: int) -> bool:
     return result is not None
 
 
-_GROUP_KILL_ATTEMPTS = 3
-_GROUP_KILL_RETRY_SECONDS = 0.02
-
-
-def _kill_unreaped_group(process: subprocess.Popen[bytes]) -> ProviderLocalRuntimeRefused | None:
-    """SIGKILL the unreaped leader's group; if that is refused, resume it.
-
-    ESRCH means the group is gone, and a refusal while no live member remains
-    (Darwin's answer for a group of zombies) leaves nothing to kill: both are the
-    outcome sought. A refusal while a member is alive is retried a bounded
-    number of times; if the kill is still refused, the group (which may have
-    been stopped) is sent SIGCONT so it is not left suspended, and the refusal
-    is returned for the caller to raise. Only an unreaped leader's pid still
-    names its group, so nothing is signalled once the leader has been reaped.
-    """
-
-    refusal: OSError | None = None
-    for attempt in range(_GROUP_KILL_ATTEMPTS):
-        if process.returncode is not None:
-            return None
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            return None
-        except OSError as exc:
-            if not group_has_live_member(process.pid):
-                return None
-            refusal = exc
-            if attempt + 1 < _GROUP_KILL_ATTEMPTS:
-                time.sleep(_GROUP_KILL_RETRY_SECONDS)
-        else:
-            return None
-    assert refusal is not None
-    resumed: bool | str = False
-    if process.returncode is None:
-        try:
-            os.killpg(process.pid, signal.SIGCONT)
-            resumed = True
-        except ProcessLookupError:
-            resumed = "group_gone"
-        except OSError as exc:
-            resumed = f"refused: {exc.strerror or exc}"
-    return ProviderLocalRuntimeRefused(
-        "provider_process_group_survived_recovery",
-        "provider process group refused termination",
-        details={
-            "kill_error": refusal.strerror or str(refusal),
-            "kill_errno": refusal.errno,
-            "kill_attempts": _GROUP_KILL_ATTEMPTS,
-            "resumed": resumed,
-        },
-    )
-
-
 def _terminate_process_group(
     process: subprocess.Popen[bytes],
     timeout_seconds: float,
@@ -1691,76 +1636,33 @@ def _terminate_process_group(
     descendants: _DescendantTracker | None,
     diagnostic_sink: Callable[[ProviderLocalRuntimeRefused], None] | None = None,
 ) -> None:
-    """Stop an unreaped group, snapshot it, kill it, reap its leader, then sweep.
-
-    The group is stopped before the snapshot so that the snapshot cannot be
-    outrun: until the kill, no member can fork, and no forked member can leave
-    the group (``setpgid``) or session (``setsid``). A member that left before
-    the stop is still on its stopped parent's chain when the snapshot is taken.
-    Without the stop, a ``setsid`` escapee spawned between snapshot and kill is
-    in no observed session and, its parent killed, on no parent chain, so no
-    later sweep could find it. Every pass after the leader is reaped observes
-    again, so the session sweep finds a same-session escapee spawned after the
-    snapshot by a process the stop did not reach.
-
-    The kill is attempted on every exit from the stop-and-snapshot step, an
-    interruption (KeyboardInterrupt, SystemExit) included: the interruption then
-    propagates, with the descendants observed so far swept. If the kill is
-    refused, the group is resumed rather than left stopped and the refusal is
-    raised as ``provider_process_group_survived_recovery``.
-    """
+    """Kill an unreaped group, reap its leader, then sweep exact descendants."""
 
     snapshot_failure: ProviderLocalRuntimeRefused | None = None
-    failure_reported = False
-    observed_descendants: tuple[ProviderDescendantProcessV1, ...] = ()
-
-    def observe() -> tuple[ProviderDescendantProcessV1, ...]:
-        nonlocal snapshot_failure
-        assert descendants is not None
+    observed_descendants: tuple[ProviderDescendantProcessV1, ...]
+    if descendants is None:
+        observed_descendants = ()
+    else:
         try:
-            return descendants.snapshot()
+            observed_descendants = descendants.snapshot()
         except ProviderLocalRuntimeRefused as exc:
-            if snapshot_failure is None and not failure_reported:
-                snapshot_failure = exc
-            return descendants.retained()
-
-    kill_refusal: ProviderLocalRuntimeRefused | None = None
-    interrupted = True
-    try:
-        # Only an unreaped leader's pid still names its group; nothing here reaps it.
-        if process.returncode is None:
-            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-                os.killpg(process.pid, signal.SIGSTOP)
-        if descendants is not None:
-            observed_descendants = observe()
-        interrupted = False
-    finally:
-        kill_refusal = _kill_unreaped_group(process)
-        if interrupted:
-            # The interruption propagates from here; sweep what was observed.
-            with contextlib.suppress(Exception):
-                kill_descendants(observed_descendants)
-            if kill_refusal is not None and diagnostic_sink is not None:
-                with contextlib.suppress(Exception):
-                    diagnostic_sink(kill_refusal)
-    if kill_refusal is not None:
-        kill_descendants(observed_descendants)
-        raise kill_refusal
+            observed_descendants = descendants.retained()
+            snapshot_failure = exc
+    if process.returncode is None:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(process.pid, signal.SIGKILL)
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         try:
             process.wait(timeout=min(0.05, max(deadline - time.monotonic(), 0.001)))
         except subprocess.TimeoutExpired:
             continue
-        if descendants is not None:
-            observed_descendants = observe()
         kill_descendants(observed_descendants)
         if snapshot_failure is not None:
             if diagnostic_sink is not None:
                 with contextlib.suppress(Exception):
                     diagnostic_sink(snapshot_failure)
             snapshot_failure = None
-            failure_reported = True
         try:
             os.killpg(process.pid, 0)
             group_alive = True
