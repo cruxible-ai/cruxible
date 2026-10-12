@@ -716,7 +716,8 @@ def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
             invocation_id=invocation_id,
             process_leases=leases,
         )
-    assert killed == [(_Process.pid, signal.SIGKILL)]
+    # Stopped before its descendants are snapshotted, then killed.
+    assert killed == [(_Process.pid, signal.SIGSTOP), (_Process.pid, signal.SIGKILL)]
     record_path, control_path = leases.paths(invocation_id)
     assert not record_path.exists()
     assert not control_path.exists()

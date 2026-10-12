@@ -1636,13 +1636,17 @@ def _terminate_process_group(
     descendants: _DescendantTracker | None,
     diagnostic_sink: Callable[[ProviderLocalRuntimeRefused], None] | None = None,
 ) -> None:
-    """Kill an unreaped group, reap its leader, then sweep exact descendants.
+    """Stop an unreaped group, snapshot it, kill it, reap its leader, then sweep.
 
-    The snapshot taken before the group kill misses a descendant spawned after
-    it that left the group (``setpgid``) before the kill landed: the kill skips
-    it and, its parent gone, no parent chain leads to it. Every pass after the
-    leader is reaped observes again, so the session sweep finds such an escapee
-    while nothing descends from the leader any more.
+    The group is stopped before the snapshot so that the snapshot cannot be
+    outrun: until the kill, no member can fork, and no forked member can leave
+    the group (``setpgid``) or session (``setsid``). A member that left before
+    the stop is still on its stopped parent's chain when the snapshot is taken.
+    Without the stop, a ``setsid`` escapee spawned between snapshot and kill is
+    in no observed session and, its parent killed, on no parent chain, so no
+    later sweep could find it. Every pass after the leader is reaped observes
+    again, so the session sweep finds a same-session escapee that an observed
+    escapee spawned later.
     """
 
     snapshot_failure: ProviderLocalRuntimeRefused | None = None
@@ -1659,10 +1663,17 @@ def _terminate_process_group(
                 snapshot_failure = exc
             return descendants.retained()
 
-    observed_descendants = () if descendants is None else observe()
+    # Only an unreaped leader's pid still names its group; nothing here reaps it.
     if process.returncode is None:
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process.pid, signal.SIGSTOP)
+    try:
+        observed_descendants = () if descendants is None else observe()
+    finally:
+        # Never leave the group stopped: the kill follows the snapshot whatever it raised.
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+                os.killpg(process.pid, signal.SIGKILL)
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         try:
