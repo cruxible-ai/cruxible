@@ -342,6 +342,24 @@ def retain_serving_head_stamp_locked(
     )
 
 
+def _content_stamp(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+    """What any change to a file's bytes or inode moves, never its access time.
+
+    The readiness digest is itself a read, and a read may advance the access
+    time: Linux ``relatime`` does whenever ctime is no older than atime, as it
+    is right after publication links the piece in and unlinks its staged name.
+    A whole ``stat_result`` comparison carries whole-second atime, so it
+    refused unchanged bytes whenever that read crossed a second boundary.
+    """
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
 def record_source_built_piece(
     path: Path, *, accepted: Any, manifest: ProjectionManifest
 ) -> dict[str, object]:
@@ -353,7 +371,10 @@ def record_source_built_piece(
     before = path.stat()
     digest = physical_file_digest(path).tagged
     after = path.stat()
-    if before != after or digest != manifest.pieces[0].physical_digest:
+    if (
+        _content_stamp(before) != _content_stamp(after)
+        or digest != manifest.pieces[0].physical_digest
+    ):
         raise ProjectionIntegrityError(
             "source-built projection changed before readiness publication"
         )

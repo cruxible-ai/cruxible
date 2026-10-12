@@ -24,7 +24,11 @@ def cli_context_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 def _patch_client(monkeypatch: pytest.MonkeyPatch, client: object) -> None:
-    monkeypatch.setattr("cruxible_core.cli.commands.server._get_client", lambda: client)
+    # Mirrors _get_lifecycle_client: the command passes its --state-root (or None).
+    def lifecycle_client(state_root: Path | None = None) -> object:
+        return client
+
+    monkeypatch.setattr("cruxible_core.cli.commands.server._get_client", lifecycle_client)
 
 
 def test_server_restart_requires_server_mode(monkeypatch, runner: CliRunner):

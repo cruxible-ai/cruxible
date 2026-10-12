@@ -1636,18 +1636,30 @@ def _terminate_process_group(
     descendants: _DescendantTracker | None,
     diagnostic_sink: Callable[[ProviderLocalRuntimeRefused], None] | None = None,
 ) -> None:
-    """Kill an unreaped group, reap its leader, then sweep exact descendants."""
+    """Kill an unreaped group, reap its leader, then sweep exact descendants.
+
+    The snapshot taken before the group kill misses a descendant spawned after
+    it that left the group (``setpgid``) before the kill landed: the kill skips
+    it and, its parent gone, no parent chain leads to it. Every pass after the
+    leader is reaped observes again, so the session sweep finds such an escapee
+    while nothing descends from the leader any more.
+    """
 
     snapshot_failure: ProviderLocalRuntimeRefused | None = None
+    failure_reported = False
     observed_descendants: tuple[ProviderDescendantProcessV1, ...]
-    if descendants is None:
-        observed_descendants = ()
-    else:
+
+    def observe() -> tuple[ProviderDescendantProcessV1, ...]:
+        nonlocal snapshot_failure
+        assert descendants is not None
         try:
-            observed_descendants = descendants.snapshot()
+            return descendants.snapshot()
         except ProviderLocalRuntimeRefused as exc:
-            observed_descendants = descendants.retained()
-            snapshot_failure = exc
+            if snapshot_failure is None and not failure_reported:
+                snapshot_failure = exc
+            return descendants.retained()
+
+    observed_descendants = () if descendants is None else observe()
     if process.returncode is None:
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             os.killpg(process.pid, signal.SIGKILL)
@@ -1657,12 +1669,15 @@ def _terminate_process_group(
             process.wait(timeout=min(0.05, max(deadline - time.monotonic(), 0.001)))
         except subprocess.TimeoutExpired:
             continue
+        if descendants is not None:
+            observed_descendants = observe()
         kill_descendants(observed_descendants)
         if snapshot_failure is not None:
             if diagnostic_sink is not None:
                 with contextlib.suppress(Exception):
                     diagnostic_sink(snapshot_failure)
             snapshot_failure = None
+            failure_reported = True
         try:
             os.killpg(process.pid, 0)
             group_alive = True

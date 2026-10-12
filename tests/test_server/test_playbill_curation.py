@@ -34,10 +34,11 @@ def test_http_curation_list_is_read_tier_and_returns_operational_head(
     payload = response.json()
     assert payload["tag"] == "playbill-curation-list-result-v1"
     assert payload["items"] == []
-    # A fresh instance has its seeded detection Trigger and no recorded run or scan.
+    # Detection is opt-in (G1): a fresh instance seeds no curation-detect Trigger
+    # and has no recorded run or scan.
     assert payload["detection"] == {
         "state": "never_run",
-        "trigger": "live",
+        "trigger": "missing",
         "detected_through_generation": None,
         "detected_at": None,
     }

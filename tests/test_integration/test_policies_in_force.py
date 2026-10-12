@@ -10,6 +10,10 @@ from cruxible_client.contracts.acquisition_policies import (
     render_acquisition_policy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.builtin_claim_types import (
+    BUILTIN_CLAIM_TYPES,
+    builtin_claim_type_files,
+)
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_path,
@@ -48,6 +52,17 @@ from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_integration.test_acquisition_policies import _policy, _rule
 from tests.test_service.test_typed_source_catalogs import _published_sources
 
+# Each seeded builtin ClaimType's three embedded policies, in field-path order.
+_SEEDED_CLAIM_TYPE_POLICIES = [
+    kind
+    for _name in sorted(BUILTIN_CLAIM_TYPES)
+    for kind in (
+        "claim_admission_policy",
+        "claim_evidence_admission_policy",
+        "claim_resolution_policy",
+    )
+]
+
 
 def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> None:  # type: ignore[no-untyped-def]
     instance, owner = initialize_local(tmp_path)
@@ -76,6 +91,9 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
         "claim_admission_policy",
         "claim_evidence_admission_policy",
         "claim_resolution_policy",
+        # The builtin ClaimTypes every new instance is seeded with
+        # (semantic.alias, semantic.distinct_from) each carry the three.
+        *_SEEDED_CLAIM_TYPE_POLICIES,
         "procedure_runtime_policy",
         "query_evaluation_policy",
         # The three Triggers every new instance is seeded with.
@@ -111,6 +129,7 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
     )
     assert [row.policy_kind for row in historical.policies] == [
         "approval_policy",
+        *_SEEDED_CLAIM_TYPE_POLICIES,
         "procedure_runtime_policy",
         "trigger_schedule",
         "trigger_schedule",
@@ -125,6 +144,12 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
         "Trigger:prediction-anchor-retry": {"kind": "cadence", "interval_seconds": 3600},
     }
     for inventory in (result, historical):
+        seeded_claim_types = {
+            row.declaring_artifact_identity
+            for row in inventory.policies
+            if row.declaring_artifact_identity.startswith("ClaimType:semantic.")
+        }
+        assert seeded_claim_types == {f"ClaimType:{name}" for name in BUILTIN_CLAIM_TYPES}
         schedules = [row for row in inventory.policies if row.policy_kind == "trigger_schedule"]
         assert {
             row.declaring_artifact_identity: row.policy for row in schedules
@@ -250,8 +275,11 @@ def complete_policy_inventory(
     for procedure in (live_procedure, retired_procedure):
         tree[procedure_path(procedure.identity.name)] = render_procedure(procedure)
 
-    # The seeded default Triggers are three live carriers; this inventory keeps one.
+    # The seeded default Triggers are three live carriers, and the seeded builtin
+    # ClaimTypes two more of the claim policies; this inventory keeps one of each.
     for path in [path for path in tree if path.startswith("triggers/")]:
+        del tree[path]
+    for path in builtin_claim_type_files():
         del tree[path]
     live_trigger = action_trigger("policy-sweep", action="evidence.sweep", interval_seconds=60)
     retired_trigger = action_trigger(

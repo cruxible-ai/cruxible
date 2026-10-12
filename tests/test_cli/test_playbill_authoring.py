@@ -346,7 +346,7 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     assert claim_type_example.exit_code == 2
     assert "No such option: --example" in claim_type_example.output
     assert claim_type_missing.exit_code == 2
-    assert "provide exactly one of --input or --template" in claim_type_missing.output
+    assert "provide exactly one of --input, --template or --builtin" in claim_type_missing.output
 
     assert example_help.exit_code == 0, example_help.output
     assert "authoring example [OPTIONS] [NAME]" in example_help.output
