@@ -369,13 +369,14 @@ def test_a_reader_rereads_only_the_sequences_written_since_it_last_looked(
     assert store.head() is head
     assert len(store.events(family="curation")) == 12
     assert loaded == []
-    # An append reads back only the partition it extends, from its new sequence.
+    # An append reads back only the partition it extends: its last verified
+    # event again (proving the prefix), then the new sequence.
     _curation_append(store, coordinate, "two", "two-4")
     moved = store.head()
-    assert loaded == [4]
+    assert loaded == [3, 4]
     assert moved != head
     assert "two-4" in {payload["event_id"] for _event, payload in store.events()}
-    assert len(store.events()) == 14 and loaded == [4]
+    assert len(store.events()) == 14 and loaded == [3, 4]
     # A fresh process (no replay) agrees with the warm one.
     monkeypatch.undo()
     reset_review_operational_replays()
