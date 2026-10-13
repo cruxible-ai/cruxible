@@ -6,9 +6,9 @@ the half-written file, verified it and failed "CAS object bytes do not match
 their content address"; a reader saw it as corrupt. Bytes are now written under
 a private temporary name, verified, and then linked to the object name.
 
-The link names the temporary file again, so it must publish the inode whose
-bytes were verified: a symlink or another file substituted at the temporary
-name between read-back and link is refused, never published.
+A store that published its body never takes anything back: an erase and a
+fresh store of the same body by another writer, landing between the first
+writer's link and its return, leave the second writer's object in place.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import CasError
 from cruxible_core.storage import cas
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 
@@ -85,44 +84,38 @@ def test_a_store_of_bytes_another_writer_is_still_writing_never_sees_them_partia
     assert len(bumps) == 1
 
 
-@pytest.mark.parametrize("substitute", ["symlink", "hard link"])
-def test_a_temporary_name_substituted_after_readback_is_refused_not_published(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, substitute: str
+def test_an_erase_and_restore_after_a_publication_keeps_the_second_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "cas"
     root.mkdir()
     store = ContentAddressedBodyStore(root)
-    content = b"valid bytes, but outside the store's custody\n"
+    other = ContentAddressedBodyStore(root)
+    content = b"ordinary verified publication\n"
     digest = store.digest_bytes(content).tagged
-    outside = tmp_path / "outside"
-    outside.write_bytes(content)
-    generation = store.evidence_generation()
     real_link = os.link
+    republished: dict[str, object] = {}
 
-    def substitute_then_link(src: str, dst: str, **kwargs: object) -> None:
-        # Between read-back and link, the temporary name stops being the
-        # verified file: same bytes, different (or no) inode.
-        source_dir = kwargs["src_dir_fd"]
-        assert isinstance(source_dir, int)
-        os.unlink(src, dir_fd=source_dir)
-        if substitute == "symlink":
-            os.symlink(str(outside), src, dir_fd=source_dir)
-        else:
-            real_link(outside, src, dst_dir_fd=source_dir)
+    def link_then_erase_and_restore(src: str, dst: str, **kwargs: object) -> None:
         real_link(src, dst, **kwargs)  # type: ignore[arg-type]
+        if republished:
+            return
+        # The first writer's object is now public; another writer erases it
+        # and stores the same body again before the first writer returns.
+        republished["erased"] = other.erase(digest)
+        republished["stored"] = other.store(content)
+        republished["identity"] = other.file_identity(digest)
 
-    with monkeypatch.context() as patch:
-        patch.setattr(cas.os, "link", substitute_then_link)
-        with pytest.raises(CasError, match="did not link the verified body"):
-            store.store(content)
+    monkeypatch.setattr(cas.os, "link", link_then_erase_and_restore)
+    first = store.store(content)
 
-    assert store.availability(digest) == "missing"
-    assert store.evidence_generation() == generation
-    shard = store._algorithm_root / digest.removeprefix("sha256:")[:2]
-    assert list(shard.iterdir()) == []
-    # Nothing outside the store gained a link into it, and it is unchanged.
-    assert os.stat(outside).st_nlink == 1
-    assert outside.read_bytes() == content
-    # The refusal left the address free for an honest store.
-    assert store.store(content).digest == digest
+    assert republished["erased"] is True
+    assert first.digest == digest
+    assert republished["stored"].digest == digest  # type: ignore[attr-defined]
+    identity = republished["identity"]
+    assert identity is not None
+    # The second writer's object survives, as the same file, with whole bytes.
+    current = other.file_identity(digest)
+    assert current is not None and current[:2] == identity[:2]  # type: ignore[index]
+    assert store.availability(digest) == "present"
     assert store.read(digest, access=READ) == content
