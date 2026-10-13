@@ -363,6 +363,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "rotate_runtime_credential",
         "init",
         "decommission_instance",
+        "rebuild_next",
         "set_ledger_mirror",
         "clear_ledger_mirror",
         "publish_ledger",

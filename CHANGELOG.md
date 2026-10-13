@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **`cruxible instance rebuild-next` repairs the next worker.** An `ADMIN`
+  operator command (and `CruxibleClient.rebuild_next`) drops the `next`
+  worker's facts and Claim rows and derives them again from nothing, clearing
+  the worker's error; a stalled `next` consumer names it as its repair. A body
+  rewritten in place, which no log records, now reaches the Claims that read it
+  at the next daily `evidence.sweep`, which compares the file identity of every
+  body a fact consulted and retries every fact whose derivation failed. `next`
+  reads the kinds with live Subjects and the ProcedureMandates nearing expiry
+  from counts and an expiry index the worker keeps, instead of grouping every
+  Subject and scanning every mandate per read. Reads behind the worker settle
+  its next pass once per pair of positions and replay it, so concurrent reads
+  derive each change once.
+- **The next worker keeps each Claim's facts and rows from what changed.** The
+  `next` worker's `facts` part keeps every Claim's verdict, resolution status,
+  visibility, lineage and citations, and next's Claim rows per key (attestation
+  threshold, slot, new-capture door, stale dependency), and moves them only for
+  the Claims and keys a change reaches: an accepted generation's member paths,
+  attestation door events, body-store landings, re-observations and one
+  `next.expire` deadline armed at the earliest end of any fact or row. `next`
+  at the current heads serves the stored rows, deriving in memory whatever the
+  worker has not yet followed (a read never writes the worker's state), and
+  `orient` counts Claims by status from it while it is current. A read at an
+  earlier coordinate or a pinned door head folds every Claim as before; a page
+  cursor from a read at the heads is refused once either head moves. The
+  whole-queue `queue` part and its per-read body observation are gone. The body store now logs each
+  evidence body that lands and each erase in sequence (`landings.log` in its
+  algorithm directory, written and read through the store's held directory), an
+  intent before the object moves and a completion after; an operation a writer
+  leaves unfinished is settled on its retry, when the store reopens and before
+  every next pass. This replaces the evidence-generation token in the verdict
+  memos. A dependency lineage's 4,096-predecessor budget is now its
+  own rather than shared by every Claim.
 - **Procedures propose Claim retirements.** A `propose_change_set` or
   `settle_change_set` item may be a retirement
   (`playbill-procedure-claim-retirement-item-v1`: the Claim ID it `retires`,

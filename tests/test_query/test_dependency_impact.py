@@ -634,6 +634,79 @@ def test_indexed_claim_lineages_cross_old_generation_boundary(max_nodes: int) ->
     assert (rows[0].accepted.artifact_digest in lineages[SOURCE_PATH]) == (max_nodes >= 257)
 
 
+def test_each_lineage_has_its_own_traversal_budget() -> None:
+    """Ruling R1: one Claim's lineage completeness never depends on another's length.
+
+    Two lineages of four predecessors each, under a budget of four: a budget
+    shared across Claims (the earlier behaviour) spent it all on the first and
+    left the second incomplete; each lineage now has the whole budget.
+    """
+
+    lineage_rows: dict[str, list[ClaimFactRowV1]] = {}
+    for index in (SOURCE_INDEX, UNRELATED_INDEX):
+        predecessor: str | None = None
+        versions: list[ClaimFactRowV1] = []
+        for generation in range(5):
+            row = _claim(
+                index,
+                item=f"wi-{index}",
+                value=f"generation-{generation}",
+                lifecycle=ArtifactLifecycle(predecessor_digest=predecessor),
+            )
+            versions.append(row)
+            predecessor = row.accepted.artifact_digest
+        lineage_rows[versions[0].accepted.path] = versions
+    located = [row for versions in lineage_rows.values() for row in versions]
+    oids = tuple(f"{sequence + 1:064x}" for sequence in range(len(located)))
+    trees = {
+        oid: {row.accepted.path: render_claim(row.accepted.claim)}
+        for oid, row in zip(oids, located, strict=True)
+    }
+
+    def artifact(digest, *, identity):  # type: ignore[no-untyped-def]
+        for sequence, row in enumerate(located):
+            if (
+                row.accepted.artifact_digest == digest
+                and row.accepted.claim.identity.qualified == identity
+            ):
+                return SimpleNamespace(occurrence_sequence=sequence, path=row.accepted.path)
+        return None
+
+    current = {path: versions[-1] for path, versions in lineage_rows.items()}
+    accepted = _facts(tuple(current.values()), generation="77").coordinate.model_copy(
+        update={"git_oid": oids[-1]}
+    )
+    instance = SimpleNamespace(
+        accepted_history_reader=lambda **kwargs: nullcontext(
+            SimpleNamespace(
+                artifact=artifact,
+                generation=lambda sequence: SimpleNamespace(git_oid=oids[sequence]),
+            )
+        ),
+        blob_at=lambda oid, path: trees[oid].get(path),
+        coordinate_for_oid=lambda oid: accepted,
+    )
+
+    lineages, incomplete = _bounded_claim_lineages(
+        instance,  # type: ignore[arg-type]
+        coordinate=accepted,
+        current_claims={path: row.accepted.claim for path, row in current.items()},
+        max_nodes=4,
+    )
+
+    assert incomplete == frozenset()
+    for path, versions in lineage_rows.items():
+        assert lineages[path] == tuple(sorted(row.accepted.artifact_digest for row in versions))
+    # A lineage longer than its own budget is still cut at that budget.
+    _short, cut = _bounded_claim_lineages(
+        instance,  # type: ignore[arg-type]
+        coordinate=accepted,
+        current_claims={path: row.accepted.claim for path, row in current.items()},
+        max_nodes=3,
+    )
+    assert cut == frozenset(lineage_rows)
+
+
 def test_a_verdict_change_alone_makes_dependents_repair_candidates() -> None:
     unsupported = _claim(SOURCE_INDEX, item="wi-1", value="ready", supported=False)
     result = _impact(_facts((unsupported, _derived())), unsupported)

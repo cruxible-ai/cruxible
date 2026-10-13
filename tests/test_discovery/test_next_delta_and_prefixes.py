@@ -83,7 +83,7 @@ def _result(item_ids: tuple[str, ...], *, digest_hex: str = "9"):  # type: ignor
         PlaybillNextHealthV1,
         PlaybillNextItemV1,
         PlaybillNextRepairV1,
-        PlaybillNextResultV1,
+        PlaybillNextResultV2,
         PlaybillNextStatusV1,
         playbill_next_item_id,
     )
@@ -106,7 +106,7 @@ def _result(item_ids: tuple[str, ...], *, digest_hex: str = "9"):  # type: ignor
             ),
         )
         items.append(item.model_copy(update={"item_id": playbill_next_item_id(item)}))
-    return PlaybillNextResultV1.model_construct(
+    return PlaybillNextResultV2.model_construct(
         coordinate=AcceptedCoordinate(
             git_oid="1" * 64,
             semantic_root="sha256:" + "2" * 64,
@@ -136,6 +136,7 @@ def _result(item_ids: tuple[str, ...], *, digest_hex: str = "9"):  # type: ignor
         items=tuple(items),
         total_items=len(items),
         result_digest="sha256:" + digest_hex * 64,
+        attestation_head_digest="sha256:" + "7" * 64,
     )
 
 
@@ -154,7 +155,6 @@ def _v2_result(item_ids: tuple[str, ...]):  # type: ignore[no-untyped-def]
     provisional = PlaybillNextResultV2.model_construct(
         **values,
         result_digest="sha256:" + "0" * 64,
-        attestation_head_digest="sha256:" + "7" * 64,
     )
     return provisional.model_copy(
         update={"result_digest": playbill_next_result_digest(provisional)}

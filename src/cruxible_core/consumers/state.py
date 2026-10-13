@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 _LOCKS: dict[Path, threading.Lock] = {}
+#: The thread holding each path's lock: opening it again there would wait forever.
+_HOLDERS: dict[Path, int] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
@@ -42,25 +44,53 @@ class DisposableState:
 
     @contextmanager
     def open(self, instance: Any, *, create: bool = True) -> Iterator[sqlite3.Connection | None]:
-        """One transaction on the state, rebuilt first if its schema is not this one."""
+        """One transaction on the state, rebuilt first if its schema is not this one.
+
+        ``create=False`` is a reader's open: it never creates the database, never
+        rebuilds a schema that is not this one (the state is absent to it, None,
+        until the worker rebuilds), and never commits: whatever it writes, as a
+        read's rolled-back overlay does, is rolled back.
+        """
 
         path = self.path(instance)
+        if not create and not path.is_file():
+            yield None
+            return
         if not path.parent.exists():
-            if not create:
-                yield None
-                return
             path.parent.mkdir(mode=0o700, parents=True)
+        key = path.resolve()
         with _LOCKS_GUARD:
-            lock = _LOCKS.setdefault(path.resolve(), threading.Lock())
+            lock = _LOCKS.setdefault(key, threading.Lock())
+            if _HOLDERS.get(key) == threading.get_ident():
+                # Fail at once rather than deadlock on this thread's own lock.
+                raise RuntimeError(f"the {self.directory} state is already open on this thread")
         with lock:
+            with _LOCKS_GUARD:
+                _HOLDERS[key] = threading.get_ident()
             connection = sqlite3.connect(path, timeout=30)
             try:
                 if _schema_rows(connection) != self.expected:
+                    if not create:
+                        connection.rollback()
+                        yield None
+                        return
                     self._rebuild(connection)
                 yield connection
-                connection.commit()
+                if create:
+                    connection.commit()
+                else:
+                    connection.rollback()
             finally:
                 connection.close()
+                with _LOCKS_GUARD:
+                    _HOLDERS.pop(key, None)
+
+    def reset(self, instance: Any) -> None:
+        """Drop every table and create the schema again: an operator's repair."""
+
+        with self.open(instance) as connection:
+            assert connection is not None
+            self._rebuild(connection)
 
     def _rebuild(self, connection: sqlite3.Connection) -> None:
         # Dropping a table drops its indexes and triggers. The schema seeds

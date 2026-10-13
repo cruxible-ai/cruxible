@@ -23,7 +23,7 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.coverage import service_resolve_playbill_coverage
 from cruxible_core.service.discovery.next import (
-    NextRequestV1,
+    NextRequest,
     NextWorkspaceObservation,
     service_playbill_next,
 )
@@ -121,7 +121,7 @@ def _result(
     assert pinned == coordinate
     result = service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             at=AcceptedCoordinate.model_validate(pinned.model_dump()),
             evaluation_time=datetime(2026, 8, 16, 21, tzinfo=UTC),
             access_profile=next_profile or CoverageAccessProfile.model_validate(PROFILE),

@@ -26,6 +26,7 @@ from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_core.evidence.claim_reobservations import (
     ClaimReobservationRefused,
     ClaimReobservationStore,
+    reobservation_journal_identity,
 )
 from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
 from cruxible_core.service.discovery.query import build_accepted_query_facts
@@ -943,3 +944,25 @@ def test_the_clock_is_read_after_admission_work_at_the_append(
         assert after.model_dump(mode="json") == before.model_dump(mode="json")
     else:
         assert after.verdict == "supported"
+
+
+def test_a_follower_reads_only_the_records_past_its_cursor(tmp_path: Path) -> None:
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim_id = _current_claim(instance).identity.name
+    store = ClaimReobservationStore(instance)
+    root, exhaust = instance.root, instance.descriptor.storage.exhaust
+    instance_id = instance.descriptor.instance_id
+    assert store.records_after(0) == ()
+    assert reobservation_journal_identity(root, exhaust=exhaust, instance_id=instance_id) is None
+
+    _reobserve(instance, _START + timedelta(hours=0.5))
+    first = reobservation_journal_identity(root, exhaust=exhaust, instance_id=instance_id)
+    assert first is not None
+    assert store.records_after(0) == ((1, claim_id),)
+    _reobserve(instance, _START + timedelta(hours=1))
+    second = reobservation_journal_identity(root, exhaust=exhaust, instance_id=instance_id)
+    assert second is not None
+    # The same log file; every append moves its signature.
+    assert second[0] == first[0] and second[1] != first[1]
+    assert store.records_after(1) == ((2, claim_id),)
+    assert store.records_after(2) == ()

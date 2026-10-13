@@ -1433,6 +1433,31 @@ def decommission_instance(
     click.echo("Reads keep serving; nothing was deleted. Archive the directory yourself.")
 
 
+@instance_group.command("rebuild-next")
+@json_option
+@handle_errors
+def rebuild_next(output_json: bool) -> None:
+    """Drop the next worker's facts and rows and derive them again from nothing.
+
+    The repair when the worker cannot follow its logs forward (a stalled
+    `next` consumer names it). It changes no accepted state and no evidence;
+    reads fold every Claim until it finishes.
+    """
+
+    result = _server_call(
+        lambda client, instance_id: client.rebuild_next(instance_id),
+        command_name="cruxible instance rebuild-next",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(
+        f"Rebuilt next for {result.instance_id} at {result.coordinate.git_oid} "
+        f"(format {result.format}): {result.claims} Claims, {result.keys} row keys, "
+        f"{result.rows} rows."
+    )
+
+
 @playbill_group.group("ledger")
 def ledger_group() -> None:
     """Publish this instance's ledger to a mirror reviewers can clone."""

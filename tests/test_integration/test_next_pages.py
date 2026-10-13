@@ -15,7 +15,6 @@ from cruxible_core.service.discovery.next import (
     NextAcceptedStateInvalid,
     NextCursorMismatch,
     NextRequest,
-    NextRequestV1,
     PlaybillNextItemV1,
     PlaybillNextRepairV1,
     PlaybillNextResultV2,
@@ -181,23 +180,20 @@ def test_a_cursor_with_a_mistyped_field_is_refused(
         service_playbill_next(instance, request=_request(cursor=forged))
 
 
-def test_a_cursor_does_not_cross_request_versions(queue: tuple[Any, _Queue]) -> None:
-    instance, _rows = queue
-    v2 = service_playbill_next(instance, request=_request(limit=2))
-    v1_request = NextRequestV1(
-        evaluation_time=EVALUATION_TIME,
-        access_profile=_request().access_profile,
-        limit=2,
-    )
-    v1 = service_playbill_next(instance, request=v1_request)
-    assert v1.next_cursor is not None and v2.next_cursor is not None
+def test_a_cursor_without_an_attestation_head_is_refused(queue: tuple[Any, _Queue]) -> None:
+    """A cursor pins the attestation head its first page read; one without it is not ours."""
+    import base64
+    import json
 
-    with pytest.raises(NextCursorMismatch, match="v2 queue"):
-        service_playbill_next(
-            instance, request=v1_request.model_copy(update={"cursor": v2.next_cursor})
-        )
-    with pytest.raises(NextCursorMismatch, match="v1 queue"):
-        service_playbill_next(instance, request=_request(limit=2, cursor=v1.next_cursor))
+    instance, _rows = queue
+    first = service_playbill_next(instance, request=_request(limit=2))
+    assert first.next_cursor is not None
+    payload = json.loads(base64.urlsafe_b64decode(first.next_cursor.encode("ascii")))
+    payload["attestation_head_digest"] = None
+    headless = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+
+    with pytest.raises(NextCursorMismatch, match="not a next page cursor"):
+        service_playbill_next(instance, request=_request(cursor=headless))
 
 
 def test_a_delta_pages_its_changed_rows_under_the_whole_queue_digest(

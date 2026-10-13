@@ -55,7 +55,7 @@ from cruxible_core.service.authoring.projection_sync import (
 )
 from cruxible_core.service.discovery.coverage import service_resolve_playbill_coverage
 from cruxible_core.service.discovery.next import (
-    NextRequestV1,
+    NextRequest,
     NextWorkspaceObservation,
     service_playbill_next,
 )
@@ -185,7 +185,7 @@ def _observe(instance: PlaybillInstance, workspace_root: Path):  # type: ignore[
 def _next(instance: PlaybillInstance, observation: object):  # type: ignore[no-untyped-def]
     return service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=EVALUATION_TIME,
             access_profile=ACCESS_PROFILE,

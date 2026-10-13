@@ -47,7 +47,7 @@ from cruxible_core.coverage.indexes import (
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.discovery.next import (
-    NextRequestV1,
+    NextRequest,
     NextSourceObservationV3,
     NextWorkspaceObservation,
 )
@@ -236,7 +236,7 @@ def retire_claim(instance, owner, claim_id: str) -> None:  # type: ignore[no-unt
     )
 
 
-def next_request(instance, *, archival: bool = False) -> NextRequestV1:  # type: ignore[no-untyped-def]
+def next_request(instance, *, archival: bool = False) -> NextRequest:  # type: ignore[no-untyped-def]
     source = LogicalSourceIdentity(plane="external", identity="repo.work-items")
     commitment = _digest(b"ready")
     occurrence = WorkingOccurrence(
@@ -257,7 +257,7 @@ def next_request(instance, *, archival: bool = False) -> NextRequestV1:  # type:
         ),
     )
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    return NextRequestV1(
+    return NextRequest(
         at=coordinate,
         evaluation_time=NOW,
         access_profile=CoverageAccessProfile(

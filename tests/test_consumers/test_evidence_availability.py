@@ -47,9 +47,9 @@ def _drain(instance, *, now: datetime) -> None:  # type: ignore[no-untyped-def]
             try:
                 NEXT_QUEUE.run(manager, "instance", work, now=now)
             except Exception:
-                # Like the runner, one failed queue fold cannot stop evidence checks.
+                # Like the runner, one failed facts pass cannot stop evidence checks.
                 # This fixture deliberately removes/corrupts CAS material.
-                if not work.key.startswith("queue:"):
+                if not work.key.startswith("facts:"):
                     raise
     raise AssertionError("the folded worker never ran out of due work")
 
@@ -262,8 +262,12 @@ def test_state_an_earlier_version_wrote_is_rebuilt_with_exact_counts(tmp_path: P
             ((f"sha256:{index:064x}", "2026-09-01T00:00:00.000000Z") for index in range(3)),
         )
 
-    # Rebuilt: nothing survives, so the worker starts over as on a new instance.
+    # A reader finds no state it can read and leaves the file as it is.
     assert WORKER.health(instance, now=NOW) == ()
+    with sqlite3.connect(evidence._STATE.path(instance)) as connection:
+        assert connection.execute("SELECT count(*) FROM pending").fetchone() == (3,)
+    # The worker's own open rebuilds it: nothing survives, as on a new instance.
+    WORKER.match(instance, now=NOW, daemon_id="daemon")
     with sqlite3.connect(evidence._STATE.path(instance)) as connection:
         assert connection.execute("SELECT count(*) FROM pending").fetchone() == (0,)
         assert connection.execute("SELECT value FROM tally").fetchall() == [(0,)]

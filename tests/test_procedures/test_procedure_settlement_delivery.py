@@ -1220,7 +1220,7 @@ def test_an_armed_capture_triggered_line_settles_or_falls_back_on_its_own(
 
 def _stale_row(instance, proposal_id: str):  # type: ignore[no-untyped-def]
     from cruxible_core.coverage.contracts import CoverageAccessProfile
-    from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
+    from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
 
     # Head moves past the proposal's base, so it can no longer activate.
     moved = _subject().model_copy(
@@ -1237,7 +1237,7 @@ def _stale_row(instance, proposal_id: str):  # type: ignore[no-untyped-def]
     )
     result = service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             evaluation_time=fixtures.NOW,
             access_profile=CoverageAccessProfile(
                 profile_id="settle-stale", permitted_access_classes=("instance",)
@@ -1476,9 +1476,9 @@ def settled_refusal_world(tmp_path: Path):  # type: ignore[no-untyped-def]
 def _next_rows(instance: Any, reason: str) -> list[Any]:
     from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.indexes.projection import AcceptedCoordinate
-    from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
+    from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
 
-    request = NextRequestV1(
+    request = NextRequest(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=fixtures.NOW + timedelta(hours=1),
         access_profile=CoverageAccessProfile(
@@ -1879,11 +1879,11 @@ def test_the_next_consumer_counts_settlements_in_the_background(tmp_path: Path) 
 def _next_result(instance: Any) -> Any:
     from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.indexes.projection import AcceptedCoordinate
-    from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
+    from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
 
     return service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=fixtures.NOW + timedelta(hours=1),
             access_profile=CoverageAccessProfile(

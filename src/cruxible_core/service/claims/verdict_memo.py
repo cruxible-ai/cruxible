@@ -11,13 +11,14 @@ at the same coordinate, so this remembers it. It is a cache and nothing else:
 
 * it is per-process and cold after a restart, so no answer depends on it;
 * it is keyed on everything the derivation reads -- the instance root, the
-  accepted coordinate, the exact Claim set, and the body store's evidence
-  generation, which moves when an evidence body arrives or any body leaves
+  accepted coordinate, the exact Claim set, and the head of the body store's
+  landing log, which moves when an evidence body arrives or any body leaves
   (deciding whether a capture can be replayed now) but not for journal-record
-  payloads. The generation sees bodies arrive and leave, not a body rewritten
-  in place, so each entry also keeps the file identity of every body-store
-  object its verdicts read and is served only while all of them hold (one stat
-  each);
+  payloads. The log sees bodies arrive and leave, not a body rewritten in
+  place, so each entry also keeps the file identity of every body-store object
+  its verdicts read and is served only while all of them hold (one stat each).
+  A positioned read keys on its recorded landing and re-observation positions
+  instead of the live heads, so it answers only for the snapshot it read.
   Accepted attestations are bound by the coordinate; pending door attestations
   are not consumed by this derivation;
 * the evaluation instant is NOT in the key, because every real surface stamps a
@@ -47,39 +48,50 @@ MEMO_CAPACITY = 4
 def verdict_input_fingerprint(instance: object) -> str | None:
     """Fingerprint every input a Claim verdict reads besides the accepted tree.
 
-    The body store replaces its evidence-generation token after every evidence
-    body lands and every erase (``ContentAddressedBodyStore.store``): one small
-    read, and it does not move for journal-record payloads (run records, Line
-    dispatch coverage, settlements), which are reachable only through the
-    record that names them, appended after the body lands. This is a
-    writer-owned availability signal, not a proof against in-place tampering
-    with body bytes; the body fingerprints kept with each remembered derivation
-    cover that, and they record a consulted body's absence too. An unreadable
-    token disables reuse entirely: two failed observations must never form a
-    reusable key.
+    The body store logs every evidence body that lands and every erase, after
+    the object as well as before (``ContentAddressedBodyStore.landings``): the
+    log's identity and newest sequence are one indexed read, and they do not
+    move for journal-record payloads (run records, Line dispatch coverage,
+    settlements), which are reachable only through the record that names them,
+    appended after the body lands. This is a writer-owned availability signal,
+    not a proof against in-place tampering with body bytes; the body
+    fingerprints kept with each remembered derivation cover that, and they
+    record a consulted body's absence too. An unreadable log disables reuse
+    entirely: two failed observations must never form a reusable key.
+
+    Inside a positioned read (``storage.read_positions.reading_at``) body
+    presence and re-observations answer as of the read's recorded landing and
+    journal positions, so those positions name the derivation instead: a fold at
+    an older position never hits, nor stores under, a later read's entry.
     """
 
-    from cruxible_core.storage.cas import ContentAddressedBodyStore
+    from cruxible_client.contracts.errors import CasError
 
     root = getattr(instance, "root", None)
     descriptor = getattr(instance, "descriptor", None)
     if not isinstance(root, Path) or descriptor is None:
         return None
     storage = getattr(descriptor, "storage", None)
-    if storage is None:
+    body_store = getattr(instance, "body_store", None)
+    if storage is None or body_store is None:
         return None
-    marker = (
-        root
-        / getattr(storage, "cas", "cas")
-        / "sha256"
-        / ContentAddressedBodyStore.EVIDENCE_GENERATION
-    )
+    from cruxible_core.storage.read_positions import current_positions
+
+    positions = current_positions()
+    if positions is not None:
+        # A positioned read answers as of the positions it recorded, not where the
+        # logs stand now: its derivation is named by those positions, so it neither
+        # serves nor stores an answer for any other. The door is not an input here.
+        return (
+            f"positioned|landings:{positions.landing_log}:{positions.landing}"
+            f"|reobservation:{positions.reobs}"
+        )
     try:
-        token = marker.read_text("ascii")
-    except FileNotFoundError:
-        token = ""
-    except (OSError, ValueError):
+        # Through the store's held directory: never a pathname an ancestor swap redirects.
+        head = body_store().landings.head()
+    except (CasError, OSError):
         return None
+    token = f"{head.identity}:{head.sequence}"
     # A recorded re-observation moves a cited content's freshness without an
     # evidence body landing: the re-observation journal's own log is an input
     # too, read from the authority so an interrupted append is never missed.
@@ -94,8 +106,8 @@ def verdict_input_fingerprint(instance: object) -> str | None:
     except (OSError, ValueError):
         return None
     if journal is None:
-        return "evidence-generation:" + token
-    return "evidence-generation:" + token + "|reobservation:" + journal
+        return "landings:" + token
+    return "landings:" + token + "|reobservation:" + journal
 
 
 def memo_key(

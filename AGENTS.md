@@ -256,6 +256,11 @@ correct.
 - **Reads answer from maintained state.** `orient`, `get`, `query` and `next`
   serve from indexes and worker findings; a full live fold on every call is only
   the fallback for an explicit historical `--at` or a cold instance.
+- **`next` is incremental.** The `next` worker's `facts` part keeps each Claim's
+  facts and next's rows per key from generation paths, door events, CAS
+  landings, re-observations and one `next.expire` deadline; reads at the head
+  serve them (deriving in memory what the worker has not followed), and
+  `_oracle_claim_rows` is only the fallback and the tests' reference.
 - **Say it in the change.** Every new loop over a whole population (all Claims,
   all generations, all bodies) states its trigger, its growth and why no change
   record can drive it, in the commit message and the report. Reviewers block on

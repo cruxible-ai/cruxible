@@ -143,6 +143,9 @@
   "/api/v1/{instance_id}/instance/decommission": {
     "POST": "InstanceDecommissionResult"
   },
+  "/api/v1/{instance_id}/instance/rebuild-next": {
+    "POST": "NextRebuildResult"
+  },
   "/api/v1/{instance_id}/kits": {
     "GET": "KitStatus",
     "POST": "KitChangeResult"

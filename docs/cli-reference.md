@@ -387,11 +387,45 @@ of governed daemon hosts shown, excluding unrelated local registry entries.
 `server status` also lists the daemon's consumers on every instance it holds
 open: each enabled Line and each built-in worker, as `running`, `stalled`,
 `lagging`, `stopped`, or `disabled`. The built-in `next` worker runs on every
-instance by default. It maintains the
-current Claim queue, cited evidence availability and prediction windows under
-one health entry, with independent cursors for each part. Queue rows carry
-evaluation-time bounds; a `next.expire` deadline refreshes them at the next
-boundary. Its evidence part re-hashes the Captures live Claims cite whenever a generation
+instance by default. It maintains each
+Claim's facts and next's Claim rows, cited evidence availability and
+prediction windows under one health entry, with independent cursors for each
+part. Its facts part keeps each Claim's verdict, resolution status,
+visibility, lineage and citations, and next's Claim rows per key (a Claim's
+attestation threshold, a (predicate, qualifier, Subject) slot, a Claim's
+new-capture door, a dependent's stale inputs), from what changed: an accepted
+generation's member paths, attestation door events, body-store landings and
+re-observations reach only the Claims and keys that read them. Each fact and
+key holds on its own evaluation-time interval; one `next.expire` deadline,
+armed at the earliest end, refreshes exactly what ended. A `next` read is a
+point-in-time snapshot: it records once where the accepted coordinate, the
+attestation door head, the re-observation journal and the body-store landing
+log stand (at the coordinate or attestation head the request names, else where
+they stand now) and answers as of exactly those positions. It serves these
+rows, its workspace citation rows, its projection checks' Claim statuses and
+`orient`'s Claim counts from the worker's state at them; when the worker has
+not yet followed a change or a bound up to them, the read derives just that in
+memory and never writes the worker's state. Writes that land while it runs are
+simply not in that answer: a read never retries, waits or refuses because of
+them. Whether a Capture's body is present is the landing log's answer at the
+read's position (landed at or before it), never a look at the file; a body's
+bytes are read, and hash-checked, only when a row needs them. A request that
+names a coordinate or attestation head reads there, independently of each
+other, as does `orient` at the coordinate it selected; once the worker has
+moved past such a head, the read folds there instead. A refusal answers as the
+full fold does: its first failure, following the fold's own order, including
+door observations interleaved across Claims. A read while the worker is
+disabled, not yet run or its state from another format folds every Claim at
+its recorded positions. A page cursor whose first page was read at
+the live accepted and door heads is refused once either head moves; this
+holds as well when those exact current heads were supplied explicitly. A body
+rewritten in place or deleted outside Cruxible, which no log records, reaches
+the Claims that read it at the next daily `evidence.sweep`, which compares the
+file identity of every body a fact consulted and records missing or corrupt
+evidence as findings. The worker
+rebuilds only on first start, a new derivation format or compiler, when its
+cursors no longer name positions in those logs, or on
+`cruxible instance rebuild-next`. Its evidence part re-hashes the Captures live Claims cite whenever a generation
 cites one, and sweeps them all on a daily `evidence.sweep` trigger event.
 Retention is evaluated at the generation or trigger event's recorded instant. A missing or corrupt Capture envelope, a
 corrupt body, or a missing body its contract still requires to be retained is a
@@ -781,6 +815,7 @@ the digest) and for staging provider files; a catalogued file goes through
 
 ~~~text
 cruxible instance decommission --reason TEXT [--dry-run|--commit] [--at OID] [--json]
+cruxible instance rebuild-next [--json]
 ~~~
 
 Decommissioning is the terminal lifecycle state of one governed instance. It
@@ -795,6 +830,13 @@ where it is, and archiving or erasing the directory afterwards is the operator's
 own step — no verb performs it, and the state cannot be reversed. So the command
 previews first and changes nothing; the confirmation is that preview's
 coordinate: `--commit --at OID` (see [Previews](#previews)).
+
+`instance rebuild-next` drops the `next` worker's facts and Claim rows and
+derives them again from nothing, as on a first start, and clears the worker's
+error. It is the repair a stalled `next` consumer names when the worker cannot
+follow its logs forward. It changes no accepted state and no evidence, needs
+`ADMIN`, and reports the coordinate, derivation format and how many Claims, row
+keys and rows it rebuilt; `next` folds every Claim until it finishes.
 
 ## ledger
 
@@ -1463,7 +1505,8 @@ source handles it was computed from (and, when a Procedure proposed the
 accepted revision, `reason`: that item's own rationale and the run and terminal
 that proposed it), `--detail history` its revisions, and
 `--detail proof` its full envelope and facts. `orient` counts Claims by status
-under `artifacts.claims`.
+under `artifacts.claims`, from the `next` worker's facts when they are current
+at the read's coordinate and instant, else derived at the read.
 
 Claims are written through `cruxible set`, `add`, `retire` and `write`, or authored
 through `cruxible authoring submit`/`compile`. `cruxible retire` retires a Claim with its

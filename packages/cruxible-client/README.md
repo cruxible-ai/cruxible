@@ -5300,6 +5300,22 @@ decommission_instance(
 
 HTTP: `POST f'/api/v1/{instance_id}/instance/decommission'`.
 
+<a id="api-cruxibleclient-rebuild-next"></a>
+
+### `CruxibleClient.rebuild_next`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+rebuild_next(instance_id: str) -> contracts.NextRebuildResult
+```
+
+HTTP: `POST f'/api/v1/{instance_id}/instance/rebuild-next'`.
+
+Drops the next worker's facts and rows and derives them again from nothing: the
+operator's repair when a stalled `next` consumer names it. It changes no accepted
+state and no evidence; `ADMIN` only.
+
 <a id="api-cruxibleclient-set-ledger-mirror"></a>
 
 ### `CruxibleClient.set_ledger_mirror`

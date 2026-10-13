@@ -82,6 +82,7 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
                 items=[],
                 total_items=0,
                 result_digest="sha256:" + "5" * 64,
+                attestation_head_digest="sha256:" + "9" * 64,
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -244,6 +245,7 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
                 items=[item],
                 total_items=1,
                 result_digest="sha256:" + "1" * 64,
+                attestation_head_digest="sha256:" + "9" * 64,
                 delta_since=None,
             )
 
@@ -305,6 +307,7 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
                 items=[],
                 total_items=0,
                 result_digest="sha256:" + "5" * 64,
+                attestation_head_digest="sha256:" + "9" * 64,
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -402,6 +405,7 @@ def _stub_pages(
                 total_items=total,
                 next_cursor=next_cursor,
                 result_digest="sha256:" + "5" * 64,
+                attestation_head_digest="sha256:" + "9" * 64,
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -519,6 +523,7 @@ def test_cli_next_keeps_a_row_whose_repair_is_withheld_and_names_what_it_needs(
                 items=[withheld],
                 total_items=1,
                 result_digest="sha256:" + "5" * 64,
+                attestation_head_digest="sha256:" + "9" * 64,
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())

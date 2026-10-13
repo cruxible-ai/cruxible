@@ -6,6 +6,10 @@ the half-written file, verified it and failed "CAS object bytes do not match
 their content address"; a reader saw it as corrupt. Bytes are now written under
 a private temporary name, verified, and then linked to the object name.
 
+A non-journal store holds its body's landing marker (``LandingLog.operation``)
+throughout, so two such stores of one body serialize; journal payloads take no
+marker, so their stores race on the publication protocol alone.
+
 A store that published its body never takes anything back: an erase and a
 fresh store of the same body by another writer, landing between the first
 writer's link and its return, leave the second writer's object in place.
@@ -46,19 +50,12 @@ def test_a_store_of_bytes_another_writer_is_still_writing_never_sees_them_partia
         return real_write(descriptor, data)
 
     monkeypatch.setattr(cas.os, "write", write_part_then_pause)
-    bumps: list[None] = []
-    bump = store._bump_evidence_generation
-
-    def count_bump() -> None:
-        bumps.append(None)
-        bump()
-
-    monkeypatch.setattr(store, "_bump_evidence_generation", count_bump)
+    landed_before = store.landings.head()
     outcome: dict[str, object] = {}
 
     def first_store() -> None:
         try:
-            outcome["first"] = store.store(content)
+            outcome["first"] = store.store(content, journal_payload=True)
         except BaseException as exc:  # noqa: BLE001
             outcome["first"] = exc
 
@@ -69,7 +66,7 @@ def test_a_store_of_bytes_another_writer_is_still_writing_never_sees_them_partia
         assert paused.wait(10), "the first writer never started writing"
         # Mid-write, the object is not there yet, never there and corrupt.
         assert store.availability(digest) == "missing"
-        second = store.store(content)
+        second = store.store(content, journal_payload=True)
         assert second.digest == digest
     finally:
         release.set()
@@ -79,9 +76,8 @@ def test_a_store_of_bytes_another_writer_is_still_writing_never_sees_them_partia
     assert store.read(digest, access=READ) == content
     shard = store._algorithm_root / digest.removeprefix("sha256:")[:2]
     assert sorted(path.name for path in shard.iterdir()) == [digest.removeprefix("sha256:")]
-    # One body arrived, so the evidence generation advanced once: the loser
-    # verified the winner's object and published nothing of its own.
-    assert len(bumps) == 1
+    # Journal payloads are logged by the record that names them, never as landings.
+    assert store.landings.head() == landed_before
 
 
 def test_an_erase_and_restore_after_a_publication_keeps_the_second_object(
@@ -107,7 +103,9 @@ def test_an_erase_and_restore_after_a_publication_keeps_the_second_object(
         republished["identity"] = other.file_identity(digest)
 
     monkeypatch.setattr(cas.os, "link", link_then_erase_and_restore)
-    first = store.store(content)
+    # A journal payload: a non-journal store would hold the landing marker the
+    # erase waits on, so no other writer could land between its link and return.
+    first = store.store(content, journal_payload=True)
 
     assert republished["erased"] is True
     assert first.digest == digest

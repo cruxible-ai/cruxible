@@ -208,7 +208,7 @@ def test_http_next_passes_the_authenticated_caller_not_a_request_field(
 
     monkeypatch.setattr(playbill_api, "service_playbill_next", spy)
     body = {
-        "tag": "playbill-next-request-v1",
+        "tag": "playbill-next-request-v2",
         "evaluation_time": "2026-08-28T18:00:00Z",
         "access_profile": {
             "tag": "playbill-coverage-access-profile-v1",

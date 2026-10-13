@@ -56,7 +56,7 @@ ClaimStatus = Literal["accepted", "conflicted", "overturned", "refused", "retire
 # `playbill_verdict_memo` for why each part of the key is there.
 # Each entry also keeps the file identity of every body-store object its
 # verdicts read (``VerdictReads.body_identities``) and is served only while all
-# of them hold: the evidence generation in the key sees arrivals and removals, not
+# of them hold: the landing-log head in the key sees arrivals and removals, not
 # a body rewritten in place.
 _RESOLUTION_MEMO: (
     "OrderedDict[tuple[str, str, str, str], "
@@ -159,7 +159,7 @@ def claim_resolution_statuses(
     that pair.
 
     The whole derivation is memoized per process on the instance, the accepted
-    coordinate, the exact Claim set, and the body store's evidence generation
+    coordinate, the exact Claim set, and the body store's landing-log head
     for live replay availability, and served only while every body-store object its verdicts
     read keeps its file identity. Pending door attestations are not an input.
     The evaluation instant is NOT in the key: every real surface stamps a fresh

@@ -37,7 +37,6 @@ from cruxible_core.service.claims.claims import (
 )
 from cruxible_core.service.discovery.next import (
     NextRequest,
-    NextRequestV1,
     service_playbill_next,
 )
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
@@ -192,7 +191,7 @@ def _rows(instance) -> tuple:  # type: ignore[no-untyped-def]
         item
         for item in service_playbill_next(
             instance,
-            request=NextRequestV1(
+            request=NextRequest(
                 evaluation_time=EVALUATION_TIME,
                 access_profile=_access(),
             ),
