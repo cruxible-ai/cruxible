@@ -79,9 +79,9 @@ With no instance selected, `cruxible init` creates a host on the daemon,
 makes you its owner under your OS username with a key kept under
 `~/.config/cruxible/keys/`, attaches the repository as its workspace, and
 remembers all of it, so later commands need no flags or environment. The
-[Quickstart](docs/quickstart.md) continues from here: define vocabulary, write
-values with evidence, read them back, review a change, and render a table
-into a page.
+[Quickstart](docs/quickstart.md) continues from here: install a small
+vocabulary, write typed values, review a change from the outside world, and
+watch a page that depends on it get flagged.
 
 An MCP client launches `cruxible mcp` (`uvx cruxible mcp` from the registry
 listing). Every tool runs on a daemon: the server uses `CRUXIBLE_SERVER_SOCKET`

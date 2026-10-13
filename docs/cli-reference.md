@@ -3991,7 +3991,7 @@ A propose-only agent is a principal whose credential is `governed_write`: it
 can author and propose, and the tier refuses approvals and activation. That
 limit needs daemon auth; with auth off every process of the OS user is equally
 trusted and could load another principal's settings. See the
-[quickstart](quickstart.md#add-a-propose-only-agent) for the worked example.
+[For AI agents](for-ai-agents.md#a-propose-only-agent) for the worked example.
 
 ## sources
 
