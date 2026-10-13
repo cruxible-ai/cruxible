@@ -113,20 +113,12 @@ def test_three_pending_accepts_coalesce_at_the_current_head(world):
     assert tuple(FLOOR.due(instance, now=NOW)) == ()
 
 
-def test_a_damaged_entry_the_delta_touches_gets_exactly_one_full_retry(world, monkeypatch):
+def test_hand_edited_base_gets_exactly_one_full_retry(world, monkeypatch):
     instance, workspace, registry = world
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
     result = refresh_floor(instance, instance.descriptor.instance_id)
-    floor_dir = workspace / ".cruxible" / "floor"
-    # A file no delta touches is not read again on a refresh: it stays as edited.
-    untouched = floor_dir / result.delta.files[0].path
-    untouched.write_text("changed by hand")
-    assert refresh_floor(instance, instance.descriptor.instance_id).written.status == "unchanged"
-    # One the next delta writes, replaced by a directory, makes it ask for the whole floor once.
-    _write(instance, _set(WI1, "status", "blocked"))
-    touched = floor_dir / "current" / f"{WI1}.yaml"
-    touched.unlink()
-    touched.mkdir()
+    path = workspace / ".cruxible" / "floor" / result.delta.files[0].path
+    path.write_text("changed by hand")
     calls = []
     fetch = floor.service_playbill_floor_delta
 
@@ -138,8 +130,6 @@ def test_a_damaged_entry_the_delta_touches_gets_exactly_one_full_retry(world, mo
     repaired = refresh_floor(instance, instance.descriptor.instance_id)
     assert repaired.written.status == "written"
     assert len(calls) == 2 and calls[-1] == (None, None)
-    assert touched.is_file()
-    assert untouched.read_text() != "changed by hand"
 
 
 def test_failed_target_stalls_until_head_or_registration_changes(world, monkeypatch):

@@ -318,11 +318,9 @@ def test_a_reserved_tombstone_is_refused_before_any_mutation(
 
 
 @pytest.mark.parametrize("damage", ["edit", "remove", "stray"])
-def test_a_delta_reads_only_its_own_entries_and_a_full_floor_repairs_the_rest(
+def test_a_delta_refuses_an_installed_floor_that_differs_from_its_manifest(
     tmp_path: Path, damage: str
 ) -> None:
-    # The delta writes b.yaml and c.yaml and removes b.status.txt; a.yaml is
-    # bound by the manifest proof and not read again.
     directory = _base_dir(tmp_path)
     untouched = directory / "current/k/a.yaml"
     if damage == "edit":
@@ -331,36 +329,11 @@ def test_a_delta_reads_only_its_own_entries_and_a_full_floor_repairs_the_rest(
         untouched.unlink()
     else:
         (directory / "current/k/stray.yaml").write_bytes(b"not the floor's\n")
-    damaged = _tree(directory)
-    applied = apply_floor_delta(directory, _delta())
-    assert (applied.status, applied.written, applied.removed) == ("applied", 2, 1)
-    expected = _expected(tmp_path)
-    tree = _tree(directory)
-    for path in ("current/k/b.yaml", "current/k/c.yaml"):
-        assert tree[path] == expected[path]
-    assert "current/k/b.status.txt" not in tree
-    # What the delta does not touch stays as it was found ...
-    for path in ("current/k/a.yaml", "current/k/stray.yaml"):
-        assert tree.get(path) == damaged.get(path)
-    # ... until the full floor repairs it.
-    full = floor_v5_delta(HEAD, coordinate=COORDINATE, generation=5)
-    assert apply_floor_delta(directory, full).status == "applied"
-    assert _tree(directory) == expected
-
-
-@pytest.mark.parametrize("damage", ["directory", "alias"])
-def test_a_delta_refuses_a_damaged_entry_it_touches(tmp_path: Path, damage: str) -> None:
-    directory = _base_dir(tmp_path)
-    touched = directory / "current/k/b.yaml"
-    touched.unlink()
-    if damage == "directory":
-        touched.mkdir()
-    else:
-        (directory / "current/k/B.yaml").write_bytes(b"an alias of a written file\n")
     before = _tree(directory)
     result = apply_floor_delta(directory, _delta())
     assert result.status == "base_mismatch"
     assert _tree(directory) == before
+    # The full floor the caller then asks for repairs it.
     full = floor_v5_delta(HEAD, coordinate=COORDINATE, generation=5)
     assert apply_floor_delta(directory, full).status == "applied"
     assert _tree(directory) == _expected(tmp_path)
@@ -384,18 +357,13 @@ def test_a_full_floor_at_its_head_still_repairs_stray_and_edited_files(tmp_path:
     assert apply_floor_delta(directory, full).status == "unchanged"
 
 
-def test_an_empty_delta_at_the_head_reads_nothing_but_the_manifest(tmp_path: Path) -> None:
+def test_an_empty_delta_at_the_head_refuses_a_damaged_floor(tmp_path: Path) -> None:
     directory = _base_dir(tmp_path)
     assert apply_floor_delta(directory, _delta()).status == "applied"
     (directory / "current/k/a.yaml").write_bytes(b"hand edit\n")
     at_head = floor_v5_delta(HEAD, coordinate=COORDINATE, generation=5, base=(5, HEAD))
     assert at_head.files == () and at_head.tombstones == ()
-    # A stored file changed outside Cruxible gets no per-apply check.
-    assert apply_floor_delta(directory, at_head).status == "unchanged"
-    assert (directory / "current/k/a.yaml").read_bytes() == b"hand edit\n"
-    full = floor_v5_delta(HEAD, coordinate=COORDINATE, generation=5)
-    assert apply_floor_delta(directory, full).status == "applied"
-    assert _tree(directory) == _expected(tmp_path)
+    assert apply_floor_delta(directory, at_head).status == "base_mismatch"
 
 
 # -- review r2 ------------------------------------------------------------------------
@@ -458,8 +426,7 @@ def test_a_directory_where_a_floor_file_goes_is_repaired_by_a_full_floor(
     (directory / "projections").mkdir()
     (directory / "projections/INDEX").write_text("# client-written\n", encoding="utf-8")
     (directory / ".gitignore").write_bytes(b"*\n")
-    # A file the delta writes: an untouched one is never read by a delta.
-    managed = directory / "current/k/b.yaml"
+    managed = directory / "current/k/a.yaml"
     managed.unlink()
     managed.mkdir()
     if nested:
@@ -532,9 +499,8 @@ def test_a_directory_aliasing_a_floor_file_refuses_a_delta_and_is_repaired(
 @pytest.mark.parametrize(
     ("managed", "alias"),
     [
-        # The directory every delta file lives in ...
+        ("current/k/a.yaml", "current/k/A.YAML"),
         ("current/k", "current/K"),
-        # ... and the manifest are on every delta's own path.
         ("manifest.json", "MANIFEST.JSON"),
     ],
 )
@@ -590,7 +556,7 @@ def test_fifo_manifest_read_returns_promptly_without_a_valid_manifest(tmp_path):
     assert call_with_fifo_timeout(fifo, lambda: read_floor_manifest(directory)) is None
 
 
-@pytest.mark.parametrize("relative", ["manifest.json", "current/k/b.yaml"])
+@pytest.mark.parametrize("relative", ["manifest.json", "current/k/a.yaml"])
 def test_floor_verification_refuses_a_fifo_swapped_after_stat(tmp_path, monkeypatch, relative):
     from tests.support.fifos import call_with_fifo_timeout
 
@@ -617,3 +583,28 @@ def test_floor_verification_refuses_a_fifo_swapped_after_stat(tmp_path, monkeypa
     with pytest.raises(FloorApplyError, match="not a regular file"):
         call_with_fifo_timeout(fifo, lambda: apply_floor_delta(directory, _delta()))
     assert swapped
+
+
+def test_a_delta_reads_only_its_own_files_once_the_floor_is_verified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = _base_dir(tmp_path)
+    reads: list[str] = []
+    read_at = floor_apply._read_at
+
+    def counted(directory_fd: int, name: str, **kwargs: object) -> bytes:
+        reads.append(name)
+        return read_at(directory_fd, name, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(floor_apply, "_read_at", counted)
+    # Files older than the floor's last verification are proven by their stat.
+    monkeypatch.setattr(floor_apply, "_RECENT_NS", -(10**12))
+    assert apply_floor_delta(directory, _delta()).status == "applied"
+    assert sorted(reads) == ["b.yaml", "manifest.json"]
+    # A size change is caught by the stat alone; a full floor repairs it.
+    (directory / "current/k/a.yaml").write_bytes(b"shorter\n")
+    reads.clear()
+    assert apply_floor_delta(directory, _delta()).status == "base_mismatch"
+    full = floor_v5_delta(HEAD, coordinate=COORDINATE, generation=5)
+    assert apply_floor_delta(directory, full).status == "applied"
+    assert _tree(directory) == _expected(tmp_path)
