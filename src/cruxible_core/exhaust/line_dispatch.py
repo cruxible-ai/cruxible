@@ -12,6 +12,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -54,7 +55,27 @@ CREATE INDEX IF NOT EXISTS pending_by_trigger ON pending(line_id,epoch,trigger_i
 CREATE TABLE IF NOT EXISTS evaluated (
  line_id TEXT NOT NULL, epoch INTEGER NOT NULL, since TEXT NOT NULL, until TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS evaluated_by_line ON evaluated(line_id,epoch);
+CREATE TABLE IF NOT EXISTS open_proposals (
+ line_id TEXT NOT NULL, node_id TEXT NOT NULL, proposal_id TEXT NOT NULL,
+ signature TEXT NOT NULL, superseded TEXT, PRIMARY KEY(line_id,node_id));
 """
+
+
+@dataclass(frozen=True)
+class LineOpenProposal:
+    """The proposal a Line's terminal last submitted, and what its change was.
+
+    ``signature`` is the change signature (``line_change_signature``) a later
+    run of the Line compares its own change against; ``superseded`` is the
+    proposal this one withdrew in its place, if any. The record stays after
+    the proposal settles: a later run reads the proposal's status, not this.
+    """
+
+    line_id: str
+    node_id: str
+    proposal_id: str
+    signature: str
+    superseded: str | None = None
 
 
 def dispatch_root(instance: PlaybillInstance) -> Path:
@@ -207,6 +228,18 @@ class LineDispatchStore:
                 "INSERT INTO evaluated VALUES(?,?,?,?)",
                 (data["line_id"], data["epoch"], data["since"], data["until"]),
             )
+        elif kind == "open_proposal":
+            # The proposal a Line's terminal submitted replaces the one before it.
+            conn.execute(
+                "INSERT OR REPLACE INTO open_proposals VALUES(?,?,?,?,?)",
+                (
+                    data["line_id"],
+                    data["node_id"],
+                    data["proposal_id"],
+                    data["signature"],
+                    data.get("superseded"),
+                ),
+            )
         elif kind != "dispatch_refused":
             raise ValueError("unknown Line dispatch transition")
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?)", (sequence,))
@@ -260,6 +293,56 @@ class LineDispatchStore:
         )
         self._apply(conn, event, stored.record.sequence)
         conn.commit()
+
+    def open_proposal(self, line_id: str, node_id: str) -> LineOpenProposal | None:
+        """The proposal this Line's terminal last submitted; one keyed row."""
+
+        with self.locked() as conn:
+            row = conn.execute(
+                "SELECT proposal_id,signature,superseded FROM open_proposals "
+                "WHERE line_id=? AND node_id=?",
+                (line_id, node_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return LineOpenProposal(
+            line_id=line_id,
+            node_id=node_id,
+            proposal_id=row[0],
+            signature=row[1],
+            superseded=row[2],
+        )
+
+    def record_open_proposal(
+        self, record: LineOpenProposal, *, actor: GovernedActorContext, now: datetime
+    ) -> None:
+        """Record the proposal a Line's terminal submitted; a repeat records nothing."""
+
+        with self.locked() as conn:
+            row = conn.execute(
+                "SELECT proposal_id,signature,superseded FROM open_proposals "
+                "WHERE line_id=? AND node_id=?",
+                (record.line_id, record.node_id),
+            ).fetchone()
+            if row is not None and tuple(row) == (
+                record.proposal_id,
+                record.signature,
+                record.superseded,
+            ):
+                return
+            self.append(
+                conn,
+                "open_proposal",
+                {
+                    "line_id": record.line_id,
+                    "node_id": record.node_id,
+                    "proposal_id": record.proposal_id,
+                    "signature": record.signature,
+                    "superseded": record.superseded,
+                },
+                actor=actor,
+                now=now,
+            )
 
     @staticmethod
     def arm_view(

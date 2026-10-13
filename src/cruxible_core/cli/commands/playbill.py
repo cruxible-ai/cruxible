@@ -5565,11 +5565,19 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
     verbs take; a settled `settle_change_set` prints the generation it
     accepted, and one that fell back prints its proposal and why. A capped
     terminal names the authority it needed and the authority the run had; a
-    refused one prints the code the run refused with.
+    refused one prints the code the run refused with. A Line run whose change
+    is its Line's open proposal's says that proposal is still current; one
+    whose change differs names the proposal it superseded.
     """
 
     for egress in result.terminal_egress:
-        if egress.settle_outcome == "settled":
+        kept = egress.line_open_proposal
+        if kept is not None and kept.outcome == "still_current":
+            click.echo(
+                f"Terminal {egress.node_id}: no change; open proposal {kept.proposal_id} "
+                "still current"
+            )
+        elif egress.settle_outcome == "settled":
             click.echo(
                 f"Settled {egress.node_id}: accepted {egress.accepted_git_oid} "
                 f"(proposal {egress.proposal_id})"
@@ -5585,9 +5593,14 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
                 if egress.settle_outcome == "proposed"
                 else ""
             )
+            superseded = (
+                f" (superseded {kept.proposal_id})"
+                if kept is not None and kept.outcome == "superseded"
+                else ""
+            )
             click.echo(
                 f"Proposal {egress.node_id}: {egress.proposal_id} "
-                f"candidate {egress.candidate_digest}{fallback}"
+                f"candidate {egress.candidate_digest}{fallback}{superseded}"
             )
             for child in egress.children:
                 if child.path is not None:

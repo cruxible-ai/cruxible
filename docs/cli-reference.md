@@ -2348,6 +2348,23 @@ lowered into; `--json` carries them in `terminal_egress`. Producing the
 proposal activates nothing: retrieve it with `cruxible get PROPOSAL_ID`, review
 it in the ledger, and activate it with the existing proposal verbs.
 
+A Line keeps one open proposal per terminal. A later run whose change equals
+that open proposal's -- the same statements (subject, predicate, qualifier,
+object, role) on the same evidence content, the same retired Claims and the
+same created Subjects; Claim ids, Capture digests and timestamps do not count
+-- proposes nothing: the open proposal is kept untouched and the run reports
+`line_open_proposal` `still_current` with its id ("no change; open proposal
+PROPOSAL_ID still current"). A run whose change differs submits its own
+proposal and withdraws the open one as superseded by it, under the run's own
+identity: the withdrawal record names the successor (`superseded_by`) and the
+run reports `line_open_proposal` `superseded`. Approvals and attestations of the
+old proposal do not carry over. The decision is made when the terminal is
+prepared and journaled with it, so startup recovery reproduces it; an open
+proposal that settled (accepted, refused, withdrawn or rejected) before the new
+one landed is left as it is. A proposal that went stale is still open work and
+is weighed the same way. Settle terminals are unaffected, including their
+fallback proposals.
+
 An item on a many-valued ClaimType adds a value, as `write`'s `add` does: the
 values already in its slot (and any sibling item in the same slot) stay, and
 each is dispositioned `not_tested`. An item on a single-valued slot that
@@ -3616,7 +3633,8 @@ activation or its author changed their mind. It writes one immutable withdrawal
 record beside the admission, touches no accepted state, leaves every byte of the
 candidate readable, and moves the proposal out of `proposal list --status open`
 with terminal reason `withdrawn`. Only the actor who submitted a proposal may
-withdraw it; withdrawing an already-withdrawn proposal repeats the first answer
+withdraw it (a later run of a Line withdraws its Line's open proposal as
+superseded, naming the successor in `superseded_by`; see [line](#line)); withdrawing an already-withdrawn proposal repeats the first answer
 rather than rewriting its reason, and a settled proposal refuses, because its
 outcome is not an intention to overwrite.
 

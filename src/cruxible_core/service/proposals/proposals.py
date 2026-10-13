@@ -1294,6 +1294,78 @@ def _close_once(
     return record, False, coordinate
 
 
+def proposal_still_open(instance: PlaybillInstance, proposal_id: str) -> bool:
+    """Whether a proposal is open or stale: not yet accepted, refused, or closed.
+
+    One keyed inventory row; a stale proposal (its base moved) is still open
+    work, which only a close or a readmission ends.
+    """
+
+    entry = next(
+        (
+            item
+            for item in _proposal_entries(
+                instance,
+                AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+                proposal_id,
+                require_evidence=False,
+            )
+            if item.proposal_id == proposal_id
+        ),
+        None,
+    )
+    return entry is not None and (entry.status == "open" or entry.terminal_reason == "stale")
+
+
+def service_supersede_line_proposal(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    successor_id: str,
+    actor_id: str,
+    withdrawn_at: str,
+) -> bool:
+    """Withdraw a Line's open proposal as superseded by the one its later run submitted.
+
+    The Line's own run identity (``actor_id``) closes it, whichever actor's run
+    submitted it: the Line owns its open proposal. Returns whether the proposal
+    now stands withdrawn as superseded by ``successor_id`` -- by this call or an
+    earlier, identical one (recovery redelivers). A proposal that settled first
+    (accepted, refused, withdrawn or rejected otherwise) is left as it is, and
+    nothing is withdrawn.
+    """
+
+    with change_scope(
+        instance,
+        dry_run=None,
+        at=None,
+        kind="direct",
+        operation="cruxible.proposal.withdraw",
+        describe=f"superseding proposal {proposal_id}",
+    ) as mode:
+        with instance.refusal_index().closing(proposal_id):
+            existing = instance.proposal_evidence().read_withdrawal(proposal_id)
+            if existing is not None:
+                return existing.superseded_by == successor_id
+            if not proposal_still_open(instance, proposal_id):
+                return False
+            _close_once(
+                instance,
+                mode,
+                ProposalWithdrawalRecord(
+                    proposal_id=proposal_id,
+                    actor_id=actor_id,
+                    reason=(
+                        f"Superseded by {successor_id}: a later run of its Line proposed "
+                        "a different change."
+                    ),
+                    withdrawn_at=withdrawn_at,
+                    superseded_by=successor_id,
+                ),
+            )
+            return True
+
+
 def service_playbill_whoami(
     instance: PlaybillInstance,
     *,
@@ -1355,6 +1427,7 @@ __all__ = [
     "StaleProposal",
     "WhoAmIActorIdSource",
     "proposal_readmission",
+    "proposal_still_open",
     "proposals_awaiting_activation",
     "proposals_awaiting_approval",
     "readmission_operation_digest",
@@ -1362,6 +1435,7 @@ __all__ = [
     "service_playbill_proposal_status",
     "service_readmit_playbill_proposal",
     "service_reject_playbill_proposal",
+    "service_supersede_line_proposal",
     "service_withdraw_playbill_proposal",
     "service_playbill_whoami",
     "stale_unreadmitted_proposals",

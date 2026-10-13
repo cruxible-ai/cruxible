@@ -179,6 +179,9 @@ disprove it; the measurement's verdict comes from its evidence.
 ## Phase 7: Hand off
 
 Proposals a Line produces are ordinary proposals: review, approve and activate
-them per `../_shared/references/governance-flow.md`. Tell the user which Lines
+them per `../_shared/references/governance-flow.md`. A Line keeps one open
+proposal per terminal: a rerun with the same change reports it still current
+and proposes nothing; a rerun with a different change withdraws it as
+superseded by the new one, so review the newest. Tell the user which Lines
 are enabled, under whose credential, on which schedule, with which mandate,
 and which `next` rows to watch.
