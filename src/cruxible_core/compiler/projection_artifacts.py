@@ -36,7 +36,6 @@ from cruxible_client.contracts.claim_types import (
     claim_type_projection_structure,
     parse_claim_type,
 )
-from cruxible_client.contracts.content_memo import ObjectMemo
 from cruxible_client.contracts.documents import document_digest, parse_document
 from cruxible_client.contracts.errors import (
     CasError,
@@ -294,23 +293,31 @@ def registered_path_kind(
     return cast(RegisteredPathKind, artifact_kinds.resolve_path(path))
 
 
-# path -> ((record position, member), ...) in record then member order, built once
-# per records tuple: one parse asks every artifact for its history, and scanning
-# every record's members per artifact made a cold parse O(artifacts x members).
-_MEMBERS_BY_PATH: ObjectMemo[Mapping[str, tuple[tuple[int, Any], ...]]] = ObjectMemo(capacity=2)
+class _IndexedRecords(tuple):  # type: ignore[type-arg]
+    """One parse's change-set records with a path index built the first time it is asked.
+
+    ``path -> ((record position, member), ...)`` in record then member order: one
+    parse asks every artifact for its history, and scanning every record's
+    members per artifact made a cold parse O(artifacts x members). The index
+    lives on this parse's own tuple and goes with it; nothing is shared.
+    """
+
+    _by_path: Mapping[str, tuple[tuple[int, Any], ...]] | None = None
 
 
 def _members_by_path(
     records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
 ) -> Mapping[str, tuple[tuple[int, Any], ...]]:
-    def build() -> Mapping[str, tuple[tuple[int, Any], ...]]:
-        found: dict[str, list[tuple[int, Any]]] = {}
-        for position, (_record_path, record) in enumerate(records):
-            for member in record.members:
-                found.setdefault(member.path, []).append((position, member))
-        return {path: tuple(items) for path, items in found.items()}
-
-    return _MEMBERS_BY_PATH.derive(records, build)
+    if isinstance(records, _IndexedRecords) and records._by_path is not None:
+        return records._by_path
+    found: dict[str, list[tuple[int, Any]]] = {}
+    for position, (_record_path, record) in enumerate(records):
+        for member in record.members:
+            found.setdefault(member.path, []).append((position, member))
+    index = {path: tuple(items) for path, items in found.items()}
+    if isinstance(records, _IndexedRecords):
+        records._by_path = index
+    return index
 
 
 def _accepting_positions(
@@ -622,7 +629,7 @@ def parse_projection_tree(
         record.sequence for _path, record in change_sets
     ] != list(range(1, len(change_sets) + 1)):
         raise ProjectionFormatError("change-set history must be contiguous from sequence one")
-    accepted_change_sets = tuple(change_sets)
+    accepted_change_sets = _IndexedRecords(change_sets)
     accepted_coordinates = dict(accepted_coordinates_by_sequence or {})
     if coordinate is not None and change_sets:
         latest_sequence = change_sets[-1][1].sequence

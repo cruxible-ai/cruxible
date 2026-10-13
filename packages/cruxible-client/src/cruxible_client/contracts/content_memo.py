@@ -1,27 +1,23 @@
-"""Bounded per-process memos for pure parses and digests of immutable artifacts.
+"""Bounded per-process memos for pure parses of immutable artifacts, keyed by content.
 
 A governed artifact's parse is a pure function of its path, its codec and its
-exact bytes; a digest is a pure function of the parsed (frozen) value. Within
-one write or one Line run the same few ClaimTypes, CaptureContracts, Subjects
-and Claims are parsed and digested dozens of times by different laws and
-indexes. These memos make each of those a lookup:
+exact bytes. Within one write or one Line run the same few ClaimTypes,
+CaptureContracts, Subjects and Claims are parsed dozens of times by different
+laws and indexes. These memos make each of those a lookup:
 
 - ``ParseMemo`` keys a parse by ``(path, codec, bytes)``: the content itself,
-  never a mutable object. It keeps the parsed value pickled and hands every
+  never a caller's object. It keeps the parsed value pickled and hands every
   caller its own detached copy, so nothing a caller does to a returned model
-  can reach a later parse. A refused parse is never remembered, so it refuses
-  again exactly as before.
-- ``ObjectMemo`` remembers a digest derived from one exact frozen object. The
-  entry holds the object, so its identity cannot be reused while the entry
-  lives, a hit is confirmed with ``is``, and every hit returns a fresh digest
-  value. Frozen models are never changed in place by the code that digests
-  them; a changed copy (``model_copy``) is a different object and derives afresh.
-- ``ValueMemo`` keys a pure function of hashable frozen values by those values.
+  (frozen models are frozen only shallowly) can reach a later parse. A refused
+  parse is never remembered, so it refuses again exactly as before.
+- ``ValueMemo`` keys a pure function by a key made of immutable values only
+  (strings, numbers, tuples of them), never by a model a caller holds.
 
-All are bounded and least-recently-used, and safe to share across threads:
-every access is one short critical section.
+Digests of parsed models are not memoized here: a model's nested containers
+can change under its identity, and keying by its serialization costs what the
+digest does. All memos are bounded and least-recently-used, and safe to share
+across threads: every access is one short critical section.
 """
-
 from __future__ import annotations
 
 import pickle
@@ -84,47 +80,8 @@ class ParseMemo(Generic[_V]):
             self._bytes = 0
 
 
-class ObjectMemo(Generic[_V]):
-    """A value derived from one exact frozen object, held together with that object.
-
-    ``fresh`` makes every hit return its own copy of the remembered value.
-    """
-
-    def __init__(self, *, capacity: int, fresh: Callable[[_V], _V] | None = None) -> None:
-        self._entries: OrderedDict[int, tuple[object, _V]] = OrderedDict()
-        self._capacity = capacity
-        self._fresh = fresh
-        self._lock = threading.Lock()
-
-    def derive(self, source: object, derive: Callable[[], _V]) -> _V:
-        key = id(source)
-        with self._lock:
-            entry = self._entries.get(key)
-            if entry is not None and entry[0] is source:
-                self._entries.move_to_end(key)
-                value = entry[1]
-                return value if self._fresh is None else self._fresh(value)
-        value = derive()
-        with self._lock:
-            self._entries[key] = (source, value)
-            self._entries.move_to_end(key)
-            while len(self._entries) > self._capacity:
-                self._entries.popitem(last=False)
-        return value if self._fresh is None else self._fresh(value)
-
-    def clear(self) -> None:
-        with self._lock:
-            self._entries.clear()
-
-
-def fresh_digest(value: Any) -> Any:
-    """A new instance of a frozen digest value (``Sha256Value`` and kin)."""
-
-    return type(value)(value.value)
-
-
 class ValueMemo(Generic[_V]):
-    """A value derived from a hashable value key (its equality is the content's)."""
+    """A value derived from a key of immutable values (its equality is the content's)."""
 
     def __init__(self, *, capacity: int) -> None:
         self._entries: OrderedDict[Any, _V] = OrderedDict()
@@ -154,4 +111,4 @@ class ValueMemo(Generic[_V]):
             self._entries.clear()
 
 
-__all__ = ["ObjectMemo", "ParseMemo", "ValueMemo", "fresh_digest"]
+__all__ = ["ParseMemo", "ValueMemo"]

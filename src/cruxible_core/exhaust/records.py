@@ -271,14 +271,14 @@ _GENESIS_DIGESTS: ValueMemo[str] = ValueMemo(capacity=4096)
 def journal_genesis_digest(stream: JournalStreamIdentityV1, partition_id: str) -> str:
     """Return the domain-separated predecessor for sequence one.
 
-    A pure function of the (frozen) stream identity and the partition id, so it
-    is remembered by their values; an invalid id refuses before anything is kept.
+    A pure function of the stream identity's strings and the partition id, so it
+    is remembered by those values; an invalid id refuses before anything is kept.
     """
 
     _identifier(partition_id, label="journal partition_id", pattern=_PARTITION_RE)
-    return _GENESIS_DIGESTS.derive(
-        (stream, partition_id), lambda: _journal_genesis_digest(stream, partition_id)
-    )
+    # Keyed by the identity's own strings, never by the caller's model object.
+    key = (stream.tag, stream.instance_id, stream.journal_family, stream.stream_id, partition_id)
+    return _GENESIS_DIGESTS.derive(key, lambda: _journal_genesis_digest(stream, partition_id))
 
 
 def _journal_genesis_digest(stream: JournalStreamIdentityV1, partition_id: str) -> str:

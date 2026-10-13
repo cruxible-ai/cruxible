@@ -31,7 +31,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo, fresh_digest
+from cruxible_client.contracts.content_memo import ParseMemo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -396,15 +396,7 @@ def _parse_procedure(
     return procedure
 
 
-_PROCEDURE_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=256, fresh=fresh_digest)
-
-
 def procedure_artifact_digest(procedure: ProcedureArtifact) -> ArtifactDigest:
-    """Digest once per exact frozen value; see ``content_memo``."""
-    return _PROCEDURE_DIGESTS.derive(procedure, lambda: _procedure_artifact_digest(procedure))
-
-
-def _procedure_artifact_digest(procedure: ProcedureArtifact) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",

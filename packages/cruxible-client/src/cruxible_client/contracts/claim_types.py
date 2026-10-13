@@ -43,7 +43,7 @@ from cruxible_client.contracts.canonical_forms import (
     validate_canonical_form,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole, ClaimTypeStructure
-from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo, fresh_digest
+from cruxible_client.contracts.content_memo import ParseMemo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
@@ -625,15 +625,7 @@ CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = 
 }
 
 
-_CLAIM_TYPE_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=1024, fresh=fresh_digest)
-
-
 def claim_type_digest(claim_type: ClaimType) -> ArtifactDigest:
-    """Digest once per exact frozen value; see ``content_memo``."""
-    return _CLAIM_TYPE_DIGESTS.derive(claim_type, lambda: _claim_type_digest(claim_type))
-
-
-def _claim_type_digest(claim_type: ClaimType) -> ArtifactDigest:
     return CLAIM_TYPE_DIGEST_FUNCTIONS[claim_type.artifact_format](claim_type)
 
 

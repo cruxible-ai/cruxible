@@ -1,10 +1,10 @@
-"""Pure artifact parses and digests run once per exact content (perf B4)."""
+"""Pure artifact parses run once per exact content; digests follow the current content (perf B4)."""
 
 from __future__ import annotations
 
 import pytest
 
-from cruxible_client.contracts import claim_types, subjects
+from cruxible_client.contracts import claim_types
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import (
     ClaimTypeFormatError,
@@ -13,7 +13,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo, ValueMemo
+from cruxible_client.contracts.content_memo import ParseMemo, ValueMemo
 from cruxible_client.contracts.subjects import (
     SubjectShell,
     parse_subject,
@@ -61,23 +61,45 @@ def test_a_parse_runs_once_per_exact_bytes_and_a_refusal_is_never_kept(monkeypat
     assert claim_type_digest(again) == claim_types._claim_type_digest(value)
 
 
-def test_a_digest_is_kept_with_its_exact_object_only(monkeypatch):
-    """Each hit returns its own digest value, equal to the one derived afresh."""
+def test_digests_follow_the_current_content_of_shallowly_frozen_models():
+    """Review F-001: a nested container changed in place changes the digest.
 
-    digests = []
-    real = subjects._subject_digest
+    Frozen models are frozen only shallowly (``ClaimType.literal_schema`` is a
+    dict), so no digest is remembered by the model object: each digest is
+    computed from the content the model holds when asked, and equal content in
+    distinct objects digests the same.
+    """
 
-    def counted(shell):  # type: ignore[no-untyped-def]
-        digests.append(shell.subject_id)
-        return real(shell)
-
-    monkeypatch.setattr(subjects, "_subject_digest", counted)
+    value = _claim_type("sha256:" + "1" * 64)
+    before = claim_type_digest(value)
+    assert value.literal_schema is not None
+    value.literal_schema["type"] = "integer"
+    after = claim_type_digest(value)
+    assert after != before
+    assert after == claim_types.CLAIM_TYPE_DIGEST_FUNCTIONS[value.artifact_format](value)
     shell = parse_subject(render_subject(_shell("a")), path=subject_path("memo.kind", "a"))
-    first, again = subject_digest(shell), subject_digest(shell)
-    assert first == again == real(_shell("a")) and again is not first
-    # An equal but distinct object derives again: identity, never a mutable key.
-    assert subject_digest(_shell("a")) == real(_shell("a"))
-    assert digests == ["a", "a"]
+    assert subject_digest(shell) == subject_digest(_shell("a"))
+
+
+def test_the_genesis_digest_memo_is_keyed_by_the_identity_strings():
+    from cruxible_core.exhaust import records
+    from cruxible_core.exhaust.records import (
+        PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+        JournalStreamIdentityV1,
+        journal_genesis_digest,
+    )
+
+    stream = JournalStreamIdentityV1(
+        instance_id="memo-instance",
+        journal_family=PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+        stream_id="memo",
+    )
+    first = journal_genesis_digest(stream, "p-1")
+    assert first == records._journal_genesis_digest(stream, "p-1")
+    other = stream.model_copy(update={"stream_id": "memo-other"})
+    assert journal_genesis_digest(other, "p-1") == records._journal_genesis_digest(other, "p-1")
+    assert journal_genesis_digest(other, "p-1") != first
+    assert all(isinstance(part, str) for key in records._GENESIS_DIGESTS._entries for part in key)
 
 
 def test_memos_are_bounded():
@@ -88,11 +110,6 @@ def test_memos_are_bounded():
     small: ParseMemo[int] = ParseMemo(capacity=10, max_bytes=256)
     small.parse(b"x" * 64, "p", None, lambda: 1)
     assert not small._entries  # one entry may never take a sixteenth of the budget
-    objects: ObjectMemo[int] = ObjectMemo(capacity=3)
-    held = [object() for _ in range(5)]
-    for number, item in enumerate(held):
-        objects.derive(item, lambda number=number: number)
-    assert len(objects._entries) == 3
     values: ValueMemo[int] = ValueMemo(capacity=2)
     for number in range(4):
         values.derive(("k", number), lambda number=number: number)

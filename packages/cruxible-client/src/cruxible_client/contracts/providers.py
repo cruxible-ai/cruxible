@@ -27,7 +27,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo, fresh_digest
+from cruxible_client.contracts.content_memo import ParseMemo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -759,15 +759,7 @@ def _parse_provider(
     return provider
 
 
-_PROVIDER_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=256, fresh=fresh_digest)
-
-
 def provider_digest(provider: ProviderAny) -> ArtifactDigest:
-    """Digest once per exact frozen value; see ``content_memo``."""
-    return _PROVIDER_DIGESTS.derive(provider, lambda: _provider_digest(provider))
-
-
-def _provider_digest(provider: ProviderAny) -> ArtifactDigest:
     if isinstance(provider, ProviderV2):
         return typed_digest(
             ArtifactDigest,

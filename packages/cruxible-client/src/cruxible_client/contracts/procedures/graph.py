@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Iterator
 
 from pydantic import BaseModel
 
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
-from cruxible_client.contracts.content_memo import ObjectMemo
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_NODE_KINDS,
@@ -391,26 +390,7 @@ def _node_local_payload(node: ProcedureNode) -> dict[str, object]:
     return {"kind": node.kind, "spec": payload}
 
 
-_NODE_DIGESTS: ObjectMemo[dict[str, ProcedureNodeDigests]] = ObjectMemo(capacity=256)
-
-
 def compute_procedure_node_digests(
-    definition: ProcedureDefinition,
-) -> dict[str, ProcedureNodeDigests]:
-    """Each node's local and subtree digests, once per exact frozen definition.
-
-    The caller gets its own dict of its own (frozen) digest records.
-    """
-
-    return {
-        node_id: replace(digests)
-        for node_id, digests in _NODE_DIGESTS.derive(
-            definition, lambda: _compute_procedure_node_digests(definition)
-        ).items()
-    }
-
-
-def _compute_procedure_node_digests(
     definition: ProcedureDefinition,
 ) -> dict[str, ProcedureNodeDigests]:
     graph = analyze_procedure(definition)
