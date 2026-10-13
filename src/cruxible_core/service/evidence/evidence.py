@@ -211,6 +211,12 @@ class VerdictReads:
     # coordinate, so a remembered answer is keyed on the record set it used.
     # Within that set, the answer's time boundaries bound it.
     used_reobservations: dict[str, int] = dataclass_field(default_factory=dict)
+    # The body-store objects each Capture's availability consulted, with the
+    # identity each read used; None when no identity stands for that answer.
+    # A landing of any of them is a change to that Capture's availability.
+    capture_bodies: dict[str, dict[str, CasFileIdentity | None] | None] = dataclass_field(
+        default_factory=dict
+    )
 
     def update(self, other: VerdictReads) -> None:
         self.paths |= other.paths
@@ -224,6 +230,19 @@ class VerdictReads:
                 self.inconsistent = True
         self.inconsistent = self.inconsistent or other.inconsistent
         self.note_bodies(other.body_identities if other.bodies_complete else None)
+        for digest, bodies in other.capture_bodies.items():
+            self.note_capture_bodies(digest, bodies)
+
+    def note_capture_bodies(
+        self, digest: str, bodies: Mapping[str, CasFileIdentity | None] | None
+    ) -> None:
+        """Attribute the objects one Capture's availability consulted to that Capture."""
+
+        known = self.capture_bodies.get(digest, {})
+        if bodies is None or known is None:
+            self.capture_bodies[digest] = None
+            return
+        self.capture_bodies[digest] = {**known, **bodies}
 
     def note_bodies(self, identities: Mapping[str, CasFileIdentity | None] | None) -> None:
         """Add the identities one read used; ``None`` means the read has none."""
@@ -480,6 +499,7 @@ class ClaimVerdictReadContext:
                     self._recording.inconsistent = True
             if bodies_known:
                 self._recording.note_bodies(bodies)
+                self._recording.note_capture_bodies(digest, bodies)
 
     def snapshot(
         self, reads: VerdictReads, *, bodies: VerdictReads | None = None

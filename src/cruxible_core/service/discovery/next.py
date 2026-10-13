@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import RLock
-from typing import Annotated, Literal, TypeAlias, cast
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -2851,7 +2851,6 @@ def _citation_commitments(
         compiler_digest=coordinate.compiler_digest,
     )
     store = instance.body_store()
-    access = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
     result: dict[str, _CitationCommitment] = {}
     citation_claim_types: dict[str, ClaimType | None] = {}
     facts = (
@@ -2877,84 +2876,116 @@ def _citation_commitments(
         for claim in population:
             if claim.lifecycle.state != "live" or claim.identity.qualified not in visible_claims:
                 continue
-            evidence = _claim_law_evidence(
+            for commitment in claim_citation_commitments(
                 instance,
-                path=claim_path(claim.identity.name),
-                at=internal_coordinate,
-            )
-            effective_captures = {item.capture_digest for item in evidence.verdict_captures}
-            predecessor_digest = claim.lifecycle.predecessor_digest
-            lineage_note: CitationLineageNote | None = None
-            if predecessor_digest is not None:
-                historical = _historical_claim(
-                    instance,
-                    coordinate=internal_coordinate,
-                    identity=claim.identity.qualified,
-                    digest=predecessor_digest,
-                )
-                predecessor = None if historical is None else historical[0]
-                if predecessor is None:
-                    lineage_note = "predecessor_unresolved"
-                elif claim_statement_digest(predecessor.statement) != claim_statement_digest(
-                    claim.statement
-                ):
-                    effective_captures.difference_update(predecessor.backing.capture_digests)
-            for citation in claim_citation_references(claim):
-                if citation.capture_digest not in effective_captures:
-                    continue
-                envelope = parse_capture_envelope(
-                    store.read(citation.capture_digest, access=access)
-                )
-                source_id: str | None = None
-                source_digest: str | None = None
-                if (
-                    isinstance(envelope.source, ExternalSourceReference)
-                    and envelope.source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
-                    and isinstance(envelope.source.coordinate, Mapping)
-                ):
-                    observed_digest = envelope.source.coordinate.get("source_content_digest")
-                    if isinstance(observed_digest, str):
-                        try:
-                            Sha256Value.from_tagged(observed_digest)
-                        except ValueError:
-                            pass
-                        else:
-                            source_id = envelope.source.source_identity
-                            source_digest = observed_digest
-                selection_span = _source_selection_span(envelope)
-                result[citation.citation_id] = _CitationCommitment(
-                    citation_id=citation.citation_id,
-                    commitment_digest=envelope.commitment.digest,
-                    byte_length=envelope.commitment.byte_length or 0,
-                    claim_identity=claim.identity.qualified,
-                    source_id=source_id,
-                    source_digest=source_digest,
-                    original_start=None if selection_span is None else selection_span[0],
-                    original_end=None if selection_span is None else selection_span[1],
-                    whole_source=_whole_source_selection(envelope),
-                    lineage_note=lineage_note,
-                    set_arguments=(
-                        None
-                        if (
-                            restated := _claim_set_arguments(
-                                claim,
-                                _claim_type_at(
-                                    instance,
-                                    internal_coordinate.git_oid,
-                                    claim.statement.predicate,
-                                    citation_claim_types,
-                                ),
-                            )
-                        )
-                        is None
-                        else tuple(sorted(restated.items()))
-                    ),
-                )
+                claim=claim,
+                coordinate=internal_coordinate,
+                store=store,
+                claim_types=citation_claim_types,
+            ):
+                result[commitment.citation_id] = commitment
     except Exception as exc:
         raise NextAcceptedStateInvalid(
             f"{NextAcceptedStateInvalid.code}: citation inventory is invalid"
         ) from exc
     return result
+
+
+_CITATION_READER = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
+
+
+def claim_citation_commitments(
+    instance: PlaybillInstance,
+    *,
+    claim: ClaimArtifactAny,
+    coordinate: AcceptedProjectionCoordinate,
+    store: Any,
+    claim_types: dict[str, ClaimType | None],
+) -> tuple[_CitationCommitment, ...]:
+    """One live Claim's citation commitments: what each effective citation committed to.
+
+    Reads the Claim's law record, its predecessor version when it has one, and
+    the Capture envelope of each effective citation. ``claim_types`` is a
+    per-caller ClaimType memo for the restating ``set`` arguments.
+    """
+
+    evidence = _claim_law_evidence(
+        instance,
+        path=claim_path(claim.identity.name),
+        at=coordinate,
+    )
+    effective_captures = {item.capture_digest for item in evidence.verdict_captures}
+    predecessor_digest = claim.lifecycle.predecessor_digest
+    lineage_note: CitationLineageNote | None = None
+    if predecessor_digest is not None:
+        historical = _historical_claim(
+            instance,
+            coordinate=coordinate,
+            identity=claim.identity.qualified,
+            digest=predecessor_digest,
+        )
+        predecessor = None if historical is None else historical[0]
+        if predecessor is None:
+            lineage_note = "predecessor_unresolved"
+        elif claim_statement_digest(predecessor.statement) != claim_statement_digest(
+            claim.statement
+        ):
+            effective_captures.difference_update(predecessor.backing.capture_digests)
+    commitments: list[_CitationCommitment] = []
+    for citation in claim_citation_references(claim):
+        if citation.capture_digest not in effective_captures:
+            continue
+        envelope = parse_capture_envelope(
+            store.read(citation.capture_digest, access=_CITATION_READER)
+        )
+        source_id: str | None = None
+        source_digest: str | None = None
+        if (
+            isinstance(envelope.source, ExternalSourceReference)
+            and envelope.source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
+            and isinstance(envelope.source.coordinate, Mapping)
+        ):
+            observed_digest = envelope.source.coordinate.get("source_content_digest")
+            if isinstance(observed_digest, str):
+                try:
+                    Sha256Value.from_tagged(observed_digest)
+                except ValueError:
+                    pass
+                else:
+                    source_id = envelope.source.source_identity
+                    source_digest = observed_digest
+        selection_span = _source_selection_span(envelope)
+        commitments.append(
+            _CitationCommitment(
+                citation_id=citation.citation_id,
+                commitment_digest=envelope.commitment.digest,
+                byte_length=envelope.commitment.byte_length or 0,
+                claim_identity=claim.identity.qualified,
+                source_id=source_id,
+                source_digest=source_digest,
+                original_start=None if selection_span is None else selection_span[0],
+                original_end=None if selection_span is None else selection_span[1],
+                whole_source=_whole_source_selection(envelope),
+                lineage_note=lineage_note,
+                set_arguments=(
+                    None
+                    if (
+                        restated := _claim_set_arguments(
+                            claim,
+                            _claim_type_at(
+                                instance,
+                                coordinate.git_oid,
+                                claim.statement.predicate,
+                                claim_types,
+                            ),
+                        )
+                    )
+                    is None
+                    else tuple(sorted(restated.items()))
+                ),
+            )
+        )
+    return tuple(commitments)
 
 
 def _historical_claim(

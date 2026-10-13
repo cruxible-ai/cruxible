@@ -503,6 +503,7 @@ def test_events_after_a_root_reads_only_what_was_published_since(
     empty = store.head()
     # Before the store exists its empty root is a valid cursor with nothing after it.
     assert store.events_after(empty) == (empty, ())
+    assert store.events_after(None) == (empty, ())
     receipts = []
     for ordinal in range(3):
         attestation = _attestation(
@@ -518,6 +519,7 @@ def test_events_after_a_root_reads_only_what_was_published_since(
     everything = store.events()
 
     after_empty = store.events_after(empty)
+    assert store.events_after(None) == after_empty
     assert after_empty[0] == head
     assert [(position, event, payload) for position, event, payload in after_empty[1]] == [
         (index + 1, event, payload) for index, (event, payload) in enumerate(everything)

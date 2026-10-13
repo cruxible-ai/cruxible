@@ -13,7 +13,7 @@ import pytest
 from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.consumers import floor
 from cruxible_core.consumers import next as folded
-from cruxible_core.consumers.next import NEXT_QUEUE, evidence, predictions, queue
+from cruxible_core.consumers.next import NEXT_QUEUE, evidence, facts, predictions, queue
 from cruxible_core.consumers.protocol import ConsumerWork
 from cruxible_core.consumers.runner import (
     ConsumerRunner,
@@ -46,7 +46,14 @@ def test_one_kind_one_health_and_independent_part_cursors(tmp_path: Path) -> Non
     assert [kind.name for kind in consumer_kinds()] == ["line", "next", "floor"]
     (health,) = consumer_health(instance, now=EVALUATION_TIME)
     assert (health.kind, health.consumer_id, health.state) == ("next", "consumer:next", "running")
-    assert set(health.detail) == {"queue", "evidence", "prediction", "curation", "settled_refusals"}
+    assert set(health.detail) == {
+        "queue",
+        "facts",
+        "evidence",
+        "prediction",
+        "curation",
+        "settled_refusals",
+    }
     assert health.detail["prediction"]["contracts"] == 1
     before = health.detail
     # Reopening the kind uses each part's durable cursor, even with a later clock.
@@ -200,12 +207,12 @@ def test_unknown_disable_setting_refuses_loop_startup(monkeypatch: pytest.Monkey
     assert runner.thread is None and runner._executors == {}
 
 
-@pytest.mark.parametrize("part", ("queue", "evidence", "prediction"))
+@pytest.mark.parametrize("part", ("queue", "facts", "evidence", "prediction"))
 def test_lost_part_state_lags_until_that_part_rebuilds(tmp_path: Path, part: str) -> None:
     instance, _owner = seed_claims(tmp_path)
     drain(instance, now=EVALUATION_TIME)
     assert NEXT_QUEUE.health(instance, now=EVALUATION_TIME)[0].state == "running"
-    modules = {"queue": queue, "evidence": evidence, "prediction": predictions}
+    modules = {"queue": queue, "facts": facts, "evidence": evidence, "prediction": predictions}
     modules[part]._STATE.path(instance).unlink()
     (health,) = NEXT_QUEUE.health(instance, now=EVALUATION_TIME)
     assert health.state == "lagging"

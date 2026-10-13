@@ -485,6 +485,12 @@ class ClaimReobservationStore:
 
     # -- reads --------------------------------------------------------------
 
+    def head_sequence(self) -> int:
+        """The journal's newest sequence (0 before any record): where a new cursor starts."""
+
+        journal = self._journal(create=False)
+        return 0 if journal is None else journal.read_head(self.stream, _PARTITION).sequence
+
     def records_after(self, sequence: int) -> tuple[tuple[int, str], ...]:
         """Each journal record after ``sequence``: its sequence and the lineage it re-observed.
 
