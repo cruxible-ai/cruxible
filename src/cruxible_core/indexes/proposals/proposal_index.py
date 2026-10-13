@@ -319,9 +319,15 @@ class ProposalIndex:
 
         A history-only commit can then carry the source checkpoint forward even
         when it precedes every proposal read of this process (see
-        ``database_committed``).
+        ``database_committed``). Never waits: a read must not block on the
+        shared lock (a writer may hold it), so a busy lock leaves the replay to
+        the next store this index serves.
         """
-        with self._lock:
+        if self._root is not None and not self._history_commits:
+            return
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
             if self._root is None:
                 self._root = root
             # Replay, in order, the history-only commits made before this
@@ -330,6 +336,8 @@ class ProposalIndex:
             self._history_commits.clear()
             for before, after in commits:
                 self.database_committed(before, after)
+        finally:
+            self._lock.release()
 
     def database_committed(self, before: tuple[int, ...] | None, after: tuple[int, ...]) -> None:
         """Publish C's captured stamp while it retains reacquired SQLite ownership.
@@ -571,14 +579,23 @@ class ProposalIndex:
         carry the checkpoint forward and the next proposal read rebuilds every
         record. A clean snapshot proves the same facts the clean branch of
         ``_sync`` does; under the shared lock, and only while the file is still
-        at that stamp, it seeds them.
+        at that stamp, it seeds them. A clean read never waits for that lock: if
+        a writer holds it, nothing is seeded.
         """
-        with self._lock:
-            if self._file_stamp() != stamp or self._marker(root) != marker:
+        if self._stamp is not None or not self._lock.acquire(blocking=False):
+            return
+        try:
+            if (
+                self._stamp is not None
+                or self._file_stamp() != stamp
+                or self._marker(root) != marker
+            ):
                 return
             self._root = root
             self._stamp = stamp
             self._remember(root, marker)
+        finally:
+            self._lock.release()
 
     def _remember(self, root: Path, marker: dict[str, Any]) -> None:
         self._shutdown_proof.clear()

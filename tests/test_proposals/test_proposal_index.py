@@ -764,7 +764,9 @@ def test_a_restarted_reader_carries_its_clean_checkpoint_across_history_commits(
             writer = owner._write_connection()
             writer.execute("BEGIN IMMEDIATE")
             before = owner._file_stamp()
-            writer.execute("UPDATE history_progress SET sequence=sequence")
+            # A real page change the proposal rows do not see.
+            writer.execute("CREATE TABLE IF NOT EXISTS scratch_history_commit (n INTEGER)")
+            writer.execute("DROP TABLE scratch_history_commit")
             after = commit_working_write(writer, owner._file_stamp, before)
             assert after != before
             owner.proposals.database_committed(before, after)
