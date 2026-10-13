@@ -810,7 +810,10 @@ def _measure(session: Session, route: Route) -> dict[str, dict[str, int]]:
             )
         if route.verify is not None:
             route.verify(world, result)
-        measured[world.shape.name] = {name: window.counts[name] for name in COUNTERS}
+        measured[world.shape.name] = {
+            **{name: window.counts[name] for name in COUNTERS},
+            **window.diagnostics,
+        }
     return measured
 
 

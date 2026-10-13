@@ -34,40 +34,39 @@ once and does nothing outside a window. SQLite connections outlive windows (an
 instance holds some open), so ``trace_sqlite`` installs a connect wrapper for the
 scale module's lifetime; its trace callbacks record nothing outside a window.
 
-SQL scans. The window over-counts rather than miss. Every execution is planned
-when it starts, afresh, with its own SQL, literals included (a literal can change
-the plan: a partial index serves ``other=1``, not ``other=2``), from its trace
-callback on its own connection (``EXPLAIN QUERY PLAN``; the callback ignores its
-own statements). So the plan sees that connection's temporary tables, attached
-schemas and uncommitted schema, and a database renamed or deleted before the
-window closes is planned and sized while it still exists. Only the schema's
-object list and trigger bodies are reused, keyed by every schema's version.
+SQL scans. The window over-counts rather than miss, and never reads the SQL text
+to find tables. Every execution is compiled afresh from its trace callback, on
+its own connection, as ``EXPLAIN QUERY PLAN`` and as ``EXPLAIN`` of its own SQL
+(literals included: a literal can change the plan) with SQLite's authorizer set
+(``statement_scan_rows``). The authorizer names, by their real names, every table
+the statement and every trigger it would fire read or write (a view's tables
+included); the program's cursors (``OpenRead``/``OpenWrite`` by root page,
+trigger programs included) add the tables read without naming a column
+(``count(*)``, ``EXISTS``). So spelling, quoting, aliases, CTE prefixes and
+views change nothing. Each touched table weighs its rows, counted afresh, unless
+the plan proves its access bounded:
 
-A plan step walks a table in full when it is a ``SCAN`` of it (a covering index
-walk included), or builds an automatic index over it. Its target is resolved to
-the real table: an alias (``FROM claims AS c`` plans as ``SCAN c``) through the
-statement's own references, ``schema.table`` through that schema, and CTEs,
-views and subqueries are skipped (their own scans are separate plan steps).
-Foreign-key checks are plan steps too, weighed each execution though SQLite runs
-them only per changed row. ``DELETE`` without ``WHERE``, ``CREATE INDEX`` and
-``DROP TABLE`` walk their table. The schema table (``sqlite_master``) resolves
-and weighs nothing: its rows are the schema, which no instance grows.
+- some plan step names it (by its real name, ``schema.table`` included; an
+  alias proves nothing) and every such step is an index lookup (a ``SEARCH``, not
+  through an automatic index), no plan step walks a table the plan does not
+  name, and the statement fires no trigger (the plan omits trigger programs); or
+- the whole statement is ``SELECT <columns> FROM <that table> LIMIT n
+  [OFFSET m]`` with a single-step plan and nothing filtering, sorting,
+  collapsing or combining it (``_row_preserving``): it weighs ``LIMIT + OFFSET``
+  rows.
 
-Writes (``write_scan_rows``). Python traces each trigger firing as a repeat of
-the outer statement, so every trace of a write keeps its own plan's weight and
-adds, for a write that names its target first, every statement of every trigger
-on that table (and of the triggers those reach), whether or not one fires; and
-for a write whose target or shape it does not establish (a ``WITH`` prefix, or
-any other form), every table the statement names, in full, plus every trigger
-on each. Trigger bodies read ``NEW.x``, ``OLD.x`` and ``RAISE(...)`` as NULL.
+So a table a statement only writes (an INSERT target) weighs its rows: the plan
+names no step for it. A view weighs nothing itself (its tables are reported);
+the schema table weighs nothing (its rows are the schema, which no instance
+grows); a table-valued function weighs nothing. ``PRAGMA integrity_check`` and
+its kind, ``ANALYZE``, ``VACUUM`` and ``REINDEX`` weigh every table. Python
+traces each trigger firing as a repeat of the outer statement, so each repeat is
+weighed again: an over-count. Transaction control weighs nothing.
 
-A ``LIMIT``ed walk counts only its ``LIMIT + OFFSET`` rows, and only for a
-proved row-preserving query: a single-step plan of ``SELECT <columns> FROM <one
-table> LIMIT n [OFFSET m]`` (``_row_preserving``); every other shape weighs the
-full table. Row counts are taken afresh at every scanning statement, never
-cached. Anything the window cannot resolve (a plan that fails, a target it
-cannot name, a statement kind it does not model) is recorded in
-``unexplained``, which the guard treats as a failure, never as zero.
+A window fails, never counting zero, when the authorizer cannot be installed,
+when it reports no write for an INSERT, REPLACE, UPDATE or DELETE, when a
+touched name is no object of its schema, or when a statement cannot be planned:
+each is recorded in ``unexplained``.
 """
 
 from __future__ import annotations
@@ -128,6 +127,10 @@ class Window:
     counts: Counter[str] = field(default_factory=Counter)
     #: Statements whose scans could not be resolved, with why; never counted as zero.
     unexplained: list[str] = field(default_factory=list)
+    #: Diagnostics outside the rule: ``insert_target_rows`` is the part of
+    #: ``sql_scan_rows`` weighed only because a table was a plain INSERT target
+    #: (written, never read, by no trigger), which no plan step can prove bounded.
+    diagnostics: Counter[str] = field(default_factory=Counter)
 
 
 _WINDOW: Window | None = None
@@ -314,7 +317,6 @@ def _on_statement(reference: Any, database: str, sql: str) -> None:
     _PLANNING = True
     try:
         window.counts["sql_scan_rows"] += statement_scan_rows(connection, sql)
-        window.counts["sql_scan_rows"] += write_scan_rows(connection, sql)
     except (Unexplained, sqlite3.Error) as exc:
         window.unexplained.append(f"{type(exc).__name__}: {exc} :: {sql[:160]}")
     finally:
@@ -352,20 +354,31 @@ def trace_sqlite(root: Path) -> Iterator[None]:
 
 _LITERALS = re.compile(r"[xX]'[0-9a-fA-F]*'|'(?:[^']|'')*'|\b\d+(?:\.\d+)?\b")
 _COMMENTS = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
-_NO_SCAN = frozenset(
-    {"BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE", "PRAGMA", "ATTACH", "DETACH"}
+#: Statements that touch no table's rows: transaction control.
+_TRANSACTION = frozenset({"BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE"})
+#: Statements that may walk every table: weighed as walking all of them.
+_EVERYTHING = frozenset({"ANALYZE", "VACUUM", "REINDEX"})
+#: Pragmas that walk every table of their schema.
+_SCANNING_PRAGMAS = frozenset(
+    {"integrity_check", "quick_check", "foreign_key_check", "cell_size_check", "optimize"}
 )
-_PLANNED = frozenset({"SELECT", "WITH", "INSERT", "REPLACE", "UPDATE", "DELETE", "VALUES"})
-_IDENT = r'(?:"(?:[^"]|"")+"|\[[^\]]+\]|`[^`]+`|[A-Za-z_][A-Za-z0-9_$]*)'
-_REFERENCE = re.compile(
-    rf"(?P<ref>{_IDENT}(?:\s*\.\s*{_IDENT})?)\s+(?:AS\s+)?(?P<alias>{_IDENT})", re.IGNORECASE
+_WRITES = frozenset({"INSERT", "REPLACE", "UPDATE", "DELETE"})
+_SCHEMA_TABLES = frozenset(
+    {"sqlite_master", "sqlite_schema", "sqlite_temp_master", "sqlite_temp_schema"}
 )
-_SUBQUERY_ALIAS = re.compile(rf"\)\s+(?:AS\s+)?(?P<alias>{_IDENT})", re.IGNORECASE)
-_CTE = re.compile(
-    rf"(?:\bWITH(?:\s+RECURSIVE)?|,)\s*(?P<name>{_IDENT})\s*(?:\([^)]*\)\s*)?AS\s+"
-    r"(?:NOT\s+)?(?:MATERIALIZED\s+)?\(",
-    re.IGNORECASE,
-)
+#: Authorizer actions that name the table they touch, and where its name is.
+_TABLE_ACTIONS = {
+    sqlite3.SQLITE_READ: 0,
+    sqlite3.SQLITE_INSERT: 0,
+    sqlite3.SQLITE_UPDATE: 0,
+    sqlite3.SQLITE_DELETE: 0,
+    sqlite3.SQLITE_CREATE_INDEX: 1,
+    sqlite3.SQLITE_CREATE_TEMP_INDEX: 1,
+    sqlite3.SQLITE_DROP_TABLE: 0,
+    sqlite3.SQLITE_DROP_TEMP_TABLE: 0,
+    sqlite3.SQLITE_ALTER_TABLE: 1,
+}
+_WRITE_ACTIONS = frozenset({sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE})
 _LIMIT = re.compile(r"\bLIMIT\s+(\d+)(?:\s+OFFSET\s+(\d+))?\s*;?\s*$", re.IGNORECASE)
 #: Anything that can make a LIMITed query read more rows than it returns.
 _UNBOUNDED = re.compile(
@@ -373,178 +386,11 @@ _UNBOUNDED = re.compile(
     r"FILTER|WITH|VALUES)\b|[(,]",
     re.IGNORECASE,
 )
-_TRIGGER_ROW = re.compile(r"\b(?:NEW|OLD)\s*\.\s*" + _IDENT, re.IGNORECASE)
-#: RAISE(...) plans only inside a trigger program; it reads nothing, so it reads as NULL.
-_RAISE = re.compile(r"\bRAISE\s*\(\s*\w+\s*(?:,\s*'(?:[^']|'')*'\s*)?\)", re.IGNORECASE)
-_CREATE_INDEX = re.compile(
-    rf"^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?{_IDENT}(?:\s*\.\s*{_IDENT})?"
-    rf"\s+ON\s+(?P<table>{_IDENT})",
-    re.IGNORECASE,
-)
-_CREATE_AS = re.compile(
-    r"^CREATE\s+(?:TEMP\w*\s+)?TABLE\b.*?\bAS\s+(?P<select>SELECT\b.*)$", re.IGNORECASE | re.DOTALL
-)
-_DROP_TABLE = re.compile(
-    rf"^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?P<table>{_IDENT}(?:\s*\.\s*{_IDENT})?)",
-    re.IGNORECASE,
-)
-_DELETE_ALL = re.compile(
-    rf"^DELETE\s+FROM\s+(?P<table>{_IDENT}(?:\s*\.\s*{_IDENT})?)\s*;?\s*$", re.IGNORECASE
-)
-#: Words that can follow a table reference without being its alias.
-_KEYWORDS = frozenset(
-    """ABORT ACTION ADD AFTER ALL ALTER ALWAYS ANALYZE AND AS ASC ATTACH AUTOINCREMENT BEFORE
-    BEGIN BETWEEN BY CASCADE CASE CAST CHECK COLLATE COLUMN COMMIT CONFLICT CONSTRAINT CREATE
-    CROSS CURRENT DEFAULT DEFERRABLE DEFERRED DELETE DESC DETACH DISTINCT DO DROP EACH ELSE END
-    ESCAPE EXCEPT EXCLUDE EXCLUSIVE EXISTS EXPLAIN FAIL FILTER FIRST FOLLOWING FOR FOREIGN FROM
-    FULL GENERATED GLOB GROUP GROUPS HAVING IF IGNORE IMMEDIATE IN INDEX INDEXED INITIALLY INNER
-    INSERT INSTEAD INTERSECT INTO IS ISNULL JOIN KEY LAST LEFT LIKE LIMIT MATCH MATERIALIZED
-    NATURAL NO NOT NOTHING NOTNULL NULL NULLS OF OFFSET ON OR ORDER OTHERS OUTER OVER PARTITION
-    PLAN PRAGMA PRECEDING PRIMARY QUERY RAISE RANGE RECURSIVE REFERENCES REGEXP REINDEX RELEASE
-    RENAME REPLACE RESTRICT RETURNING RIGHT ROLLBACK ROW ROWS SAVEPOINT SELECT SET TABLE TEMP
-    TEMPORARY THEN TIES TO TRANSACTION TRIGGER UNBOUNDED UNION UNIQUE UPDATE USING VACUUM
-    VALUES VIEW VIRTUAL WHEN WHERE WINDOW WITH WITHOUT""".split()
-)
-
-
-def _bare(identifier: str) -> str:
-    identifier = identifier.strip()
-    if identifier[:1] in ('"', "[", "`"):
-        identifier = identifier[1:-1].replace('""', '"')
-    return identifier
-
-
-def _name(reference: str) -> tuple[str | None, str]:
-    """``schema.table`` or ``table``, unquoted."""
-
-    parts = re.split(rf"\s*\.\s*(?={_IDENT}$)", reference.strip(), maxsplit=1)
-    if len(parts) == 2:
-        return _bare(parts[0]), _bare(parts[1])
-    return None, _bare(reference)
+_FRESH = 0
 
 
 def _quote(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
-
-
-def _cached(connection: TracedConnection, key: Any, compute: Callable[[], Any]) -> Any:
-    cache = connection.scale_cache
-    if key not in cache:
-        cache[key] = compute()
-    return cache[key]
-
-
-def _schema_version(connection: TracedConnection) -> tuple[tuple[str, int], ...]:
-    """Every schema's version: a cached plan or object list is good while these hold."""
-
-    return tuple(
-        (schema, int(connection.execute(f"PRAGMA {_quote(schema)}.schema_version").fetchone()[0]))
-        for schema in _schemas(connection)
-    )
-
-
-def _schemas(connection: TracedConnection) -> tuple[str, ...]:
-    """Schemas in SQLite's lookup order for an unqualified name: temp, main, attached."""
-
-    names = [str(row[1]) for row in connection.execute("PRAGMA database_list")]
-    return tuple(sorted(names, key=lambda name: (name != "temp", name != "main")))
-
-
-def _objects(connection: TracedConnection, version: Any) -> dict[str, dict[str, str]]:
-    """``schema -> {name: type}`` of every table, view and trigger."""
-
-    def read() -> dict[str, dict[str, str]]:
-        return {
-            schema: {
-                str(name): str(kind)
-                for kind, name in connection.execute(
-                    f"SELECT type, name FROM {_quote(schema)}.sqlite_master "
-                    "WHERE type IN ('table','view','trigger')"
-                )
-            }
-            for schema in _schemas(connection)
-        }
-
-    return _cached(connection, ("objects", version), read)  # type: ignore[no-any-return]
-
-
-_SCHEMA_TABLES = frozenset(
-    {"sqlite_master", "sqlite_schema", "sqlite_temp_master", "sqlite_temp_schema"}
-)
-
-
-def _table(
-    objects: dict[str, dict[str, str]], schema: str | None, name: str
-) -> tuple[str, str] | None:
-    if name.lower() in _SCHEMA_TABLES:
-        # The schema table itself: its rows are the schema's objects.
-        temporary = "temp" in name.lower()
-        return ("temp" if temporary else (schema or "main")), "sqlite_master"
-    for candidate in (schema,) if schema is not None else tuple(objects):
-        if objects.get(candidate, {}).get(name) == "table":
-            return candidate, name
-    return None
-
-
-def _non_base(objects: dict[str, dict[str, str]], schema: str | None, name: str) -> bool:
-    return any(
-        objects.get(candidate, {}).get(name) == "view"
-        for candidate in ((schema,) if schema is not None else tuple(objects))
-    )
-
-
-_TOKEN = re.compile(rf"{_IDENT}|\S")
-
-
-def _scope(
-    sql: str, objects: dict[str, dict[str, str]]
-) -> tuple[dict[str, set[tuple[str, str]]], set[str]]:
-    """The statement's aliases of real tables, and the names that are no base table.
-
-    A reference is ``[schema.]name [AS] alias`` wherever it stands (a name that
-    is no table, view or CTE never yields an alias); ``) [AS] alias`` names a
-    subquery; ``WITH name AS (`` and ``, name AS (`` name CTEs.
-    """
-
-    text = _COMMENTS.sub(" ", _LITERALS.sub("0", sql))
-    non_base = {_bare(match.group("name")) for match in _CTE.finditer(text)}
-    tokens = _TOKEN.findall(text)
-
-    def identifier(index: int) -> str | None:
-        if index >= len(tokens):
-            return None
-        token = tokens[index]
-        if not re.fullmatch(_IDENT, token) or token.upper() in _KEYWORDS:
-            return None
-        return _bare(token)
-
-    def alias_at(index: int) -> str | None:
-        if index < len(tokens) and tokens[index].upper() == "AS":
-            index += 1
-        return identifier(index)
-
-    aliases: dict[str, set[tuple[str, str]]] = {}
-    for index, token in enumerate(tokens):
-        if token == ")":
-            alias = alias_at(index + 1)
-            if alias is not None:
-                non_base.add(alias)
-            continue
-        if identifier(index) is None or (index > 0 and tokens[index - 1] == "."):
-            continue
-        schema, name, after = None, _bare(token), index + 1
-        if after + 1 < len(tokens) and tokens[after] == "." and identifier(after + 1) is not None:
-            schema, name, after = name, _bare(tokens[after + 1]), after + 2
-        alias = alias_at(after)
-        if alias is None:
-            continue
-        cte = schema is None and name in non_base
-        table = None if cte else _table(objects, schema, name)
-        if table is not None:
-            aliases.setdefault(alias, set()).add(table)
-        elif cte or _non_base(objects, schema, name):
-            non_base.add(alias)
-    return aliases, non_base
 
 
 def _row_preserving(sql: str) -> bool:
@@ -572,251 +418,246 @@ def _row_preserving(sql: str) -> bool:
     )
 
 
-def _scan_targets(
-    connection: TracedConnection, sql: str, version: Any
-) -> tuple[tuple[tuple[str, str], bool], ...]:
-    """Each table a statement's plan walks in full, and whether the walk is bounded.
+def _compiled(
+    connection: TracedConnection, sql: str
+) -> tuple[list[str], list[tuple[int, str | None, str | None, str | None, str | None]], list[Any]]:
+    """The statement's query plan and program, and every action SQLite authorizes.
 
-    Planned afresh for every execution, with its own SQL, literals included: a
-    literal can change the plan on an unchanged schema (a partial index serves
-    ``other=1`` and not ``other=2``), so no plan is ever reused.
+    The statement is compiled afresh twice (a unique comment keeps Python's
+    statement cache from handing back an earlier compilation), as ``EXPLAIN
+    QUERY PLAN`` and as ``EXPLAIN``, with the authorizer set: SQLite reports
+    every table the statement and the triggers it would fire read or write, by
+    its real name, with the trigger or view responsible; the program lists every
+    cursor it opens, trigger programs included.
     """
 
-    def plan() -> tuple[tuple[tuple[str, str], bool], ...]:
-        rows = connection.execute("EXPLAIN QUERY PLAN " + sql).fetchall()
-        details = [str(row[3]) for row in rows]
-        objects = _objects(connection, version)
-        aliases, non_base = _scope(sql, objects)
-        bounded = len(details) == 1 and _row_preserving(sql)
-        targets: list[tuple[tuple[str, str], bool]] = []
-        for detail in details:
-            if detail.startswith("SCAN "):
-                target = detail[len("SCAN ") :]
-            elif detail.startswith("SEARCH ") and " USING AUTOMATIC " in detail:
-                # Building the automatic index walks the whole table.
-                target = detail[len("SEARCH ") :]
-            else:
-                continue
-            if target == "CONSTANT ROW" or " VIRTUAL TABLE" in target or target.startswith("("):
-                continue
-            target = target.split(" USING ", 1)[0]
-            schema, name = _name(target)
-            if schema is None and name in aliases:
-                found = aliases[name]
-                if len(found) != 1:
-                    raise Unexplained(f"alias {name!r} names {sorted(found)}")
-                targets.append((next(iter(found)), bounded))
-                continue
-            if schema is None and name in non_base:
-                continue
-            table = _table(objects, schema, name)
-            if table is not None:
-                targets.append((table, bounded))
-            elif not _non_base(objects, schema, name):
-                raise Unexplained(f"plan step {detail!r} names no table, alias, view or CTE")
-        return tuple(targets)
+    global _FRESH
+    _FRESH += 1
+    events: list[tuple[int, str | None, str | None, str | None, str | None]] = []
 
-    return plan()
+    def authorize(
+        action: int, first: str | None, second: str | None, database: str | None, source: str | None
+    ) -> int:
+        events.append((action, first, second, database, source))
+        return sqlite3.SQLITE_OK
+
+    try:
+        connection.set_authorizer(authorize)
+    except (sqlite3.Error, AttributeError) as exc:
+        raise Unexplained(f"the authorizer cannot be installed: {exc}") from exc
+    text_factory = connection.text_factory
+    try:
+        text = sql.rstrip().rstrip(";")
+        tag = f"\n/* scale-guard {_FRESH} */"
+        plan = connection.execute(f"EXPLAIN QUERY PLAN {text}{tag}").fetchall()
+        # A program's operands hold the statement's blobs, which are no text.
+        connection.text_factory = lambda value: value.decode("utf-8", "replace")
+        program = connection.execute(f"EXPLAIN {text}{tag}").fetchall()
+    finally:
+        connection.text_factory = text_factory
+        connection.set_authorizer(None)
+    return [str(row[3]) for row in plan], events, program
+
+
+#: OP_Open** flag: P2 holds a register, not a root page.
+_P2_IS_REGISTER = 0x10
+_OPENS = frozenset({"OpenRead", "OpenWrite", "ReopenIdx"})
+
+
+def _opened(connection: TracedConnection, program: list[Any]) -> tuple[set[tuple[str, str]], bool]:
+    """The tables whose rows or indexes the program opens, and whether it runs a trigger."""
+
+    databases = {
+        int(seq): str(name) for seq, name, _file in connection.execute("PRAGMA database_list")
+    }
+    opened: set[tuple[str, str]] = set()
+    fires = False
+    for row in program:
+        opcode, page, database, flags = row[1], row[3], row[4], row[6]
+        if opcode == "Program":
+            fires = True
+        if opcode not in _OPENS or int(flags) & _P2_IS_REGISTER or int(page) == 1:
+            continue
+        schema = databases.get(int(database))
+        found = (
+            None
+            if schema is None
+            else connection.execute(
+                f"SELECT type, name, tbl_name FROM {_quote(schema)}.sqlite_master "
+                "WHERE rootpage = ?",
+                (int(page),),
+            ).fetchone()
+        )
+        if found is None:
+            raise Unexplained(f"a cursor on root page {page} of database {database} names nothing")
+        kind, name, table = (str(value) for value in found)
+        assert schema is not None
+        opened.add((schema, name if kind == "table" else table))
+    return opened, fires
+
+
+def _object_type(connection: TracedConnection, database: str, name: str) -> str | None:
+    row = connection.execute(
+        f"SELECT type FROM {_quote(database)}.sqlite_master WHERE name = ?", (name,)
+    ).fetchone()
+    return None if row is None else str(row[0])
+
+
+def _every_table(connection: TracedConnection) -> set[tuple[str, str]]:
+    return {
+        (str(schema), str(name))
+        for _seq, schema, _file in connection.execute("PRAGMA database_list").fetchall()
+        for (name,) in connection.execute(
+            f"SELECT name FROM {_quote(str(schema))}.sqlite_master WHERE type = 'table'"
+        ).fetchall()
+        if str(name) not in _SCHEMA_TABLES
+    }
 
 
 def _rows(connection: TracedConnection, table: tuple[str, str]) -> int:
     """The table's rows now, counted afresh every time: no cache can go stale."""
 
-    if table[1] == "sqlite_master":
-        # The schema table's rows are the database's schema, which no instance
-        # grows; weighing them would only dilute the growth the rule compares.
-        return 0
     schema, name = table
     (rows,) = connection.execute(f"SELECT count(*) FROM {_quote(schema)}.{_quote(name)}").fetchone()
     return int(rows)
 
 
-def _body(name: str, sql: str) -> tuple[str, ...]:
-    body = re.search(r"\bBEGIN\b(.*)\bEND\s*;?\s*$", sql, re.IGNORECASE | re.DOTALL)
-    if body is None:
-        raise Unexplained(f"trigger {name!r} has no BEGIN ... END body")
-    return tuple(
-        _RAISE.sub("NULL", _TRIGGER_ROW.sub("NULL", statement)).strip()
-        for statement in _split_statements(body.group(1))
-        if statement.strip()
-    )
+def _step_target(detail: str) -> tuple[str, bool, bool] | None:
+    """The name a plan step reads, whether it walks it, and whether it is virtual.
 
-
-def _triggers(
-    connection: TracedConnection, version: Any, *, name: str | None = None, table: str | None = None
-) -> tuple[str, ...]:
-    """The body statements of one named trigger, or of every trigger on one table."""
-
-    def read() -> tuple[str, ...]:
-        column, value = ("name", name) if name is not None else ("tbl_name", table)
-        found = [
-            (str(row[0]), str(row[1]))
-            for schema in _schemas(connection)
-            for row in connection.execute(
-                f"SELECT name, sql FROM {_quote(schema)}.sqlite_master "
-                f"WHERE type='trigger' AND {column}=?",
-                (value,),
-            )
-        ]
-        if name is not None and not found:
-            raise Unexplained(f"trigger {name!r} is not in any schema")
-        return tuple(statement for trigger, sql in found for statement in _body(trigger, sql))
-
-    return _cached(connection, ("triggers", version, name, table), read)  # type: ignore[no-any-return]
-
-
-_DML_TARGET = re.compile(
-    rf"^(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)"
-    rf"\s+(?P<table>{_IDENT}(?:\s*\.\s*{_IDENT})?)",
-    re.IGNORECASE,
-)
-
-
-_WRITES = frozenset({"INSERT", "REPLACE", "UPDATE", "DELETE"})
-
-
-def write_scan_rows(connection: TracedConnection, sql: str) -> int:
-    """What a write may walk beyond its own plan: its triggers, or everything it names.
-
-    Python traces each fired trigger program, and each statement in it, as a
-    repeat of the outer statement's expanded SQL, so a trace cannot tell an
-    execution from a trigger firing. Every trace of a write therefore weighs,
-    on top of its own plan (``_on_statement``):
-
-    - for ``INSERT``/``REPLACE``/``UPDATE``/``DELETE`` that names its target
-      first, every statement of every trigger on that table, whether or not
-      one fires, and of the triggers those statements reach in turn;
-    - for a write whose target and shape it does not establish (a ``WITH``
-      prefix, or any other form), every table the statement names, in full,
-      plus every trigger on each of them.
-
-    An over-count, never a miss.
+    A ``SCAN`` walks; a ``SEARCH`` is an index lookup, except one through an
+    automatic index, whose building walks the table. None for a step naming no
+    table (a constant row, a subquery).
     """
 
-    return _write_scan_rows(connection, sql, frozenset())
-
-
-def _named_tables(sql: str, objects: dict[str, dict[str, str]]) -> set[tuple[str, str]]:
-    """Every real table a statement names anywhere, CTE-shadowed or not."""
-
-    tokens = _TOKEN.findall(_COMMENTS.sub(" ", _LITERALS.sub("0", sql)))
-    named: set[tuple[str, str]] = set()
-    for index, token in enumerate(tokens):
-        if not re.fullmatch(_IDENT, token) or (index > 0 and tokens[index - 1] == "."):
-            continue
-        schema, name = None, _bare(token)
-        if (
-            index + 2 < len(tokens)
-            and tokens[index + 1] == "."
-            and re.fullmatch(_IDENT, tokens[index + 2])
-        ):
-            schema, name = name, _bare(tokens[index + 2])
-        table = _table(objects, schema, name)
-        if table is not None and table[1] != "sqlite_master":
-            named.add(table)
-    return named
-
-
-def _write_scan_rows(connection: TracedConnection, sql: str, seen: frozenset[str]) -> int:
-    text = sql.strip()
-    first = re.match(r"[A-Za-z]+", text)
-    keyword = first.group(0).upper() if first is not None else ""
-    version = _schema_version(connection)
-    target = _DML_TARGET.match(text)
-    if target is not None:
-        tables = {_name(target.group("table"))[1]}
-        total = 0
-    elif keyword in _WRITES or keyword == "WITH":
-        named = _named_tables(text, _objects(connection, version))
-        tables = {name for _schema, name in named}
-        total = sum(_rows(connection, table) for table in sorted(named))
+    if detail.startswith("SCAN "):
+        target, walks = detail[len("SCAN ") :], True
+    elif detail.startswith("SEARCH "):
+        target, walks = detail[len("SEARCH ") :], " USING AUTOMATIC " in detail
     else:
-        return 0
-    for table in sorted(tables - seen):
-        for body in _triggers(connection, version, table=table):
-            total += statement_scan_rows(connection, body)
-            total += _write_scan_rows(connection, body, seen | {table})
-    return total
-
-
-def _split_statements(text: str) -> list[str]:
-    statements, current, quote = [], [], None
-    for character in text:
-        if quote is not None:
-            if character == quote:
-                quote = None
-        elif character in ("'", '"'):
-            quote = character
-        elif character == ";":
-            statements.append("".join(current))
-            current = []
-            continue
-        current.append(character)
-    statements.append("".join(current))
-    return statements
+        return None
+    if target == "CONSTANT ROW" or target.startswith("("):
+        return None
+    virtual = " VIRTUAL TABLE" in target
+    return target.split(" USING ", 1)[0].split(" VIRTUAL TABLE", 1)[0], walks, virtual
 
 
 def statement_scan_rows(connection: TracedConnection, sql: str) -> int:
-    """Rows of every table one statement walks in full, on its own connection, now."""
+    """Rows of every table one statement may walk in full, on its own connection, now.
 
-    version = _schema_version(connection)
+    The tables come from SQLite, never from the SQL text: the authorizer's
+    reads and writes (the statement's and its triggers'), and the program's
+    cursors. Each weighs its rows unless the plan proves the access bounded:
+    some plan step names the table (by its real name; an alias proves nothing)
+    and every such step is an index lookup, no step walks a table the plan does
+    not name, and the statement fires no trigger; or the whole statement is a
+    proved row-preserving ``LIMIT`` walk of that table alone.
+    """
+
     text = sql.strip()
     if text.startswith("--"):
-        name = text[2:].strip()
-        if not name.upper().startswith("TRIGGER "):
-            raise Unexplained("a traced comment that is no trigger firing")
-        return sum(
-            statement_scan_rows(connection, body)
-            for body in _triggers(connection, version, name=_bare(name[len("TRIGGER ") :]))
-        )
+        # SQL SQLite runs itself (reloading statistics or the schema), traced as a
+        # comment; a trigger traced unexpanded (``-- TRIGGER name``) is no statement.
+        text = text[2:].strip()
+        if text.upper().startswith("TRIGGER "):
+            raise Unexplained("a trigger traced without its statement")
     first = re.match(r"[A-Za-z]+", text)
     keyword = first.group(0).upper() if first is not None else ""
-    if keyword in _NO_SCAN:
+    if keyword in _TRANSACTION:
         return 0
-    objects = _objects(connection, version)
-    if keyword == "CREATE":
-        index = _CREATE_INDEX.match(text)
-        if index is not None:
-            table = _table(objects, None, _bare(index.group("table")))
-            return 0 if table is None else _rows(connection, table)
-        selected = _CREATE_AS.match(text)
-        if selected is not None:
-            return statement_scan_rows(connection, selected.group("select"))
-        return 0
-    if keyword == "DROP":
-        dropped = _DROP_TABLE.match(text)
-        if dropped is None:
-            return 0
-        table = _table(objects, *_name(dropped.group("table")))
-        return 0 if table is None else _rows(connection, table)
-    if keyword == "DELETE":
-        everything = _DELETE_ALL.match(text)
-        if everything is not None:
-            table = _table(objects, *_name(everything.group("table")))
-            if table is None:
-                raise Unexplained(f"DELETE names no table: {everything.group('table')}")
-            return _rows(connection, table)
-    if keyword == "ALTER":
-        altered = re.match(
-            rf"^ALTER\s+TABLE\s+(?P<table>{_IDENT}(?:\s*\.\s*{_IDENT})?)\s+DROP\b",
-            text,
-            re.IGNORECASE,
-        )
-        if altered is None:
-            return 0  # renames and added columns change the schema only
-        table = _table(objects, *_name(altered.group("table")))
-        return 0 if table is None else _rows(connection, table)
-    if keyword not in _PLANNED:
-        raise Unexplained(f"statement kind {keyword!r} is not modelled")
+    if keyword in _EVERYTHING:
+        return sum(_rows(connection, table) for table in sorted(_every_table(connection)))
+    if not keyword:
+        raise Unexplained("a statement whose kind cannot be read")
+    details, events, program = _compiled(connection, text)
+    if any(
+        action == sqlite3.SQLITE_PRAGMA and str(first_name).lower() in _SCANNING_PRAGMAS
+        for action, first_name, _second, _database, _source in events
+    ):
+        return sum(_rows(connection, table) for table in sorted(_every_table(connection)))
+    touched = _touched(events)
+    if keyword in _WRITES and not any(actions & _WRITE_ACTIONS for actions in touched.values()):
+        raise Unexplained("SQLite authorized no write for a write statement")
+    opened, fires = _opened(connection, program)
+    for table in opened - set(touched):
+        touched[table] = set()  # read without naming a column (count(*), EXISTS)
+    views = {
+        (database, source)
+        for _action, _first, _second, database, source in events
+        if source is not None
+        and database is not None
+        and _object_type(connection, database, source) == "view"
+    }
+    triggered = fires or any(
+        source is not None and (database, source) not in views
+        for _action, _first, _second, database, source in events
+    )
+    steps = [step for step in map(_step_target, details) if step is not None]
+    named = {name.lower(): table for table in touched for name in (table[1], ".".join(table))}
+    unnamed_walk = any(walks for name, walks, _virtual in steps if name.lower() not in named)
     total = 0
-    for table, bounded in _scan_targets(connection, text, version):
+    for table in sorted(touched):
+        own = [
+            (walks, virtual) for name, walks, virtual in steps if named.get(name.lower()) == table
+        ]
+        kind = _object_type(connection, *table)
+        if kind is None:
+            if own and all(virtual for _walks, virtual in own):
+                continue  # a table-valued function, over its own arguments
+            if keyword == "CREATE":
+                continue  # the object this statement creates: nothing in it yet
+            raise Unexplained(f"{'.'.join(table)} is no object of its schema")
+        if kind == "view":
+            continue  # the tables it reads are reported themselves
+        if own and not triggered and not unnamed_walk and not any(w for w, _v in own):
+            continue  # every access is an index lookup the plan names
         rows = _rows(connection, table)
-        if bounded:
+        window = _WINDOW
+        if (
+            window is not None
+            and not own
+            and not triggered
+            and touched[table] == {sqlite3.SQLITE_INSERT}
+        ):
+            window.diagnostics["insert_target_rows"] += rows
+        if (
+            len(details) == 1
+            and own == [(True, False)]
+            and len(touched) == 1
+            and touched[table] <= {sqlite3.SQLITE_READ}
+            and not triggered
+            and _row_preserving(text)
+        ):
             limit = _LIMIT.search(text)
             assert limit is not None
             rows = min(rows, int(limit.group(1)) + int(limit.group(2) or 0))
         total += rows
     return total
+
+
+def _table_of(
+    action: int, first_name: str | None, second_name: str | None, database: str | None
+) -> tuple[str, str] | None:
+    position = _TABLE_ACTIONS.get(action)
+    if position is None:
+        return None
+    name = (first_name, second_name)[position]
+    if action == sqlite3.SQLITE_ALTER_TABLE:
+        database = first_name
+    if name is None or database is None or name in _SCHEMA_TABLES:
+        return None
+    return database, name
+
+
+def _touched(
+    events: list[tuple[int, str | None, str | None, str | None, str | None]],
+) -> dict[tuple[str, str], set[int]]:
+    touched: dict[tuple[str, str], set[int]] = {}
+    for action, first_name, second_name, database, _source in events:
+        table = _table_of(action, first_name, second_name, database)
+        if table is not None:
+            touched.setdefault(table, set()).add(action)
+    return touched
 
 
 @contextmanager
