@@ -13,6 +13,7 @@ from cruxible_core.ledger.git import GitLedger
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage import cas
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
+from cruxible_core.storage.landing_log import LOG_NAME, PENDING_NAME, LandingLog
 
 READ = BodyAccessContext(principal_id="owner", can_read_body=True)
 
@@ -246,14 +247,14 @@ def test_a_landing_logged_before_its_object_is_logged_again_once_it_is_final(tmp
     store, _digest, _path = _store(tmp_path)
     content = b"in flight"
     seen: list[tuple[str, bool]] = []
-    original = store.landings.__class__.note
+    original = LandingLog._append
 
-    def note(self, digest, kind):  # type: ignore[no-untyped-def]
-        sequence = original(self, digest, kind)
+    def append(self, kind, digest, *, sync):  # type: ignore[no-untyped-def]
+        sequence = original(self, kind, digest, sync=sync)
         seen.append((kind, store.verify(digest)))
         return sequence
 
-    monkeypatch.setattr(store.landings.__class__, "note", note)
+    monkeypatch.setattr(LandingLog, "_append", append)
     store.store(content)
     assert seen == [("store", False), ("stored", True)]
 
@@ -264,4 +265,123 @@ def test_a_missing_landing_log_reads_as_empty_and_is_not_created(tmp_path):
     store = ContentAddressedBodyStore(root)
     assert (store.landings.head().identity, store.landings.head().sequence) == ("", 0)
     assert store.landings.after(0) == ()
-    assert not store.landings.path.exists()
+    assert not (store._algorithm_root / LOG_NAME).exists()
+    assert not (store._algorithm_root / PENDING_NAME).exists()
+
+
+def _kinds(store, after: int = 0) -> list[tuple[str, str]]:  # type: ignore[no-untyped-def]
+    return [(row.digest, row.kind) for row in store.landings.after(after)]
+
+
+@pytest.mark.parametrize("failing", ("store", "stored"))
+def test_a_store_interrupted_at_either_row_is_settled_by_its_retry(tmp_path, monkeypatch, failing):
+    """However a landing is interrupted, its retry publishes the object's final state."""
+
+    store, _digest, _path = _store(tmp_path)
+    head = store.landings.head().sequence
+    original = LandingLog._append
+    content = b"interrupted body"
+    digest = store.digest_bytes(content).tagged
+
+    def append(self, kind, digest, *, sync):  # type: ignore[no-untyped-def]
+        if kind == failing:
+            raise CasError("the landing row could not be written")
+        return original(self, kind, digest, sync=sync)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(LandingLog, "_append", append)
+        with pytest.raises(CasError, match="landing row"):
+            store.store(content)
+    assert store.landings.unfinished()
+    # A failed intent never wrote the object; a failed completion did.
+    assert store.verify(digest) is (failing == "stored")
+    store.store(content)
+    assert not store.landings.unfinished()
+    rows = _kinds(store, head)
+    assert rows[-1] == (digest, "stored")
+    if failing == "stored":
+        assert rows == [(digest, "store"), (digest, "stored")]
+
+
+def test_a_store_whose_object_write_fails_publishes_its_absence(tmp_path, monkeypatch):
+    store, _digest, _path = _store(tmp_path)
+    head = store.landings.head().sequence
+    content = b"never written"
+    digest = store.digest_bytes(content).tagged
+
+    def failed(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise CasError("CAS body could not be stored durably")
+
+    monkeypatch.setattr(store, "_write_object", failed)
+    with pytest.raises(CasError, match="durably"):
+        store.store(content)
+    assert not store.landings.unfinished()
+    assert _kinds(store, head) == [(digest, "store"), (digest, "erased")]
+
+
+def test_an_erase_interrupted_before_its_completion_is_settled_by_retry_or_reopen(
+    tmp_path, monkeypatch
+):
+    store, digest, _path = _store(tmp_path)
+    head = store.landings.head().sequence
+    original = LandingLog._append
+
+    def append(self, kind, digest, *, sync):  # type: ignore[no-untyped-def]
+        if kind == "erased":
+            raise CasError("the landing row could not be written")
+        return original(self, kind, digest, sync=sync)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(LandingLog, "_append", append)
+        with pytest.raises(CasError, match="landing row"):
+            store.erase(digest)
+    assert store.landings.unfinished() and not store.verify(digest)
+    # Reopening the store settles what any writer left unfinished.
+    reopened = ContentAddressedBodyStore(store.root)
+    assert not reopened.landings.unfinished()
+    assert _kinds(reopened, head) == [(digest, "erase"), (digest, "erased")]
+    # A retry of the same erase is idempotent and publishes nothing more.
+    assert reopened.erase(digest) is False
+    assert _kinds(reopened, head) == [(digest, "erase"), (digest, "erased")]
+
+
+def test_a_live_writers_landing_is_not_settled_under_it(tmp_path):
+    """Reconciliation skips a marker another live writer holds: that writer publishes."""
+
+    store, _digest, _path = _store(tmp_path)
+    content = b"slow writer"
+    digest = store.digest_bytes(content).tagged
+    with store.landings.operation(digest, "store"):
+        other = ContentAddressedBodyStore(store.root)
+        assert other.landings.reconcile() == 0
+        assert store.landings.unfinished()
+    assert not store.landings.unfinished()
+
+
+@pytest.mark.parametrize("level", ["algorithm", "cas", "managed"])
+def test_a_retained_landing_log_follows_the_held_directory_through_a_swap(tmp_path, level):
+    """The log is reached through the held directory, never a pathname: a swapped
+    ancestor redirects neither its writes nor its reads."""
+
+    store, digest, _path = _store(tmp_path)
+    log = store.landings
+    head = log.head()
+    ancestor = {
+        "algorithm": store._algorithm_root,
+        "cas": store._algorithm_root.parent,
+        "managed": store._algorithm_root.parent.parent,
+    }[level]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.replace(ancestor, outside / "moved")
+    stand_in = outside / "stand-in"
+    stand_in.mkdir()
+    ancestor.symlink_to(stand_in, target_is_directory=True)
+
+    with log.operation(digest, "erase"):
+        pass
+    assert log.head().identity == head.identity
+    assert log.head().sequence == head.sequence + 2
+    assert [row.kind for row in log.after(head.sequence)] == ["erase", "stored"]
+    assert log.reconcile() == 0 and not log.unfinished()
+    assert list(stand_in.rglob("*")) == []

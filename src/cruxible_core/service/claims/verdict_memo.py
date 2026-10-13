@@ -59,17 +59,18 @@ def verdict_input_fingerprint(instance: object) -> str | None:
     """
 
     from cruxible_client.contracts.errors import CasError
-    from cruxible_core.storage.landing_log import LandingLog
 
     root = getattr(instance, "root", None)
     descriptor = getattr(instance, "descriptor", None)
     if not isinstance(root, Path) or descriptor is None:
         return None
     storage = getattr(descriptor, "storage", None)
-    if storage is None:
+    body_store = getattr(instance, "body_store", None)
+    if storage is None or body_store is None:
         return None
     try:
-        head = LandingLog(root / getattr(storage, "cas", "cas") / "sha256").head()
+        # Through the store's held directory: never a pathname an ancestor swap redirects.
+        head = body_store().landings.head()
     except (CasError, OSError):
         return None
     token = f"{head.identity}:{head.sequence}"

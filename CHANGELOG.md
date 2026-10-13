@@ -9,9 +9,12 @@
   body-store landings, re-observations and its own `next.facts.expire`
   deadline. `orient` counts Claims by status from it while it is current,
   instead of deriving every status at the read. The body store now logs each
-  evidence body that lands and each erase in sequence (`landings.sqlite3` in
-  its algorithm directory), which replaces the evidence-generation token in the
-  verdict memos. A dependency lineage's 4,096-predecessor budget is now its
+  evidence body that lands and each erase in sequence (`landings.log` in its
+  algorithm directory, written and read through the store's held directory), an
+  intent before the object moves and a completion after; an operation a writer
+  leaves unfinished is settled on its retry, when the store reopens and before
+  every next pass. This replaces the evidence-generation token in the verdict
+  memos. A dependency lineage's 4,096-predecessor budget is now its
   own rather than shared by every Claim.
 - **Procedures propose Claim retirements.** A `propose_change_set` or
   `settle_change_set` item may be a retirement

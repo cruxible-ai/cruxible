@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import heapq
 import os
@@ -231,6 +230,8 @@ class ContentAddressedBodyStore:
             raise CasError("CAS algorithm directory changed while it was opened")
         self._root_fd = descriptor
         weakref.finalize(self, os.close, descriptor)
+        # Opening the store settles any landing a writer left unfinished.
+        self.landings.reconcile()
 
     @property
     def capture_envelopes(self) -> CaptureEnvelopeIndex:
@@ -238,25 +239,11 @@ class ContentAddressedBodyStore:
 
         return CaptureEnvelopeIndex(self)
 
-    def _held_directory(self) -> Path:
-        """Where the held algorithm directory is now, read from its descriptor.
-
-        A directory moved away (an ancestor replaced by a symlink, say) is still
-        the one the store validated, so what the store writes beside its
-        objects follows it there instead of following the old path.
-        """
-
-        get_path = getattr(fcntl, "F_GETPATH", None)
-        if get_path is not None:
-            raw = fcntl.fcntl(self._root_fd, get_path, bytes(1024))
-            return Path(os.fsdecode(raw.split(b"\0", 1)[0]))
-        return Path(os.readlink(f"/proc/self/fd/{self._root_fd}"))
-
     @property
     def landings(self) -> LandingLog:
         """The sequenced log of every evidence body that lands and every erase."""
 
-        return LandingLog(self._held_directory())
+        return LandingLog(self)
 
     @staticmethod
     def digest_bytes(content: bytes) -> CasDigest:
@@ -442,35 +429,14 @@ class ContentAddressedBodyStore:
                 existing = None
             if existing is not None:
                 self._verified_bytes(digest.tagged)
+                if not journal_payload:
+                    # A retry after an interrupted landing: publish its completion.
+                    self.landings.reconcile(digest.tagged)
+            elif journal_payload:
+                self._write_object(name, content, digest.tagged, directory)
             else:
-                if not journal_payload:
-                    self.landings.note(digest.tagged, "store")
-                descriptor: int | None = None
-                try:
-                    descriptor = os.open(
-                        name,
-                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                        0o600,
-                        dir_fd=directory,
-                    )
-                    view = memoryview(content)
-                    while view:
-                        written = os.write(descriptor, view)
-                        if written <= 0:  # pragma: no cover - defensive OS contract
-                            raise CasError("CAS write made no progress")
-                        view = view[written:]
-                    os.fchmod(descriptor, 0o600)
-                    os.fsync(descriptor)
-                except FileExistsError:
-                    self._verified_bytes(digest.tagged)
-                except OSError as exc:
-                    raise CasError("CAS body could not be stored durably") from exc
-                finally:
-                    if descriptor is not None:
-                        os.close(descriptor)
-                os.fsync(directory)
-                if not journal_payload:
-                    self.landings.note(digest.tagged, "stored")
+                with self.landings.operation(digest.tagged, "store"):
+                    self._write_object(name, content, digest.tagged, directory)
         finally:
             os.close(directory)
         return CasObjectMetadata(
@@ -479,6 +445,32 @@ class ContentAddressedBodyStore:
             byte_length=len(content),
             redacted=False,
         )
+
+    def _write_object(self, name: str, content: bytes, digest: str, directory: int) -> None:
+        descriptor: int | None = None
+        try:
+            descriptor = os.open(
+                name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=directory,
+            )
+            view = memoryview(content)
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:  # pragma: no cover - defensive OS contract
+                    raise CasError("CAS write made no progress")
+                view = view[written:]
+            os.fchmod(descriptor, 0o600)
+            os.fsync(descriptor)
+        except FileExistsError:
+            self._verified_bytes(digest)
+        except OSError as exc:
+            raise CasError("CAS body could not be stored durably") from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        os.fsync(directory)
 
     def _memo_key(self, digest: str) -> tuple[str, str]:
         return (str(self._path(digest)), digest)
@@ -616,21 +608,23 @@ class ContentAddressedBodyStore:
         """Delete one exact verified body; semantic envelopes must be preserved elsewhere."""
 
         if self._object_status(digest) is None:
+            # A retry after an interrupted erase: publish its completion.
+            self.landings.reconcile(digest)
             return False
         self._verified_bytes(digest)
         shard, name = self._names(digest)
         directory = self._shard(shard)
         if directory is None:
             return False
-        self.landings.note(digest, "erase")
         try:
-            os.unlink(name, dir_fd=directory)
-            os.fsync(directory)
-        except OSError as exc:
-            raise CasError("CAS body could not be erased") from exc
+            with self.landings.operation(digest, "erase"):
+                try:
+                    os.unlink(name, dir_fd=directory)
+                    os.fsync(directory)
+                except OSError as exc:
+                    raise CasError("CAS body could not be erased") from exc
         finally:
             os.close(directory)
-        self.landings.note(digest, "erased")
         return True
 
 
