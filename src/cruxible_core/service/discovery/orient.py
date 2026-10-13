@@ -25,7 +25,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from cruxible_client import contracts
 from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
@@ -105,6 +105,9 @@ from cruxible_core.service.read_refusals import (
     nearest,
     resolve_read_coordinate,
 )
+
+if TYPE_CHECKING:
+    from cruxible_core.consumers.next.facts import ReadHeads
 
 _LIST = "orient"
 _NEXT_PROFILE = CoverageAccessProfile(
@@ -605,6 +608,7 @@ def _attention(
     caller_rung: int | None,
     surface: OrientSurface,
     caller_tools: tuple[str, ...] | None,
+    heads: ReadHeads | None,
     provider_lane: contracts.ProviderLaneStatus | None = None,
     consumers_running: bool = False,
 ) -> tuple[OrientAttention, bool]:
@@ -632,6 +636,7 @@ def _attention(
             caller_principal_id=None if caller is None else caller.actor_id,
             caller_rung=caller_rung,
             match=lambda item: _upgrade_hint((item,)) is not None,
+            heads=heads,
         )
         items, total = queue.items, queue.total_items
         reused = queue.matching_item
@@ -841,6 +846,8 @@ def service_playbill_orient(
     view = section or ("kind" if kind is not None else "kinds")
     continuation, at = _continuation(instance, cursor, view=view, at=at)
     coordinate = resolve_read_coordinate(instance, at)
+    # Named by the caller or a cursor, or selected here: every read below is at it,
+    # whatever is accepted meanwhile (a point-in-time read).
     served = AcceptedCoordinate.from_internal(coordinate)
     moment = (evaluation_time or datetime.now(UTC)).astimezone(UTC)
     state = _read_state(instance, coordinate)
@@ -954,6 +961,16 @@ def service_playbill_orient(
             next=tuple(render_orient_call(call, surface) for call in calls),
         )
 
+    from cruxible_core.consumers.next.facts import read_heads
+
+    # One set of heads for the whole read: the attention summary and the Claim
+    # tally answer as of the same door, landing and re-observation positions.
+    # Heads that cannot be read (an unreadable door) leave attention to report
+    # its queue unreadable and the Claim counts to record their own positions.
+    try:
+        heads: ReadHeads | None = read_heads(instance, coordinate=coordinate)
+    except CruxibleError:
+        heads = None
     attention, upgrade = _attention(
         instance,
         coordinate=coordinate,
@@ -963,6 +980,7 @@ def service_playbill_orient(
         caller_rung=caller_rung,
         surface=surface,
         caller_tools=caller_tools,
+        heads=heads,
         provider_lane=provider_lane,
         consumers_running=consumers_running,
     )
@@ -1014,7 +1032,7 @@ def service_playbill_orient(
             queries=len(state.queries),
             interfaces=len(state.interfaces),
             **counts,
-            claims=_claim_counts(instance, coordinate, evaluation_time=moment),
+            claims=_claim_counts(instance, coordinate, evaluation_time=moment, heads=heads),
         ),
         queries=state.queries[:ORIENT_DEFAULT_QUERIES],
         attention=attention,
@@ -1040,12 +1058,38 @@ def _claim_counts(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
+    heads: ReadHeads | None = None,
 ) -> OrientClaimCounts:
-    """Every accepted Claim counted by status, from the remembered resolution when it holds.
+    """Every accepted Claim counted by status: from the next facts' tally.
 
-    The ``next`` fold just derived the same statuses at this coordinate, so a
-    warm memo answers from the index alone; a miss derives them once.
+    The next worker keeps each Claim's resolution status from change records
+    and counts them as they move; a worker behind or an instant outside its
+    facts' intervals costs the change, read through the same rolled-back
+    overlay next's rows use. Only where next folds (the worker disabled or not
+    yet run, a historical coordinate) or a slot did not resolve does the
+    remembered resolution answer, and a miss derive the statuses once. Both
+    read at ``heads``, the ones orient's attention read at (None: recorded here).
     """
+
+    from cruxible_core.consumers.next.facts import claim_status_tally, read_positions
+    from cruxible_core.storage.read_positions import reading_at
+
+    tally = claim_status_tally(
+        instance, coordinate=coordinate, evaluation_time=evaluation_time, heads=heads
+    )
+    if tally is not None:
+        return OrientClaimCounts(**tally)
+    with reading_at(read_positions(instance) if heads is None else heads.positions):
+        return _derived_claim_counts(instance, coordinate, evaluation_time=evaluation_time)
+
+
+def _derived_claim_counts(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    *,
+    evaluation_time: datetime,
+) -> OrientClaimCounts:
+    """Every accepted Claim counted by status, derived at one read's recorded positions."""
 
     from cruxible_core.service.authoring.documents import AcceptedCoordinate
     from cruxible_core.service.discovery.claim_status import (

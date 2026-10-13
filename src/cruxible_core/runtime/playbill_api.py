@@ -217,7 +217,7 @@ from cruxible_core.service.discovery.curation import (
     validate_playbill_curation_observe_request,
 )
 from cruxible_core.service.discovery.next import (
-    NextRequestV1,
+    NextRequest,
     service_playbill_next,
     validate_playbill_next_request,
 )
@@ -607,6 +607,31 @@ def playbill_instance_decommission(
                 decommissioned_by=record.decommissioned_by,
                 coordinate=full_coordinate(instance),
             )
+
+
+def playbill_instance_rebuild_next(instance_id: str) -> contracts.NextRebuildResult:
+    """Drop the next worker's facts and rows and derive them again from nothing.
+
+    The repair for state the worker cannot follow forward (R6). It changes no
+    accepted state and no evidence: the tables are derived from the accepted
+    tree and the change logs, as on a first start.
+    """
+
+    from cruxible_core.consumers.next.facts import FORMAT, rebuild
+
+    check_permission("cruxible_instance_rebuild_next", instance_id=instance_id)
+    # Only a registered principal repairs an instance, as for every instance write.
+    _actor_id(instance_id)
+    instance = get_playbill_manager().get(instance_id)
+    rebuilt = rebuild(instance, now=utc_now())
+    return contracts.NextRebuildResult(
+        instance_id=instance_id,
+        coordinate=full_coordinate(instance),
+        format=FORMAT,
+        claims=rebuilt.claims,
+        keys=rebuilt.keys,
+        rows=rebuilt.rows,
+    )
 
 
 def _mirror_receipt(
@@ -2267,7 +2292,7 @@ def _caller_authoring_refusal(instance_id: str) -> AuthoringRefusal | None:
 def playbill_next(
     instance_id: str,
     *,
-    request: NextRequestV1 | Mapping[str, object],
+    request: NextRequest | Mapping[str, object],
 ) -> contracts.NextResult:
     check_permission("cruxible_next", instance_id=instance_id)
     lane_state, lane_code, lane_detail = (

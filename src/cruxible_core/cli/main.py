@@ -54,6 +54,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("floor", "delivery"): "manual",
     ("init",): "active",
     ("instance", "decommission"): "active",
+    ("instance", "rebuild-next"): "active",
     ("body", "store"): "active",
     ("provider", "install"): "active",
     ("kit", "add"): "active",
@@ -445,7 +446,12 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill",
                 "decommission_instance",
                 "End this instance's governed writes without deleting anything.",
-            )
+            ),
+            "rebuild-next": _command(
+                "playbill",
+                "rebuild_next",
+                "Drop the next worker's facts and rows and derive them again from nothing.",
+            ),
         },
         module="playbill",
         attr="instance_group",

@@ -30,7 +30,7 @@ from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmiss
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE, PlaybillInstance
 from cruxible_core.service.claims.subjects import service_get_playbill_subject
 from cruxible_core.service.discovery.next import (
-    NextRequestV1,
+    NextRequest,
     service_playbill_next,
 )
 from cruxible_core.service.discovery.orient import service_playbill_orient
@@ -118,7 +118,7 @@ def test_a_decommissioned_instance_refuses_writes_typed_and_keeps_serving_reads(
 
     status = service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             evaluation_time=EVALUATION_TIME,
             access_profile=CoverageAccessProfile(profile_id="decommission-test"),
         ),

@@ -133,9 +133,9 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # S3: `procedure readiness|status` folded into `get`, `procedure bind` was cut,
     # `line status` folded into `get Line:<name>`, `line check` became
     # `line evaluate --dry-run`. v1 polish added `proposal reject`; the Line inbox
-    # added `inbox list|get|ack|dismiss|link`.
-    assert len(leaf_claims) == 105, (
-        f"expected 105 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    # added `inbox list|get|ack|dismiss|link`; incremental next added `instance rebuild-next`.
+    assert len(leaf_claims) == 106, (
+        f"expected 106 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

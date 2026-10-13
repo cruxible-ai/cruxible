@@ -259,7 +259,7 @@ def _tick(part: str) -> Callable[[World], object]:
 
 #: Whether a tick of each part has work after a generation: the triggers fire
 #: floor.refresh and curation.detect, the armed Line's GenerationAccepted Trigger
-#: is due, the new Claims' Captures wait for the evidence check, the queue and the
+#: is due, the new Claims' Captures wait for the evidence check, next's facts and the
 #: floor have a new target, curation a new generation, and the refusal index a
 #: generation to catch up. Neither world holds a prediction contract, so the
 #: prediction part only ever matches. Idle, nothing is due anywhere.
@@ -267,7 +267,7 @@ _DUE_AFTER_GENERATION = {
     "triggers": True,
     "line": True,
     "floor": True,
-    "queue": True,
+    "facts": True,
     "evidence": True,
     "prediction": False,
     "curation": True,
@@ -486,9 +486,9 @@ def _stale_base_write(world: World) -> object:
 
 
 def _store_body(world: World) -> None:
-    """Bring the stored queue current, then store one body (a client's ``store_body``)."""
+    """Bring next's facts current, then store one body (a client's ``store_body``)."""
 
-    _worlds.tick(world, "queue")
+    _worlds.tick(world, "facts")
     playbill_api.playbill_store_body(
         world.instance_id,
         content_base64=base64.b64encode(f"scale body {world.shape.name}\n".encode()).decode(),
@@ -510,12 +510,6 @@ def _reopen(world: World) -> None:
 _FLOOR_PARSE = (
     "audit#11: each floor refresh parses and digests every current Claim "
     "(service/floor/floor_index.py:188 _parse_into, via build_floor_inputs :277)"
-)
-_QUEUE_FOLD = (
-    "K1/audit#1: each next-queue fold reads, parses and re-resolves every Claim, once for "
-    "V1 and once for V2 (service/evidence/evidence.py:334 via "
-    "service/discovery/next.py:2086; consumers/next/queue.py:213,219; "
-    "service/discovery/claim_status.py:293)"
 )
 _CURATION = (
     "audit#2: curation detection rescans the instance every generation: unscoped facts "
@@ -547,15 +541,6 @@ _AUDIT = (
     "(service/discovery/audit.py:315-319 _history_index), plus unscoped facts (:725) and "
     "a Capture per row (:427)"
 )
-_LIVE_FOLD = (
-    "audit#3: with no stored queue, next folds every Claim live: all Claims and slots "
-    "(service/discovery/next.py:5630-5639) and each Claim's law record "
-    "(next.py:5674 -> :3227 -> service/claims/claims.py:529)"
-)
-_ORIENT_FOLD = (
-    "audit#15: orient after an activation runs the live next fold for its attention "
-    "section (service/discovery/orient.py:621 -> next.py:5819 -> :5630)"
-)
 _SETTLE = (
     "audit#9: each settle builds the condition's query facts over every Claim of its "
     "predicates and every Subject, three times at one coordinate "
@@ -563,27 +548,11 @@ _SETTLE = (
     "service/discovery/query.py:626; via procedures/proposal_delivery.py:2014 and "
     "proposals/proposals.py:4554)"
 )
-_BODY_STORE = (
-    "audit#1: storing one body moves the instance-wide evidence token "
-    "(storage/cas.py:426-450), so the next queue tick refolds every Claim "
-    "(service/evidence/evidence.py:334 via service/discovery/next.py:2086)"
-)
 _COLD_DERIVE = (
     "audit#23: the first write or dry run after an open derives the indexed state cold, "
     "building every artifact's dependency edges (indexes/evaluated_state.py:747 "
     "derive_indexed_state -> claims/closure.py:496, via proposals/proposals.py:4998); "
     "the cost model allows a cold-start rebuild (needs a ruling)"
-)
-_FOLD_SQL = (
-    "; in SQL, every Claim law record walked whole (indexes/history/history_index.py:686 "
-    "claim_law_locations with no path, via service/claims/claims.py:528) and two "
-    "generation records read per Claim (:483 via claims.py:529-530, from "
-    "service/discovery/next.py:3227)"
-)
-_HEADS_SQL = (
-    ", and every Claim's law head read in one IN list (indexes/history/history_index.py:701 "
-    "claim_law_heads via service/evidence/evidence.py:534, from "
-    "service/discovery/claim_status.py:247)"
 )
 _ACQUIRE = (
     "the history index acquired afresh: a read-only open with BEGIN and a schema load "
@@ -631,19 +600,6 @@ GROWS: dict[str, dict[str, str]] = {
             "(indexes/history/history_index.py:483 via service/floor/floor_content.py:295)"
         ),
     },
-    "tick.after_generation.queue": {
-        **_grows(_QUEUE_FOLD, "claim_parses", *_DIGESTS, "git_blob_reads"),
-        "sql_vm_steps": _QUEUE_FOLD + _FOLD_SQL + _HEADS_SQL,
-        "file_opens": (
-            "K1/audit#1: each next-queue fold evaluates every Claim's verdict "
-            "(service/evidence/evidence.py:1285) and stats every body it rests on "
-            "(service/evidence/evidence.py:727)"
-        ),
-        "sql_statements": (
-            "K1/audit#1: each next-queue fold reads every Claim's law record "
-            "(service/claims/claims.py:529 via service/discovery/next.py:3227)"
-        ),
-    },
     "tick.after_generation.curation": {
         **_grows(
             _CURATION,
@@ -662,21 +618,6 @@ GROWS: dict[str, dict[str, str]] = {
             "service/evidence/evidence.py:926, from service/discovery/query.py:493)"
         ),
     },
-    "tick.idle.queue": {
-        "file_opens": (
-            "audit#13: every next-queue match stats every body the last fold read "
-            "(consumers/next/queue.py:138 -> :70 -> service/evidence/evidence.py:727)"
-        )
-    },
-    "read.orient": {
-        "file_opens": (
-            "audit#14/#15: orient stats every stored-queue body (consumers/next/queue.py:70 "
-            "via service/discovery/next.py:5819) and every remembered slot's bodies "
-            "(service/discovery/claim_status.py:139 via service/discovery/orient.py:1064)"
-        )
-    },
-    "read.get.subject": {"file_opens": _STORED_QUEUE_BODIES + " via service/discovery/get.py:1123"},
-    "read.get.claim": {"file_opens": _STORED_QUEUE_BODIES + " via service/discovery/get.py:1036"},
     "read.query.where": {
         **_grows(
             "new: a kind query reads and digests every Subject of the kind before its where "
@@ -698,28 +639,7 @@ GROWS: dict[str, dict[str, str]] = {
         ),
         "sql_vm_steps": _NAMED_FACTS + _BLOB_READS + ", and " + _LAW_HEAD,
     },
-    "read.next.stored_queue": {
-        "file_opens": _STORED_QUEUE_BODIES + " via service/discovery/next.py:5604"
-    },
-    "read.next.workspace_sources": {
-        **_grows(
-            _CITATIONS,
-            "claim_parses",
-            *_DIGESTS,
-            "file_opens",
-            "sql_statements",
-            "cas_body_reads",
-            "git_blob_reads",
-        ),
-        "sql_vm_steps": (
-            _CITATIONS
-            + "; in SQL, per item "
-            + _ACQUIRE
-            + " (runtime/instance.py:1825 accepted_history_reader), each Claim's member "
-            "history read twice (indexes/history/history_index.py:542 via "
-            "indexes/typed_state.py:1253 and :1322) and " + _LAW_HEAD
-        ),
-    },
+    "read.next.workspace_sources": {"canonical_digests": _CITATIONS},
     "read.coverage.workspace_sources": _grows(_COVERAGE, *_DIGESTS, "file_opens", "cas_body_reads"),
     "read.audit.first_page": {
         **_grows(
@@ -733,21 +653,6 @@ GROWS: dict[str, dict[str, str]] = {
         ),
         "sql_vm_steps": (_AUDIT + "; in SQL, " + _LAW_HEAD + ", and repeatedly " + _ACQUIRE),
     },
-    "read.next.no_stored_queue": {
-        **_grows(_LIVE_FOLD, *_DIGESTS, "file_opens", "sql_statements"),
-        "sql_vm_steps": _LIVE_FOLD + _FOLD_SQL + _HEADS_SQL,
-    },
-    "read.orient.after_activation": {
-        **_grows(
-            _ORIENT_FOLD,
-            "claim_parses",
-            *_DIGESTS,
-            "file_opens",
-            "sql_statements",
-            "git_blob_reads",
-        ),
-        "sql_vm_steps": _ORIENT_FOLD + _FOLD_SQL,
-    },
     "procedure.settle": {
         **_grows(_SETTLE, "claim_parses", *_DIGESTS, "file_opens", "git_blob_reads"),
         **_grows(
@@ -756,17 +661,6 @@ GROWS: dict[str, dict[str, str]] = {
             "sql_statements",
             "sql_vm_steps",
         ),
-    },
-    "tick.after_body_store.queue": {
-        **_grows(
-            _BODY_STORE,
-            "claim_parses",
-            *_DIGESTS,
-            "file_opens",
-            "sql_statements",
-            "git_blob_reads",
-        ),
-        "sql_vm_steps": _BODY_STORE + _FOLD_SQL + _HEADS_SQL,
     },
     "cold.write": _grows(_COLD_DERIVE, *_DIGESTS),
     "cold.dry_run": _grows(_COLD_DERIVE, *_DIGESTS),
@@ -828,7 +722,7 @@ def _routes() -> list[Route]:
         ),
         Route("authoring.trigger_member", _authoring_trigger),
         Route("write.stale_base", _stale_base_write, prepare=_hold_coordinate),
-        Route("tick.after_body_store.queue", _tick("queue"), prepare=_store_body),
+        Route("tick.after_body_store.facts", _tick("facts"), prepare=_store_body),
         Route("cold.write", _write(lambda w: _creates(w, "cold")), prepare=_reopen),
         Route(
             "cold.dry_run", _write(lambda w: _creates(w, "colddry"), dry_run=True), prepare=_reopen

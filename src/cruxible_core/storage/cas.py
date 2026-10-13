@@ -27,6 +27,7 @@ from cruxible_client.contracts.cas_contracts import (
 )
 from cruxible_client.contracts.errors import CasError
 from cruxible_core.storage.capture_envelope_index import ENVELOPE_HEAD, CaptureEnvelopeIndex
+from cruxible_core.storage.landing_log import LandingLog
 
 # Objects already hashed against their address, with the file identity observed
 # when they were: (device, inode, size, mtime, ctime). Bytes are reused without
@@ -55,95 +56,6 @@ def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
         metadata.st_mtime_ns,
         metadata.st_ctime_ns,
     )
-
-
-# -- body observation -------------------------------------------------------------
-
-FileIdentity = tuple[int, int, int, int, int]
-
-
-@dataclass
-class BodyObservation:
-    """The file identity of every CAS object read or checked inside one ``observe_bodies``.
-
-    A derived answer kept beyond the fold that computed it (the stored ``next``
-    queue) is valid only while every object the fold consulted keeps the identity
-    it had, so the observation is taken here, at the one layer every body read,
-    existence check and identity reuse passes through, rather than by each
-    caller. ``None`` records an absent object. An object seen with two identities
-    moved during the fold (``consistent`` is False); an answer that rests on
-    something no identity stands for, such as an external reader, clears
-    ``complete``.
-    """
-
-    identities: dict[str, FileIdentity | None]
-    consistent: bool = True
-    complete: bool = True
-
-    def note(self, digest: str, identity: FileIdentity | None) -> None:
-        if self.identities.setdefault(digest, identity) != identity:
-            self.consistent = False
-
-    def fingerprints(self) -> tuple[tuple[str, FileIdentity | None], ...]:
-        return tuple(sorted(self.identities.items()))
-
-
-_BODY_OBSERVATION: ContextVar[BodyObservation | None] = ContextVar(
-    "cruxible_cas_body_observation", default=None
-)
-
-
-@contextmanager
-def observe_bodies() -> Iterator[BodyObservation]:
-    """Record every CAS object identity this context consults; outside one, nothing is kept."""
-
-    observation = BodyObservation(identities={})
-    token = _BODY_OBSERVATION.set(observation)
-    try:
-        yield observation
-    finally:
-        _BODY_OBSERVATION.reset(token)
-
-
-# Every hook starts with one context lookup and does nothing else outside an
-# observation: no identity is built and no extra stat is taken for a caller that
-# is not observing.
-
-
-def _observe(digest: str, status: os.stat_result | None) -> None:
-    """Record one object as stat showed it; ``None`` is a confirmed absence."""
-
-    observation = _BODY_OBSERVATION.get()
-    if observation is not None:
-        observation.note(digest, None if status is None else _file_identity(status))
-
-
-def _observe_read(digest: str, before: os.stat_result, after: os.stat_result) -> None:
-    """Record one read bracketed by two stats of its descriptor."""
-
-    observation = _BODY_OBSERVATION.get()
-    if observation is None:
-        return
-    if _file_identity(before) == _file_identity(after):
-        observation.note(digest, _file_identity(after))
-    else:
-        # Written while it was read: no one identity stands for these bytes.
-        observation.consistent = False
-
-
-def _observe_descriptor_read(digest: str, before: os.stat_result, descriptor: int) -> None:
-    """Record a read whose closing stat is taken only when someone is observing."""
-
-    if _BODY_OBSERVATION.get() is not None:
-        _observe_read(digest, before, os.fstat(descriptor))
-
-
-def note_unobservable_body() -> None:
-    """Mark the current observation incomplete: an answer rests on a read no identity covers."""
-
-    observation = _BODY_OBSERVATION.get()
-    if observation is not None:
-        observation.complete = False
 
 
 def _read_descriptor(
@@ -230,12 +142,22 @@ class ContentAddressedBodyStore:
             raise CasError("CAS algorithm directory changed while it was opened")
         self._root_fd = descriptor
         weakref.finalize(self, os.close, descriptor)
+        # Opening the store mints the log over objects it does not yet name, and
+        # settles any landing a writer left unfinished.
+        self.landings.ensure()
+        self.landings.reconcile()
 
     @property
     def capture_envelopes(self) -> CaptureEnvelopeIndex:
         """Every stored Capture envelope by the contract it names (an index, not a walk)."""
 
         return CaptureEnvelopeIndex(self)
+
+    @property
+    def landings(self) -> LandingLog:
+        """The sequenced log of every evidence body that lands and every erase."""
+
+        return LandingLog(self)
 
     @staticmethod
     def digest_bytes(content: bytes) -> CasDigest:
@@ -280,7 +202,6 @@ class ContentAddressedBodyStore:
         shard, name = self._names(digest)
         descriptor = self._shard(shard)
         if descriptor is None:
-            _observe(digest, None)
             return None
         try:
             status = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
@@ -288,7 +209,6 @@ class ContentAddressedBodyStore:
             status = None
         finally:
             os.close(descriptor)
-        _observe(digest, status)
         return status
 
     def peek(self, digest: str, length: int) -> bytes:
@@ -301,7 +221,6 @@ class ContentAddressedBodyStore:
         shard, name = self._names(digest)
         directory = self._shard(shard)
         if directory is None:
-            _observe(digest, None)
             return b""
         try:
             try:
@@ -309,23 +228,18 @@ class ContentAddressedBodyStore:
                     name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
                 )
             except FileNotFoundError:
-                _observe(digest, None)
                 return b""
             except OSError:
-                note_unobservable_body()
                 return b""
         finally:
             os.close(directory)
         try:
             before = os.fstat(descriptor)
             if not stat.S_ISREG(before.st_mode):
-                _observe(digest, before)
                 return b""
             head = os.read(descriptor, length)
-            _observe_descriptor_read(digest, before, descriptor)
             return head
         except OSError:
-            note_unobservable_body()
             return b""
         finally:
             os.close(descriptor)
@@ -397,65 +311,13 @@ class ContentAddressedBodyStore:
         status = self._object_status(digest)
         return None if status is None else _file_identity(status)
 
-    #: Replaced (a fresh token) after every evidence body lands and every erase:
-    #: the one signal a remembered verdict needs, without journal payloads.
-    EVIDENCE_GENERATION = "evidence-generation"
-
-    def evidence_generation(self) -> str | None:
-        """The current evidence-body generation token; None when unreadable.
-
-        ``""`` means no evidence body has landed since the token was introduced.
-        Read through the held algorithm directory, like every object.
-        """
-
-        try:
-            descriptor = os.open(
-                self.EVIDENCE_GENERATION, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=self._root_fd
-            )
-        except FileNotFoundError:
-            return ""
-        except OSError:
-            return None
-        try:
-            return os.read(descriptor, 64).decode("ascii")
-        except (OSError, ValueError):
-            return None
-        finally:
-            os.close(descriptor)
-
-    def _bump_evidence_generation(self) -> None:
-        temporary = f".{self.EVIDENCE_GENERATION}.{uuid4().hex}"
-        try:
-            descriptor = os.open(
-                temporary,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                0o600,
-                dir_fd=self._root_fd,
-            )
-            try:
-                os.write(descriptor, uuid4().hex.encode("ascii"))
-            finally:
-                os.close(descriptor)
-            os.replace(
-                temporary,
-                self.EVIDENCE_GENERATION,
-                src_dir_fd=self._root_fd,
-                dst_dir_fd=self._root_fd,
-            )
-        except OSError as exc:
-            try:
-                os.unlink(temporary, dir_fd=self._root_fd)
-            except OSError:
-                pass
-            raise CasError("CAS evidence generation could not be advanced") from exc
-
     def store(self, content: bytes, *, journal_payload: bool = False) -> CasObjectMetadata:
         """Durably store inert bytes, idempotently, under their exact digest.
 
-        A new body advances the evidence generation unless it is a journal
-        record's payload: such a body is reachable only through the record
-        that names it, appended after it lands, so its arrival alone changes
-        no verdict input.
+        A new body is logged as a landing (``landings``), before the object is
+        written and again after, unless it is a journal record's payload: such a
+        body is reachable only through the record that names it, appended after
+        it lands, so its arrival alone changes no verdict input.
         """
 
         digest = self.digest_bytes(content)
@@ -473,10 +335,16 @@ class ContentAddressedBodyStore:
                 existing = None
             if existing is not None:
                 self._verified_bytes(digest.tagged)
-            elif self._publish(directory, name, content, digest.tagged):
-                os.fsync(directory)
                 if not journal_payload:
-                    self._bump_evidence_generation()
+                    # A retry after an interrupted landing: publish its completion;
+                    # a body that arrived as a journal payload: log it now.
+                    self.landings.reconcile(digest.tagged)
+                    self.landings.ensure_landed(digest.tagged)
+            elif journal_payload:
+                self._publish(directory, name, content, digest.tagged)
+            else:
+                with self.landings.operation(digest.tagged, "store"):
+                    self._publish(directory, name, content, digest.tagged)
         finally:
             os.close(directory)
         return CasObjectMetadata(
@@ -495,7 +363,8 @@ class ContentAddressedBodyStore:
         therefore never meets a partially written object: before the link the
         name does not exist, after it the bytes are whole. ``link`` never
         replaces an object, so a writer that loses the race verifies the
-        winner's object and reports that it published nothing.
+        winner's object and reports that it published nothing. A published
+        object's directory entry is fsynced before this returns.
         """
 
         temporary = f".{name}.{uuid4().hex}.tmp"
@@ -531,6 +400,7 @@ class ContentAddressedBodyStore:
                 return False
             except OSError as exc:
                 raise CasError("CAS body could not be stored durably") from exc
+            os.fsync(directory)
             return True
         finally:
             try:
@@ -558,7 +428,6 @@ class ContentAddressedBodyStore:
         shard, name = self._names(digest)
         directory = self._shard(shard)
         if directory is None:
-            _observe(digest, None)
             raise CasError("CAS object is missing")
         try:
             key = self._memo_key(digest)
@@ -569,18 +438,13 @@ class ContentAddressedBodyStore:
                 try:
                     status = os.stat(name, dir_fd=directory, follow_symlinks=False)
                 except FileNotFoundError as exc:
-                    _observe(digest, None)
                     raise CasError("CAS object is missing") from exc
-                _observe(digest, status)
                 if not stat.S_ISREG(status.st_mode):
                     raise CasError("CAS object must be a regular file")
                 raise CasError("CAS object cannot be read")
             before, content, after = read
         finally:
             os.close(directory)
-        # Observed before the address is checked: an answer that a corrupt
-        # object refused rests on that object just as much as one it served.
-        _observe_read(digest, before, after)
         if known is not None and _file_identity(before) == known == _file_identity(after):
             return content
         if self.digest_bytes(content).tagged != digest:
@@ -614,7 +478,6 @@ class ContentAddressedBodyStore:
         shard, name = self._names(digest)
         directory = self._shard(shard)
         if directory is None:
-            _observe(digest, None)
             return "missing"
         try:
             try:
@@ -624,24 +487,19 @@ class ContentAddressedBodyStore:
                     name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
                 )
             except FileNotFoundError:
-                _observe(digest, None)
                 return "missing"
             except OSError:
-                note_unobservable_body()
                 return "corrupt"
         finally:
             os.close(directory)
         try:
             before = os.fstat(descriptor)
             if not stat.S_ISREG(before.st_mode):
-                _observe(digest, before)
                 return "corrupt"
             hasher = hashlib.sha256()
             while chunk := os.read(descriptor, 1 << 20):
                 hasher.update(chunk)
-            _observe_descriptor_read(digest, before, descriptor)
         except OSError:
-            note_unobservable_body()
             return "corrupt"
         finally:
             os.close(descriptor)
@@ -674,6 +532,8 @@ class ContentAddressedBodyStore:
         """Delete one exact verified body; semantic envelopes must be preserved elsewhere."""
 
         if self._object_status(digest) is None:
+            # A retry after an interrupted erase: publish its completion.
+            self.landings.reconcile(digest)
             return False
         self._verified_bytes(digest)
         shard, name = self._names(digest)
@@ -681,13 +541,14 @@ class ContentAddressedBodyStore:
         if directory is None:
             return False
         try:
-            os.unlink(name, dir_fd=directory)
-            os.fsync(directory)
-        except OSError as exc:
-            raise CasError("CAS body could not be erased") from exc
+            with self.landings.operation(digest, "erase"):
+                try:
+                    os.unlink(name, dir_fd=directory)
+                    os.fsync(directory)
+                except OSError as exc:
+                    raise CasError("CAS body could not be erased") from exc
         finally:
             os.close(directory)
-        self._bump_evidence_generation()
         return True
 
 
@@ -791,7 +652,6 @@ class DryRunBodyStore:
 
 __all__ = [
     "BodyAccessContext",
-    "BodyObservation",
     "CasScan",
     "BodyProjectionProtocol",
     "CasObjectMetadata",
@@ -799,6 +659,4 @@ __all__ = [
     "DryRunBodyStore",
     "dry_run_bodies",
     "dry_run_held_bodies",
-    "note_unobservable_body",
-    "observe_bodies",
 ]

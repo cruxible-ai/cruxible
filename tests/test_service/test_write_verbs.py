@@ -1747,13 +1747,13 @@ def test_a_contest_row_offers_one_keep_option_per_contender_and_picks_none(
     from cruxible_client.contracts.captures import CanonicalDuration
     from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.indexes.projection import AcceptedCoordinate
-    from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
+    from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
 
     first = _write(instance, _set(WI1, "status", "ready")).changes[0].claim
     second = _write(instance, _set(WI1, "status", "blocked", contend=True)).changes[0].claim
 
     def conflict_rows() -> list[Any]:
-        request = NextRequestV1(
+        request = NextRequest(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=datetime.now(UTC),
             access_profile=CoverageAccessProfile(

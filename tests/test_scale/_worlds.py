@@ -667,7 +667,7 @@ TICK_PARTS = (
     "triggers",
     "line",
     "floor",
-    "queue",
+    "facts",
     "evidence",
     "prediction",
     "curation",
@@ -687,8 +687,8 @@ def tick(world: World, part: str) -> object:
     from cruxible_core.consumers.next import (
         curation,
         evidence,
+        facts,
         predictions,
-        queue,
         settled_refusals,
     )
     from cruxible_core.triggers.journal import evaluate_triggers
@@ -706,7 +706,7 @@ def tick(world: World, part: str) -> object:
     kind: Any = {
         "line": LINE_ARMS,
         "floor": FLOOR,
-        "queue": queue._PART,  # noqa: SLF001
+        "facts": facts._PART,  # noqa: SLF001
         "evidence": evidence._PART,  # noqa: SLF001
         "prediction": predictions._PART,  # noqa: SLF001
         "curation": curation._PART,  # noqa: SLF001

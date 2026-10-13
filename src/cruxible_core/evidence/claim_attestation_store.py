@@ -5,7 +5,7 @@ from __future__ import annotations
 import fcntl
 import os
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1133,6 +1133,58 @@ class ClaimAttestationEvidenceStore:
                     if chain.position(digest) <= position
                 ]
             return tuple(self._event_pair(digest) for digest in digests if digest is not None)
+
+    def events_after(
+        self, root_digest: str | None, *, through: str | None = None
+    ) -> tuple[str, tuple[tuple[int, ClaimAttestationEvent, ClaimAttestationEventPayload], ...]]:
+        """A head and every event published after ``root_digest`` up to it, in chain order.
+
+        The head is ``through`` (a head a read recorded), else the current one.
+        Each event comes with its chain position (its published root's
+        sequence). Only the roots past ``root_digest`` are read, over the cached
+        validated chain, so a caller following the door pays for what is new;
+        ``None`` reads from genesis. A root that is not a replay-valid ancestor
+        of that head is refused (``attestation_head_unknown``): the follower
+        must start over.
+        """
+
+        with self._locked():
+            if not self.root.exists():
+                empty = self._empty_root().root_digest
+                if root_digest not in {None, empty} or through not in {None, empty}:
+                    raise _error("attestation_head_unknown", "attestation head is unknown")
+                return empty, ()
+            self._load_manifest()
+            current = self._ready()
+            chain = self._validated_chain(current.root_digest)
+            head = current.root_digest if through is None else through
+            position = 0 if root_digest is None else chain.index.get(root_digest)
+            last = chain.index.get(head)
+            if position is None or last is None or last < position:
+                raise _error(
+                    "attestation_head_unknown",
+                    "attestation head is not a replay-valid ancestor",
+                )
+            return head, tuple(
+                (root.sequence, *self._event_pair(root.event_digest))
+                for root in chain.roots[position + 1 : last + 1]
+                if root.event_digest is not None
+            )
+
+    def event_pairs(
+        self, event_digests: Iterable[str]
+    ) -> tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...]:
+        """These published events with their payloads, authenticated as every read is.
+
+        A follower that kept event digests (``events_after``) reads back only the
+        events it needs, never the chain around them.
+        """
+
+        with self._locked():
+            if not self.root.exists():
+                return ()
+            self._load_manifest()
+            return tuple(self._event_pair(digest) for digest in event_digests)
 
     def fold_events(
         self, *, at_head: str | None = None

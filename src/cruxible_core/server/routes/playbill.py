@@ -88,7 +88,6 @@ from cruxible_core.server.playbill_request_models import (
     LedgerMirrorRequest,
     LedgerPublishRequest,
     NextRequest,
-    NextRequestV1,
     PlaybillAuthoringCompileRequest,
     PlaybillAuthoringCompileRequestV3,
     ProposalReadmitRequest,
@@ -176,6 +175,14 @@ def instance_decommission(
         dry_run=req.dry_run,
         at=req.at,
     )
+
+
+@router.post(
+    "/{instance_id}/instance/rebuild-next",
+    response_model=contracts.NextRebuildResult,
+)
+def instance_rebuild_next(instance_id: str) -> contracts.NextRebuildResult:
+    return playbill_api.playbill_instance_rebuild_next(resolve_server_instance_id(instance_id))
 
 
 @router.post(
@@ -1180,7 +1187,7 @@ def procedure_readings(
 )
 def next_work(
     instance_id: str,
-    req: NextRequestV1 | NextRequest,
+    req: NextRequest,
 ) -> contracts.NextResult:
     return playbill_api.playbill_next(
         resolve_server_instance_id(instance_id),

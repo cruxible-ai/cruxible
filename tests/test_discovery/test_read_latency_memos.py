@@ -44,7 +44,7 @@ from cruxible_core.service.claims.claims import (
 )
 from cruxible_core.service.discovery import next as playbill_next
 from cruxible_core.service.discovery.next import (
-    NextRequestV1,
+    NextRequest,
     NextSourceObservation,
     NextWorkspaceObservation,
     service_playbill_next,
@@ -280,7 +280,7 @@ def test_next_evaluates_each_claim_verdict_exactly_once(
     )
     result = service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=EVALUATION_TIME,
             access_profile=ACCESS,
@@ -389,7 +389,7 @@ def _unobserved_rows(
         )
     result = service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=EVALUATION_TIME,
             access_profile=ACCESS,

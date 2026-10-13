@@ -149,7 +149,8 @@ that starts reaching one more operation moves the pin.
 
 Setting up a host (`cruxible init`, or `cruxible host create` to allocate one
 without becoming its owner), releasing its worktree (`cruxible workspace
-detach`) and decommissioning an instance (`cruxible instance decommission`) are
+detach`), decommissioning an instance (`cruxible instance decommission`) and
+rebuilding the `next` worker's state (`cruxible instance rebuild-next`) are
 operator acts with no MCP tool.
 
 | Tool | Purpose | Permission |

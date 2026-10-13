@@ -11,8 +11,9 @@ from cruxible_client.contracts.errors import CasError, FormatError
 from cruxible_core.ledger import git as ledger_git
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.storage import cas
+from cruxible_core.storage import cas, landing_log
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
+from cruxible_core.storage.landing_log import LOG_NAME, PENDING_NAME, LandingLog
 
 READ = BodyAccessContext(principal_id="owner", can_read_body=True)
 
@@ -207,19 +208,283 @@ def test_scan_streams_a_bounded_prefix_including_a_dry_runs_held_bodies(
     assert dry.peek(extra, 4) == b"held"
 
 
-def test_only_evidence_bodies_and_erasure_advance_the_evidence_generation(tmp_path):
+def test_only_evidence_bodies_and_erasure_are_logged_as_landings(tmp_path):
     """Journal-record payloads (run records, dispatch coverage, settlements) never
-    move the verdict input fingerprint; an evidence body's arrival and any erase do."""
+    move the verdict input fingerprint; an evidence body's arrival and any erase do,
+    each logged before its object moves and again after."""
 
     store, digest, _path = _store(tmp_path)
-    generation = store.evidence_generation()
-    assert generation not in (None, "")
+    head = store.landings.head()
+    assert head.identity and head.sequence == 2
+    assert [(row.digest, row.kind) for row in store.landings.after(0)] == [
+        (digest, "store"),
+        (digest, "stored"),
+    ]
     store.store(b"run record payload", journal_payload=True)
-    assert store.evidence_generation() == generation
+    assert store.landings.head() == head
     store.store(b"good")  # already present: nothing arrived
-    assert store.evidence_generation() == generation
-    store.store(b"a new capture body")
-    after_arrival = store.evidence_generation()
-    assert after_arrival != generation
+    assert store.landings.head() == head
+    arrived = store.store(b"a new capture body").digest
+    assert [(row.digest, row.kind) for row in store.landings.after(head.sequence)] == [
+        (arrived, "store"),
+        (arrived, "stored"),
+    ]
+    after_arrival = store.landings.head()
     assert store.erase(digest)
-    assert store.evidence_generation() != after_arrival
+    assert [(row.digest, row.kind) for row in store.landings.after(after_arrival.sequence)] == [
+        (digest, "erase"),
+        (digest, "erased"),
+    ]
+    assert store.landings.head().identity == head.identity
+    # A cursor reads exactly the range it asks for.
+    assert [row.sequence for row in store.landings.after(1, through=3)] == [2, 3]
+
+
+def test_a_landing_logged_before_its_object_is_logged_again_once_it_is_final(tmp_path, monkeypatch):
+    """A reader that consumes the first row while the write is in flight sees the
+    digest again after the object lands, so nothing it derived then stays."""
+
+    store, _digest, _path = _store(tmp_path)
+    content = b"in flight"
+    seen: list[tuple[str, bool]] = []
+    original = LandingLog._append
+
+    def append(self, kind, digest, *, sync):  # type: ignore[no-untyped-def]
+        sequence = original(self, kind, digest, sync=sync)
+        seen.append((kind, store.verify(digest)))
+        return sequence
+
+    monkeypatch.setattr(LandingLog, "_append", append)
+    store.store(content)
+    assert seen == [("store", False), ("stored", True)]
+
+
+def test_a_missing_landing_log_reads_as_empty_and_is_not_created(tmp_path):
+    root = tmp_path / "managed" / "cas"
+    root.mkdir(parents=True)
+    store = ContentAddressedBodyStore(root)
+    assert (store.landings.head().identity, store.landings.head().sequence) == ("", 0)
+    assert store.landings.after(0) == ()
+    assert not (store._algorithm_root / LOG_NAME).exists()
+    assert not (store._algorithm_root / PENDING_NAME).exists()
+
+
+def test_presence_is_the_last_completion_at_or_before_a_position(tmp_path):
+    """A read decides a body's presence from the log alone: its last completion at or
+    before the read's position. An intent whose completion comes later changes nothing."""
+
+    store, digest, path = _store(tmp_path)
+    identity = store.landings.head().identity
+
+    def present(sequence: int, which: str = digest) -> bool:
+        return store.landings.present(which, identity=identity, sequence=sequence)
+
+    assert store.erase(digest)
+    store.store(b"good")
+    assert [(row.sequence, row.kind) for row in store.landings.after(0)] == [
+        (1, "store"),
+        (2, "stored"),
+        (3, "erase"),
+        (4, "erased"),
+        (5, "store"),
+        (6, "stored"),
+    ]
+    assert [present(sequence) for sequence in range(7)] == [
+        False,
+        False,
+        True,
+        True,
+        False,
+        False,
+        True,
+    ]
+    # The file is never asked: removed outside the store, the log still says present.
+    path.unlink()
+    assert present(6) and not present(6, "sha256:" + "0" * 64)
+    with pytest.raises(CasError, match="replaced"):
+        store.landings.present(digest, identity="landings_other", sequence=6)
+
+
+def test_a_log_minted_over_held_objects_names_each_as_stored(tmp_path):
+    """A store that already holds objects when its log begins (a store from before the
+    log, or bodies first stored as journal payloads) records each as present first."""
+
+    root = tmp_path / "managed" / "cas"
+    root.mkdir(parents=True)
+    store = ContentAddressedBodyStore(root)
+    held = store.store(b"stored before any landing", journal_payload=True).digest
+    assert store.landings.head().identity == ""
+    reopened = ContentAddressedBodyStore(root)
+    head = reopened.landings.head()
+    assert [(row.digest, row.kind) for row in reopened.landings.after(0)] == [(held, "stored")]
+    assert reopened.landings.present(held, identity=head.identity, sequence=head.sequence)
+
+
+def test_an_interrupted_seed_publishes_nothing_and_the_next_open_seeds_again(tmp_path, monkeypatch):
+    """A seed that stops part way (its header and one body written) is never the log:
+    the next open seeds every pre-existing body, and a later open keeps that head."""
+
+    root = tmp_path / "managed" / "cas"
+    root.mkdir(parents=True)
+    store = ContentAddressedBodyStore(root)
+    held = [
+        store.store(value, journal_payload=True).digest
+        for value in (b"pre-log body A", b"pre-log body B", b"pre-log body C")
+    ]
+    assert store.landings.head().identity == ""
+    real_write = landing_log.os.write
+    writes: list[int] = []
+
+    def crash(descriptor, data):
+        if not writes:
+            writes.append(1)
+            return real_write(descriptor, bytes(data[: landing_log.RECORD * 2]))
+        raise OSError("simulated process failure during seed")
+
+    monkeypatch.setattr(landing_log.os, "write", crash)
+    with pytest.raises(OSError, match="during seed"):
+        ContentAddressedBodyStore(root)
+    monkeypatch.setattr(landing_log.os, "write", real_write)
+    assert writes
+    assert store.landings.head().identity == ""  # the partial seed was never published
+
+    recovered = ContentAddressedBodyStore(root)
+    head = recovered.landings.head()
+    assert head.identity and head.sequence == len(held)
+    assert all(
+        recovered.landings.present(digest, identity=head.identity, sequence=head.sequence)
+        for digest in held
+    )
+    assert ContentAddressedBodyStore(root).landings.head() == head
+
+
+def test_a_journal_payload_stored_again_as_evidence_is_logged_present(tmp_path):
+    store, _digest, _path = _store(tmp_path)
+    payload = store.store(b"a record payload, later cited", journal_payload=True).digest
+    head = store.landings.head()
+    assert not store.landings.present(payload, identity=head.identity, sequence=head.sequence)
+    store.store(b"a record payload, later cited")
+    assert _kinds(store, head.sequence) == [(payload, "store"), (payload, "stored")]
+    head = store.landings.head()
+    assert store.landings.present(payload, identity=head.identity, sequence=head.sequence)
+    # Present already: storing it again logs nothing.
+    store.store(b"a record payload, later cited")
+    assert store.landings.head() == head
+
+
+def _kinds(store, after: int = 0) -> list[tuple[str, str]]:  # type: ignore[no-untyped-def]
+    return [(row.digest, row.kind) for row in store.landings.after(after)]
+
+
+@pytest.mark.parametrize("failing", ("store", "stored"))
+def test_a_store_interrupted_at_either_row_is_settled_by_its_retry(tmp_path, monkeypatch, failing):
+    """However a landing is interrupted, its retry publishes the object's final state."""
+
+    store, _digest, _path = _store(tmp_path)
+    head = store.landings.head().sequence
+    original = LandingLog._append
+    content = b"interrupted body"
+    digest = store.digest_bytes(content).tagged
+
+    def append(self, kind, digest, *, sync):  # type: ignore[no-untyped-def]
+        if kind == failing:
+            raise CasError("the landing row could not be written")
+        return original(self, kind, digest, sync=sync)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(LandingLog, "_append", append)
+        with pytest.raises(CasError, match="landing row"):
+            store.store(content)
+    assert store.landings.unfinished()
+    # A failed intent never wrote the object; a failed completion did.
+    assert store.verify(digest) is (failing == "stored")
+    store.store(content)
+    assert not store.landings.unfinished()
+    rows = _kinds(store, head)
+    assert rows[-1] == (digest, "stored")
+    if failing == "stored":
+        assert rows == [(digest, "store"), (digest, "stored")]
+
+
+def test_a_store_whose_object_write_fails_publishes_its_absence(tmp_path, monkeypatch):
+    store, _digest, _path = _store(tmp_path)
+    head = store.landings.head().sequence
+    content = b"never written"
+    digest = store.digest_bytes(content).tagged
+
+    def failed(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise CasError("CAS body could not be stored durably")
+
+    monkeypatch.setattr(store, "_publish", failed)
+    with pytest.raises(CasError, match="durably"):
+        store.store(content)
+    assert not store.landings.unfinished()
+    assert _kinds(store, head) == [(digest, "store"), (digest, "erased")]
+
+
+def test_an_erase_interrupted_before_its_completion_is_settled_by_retry_or_reopen(
+    tmp_path, monkeypatch
+):
+    store, digest, _path = _store(tmp_path)
+    head = store.landings.head().sequence
+    original = LandingLog._append
+
+    def append(self, kind, digest, *, sync):  # type: ignore[no-untyped-def]
+        if kind == "erased":
+            raise CasError("the landing row could not be written")
+        return original(self, kind, digest, sync=sync)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(LandingLog, "_append", append)
+        with pytest.raises(CasError, match="landing row"):
+            store.erase(digest)
+    assert store.landings.unfinished() and not store.verify(digest)
+    # Reopening the store settles what any writer left unfinished.
+    reopened = ContentAddressedBodyStore(store.root)
+    assert not reopened.landings.unfinished()
+    assert _kinds(reopened, head) == [(digest, "erase"), (digest, "erased")]
+    # A retry of the same erase is idempotent and publishes nothing more.
+    assert reopened.erase(digest) is False
+    assert _kinds(reopened, head) == [(digest, "erase"), (digest, "erased")]
+
+
+def test_a_live_writers_landing_is_not_settled_under_it(tmp_path):
+    """Reconciliation skips a marker another live writer holds: that writer publishes."""
+
+    store, _digest, _path = _store(tmp_path)
+    content = b"slow writer"
+    digest = store.digest_bytes(content).tagged
+    with store.landings.operation(digest, "store"):
+        other = ContentAddressedBodyStore(store.root)
+        assert other.landings.reconcile() == 0
+        assert store.landings.unfinished()
+    assert not store.landings.unfinished()
+
+
+@pytest.mark.parametrize("level", ["algorithm", "cas", "managed"])
+def test_a_retained_landing_log_follows_the_held_directory_through_a_swap(tmp_path, level):
+    """The log is reached through the held directory, never a pathname: a swapped
+    ancestor redirects neither its writes nor its reads."""
+
+    store, digest, _path = _store(tmp_path)
+    log = store.landings
+    head = log.head()
+    ancestor = {
+        "algorithm": store._algorithm_root,
+        "cas": store._algorithm_root.parent,
+        "managed": store._algorithm_root.parent.parent,
+    }[level]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.replace(ancestor, outside / "moved")
+    stand_in = outside / "stand-in"
+    stand_in.mkdir()
+    ancestor.symlink_to(stand_in, target_is_directory=True)
+
+    with log.operation(digest, "erase"):
+        pass
+    assert log.head().identity == head.identity
+    assert log.head().sequence == head.sequence + 2
+    assert [row.kind for row in log.after(head.sequence)] == ["erase", "stored"]
+    assert log.reconcile() == 0 and not log.unfinished()
+    assert list(stand_in.rglob("*")) == []

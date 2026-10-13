@@ -281,22 +281,6 @@ class ProposalRejectRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class NextRequestV1(_StrictPlaybillRequest):
-    tag: Literal["playbill-next-request-v1"] = "playbill-next-request-v1"
-    at: AcceptedCoordinate | None = None
-    evaluation_time: datetime
-    access_profile: dict[str, Any]
-    expiring_within: dict[str, Any] | None = None
-    workspace_observation: dict[str, Any] | None = None
-    since_result_digest: str | None = None
-    limit: int = Field(default=NEXT_DEFAULT_LIMIT, ge=1, le=NEXT_MAX_LIMIT)
-    cursor: str | None = Field(default=None, max_length=2048)
-    # Who reads the queue: the surface a repair renders for, and the tools an
-    # MCP session advertises. The daemon supplies the caller's tier itself.
-    caller_surface: Literal["cli", "mcp", "sdk"] | None = None
-    caller_tools: tuple[str, ...] | None = None
-
-
 class NextRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-next-request-v2"] = "playbill-next-request-v2"
     at: AcceptedCoordinate | None = None
@@ -311,6 +295,8 @@ class NextRequest(_StrictPlaybillRequest):
         default=None,
         pattern=r"^sha256:[0-9a-f]{64}$",
     )
+    # Who reads the queue: the surface a repair renders for, and the tools an
+    # MCP session advertises. The daemon supplies the caller's tier itself.
     caller_surface: Literal["cli", "mcp", "sdk"] | None = None
     caller_tools: tuple[str, ...] | None = None
 

@@ -80,7 +80,7 @@ from cruxible_core.service.claims.claims import (
 from cruxible_core.service.discovery.next import (
     NextDriftObservation,
     NextReason,
-    NextRequestV1,
+    NextRequest,
     NextSourceObservation,
     NextSourceObservationV3,
     NextWorkspaceObservation,
@@ -220,8 +220,8 @@ def _request(
     evaluation_time: datetime = EVALUATION_TIME,
     expiring_within: int = 604_800_000_000,
     workspace: NextWorkspaceObservation | None = None,
-) -> NextRequestV1:
-    return NextRequestV1(
+) -> NextRequest:
+    return NextRequest(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=evaluation_time,
         access_profile=_access(),
@@ -230,7 +230,7 @@ def _request(
     )
 
 
-def _row(instance, reason: str, request: NextRequestV1, **caller: Any):  # type: ignore[no-untyped-def]
+def _row(instance, reason: str, request: NextRequest, **caller: Any):  # type: ignore[no-untyped-def]
     return next(
         item
         for item in service_playbill_next(instance, request=request, **caller).items
@@ -238,7 +238,7 @@ def _row(instance, reason: str, request: NextRequestV1, **caller: Any):  # type:
     )
 
 
-def _assert_gone(instance, reason: str, request: NextRequestV1, **caller: Any) -> None:  # type: ignore[no-untyped-def]
+def _assert_gone(instance, reason: str, request: NextRequest, **caller: Any) -> None:  # type: ignore[no-untyped-def]
     left = [
         item
         for item in service_playbill_next(instance, request=request, **caller).items
@@ -268,7 +268,7 @@ def _item_key(item: object) -> ClosedLoopKey:
 def _row_by_key(
     instance,
     key: ClosedLoopKey,
-    request: NextRequestV1,  # type: ignore[no-untyped-def]
+    request: NextRequest,  # type: ignore[no-untyped-def]
 ):  # type: ignore[no-untyped-def]
     return next(
         item
@@ -280,7 +280,7 @@ def _row_by_key(
 def _assert_key_gone(
     instance,
     key: ClosedLoopKey,
-    request: NextRequestV1,  # type: ignore[no-untyped-def]
+    request: NextRequest,  # type: ignore[no-untyped-def]
 ) -> None:
     assert all(
         _item_key(item) != key for item in service_playbill_next(instance, request=request).items
@@ -1366,7 +1366,7 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     # Only the author may readmit, so only the author's queue carries the row.
     _assert_gone(instance, "proposal_stale", _request(instance), caller_principal_id="reviewer")
     _assert_gone(instance, "proposal_stale", _request(instance))
-    hidden = NextRequestV1(
+    hidden = NextRequest(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=CoverageAccessProfile(
@@ -1417,7 +1417,7 @@ def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     assert governed.candidate is not None
     proposal_id = governed.admission.proposal_id
 
-    def rows(caller: str | None, request: NextRequestV1) -> list[object]:
+    def rows(caller: str | None, request: NextRequest) -> list[object]:
         return [
             item
             for item in service_playbill_next(
@@ -1437,7 +1437,7 @@ def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     assert rows("owner", _request(instance)) == []
     assert rows("stranger", _request(instance)) == []
     assert rows(None, _request(instance)) == []
-    hidden = NextRequestV1(
+    hidden = NextRequest(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=CoverageAccessProfile(
@@ -1599,7 +1599,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     assert row.repair.operation == EXPECTED_OPERATIONS["mandate_expiring"]
     assert row.repair.command == "cruxible authoring example procedure-mandate"
     assert datetime.fromisoformat(row.detail["expires_at"]) == lapsing.expires_at
-    hidden = NextRequestV1(
+    hidden = NextRequest(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=CoverageAccessProfile(
@@ -1741,7 +1741,7 @@ def _evidence_unavailable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         item.startswith("Claim:") for item in row.related_identities
     )
     assert row.repair.operation == EXPECTED_OPERATIONS["evidence_unavailable"]
-    hidden = NextRequestV1(
+    hidden = NextRequest(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=CoverageAccessProfile(
@@ -1929,7 +1929,7 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     assert row.related_identities and row.related_identities[0].startswith("Claim:")
     assert row.detail["anchor_event"] is None and row.detail["bound_contract_id"]
     assert row.repair.operation == EXPECTED_OPERATIONS["prediction_settleable"]
-    hidden = NextRequestV1(
+    hidden = NextRequest(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=worker.FIXED_CLOSES,
         access_profile=CoverageAccessProfile(
@@ -1987,7 +1987,7 @@ def _prediction_window_unbindable(root: Path, _monkeypatch: pytest.MonkeyPatch) 
     assert row.detail["anchor_event"] == event.model_dump(mode="json")
     assert row.detail["code"] == "trigger_capture_unavailable"
     assert row.repair.operation == EXPECTED_OPERATIONS["prediction_window_unbindable"]
-    hidden = NextRequestV1(
+    hidden = NextRequest(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=CoverageAccessProfile(

@@ -180,6 +180,14 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
             connection.execute("PRAGMA synchronous=FULL")
         connection.execute("BEGIN IMMEDIATE" if create else "BEGIN")
         (version,) = connection.execute("PRAGMA user_version").fetchone()
+        if (
+            version == 0
+            and not create
+            and connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is None
+        ):
+            # A journal whose creator has not committed its schema yet: none, to a reader.
+            yield None
+            return
         if version == 0 and create:
             if connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone():
                 raise ValueError("Unrecognized trigger journal; retain it for operator repair")
@@ -259,7 +267,7 @@ def schedule_deadline(instance: Any, name: str, at: datetime) -> None:
 
 
 def cancel_deadline(instance: Any, name: str) -> None:
-    """Withdraw a replaced queue's bound when its replacement has no deadline."""
+    """Withdraw a worker's bound when the state it now holds has none."""
 
     _deadline_name(name)
     with _open(instance) as connection:
