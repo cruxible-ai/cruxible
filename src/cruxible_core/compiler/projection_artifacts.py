@@ -7,7 +7,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Literal, Mapping, cast
+from typing import TYPE_CHECKING, Any, Literal, Mapping, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -36,6 +36,7 @@ from cruxible_client.contracts.claim_types import (
     claim_type_projection_structure,
     parse_claim_type,
 )
+from cruxible_client.contracts.content_memo import ObjectMemo
 from cruxible_client.contracts.documents import document_digest, parse_document
 from cruxible_client.contracts.errors import (
     CasError,
@@ -293,6 +294,42 @@ def registered_path_kind(
     return cast(RegisteredPathKind, artifact_kinds.resolve_path(path))
 
 
+# path -> ((record position, member), ...) in record then member order, built once
+# per records tuple: one parse asks every artifact for its history, and scanning
+# every record's members per artifact made a cold parse O(artifacts x members).
+_MEMBERS_BY_PATH: ObjectMemo[Mapping[str, tuple[tuple[int, Any], ...]]] = ObjectMemo(capacity=2)
+
+
+def _members_by_path(
+    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
+) -> Mapping[str, tuple[tuple[int, Any], ...]]:
+    def build() -> Mapping[str, tuple[tuple[int, Any], ...]]:
+        found: dict[str, list[tuple[int, Any]]] = {}
+        for position, (_record_path, record) in enumerate(records):
+            for member in record.members:
+                found.setdefault(member.path, []).append((position, member))
+        return {path: tuple(items) for path, items in found.items()}
+
+    return _MEMBERS_BY_PATH.derive(records, build)
+
+
+def _accepting_positions(
+    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
+    *,
+    path: str,
+    artifact_digest: str,
+) -> tuple[int, ...]:
+    """Positions, newest first, of the records with a member accepting this exact revision."""
+
+    return tuple(
+        dict.fromkeys(
+            position
+            for position, member in reversed(_members_by_path(records).get(path, ()))
+            if getattr(member, "candidate_artifact_digest", None) == artifact_digest
+        )
+    )
+
+
 def projected_revision(
     records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     *,
@@ -300,12 +337,7 @@ def projected_revision(
     input_digest: str,
     artifact_digest: str,
 ) -> int:
-    history = tuple(
-        member
-        for _record_path, record in records
-        for member in record.members
-        if member.path == path
-    )
+    history = tuple(member for _position, member in _members_by_path(records).get(path, ()))
     if any(
         (
             getattr(member, "candidate_artifact_digest", None) == artifact_digest
@@ -326,13 +358,8 @@ def _accepted_artifact_timestamp(
 ) -> datetime | None:
     """Return the signed C_s time of the change set that accepted this exact revision."""
 
-    for _record_path, record in reversed(records):
-        if not any(
-            member.path == path
-            and getattr(member, "candidate_artifact_digest", None) == artifact_digest
-            for member in record.members
-        ):
-            continue
+    for position in _accepting_positions(records, path=path, artifact_digest=artifact_digest):
+        record = records[position][1]
         return datetime.strptime(record.candidate.timestamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
             tzinfo=timezone.utc
         )
@@ -348,13 +375,8 @@ def _accepted_artifact_coordinate(
 ) -> AcceptedCoordinate | None:
     """Resolve the immutable generation that accepted one exact artifact revision."""
 
-    for _record_path, record in reversed(records):
-        if any(
-            member.path == path
-            and getattr(member, "candidate_artifact_digest", None) == artifact_digest
-            for member in record.members
-        ):
-            return coordinates_by_sequence.get(record.sequence)
+    for position in _accepting_positions(records, path=path, artifact_digest=artifact_digest):
+        return coordinates_by_sequence.get(records[position][1].sequence)
     return None
 
 
@@ -366,13 +388,8 @@ def _current_member_law_result(
 ) -> dict[str, object] | None:
     """Return the exact accepted law result for one current artifact revision."""
 
-    for _record_path, record in reversed(records):
-        if not any(
-            member.path == path
-            and getattr(member, "candidate_artifact_digest", None) == artifact_digest
-            for member in record.members
-        ):
-            continue
+    for position in _accepting_positions(records, path=path, artifact_digest=artifact_digest):
+        record = records[position][1]
         for evidence in getattr(record, "law_evidence", ()):
             if evidence.path == path:
                 return dict(evidence.result)
