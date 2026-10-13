@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -49,6 +50,7 @@ from cruxible_core.query.impact import (
     DependencyImpactRequestV1,
     build_dependency_impact,
 )
+from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.audit import (
     AuditCursorInvalid,
     PlaybillAuditRequestV1,
@@ -779,6 +781,42 @@ def _generation(sequence: int, oid: str, row, *, actor: str, attestations=()):  
     )
 
 
+class _FakeHistoryReader:
+    """The history-index reads the audit makes, over the fake generations."""
+
+    def __init__(self, histories, trees) -> None:  # type: ignore[no-untyped-def]
+        self.histories, self.trees = histories, trees
+
+    def member_versions(self, paths):  # type: ignore[no-untyped-def]
+        return {
+            path: tuple(
+                (generation.sequence, None)
+                for generation in self.histories
+                if path in self.trees[generation.oid]
+            )
+            for path in paths
+        }
+
+    def claim_law_locations_of(self, paths):  # type: ignore[no-untyped-def]
+        return tuple(
+            SimpleNamespace(sequence=generation.sequence, member_ordinal=0, member_path=member.path)
+            for generation in self.histories
+            for member in generation.record.law_evidence
+            if member.path in paths
+        )
+
+    def _generation(self, sequence):  # type: ignore[no-untyped-def]
+        return next(item for item in self.histories if item.sequence == sequence)
+
+    def read_member_law_evidence(self, location, _records):  # type: ignore[no-untyped-def]
+        record = self._generation(location.sequence).record
+        return next(item for item in record.law_evidence if item.path == location.member_path)
+
+    def read_generation_facts(self, sequence, _records):  # type: ignore[no-untyped-def]
+        record = self._generation(sequence).record
+        return SimpleNamespace(actor_id=record.actor_binding.actor_id)
+
+
 def test_history_index_carries_backing_only_verification_and_resets_on_statement_change() -> None:
     subject_row = subject("project.work_item", "wi-42")
     first = claim_fact(4, subject_row=subject_row, predicate=PREDICATE, value="ready")
@@ -799,7 +837,8 @@ def test_history_index_carries_backing_only_verification_and_resets_on_statement
     fake = SimpleNamespace(
         accepted_history=lambda: histories,
         blobs_at=lambda oid, paths: {p: trees[oid][p] for p in paths if p in trees[oid]},
-        accepted_history_reader=lambda: nullcontext(None),
+        accepted_history_reader=lambda: nullcontext(_FakeHistoryReader(histories, trees)),
+        retained_record_reader=lambda: None,
     )
 
     carried = _history_index(
@@ -882,3 +921,111 @@ def test_reverse_index_matches_dependency_impact_and_builds_tree_index_once(
     assert {item.identity.qualified for item in index[source.accepted.path]} == {
         item.identity for item in impact.dependents
     }
+
+
+def _walked_history_index(
+    instance: PlaybillInstance,
+    *,
+    current_claims: dict[str, Any],
+    target_generation: int,
+) -> _AuditHistoryIndex:
+    """The audit history index as it was first computed: every generation, every Claim at each."""
+
+    from cruxible_client.contracts.claim_attestations import attestation_identity
+    from cruxible_client.contracts.claims import (
+        AcceptedClaimAttestationEvidence,
+        claim_artifact_digest,
+        parse_claim,
+        parse_claim_law_evidence,
+    )
+
+    paths = set(current_claims)
+    lineages: dict[str, set[str]] = {path: set() for path in paths}
+    first: dict[tuple[str, str], int] = {}
+    actors: dict[tuple[str, str], str] = {}
+    attestations: dict[tuple[str, str, str], int] = {}
+    for generation in instance.accepted_history():
+        if generation.sequence > target_generation:
+            break
+        tree = instance.blobs_at(generation.oid, tuple(sorted(paths)))
+        for path in paths:
+            raw = tree.get(path)
+            if raw is not None:
+                lineages[path].add(claim_artifact_digest(parse_claim(raw, path=path)).tagged)
+        record = generation.record
+        if record is None:
+            continue
+        for member in getattr(record, "law_evidence", ()):
+            raw_law = member.result.get("claim_evidence")
+            if raw_law is None or member.path not in paths:
+                continue
+            law = parse_claim_law_evidence(raw_law)
+            key = (member.path, law.statement_digest)
+            first.setdefault(key, generation.sequence)
+            actors.setdefault(key, record.actor_binding.actor_id)
+            for attestation in law.verified_attestations:
+                attestations.setdefault(
+                    (member.path, law.statement_digest, attestation.attestation_digest),
+                    generation.sequence,
+                )
+    for path, row in current_claims.items():
+        first.setdefault((path, row.accepted.statement_digest), target_generation)
+        lineages[path].add(row.accepted.artifact_digest)
+    with instance.accepted_history_reader() as retained:
+        for path, row in current_claims.items():
+            for item in row.attestations:
+                if isinstance(item, AcceptedClaimAttestationEvidence):
+                    attestations[(path, row.accepted.statement_digest, item.attestation_digest)] = (
+                        min(
+                            v.occurrence_sequence
+                            for v in retained.occurrences(
+                                attestation_identity(item.envelope).qualified
+                            )
+                            if v.occurrence_sequence <= target_generation
+                        )
+                    )
+    return _AuditHistoryIndex(
+        claim_lineages={
+            path: tuple(sorted(digests, key=lambda item: item.encode("ascii")))
+            for path, digests in lineages.items()
+        },
+        first_statement_generation=first,
+        lineage_creation_actor=actors,
+        attestation_first_generation=attestations,
+    )
+
+
+def test_the_indexed_history_index_equals_the_walk_over_every_generation(tmp_path: Path) -> None:
+    """Perf E1: the audit's history facts come from the history index, sized by these Claims."""
+
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._write_support import KIND, caller, seed_write_surface
+
+    instance, _owner = seed_write_surface(tmp_path)
+    for round_number, status in enumerate(("ready", "blocked", "done", "ready")):
+        request = WriteRequest.model_validate(
+            {
+                "because": f"Round {round_number}.",
+                "changes": [
+                    {"op": "set", "subject": f"{KIND}/wi-1", "field": "status", "value": status},
+                    {
+                        "op": "set",
+                        "subject": f"{KIND}/audit-{round_number}",
+                        "field": "title",
+                        "value": f"Item {round_number}",
+                    },
+                ],
+            }
+        )
+        assert service_playbill_write(instance, request=request, caller=caller()).status == (
+            "accepted"
+        )
+    head = instance.accepted_coordinate()
+    facts_at_head = build_accepted_query_facts(instance, coordinate=head)
+    current = {row.accepted.path: row for row in facts_at_head.claims}
+    sequence = instance.accepted_history()[-1].sequence
+    for target in (sequence, sequence - 1):
+        assert _history_index(
+            instance, current_claims=current, target_generation=target
+        ) == _walked_history_index(instance, current_claims=current, target_generation=target)

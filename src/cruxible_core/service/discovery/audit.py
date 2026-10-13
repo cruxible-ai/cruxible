@@ -26,7 +26,6 @@ from cruxible_client.contracts.claim_verdicts import (
     evaluate_claim_verdict,
 )
 from cruxible_client.contracts.claims import (
-    ClaimLawEvidenceAny,
     claim_artifact_digest,
     parse_claim,
     parse_claim_law_evidence,
@@ -289,48 +288,64 @@ def _audit_consumption_touch_counts(instance: PlaybillInstance) -> dict[str, int
     }
 
 
-def _record_claim_law_evidence(record: object) -> tuple[tuple[str, ClaimLawEvidenceAny], ...]:
-    found: list[tuple[str, ClaimLawEvidenceAny]] = []
-    for member in getattr(record, "law_evidence", ()):
-        raw = member.result.get("claim_evidence")
-        if raw is not None:
-            found.append((member.path, parse_claim_law_evidence(raw)))
-    return tuple(found)
-
-
 def _history_index(
     instance: PlaybillInstance,
     *,
     current_claims: Mapping[str, ClaimFactRowV1],
     target_generation: int,
 ) -> _AuditHistoryIndex:
+    """Each audited Claim's lineage, first statement generation, creator and attestations.
+
+    Read from the history index, sized by these Claims' own history: a path's
+    accepted bytes change only in a generation whose change record names it
+    (``member_versions``), so its lineage is its genesis bytes plus its bytes at
+    each such generation, and its law records are located directly
+    (``claim_law_locations_of``). The answer is the walk over every generation
+    and every Claim at each, which this replaces.
+    """
+
     paths = set(current_claims)
+    ordered = tuple(sorted(paths))
     lineages: dict[str, set[str]] = {path: set() for path in paths}
     first: dict[tuple[str, str], int] = {}
     actors: dict[tuple[str, str], str] = {}
     attestations: dict[tuple[str, str, str], int] = {}
-    for generation in instance.accepted_history():
-        if generation.sequence > target_generation:
-            break
-        tree = instance.blobs_at(generation.oid, tuple(sorted(paths)))
-        for path in paths:
-            raw = tree.get(path)
-            if raw is not None:
-                lineages[path].add(claim_artifact_digest(parse_claim(raw, path=path)).tagged)
-        record = generation.record
-        if record is None:
-            continue
-        actor = record.actor_binding.actor_id
-        for path, law in _record_claim_law_evidence(record):
-            if path not in paths:
+    oids = {
+        generation.sequence: generation.oid
+        for generation in instance.accepted_history()
+        if generation.sequence <= target_generation
+    }
+    records = instance.retained_record_reader()
+    with instance.accepted_history_reader() as retained:
+        changed_at: dict[int, set[str]] = {0: set(paths)} if paths and 0 in oids else {}
+        for path, versions in retained.member_versions(ordered).items():
+            for sequence, _digest in versions:
+                if sequence <= target_generation:
+                    changed_at.setdefault(sequence, set()).add(path)
+        for sequence in sorted(changed_at):
+            tree = instance.blobs_at(oids[sequence], tuple(sorted(changed_at[sequence])))
+            for path in changed_at[sequence]:
+                raw = tree.get(path)
+                if raw is not None:
+                    lineages[path].add(claim_artifact_digest(parse_claim(raw, path=path)).tagged)
+        for location in retained.claim_law_locations_of(ordered):
+            if location.sequence > target_generation:
                 continue
-            key = (path, law.statement_digest)
-            first.setdefault(key, generation.sequence)
-            actors.setdefault(key, actor)
+            raw_law = retained.read_member_law_evidence(location, records).result.get(
+                "claim_evidence"
+            )
+            if raw_law is None:
+                continue
+            law = parse_claim_law_evidence(raw_law)
+            key = (location.member_path, law.statement_digest)
+            first.setdefault(key, location.sequence)
+            actors.setdefault(
+                key, retained.read_generation_facts(location.sequence, records).actor_id
+            )
             for attestation in law.verified_attestations:
                 attestations.setdefault(
-                    (path, law.statement_digest, attestation.attestation_digest),
-                    generation.sequence,
+                    (location.member_path, law.statement_digest, attestation.attestation_digest),
+                    location.sequence,
                 )
     for path, row in current_claims.items():
         key = (path, row.accepted.statement_digest)

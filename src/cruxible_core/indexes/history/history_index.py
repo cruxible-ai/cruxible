@@ -692,6 +692,25 @@ class HistoryReader:
             )
         )
 
+    def claim_law_locations_of(self, paths: Sequence[str]) -> tuple[AcceptedMemberLocation, ...]:
+        """Every Claim law-record location of ``paths`` to this cutoff, oldest first, in bulk."""
+
+        wanted = tuple(dict.fromkeys(paths))
+        found: list[AcceptedMemberLocation] = []
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            found.extend(
+                AcceptedMemberLocation(*row)
+                for row in self._connection.execute(
+                    "SELECT * FROM accepted_member_locations WHERE artifact_kind='claim' "
+                    "AND has_law_evidence=1 AND sequence<=? AND member_path IN ("
+                    + ",".join("?" for _ in chunk)
+                    + ")",
+                    (self.sequence, *chunk),
+                )
+            )
+        return tuple(sorted(found, key=lambda item: (item.sequence, item.member_ordinal)))
+
     def claim_law_heads(self, paths: tuple[str, ...]) -> dict[str, tuple[int, int] | None]:
         """The latest law-record location of each Claim path at this cutoff, in one read."""
 
