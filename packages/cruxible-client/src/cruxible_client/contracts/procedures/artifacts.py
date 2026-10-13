@@ -31,7 +31,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo
+from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo, fresh_digest
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -363,7 +363,7 @@ def render_procedure(procedure: ProcedureArtifact) -> bytes:
 
 
 _PROCEDURE_PARSES: ParseMemo[ProcedureArtifact] = ParseMemo(
-    capacity=1024, max_bytes=32 * 1024 * 1024
+    capacity=256, max_bytes=16 * 1024 * 1024
 )
 
 
@@ -396,7 +396,7 @@ def _parse_procedure(
     return procedure
 
 
-_PROCEDURE_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=1024)
+_PROCEDURE_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=256, fresh=fresh_digest)
 
 
 def procedure_artifact_digest(procedure: ProcedureArtifact) -> ArtifactDigest:

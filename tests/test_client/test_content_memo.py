@@ -7,13 +7,13 @@ import pytest
 from cruxible_client.contracts import claim_types, subjects
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import (
+    ClaimTypeFormatError,
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
     render_claim_type,
 )
 from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo, ValueMemo
-from cruxible_client.contracts.errors import ClaimTypeFormatError
 from cruxible_client.contracts.subjects import (
     SubjectShell,
     parse_subject,
@@ -47,7 +47,10 @@ def test_a_parse_runs_once_per_exact_bytes_and_a_refusal_is_never_kept(monkeypat
     content = render_claim_type(value)
     first = parse_claim_type(content, path=path)
     again = parse_claim_type(bytes(bytearray(content)), path=path)
-    assert first == value and again is first and parsed == [path]
+    # Each caller gets its own detached copy of the one parse.
+    assert first == value == again and again is not first and parsed == [path]
+    first.identity.__dict__["name"] = "poisoned"
+    assert parse_claim_type(content, path=path) == value
     # A different path is a different parse (and still refuses as before).
     with pytest.raises(ClaimTypeFormatError):
         parse_claim_type(content, path="claim-types/other.json")
@@ -59,6 +62,8 @@ def test_a_parse_runs_once_per_exact_bytes_and_a_refusal_is_never_kept(monkeypat
 
 
 def test_a_digest_is_kept_with_its_exact_object_only(monkeypatch):
+    """Each hit returns its own digest value, equal to the one derived afresh."""
+
     digests = []
     real = subjects._subject_digest
 
@@ -68,7 +73,8 @@ def test_a_digest_is_kept_with_its_exact_object_only(monkeypatch):
 
     monkeypatch.setattr(subjects, "_subject_digest", counted)
     shell = parse_subject(render_subject(_shell("a")), path=subject_path("memo.kind", "a"))
-    assert subject_digest(shell) == subject_digest(shell) == real(_shell("a"))
+    first, again = subject_digest(shell), subject_digest(shell)
+    assert first == again == real(_shell("a")) and again is not first
     # An equal but distinct object derives again: identity, never a mutable key.
     assert subject_digest(_shell("a")) == real(_shell("a"))
     assert digests == ["a", "a"]
@@ -79,7 +85,7 @@ def test_memos_are_bounded():
     for number in range(5):
         parses.parse(str(number).encode(), "p", None, lambda number=number: number)
     assert len(parses._entries) == 2
-    small: ParseMemo[int] = ParseMemo(capacity=10, max_bytes=64)
+    small: ParseMemo[int] = ParseMemo(capacity=10, max_bytes=256)
     small.parse(b"x" * 64, "p", None, lambda: 1)
     assert not small._entries  # one entry may never take a sixteenth of the budget
     objects: ObjectMemo[int] = ObjectMemo(capacity=3)

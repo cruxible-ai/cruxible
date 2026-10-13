@@ -33,7 +33,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo
+from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo, fresh_digest
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import SubjectFormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -150,7 +150,7 @@ def render_subject(shell: SubjectShell) -> bytes:
     return pretty_canonical_bytes(shell.model_dump(mode="json"))
 
 
-_SUBJECT_PARSES: ParseMemo[SubjectShell] = ParseMemo(capacity=65536, max_bytes=64 * 1024 * 1024)
+_SUBJECT_PARSES: ParseMemo[SubjectShell] = ParseMemo(capacity=4096, max_bytes=16 * 1024 * 1024)
 
 
 def parse_subject(
@@ -201,7 +201,7 @@ SUBJECT_DIGEST_FUNCTIONS: dict[str, Callable[[SubjectShell], ArtifactDigest]] = 
 }
 
 
-_SUBJECT_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=65536)
+_SUBJECT_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=4096, fresh=fresh_digest)
 
 
 def subject_digest(shell: SubjectShell) -> ArtifactDigest:

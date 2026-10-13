@@ -45,7 +45,7 @@ from cruxible_client.contracts.cas_contracts import (
     BodyAccessContext,
     CasObjectMetadata,
 )
-from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo
+from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo, fresh_digest
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import CasError, FormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
@@ -579,7 +579,7 @@ def render_capture_contract(contract: CaptureContract) -> bytes:
 
 
 _CAPTURE_CONTRACT_PARSES: ParseMemo[CaptureContract] = ParseMemo(
-    capacity=4096, max_bytes=32 * 1024 * 1024
+    capacity=1024, max_bytes=16 * 1024 * 1024
 )
 
 
@@ -620,7 +620,9 @@ def _parse_capture_contract(
     return contract
 
 
-_CAPTURE_CONTRACT_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=4096)
+_CAPTURE_CONTRACT_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(
+    capacity=1024, fresh=fresh_digest
+)
 
 
 def capture_contract_digest(contract: CaptureContract) -> ArtifactDigest:

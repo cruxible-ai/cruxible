@@ -78,7 +78,7 @@ from cruxible_client.contracts.claim_verdicts import (
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
 )
-from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo
+from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo, fresh_digest
 from cruxible_client.contracts.declared_blocks import (
     ProjectionWindow,
     projection_window_intersecting,
@@ -696,7 +696,7 @@ def render_claim(claim: ClaimArtifactAny) -> bytes:
     return pretty_canonical_bytes(claim.model_dump(mode="json"))
 
 
-_CLAIM_PARSES: ParseMemo[ClaimArtifactAny] = ParseMemo(capacity=65536, max_bytes=128 * 1024 * 1024)
+_CLAIM_PARSES: ParseMemo[ClaimArtifactAny] = ParseMemo(capacity=4096, max_bytes=32 * 1024 * 1024)
 
 
 def parse_claim(
@@ -758,7 +758,7 @@ def claim_referent_context_digest(context: ClaimReferentContext) -> Sha256Value:
     )
 
 
-_CLAIM_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=65536)
+_CLAIM_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=4096, fresh=fresh_digest)
 
 
 def claim_artifact_digest(claim: ClaimArtifactAny) -> ArtifactDigest:

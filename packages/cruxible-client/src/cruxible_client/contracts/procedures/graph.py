@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterator
 
 from pydantic import BaseModel
@@ -391,7 +391,7 @@ def _node_local_payload(node: ProcedureNode) -> dict[str, object]:
     return {"kind": node.kind, "spec": payload}
 
 
-_NODE_DIGESTS: ObjectMemo[dict[str, ProcedureNodeDigests]] = ObjectMemo(capacity=1024)
+_NODE_DIGESTS: ObjectMemo[dict[str, ProcedureNodeDigests]] = ObjectMemo(capacity=256)
 
 
 def compute_procedure_node_digests(
@@ -399,12 +399,15 @@ def compute_procedure_node_digests(
 ) -> dict[str, ProcedureNodeDigests]:
     """Each node's local and subtree digests, once per exact frozen definition.
 
-    The caller gets its own dict; the digests themselves are frozen.
+    The caller gets its own dict of its own (frozen) digest records.
     """
 
-    return dict(
-        _NODE_DIGESTS.derive(definition, lambda: _compute_procedure_node_digests(definition))
-    )
+    return {
+        node_id: replace(digests)
+        for node_id, digests in _NODE_DIGESTS.derive(
+            definition, lambda: _compute_procedure_node_digests(definition)
+        ).items()
+    }
 
 
 def _compute_procedure_node_digests(

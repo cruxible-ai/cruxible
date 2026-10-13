@@ -7,19 +7,24 @@ and Claims are parsed and digested dozens of times by different laws and
 indexes. These memos make each of those a lookup:
 
 - ``ParseMemo`` keys a parse by ``(path, codec, bytes)``: the content itself,
-  never a mutable object. A refused parse is never remembered, so it refuses
+  never a mutable object. It keeps the parsed value pickled and hands every
+  caller its own detached copy, so nothing a caller does to a returned model
+  can reach a later parse. A refused parse is never remembered, so it refuses
   again exactly as before.
-- ``ObjectMemo`` remembers a value derived from one exact frozen object. The
+- ``ObjectMemo`` remembers a digest derived from one exact frozen object. The
   entry holds the object, so its identity cannot be reused while the entry
-  lives, and a hit is confirmed with ``is``. Because ``ParseMemo`` hands back the
-  same object for the same bytes, a digest of a re-parsed artifact is a hit too.
+  lives, a hit is confirmed with ``is``, and every hit returns a fresh digest
+  value. Frozen models are never changed in place by the code that digests
+  them; a changed copy (``model_copy``) is a different object and derives afresh.
+- ``ValueMemo`` keys a pure function of hashable frozen values by those values.
 
-Both are bounded (entries, and bytes for parses) and least-recently-used, and
-safe to share across threads: every access is one short critical section.
+All are bounded and least-recently-used, and safe to share across threads:
+every access is one short critical section.
 """
 
 from __future__ import annotations
 
+import pickle
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
@@ -34,7 +39,7 @@ class ParseMemo(Generic[_V]):
     """``(path, codec, exact bytes) -> parsed artifact``, bounded by entries and bytes."""
 
     def __init__(self, *, capacity: int, max_bytes: int) -> None:
-        self._entries: OrderedDict[tuple[str, object, bytes], _V] = OrderedDict()
+        self._entries: OrderedDict[tuple[str, object, bytes], bytes] = OrderedDict()
         self._capacity = capacity
         self._max_bytes = max_bytes
         self._bytes = 0
@@ -49,23 +54,28 @@ class ParseMemo(Generic[_V]):
         except TypeError:
             return parse()
         with self._lock:
-            found = self._entries.get(key, _MISSING)
-            if found is not _MISSING:
+            found = self._entries.get(key)
+            if found is not None:
                 self._entries.move_to_end(key)
-                return found  # type: ignore[return-value]
+        if found is not None:
+            return pickle.loads(found)  # type: ignore[no-any-return]
         value = parse()
-        weight = len(content) + len(path)
+        try:
+            frozen = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+        except (pickle.PicklingError, TypeError, AttributeError):
+            return value
+        weight = len(content) + len(path) + len(frozen)
         if weight * 16 > self._max_bytes:
             return value
         with self._lock:
             if key not in self._entries:
-                self._entries[key] = value
+                self._entries[key] = frozen
                 self._bytes += weight
             while self._entries and (
                 len(self._entries) > self._capacity or self._bytes > self._max_bytes
             ):
-                (old_path, _codec, old_content), _value = self._entries.popitem(last=False)
-                self._bytes -= len(old_content) + len(old_path)
+                (old_path, _codec, old_content), old = self._entries.popitem(last=False)
+                self._bytes -= len(old_content) + len(old_path) + len(old)
         return value
 
     def clear(self) -> None:
@@ -75,11 +85,15 @@ class ParseMemo(Generic[_V]):
 
 
 class ObjectMemo(Generic[_V]):
-    """A value derived from one exact frozen object, held together with that object."""
+    """A value derived from one exact frozen object, held together with that object.
 
-    def __init__(self, *, capacity: int) -> None:
+    ``fresh`` makes every hit return its own copy of the remembered value.
+    """
+
+    def __init__(self, *, capacity: int, fresh: Callable[[_V], _V] | None = None) -> None:
         self._entries: OrderedDict[int, tuple[object, _V]] = OrderedDict()
         self._capacity = capacity
+        self._fresh = fresh
         self._lock = threading.Lock()
 
     def derive(self, source: object, derive: Callable[[], _V]) -> _V:
@@ -88,18 +102,25 @@ class ObjectMemo(Generic[_V]):
             entry = self._entries.get(key)
             if entry is not None and entry[0] is source:
                 self._entries.move_to_end(key)
-                return entry[1]
+                value = entry[1]
+                return value if self._fresh is None else self._fresh(value)
         value = derive()
         with self._lock:
             self._entries[key] = (source, value)
             self._entries.move_to_end(key)
             while len(self._entries) > self._capacity:
                 self._entries.popitem(last=False)
-        return value
+        return value if self._fresh is None else self._fresh(value)
 
     def clear(self) -> None:
         with self._lock:
             self._entries.clear()
+
+
+def fresh_digest(value: Any) -> Any:
+    """A new instance of a frozen digest value (``Sha256Value`` and kin)."""
+
+    return type(value)(value.value)
 
 
 class ValueMemo(Generic[_V]):
@@ -133,4 +154,4 @@ class ValueMemo(Generic[_V]):
             self._entries.clear()
 
 
-__all__ = ["ObjectMemo", "ParseMemo", "ValueMemo"]
+__all__ = ["ObjectMemo", "ParseMemo", "ValueMemo", "fresh_digest"]

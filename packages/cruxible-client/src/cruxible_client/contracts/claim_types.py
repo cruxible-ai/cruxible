@@ -43,7 +43,7 @@ from cruxible_client.contracts.canonical_forms import (
     validate_canonical_form,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole, ClaimTypeStructure
-from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo
+from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo, fresh_digest
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
@@ -511,7 +511,7 @@ def render_claim_type(claim_type: ClaimType) -> bytes:
     return pretty_canonical_bytes(payload)
 
 
-_CLAIM_TYPE_PARSES: ParseMemo[ClaimType] = ParseMemo(capacity=4096, max_bytes=32 * 1024 * 1024)
+_CLAIM_TYPE_PARSES: ParseMemo[ClaimType] = ParseMemo(capacity=1024, max_bytes=16 * 1024 * 1024)
 
 
 def parse_claim_type(
@@ -625,7 +625,7 @@ CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = 
 }
 
 
-_CLAIM_TYPE_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=4096)
+_CLAIM_TYPE_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=1024, fresh=fresh_digest)
 
 
 def claim_type_digest(claim_type: ClaimType) -> ArtifactDigest:
