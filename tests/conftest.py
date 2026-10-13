@@ -143,7 +143,7 @@ def isolate_cli_context(
 
 
 @pytest.fixture(autouse=True)
-def isolate_daemon_checkpoint_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+def isolate_daemon_checkpoint_mode() -> Iterator[None]:
     """No test inherits the daemon's quiet-period replay checkpoints.
 
     ``run_server`` reaches ``server.app._serve``, which turns quiet checkpoints on
@@ -152,12 +152,19 @@ def isolate_daemon_checkpoint_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     stubbed left it on for every later test in the same xdist worker, so a
     deferred summary could land inside another test's "a preview writes
     nothing" window. The setting is restored after every test.
+
+    Saved and restored directly, not through ``monkeypatch``: a live MonkeyPatch on
+    a runtime object makes world templates build every world fresh.
     """
 
     from cruxible_core.runtime.playbill_manager import get_playbill_manager
 
     manager = get_playbill_manager()
-    monkeypatch.setattr(manager, "quiet_checkpoint_seconds", manager.quiet_checkpoint_seconds)
+    saved = manager.quiet_checkpoint_seconds
+    try:
+        yield
+    finally:
+        manager.quiet_checkpoint_seconds = saved
 
 
 def test_owned_roots(base_temp: Path) -> tuple[Path, ...]:
