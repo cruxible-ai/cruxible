@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from collections.abc import Callable, Iterator
@@ -77,13 +78,39 @@ def guard_database_path(path: Path) -> Iterator[None]:
         )
 
 
+def _memory_copy(path: Path) -> sqlite3.Connection:
+    """The database at ``path`` copied into memory from an open that creates no file."""
+
+    source = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
+    try:
+        memory = sqlite3.connect(":memory:")
+        try:
+            source.backup(memory)
+            memory.execute("PRAGMA query_only=ON")
+        except BaseException:
+            memory.close()
+            raise
+    finally:
+        source.close()
+    return memory
+
+
 def open_working_snapshot(
     path: Path,
     *,
     expected_stamp: tuple[int, ...],
     file_stamp: Callable[[], tuple[int, ...] | None],
+    write_nothing: bool = False,
 ) -> sqlite3.Connection:
-    """Pin a WAL snapshot only while its verified physical proof remains unchanged."""
+    """Pin a WAL snapshot only while its verified physical proof remains unchanged.
+
+    Even a read-only open of a WAL database whose ``-wal`` file is absent
+    creates that file beside it. With ``write_nothing`` (a preview) such a
+    database, whose main file then holds every committed row, is copied into
+    memory from an immutable open instead, under the same stamp proof: a writer
+    that commits or checkpoints during the copy moves the stamp and the copy is
+    refused. A database whose WAL exists is opened in place as usual.
+    """
 
     for attempt in range(ACQUISITION_ATTEMPTS):
         connection = None
@@ -93,12 +120,15 @@ def open_working_snapshot(
                     raise WorkingDatabaseChangedError(
                         "working database changed before snapshot acquisition"
                     )
-                connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
-                connection.execute("PRAGMA query_only=ON")
-                connection.execute("BEGIN DEFERRED")
-                # BEGIN does not acquire the WAL snapshot. Read while the path
-                # proof and the exact physical stamp still protect acquisition.
-                connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+                if write_nothing and not os.path.lexists(path.with_name(path.name + "-wal")):
+                    connection = _memory_copy(path)
+                else:
+                    connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+                    connection.execute("PRAGMA query_only=ON")
+                    connection.execute("BEGIN DEFERRED")
+                    # BEGIN does not acquire the WAL snapshot. Read while the path
+                    # proof and the exact physical stamp still protect acquisition.
+                    connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
                 if file_stamp() != expected_stamp:
                     raise WorkingDatabaseChangedError(
                         "working database changed during snapshot acquisition"

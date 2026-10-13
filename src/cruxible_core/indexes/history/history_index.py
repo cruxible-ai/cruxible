@@ -1324,8 +1324,12 @@ class AcceptedHistoryIndex:
         if stamp is None or self._ready != ready or self._file_stamp() != stamp:
             return None
         try:
+            # A detached read (a preview) must not create the WAL beside the file.
             connection = open_working_snapshot(
-                self.path, expected_stamp=stamp, file_stamp=self._file_stamp
+                self.path,
+                expected_stamp=stamp,
+                file_stamp=self._file_stamp,
+                write_nothing=_DETACHED_READS.get(),
             )
         except WorkingDatabaseChangedError:
             # A writer moved the file since the checks above; take the locked path.

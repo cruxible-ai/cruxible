@@ -711,10 +711,13 @@ def test_detached_reads_after_a_restart_verify_the_file_once(tmp_path, seeded, m
 
     The first detached read verifies the recorded readiness over a private copy;
     the working file at that stamp is then known to be at the head, so later
-    reads take its clean snapshot and answer what the copies answered.
+    reads take its clean snapshot and answer what the copies answered. None of
+    them writes: the close removed the WAL, and a clean snapshot opened in place
+    would create it again beside the file.
     """
 
     from cruxible_core.indexes.history import history_index as module
+    from tests.support.store_snapshot import snapshot_stores
 
     state = seeded._recovered
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
@@ -735,6 +738,8 @@ def test_detached_reads_after_a_restart_verify_the_file_once(tmp_path, seeded, m
     monkeypatch.setattr(module, "_history_chain", chain)
     monkeypatch.setattr(AcceptedHistoryIndex, "_copy_working_rows", copy)
     reopened = AcceptedHistoryIndex(index.path)
+    assert not index.path.with_name(index.path.name + "-wal").exists()
+    before = snapshot_stores(tmp_path)
     answers = []
     with module.detached_history_reads():
         for _ in range(3):
@@ -742,6 +747,7 @@ def test_detached_reads_after_a_restart_verify_the_file_once(tmp_path, seeded, m
                 answers.append(
                     (reader.sequence, reader.occurrences("Claim:a"), reader.artifact("1"))
                 )
+    assert snapshot_stores(tmp_path) == before
     assert len(set(map(repr, answers))) == 1
     assert chains == [state.head.sequence] and len(copies) == 1
     assert reopened.generations_checked == 0

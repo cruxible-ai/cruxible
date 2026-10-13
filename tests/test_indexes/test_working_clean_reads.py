@@ -256,15 +256,21 @@ def test_a_lock_free_read_whose_file_moves_during_acquisition_takes_the_locked_p
     # An ordinary writer (a queued review-ref refresh, a settle) may move the
     # file between the lock-free reader's checks and its snapshot. The real
     # acquisition sees the stamp move; the reader must fall back, not fail.
-    def writer_moves_the_file(path, *, expected_stamp, file_stamp):  # type: ignore[no-untyped-def]
+    def writer_moves_the_file(path, *, expected_stamp, file_stamp, write_nothing=False):  # type: ignore[no-untyped-def]
         if raced:
-            return real(path, expected_stamp=expected_stamp, file_stamp=file_stamp)
+            return real(
+                path,
+                expected_stamp=expected_stamp,
+                file_stamp=file_stamp,
+                write_nothing=write_nothing,
+            )
         raced.append(True)
         calls = iter((expected_stamp,))
         return real(
             path,
             expected_stamp=expected_stamp,
             file_stamp=lambda: next(calls, (*expected_stamp[:-1], -1)),
+            write_nothing=write_nothing,
         )
 
     monkeypatch.setattr(module, "open_working_snapshot", writer_moves_the_file)
